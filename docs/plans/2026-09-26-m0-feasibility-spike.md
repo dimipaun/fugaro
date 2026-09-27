@@ -2,6 +2,10 @@
 
 > **This is a spike.** Nothing built here ships. The output is a filled-in `docs/design/m0-results.md` and a go/no-go decision on Cloud Run jobs as the compute layer. Design: [docs/design/v1.md](../design/v1.md) §14.
 
+> **Status (2026-09-27): split in two.** v1 ships web-first (design §14).
+> - **Now:** run **Step 0 only**, against the **web** repo, before the `web-node` image is built (M3). A hit there means the web workflow also needs the Docker-capable backend.
+> - **Later:** run the full runbook against the **server** repo before any server-workflow work starts.
+
 **Questions to answer, most dangerous first:**
 
 1. **Does the server test suite need Docker?** Cloud Run jobs have no Docker daemon and no privileged mode, so Testcontainers, docker-compose, and embedded-Docker test fixtures can't run there. If the suite depends on Docker, Cloud Run is out for the server workflow, whatever the memory ceiling.
