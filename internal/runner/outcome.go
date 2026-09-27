@@ -7,16 +7,22 @@ import (
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
-// Decide applies the PR outcome rule (design §4.2): ready only if the latest
-// test record on finalSHA with a clean tree passed and the last review shipped.
-func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary) (bool, string) {
+// latestVerifiedTest returns the last test record on sha with a clean tree.
+func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 	var latest *verify.Record
 	for i := range records {
 		r := &records[i]
-		if r.Kind == verify.KindTest && r.HeadSHA == finalSHA && r.CleanTree {
+		if r.Kind == verify.KindTest && r.HeadSHA == sha && r.CleanTree {
 			latest = r
 		}
 	}
+	return latest
+}
+
+// Decide applies the PR outcome rule (design §4.2): ready only if the latest
+// test record on finalSHA with a clean tree passed and the last review shipped.
+func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary) (bool, string) {
+	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
 		return false, "no verified test run on the final commit"

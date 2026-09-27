@@ -87,12 +87,40 @@ func TestReport(t *testing.T) {
 		HeadSHA: "abcdef1234567", CostUSD: 4.126,
 		Stages:  []runstore.StageTiming{{Name: "implement", DurationS: 61}},
 		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 1}, {Round: 2, Verdict: "ship"}},
-		Verify:  []verify.Record{{Kind: verify.KindTest, HeadSHA: "abcdef1234567", Tests: 3, Failures: 1, Flaky: []string{"pkg.A.b"}}},
+		Verify:  []verify.Record{{Kind: verify.KindTest, HeadSHA: "abcdef1234567", CleanTree: true, Tests: 3, Failures: 1, Flaky: []string{"pkg.A.b"}}},
 	}
 	got := Report(rec, "runs/acme-app/20260926-221530-abcd/")
 	for _, want := range []string{"draft — tests failing on the final commit", "| implement | 1m1s |", "round 1: changes (1 finding)", "round 2: ship", "failed on abcdef1 (3 tests, 1 failure, flaky: pkg.A.b)", "$4.13", "runs/acme-app/20260926-221530-abcd/"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestReportConsistentWithDecide(t *testing.T) {
+	// Test that report and outcome agree: clean-failed followed by dirty-passed
+	// on the same SHA. Report should say "failed", Decide should say "tests failing".
+	cleanFailed := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: true, Passed: false, Tests: 2, Failures: 1}
+	dirtyPassed := verify.Record{Kind: verify.KindTest, HeadSHA: "abc", CleanTree: false, Passed: true, Tests: 2}
+	ship := &runstore.ReviewSummary{Round: 1, Verdict: "ship"}
+
+	rec := &runstore.Record{
+		RunID:   "20260927-000000-xxxx",
+		Outcome: runstore.OutcomeDraft,
+		Reason:  "tests failing on the final commit",
+		HeadSHA: "abc",
+		Verify:  []verify.Record{cleanFailed, dirtyPassed},
+	}
+
+	// Decide should report tests failing (uses clean record)
+	ready, reason := Decide(rec.Verify, rec.HeadSHA, ship)
+	if ready || reason != "tests failing on the final commit" {
+		t.Errorf("Decide = %v %q, want false %q", ready, reason, "tests failing on the final commit")
+	}
+
+	// Report should also say failed (uses clean record via latestVerifiedTest)
+	got := Report(rec, "location/")
+	if !strings.Contains(got, "failed on abc (2 tests, 1 failure)") {
+		t.Errorf("report should say failed, got:\n%s", got)
 	}
 }

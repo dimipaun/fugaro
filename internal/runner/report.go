@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/runstore"
-	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // Report renders the run report posted to the PR and stored as report.md.
@@ -44,12 +43,7 @@ func Report(rec *runstore.Record, location string) string {
 }
 
 func testsLine(rec *runstore.Record) string {
-	var last *verify.Record
-	for i := range rec.Verify {
-		if rec.Verify[i].Kind == verify.KindTest && rec.Verify[i].HeadSHA == rec.HeadSHA {
-			last = &rec.Verify[i]
-		}
-	}
+	last := latestVerifiedTest(rec.Verify, rec.HeadSHA)
 	if last == nil {
 		return "**Tests:** no recorded test run on the final commit\n\n"
 	}
