@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/task.schema.json",
+  "title": "Fugaro task spec",
+  "description": "runs/<repo-slug>/<run-id>/task.json. See docs/design/v1.md §5.3.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "repo", "ref"],
+  "properties": {
+    "version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "repo": { "type": "string", "pattern": "^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$" },
+    "ref": { "type": "string", "minLength": 1 },
+    "workflow": { "type": "string" },
+    "task": { "type": "string" },
+    "branch": { "type": "string", "minLength": 1 },
+    "pr": { "type": "integer", "minimum": 1 },
+    "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "max_budget_usd": { "type": "number", "minimum": 0 },
+        "model": { "type": "string" },
+        "total_timeout": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" }
+      }
+    },
+    "requested_by": { "type": "string" }
+  },
+  "dependentRequired": {
+    "branch": ["pr", "previous_run"],
+    "pr": ["branch", "previous_run"],
+    "previous_run": ["branch", "pr"]
+  },
+  "if": { "not": { "required": ["branch"] } },
+  "then": { "required": ["task"], "properties": { "task": { "minLength": 1 } } }
+}

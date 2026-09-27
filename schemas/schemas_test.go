@@ -81,3 +81,28 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 		t.Errorf("schema rejects the embedded example: %v", err)
 	}
 }
+
+func TestTaskSchemaCorpus(t *testing.T) {
+	sch := compile(t, "task.schema.json")
+	jsonInstance := func(f string) any {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return inst
+	}
+	for _, f := range globAll(t, "../testdata/task/valid/*.json") {
+		if err := sch.Validate(jsonInstance(f)); err != nil {
+			t.Errorf("%s: schema rejects a valid task: %v", f, err)
+		}
+	}
+	for _, f := range globAll(t, "../testdata/task/invalid/*.json") {
+		if err := sch.Validate(jsonInstance(f)); err == nil {
+			t.Errorf("%s: schema accepts an invalid task", f)
+		}
+	}
+}
