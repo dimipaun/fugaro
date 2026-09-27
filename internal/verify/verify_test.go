@@ -79,6 +79,9 @@ func TestTestParsesReports(t *testing.T) {
 	if rec.HeadSHA != head || !rec.CleanTree {
 		t.Fatalf("head=%s clean=%v, want %s true (build/ is ignored)", rec.HeadSHA, rec.CleanTree, head)
 	}
+	if strings.Contains(rec.Summary(), "no JUnit reports") {
+		t.Fatalf("summary warns although reports were found: %s", rec.Summary())
+	}
 }
 
 func TestRerunMarksFlaky(t *testing.T) {
@@ -157,5 +160,94 @@ func TestRerunCommandQuotes(t *testing.T) {
 	want := `./gradlew test --tests 'a.B.c' --tests 'it'\''s'`
 	if got != want {
 		t.Fatalf("got %s, want %s", got, want)
+	}
+}
+
+// rerunWith replaces the fixture's rerun command with script, a shell script
+// stored outside the checkout so the tree stays clean.
+func rerunWith(t *testing.T, f fixture, script string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "rerun.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s, err := LoadSettings(f.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.RerunFailed = &config.RerunFailed{Command: "sh " + path, Each: "{id}"}
+	if err := WriteSettings(f.stateDir, s); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRerunSkippedIsNotFlaky: a previously failed test that the rerun
+// reports as skipped never actually re-ran, so it must stay failed rather
+// than be counted as a flaky pass.
+func TestRerunSkippedIsNotFlaky(t *testing.T) {
+	f := setup(t)
+	f.fails(t, "beta")
+	run(t, f, KindTest, false)
+	rerunWith(t, f, `mkdir -p build/test-results
+echo '<testsuite><testcase classname="pkg.Suite" name="beta"><skipped/></testcase></testsuite>' > build/test-results/TEST-suite.xml
+`)
+	rec := run(t, f, KindTest, true)
+	if rec.Passed || len(rec.Flaky) != 0 || !slices.Equal(rec.Failed, []string{"pkg.Suite.beta"}) {
+		t.Fatalf("rerun record = %+v", rec)
+	}
+}
+
+// TestRerunWithoutReportsFailsClosed: a rerun that exits 0 but leaves no
+// fresh reports proves nothing, so every previous failure stays failed.
+func TestRerunWithoutReportsFailsClosed(t *testing.T) {
+	f := setup(t)
+	f.fails(t, "beta")
+	run(t, f, KindTest, false)
+	rerunWith(t, f, "exit 0\n")
+	rec := run(t, f, KindTest, true)
+	if rec.Passed || len(rec.Flaky) != 0 || !slices.Equal(rec.Failed, []string{"pkg.Suite.beta"}) {
+		t.Fatalf("rerun record = %+v", rec)
+	}
+}
+
+// TestTestWithoutReportsWarns: a test run that leaves no fresh reports says
+// so in its summary, since its counts are then meaningless.
+func TestTestWithoutReportsWarns(t *testing.T) {
+	f := setup(t)
+	s, err := LoadSettings(f.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Test = "true"
+	if err := WriteSettings(f.stateDir, s); err != nil {
+		t.Fatal(err)
+	}
+	rec := run(t, f, KindTest, false)
+	if want := "no JUnit reports found under build/test-results/*.xml"; !strings.Contains(rec.Summary(), want) {
+		t.Fatalf("summary %q lacks %q", rec.Summary(), want)
+	}
+}
+
+// TestTimeoutKillsWithinGrace: a verify command that ignores SIGTERM is
+// SIGKILLed after a grace shorter than the agent group's 10s, so that when
+// the agent's stage is killed, `fugaro verify` still has time to kill its own
+// test group before it is itself SIGKILLed.
+func TestTimeoutKillsWithinGrace(t *testing.T) {
+	f := setup(t)
+	s, err := LoadSettings(f.stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Test, s.TimeoutS = "trap '' TERM; sleep 30", 1
+	if err := WriteSettings(f.stateDir, s); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	rec := run(t, f, KindTest, false)
+	if d := time.Since(start); d >= 10*time.Second {
+		t.Fatalf("verify took %s to kill a SIGTERM-ignoring command; want under the agent's 10s grace", d)
+	}
+	if !rec.TimedOut || rec.Passed {
+		t.Fatalf("record = %+v", rec)
 	}
 }

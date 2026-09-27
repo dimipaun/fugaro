@@ -24,6 +24,13 @@ import (
 const (
 	settingsFile = "workflow.json"
 	recordsDir   = "verify"
+
+	// commandGrace is how long a timed-out or cancelled verify command's
+	// group gets between SIGTERM and SIGKILL. It is shorter than the agent
+	// group's 10s, so when the agent's stage is killed, `fugaro verify`
+	// (which lives in the agent's group) still has time to SIGKILL its own
+	// test group before it is itself SIGKILLed and orphans that group.
+	commandGrace = 5 * time.Second
 )
 
 // Settings is what the runner tells `fugaro verify` about the workflow.
@@ -47,6 +54,17 @@ func WriteSettings(stateDir string, s Settings) error {
 	}
 	if err := os.WriteFile(filepath.Join(stateDir, settingsFile), data, 0o644); err != nil {
 		return fmt.Errorf("writing verify settings: %w", err)
+	}
+	return nil
+}
+
+// ClearState removes the settings and records an earlier run left in
+// stateDir, and nothing else there.
+func ClearState(stateDir string) error {
+	for _, name := range []string{settingsFile, recordsDir} {
+		if err := os.RemoveAll(filepath.Join(stateDir, name)); err != nil {
+			return fmt.Errorf("removing stale %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -87,6 +105,7 @@ type Record struct {
 	Skipped   int       `json:"skipped"`
 	Failed    []string  `json:"failed,omitempty"`
 	Flaky     []string  `json:"flaky,omitempty"`
+	Warning   string    `json:"warning,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	DurationS float64   `json:"duration_s"`
 }
@@ -113,6 +132,9 @@ func (r Record) Summary() string {
 	}
 	if r.TimedOut {
 		s += "; timed out"
+	}
+	if r.Warning != "" {
+		s += "; warning: " + r.Warning
 	}
 	if !r.CleanTree {
 		s += "; working tree not clean, so this run cannot mark the PR ready: commit first"
@@ -185,7 +207,7 @@ func Run(ctx context.Context, o Options) (Record, error) {
 	defer cancel()
 	code, runErr := procgroup.Run(runCtx, procgroup.Cmd{
 		Name: "sh", Args: []string{"-c", command}, Dir: s.RepoDir, Env: env,
-		Stdout: o.Stdout, Stderr: o.Stderr,
+		Stdout: o.Stdout, Stderr: o.Stderr, Grace: commandGrace,
 	})
 	timedOut := errors.Is(runErr, context.DeadlineExceeded)
 	if runErr != nil && !timedOut {
@@ -201,11 +223,14 @@ func Run(ctx context.Context, o Options) (Record, error) {
 		if err != nil {
 			return Record{}, err
 		}
+		if len(cases) == 0 {
+			rec.Warning = "no JUnit reports found under " + strings.Join(s.Reports, ", ")
+		}
 		if prev == nil {
 			rec.Tests, rec.Skipped, rec.Failed = summarize(cases)
 		} else {
 			rec.Tests, rec.Skipped = prev.Tests, prev.Skipped
-			rec.Flaky, rec.Failed = compareRerun(prev.Failed, cases, code)
+			rec.Flaky, rec.Failed = compareRerun(prev.Failed, cases)
 		}
 		rec.Failures = len(rec.Failed)
 	}
@@ -261,17 +286,16 @@ func summarize(cases []TestCase) (tests, skipped int, failed []string) {
 }
 
 // compareRerun splits the previously failed tests into those that now pass
-// (flaky) and those that still fail or did not run.
-func compareRerun(prevFailed []string, cases []TestCase, exitCode int) (flaky, failed []string) {
-	if len(cases) == 0 {
-		if exitCode == 0 {
-			return slices.Clone(prevFailed), nil
-		}
-		return nil, slices.Clone(prevFailed)
-	}
+// (flaky) and those that still fail or did not run. Only a fresh, non-skipped
+// result proves a test re-ran, so a test that was skipped or is missing from
+// the rerun's reports (including a rerun that left no reports at all,
+// whatever its exit code) stays failed.
+func compareRerun(prevFailed []string, cases []TestCase) (flaky, failed []string) {
 	ran, failedNow := map[string]bool{}, map[string]bool{}
 	for _, c := range cases {
-		ran[c.ID] = true
+		if !c.Skipped {
+			ran[c.ID] = true
+		}
 		if c.Failed {
 			failedNow[c.ID] = true
 		}
