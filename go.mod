@@ -5,6 +5,7 @@ go 1.27
 require (
 	cloud.google.com/go/storage v1.68.0
 	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/klauspost/compress v1.20.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	gocloud.dev v0.46.0
