@@ -217,3 +217,63 @@ func TestPushCreatesRemoteBranch(t *testing.T) {
 		t.Fatalf("remote branch = %s, want %s", got, head)
 	}
 }
+
+func TestPushOverwritesTheAgentsOwnPushAfterAmend(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	// The agent pushes on its own, then amends the pushed commit.
+	testutil.Git(t, repo.Dir, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "--amend", "-m", "first, amended")
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"), testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != want {
+		t.Fatalf("remote branch %s, want the amended %s", got, want)
+	}
+}
+
+func TestPushRefusesATipFromElsewhere(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	// Someone else pushes to the run branch from their own clone.
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	testutil.Git(t, other, "commit", "--quiet", "--allow-empty", "-m", "theirs")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x")
+	theirs := testutil.Git(t, other, "rev-parse", "HEAD")
+
+	err := repo.Push(ctx, "fugaro/x")
+	if err == nil || !strings.Contains(err.Error(), "something else pushed") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != theirs {
+		t.Fatalf("remote branch %s was overwritten (want %s)", got, theirs)
+	}
+}
+
+func TestPushRefusesNonRunBranches(t *testing.T) {
+	repo, remote := setup(t)
+	before := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+	if err := repo.CommitEmpty(ctx, "x"); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []string{"main", "fugaro/", "feature/fugaro/x"} {
+		if err := repo.Push(ctx, b); err == nil || !strings.Contains(err.Error(), "refusing to push") {
+			t.Errorf("Push(%q) err = %v", b, err)
+		}
+	}
+	if after := testutil.Git(t, remote, "rev-parse", "refs/heads/main"); after != before {
+		t.Fatalf("main moved from %s to %s", before, after)
+	}
+}

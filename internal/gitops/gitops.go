@@ -172,8 +172,48 @@ func (r *Repo) AheadOf(ctx context.Context, base string) (int, error) {
 	return strconv.Atoi(out)
 }
 
-// Push pushes HEAD to branch on origin.
+// RunBranchPrefix starts every branch the runner pushes.
+const RunBranchPrefix = "fugaro/"
+
+// OriginURL returns the URL of the checkout's origin remote.
+func (r *Repo) OriginURL(ctx context.Context) (string, error) {
+	return r.git(ctx, "remote", "get-url", "origin")
+}
+
+// Push pushes HEAD to the run branch on origin. The agent may already have
+// pushed the branch and then amended or rebased it, so the push is forced,
+// but under a lease: the remote branch is overwritten only if it is absent
+// or its tip is a commit this checkout has (so it came from this run). A
+// tip pushed from anywhere else is left alone and Push fails. Only
+// fugaro/ branches are ever pushed, so the base branch cannot be touched.
 func (r *Repo) Push(ctx context.Context, branch string) error {
-	_, err := r.git(ctx, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
+		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
+	}
+	ref := "refs/heads/" + branch
+	tip, err := r.remoteTip(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("reading %s on origin: %w", branch, err)
+	}
+	if tip != "" {
+		if _, err := r.git(ctx, "cat-file", "-e", tip+"^{commit}"); err != nil {
+			return fmt.Errorf("%s on origin is at %s, a commit this run never had: something else pushed to the branch, so it is not overwritten", branch, tip)
+		}
+	}
+	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
 	return err
+}
+
+// remoteTip returns the commit ref points at on origin, or "" if it does not exist.
+func (r *Repo) remoteTip(ctx context.Context, ref string) (string, error) {
+	out, err := r.git(ctx, "ls-remote", "origin", ref)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha, name, ok := strings.Cut(line, "\t"); ok && name == ref {
+			return sha, nil
+		}
+	}
+	return "", nil
 }
