@@ -1,0 +1,7 @@
+version: 1
+git: { provider: github }
+workflows:
+  server:
+    base: server-jvm
+    commands: { build: make, test: make test }
+    secrets: [{ name: tok, env: GIT_TOKEN }]

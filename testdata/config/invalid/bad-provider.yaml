@@ -1,0 +1,4 @@
+version: 1
+git: { provider: gitlab }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }

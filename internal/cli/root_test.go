@@ -29,6 +29,13 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+func TestExitErrorNilErr(t *testing.T) {
+	e := &ExitError{Code: ExitRemoteError}
+	if got, want := e.Error(), "exit code 2"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+}
+
 func TestExitCode(t *testing.T) {
 	remote := &ExitError{Code: ExitRemoteError, Err: errors.New("boom")}
 	cases := []struct {

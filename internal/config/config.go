@@ -119,6 +119,8 @@ type Problem struct {
 	Message string `json:"message"`
 }
 
+// String formats a Problem for human-readable output, such as `fugaro validate`'s
+// default (non-JSON) mode.
 func (p Problem) String() string {
 	switch {
 	case p.Path != "" && p.Line > 0:

@@ -21,11 +21,20 @@ const (
 
 // ExitError carries a specific process exit code out of a command.
 type ExitError struct {
-	Code int
-	Err  error
+	Code int   // Code is the process exit code (design §9.1).
+	Err  error // Err is the underlying error, or nil if Code alone explains the exit.
 }
 
-func (e *ExitError) Error() string { return e.Err.Error() }
+// Error implements error. When Err is nil, it falls back to a message naming
+// the exit code, so a bare &ExitError{Code: ...} still prints something useful.
+func (e *ExitError) Error() string {
+	if e.Err == nil {
+		return fmt.Sprintf("exit code %d", e.Code)
+	}
+	return e.Err.Error()
+}
+
+// Unwrap exposes Err so errors.As and errors.Is see through an ExitError.
 func (e *ExitError) Unwrap() error { return e.Err }
 
 // ExitCode maps an error returned by a command to a process exit code.
@@ -48,7 +57,7 @@ func NewRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(newVersionCmd())
+	root.AddCommand(newVersionCmd(), newValidateCmd(), newConfigCmd())
 	return root
 }
 

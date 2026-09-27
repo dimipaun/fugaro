@@ -1,0 +1,9 @@
+version: 1
+git:
+  provider: github
+workflows:
+  server:
+    base: server-jvm
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test
