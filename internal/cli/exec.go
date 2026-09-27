@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -64,7 +65,17 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		return errors.New("--task-file and --run (or FUGARO_RUN) are mutually exclusive; pass exactly one")
 	}
 	env := os.Environ()
-	providerKind, openProvider, err := providerOptions(o, env)
+	// The run's logger needs the run ID, known only once the task is read,
+	// but the provider options are checked before anything is written.
+	// Adapter warnings (such as Bitbucket's unsupported labels) come
+	// later, once the run is under way, so they go to the logger then.
+	var log *slog.Logger
+	warn := func(msg string) {
+		if log != nil {
+			log.Warn(msg)
+		}
+	}
+	providerKind, openProvider, err := providerOptions(o, env, warn)
 	if err != nil {
 		return err
 	}
@@ -100,7 +111,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
-	log := runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
+	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
 		Store: runstore.Open(bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
@@ -123,8 +134,9 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 
 // providerOptions turns --provider into the runner's provider settings: the
 // kind to open before fugaro.yaml is read ("" lets the origin URL's host or
-// git.provider decide), and how to open it.
-func providerOptions(o execOptions, env []string) (string, gitprov.Opener, error) {
+// git.provider decide), and how to open it. warn receives the adapters'
+// warnings.
+func providerOptions(o execOptions, env []string, warn func(string)) (string, gitprov.Opener, error) {
 	switch o.provider {
 	case "fake":
 		return "", gitprov.Static(&fake.Provider{Path: o.providerState}), nil
@@ -132,7 +144,7 @@ func providerOptions(o execOptions, env []string) (string, gitprov.Opener, error
 		if o.providerState != "" {
 			return "", nil, errors.New("--provider-state only applies to --provider fake")
 		}
-		return o.provider, providers.FromEnv(env, nil), nil
+		return o.provider, providers.FromEnv(env, nil, warn), nil
 	default:
 		return "", nil, fmt.Errorf("--provider must be github, bitbucket or fake, not %q", o.provider)
 	}

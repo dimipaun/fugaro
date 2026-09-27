@@ -33,26 +33,23 @@ const minSecretLen = 4
 
 // FromEnv returns an Opener that opens providers with credentials from env
 // (KEY=VALUE pairs, usually os.Environ()). hc is the HTTP client adapters
-// use; nil means their default.
+// use; nil means their default. warn receives adapter warnings meant for
+// the run's log, such as the Bitbucket adapter's one-time "labels aren't
+// supported" (bitbucket.Options.Warn); nil drops them.
 //
-// FromEnv must be called once per run: it closes over env and hc but keeps
-// no other state itself, so calling the returned Opener more than once for
-// the same repo builds a fresh *bitbucket.Provider or *github.Provider each
-// time. The runner (Task 9) must call it exactly once per run and reuse the
-// single Provider it returns, both so that a Bitbucket adapter's labels
-// warning (bitbucket.Options.Warn) fires at most once, and so that a
-// GitHub adapter's installation-token cache (tokenSource) is actually
-// shared across the run instead of re-minting on every use.
+// Each call of the returned Opener builds a fresh Provider, and a
+// Provider's state lives for as long as it does: the Bitbucket labels
+// warning fires once per Provider, and the GitHub installation-token cache
+// is per Provider. A run must therefore open its provider once and reuse
+// it, as the runner does.
 //
-// The []string FromEnv's Opener returns holds only the static secret it
-// read from env: the Bitbucket token, or the GitHub App's private key PEM.
-// It does not include installation tokens GitHub mints later (ghs_...),
-// because those do not exist yet when the Opener runs. The runner must
-// additionally redact the token from every Provider.GitAuth call: each
-// call can mint a fresh token (GitAuth refreshes when the cached one would
-// expire within minValid), and every value it ever returns must be added
-// to the redaction list, not just the first.
-func FromEnv(env []string, hc *http.Client) gitprov.Opener {
+// The []string the Opener returns holds only the static secret read from
+// env: the Bitbucket token, or the GitHub App's private key PEM. It cannot
+// hold GitHub installation tokens (ghs_…), which are minted later, on each
+// Provider.GitAuth call that finds the cached one too close to expiry. A
+// caller must redact every GitAuth.Token (and GitAuth.Env value) it is
+// ever handed, not just the first.
+func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 	vars := map[string]string{}
 	for _, kv := range env {
 		if k, v, ok := strings.Cut(kv, "="); ok {
@@ -70,7 +67,7 @@ func FromEnv(env []string, hc *http.Client) gitprov.Opener {
 			if err != nil {
 				return nil, nil, err
 			}
-			p, err := bitbucket.New(bitbucket.Options{Workspace: owner, Slug: name, Token: token, BaseURL: vars[EnvBitbucketAPIURL], HTTP: hc})
+			p, err := bitbucket.New(bitbucket.Options{Workspace: owner, Slug: name, Token: token, BaseURL: vars[EnvBitbucketAPIURL], HTTP: hc, Warn: warn})
 			return p, []string{token}, err
 		case gitprov.KindGitHub:
 			appID := vars[EnvGitHubAppID]

@@ -106,7 +106,9 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 	testutil.IsolateGit(t)
 	const token = "bb-e2e-token-5678"
 	files := testutil.FixtureFiles(t)
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "provider: github", "provider: bitbucket", 1)
+	// Labels exist only to check that the Bitbucket adapter's "labels
+	// aren't supported" warning reaches the runner's log, once.
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "provider: github", "provider: bitbucket\n  pr: { labels: [fugaro] }", 1)
 	remote := testutil.NewHTTPRemote(t, files, testutil.Token("x-token-auth", token))
 	api := &bitbucketAPI{t: t, token: token}
 	apiSrv := httptest.NewServer(api)
@@ -139,10 +141,16 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 	}
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) }
 	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.CombinedOutput()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.Output()
+	out := append(stdout, stderr.String()...)
 	t.Logf("fugaro exec output (err=%v):\n%s", err, out)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if n := strings.Count(stderr.String(), "labels aren't supported"); n != 1 {
+		t.Errorf("stderr has the Bitbucket labels warning %d times, want once", n)
 	}
 
 	var rec runstore.Record

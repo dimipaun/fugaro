@@ -6,6 +6,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -29,7 +31,7 @@ func keyPEM(t *testing.T) string {
 }
 
 func TestBitbucketFromEnv(t *testing.T) {
-	p, secrets, err := FromEnv([]string{EnvBitbucketToken + "=bb-token-1234"}, nil)(ctx, gitprov.KindBitbucket, "acme/web")
+	p, secrets, err := FromEnv([]string{EnvBitbucketToken + "=bb-token-1234"}, nil, nil)(ctx, gitprov.KindBitbucket, "acme/web")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +54,7 @@ func TestGitHubFromEnvKeyOrFile(t *testing.T) {
 		"inline": {EnvGitHubAppID + "=1234", EnvGitHubAppKey + "=" + pemData},
 		"file":   {EnvGitHubAppID + "=1234", EnvGitHubAppKeyFile + "=" + file},
 	} {
-		p, secrets, err := FromEnv(env, nil)(ctx, gitprov.KindGitHub, "acme/web")
+		p, secrets, err := FromEnv(env, nil, nil)(ctx, gitprov.KindGitHub, "acme/web")
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -76,8 +78,37 @@ func TestFromEnvErrors(t *testing.T) {
 		{"bad repo", gitprov.KindBitbucket, "web", []string{EnvBitbucketToken + "=bb-token-1234"}, "owner/name"},
 		{"unknown kind", "gitlab", "acme/web", nil, "unknown git provider"},
 	} {
-		if _, _, err := FromEnv(tc.env, nil)(ctx, tc.kind, tc.repo); err == nil || !strings.Contains(err.Error(), tc.want) {
+		if _, _, err := FromEnv(tc.env, nil, nil)(ctx, tc.kind, tc.repo); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want it to mention %q", tc.name, err, tc.want)
 		}
+	}
+}
+
+// TestBitbucketLabelsWarningReachesWarn checks that FromEnv hands its warn
+// func to the Bitbucket adapter, so the labels warning is not dropped.
+func TestBitbucketLabelsWarningReachesWarn(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			w.Write([]byte(`{"values":[]}`))
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte(`{"id":1,"title":"t","draft":false,"links":{"html":{"href":"https://bitbucket.org/acme/web/pull-requests/1"}}}`))
+	}))
+	defer srv.Close()
+	var warnings []string
+	env := []string{EnvBitbucketToken + "=bb-token-1234", EnvBitbucketAPIURL + "=" + srv.URL}
+	p, _, err := FromEnv(env, nil, func(msg string) { warnings = append(warnings, msg) })(ctx, gitprov.KindBitbucket, "acme/web")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/x", Base: "main", Title: "t", Labels: []string{"fugaro"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "labels") {
+		t.Fatalf("warnings = %q, want one about labels", warnings)
 	}
 }
