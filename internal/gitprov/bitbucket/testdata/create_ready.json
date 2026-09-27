@@ -1,0 +1,13 @@
+[
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
+   "auth": "Bearer bb-token-1234", "status": 200,
+   "response": {"pagelen": 10, "size": 0, "page": 1, "values": []}},
+  {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests", "auth": "Bearer bb-token-1234",
+   "request": {"title": "Add search", "description": "Adds search.",
+               "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},
+               "draft": false, "close_source_branch": true,
+               "reviewers": [{"uuid": "{5b1d0c7e-0000-4000-8000-000000000001}"}, {"account_id": "557058:0000"}]},
+   "status": 201,
+   "response": {"type": "pullrequest", "id": 42, "title": "Add search", "draft": false, "state": "OPEN",
+                "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/42"}}}}
+]

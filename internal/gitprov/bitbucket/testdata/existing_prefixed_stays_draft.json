@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
+   "status": 200,
+   "response": {"values": [{"type": "pullrequest", "id": 52, "title": "[DRAFT] Add search", "draft": false, "state": "OPEN",
+                            "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/52"}}}]}}
+]

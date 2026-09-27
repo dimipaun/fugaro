@@ -89,7 +89,7 @@ func TestReport(t *testing.T) {
 		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 1}, {Round: 2, Verdict: "ship"}},
 		Verify:  []verify.Record{{Kind: verify.KindTest, HeadSHA: "abcdef1234567", CleanTree: true, Tests: 3, Failures: 1, Flaky: []string{"pkg.A.b"}}},
 	}
-	got := Report(rec, "runs/acme-app/20260926-221530-abcd/")
+	got := Report(rec, "runs/acme-app/20260926-221530-abcd/", nil)
 	for _, want := range []string{"draft — tests failing on the final commit", "| implement | 1m1s |", "round 1: changes (1 finding)", "round 2: ship", "failed on abcdef1 (3 tests, 1 failure, flaky: pkg.A.b)", "$4.13", "runs/acme-app/20260926-221530-abcd/"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report lacks %q:\n%s", want, got)
@@ -119,8 +119,22 @@ func TestReportConsistentWithDecide(t *testing.T) {
 	}
 
 	// Report should also say failed (uses clean record via latestVerifiedTest)
-	got := Report(rec, "location/")
+	got := Report(rec, "location/", nil)
 	if !strings.Contains(got, "failed on abc (2 tests, 1 failure)") {
 		t.Errorf("report should say failed, got:\n%s", got)
+	}
+}
+
+func TestReportLogTail(t *testing.T) {
+	rec := &runstore.Record{RunID: "20260927-000000-abcd", Outcome: runstore.OutcomeDraft, Reason: "stage implement failed: boom"}
+	got := Report(rec, "loc/", &LogTail{Source: "stage implement-1, stderr", Lines: []string{"a ``` b", "boom"}})
+	// The fence is longer than any backtick run in the tail, so the tail
+	// cannot close the code block early.
+	want := "**Log tail** (stage implement-1, stderr):\n\n````text\na ``` b\nboom\n````\n\n"
+	if !strings.Contains(got, want) {
+		t.Fatalf("report lacks %q:\n%s", want, got)
+	}
+	if strings.Contains(Report(rec, "loc/", nil), "Log tail") {
+		t.Fatal("a nil tail rendered a section")
 	}
 }

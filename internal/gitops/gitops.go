@@ -172,8 +172,80 @@ func (r *Repo) AheadOf(ctx context.Context, base string) (int, error) {
 	return strconv.Atoi(out)
 }
 
-// Push pushes HEAD to branch on origin.
+// RunBranchPrefix starts every branch the runner pushes.
+const RunBranchPrefix = "fugaro/"
+
+// OriginURL returns the URL of the checkout's origin remote.
+func (r *Repo) OriginURL(ctx context.Context) (string, error) {
+	return r.git(ctx, "remote", "get-url", "origin")
+}
+
+// Push pushes HEAD to the run branch on origin. The agent may already have
+// pushed the branch and then amended or rebased it, so the push is forced,
+// but under a lease: the remote branch is overwritten only if it is absent
+// or its tip is a commit that belongs to this run (see tipBelongsToRun). A
+// tip pushed from anywhere else is left alone and Push fails. Only
+// fugaro/ branches are ever pushed, so the base branch cannot be touched,
+// and the suffix is validated as a real branch name so the refspec can't be
+// used to reach some other ref.
 func (r *Repo) Push(ctx context.Context, branch string) error {
-	_, err := r.git(ctx, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
+		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
+	}
+	if _, err := r.git(ctx, "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("refusing to push %q: not a valid branch name: %w", branch, err)
+	}
+	ref := "refs/heads/" + branch
+	tip, err := r.remoteTip(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("reading %s on origin: %w", branch, err)
+	}
+	if tip != "" {
+		ours, err := r.tipBelongsToRun(ctx, tip)
+		if err != nil {
+			return fmt.Errorf("checking whether %s's tip on origin belongs to this run: %w", branch, err)
+		}
+		if !ours {
+			return fmt.Errorf("%s on origin is at %s, a commit this run never had: something else pushed to the branch, so it is not overwritten", branch, tip)
+		}
+	}
+	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
 	return err
+}
+
+// remoteTip returns the commit ref points at on origin, or "" if it does not exist.
+func (r *Repo) remoteTip(ctx context.Context, ref string) (string, error) {
+	out, err := r.git(ctx, "ls-remote", "origin", ref)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if sha, name, ok := strings.Cut(line, "\t"); ok && name == ref {
+			return sha, nil
+		}
+	}
+	return "", nil
+}
+
+// tipBelongsToRun reports whether tip is a commit this run's checkout
+// produced: either HEAD still descends from it (a plain amend or a rebase
+// that keeps it as a parent), or it is in HEAD's own reflog (a rebase that
+// drops it as a parent still records it there, since every commit and
+// checkout in this checkout's history appends to HEAD's reflog). A commit
+// that is merely present in the local object store — for instance because
+// something else's push to the branch was later brought in with a plain
+// `git fetch origin` — is neither, and must not be mistaken for this run's
+// own tip.
+func (r *Repo) tipBelongsToRun(ctx context.Context, tip string) (bool, error) {
+	if _, err := r.git(ctx, "cat-file", "-e", tip+"^{commit}"); err != nil {
+		return false, nil
+	}
+	if _, err := r.git(ctx, "merge-base", "--is-ancestor", tip, "HEAD"); err == nil {
+		return true, nil
+	}
+	reflog, err := r.git(ctx, "reflog", "show", "--format=%H", "HEAD")
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(strings.Split(reflog, "\n"), tip), nil
 }

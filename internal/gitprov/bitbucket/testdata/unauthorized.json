@@ -1,0 +1,4 @@
+[
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
+   "status": 401, "response": {"type": "error", "error": {"message": "Token is invalid or expired"}}}
+]

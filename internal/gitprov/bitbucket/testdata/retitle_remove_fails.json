@@ -1,0 +1,5 @@
+[
+  {"method": "PUT", "path": "/2.0/repositories/acme/web/pullrequests/51", "request": {"title": "Add search"},
+   "status": 500,
+   "response": {"type": "error", "error": {"message": "internal server error"}}}
+]

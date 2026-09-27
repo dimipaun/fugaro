@@ -13,10 +13,21 @@ func TestExecNeedsBucket(t *testing.T) {
 	}
 }
 
-func TestExecNeedsFakeProviderUntilM2(t *testing.T) {
+func TestExecRejectsUnknownProvider(t *testing.T) {
 	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "gitlab") // the flag's default comes from here
 	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(), "--run", "acme-app/20260926-221530-abcd")
-	if err == nil || !strings.Contains(err.Error(), "--provider fake") {
+	if err == nil || !strings.Contains(err.Error(), `github, bitbucket or fake, not "gitlab"`) {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestExecProviderStateNeedsFake(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(), "--run", "acme-app/20260926-221530-abcd",
+		"--provider", "bitbucket", "--provider-state", "state.json")
+	if err == nil || !strings.Contains(err.Error(), "--provider-state only applies to --provider fake") {
 		t.Fatalf("err = %v", err)
 	}
 }
