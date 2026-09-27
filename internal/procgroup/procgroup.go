@@ -136,13 +136,19 @@ func Run(ctx context.Context, c Cmd) (int, error) {
 
 	copied := make(chan struct{})
 	go func() { copies.Wait(); close(copied) }()
+	drained := false
 	select {
 	case <-copied:
+		drained = true
 	case <-time.After(outputDrainTimeout):
 		// A child escaped the group and still holds a pipe open. Run
 		// returns anyway; the abandoned copy goroutines keep running and
-		// may still write to the caller's Stdout/Stderr after this call
-		// returns.
+		// may still write to the caller's Stdout/Stderr — and to
+		// copyErrs, below — after this call returns. copyErrs is
+		// therefore only safe to read when drained is true: copies.Wait()
+		// returning is what establishes happens-before between each copy
+		// goroutine's write to its copyErrs slot and this goroutine's read
+		// of it. Without that, reading copyErrs here would race.
 	}
 	outR.Close()
 	errR.Close()
@@ -160,8 +166,10 @@ func Run(ctx context.Context, c Cmd) (int, error) {
 	if waitErr != nil && !errors.As(waitErr, &exitErr) {
 		return code, fmt.Errorf("procgroup: wait: %w", waitErr)
 	}
-	if copyErr := firstErr(copyErrs); copyErr != nil {
-		return code, fmt.Errorf("procgroup: copy output: %w", copyErr)
+	if drained {
+		if copyErr := firstErr(copyErrs); copyErr != nil {
+			return code, fmt.Errorf("procgroup: copy output: %w", copyErr)
+		}
 	}
 	return code, nil
 }

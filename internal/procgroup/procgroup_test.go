@@ -118,3 +118,61 @@ func TestSharedWriterForStdoutAndStderr(t *testing.T) {
 		t.Fatalf("combined output = %q", buf.String())
 	}
 }
+
+// slowErrWriter's Write blocks for delay before returning an error. Used to
+// keep the output-copy goroutine busy inside w.Write past Run's drain
+// timeout, so Run reliably takes the outputDrainTimeout branch instead of
+// the <-copied one, while the goroutine's write to its copyErrs slot still
+// happens later — with no synchronization at all back to Run's own,
+// earlier read of copyErrs. If that read weren't guarded to only happen on
+// the <-copied path, it would race with this later write.
+type slowErrWriter struct {
+	delay time.Duration
+}
+
+func (w slowErrWriter) Write(p []byte) (int, error) {
+	time.Sleep(w.delay)
+	return 0, errors.New("slowErrWriter: boom")
+}
+
+// TestDrainTimeoutSkipsCopyErrors deterministically reaches the
+// outputDrainTimeout branch, with no dependency on process-group escape,
+// external tools, or timing luck: the writer's own delay (longer than
+// outputDrainTimeout) guarantees the output-copy goroutine cannot finish
+// before Run's drain-timeout fires, so `drained` is always false here.
+//
+// Run must therefore not read copyErrs on this path: proven by asserting
+// err is nil (the copy goroutine's eventual error must be dropped, not
+// surfaced) and by running under -race, which would otherwise catch the
+// goroutine's later, unsynchronized write to copyErrs racing with an
+// earlier unguarded read of it.
+func TestDrainTimeoutSkipsCopyErrors(t *testing.T) {
+	delay := outputDrainTimeout + time.Second
+	c := sh("echo x")
+	c.Stdout = slowErrWriter{delay: delay}
+
+	start := time.Now()
+	code, err := Run(context.Background(), c)
+	elapsed := time.Since(start)
+
+	if elapsed < outputDrainTimeout {
+		t.Fatalf("elapsed = %v, want >= %v: the drain-timeout branch was not reached", elapsed, outputDrainTimeout)
+	}
+	if elapsed > outputDrainTimeout+2*time.Second {
+		t.Fatalf("Run took too long to return: %v", elapsed)
+	}
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the copy goroutine had not written its "+
+			"error yet when Run returned, and once the drain times out that "+
+			"result can never be read safely, so it must be dropped", err)
+	}
+	if code != 0 {
+		t.Fatalf("code = %d, want 0 (the tracked shell's own exit code)", code)
+	}
+
+	// Let the still-running copy goroutine actually finish — its write to
+	// copyErrs is what would race with the read above if Run's guard were
+	// missing — before this test returns, so a leaked goroutine or a race
+	// report is attributed to this test rather than a later, unrelated one.
+	time.Sleep(delay)
+}
