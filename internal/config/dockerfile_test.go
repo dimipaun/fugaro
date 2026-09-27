@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -92,5 +93,40 @@ func TestCheckLintsDockerfile(t *testing.T) {
 	if !hasProblem(ps, "workflows.web.dockerfile", ".fugaro/web.Dockerfile must build its final stage FROM", 0) ||
 		!hasProblem(ps, "workflows.web.dockerfile", "must bake the checkout", 0) {
 		t.Fatalf("problems = %v", ps)
+	}
+}
+
+// TestParseDockerfileContinuations pins two corners of Docker's own parser:
+// an escape character followed only by trailing spaces or tabs still
+// continues the line, and a leading `# escape=` directive changes the escape
+// character (so a trailing backslash is then literal).
+func TestParseDockerfileContinuations(t *testing.T) {
+	cases := []struct {
+		name, df string
+		want     []instruction
+	}{
+		{"trailing whitespace after backslash", "FROM base\nRUN echo a \\ \t\n    && echo b\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "echo a && echo b"}}},
+		{"escape directive", "# escape=`\nFROM base\nRUN echo a `\n    && echo b\nRUN dir C:\\\nWORKDIR /w\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "echo a && echo b"}, {"RUN", `dir C:\`}, {"WORKDIR", "/w"}}},
+		{"escape directive after syntax, any case and spacing", "# syntax=docker/dockerfile:1\n#  ESCAPE = `  \nFROM base\nRUN a `  \n b\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "a b"}}},
+		{"escape comment after an instruction is not a directive", "FROM base\n# escape=`\nRUN a `\nRUN b \\\n c\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "a `"}, {"RUN", "b c"}}},
+		{"escape comment after a plain comment is not a directive", "# hello\n# escape=`\nFROM base\nRUN b \\\n c\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "b c"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseDockerfile([]byte(tc.df))
+			// Only the instruction boundaries are pinned, not the exact run
+			// of spaces a join leaves behind.
+			for i := range got {
+				got[i].args = strings.Join(strings.Fields(got[i].args), " ")
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("parseDockerfile = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

@@ -24,16 +24,36 @@ type stage struct {
 	body         []instruction
 }
 
+// directiveRE matches a parser directive such as "# escape=`", which Docker
+// honours only in the comment lines at the very top of the file.
+var directiveRE = regexp.MustCompile(`^#\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*(.*?)\s*$`)
+
 // parseDockerfile splits a Dockerfile into instructions. It joins
 // continuation lines, drops comment lines, and folds heredoc bodies into
 // their instruction's arguments, so a heredoc line that happens to start
-// with FROM is not read as an instruction.
+// with FROM is not read as an instruction. Like Docker's own parser, it
+// honours a leading "# escape=" directive (a backtick or a backslash), and
+// treats the escape character followed only by spaces or tabs as a
+// continuation.
 func parseDockerfile(data []byte) []instruction {
 	var out []instruction
 	var cur strings.Builder
 	var heredocs []string // delimiters still open for the last instruction
+	escape := `\`
+	directives := true // still in the leading run of parser directives
 	for _, raw := range strings.Split(string(data), "\n") {
 		line := strings.TrimRight(raw, "\r")
+		if directives {
+			m := directiveRE.FindStringSubmatch(line)
+			if m == nil {
+				directives = false
+			} else {
+				if strings.EqualFold(m[1], "escape") && (m[2] == "`" || m[2] == `\`) {
+					escape = m[2]
+				}
+				continue
+			}
+		}
 		if len(heredocs) > 0 {
 			last := &out[len(out)-1]
 			last.args += "\n" + line
@@ -45,8 +65,8 @@ func parseDockerfile(data []byte) []instruction {
 		if strings.HasPrefix(strings.TrimSpace(line), "#") {
 			continue
 		}
-		if strings.HasSuffix(line, `\`) {
-			cur.WriteString(strings.TrimSuffix(line, `\`) + " ")
+		if trimmed := strings.TrimRight(line, " \t"); strings.HasSuffix(trimmed, escape) {
+			cur.WriteString(strings.TrimSuffix(trimmed, escape) + " ")
 			continue
 		}
 		cur.WriteString(line)
