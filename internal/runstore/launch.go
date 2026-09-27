@@ -12,8 +12,8 @@ import (
 type Launch struct {
 	Version    int       `json:"version"`
 	RunID      string    `json:"run_id"`
-	Backend    string    `json:"backend"` // "cloud-run"
-	Execution  string    `json:"execution"`
+	Backend    string    `json:"backend"`   // "cloud-run"
+	Execution  string    `json:"execution"` // canonical full name (projects/…/executions/<name>); compare only via backend.SameExecution
 	Job        string    `json:"job"`
 	LogURL     string    `json:"log_url,omitempty"`
 	LaunchedBy string    `json:"launched_by,omitempty"`

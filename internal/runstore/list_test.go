@@ -2,11 +2,13 @@ package runstore
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/task"
@@ -55,5 +57,32 @@ func TestListAndLocate(t *testing.T) {
 	}
 	if rt, err := RunTime("20260927-110000-cccc"); err != nil || !rt.Equal(time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)) {
 		t.Fatalf("RunTime = %v %v", rt, err)
+	}
+}
+
+// A remote failure while checking a run is not "no run": it must not look
+// like a user error.
+func TestLocateRemoteErrorIsNotNotFound(t *testing.T) {
+	b := blob.NewBucket(&fakeBucket{attrErr: errFakeRemote})
+	_, _, err := Locate(context.Background(), b, "acme-app/20260925-100000-aaaa")
+	if err == nil || errors.Is(err, ErrNotFound) || strings.Contains(err.Error(), "no run") || !strings.Contains(err.Error(), "runs bucket") {
+		t.Fatalf("Locate remote error = %v", err)
+	}
+	_, _, err = Locate(context.Background(), memblob.OpenBucket(nil), "acme-app/20260925-100000-aaaa")
+	if !errors.Is(err, ErrNotFound) || !strings.Contains(err.Error(), "no run") {
+		t.Fatalf("Locate missing = %v", err)
+	}
+}
+
+func TestListRunIDsRejectsBadSlug(t *testing.T) {
+	b := memblob.OpenBucket(nil)
+	seed(t, Open(b, "acme-app", "20260927-090000-bbbb"), "20260927-090000-bbbb")
+	for _, bad := range []string{"", ".", "..", "Acme-App", "acme/app", "acme-app/"} {
+		if _, err := ListRunIDs(context.Background(), b, bad, time.Time{}); err == nil || !strings.Contains(err.Error(), "slug") {
+			t.Errorf("ListRunIDs(%q) = %v", bad, err)
+		}
+	}
+	if got, err := ListRunIDs(context.Background(), b, "acme", time.Time{}); err != nil || len(got) != 0 {
+		t.Errorf("ListRunIDs(acme) = %v, %v", got, err)
 	}
 }

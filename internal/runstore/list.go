@@ -12,7 +12,10 @@ import (
 	"gocloud.dev/blob"
 )
 
-var runIDRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
+var (
+	runIDRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
+	slugRE  = regexp.MustCompile(`^[a-z0-9._-]+$`)
+)
 
 // RunTime is when a run ID was minted (its UTC timestamp prefix).
 func RunTime(runID string) (time.Time, error) {
@@ -50,6 +53,9 @@ func ListSlugs(ctx context.Context, b *blob.Bucket) ([]string, error) {
 // ListRunIDs lists slug's run IDs minted at or after since, newest first.
 // A zero since lists all of them.
 func ListRunIDs(ctx context.Context, b *blob.Bucket, slug string, since time.Time) ([]string, error) {
+	if !slugRE.MatchString(slug) || slug == "." || slug == ".." {
+		return nil, fmt.Errorf("%q is not a repo slug", slug)
+	}
 	all, err := dirs(ctx, b, "runs/"+slug+"/")
 	if err != nil {
 		return nil, err
@@ -72,8 +78,12 @@ func Locate(ctx context.Context, b *blob.Bucket, ref string) (slug, runID string
 		if slug, runID, err = ParseRef(ref); err != nil {
 			return "", "", err
 		}
-		if ok, err := b.Exists(ctx, "runs/"+slug+"/"+runID+"/task.json"); err != nil || !ok {
-			return "", "", fmt.Errorf("no run %s in the runs bucket: %w", ref, errOr(err, ErrNotFound))
+		ok, err := b.Exists(ctx, "runs/"+slug+"/"+runID+"/task.json")
+		if err != nil {
+			return "", "", fmt.Errorf("checking run %s in the runs bucket: %w", ref, err)
+		}
+		if !ok {
+			return "", "", fmt.Errorf("no run %s in the runs bucket: %w", ref, ErrNotFound)
 		}
 		return slug, runID, nil
 	}
@@ -105,11 +115,4 @@ func Locate(ctx context.Context, b *blob.Bucket, ref string) (slug, runID string
 		refs[i] = s + "/" + ref
 	}
 	return "", "", fmt.Errorf("run ID %s is in several repositories; pass one of %s", ref, strings.Join(refs, ", "))
-}
-
-func errOr(err, fallback error) error {
-	if err != nil {
-		return err
-	}
-	return fallback
 }

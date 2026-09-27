@@ -64,7 +64,7 @@ type Record struct {
 	RunID      string          `json:"run_id"`
 	Repo       string          `json:"repo"`
 	Workflow   string          `json:"workflow,omitempty"`
-	Execution  string          `json:"execution,omitempty"`
+	Execution  string          `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
 	Status     Status          `json:"status"`
 	Stage      string          `json:"stage"`
 	Outcome    Outcome         `json:"outcome"`
