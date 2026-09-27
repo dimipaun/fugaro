@@ -126,3 +126,65 @@ func TestRecorderScrubsQueryInPath(t *testing.T) {
 		t.Fatalf("replay with scrubbed query: %v", err)
 	}
 }
+
+// TestRecorderScrubsTokenFields covers a credential the caller could not
+// list in Secrets because the API minted it during the recording (a GitHub
+// installation token, "ghs_…"): every JSON "token" field in a recorded
+// response is replaced with "REDACTED", at any depth, while other fields
+// are kept.
+func TestRecorderScrubsTokenFields(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"token":"ghs_minted_unknown","expires_at":"2026-09-27T12:00:00Z","nested":[{"token":"ghs_nested_unknown","id":12345678901234567}]}`))
+	}))
+	defer live.Close()
+	rec := &Recorder{}
+	c := &httpjson.Client{BaseURL: live.URL, HTTP: &http.Client{Transport: rec}}
+	var out struct{ Token string }
+	if err := c.Do(context.Background(), "POST", "/app/installations/1/access_tokens", map[string]any{"token": "request-side"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Token != "ghs_minted_unknown" {
+		t.Fatalf("the caller must still see the live response, got %q", out.Token)
+	}
+	path := filepath.Join(t.TempDir(), "recorded.json")
+	if err := rec.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	s := string(data)
+	if strings.Contains(s, "ghs_minted_unknown") || strings.Contains(s, "ghs_nested_unknown") {
+		t.Fatalf("recording leaks a minted token:\n%s", s)
+	}
+	if !strings.Contains(s, "2026-09-27T12:00:00Z") || !strings.Contains(s, "12345678901234567") {
+		t.Fatalf("recording lost non-token fields:\n%s", s)
+	}
+}
+
+// TestRecorderScrubsSuffixedTokenFields covers OAuth-style credential
+// fields (access_token, refresh_token, …): any key ending in "_token" is
+// scrubbed like "token", while look-alikes such as "token_type" are kept.
+func TestRecorderScrubsSuffixedTokenFields(t *testing.T) {
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"oauth_access_unknown","refresh_token":"oauth_refresh_unknown","token_type":"bearer","scopes":{"id_token":"oidc_unknown"}}`))
+	}))
+	defer live.Close()
+	rec := &Recorder{}
+	c := &httpjson.Client{BaseURL: live.URL, HTTP: &http.Client{Transport: rec}}
+	if err := c.Do(context.Background(), "POST", "/site/oauth2/access_token", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "recorded.json")
+	if err := rec.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	s := string(data)
+	for _, leak := range []string{"oauth_access_unknown", "oauth_refresh_unknown", "oidc_unknown"} {
+		if strings.Contains(s, leak) {
+			t.Fatalf("recording leaks %s:\n%s", leak, s)
+		}
+	}
+	if !strings.Contains(s, `"bearer"`) {
+		t.Fatalf("recording lost token_type:\n%s", s)
+	}
+}

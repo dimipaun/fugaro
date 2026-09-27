@@ -1,0 +1,400 @@
+[
+  {
+    "method": "GET",
+    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-labels-a%22+AND+source.repository.full_name%3D%22edgeappinc%2Ffugarosandbox%22+AND+state%3D%22OPEN%22",
+    "status": 200,
+    "response": {
+      "values": [],
+      "pagelen": 10,
+      "size": 0,
+      "page": 1
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests",
+    "request": {
+      "close_source_branch": true,
+      "description": "Labels check.",
+      "destination": {
+        "branch": {
+          "name": "master"
+        }
+      },
+      "draft": false,
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260927-183406-labels-a"
+        }
+      },
+      "title": "Fugaro live check 20260927-183406 labels"
+    },
+    "status": 201,
+    "response": {
+      "comment_count": 0,
+      "task_count": 0,
+      "type": "pullrequest",
+      "id": 2,
+      "title": "Fugaro live check 20260927-183406 labels",
+      "description": "Labels check.",
+      "rendered": {
+        "title": {
+          "type": "rendered",
+          "raw": "Fugaro live check 20260927-183406 labels",
+          "markup": "markdown",
+          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/edgeappinc/fugarosandbox/commits/20260927\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260927\u003c/a\u003e-183406 labels\u003c/p\u003e"
+        },
+        "description": {
+          "type": "rendered",
+          "raw": "Labels check.",
+          "markup": "markdown",
+          "html": "\u003cp\u003eLabels check.\u003c/p\u003e"
+        }
+      },
+      "state": "OPEN",
+      "draft": false,
+      "merge_commit": null,
+      "close_source_branch": true,
+      "closed_by": null,
+      "author": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "reason": "",
+      "created_on": "2026-09-27T18:34:30.388841+00:00",
+      "updated_on": "2026-09-27T18:34:30.792928+00:00",
+      "destination": {
+        "branch": {
+          "name": "master"
+        },
+        "commit": {
+          "hash": "6e705671e70b",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/6e705671e70b"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/6e705671e70b"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "edgeappinc/fugarosandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+            }
+          },
+          "name": "FugaroSandbox",
+          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+        }
+      },
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260927-183406-labels-a",
+          "links": {},
+          "sync_strategies": [
+            "merge_commit",
+            "rebase"
+          ]
+        },
+        "commit": {
+          "hash": "c9fdfe6340c1",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/c9fdfe6340c1"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/c9fdfe6340c1"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "edgeappinc/fugarosandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+            }
+          },
+          "name": "FugaroSandbox",
+          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+        }
+      },
+      "reviewers": [],
+      "participants": [],
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2"
+        },
+        "html": {
+          "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/2"
+        },
+        "commits": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/commits"
+        },
+        "approve": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/approve"
+        },
+        "request-changes": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/request-changes"
+        },
+        "diff": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diff/edgeappinc/fugarosandbox:c9fdfe6340c1%0D6e705671e70b?from_pullrequest_id=2\u0026topic=true"
+        },
+        "diffstat": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diffstat/edgeappinc/fugarosandbox:c9fdfe6340c1%0D6e705671e70b?from_pullrequest_id=2\u0026topic=true"
+        },
+        "comments": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/comments"
+        },
+        "activity": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/activity"
+        },
+        "merge": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/merge"
+        },
+        "decline": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/decline"
+        },
+        "statuses": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/statuses"
+        },
+        "mergeability_checks": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/2/mergeability/checks"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "Labels check.",
+        "markup": "markdown",
+        "html": "\u003cp\u003eLabels check.\u003c/p\u003e"
+      },
+      "queued": false
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-labels-b%22+AND+source.repository.full_name%3D%22edgeappinc%2Ffugarosandbox%22+AND+state%3D%22OPEN%22",
+    "status": 200,
+    "response": {
+      "values": [],
+      "pagelen": 10,
+      "size": 0,
+      "page": 1
+    }
+  },
+  {
+    "method": "POST",
+    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests",
+    "request": {
+      "close_source_branch": true,
+      "description": "Labels check.",
+      "destination": {
+        "branch": {
+          "name": "master"
+        }
+      },
+      "draft": false,
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260927-183406-labels-b"
+        }
+      },
+      "title": "Fugaro live check 20260927-183406 labels"
+    },
+    "status": 201,
+    "response": {
+      "comment_count": 0,
+      "task_count": 0,
+      "type": "pullrequest",
+      "id": 3,
+      "title": "Fugaro live check 20260927-183406 labels",
+      "description": "Labels check.",
+      "rendered": {
+        "title": {
+          "type": "rendered",
+          "raw": "Fugaro live check 20260927-183406 labels",
+          "markup": "markdown",
+          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/edgeappinc/fugarosandbox/commits/20260927\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260927\u003c/a\u003e-183406 labels\u003c/p\u003e"
+        },
+        "description": {
+          "type": "rendered",
+          "raw": "Labels check.",
+          "markup": "markdown",
+          "html": "\u003cp\u003eLabels check.\u003c/p\u003e"
+        }
+      },
+      "state": "OPEN",
+      "draft": false,
+      "merge_commit": null,
+      "close_source_branch": true,
+      "closed_by": null,
+      "author": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "reason": "",
+      "created_on": "2026-09-27T18:34:32.146276+00:00",
+      "updated_on": "2026-09-27T18:34:32.523594+00:00",
+      "destination": {
+        "branch": {
+          "name": "master"
+        },
+        "commit": {
+          "hash": "6e705671e70b",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/6e705671e70b"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/6e705671e70b"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "edgeappinc/fugarosandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+            }
+          },
+          "name": "FugaroSandbox",
+          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+        }
+      },
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260927-183406-labels-b",
+          "links": {},
+          "sync_strategies": [
+            "merge_commit",
+            "rebase"
+          ]
+        },
+        "commit": {
+          "hash": "a621801f2dbb",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/a621801f2dbb"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/a621801f2dbb"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "edgeappinc/fugarosandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+            }
+          },
+          "name": "FugaroSandbox",
+          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+        }
+      },
+      "reviewers": [],
+      "participants": [],
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3"
+        },
+        "html": {
+          "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/3"
+        },
+        "commits": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/commits"
+        },
+        "approve": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/approve"
+        },
+        "request-changes": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/request-changes"
+        },
+        "diff": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diff/edgeappinc/fugarosandbox:a621801f2dbb%0D6e705671e70b?from_pullrequest_id=3\u0026topic=true"
+        },
+        "diffstat": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diffstat/edgeappinc/fugarosandbox:a621801f2dbb%0D6e705671e70b?from_pullrequest_id=3\u0026topic=true"
+        },
+        "comments": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/comments"
+        },
+        "activity": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/activity"
+        },
+        "merge": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/merge"
+        },
+        "decline": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/decline"
+        },
+        "statuses": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/statuses"
+        },
+        "mergeability_checks": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/3/mergeability/checks"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "Labels check.",
+        "markup": "markdown",
+        "html": "\u003cp\u003eLabels check.\u003c/p\u003e"
+      },
+      "queued": false
+    }
+  }
+]

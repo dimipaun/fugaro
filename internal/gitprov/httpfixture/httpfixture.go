@@ -157,6 +157,10 @@ func queryMatches(want, got url.Values) bool {
 // never records the Authorization header, and replaces every value in
 // Secrets with "REDACTED" wherever it appears — in the request and
 // response bodies, and in the recorded path, including its query string.
+// It also replaces every JSON "token" or "*_token" field in a response with "REDACTED"
+// (scrubTokenFields), for credentials minted during the recording. Review
+// a recording before committing it all the same: a secret in some other
+// field, or one not listed in Secrets, is kept.
 // A secret redacted from a query value replays via Server's REDACTED
 // wildcard match (see queryMatches), without needing the original secret.
 type Recorder struct {
@@ -194,7 +198,7 @@ func (rec *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	rec.mu.Lock()
 	rec.list = append(rec.list, Exchange{
 		Method: req.Method, Path: rec.scrubString(req.URL.RequestURI()), Status: resp.StatusCode,
-		Request: rec.scrub(reqBody), Response: rec.scrub(respBody),
+		Request: rec.scrub(reqBody), Response: scrubTokenFields(rec.scrub(respBody)),
 	})
 	rec.mu.Unlock()
 	return resp, nil
@@ -220,6 +224,64 @@ func (rec *Recorder) scrub(body []byte) json.RawMessage {
 		return quoted
 	}
 	return json.RawMessage(s)
+}
+
+// scrubTokenFields replaces the value of every JSON object field named
+// "token" or ending in "_token" (access_token, refresh_token, id_token, …;
+// see isTokenKey), at any depth, with "REDACTED". It covers credentials an API
+// mints during a recording (a GitHub installation token), which the caller
+// could not have listed in Secrets beforehand. Only responses are
+// scrubbed this way: a request body must stay as sent to replay. A body
+// with no such field is returned byte for byte.
+func scrubTokenFields(body json.RawMessage) json.RawMessage {
+	if len(body) == 0 || !bytes.Contains(bytes.ToLower(body), []byte(`token"`)) {
+		return body
+	}
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber() // keep large IDs exact
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		return body
+	}
+	if !redactTokens(v) {
+		return body
+	}
+	out, err := json.Marshal(v)
+	if err != nil {
+		return body
+	}
+	return out
+}
+
+// isTokenKey reports whether a JSON field named k holds a token: "token"
+// itself, or any key ending in "_token". A key merely starting with it,
+// such as "token_type", does not.
+func isTokenKey(k string) bool {
+	k = strings.ToLower(k)
+	return k == "token" || strings.HasSuffix(k, "_token")
+}
+
+// redactTokens rewrites v in place and reports whether it changed anything.
+func redactTokens(v any) bool {
+	changed := false
+	switch v := v.(type) {
+	case map[string]any:
+		for k, x := range v {
+			if _, isString := x.(string); isTokenKey(k) && isString {
+				v[k] = "REDACTED"
+				changed = true
+			} else if redactTokens(x) {
+				changed = true
+			}
+		}
+	case []any:
+		for _, x := range v {
+			if redactTokens(x) {
+				changed = true
+			}
+		}
+	}
+	return changed
 }
 
 // Exchanges returns what has been recorded so far.

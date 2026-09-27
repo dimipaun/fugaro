@@ -254,7 +254,12 @@ func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitp
 	}
 	addPrefix := draft && !pr.Draft
 	if title := gitprov.DraftTitle(pr.Title, addPrefix); title != pr.Title {
-		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", pr.ID)), map[string]any{"title": title}, nil); err != nil {
+		// The requested draft state goes along with the title, so this
+		// retitle re-asserts what was asked for rather than countermanding
+		// it (or, should Bitbucket ever treat an omitted field as false,
+		// clearing it).
+		body := map[string]any{"title": title, "draft": draft}
+		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", pr.ID)), body, nil); err != nil {
 			// The pull request still exists with its title unchanged; the
 			// Provider contract (design, gitprov.go) requires it be returned
 			// alongside the failure rather than dropped.
