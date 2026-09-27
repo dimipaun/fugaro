@@ -1,0 +1,20 @@
+version: 1
+git:
+  provider: github
+  base_branch: main
+agent:
+  auth: api-key
+  review_rounds: 2
+workflows:
+  app:
+    base: web-node
+    commands:
+      build: sh build.sh
+      test: sh test.sh
+      rerun_failed:
+        command: sh test.sh
+        each: "{id}"
+      reports: ["build/test-results/*.xml"]
+    secrets:
+      - { name: fixture-fails, env: FIXTURE_FAILS_FILE }
+    timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }

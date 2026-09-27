@@ -1,0 +1,4 @@
+version: 1
+git: { provider: github }
+workflows:
+  server: { base: server-jvm, color: blue, commands: { build: make, test: make test } }

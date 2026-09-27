@@ -1,0 +1,161 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
+)
+
+var (
+	workflowNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	secretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	memoryRE       = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
+)
+
+// reservedEnvPrefixes are set by Fugaro itself or change git and Claude Code behavior.
+var reservedEnvPrefixes = []string{"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_"}
+
+// Validate reports every rule a defaulted config breaks.
+func Validate(c *Config) []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	if c.Version != 1 {
+		add("version", "must be 1")
+	}
+	if !slices.Contains([]string{"github", "bitbucket"}, c.Git.Provider) {
+		add("git.provider", "must be one of github, bitbucket")
+	}
+	if !slices.Contains([]string{"vertex", "api-key", "oauth"}, c.Agent.Auth) {
+		add("agent.auth", "must be one of vertex, api-key, oauth")
+	}
+	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
+		add("agent.review_rounds", "must be between 1 and 10")
+	}
+	if c.Agent.MaxBudgetUSD < 0 {
+		add("agent.max_budget_usd", "must not be negative")
+	}
+	if len(c.Workflows) == 0 {
+		add("workflows", "must define at least one workflow")
+	}
+	for _, name := range sortedKeys(c.Workflows) {
+		w := c.Workflows[name]
+		p := "workflows." + name
+		if !workflowNameRE.MatchString(name) {
+			add(p, "workflow name must match %s", workflowNameRE)
+		}
+		if !slices.Contains([]string{"server-jvm", "web-node"}, w.Base) {
+			add(p+".base", "must be one of server-jvm, web-node")
+		}
+		if strings.TrimSpace(w.Commands.Build) == "" {
+			add(p+".commands.build", "is required")
+		}
+		if strings.TrimSpace(w.Commands.Test) == "" {
+			add(p+".commands.test", "is required")
+		}
+		if rf := w.Commands.RerunFailed; rf != nil {
+			if strings.TrimSpace(rf.Command) == "" {
+				add(p+".commands.rerun_failed.command", "is required")
+			}
+			if !strings.Contains(rf.Each, "{id}") {
+				add(p+".commands.rerun_failed.each", "must contain {id}")
+			}
+		}
+		for i, ce := range w.Cache {
+			cp := fmt.Sprintf("%s.cache[%d]", p, i)
+			if len(ce.Key) == 0 {
+				add(cp+".key", "must list at least one file")
+			}
+			if len(ce.Paths) == 0 {
+				add(cp+".paths", "must list at least one path")
+			}
+		}
+		seen := map[string]bool{}
+		for i, s := range w.Secrets {
+			sp := fmt.Sprintf("%s.secrets[%d]", p, i)
+			if !secretNameRE.MatchString(s.Name) {
+				add(sp+".name", "must be lower-case letters, digits and dashes")
+			}
+			switch {
+			case !envNameRE.MatchString(s.Env):
+				add(sp+".env", "must be an upper-case environment variable name")
+			case reservedEnv(s.Env):
+				add(sp+".env", "%s uses a reserved prefix (%s)", s.Env, strings.Join(reservedEnvPrefixes, ", "))
+			case seen[s.Env]:
+				add(sp+".env", "%s is declared twice", s.Env)
+			}
+			seen[s.Env] = true
+		}
+		if !slices.Contains([]int{1, 2, 4, 6, 8}, w.Resources.CPU) {
+			add(p+".resources.cpu", "must be one of 1, 2, 4, 6, 8")
+		}
+		if !memoryRE.MatchString(w.Resources.Memory) {
+			add(p+".resources.memory", "must look like 512Mi or 16Gi")
+		}
+		t := w.Timeouts
+		for _, d := range []struct {
+			name string
+			v    Duration
+		}{{"total", t.Total}, {"stage", t.Stage}, {"verify", t.Verify}, {"finalize_reserve", t.FinalizeReserve}} {
+			if d.v.Duration <= 0 {
+				add(p+".timeouts."+d.name, "must be positive")
+			}
+		}
+		if t.FinalizeReserve.Duration >= t.Total.Duration {
+			add(p+".timeouts.finalize_reserve", "must be shorter than timeouts.total")
+		}
+		if t.Stage.Duration > t.Total.Duration {
+			add(p+".timeouts.stage", "must not exceed timeouts.total")
+		}
+	}
+	return ps
+}
+
+func reservedEnv(name string) bool {
+	for _, prefix := range reservedEnvPrefixes {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// Check reports files a config refers to that do not exist under root, the
+// repository checkout. `fugaro validate` runs it; the runner does not.
+func Check(c *Config, root string) []Problem {
+	var ps []Problem
+	mustExist := func(path, rel string) {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			ps = append(ps, Problem{Path: path, Message: rel + " does not exist"})
+		}
+	}
+	if c.Agent.Instructions != "" {
+		mustExist("agent.instructions", c.Agent.Instructions)
+	}
+	// A review starting with "/" names a skill; anything else is a prompt file.
+	if c.Agent.Review != "" && !strings.HasPrefix(c.Agent.Review, "/") {
+		mustExist("agent.review", c.Agent.Review)
+	}
+	for _, name := range sortedKeys(c.Workflows) {
+		w := c.Workflows[name]
+		p := "workflows." + name
+		if w.Dockerfile != "" {
+			mustExist(p+".dockerfile", w.Dockerfile)
+		}
+		for _, cmd := range []struct{ path, value string }{
+			{p + ".commands.build", w.Commands.Build},
+			{p + ".commands.test", w.Commands.Test},
+		} {
+			fields := strings.Fields(cmd.value)
+			if len(fields) > 0 && strings.HasPrefix(fields[0], "./") {
+				mustExist(cmd.path, fields[0])
+			}
+		}
+	}
+	return ps
+}

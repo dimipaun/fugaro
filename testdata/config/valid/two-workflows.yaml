@@ -1,0 +1,13 @@
+version: 1
+git:
+  provider: bitbucket
+  base_branch: develop
+workflows:
+  server:
+    base: server-jvm
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+  web:
+    base: web-node
+    commands: { build: pnpm build, test: pnpm test }
+    secrets:
+      - { name: npm-token, env: NPM_TOKEN }

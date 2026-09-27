@@ -1,0 +1,219 @@
+package gitops
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/testutil"
+)
+
+var ctx = context.Background()
+
+func setup(t *testing.T) (*Repo, string) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	remote := testutil.NewRemote(t, map[string]string{
+		"README.md":  "hello\n",
+		".gitignore": "build/\nnode_modules/\n",
+	})
+	repo, err := OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote, IdentityEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, remote
+}
+
+func TestOpenOrCloneNeedsRemote(t *testing.T) {
+	if _, err := OpenOrClone(ctx, t.TempDir(), "", nil); err == nil {
+		t.Fatal("want an error when there is no checkout and no remote")
+	}
+}
+
+func TestCheckoutNewBranchKeepsIgnored(t *testing.T) {
+	repo, _ := setup(t)
+	testutil.WriteFiles(t, repo.Dir, map[string]string{
+		"node_modules/dep/index.js": "warm cache\n",
+		"stray.txt":                 "untracked\n",
+	})
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/x" {
+		t.Fatalf("branch = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "stray.txt")); !os.IsNotExist(err) {
+		t.Fatal("untracked file survived the reset")
+	}
+	if _, err := os.Stat(filepath.Join(repo.Dir, "node_modules", "dep", "index.js")); err != nil {
+		t.Fatal("ignored warm cache was wiped:", err)
+	}
+}
+
+func TestCommitAllAheadAndClean(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := repo.CommitAll(ctx, "nothing")
+	if err != nil || changed {
+		t.Fatalf("CommitAll on a clean tree = %v, %v", changed, err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if clean, _ := repo.IsClean(ctx); clean {
+		t.Fatal("IsClean = true with an untracked file")
+	}
+	changed, err = repo.CommitAll(ctx, "add a")
+	if err != nil || !changed {
+		t.Fatalf("CommitAll = %v, %v", changed, err)
+	}
+	if clean, _ := repo.IsClean(ctx); !clean {
+		t.Fatal("IsClean = false after commit")
+	}
+	if n, err := repo.AheadOf(ctx, "main"); err != nil || n != 1 {
+		t.Fatalf("AheadOf = %d, %v", n, err)
+	}
+	if err := repo.CommitEmpty(ctx, "empty"); err != nil {
+		t.Fatal(err)
+	}
+	if n, _ := repo.AheadOf(ctx, "main"); n != 2 {
+		t.Fatalf("AheadOf after empty commit = %d", n)
+	}
+	if got := testutil.Git(t, repo.Dir, "log", "-1", "--format=%an"); got != "Fugaro" {
+		t.Fatalf("author = %q, want Fugaro", got)
+	}
+}
+
+func TestCommitAllIgnoresFailingHook(t *testing.T) {
+	repo, _ := setup(t)
+	hook := filepath.Join(repo.Dir, ".git", "hooks", "pre-commit")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal("a failing pre-commit hook blocked the runner's commit:", err)
+	}
+}
+
+// writeFailingHook installs a hook named name in the checkout at dir that
+// always exits 1.
+func writeFailingHook(t *testing.T, dir, name string) {
+	t.Helper()
+	hook := filepath.Join(dir, ".git", "hooks", name)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho hook "+name+" ran >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunnerGitSkipsRepoHooks: runner-owned git never runs the repository's
+// hooks. A failing pre-push must not block finalize's push, a failing
+// post-checkout must not fail bootstrap, and prepare-commit-msg, which
+// --no-verify does not skip, must not block the runner's commits.
+func TestRunnerGitSkipsRepoHooks(t *testing.T) {
+	for _, h := range []string{"post-checkout", "pre-push", "prepare-commit-msg"} {
+		t.Run(h, func(t *testing.T) {
+			repo, remote := setup(t)
+			writeFailingHook(t, repo.Dir, h)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal("CheckoutNewBranch:", err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+			if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+				t.Fatal("CommitAll:", err)
+			}
+			if err := repo.CommitEmpty(ctx, "empty"); err != nil {
+				t.Fatal("CommitEmpty:", err)
+			}
+			if err := repo.Push(ctx, "fugaro/x"); err != nil {
+				t.Fatal("Push:", err)
+			}
+			head, _ := repo.HeadSHA(ctx)
+			if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != head {
+				t.Fatalf("remote branch = %s, want %s", got, head)
+			}
+		})
+	}
+}
+
+// TestLeakedChildDoesNotHang: a process git spawns that forks a background
+// child hands that child git's stdout/stderr pipes. Since git() captures
+// output in a bytes.Buffer, exec.Cmd copies through an internal pipe; without
+// a bound, Wait blocks until every holder of the write end closes it,
+// including a child git itself no longer waits for. See internal/procgroup,
+// which guards agent invocations the same way. The fetch itself succeeds
+// (git exits 0), so this must not surface as an error either: gitWaitDelay
+// only forces the pipe closed early; it doesn't truncate git's own
+// (already-complete) output.
+//
+// Runner git never runs repository hooks (see noHooks), so the leak comes
+// from the remote side instead, as in production, where receive-pack's
+// detached `git maintenance` is the known offender: remote.origin.uploadpack
+// points at a wrapper that backgrounds a child holding stderr, then execs
+// the real git-upload-pack.
+func TestLeakedChildDoesNotHang(t *testing.T) {
+	repo, _ := setup(t)
+	tmp := t.TempDir()
+	pidFile := filepath.Join(tmp, "leaked.pid")
+	wrapper := filepath.Join(tmp, "upload-pack.sh")
+	// sleep 30s: comfortably longer than both gitWaitDelay (5s) and the 20s
+	// assertion below, so a regression (waiting for the leaked child to exit
+	// on its own) fails this test instead of coincidentally finishing in
+	// time; the 15s of slack over gitWaitDelay absorbs a heavily loaded
+	// machine. Killed in Cleanup regardless. Only stderr is leaked: holding
+	// the protocol pipe (stdout) would stall upload-pack itself.
+	script := "#!/bin/sh\nsleep 30 </dev/null >/dev/null & echo $! > " + pidFile + "\nexec git-upload-pack \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "remote.origin.uploadpack", wrapper)
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
+	start := time.Now()
+	err := repo.CheckoutNewBranch(ctx, "main", "fugaro/hangtest")
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked child blocked it", d, err)
+	}
+	if err != nil {
+		t.Fatalf("CheckoutNewBranch returned an error for a successful checkout with a leaked child: %v", err)
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("the upload-pack wrapper never ran, so nothing leaked: %v", err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/hangtest" {
+		t.Fatalf("branch = %q, want fugaro/hangtest", got)
+	}
+}
+
+func TestPushCreatesRemoteBranch(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := repo.HeadSHA(ctx)
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != head {
+		t.Fatalf("remote branch = %s, want %s", got, head)
+	}
+}

@@ -1,0 +1,34 @@
+# fugaro.yaml — how Fugaro builds and tests this repository.
+# Schema: https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/fugaro.schema.json
+# Check it with: fugaro validate
+version: 1
+
+git:
+  provider: github            # github | bitbucket
+  base_branch: main
+  pr:
+    labels: [fugaro]
+    reviewers: []
+
+agent:
+  auth: vertex                # vertex | api-key | oauth
+  # model: claude-opus-5-5    # defaults to Claude Code's default model
+  review_rounds: 2            # review → fix rounds before the PR is opened
+  max_budget_usd: 25          # per stage, passed to claude --max-budget-usd
+  # instructions: .fugaro/instructions.md   # appended to the agent's system prompt
+  # review: /review           # a skill name, or a repo-relative prompt file
+
+workflows:
+  server:                     # workflow name, chosen with `fugaro run --workflow`
+    base: server-jvm          # server-jvm | web-node
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test
+      rerun_failed:           # optional; lets the agent prove a failure is flaky
+        command: ./gradlew test
+        each: "--tests {id}"  # appended once per failed test ID
+      reports: ["**/build/test-results/**/*.xml"]   # JUnit XML
+    secrets:                  # logical names; infrastructure maps them to Secret Manager
+      - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
+    resources: { cpu: 8, memory: 32Gi }
+    timeouts: { total: 90m, stage: 40m, verify: 30m, finalize_reserve: 5m }
