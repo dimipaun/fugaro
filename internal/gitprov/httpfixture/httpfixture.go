@@ -4,6 +4,11 @@
 // A fixture file is a JSON array of exchanges, served strictly in order.
 // Paths may be written unescaped: they are compared after parsing, so
 // ?q=source.branch.name="fugaro/x" matches its escaped form on the wire.
+//
+// A recorded path's query may itself have been scrubbed (see Recorder): a
+// query parameter whose fixture value is "REDACTED" matches any value the
+// replayed request sends for that parameter, so a secret that a Recorder
+// removed from a path stays replayable without the original secret.
 package httpfixture
 
 import (
@@ -101,7 +106,7 @@ func mismatch(e Exchange, r *http.Request, body []byte) string {
 		return "bad fixture path: " + err.Error()
 	}
 	wantQ, _ := url.ParseQuery(want.RawQuery)
-	if r.URL.Path != want.Path || !reflect.DeepEqual(r.URL.Query(), wantQ) {
+	if r.URL.Path != want.Path || !queryMatches(wantQ, r.URL.Query()) {
 		return "path " + r.URL.RequestURI()
 	}
 	if e.Auth != "" && r.Header.Get("Authorization") != e.Auth {
@@ -122,10 +127,38 @@ func mismatch(e Exchange, r *http.Request, body []byte) string {
 	return ""
 }
 
+// queryMatches reports whether got, the replayed request's query, satisfies
+// want, the fixture's query. They must name the same parameters with the
+// same number of values each, except that a "REDACTED" value in want (left
+// there by a Recorder scrubbing a secret) matches any value in got.
+func queryMatches(want, got url.Values) bool {
+	if len(want) != len(got) {
+		return false
+	}
+	for k, wv := range want {
+		gv, ok := got[k]
+		if !ok || len(wv) != len(gv) {
+			return false
+		}
+		for i, v := range wv {
+			if v == "REDACTED" {
+				continue
+			}
+			if v != gv[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Recorder is an http.RoundTripper that forwards requests to Next and
 // records each exchange, for turning a live run into fixture files. It
 // never records the Authorization header, and replaces every value in
-// Secrets with "REDACTED" in the bodies it records.
+// Secrets with "REDACTED" wherever it appears — in the request and
+// response bodies, and in the recorded path, including its query string.
+// A secret redacted from a query value replays via Server's REDACTED
+// wildcard match (see queryMatches), without needing the original secret.
 type Recorder struct {
 	Next    http.RoundTripper // nil means http.DefaultTransport
 	Secrets []string
@@ -160,23 +193,28 @@ func (rec *Recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	resp.Body = io.NopCloser(bytes.NewReader(respBody))
 	rec.mu.Lock()
 	rec.list = append(rec.list, Exchange{
-		Method: req.Method, Path: req.URL.RequestURI(), Status: resp.StatusCode,
+		Method: req.Method, Path: rec.scrubString(req.URL.RequestURI()), Status: resp.StatusCode,
 		Request: rec.scrub(reqBody), Response: rec.scrub(respBody),
 	})
 	rec.mu.Unlock()
 	return resp, nil
 }
 
-func (rec *Recorder) scrub(body []byte) json.RawMessage {
-	if len(bytes.TrimSpace(body)) == 0 {
-		return nil
-	}
-	s := string(body)
+// scrubString replaces every value in Secrets with "REDACTED" in s.
+func (rec *Recorder) scrubString(s string) string {
 	for _, secret := range rec.Secrets {
 		if secret != "" {
 			s = strings.ReplaceAll(s, secret, "REDACTED")
 		}
 	}
+	return s
+}
+
+func (rec *Recorder) scrub(body []byte) json.RawMessage {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil
+	}
+	s := rec.scrubString(string(body))
 	if !json.Valid([]byte(s)) {
 		quoted, _ := json.Marshal(s) // keep a non-JSON body as a JSON string
 		return quoted

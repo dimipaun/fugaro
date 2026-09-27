@@ -92,7 +92,8 @@ func (c *Client) Do(ctx context.Context, method, path string, in, out any) error
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		excerpt := strings.TrimSpace(string(data))
 		if len(excerpt) > maxErrorBody {
-			excerpt = strings.ToValidUTF8(excerpt[:maxErrorBody], "") + "…"
+			const ellipsis = "…"
+			excerpt = strings.ToValidUTF8(excerpt[:maxErrorBody-len(ellipsis)], "") + ellipsis
 		}
 		return &StatusError{Method: method, URL: req.URL.Path, Status: resp.StatusCode, Body: excerpt}
 	}

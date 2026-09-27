@@ -80,3 +80,49 @@ func TestRecorderScrubsAndReplays(t *testing.T) {
 		t.Fatalf("replay = %+v, %v", out, err)
 	}
 }
+
+// TestRecorderScrubsQueryInPath covers the round-1 review finding: a secret
+// carried in a request's query string must not reach the fixture file
+// as-is, and the scrubbed path must still be replayable.
+func TestRecorderScrubsQueryInPath(t *testing.T) {
+	const secret = "ghs_query_secret"
+	live := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"values":[]}`))
+	}))
+	defer live.Close()
+	rec := &Recorder{Secrets: []string{secret}}
+	c := &httpjson.Client{BaseURL: live.URL, HTTP: &http.Client{Transport: rec}}
+	path := "/repos?token=" + secret + "&other=kept"
+	var out struct{ Values []any }
+	if err := c.Do(context.Background(), "GET", path, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+
+	if exs := rec.Exchanges(); len(exs) != 1 || strings.Contains(exs[0].Path, secret) || !strings.Contains(exs[0].Path, "REDACTED") {
+		t.Fatalf("recorded exchange = %+v", exs)
+	}
+
+	fixture := filepath.Join(t.TempDir(), "recorded.json")
+	if err := rec.Save(fixture); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("recording leaks the query secret:\n%s", data)
+	}
+	if !strings.Contains(string(data), "REDACTED") {
+		t.Fatalf("recording does not redact the query secret:\n%s", data)
+	}
+
+	// Replay: the client still sends the real secret (it's a test constant,
+	// not an actual secret), but the fixture only has "REDACTED" in its
+	// place. The replay server must match anyway.
+	srv := Serve(t, fixture)
+	var replayed struct{ Values []any }
+	if err := (&httpjson.Client{BaseURL: srv.URL}).Do(context.Background(), "GET", path, nil, &replayed); err != nil {
+		t.Fatalf("replay with scrubbed query: %v", err)
+	}
+}
