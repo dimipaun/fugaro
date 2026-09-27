@@ -8,8 +8,15 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
+// LogTail is the end of the output that explains a draft PR (design §4.5).
+type LogTail struct {
+	Source string   // what the lines are from, such as "stage implement-1, stderr"
+	Lines  []string // already redacted
+}
+
 // Report renders the run report posted to the PR and stored as report.md.
-func Report(rec *runstore.Record, location string) string {
+// tail, when non-nil, is shown in a code block.
+func Report(rec *runstore.Record, location string, tail *LogTail) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Outcome == runstore.OutcomeReady {
@@ -38,6 +45,11 @@ func Report(rec *runstore.Record, location string) string {
 	}
 	b.WriteString(testsLine(rec))
 	fmt.Fprintf(&b, "**Cost:** $%.2f\n\n", rec.CostUSD)
+	if tail != nil && len(tail.Lines) > 0 {
+		text := strings.Join(tail.Lines, "\n")
+		f := fence(text)
+		fmt.Fprintf(&b, "**Log tail** (%s):\n\n%stext\n%s\n%s\n\n", tail.Source, f, text, f)
+	}
 	fmt.Fprintf(&b, "Transcripts and verify records: `%s` in the runs bucket.\n", location)
 	return b.String()
 }
@@ -60,4 +72,19 @@ func testsLine(rec *runstore.Record) string {
 		s += ", flaky: " + strings.Join(last.Flaky, ", ")
 	}
 	return s + ")\n\n"
+}
+
+// fence returns a backtick fence longer than any backtick run in s, so s
+// cannot end the code block early.
+func fence(s string) string {
+	longest, run := 0, 0
+	for _, c := range s {
+		if c == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	return strings.Repeat("`", max(3, longest+1))
 }

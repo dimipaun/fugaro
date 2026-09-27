@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -73,6 +75,7 @@ type run struct {
 	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
 	auth         gitprov.GitAuth // current git credentials
 	authWarned   bool            // whether a mid-run refresh failure has already been logged
+	tail         *LogTail        // output of the first failed stage, for the draft PR
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -559,8 +562,10 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	log.Info("stage started", "n", n)
 
 	var transcript bytes.Buffer
-	tw := agent.NewRedactor(&transcript, r.secrets)
-	sw := agent.NewRedactor(NewLineWriter(log, "agent"), r.secrets)
+	stderrTail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
+	transcriptTail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
+	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail), r.secrets)
+	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secrets)
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.env, tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.Model, r.cfg.Agent.MaxBudgetUSD
 
@@ -580,13 +585,58 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	case err != nil:
 		r.fail(StageError(name, stageCtx, r.budget, err))
 		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
+		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false
 	case res.IsError:
 		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
+		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false
 	}
 	r.save(ctx)
 	return res, true
+}
+
+// keepTail remembers the failing stage's output for the draft PR (design
+// §4.5): the end of its stderr, or of its transcript when stderr was empty.
+// Both were redacted on the way in. Only the first failure is kept, as
+// with fail.
+func (r *run) keepTail(stage string, stderr, transcript *logtail.Writer) {
+	if r.tail != nil {
+		return
+	}
+	if lines := stderr.Lines(); len(lines) > 0 {
+		r.tail = &LogTail{Source: "stage " + stage + ", stderr", Lines: lines}
+	} else if lines := transcript.Lines(); len(lines) > 0 {
+		r.tail = &LogTail{Source: "stage " + stage + ", transcript", Lines: lines}
+	}
+}
+
+// logTail picks the log tail a draft PR carries: the failing stage's
+// output if a stage failed, otherwise the output of the last verify run if
+// that run failed. A ready PR carries none.
+func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
+	if ready {
+		return nil
+	}
+	if r.tail != nil {
+		return r.tail
+	}
+	if len(records) == 0 {
+		return nil
+	}
+	last := records[len(records)-1]
+	if last.Passed {
+		return nil
+	}
+	text, err := verify.LogTail(r.d.StateDir, last.N)
+	if err != nil {
+		r.d.Log.Warn("reading the verify log tail failed", "n", last.N, "err", err)
+		return nil
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	return &LogTail{Source: fmt.Sprintf("fugaro verify %s #%d", last.Kind, last.N), Lines: strings.Split(r.redact(text), "\n")}
 }
 
 func (r *run) finalize(ctx context.Context) error {
@@ -668,7 +718,7 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
-	report := agent.Redact(Report(r.rec, r.d.Store.Prefix()), r.secrets)
+	report := agent.Redact(Report(r.rec, r.d.Store.Prefix(), r.logTail(ready, records)), r.secrets)
 	if err := r.provider.Comment(ctx, pr, report); err != nil {
 		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
 	}
@@ -729,9 +779,10 @@ func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) 
 	}
 }
 
-// prText returns the PR title and body the agent wrote to pr.md, or defaults
-// built from the task. The agent's text is redacted before it is published.
-func (r *run) prText() (string, string) {
+// rawPRText returns the PR title and body the agent wrote to pr.md, or
+// defaults built from the task. The agent's text is redacted before it is
+// published.
+func (r *run) rawPRText() (string, string) {
 	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
 		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secrets)), "\n")
 		title = strings.TrimSpace(strings.TrimLeft(title, "# "))
@@ -744,4 +795,27 @@ func (r *run) prText() (string, string) {
 		first = string(runes[:71]) + "…"
 	}
 	return first, fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+}
+
+// Pull request text bounds. They keep well under GitHub's limits (titles
+// of 256 characters, bodies of 65,536), so a long pr.md cannot fail
+// finalize.
+const (
+	maxTitleRunes = 200
+	maxBodyBytes  = 60000
+)
+
+const truncatedNote = "\n\n*(Truncated by Fugaro: the description was longer than a pull request allows.)*"
+
+// prText returns the pull request's title and body, redacted and clipped
+// to what every provider accepts.
+func (r *run) prText() (string, string) {
+	title, body := r.rawPRText()
+	if runes := []rune(title); len(runes) > maxTitleRunes {
+		title = string(runes[:maxTitleRunes-1]) + "…"
+	}
+	if len(body) > maxBodyBytes {
+		body = strings.ToValidUTF8(body[:maxBodyBytes-len(truncatedNote)], "") + truncatedNote
+	}
+	return title, body
 }
