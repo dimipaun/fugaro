@@ -120,3 +120,34 @@ func TestCIWorkflowPermissionsScoped(t *testing.T) {
 		}
 	}
 }
+
+// TestCIWorkflowNoUnsafeInterpolation keeps refname-derived and actor values
+// out of `run:` script text, where a crafted ref name or username could
+// inject shell. They must instead be passed through `env:` and referenced as
+// shell variables.
+func TestCIWorkflowNoUnsafeInterpolation(t *testing.T) {
+	data, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for jobName, job := range wf.Jobs {
+		for _, step := range job.Steps {
+			for _, bad := range []string{"${{ needs.", "${{ github.actor"} {
+				if strings.Contains(step.Run, bad) {
+					t.Errorf("job %q step %q run: interpolates %q directly; pass it via env: and reference it as a shell variable", jobName, step.Name, bad)
+				}
+			}
+		}
+	}
+}

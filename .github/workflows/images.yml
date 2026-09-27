@@ -1,7 +1,7 @@
 name: images
 on:
   push:
-    tags: ["v*"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
     paths: ["images/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".dockerignore", ".github/workflows/images.yml"]
   schedule:
@@ -32,6 +32,10 @@ jobs:
           case "$GITHUB_EVENT_NAME" in
             push)
               tag=$GITHUB_REF_NAME
+              if ! printf '%s\n' "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "::error::pushed tag '$tag' is not a strict vX.Y.Z release tag" >&2
+                exit 1
+              fi
               ;;
             pull_request)
               version="pr-${{ github.event.number }}"
@@ -71,7 +75,9 @@ jobs:
           fetch-depth: 0
       - name: Checkout the resolved tag
         if: needs.version.outputs.tag != ''
-        run: git checkout --quiet "refs/tags/${{ needs.version.outputs.tag }}"
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: git checkout --quiet "refs/tags/$TAG"
       - name: Build
         env:
           FUGARO_VERSION: ${{ needs.version.outputs.version }}
@@ -110,11 +116,14 @@ jobs:
       - name: Load and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MAJOR: ${{ needs.version.outputs.major }}
         run: |
           set -eu
           gunzip -c "fugaro-${{ matrix.base }}.tar.gz" | docker load
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for t in "${{ needs.version.outputs.version }}" "${{ needs.version.outputs.major }}"; do
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          for t in "$VERSION" "$MAJOR"; do
             docker tag "fugaro-${{ matrix.base }}:ci" "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
             docker push "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
           done
