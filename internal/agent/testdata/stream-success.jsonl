@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"3f2a9c1e-0000-4000-8000-000000000001","cwd":"/work/repo"}
+{"type":"assistant","session_id":"3f2a9c1e-0000-4000-8000-000000000001","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}
+{"type":"result","subtype":"success","is_error":false,"total_cost_usd":0.049912,"session_id":"3f2a9c1e-0000-4000-8000-000000000001","result":"{\"verdict\":\"ship\"}","structured_output":{"verdict":"ship"},"num_turns":2}
