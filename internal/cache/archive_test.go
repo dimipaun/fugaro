@@ -3,10 +3,14 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -156,5 +160,125 @@ func TestRestoreRejectsManifestMismatch(t *testing.T) {
 	// hostile's manifest says one root.
 	if err := Extract(hostile(t), []string{t.TempDir(), t.TempDir()}, 1<<20); err == nil {
 		t.Fatal("an archive for one root was restored into two")
+	}
+}
+
+func sym(name, target string) *tar.Header {
+	return &tar.Header{Name: name, Linkname: target, Typeflag: tar.TypeSymlink}
+}
+
+// Links that pass the lexical check when created but resolve outside the
+// root once later entries are in: each must be refused and removed.
+func TestRestoreRejectsEscapingLinkChains(t *testing.T) {
+	cases := map[string][]*tar.Header{
+		"ordering":    {sym("0/p", "q/.."), sym("0/q", ".")},
+		"parent link": {sym("0/q", "."), sym("0/q/p", "..")},
+		"replacement": {
+			{Name: "0/a/b/", Mode: 0o755, Typeflag: tar.TypeDir},
+			sym("0/q", "a/b"), sym("0/p", "q/.."), sym("0/q", "."),
+		},
+		"implementer chain": {
+			{Name: "0/d/e/", Mode: 0o755, Typeflag: tar.TypeDir},
+			sym("0/d/e/up", "../.."), sym("0/p", "d/e/up/.."),
+		},
+		"grandparent": {sym("0/q", "."), sym("0/r", "q/.."), sym("0/p", "r/..")},
+	}
+	for name, hdrs := range cases {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "root")
+			err := Extract(hostile(t, hdrs...), []string{root}, 1<<20)
+			if err == nil || !strings.Contains(err.Error(), "outside") || !errors.Is(err, ErrBadArchive) {
+				t.Fatalf("Extract = %v, want an ErrBadArchive naming outside", err)
+			}
+			if _, err := os.Lstat(filepath.Join(root, "p")); err == nil {
+				if target, err := filepath.EvalSymlinks(filepath.Join(root, "p")); err == nil {
+					t.Fatalf("root/p survives and resolves to %s", target)
+				}
+				t.Fatal("root/p survives")
+			}
+		})
+	}
+}
+
+// A link created before a later entry is refused is still checked.
+func TestRestoreRemovesEscapingLinkOnPartialRestore(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "root")
+	err := Extract(hostile(t, sym("0/q", "."), sym("0/p", "q/.."),
+		&tar.Header{Name: "0/fifo", Typeflag: tar.TypeFifo}), []string{root}, 1<<20)
+	if err == nil || !strings.Contains(err.Error(), "outside") {
+		t.Fatalf("Extract = %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "p")); err == nil {
+		t.Fatal("the escaping link survived a partial restore")
+	}
+	if target, _ := os.Readlink(filepath.Join(root, "q")); target != "." {
+		t.Fatalf("a link inside the root was removed: q = %q", target)
+	}
+}
+
+func TestExtractChargesHeaders(t *testing.T) {
+	var hdrs []*tar.Header
+	for i := range 3000 {
+		hdrs = append(hdrs, &tar.Header{Name: fmt.Sprintf("0/d%d/", i), Mode: 0o755, Typeflag: tar.TypeDir})
+	}
+	err := Extract(hostile(t, hdrs...), []string{t.TempDir()}, 1<<20)
+	if !errors.Is(err, ErrTooLarge) || !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("a headers-only archive past the cap: %v", err)
+	}
+}
+
+func TestWriteChargesHeaders(t *testing.T) {
+	src := t.TempDir()
+	for i := range 10 {
+		if err := os.Mkdir(filepath.Join(src, fmt.Sprint(i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := Write(io.Discard, []string{src}, 1024); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("Write = %v, want ErrTooLarge", err)
+	}
+}
+
+func TestWriteSkipsPhysicallyEscapingLinks(t *testing.T) {
+	src := t.TempDir()
+	write(t, src, map[string]string{"f": "x"})
+	for link, target := range map[string]string{"q": ".", "p": "q/..", "abs": "/etc", "ok": "f"} {
+		if err := os.Symlink(target, filepath.Join(src, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	st, err := writeArchive(&buf, []string{src}, 1<<20)
+	if err != nil || st.skippedLinks != 2 {
+		t.Fatalf("writeArchive = %+v, %v; want 2 skipped links", st, err)
+	}
+	dst := t.TempDir()
+	if err := Extract(&buf, []string{dst}, 1<<20); err != nil {
+		t.Fatalf("the archive Write produced does not restore: %v", err)
+	}
+	for _, gone := range []string{"p", "abs"} {
+		if _, err := os.Lstat(filepath.Join(dst, gone)); err == nil {
+			t.Errorf("%s was archived", gone)
+		}
+	}
+	if target, _ := os.Readlink(filepath.Join(dst, "ok")); target != "f" {
+		t.Errorf("ok = %q", target)
+	}
+}
+
+func TestExtractClassifiesErrors(t *testing.T) {
+	if err := Extract(strings.NewReader("not zstd"), []string{t.TempDir()}, 1<<20); !errors.Is(err, ErrBadArchive) {
+		t.Errorf("corrupt archive: %v, want ErrBadArchive", err)
+	}
+	src := t.TempDir()
+	write(t, src, map[string]string{"big": strings.Repeat("x", 64<<10)})
+	var buf bytes.Buffer
+	if _, err := Write(&buf, []string{src}, 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	broken := io.MultiReader(bytes.NewReader(buf.Bytes()[:buf.Len()/2]), iotest.ErrReader(errors.New("connection reset")))
+	err := Extract(broken, []string{t.TempDir()}, 1<<20)
+	if err == nil || errors.Is(err, ErrBadArchive) {
+		t.Errorf("I/O error: %v, want an error that is not ErrBadArchive", err)
 	}
 }

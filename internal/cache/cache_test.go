@@ -79,4 +79,48 @@ func TestRestoreCorruptArchiveIsWarning(t *testing.T) {
 	if hit || err == nil {
 		t.Fatalf("Restore corrupt = %v, %v (want a miss with an error the runner logs as a warning)", hit, err)
 	}
+	if !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("Restore corrupt = %v, want ErrBadArchive", err)
+	}
+	if ok, _ := b.Exists(ctx, ObjectKey("acme-app", "web", "k1")); ok {
+		t.Fatal("a corrupt archive was kept, blocking its key")
+	}
+}
+
+func TestRestoreKeepsArchiveReplacedSinceRead(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	s := &Store{Bucket: b, Slug: "acme-app", Workflow: "web", MaxBytes: 1 << 20}
+	obj := ObjectKey("acme-app", "web", "k1")
+	_ = b.WriteAll(ctx, obj, []byte("not zstd"), nil)
+	r, err := b.NewReader(ctx, obj, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	_ = b.WriteAll(ctx, obj, []byte("a newer object"), nil)
+	if err := s.discard(ctx, obj, r); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := b.Exists(ctx, obj); !ok {
+		t.Fatal("discard deleted an object other than the one read")
+	}
+}
+
+func TestSaveWarnsAboutSkippedLinks(t *testing.T) {
+	ctx := context.Background()
+	var warned []any
+	s := &Store{Bucket: blobx.Wrap(memblob.OpenBucket(nil)), Slug: "acme-app", Workflow: "web",
+		Warn: func(msg string, args ...any) { warned = append([]any{msg}, args...) }}
+	src := t.TempDir()
+	write(t, src, map[string]string{"f": "x"})
+	if err := os.Symlink("/etc/passwd", filepath.Join(src, "abs")); err != nil {
+		t.Fatal(err)
+	}
+	if saved, err := s.Save(ctx, "k1", []string{src}); err != nil || !saved {
+		t.Fatalf("Save = %v, %v", saved, err)
+	}
+	if len(warned) != 5 || warned[4] != 1 {
+		t.Fatalf("Warn got %v, want the key and skipped_links=1", warned)
+	}
 }

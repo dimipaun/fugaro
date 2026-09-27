@@ -23,7 +23,13 @@ import (
 
 // KeyOf computes e's key in the checkout at root. ok is false when none of
 // the key files exist, which means the entry is not cached.
-func KeyOf(root string, e config.CacheEntry, baseImage string) (string, bool, error) {
+//
+// Besides the key files' contents and e's paths, the key covers baseImage
+// (the base image reference, a digest when the build pinned one) and
+// toolchain, a hash the runner computes over the repo's image: settings
+// (node, jdk, apt, setup). A toolchain change such as a Node bump then
+// invalidates caches holding native binaries built for the old one.
+func KeyOf(root string, e config.CacheEntry, baseImage, toolchain string) (string, bool, error) {
 	var files []string
 	for _, pattern := range e.Key {
 		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly())
@@ -38,7 +44,7 @@ func KeyOf(root string, e config.CacheEntry, baseImage string) (string, bool, er
 		return "", false, nil
 	}
 	h := sha256.New()
-	fmt.Fprintf(h, "fugaro-cache-v1\nbase %s\npaths %s\n", baseImage, strings.Join(e.Paths, "\x00"))
+	fmt.Fprintf(h, "fugaro-cache-v1\nbase %s\ntoolchain %s\npaths %s\n", baseImage, toolchain, strings.Join(e.Paths, "\x00"))
 	for _, f := range files {
 		fh := sha256.New()
 		file, err := os.Open(filepath.Join(root, f))
@@ -56,8 +62,11 @@ func KeyOf(root string, e config.CacheEntry, baseImage string) (string, bool, er
 }
 
 // Resolve turns fugaro.yaml cache paths into absolute directories: "~/x"
-// is under home, "x" under the checkout. Absolute paths and ".." are
-// refused, so a cache can never target the system.
+// is under home, "x" under the checkout. Absolute paths, "..", any .git
+// component (a restore must never write git hooks or config the runner's
+// git then runs) and roots that repeat or nest inside one another (the
+// same files would be archived twice) are refused, so a cache can never
+// target the system or the repository's metadata.
 func Resolve(paths []string, root, home string) ([]string, error) {
 	out := make([]string, len(paths))
 	for i, p := range paths {
@@ -72,7 +81,19 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 		if rel == "" || path.IsAbs(rel) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 			return nil, fmt.Errorf("cache path %q must be ~/<dir> or a directory inside the checkout", p)
 		}
+		for _, part := range strings.Split(clean, "/") {
+			if strings.EqualFold(part, ".git") {
+				return nil, fmt.Errorf("cache path %q must not be inside a .git directory", p)
+			}
+		}
 		out[i] = filepath.Join(base, filepath.FromSlash(clean))
+	}
+	for i, a := range out {
+		for j, b := range out[:i] {
+			if a == b || strings.HasPrefix(a, b+string(filepath.Separator)) || strings.HasPrefix(b, a+string(filepath.Separator)) {
+				return nil, fmt.Errorf("cache paths %q and %q overlap", paths[j], paths[i])
+			}
+		}
 	}
 	return out, nil
 }
