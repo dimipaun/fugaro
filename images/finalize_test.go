@@ -98,3 +98,63 @@ func TestFinalizeCheckoutRejectsGlobalHelper(t *testing.T) {
 		t.Fatalf("err = %v, output %q", err, out)
 	}
 }
+
+func TestFinalizeCheckoutStripsUnscopedExtraHeader(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	testutil.Git(t, repo, "config", "http.extraheader", "AUTHORIZATION: basic dG9rZW4=")
+	if out, err := finalize(t, repo, home); err != nil {
+		t.Fatalf("finalize-checkout: %v\n%s", err, out)
+	}
+	cfg := strings.ToLower(testutil.Git(t, repo, "config", "--local", "--list"))
+	// "extraheader=" (not bare "extraheader"): the fixture's own temp
+	// directory name embeds this test's name, which contains "ExtraHeader".
+	if strings.Contains(cfg, "extraheader=") {
+		t.Errorf("git config still has an unscoped http.extraheader:\n%s", cfg)
+	}
+}
+
+func TestFinalizeCheckoutRejectsGlobalExtraHeader(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	if err := os.WriteFile(global, []byte("[http]\n\textraheader = AUTHORIZATION: basic dG9rZW4=\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	out, err := finalize(t, repo, home)
+	if err == nil || !strings.Contains(out, "extraheader") {
+		t.Fatalf("err = %v, output %q", err, out)
+	}
+	if strings.Contains(out, "dG9rZW4") {
+		t.Fatal("finalize-checkout printed the extraheader value")
+	}
+}
+
+func TestFinalizeCheckoutRejectsGlobalCredentialInsteadOf(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	cfg := "[url \"https://x-access-token:s3cr3t@example.invalid/\"]\n\tinsteadOf = https://example.invalid/\n"
+	if err := os.WriteFile(global, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	out, err := finalize(t, repo, home)
+	if err == nil || !strings.Contains(out, "insteadOf") {
+		t.Fatalf("err = %v, output %q", err, out)
+	}
+	if strings.Contains(out, "s3cr3t") {
+		t.Fatal("finalize-checkout printed the insteadOf value")
+	}
+}
+
+func TestFinalizeCheckoutAcceptsGlobalNonCredentialInsteadOf(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	cfg := "[url \"https://mirror.example.invalid/\"]\n\tinsteadOf = https://example.invalid/\n"
+	if err := os.WriteFile(global, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	if out, err := finalize(t, repo, home); err != nil {
+		t.Fatalf("finalize-checkout: %v\n%s", err, out)
+	}
+}

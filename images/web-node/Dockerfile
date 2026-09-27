@@ -42,7 +42,7 @@ ENV HOME=/home/fugaro \
 # steps only and remove the grant before the image is finished.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl git procps sudo tini xz-utils zstd \
+      ca-certificates curl dirmngr git gnupg procps sudo tini xz-utils zstd \
  && rm -rf /var/lib/apt/lists/* \
  && userdel --remove ubuntu \
  && useradd --uid 1000 --user-group --create-home --shell /bin/bash fugaro \
@@ -50,13 +50,17 @@ RUN apt-get update \
  && install -d -o fugaro -g fugaro -m 0700 /work/creds \
  && install -d -o fugaro -g fugaro -m 0755 /home/fugaro/.cache "$COREPACK_HOME" "$PLAYWRIGHT_BROWSERS_PATH"
 # gh (the GitHub CLI), installed from a pinned release tarball with its
-# published sha256sum verified, per release (design §7.1: the runner
-# configures git and gh with the token so the agent can push, edit the PR,
-# and read issues and PRs).
+# published sha256sum verified per architecture, checked ourselves against
+# https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_checksums.txt
+# on 2026-09-27 (design §7.1: the runner configures git and gh with the
+# token, so the agent can push, edit the PR, and read issues and PRs). The
+# apt route was rejected: cli.github.com's apt repo publishes only the
+# Packages index for the current release, with no per-version pool to pin
+# an older `apt-get install gh=X` against.
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) arch=amd64; sum=9bca2d1c16825f109907a23307628a2f0698fbf99662b73a5cf0b020293072b8 ;; \
-      arm64) arch=arm64; sum=9aec87f9a011b1521556b06cb003776e7e214144c8efd2144924a28d90c23057 ;; \
+      arm64) arch=arm64; sum=b57e8063f18862647c9d22727c32e9da1b963f8bf9db648fe123a6975695640f ;; \
       *) echo "web-node: unsupported architecture $(dpkg --print-architecture) for gh" >&2; exit 1 ;; \
     esac; \
     tmp=$(mktemp -d); \
@@ -71,10 +75,32 @@ COPY --chmod=0755 images/web-node/install-node.sh /usr/local/lib/fugaro/install-
 COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/finalize-checkout
 RUN /usr/local/lib/fugaro/install-node "$NODE_VERSION"
 USER fugaro
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN curl -fsSL https://claude.ai/install.sh | bash -s "$CLAUDE_CODE_VERSION" \
- && claude --version
-SHELL ["/bin/sh", "-c"]
+# Claude Code (native build, pinned), downloaded directly (no curl | bash)
+# and verified against a per-arch sha256 taken from that release's own
+# manifest.json (the same one https://claude.ai/install.sh reads) and
+# checked ourselves against the freshly downloaded binary on 2026-09-27:
+#   https://downloads.claude.ai/claude-code-releases/2.1.283/manifest.json
+#     linux-x64:   1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2
+#     linux-arm64: 346d294f0103d6fc0de11ac953579b5c62dfa90698a4cfc486b6f927c615e697
+# `claude install` sets up the launcher under ~/.local/bin; the installer's
+# own state and identity files (~/.claude, ~/.claude.json, which holds a
+# fixed machineID/userID, ~/.npm, ~/.cache/claude) are removed straight
+# after so the image carries no shared per-build identity, and `claude
+# --version` is checked again afterwards to confirm the launcher survives.
+RUN set -eu; \
+    case "$(dpkg --print-architecture)" in \
+      amd64) carch=x64; csum=1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2 ;; \
+      arm64) carch=arm64; csum=346d294f0103d6fc0de11ac953579b5c62dfa90698a4cfc486b6f927c615e697 ;; \
+      *) echo "web-node: unsupported architecture $(dpkg --print-architecture) for Claude Code" >&2; exit 1 ;; \
+    esac; \
+    tmp=$(mktemp -d); \
+    curl -fsSL "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-${carch}/claude" -o "$tmp/claude"; \
+    echo "$csum  $tmp/claude" | sha256sum -c -; \
+    chmod +x "$tmp/claude"; \
+    "$tmp/claude" install; \
+    rm -rf "$tmp"; \
+    rm -rf "$HOME/.claude" "$HOME/.claude.json" "$HOME/.npm" "$HOME/.cache/claude"; \
+    claude --version
 # Copied last so a fugaro change doesn't re-download Node or Claude Code.
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
 WORKDIR /work/repo
