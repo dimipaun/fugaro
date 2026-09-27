@@ -68,6 +68,10 @@ var literalTokenRE = regexp.MustCompile(`(?m)(_authToken\s*=|npmAuthToken\s*:)\s
 // in images/derived/Dockerfile.tmpl) once image.setup steps are done, so a
 // finished image must never have a setuid sudo. If sudo (or anything else)
 // shows up here, that is a real finding, not noise.
+//
+// A package installed by image.setup or image.apt that ships its own setuid
+// binary (for example openssh-client's ssh-keysign) will trip this check and
+// needs an explicit allowance added here, not a silent pass.
 var expectedSetuidBinaries = map[string]bool{
 	"usr/bin/chfn":    true,
 	"usr/bin/chsh":    true,

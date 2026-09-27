@@ -125,3 +125,35 @@ func TestImageSelftestCommand(t *testing.T) {
 	}
 	t.Fatalf("want a failed checkout check, got %+v", rep)
 }
+
+func TestImageBuildNeedsLocal(t *testing.T) {
+	_, _, err := execute(t, "image", "build")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M4") || !strings.Contains(err.Error(), "--local") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+func TestImageBuildLocalRejectsRepo(t *testing.T) {
+	_, _, err := execute(t, "image", "build", "--local", "--repo", "acme/app")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo applies to Cloud Build") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+func TestImageBuildDevBuildNeedsBase(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	_, _, err := execute(t, "image", "build", "--local")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "development build") || !strings.Contains(err.Error(), "--base") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+func TestImageBuildReportsConfigProblems(t *testing.T) {
+	files := npmFiles()
+	files["fugaro.yaml"] = strings.Replace(cliMinimalYAML, "github", "gitlab", 1)
+	checkoutWith(t, files)
+	_, _, err := execute(t, "image", "build", "--local", "--base", "fugaro-web-node:dev")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml has 1 problem(s)") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
