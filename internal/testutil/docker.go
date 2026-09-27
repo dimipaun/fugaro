@@ -3,12 +3,8 @@
 package testutil
 
 import (
-	"archive/tar"
-	"bufio"
 	"bytes"
-	"compress/gzip"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -133,13 +129,9 @@ func ShareWithContainer(t *testing.T, image, dir string) {
 // (the containerd image store, `docker info`'s default on recent Docker
 // Desktop, stores and re-exports layers zstd-compressed, not gzip, so a scan
 // that only unwrapped gzip would pass vacuously there), so it also finds data
-// that a later layer deleted.
-//
-// zstd decompression shells out to the `zstd` binary (`zstd -dc`) rather than
-// vendoring a Go zstd decoder: the module takes no new dependencies (see
-// global-constraints.md), and every environment that runs these `docker`-tagged
-// tests already needs a real Docker daemon, so requiring `zstd` on PATH too is
-// a small ask; docker/cli and moby/moby's own test suites do the same.
+// that a later layer deleted. The tar-scanning core is TarContains, in
+// imagescan.go, which a non-Docker unit test exercises directly against a
+// synthetic tar stream.
 func ImageContains(t *testing.T, image, needle string) bool {
 	t.Helper()
 	cmd := exec.Command("docker", "save", image)
@@ -152,95 +144,11 @@ func ImageContains(t *testing.T, image, needle string) bool {
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	found := false
-	tr := tar.NewReader(stdout)
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("reading docker save %s: %v", image, err)
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			continue
-		}
-		br := bufio.NewReaderSize(tr, 1<<16)
-		var r io.Reader = br
-		var wait func() error
-		switch magic, _ := br.Peek(4); {
-		case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
-			gz, err := gzip.NewReader(br)
-			if err != nil {
-				t.Fatalf("%s: %v", hdr.Name, err)
-			}
-			r = gz
-		case len(magic) == 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
-			r, wait = decompressZstd(t, hdr.Name, br)
-		}
-		ok, err := streamContains(r, []byte(needle))
-		if err != nil {
-			t.Fatalf("scanning %s: %v", hdr.Name, err)
-		}
-		if wait != nil {
-			if err := wait(); err != nil {
-				t.Fatalf("zstd -dc %s: %v", hdr.Name, err)
-			}
-		}
-		found = found || ok
-	}
+	found := TarContains(t, stdout, needle)
 	if err := cmd.Wait(); err != nil {
 		t.Fatalf("docker save %s: %v\n%s", image, err, stderr.String())
 	}
 	return found
-}
-
-// decompressZstd streams r through `zstd -dc`, returning its stdout and a
-// wait function the caller must call, once it has read the returned reader to
-// EOF (or hit an error), to reap the child and surface its failure.
-func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func() error) {
-	t.Helper()
-	cmd := exec.Command("zstd", "-dc", "-q")
-	cmd.Stdin = r
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("running zstd -dc for %s: %v (install zstd to scan zstd-compressed layers)", name, err)
-	}
-	return stdout, func() error {
-		if err := cmd.Wait(); err != nil {
-			return fmt.Errorf("%v: %s", err, stderr.String())
-		}
-		return nil
-	}
-}
-
-// streamContains reports whether needle occurs in r, reading it in chunks.
-func streamContains(r io.Reader, needle []byte) (bool, error) {
-	buf := make([]byte, 1<<20)
-	var tail []byte
-	for {
-		n, err := r.Read(buf)
-		window := append(tail, buf[:n]...)
-		if bytes.Contains(window, needle) {
-			return true, nil
-		}
-		if keep := len(needle) - 1; len(window) > keep {
-			tail = append([]byte(nil), window[len(window)-keep:]...)
-		} else {
-			tail = window
-		}
-		if err == io.EOF {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-	}
 }
 
 // NPMFixtureFiles are a package.json and package-lock.json with no
