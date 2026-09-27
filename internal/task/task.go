@@ -20,6 +20,9 @@ var (
 	repoRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$`)
 )
 
+// BatchRE is the form of a task's batch label.
+var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
 	Version     int       `json:"version"`
@@ -33,6 +36,7 @@ type Spec struct {
 	PreviousRun string    `json:"previous_run,omitempty"`
 	Overrides   Overrides `json:"overrides"`
 	RequestedBy string    `json:"requested_by,omitempty"`
+	Batch       string    `json:"batch,omitempty"`
 }
 
 // Overrides are the only config values a single task may change.
@@ -100,6 +104,9 @@ func (s *Spec) Validate() error {
 	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)
+	}
+	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
+		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

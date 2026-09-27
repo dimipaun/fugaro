@@ -26,7 +26,8 @@
         "total_timeout": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" }
       }
     },
-    "requested_by": { "type": "string" }
+    "requested_by": { "type": "string" },
+    "batch": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" }
   },
   "dependentRequired": {
     "branch": ["pr", "previous_run"],

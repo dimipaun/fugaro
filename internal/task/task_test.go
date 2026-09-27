@@ -99,3 +99,16 @@ func TestMarshalRoundTrip(t *testing.T) {
 		t.Fatalf("round trip lost data: %+v", s2)
 	}
 }
+
+func TestBatch(t *testing.T) {
+	s := &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x", Batch: "tuesday-cleanup.2"}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"Tuesday", "-x", "a b", strings.Repeat("a", 64)} {
+		s.Batch = bad
+		if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "batch") {
+			t.Errorf("batch %q: %v", bad, err)
+		}
+	}
+}
