@@ -13,8 +13,9 @@ var baseDefaults = map[string]baseDefault{
 	"web-node":   {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 }
 
-// applyDefaults fills in every field fugaro.yaml may omit. Cache defaults
-// arrive with cache support in M4.
+// applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
+// default depends on the checkout's lockfile, so it is not applied here:
+// DefaultCache computes it, and M4's cache restore applies it.
 func applyDefaults(c *Config) {
 	if c.Git.BaseBranch == "" {
 		c.Git.BaseBranch = "main"

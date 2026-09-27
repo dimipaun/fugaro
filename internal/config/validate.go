@@ -161,6 +161,11 @@ func Check(c *Config, root string) []Problem {
 		p := "workflows." + name
 		if w.Dockerfile != "" {
 			ps = append(ps, checkDockerfile(p, root, w)...)
+		} else if w.Base == "web-node" {
+			// The generated image's warm-up needs a package manager it can name.
+			if _, err := DetectNodePM(root); err != nil {
+				ps = append(ps, Problem{Path: p, Message: err.Error()})
+			}
 		}
 		for _, cmd := range []struct{ path, value string }{
 			{p + ".commands.build", w.Commands.Build},
