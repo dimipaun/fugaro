@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 )
@@ -28,9 +29,14 @@ type State struct {
 
 // Provider is a fake git host.
 type Provider struct {
-	Path  string // optional; when set, State is loaded and saved on every call
-	mu    sync.Mutex
-	State State
+	Path string // optional; when set, State is loaded and saved on every call
+	// Auth, when set, supplies GitAuth's result for each minValid asked
+	// for. When nil, GitAuth returns no credentials (local remotes need none).
+	Auth func(minValid time.Duration) gitprov.GitAuth
+	// FailEnsure makes that many EnsurePR calls fail before any succeeds.
+	FailEnsure int
+	mu         sync.Mutex
+	State      State
 }
 
 // Load reads a persisted state file; a missing file is an empty state.
@@ -70,6 +76,10 @@ func (p *Provider) save() error {
 func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.FailEnsure > 0 {
+		p.FailEnsure--
+		return gitprov.PR{}, errors.New("fake provider: injected EnsurePR failure")
+	}
 	if err := p.load(); err != nil {
 		return gitprov.PR{}, err
 	}
@@ -99,4 +109,14 @@ func (p *Provider) Comment(_ context.Context, pr gitprov.PR, body string) error 
 		}
 	}
 	return fmt.Errorf("fake provider: no PR #%d", pr.Number)
+}
+
+// GitAuth implements gitprov.Provider.
+func (p *Provider) GitAuth(_ context.Context, minValid time.Duration) (gitprov.GitAuth, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.Auth == nil {
+		return gitprov.GitAuth{}, nil
+	}
+	return p.Auth(minValid), nil
 }
