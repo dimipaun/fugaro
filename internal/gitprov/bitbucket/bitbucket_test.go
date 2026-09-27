@@ -206,6 +206,27 @@ func TestRejectedReviewerAndStuckDraftBothReported(t *testing.T) {
 	}
 }
 
+// TestRetitleFailureStillReturnsPR covers the folded-in fix: when the
+// fallback title PUT (adding the "[DRAFT] " prefix because Bitbucket ignored
+// draft:true) itself fails, EnsurePR must still return the pull request that
+// was created — its number, URL and known draft state — alongside a
+// *gitprov.PartialError, rather than an empty PR and a plain error, matching
+// the Provider contract that an existing pull request is always returned.
+func TestRetitleFailureStillReturnsPR(t *testing.T) {
+	p := open(t, "retitle_fails.json")
+	pr, err := p.EnsurePR(ctx, spec(true))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a *gitprov.PartialError", err)
+	}
+	if pr != (gitprov.PR{Number: 49, URL: "https://bitbucket.org/acme/web/pull-requests/49"}) {
+		t.Fatalf("pr = %+v", pr)
+	}
+	if !strings.Contains(err.Error(), "retitling") {
+		t.Fatalf("err = %v, want it to mention retitling", err)
+	}
+}
+
 // TestFindEscapesBranchName covers the minor fix: a branch name carrying a
 // double quote or backslash must not be allowed to break out of the BBQL
 // string literal in find's ?q= parameter.

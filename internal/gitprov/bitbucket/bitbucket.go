@@ -221,7 +221,11 @@ func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitp
 	}
 	if title := gitprov.DraftTitle(pr.Title, draft && !pr.Draft); title != pr.Title {
 		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", pr.ID)), map[string]any{"title": title}, nil); err != nil {
-			return gitprov.PR{}, fmt.Errorf("retitling pull request #%d: %w", pr.ID, err)
+			// The pull request still exists with its title unchanged; the
+			// Provider contract (design, gitprov.go) requires it be returned
+			// alongside the failure rather than dropped.
+			out := gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: pr.Draft}
+			return out, &gitprov.PartialError{Err: fmt.Errorf("retitling pull request #%d: %w", pr.ID, err)}
 		}
 	}
 	return gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: draft}, nil
