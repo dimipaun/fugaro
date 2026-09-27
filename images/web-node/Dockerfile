@@ -73,7 +73,10 @@ RUN set -eu; \
     HOME=/root gh --version
 COPY --chmod=0755 images/web-node/install-node.sh /usr/local/lib/fugaro/install-node
 COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/finalize-checkout
-RUN /usr/local/lib/fugaro/install-node "$NODE_VERSION"
+# The Node.js release keyring is baked once here, so derived builds that set
+# image.node verify against it without a keyserver.
+RUN /usr/local/lib/fugaro/install-node keyring \
+ && /usr/local/lib/fugaro/install-node "$NODE_VERSION"
 USER fugaro
 # Claude Code (native build, pinned), downloaded directly (no curl | bash)
 # and verified against a per-arch sha256 taken from that release's own

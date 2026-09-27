@@ -130,6 +130,22 @@ func TestDerivedYarnBerryWithNodePin(t *testing.T) {
 	}
 }
 
+// TestDerivedNodePinSignedByARetiredKey pins image.node to a release whose
+// SHASUMS256.txt was signed by a key from nodejs/node's "previous releases"
+// list (v18.17.0, Danielle Adams's 74F12602B6F1C4E913FAA37AD3A89613643B6201),
+// so the derived build must verify it against the base's baked keyring.
+func TestDerivedNodePinSignedByARetiredKey(t *testing.T) {
+	base := testutil.BaseImage(t)
+	testutil.IsolateGit(t)
+	files := testutil.FixtureFiles(t)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", "    base: web-node\n    image: { node: \"18.17.0\" }\n", 1)
+	const tag = "fugaro-test-node18:local"
+	res := buildImage(t, checkout(t, files), base, tag)
+	if c := smokeCheck(res, "node"); !c.OK || !strings.HasPrefix(c.Detail, "v18.17.0") {
+		t.Errorf("node check = %+v", c)
+	}
+}
+
 func TestRepoDockerfileEscapeHatch(t *testing.T) {
 	base := testutil.BaseImage(t)
 	testutil.IsolateGit(t)

@@ -61,3 +61,34 @@ func TestBaseImageSmoke(t *testing.T) {
 		}
 	}
 }
+
+// retiredKeyNode is a Node.js release signed by a key from the "Other keys
+// used to sign some previous releases" list, not a current releaser's:
+// v18.17.0's SHASUMS256.txt.sig was made by Danielle Adams's
+// 74F12602B6F1C4E913FAA37AD3A89613643B6201 (checked with gpgv on
+// 2026-09-27).
+const retiredKeyNode = "18.17.0"
+
+// TestInstallNodeUsesTheBakedKeyring runs install-node the way a derived
+// build does for image.node, with every key source unreachable: the
+// keyring baked into the base must be enough, including for a release
+// signed by a retired key. Without that keyring, install-node must refuse
+// rather than skip verification.
+func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
+	image := testutil.BaseImage(t)
+	blocked := []string{"run", "--rm", "--user", "root"}
+	for _, host := range []string{"keys.openpgp.org", "keyserver.ubuntu.com", "raw.githubusercontent.com", "github.com"} {
+		blocked = append(blocked, "--add-host", host+":127.0.0.1")
+	}
+	blocked = append(blocked, image, "sh", "-c")
+	out := testutil.Docker(t, append(blocked,
+		"test -s /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode+" >&2 && node -v")...)
+	if !strings.HasSuffix(out, "v"+retiredKeyNode) {
+		t.Fatalf("node -v after install-node %s = %q", retiredKeyNode, out)
+	}
+	cmd := exec.Command("docker", append(blocked,
+		"rm /usr/local/lib/fugaro/nodejs.gpg && /usr/local/lib/fugaro/install-node "+retiredKeyNode)...)
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "no Node.js release keyring") {
+		t.Fatalf("install-node without the keyring: err=%v\n%s", err, out)
+	}
+}
