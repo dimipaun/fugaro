@@ -252,7 +252,8 @@ func TestRetitleRemoveFailureIsPartial(t *testing.T) {
 	if !strings.Contains(err.Error(), "retitling") {
 		t.Fatalf("err = %v, want it to mention retitling", err)
 	}
-	if pr != (gitprov.PR{Number: 51, URL: "https://bitbucket.org/acme/web/pull-requests/51"}) {
+	// The prefix is still there, so the pull request is still a draft.
+	if pr != (gitprov.PR{Number: 51, URL: "https://bitbucket.org/acme/web/pull-requests/51", Draft: true}) {
 		t.Fatalf("pr = %+v", pr)
 	}
 }
@@ -279,5 +280,73 @@ func TestFindEscapesBranchName(t *testing.T) {
 	want := `source.branch.name="fugaro/quo\"te\\slash" AND source.repository.full_name="acme/web" AND state="OPEN"`
 	if gotQuery != want {
 		t.Fatalf("query = %q, want %q", gotQuery, want)
+	}
+}
+
+// TestPrefixedPRStaysDraftWithoutPUT covers an existing pull request that
+// is already a draft by its fallback title ("[DRAFT] …", draft false) when
+// a draft is wanted: it counts as a draft already, so no PUT is sent (one
+// that stripped the prefix and failed to re-add it would leave it looking
+// ready). The fixture holds only the GET.
+func TestPrefixedPRStaysDraftWithoutPUT(t *testing.T) {
+	p := open(t, "existing_prefixed_stays_draft.json")
+	pr, err := p.EnsurePR(ctx, spec(true))
+	if err != nil || pr != (gitprov.PR{Number: 52, URL: "https://bitbucket.org/acme/web/pull-requests/52", Draft: true}) {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestExistingReadyUpdateFailureIsPartial covers a failed PUT on an
+// existing draft pull request that should go ready: the pull request is
+// returned, still a draft, with a *gitprov.PartialError (the conservative
+// direction), never an empty PR.
+func TestExistingReadyUpdateFailureIsPartial(t *testing.T) {
+	p := open(t, "existing_ready_update_fails.json")
+	pr, err := p.EnsurePR(ctx, spec(false))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) || !strings.Contains(err.Error(), "updating pull request #53") {
+		t.Fatalf("err = %v, want a *gitprov.PartialError about the update", err)
+	}
+	if pr != (gitprov.PR{Number: 53, URL: "https://bitbucket.org/acme/web/pull-requests/53", Draft: true}) {
+		t.Fatalf("pr = %+v", pr)
+	}
+}
+
+// TestExistingDraftUpdateFailureIsRetryable covers a failed PUT on an
+// existing ready pull request that should become a draft: it still looks
+// ready, so the error is plain and retryable, and the pull request is
+// returned as currently seen.
+func TestExistingDraftUpdateFailureIsRetryable(t *testing.T) {
+	p := open(t, "existing_draft_update_fails.json")
+	pr, err := p.EnsurePR(ctx, spec(true))
+	var partial *gitprov.PartialError
+	if err == nil || errors.As(err, &partial) || !strings.Contains(err.Error(), "updating pull request #54") {
+		t.Fatalf("err = %v, want a plain error about the update", err)
+	}
+	if pr != (gitprov.PR{Number: 54, URL: "https://bitbucket.org/acme/web/pull-requests/54"}) {
+		t.Fatalf("pr = %+v", pr)
+	}
+}
+
+// TestFindLowercasesRepository covers Bitbucket's lowercase repository
+// slugs: source.repository.full_name is compared as a string, so a
+// fugaro.yaml or task naming "Acme/Web" must still find the pull request.
+func TestFindLowercasesRepository(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"values":[]}`))
+	}))
+	defer srv.Close()
+	p, err := New(Options{Workspace: "Acme", Slug: "Web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.find(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if want := `source.repository.full_name="acme/web"`; !strings.Contains(gotQuery, want) {
+		t.Fatalf("query = %q, want it to contain %q", gotQuery, want)
 	}
 }

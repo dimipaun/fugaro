@@ -105,25 +105,50 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 		return gitprov.PR{}, err
 	}
 	if existing != nil {
-		title := gitprov.DraftTitle(existing.Title, false)
-		if title == existing.Title && existing.Draft == spec.Draft {
-			// Nothing would change: no fallback prefix to add or remove,
-			// and the draft state already matches. Skip the PUT.
-			return gitprov.PR{Number: existing.ID, URL: existing.Links.HTML.Href, Draft: existing.Draft}, nil
-		}
-		var pr pullRequest
-		body := map[string]any{"title": title, "draft": spec.Draft}
-		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", existing.ID)), body, &pr); err != nil {
-			return gitprov.PR{}, fmt.Errorf("updating pull request #%d: %w", existing.ID, err)
-		}
-		return p.finish(ctx, pr, spec.Draft)
+		return p.update(ctx, *existing, spec.Draft)
 	}
 	return p.create(ctx, spec)
 }
 
+// update puts an existing pull request (one an earlier attempt or the
+// agent opened) in the wanted draft state, leaving its title and
+// description alone apart from the fallback "[DRAFT] " prefix. A pull
+// request already a draft either way (Bitbucket's draft flag, or the
+// prefix) is left as is when a draft is wanted: stripping the prefix only
+// to re-add it could leave it looking ready if the second request failed.
+//
+// A failed PUT returns the pull request as currently seen. When ready was
+// wanted it is still a draft, the conservative direction, so the failure
+// is a *gitprov.PartialError; when a draft was wanted it still looks
+// ready, so the failure is a plain error the runner retries.
+func (p *Provider) update(ctx context.Context, existing pullRequest, draft bool) (gitprov.PR, error) {
+	seenDraft := existing.Draft || strings.HasPrefix(existing.Title, gitprov.DraftPrefix)
+	title := existing.Title
+	if !draft {
+		title = gitprov.DraftTitle(existing.Title, false)
+	}
+	if seenDraft == draft && title == existing.Title {
+		// Nothing would change: skip the PUT.
+		return gitprov.PR{Number: existing.ID, URL: existing.Links.HTML.Href, Draft: seenDraft}, nil
+	}
+	var pr pullRequest
+	body := map[string]any{"title": title, "draft": draft}
+	if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", existing.ID)), body, &pr); err != nil {
+		out := gitprov.PR{Number: existing.ID, URL: existing.Links.HTML.Href, Draft: seenDraft}
+		wrapped := fmt.Errorf("updating pull request #%d: %w", existing.ID, err)
+		if !draft && seenDraft {
+			return out, &gitprov.PartialError{Err: wrapped}
+		}
+		return out, wrapped
+	}
+	return p.finish(ctx, pr, draft)
+}
+
 func (p *Provider) find(ctx context.Context, branch string) (*pullRequest, error) {
 	q := url.Values{"q": {fmt.Sprintf(`source.branch.name="%s" AND source.repository.full_name="%s/%s" AND state="OPEN"`,
-		escapeBBQL(branch), escapeBBQL(p.o.Workspace), escapeBBQL(p.o.Slug))}}
+		// Bitbucket stores workspace and repository slugs in lowercase,
+		// and full_name is compared as a string.
+		escapeBBQL(branch), escapeBBQL(strings.ToLower(p.o.Workspace)), escapeBBQL(strings.ToLower(p.o.Slug)))}}
 	var page struct {
 		Values []pullRequest `json:"values"`
 	}
@@ -236,12 +261,13 @@ func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitp
 			out := gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: pr.Draft}
 			wrapped := fmt.Errorf("retitling pull request #%d: %w", pr.ID, err)
 			if addPrefix {
-				// Leaves the PR looking more ready than requested is unsafe
-				// only in the other direction; here it still looks ready
-				// (or unmarked), which a retry can safely correct, so this
-				// is a plain error the runner will retry EnsurePR over.
+				// The PR still looks ready (unmarked), which a retry can
+				// safely correct, so this is a plain error the runner will
+				// retry EnsurePR over.
 				return out, wrapped
 			}
+			// The prefix is still there, so the PR is still a draft.
+			out.Draft = true
 			return out, &gitprov.PartialError{Err: wrapped}
 		}
 	}
