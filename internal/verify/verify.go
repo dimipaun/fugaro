@@ -39,13 +39,16 @@ type Settings struct {
 // WriteSettings stores settings in stateDir and prepares the records directory.
 func WriteSettings(stateDir string, s Settings) error {
 	if err := os.MkdirAll(filepath.Join(stateDir, recordsDir), 0o755); err != nil {
-		return err
+		return fmt.Errorf("creating verify state dir: %w", err)
 	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("encoding verify settings: %w", err)
 	}
-	return os.WriteFile(filepath.Join(stateDir, settingsFile), data, 0o644)
+	if err := os.WriteFile(filepath.Join(stateDir, settingsFile), data, 0o644); err != nil {
+		return fmt.Errorf("writing verify settings: %w", err)
+	}
+	return nil
 }
 
 // LoadSettings reads the settings the runner wrote.
@@ -55,7 +58,10 @@ func LoadSettings(stateDir string) (Settings, error) {
 	if err != nil {
 		return s, fmt.Errorf("reading verify settings: %w", err)
 	}
-	return s, json.Unmarshal(data, &s)
+	if err := json.Unmarshal(data, &s); err != nil {
+		return s, fmt.Errorf("decoding verify settings: %w", err)
+	}
+	return s, nil
 }
 
 // Kind is what a verify run executes.
@@ -289,26 +295,29 @@ func writeRecord(stateDir string, rec *Record) error {
 	dir := filepath.Join(stateDir, recordsDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("listing verify records: %w", err)
 	}
 	for n := len(entries) + 1; ; n++ {
 		rec.N = n
 		data, err := json.MarshalIndent(rec, "", "  ")
 		if err != nil {
-			return err
+			return fmt.Errorf("encoding verify record %d: %w", n, err)
 		}
 		f, err := os.OpenFile(filepath.Join(dir, fmt.Sprintf("%04d.json", n)), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if errors.Is(err, fs.ErrExist) {
 			continue // a concurrent verify took this number
 		}
 		if err != nil {
-			return err
+			return fmt.Errorf("writing verify record %d: %w", n, err)
 		}
 		if _, err := f.Write(data); err != nil {
 			f.Close()
-			return err
+			return fmt.Errorf("writing verify record %d: %w", n, err)
 		}
-		return f.Close()
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("writing verify record %d: %w", n, err)
+		}
+		return nil
 	}
 }
 
@@ -320,7 +329,7 @@ func Records(stateDir string) ([]Record, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading verify records: %w", err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -333,7 +342,7 @@ func Records(stateDir string) ([]Record, error) {
 	for _, name := range names {
 		data, err := os.ReadFile(filepath.Join(dir, name))
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("reading verify record %s: %w", name, err)
 		}
 		var r Record
 		if err := json.Unmarshal(data, &r); err != nil {
