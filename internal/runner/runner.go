@@ -1,0 +1,370 @@
+// Package runner executes one Fugaro run: bootstrap, implement, review and
+// fix rounds, finalize (design §4).
+package runner
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/verify"
+)
+
+// Deps is everything a run touches.
+type Deps struct {
+	Store       *runstore.Store
+	Provider    gitprov.Provider
+	Agent       agent.Agent
+	WorkDir     string   // the repository checkout (baked into the image)
+	Remote      string   // cloned into WorkDir when it has no checkout
+	StateDir    string   // FUGARO_STATE_DIR; must be outside WorkDir
+	Env         []string // the runner's environment, usually os.Environ()
+	PathPrepend string   // directory holding the fugaro binary, put first on the agent's PATH
+	Log         *slog.Logger
+	Now         func() time.Time
+	CancelPoll  time.Duration
+}
+
+type run struct {
+	d            Deps
+	rec          *runstore.Record
+	spec         *task.Spec
+	cfg          *config.Config
+	wf           config.Workflow
+	repo         *gitops.Repo
+	env          []string
+	secrets      []string
+	budget       Budget
+	instructions string
+	reviewFile   string
+	stageN       map[string]int
+	failReason   string
+	cancelled    bool
+}
+
+// Run executes the run whose task spec is in d.Store. It always returns the
+// final record; the error is non-nil only for an infra_error.
+func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	if d.CancelPoll == 0 {
+		d.CancelPoll = 30 * time.Second
+	}
+	if d.Log == nil {
+		d.Log = slog.New(slog.DiscardHandler)
+	}
+	r := &run{
+		d:      d,
+		stageN: map[string]int{},
+		rec: &runstore.Record{Version: 1, Status: runstore.StatusRunning, Stage: "bootstrap",
+			Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panic: %v", p)
+		}
+		if err != nil {
+			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, err.Error()
+			d.Log.Error("run failed", "stage", r.rec.Stage, "err", err)
+		}
+		finished := d.Now().UTC()
+		r.rec.FinishedAt = &finished
+		if werr := d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); werr != nil && err == nil {
+			err = fmt.Errorf("writing run record: %w", werr)
+		}
+		rec = r.rec
+	}()
+
+	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
+	defer stopWatch()
+	if err := r.bootstrap(runCtx); err != nil {
+		return nil, fmt.Errorf("bootstrap: %w", err)
+	}
+	r.agentLoop(runCtx)
+	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
+	defer cancel()
+	if err := r.finalize(finCtx); err != nil {
+		return nil, fmt.Errorf("finalize: %w", err)
+	}
+	return r.rec, nil
+}
+
+func (r *run) save(ctx context.Context) {
+	if err := r.d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); err != nil {
+		r.d.Log.Warn("writing run record failed", "err", err)
+	}
+}
+
+// fail records the first reason the run cannot produce a ready PR.
+func (r *run) fail(reason string) {
+	if r.failReason == "" {
+		r.failReason = reason
+	}
+}
+
+func (r *run) bootstrap(ctx context.Context) error {
+	spec, err := r.d.Store.ReadTask(ctx)
+	if err != nil {
+		return err
+	}
+	r.spec = spec
+	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	r.save(ctx)
+	if spec.IsFollowUp() {
+		return errors.New("follow-up runs are not supported by this version of fugaro")
+	}
+	if rel, err := filepath.Rel(r.d.WorkDir, r.d.StateDir); err == nil && !strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("state dir %s must be outside the checkout %s", r.d.StateDir, r.d.WorkDir)
+	}
+
+	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.IdentityEnv())
+	if err != nil {
+		return err
+	}
+	branch := "fugaro/" + spec.RunID
+	if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
+		return err
+	}
+	r.repo = repo
+
+	data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
+	if err != nil {
+		return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		msgs := make([]string, len(problems))
+		for i, p := range problems {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("fugaro.yaml is invalid: %s", strings.Join(msgs, "; "))
+	}
+	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
+	if err != nil {
+		return err
+	}
+	if err := spec.Apply(cfg, &wf); err != nil {
+		return err
+	}
+	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
+		return err
+	}
+	if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
+		return fmt.Errorf("agent.instructions: %w", err)
+	}
+	if cfg.Agent.Review != "" && !strings.HasPrefix(cfg.Agent.Review, "/") {
+		if r.reviewFile, err = r.readRepoFile(cfg.Agent.Review); err != nil {
+			return fmt.Errorf("agent.review: %w", err)
+		}
+	}
+
+	if err := os.RemoveAll(r.d.StateDir); err != nil {
+		return err
+	}
+	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
+		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test,
+		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
+		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
+	}); err != nil {
+		return err
+	}
+	secretEnvs := make([]string, len(wf.Secrets))
+	for i, s := range wf.Secrets {
+		secretEnvs[i] = s.Env
+	}
+	set := map[string]string{"FUGARO_STATE_DIR": r.d.StateDir}
+	for k, v := range gitops.Identity {
+		set[k] = v
+	}
+	if r.env, r.secrets, err = agent.BuildEnv(r.d.Env, agent.EnvSpec{
+		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+	}); err != nil {
+		return err
+	}
+	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
+		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
+	r.rec.Branch = branch
+	r.save(ctx)
+	return nil
+}
+
+func (r *run) readRepoFile(rel string) (string, error) {
+	if rel == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(filepath.Join(r.d.WorkDir, rel))
+	return string(data), err
+}
+
+func (r *run) agentLoop(ctx context.Context) {
+	sessionID := agent.NewSessionID()
+	sys := SystemPrompt(PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}, r.instructions)
+	if _, ok := r.stage(ctx, "implement", agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys}); !ok {
+		return
+	}
+	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	rounds := r.cfg.Agent.ReviewRounds
+	for round := 1; round <= rounds; round++ {
+		res, ok := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema})
+		if !ok {
+			return
+		}
+		v := ParseVerdict(res)
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Verdict: v.Verdict, Findings: len(v.Findings)})
+		r.save(ctx)
+		if v.Verdict == "ship" || round == rounds {
+			return
+		}
+		if _, ok := r.stage(ctx, "fix", agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}); !ok {
+			return
+		}
+	}
+}
+
+// stage runs one agent stage and reports whether the loop may continue.
+func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.Result, bool) {
+	if ctx.Err() != nil {
+		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
+		r.cancelled = errors.Is(context.Cause(ctx), ErrCancelled)
+		return agent.Result{}, false
+	}
+	if r.budget.Exhausted() {
+		r.fail("time budget exhausted before stage " + name)
+		return agent.Result{}, false
+	}
+	r.stageN[name]++
+	n := r.stageN[name]
+	started := r.d.Now()
+	r.rec.Stage = name
+	r.save(ctx)
+	log := r.d.Log.With("stage", name)
+	log.Info("stage started", "n", n)
+
+	var transcript bytes.Buffer
+	tw := agent.NewRedactor(&transcript, r.secrets)
+	sw := agent.NewRedactor(NewLineWriter(log, "agent"), r.secrets)
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.env, tw, sw
+	req.Model, req.MaxBudgetUSD = r.cfg.Agent.Model, r.cfg.Agent.MaxBudgetUSD
+
+	stageCtx, cancel := r.budget.StageContext(ctx)
+	defer cancel()
+	res, err := r.d.Agent.Run(stageCtx, req)
+	_ = tw.Flush()
+	_ = sw.Flush()
+	if perr := r.d.Store.PutFile(context.WithoutCancel(ctx), fmt.Sprintf("transcripts/%s-%d.jsonl", name, n), transcript.Bytes(), "application/x-ndjson"); perr != nil {
+		log.Warn("storing transcript failed", "err", perr)
+	}
+	r.rec.CostUSD += res.CostUSD
+	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
+	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
+
+	switch {
+	case err != nil:
+		r.fail(StageError(name, stageCtx, r.budget, err))
+		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
+		return res, false
+	case res.IsError:
+		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
+		return res, false
+	}
+	r.save(ctx)
+	return res, true
+}
+
+func (r *run) finalize(ctx context.Context) error {
+	r.rec.Stage = "finalize"
+	r.save(ctx)
+	base := r.cfg.Git.BaseBranch
+	if _, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize"); err != nil {
+		return err
+	}
+	ahead, err := r.repo.AheadOf(ctx, base)
+	if err != nil {
+		return err
+	}
+	if ahead == 0 {
+		r.fail("the agent made no commits")
+		if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
+			return err
+		}
+	}
+	sha, err := r.repo.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	records, err := verify.Records(r.d.StateDir)
+	if err != nil {
+		return err
+	}
+	r.rec.HeadSHA, r.rec.Verify = sha, records
+
+	var last *runstore.ReviewSummary
+	if n := len(r.rec.Reviews); n > 0 {
+		last = &r.rec.Reviews[n-1]
+	}
+	ready, reason := Decide(records, sha, last)
+	if r.failReason != "" {
+		ready, reason = false, r.failReason
+	}
+	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
+		return err
+	}
+	title, body := r.prText()
+	pr, err := r.d.Provider.EnsurePR(ctx, gitprov.PRSpec{
+		Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
+		Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
+	})
+	if err != nil {
+		return err
+	}
+	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	r.rec.Reason = reason
+	switch {
+	case ready:
+		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
+	case r.cancelled:
+		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeDraft
+	default:
+		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
+	}
+	report := Report(r.rec, r.d.Store.Prefix())
+	if err := r.d.Provider.Comment(ctx, pr, report); err != nil {
+		r.d.Log.Warn("posting the run report failed", "err", err)
+	}
+	if err := r.d.Store.PutFile(ctx, "report.md", []byte(report), "text/markdown"); err != nil {
+		r.d.Log.Warn("storing the run report failed", "err", err)
+	}
+	r.rec.Stage = "writeback" // cache write-back arrives in M4
+	return nil
+}
+
+// prText returns the PR title and body the agent wrote to pr.md, or defaults
+// built from the task.
+func (r *run) prText() (string, string) {
+	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, "pr.md")); err == nil {
+		title, body, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
+		title = strings.TrimSpace(strings.TrimLeft(title, "# "))
+		if title != "" {
+			return title, strings.TrimSpace(body)
+		}
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(r.spec.Task), "\n")
+	if runes := []rune(first); len(runes) > 72 {
+		first = string(runes[:71]) + "…"
+	}
+	return first, fmt.Sprintf("Opened by Fugaro run `%s`.\n\n## Task\n\n%s", r.rec.RunID, r.spec.Task)
+}
