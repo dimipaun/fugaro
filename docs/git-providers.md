@@ -27,7 +27,8 @@ Create a **repository access token** under *Repository settings → Security →
 Git uses it with the username `x-token-auth`. The token is scoped to its repository by design, which makes it the per-repo credential that design §6.1 asks for.
 
 - **Reviewers** (`git.pr.reviewers`) are account UUIDs (`{…}`) or account IDs, not usernames. If Bitbucket rejects one, the PR is opened without reviewers and the run logs a warning.
-- **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The adapter warns about this **once per Provider**, not once per call — see [`providers.FromEnv` and provider lifetime](#providersfromenv-and-provider-lifetime) below for why that means FromEnv must be called once per run.
+- **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The run logs a warning about this once, to its stderr log.
+- **Repository names** are matched in lowercase when finding an existing pull request, since Bitbucket stores workspace and repository slugs in lowercase.
 
 ### GitHub
 
@@ -37,35 +38,10 @@ Create a **GitHub App** and install it on the repositories Fugaro serves (design
 - **Issues: Read**
 - **Metadata: Read**
 
-Store its App ID and private key as the variables above. At bootstrap, the runner mints an **installation token for this repository only**, restricted to the permissions above. It lasts about an hour. Before each stage, the runner replaces it with a fresh one if it would expire within that stage's timeout plus 5 minutes.
+Store its App ID and private key as the variables above. At bootstrap, the runner mints an **installation token for this repository only**, restricted to the permissions above. It lasts about an hour. Before each stage, the runner replaces it with a fresh one if it would expire within that stage's timeout plus 5 minutes, but it never asks for more than 50 minutes, which is all GitHub can give. So with `timeouts.stage` above about 45 minutes, a stage can outlive its token: the agent's `git` and `gh` calls late in that stage fail, and only the refresh before the next stage (or before finalize's push) restores working credentials.
 
 - **Reviewers** are user logins, or `org/team` for a team.
 - **Labels** are added after the PR is created. If that fails, the PR stays and the run logs a warning.
-
-## `providers.FromEnv` and provider lifetime
-
-`internal/gitprov/providers.FromEnv(env []string, hc *http.Client) gitprov.Opener` builds the `gitprov.Opener` the runner calls to open a provider for a repo. It reads `env` (`KEY=VALUE` pairs, normally `os.Environ()`) once, at call time, and returns a closure; it does not read the environment again afterward.
-
-**The runner must call `FromEnv` exactly once per run, and call the `Opener` it returns exactly once per repo, keeping the single `gitprov.Provider` it gets back for the rest of the run.** Two reasons this is a hard requirement, not just tidiness:
-
-1. **Bitbucket's labels warning is per-`Provider`, not per-call.** `bitbucket.Options.Warn` fires the first time a `PRSpec` with labels reaches that `*bitbucket.Provider` value. Opening a second `*bitbucket.Provider` for the same run (for example by calling the `Opener` again) resets that state and the warning fires again.
-2. **GitHub's installation-token cache lives on the `*github.Provider`.** Its `tokenSource` caches the minted token and the installation id it discovered. A second `*github.Provider` for the same run re-discovers the installation and re-mints a token instead of reusing the cached one.
-
-### Secrets returned, and what still needs live redaction
-
-The `Opener`'s `[]string` return is the static secret `FromEnv` read from `env` when it built the provider:
-- Bitbucket: `[token]` — the repository access token.
-- GitHub: `[private key PEM]` — the App's private key, not a token.
-
-This is not the complete redaction list for the run. The GitHub App's private key never appears in a git command or an HTTP request after the JWT is signed; what actually goes over the wire, and what could leak into logs or a PR body, is the **installation token** (`ghs_…`) that `Provider.GitAuth` mints from that key. That token:
-- does not exist yet when `FromEnv`'s `Opener` runs, so it cannot be in the `[]string` it returns;
-- is refreshed periodically (about hourly, or sooner if a stage's timeout would outlive it), so a single value captured once goes stale;
-- is exactly the value design §6.1/§6.2 and the global constraints require to be in the runner's redaction list.
-
-So Task 9 (the runner) must add to its redaction list, in addition to `FromEnv`'s `[]string`:
-- **every non-empty `GitAuth.Token`** returned by `Provider.GitAuth`, at the point it is returned — not just the first call. For Bitbucket, `GitAuth.Token` is the same repository access token already in `FromEnv`'s list (redacting it twice is harmless). For GitHub, each call can return a newly minted token, so the runner must redact the new value every time it mints one, not only at startup.
-
-No new method was added to `gitprov.Provider` or `gitprov.Opener` for this: `Provider.GitAuth`'s existing return value already exposes every secret that needs redacting. The requirement is purely about how the runner uses what's already there — call `GitAuth` before using its token in a stage, and redact whatever it returns each time, including on refresh.
 
 ## What the agent gets (design §6.2)
 
@@ -79,10 +55,10 @@ The token is never written to `.git/config`, to a remote URL, or to a command li
 
 ## Pushing and draft pull requests
 
-- **Pushing.** Finalize pushes only the run's own `fugaro/<run-id>` branch, with `--force-with-lease`. It overwrites the remote branch only when the branch is absent or its tip is a commit the run's checkout has, meaning the agent pushed it, perhaps before amending. A tip pushed from anywhere else is left alone, and the run fails with a clear reason. The base branch is never pushed. Protect it anyway (design §6.1).
+- **Pushing.** Finalize pushes only the run's own `fugaro/<run-id>` branch, with `--force-with-lease`. It overwrites the remote branch only when the branch is absent or its tip is one of the run's own commits: an ancestor of the final HEAD, or a commit in HEAD's reflog. That covers the agent pushing the branch and then amending or rebasing. A tip merely present in the checkout, for example because a `git fetch` brought in someone else's push, does not count. A tip pushed from anywhere else is left alone, and the run fails with a clear reason. The base branch is never pushed. Protect it anyway (design §6.1).
 - **Draft PRs on GitHub.** Draft state is changed through GraphQL, because REST cannot change it. Some plans have no draft PRs for private repositories. There, Fugaro opens a normal PR titled `[DRAFT] …`, and removes the prefix when a later run marks the PR ready.
 - **Draft PRs on Bitbucket Cloud.** The REST API documents a `draft` boolean on create and update, which needs `pullrequest:write`. A repository access token can hold that scope. Fugaro sends `draft` and checks the response. If Bitbucket did not make the PR a draft, it uses the same `[DRAFT] ` title fallback.
-- **Which direction a failure falls in.** Both adapters only ever report a `*gitprov.PartialError` for a draft/title mismatch that falls in the *conservative* direction: the PR stays a draft, or keeps its `[DRAFT] ` prefix, when the caller asked for ready. `EnsurePR`'s caller (and a human) can safely leave that for a retry to heal, since a run that looks unfinished when it is in fact fine is safe. When the mismatch would go the other way — a draft or `[DRAFT] ` PR that a failed update left looking more ready than requested, for example a retitle that stripped the prefix but the underlying draft toggle failed — the adapter instead returns the populated `PR` (valid, safe to use) together with a plain, retryable `error`, not a `PartialError`. Operators should read a plain error at this point as "the PR may already look ready even though it isn't (or vice versa) — do not assume the title reflects the true draft state until the next successful `EnsurePR`," and should retry rather than treat the run as merely partially done.
+- **Which direction a failure falls in.** When `EnsurePR` cannot fully apply the draft state, it still returns the pull request. The error it returns depends on which way the PR is wrong. If the PR is left looking *more* like a draft than asked, for example still a draft or still titled `[DRAFT] …` when ready was wanted, the error is a `*gitprov.PartialError`. The run then records a draft outcome, naming the failure, and never reports the PR as ready. If the PR is left looking *more ready* than asked, the error is a plain one, and the runner retries `EnsurePR`. The usual case is Bitbucket ignoring `draft: true`, after which the retitle that adds the `[DRAFT] ` prefix fails. Each retry finds the same PR and tries the prefix again. If the retries run out, the run ends in `infra_error`, the PR is kept in the run record, and it may still look ready. Check it by hand.
 
 ## Live check against a sandbox repository
 
@@ -110,4 +86,7 @@ Hermetic tests cover the adapters with recorded HTTP fixtures (`internal/gitprov
 5. **Force a draft.** Run a failing task, for example with `FIXTURE_FAILS_FILE` naming a test. Check that the PR is a real draft. On Bitbucket this answers design §15. If the PR carries the `[DRAFT] ` prefix instead, record that in §15.
 6. **Verify a title-only Bitbucket update preserves reviewers and description.** With an existing Bitbucket PR that has reviewers and a description set, trigger an update that only changes `title` and `draft` (for example, mark the run's task ready after it first went out as a draft). Confirm with `GET …/pullrequests/{id}` afterward that the reviewers list and description are unchanged — a `PUT` with only `{title, draft}` must not clear fields it did not mention. If Bitbucket's API turns out to require the full object on every `PUT` (clearing omitted fields), that is a live-run finding to fix, not something the hermetic fixtures can catch.
 7. **Verify Bitbucket's `draft` field on create and on update.** Open a PR with `draft: true` and confirm `GET` shows it as a draft; then update it with `draft: false` and confirm `GET` shows it as ready. If either direction is ignored (the field round-trips but doesn't change PR state, or a plan/workspace tier doesn't support drafts), the adapter's `[DRAFT] ` title-prefix fallback is the one actually in effect for that workspace — record which case applies in your operational notes and treat step 5 above (forcing a draft) as the authority on which path this workspace uses.
-8. **Record fixtures.** To replace the hand-written ones with recorded ones, wrap the adapter's HTTP client in `httpfixture.Recorder` (the `HTTP` option of `bitbucket.Options` or `github.Options`), with the credential values in `Secrets`, and `Save` the exchanges. Do this for both providers so the hermetic test fixtures reflect real Bitbucket and GitHub responses rather than hand-written ones.
+8. **Check the Bitbucket labels warning.** With `git.pr.labels` set in the sandbox's `fugaro.yaml`, check that the run's stderr log carries the "labels aren't supported" warning exactly once.
+9. **Check Bitbucket's repository name matching.** Run once with `repo` in the task file spelled in mixed case (for example `Owner/Sandbox`), with a PR already open for the run branch. The run must find and update that PR, not open a second one.
+10. **Check GitHub token life against a long stage.** With `timeouts.stage` above an hour, check that a stage lasting more than an hour still gets a working token from the next stage onward: the log shows no "refreshing git credentials failed" warning, and finalize's push succeeds.
+11. **Record fixtures.** To replace the hand-written ones with recorded ones, wrap the adapter's HTTP client in `httpfixture.Recorder` (the `HTTP` option of `bitbucket.Options` or `github.Options`), with the credential values in `Secrets`, and `Save` the exchanges. Do this for both providers so the hermetic test fixtures reflect real Bitbucket and GitHub responses rather than hand-written ones.
