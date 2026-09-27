@@ -34,7 +34,7 @@ func newValidateCmd() *cobra.Command {
 			}
 			cfg, problems := config.Parse(data)
 			if cfg != nil {
-				problems = config.Check(cfg, filepath.Dir(path))
+				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
 			}
 			out := cmd.OutOrStdout()
 			if asJSON {

@@ -98,6 +98,9 @@ func Validate(c *Config) []Problem {
 			if !secretNameRE.MatchString(s.Name) {
 				add(sp+".name", "must be lower-case letters, digits and dashes")
 			}
+			if _, reserved := ReservedSecrets[s.Name]; reserved {
+				add(sp+".name", "%s is reserved for the platform's own secrets", s.Name)
+			}
 			switch {
 			case !envNameRE.MatchString(s.Env):
 				add(sp+".env", "must be an upper-case environment variable name")
@@ -108,8 +111,8 @@ func Validate(c *Config) []Problem {
 			}
 			seen[s.Env] = true
 		}
-		if !slices.Contains([]int{1, 2, 4, 6, 8}, w.Resources.CPU) {
-			add(p+".resources.cpu", "must be one of 1, 2, 4, 6, 8")
+		if w.Resources.CPU < 1 {
+			add(p+".resources.cpu", "must be at least 1 (the compute backend checks its own limits)")
 		}
 		if !memoryRE.MatchString(w.Resources.Memory) {
 			add(p+".resources.memory", "must look like 512Mi or 16Gi")
