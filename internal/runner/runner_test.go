@@ -17,6 +17,7 @@ import (
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -46,6 +47,7 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 }
 
 type harness struct {
+	files     map[string]string
 	deps      runner.Deps
 	store     *runstore.Store
 	bucket    *blob.Bucket
@@ -79,14 +81,27 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 	a := &scriptedAgent{t: t}
 	p := &fake.Provider{}
 	return &harness{
+		files: files,
 		deps: runner.Deps{
-			Store: store, Provider: p, Agent: a,
+			Store: store, OpenProvider: gitprov.Static(p), Agent: a,
 			WorkDir: filepath.Join(tmp, "work"), Remote: remote, StateDir: filepath.Join(tmp, "state"),
 			Env:        []string{"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "ANTHROPIC_API_KEY=test-key", "FIXTURE_FAILS_FILE=" + failsFile},
 			CancelPoll: 20 * time.Millisecond,
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+}
+
+// useHTTPRemote replaces the harness's remote with the same files served
+// over HTTP behind basic auth that allow decides. Its host names no
+// provider, so the run names one up front, as `--provider github` would:
+// the clone itself needs credentials.
+func (h *harness) useHTTPRemote(t *testing.T, allow func(user, pass string) bool) *testutil.HTTPRemote {
+	t.Helper()
+	remote := testutil.NewHTTPRemote(t, h.files, allow)
+	h.deps.Remote, h.remote = remote.URL, remote.Bare
+	h.deps.ProviderKind = "github"
+	return remote
 }
 
 // filterEnv returns env without the entry for key.

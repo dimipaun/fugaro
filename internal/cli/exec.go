@@ -100,7 +100,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	}
 	log := runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
-		Store: runstore.Open(bucket, slug, runID), Provider: provider, Agent: agent.Claude{Bin: o.claudeBin},
+		Store: runstore.Open(bucket, slug, runID), OpenProvider: gitprov.Static(provider), Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: os.Environ(),
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 	})

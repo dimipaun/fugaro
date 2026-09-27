@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -26,8 +28,19 @@ import (
 
 // Deps is everything a run touches.
 type Deps struct {
-	Store       *runstore.Store
-	Provider    gitprov.Provider
+	Store *runstore.Store
+	// OpenProvider opens the git provider. It is called once, as soon as
+	// the provider's kind is known: before the checkout when ProviderKind
+	// or the origin URL's host names it, otherwise right after fugaro.yaml
+	// is read, from git.provider.
+	OpenProvider gitprov.Opener
+	// ProviderKind, when set, names the provider before fugaro.yaml is
+	// read, for remotes whose host does not identify it. git.provider
+	// must agree with it.
+	ProviderKind string
+	// RetryDelay is the pause between attempts to open the pull request;
+	// zero means 3 seconds.
+	RetryDelay  time.Duration
 	Agent       agent.Agent
 	WorkDir     string   // the repository checkout (baked into the image)
 	Remote      string   // cloned into WorkDir when it has no checkout
@@ -54,7 +67,25 @@ type run struct {
 	stageN       map[string]int
 	failReason   string
 	cancelled    bool
+	provider     gitprov.Provider
+	providerKind string
+	providerFrom string          // where providerKind came from, for mismatch errors
+	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
+	auth         gitprov.GitAuth // current git credentials
 }
+
+// Git credential lifetimes (design §6.2). A stage must not outlive its
+// token, so before each stage the runner asks for one valid for the stage
+// timeout plus gitAuthSlack; bootstrap's clone and fetch need only
+// bootstrapAuthMinValid.
+const (
+	gitAuthSlack          = 5 * time.Minute
+	bootstrapAuthMinValid = 10 * time.Minute
+)
+
+// prAttempts is how many times finalize tries to open the pull request.
+// EnsurePR finds what an earlier attempt created, so retrying is safe.
+const prAttempts = 3
 
 // Run executes the run whose task spec is in d.Store. It always returns the
 // final record, reflecting the run's actual status and outcome whether or
@@ -83,13 +114,16 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = fmt.Errorf("panic: %v", p)
 		}
 		if err != nil {
+			// Provider and git errors can quote what they were sent, so
+			// the reason is redacted like everything else published.
+			reason := r.redact(err.Error())
 			// A more specific outcome (such as a bootstrap cancellation) may
 			// already be recorded; only fall back to infra_error when the
 			// run never got far enough to decide anything else.
 			if r.rec.Status == runstore.StatusRunning {
-				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, err.Error()
+				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
 			}
-			d.Log.Error("run failed", "stage", r.rec.Stage, "err", err)
+			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
 		finished := d.Now().UTC()
 		r.rec.FinishedAt = &finished
@@ -137,6 +171,82 @@ func (r *run) save(ctx context.Context) {
 	if err := r.d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// redact removes every known secret value from s.
+func (r *run) redact(s string) string { return agent.Redact(s, r.secrets) }
+
+// addSecret adds v to the values redacted from everything the run publishes.
+func (r *run) addSecret(v string) {
+	if v != "" && !slices.Contains(r.secrets, v) {
+		r.secrets = append(r.secrets, v)
+	}
+}
+
+// openProvider opens the provider of kind, which from names the source of
+// (for error messages), and fetches its first git credentials.
+func (r *run) openProvider(ctx context.Context, kind, from string) error {
+	p, secrets, err := r.d.OpenProvider(ctx, kind, r.spec.Repo)
+	for _, s := range secrets {
+		r.addSecret(s)
+	}
+	if err != nil {
+		return fmt.Errorf("opening the %s provider: %w", kind, err)
+	}
+	r.provider, r.providerKind, r.providerFrom = p, kind, from
+	if err := r.refreshGitAuth(ctx, bootstrapAuthMinValid); err != nil {
+		return fmt.Errorf("getting git credentials from the %s provider: %w", kind, err)
+	}
+	return nil
+}
+
+// refreshGitAuth gets git credentials valid for at least minValid and puts
+// them in the environment of the runner's git and of the agent (design
+// §6.2). With the GitHub provider this is what replaces a near-expiry
+// installation token between stages.
+func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error {
+	auth, err := r.provider.GitAuth(ctx, minValid)
+	if err != nil {
+		return err
+	}
+	r.addSecret(auth.Token)
+	for _, v := range auth.Env {
+		r.addSecret(v)
+	}
+	r.auth = auth
+	vars := r.authVars()
+	if r.repo != nil {
+		r.repo.Env = gitops.WithVars(r.repo.Env, vars)
+	}
+	if r.env != nil {
+		r.env = gitops.WithVars(r.env, vars)
+	}
+	return nil
+}
+
+// authVars is the environment that carries the current git credentials.
+func (r *run) authVars() map[string]string {
+	vars := map[string]string{}
+	if r.auth.Token != "" && r.credURL != "" {
+		if cred, err := gitops.CredentialVars(r.credURL, r.auth.Username, r.auth.Token); err == nil {
+			maps.Copy(vars, cred)
+		} else {
+			r.d.Log.Warn("git credentials not applied", "err", r.redact(err.Error()))
+		}
+	}
+	maps.Copy(vars, r.auth.Env)
+	return vars
+}
+
+// originURL returns the checkout's origin URL, or the remote it will be
+// cloned from when there is no checkout yet.
+func (r *run) originURL(ctx context.Context) string {
+	if repo, err := gitops.Open(r.d.WorkDir, nil); err == nil {
+		if u, err := repo.OriginURL(ctx); err == nil {
+			return u
+		}
+	}
+	return r.d.Remote
 }
 
 // fail records the first reason the run cannot produce a ready PR.
@@ -235,7 +345,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return err
 	}
 
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.IdentityEnv())
+	// The clone and fetch below may already need credentials, so the
+	// provider is opened now if anything but fugaro.yaml names it.
+	origin := r.originURL(ctx)
+	r.credURL = gitops.CredentialURL(origin)
+	if kind, from := r.d.ProviderKind, "the --provider flag"; kind != "" {
+		if err := r.openProvider(ctx, kind, from); err != nil {
+			return err
+		}
+	} else if kind := gitprov.KindForURL(origin); kind != "" {
+		if err := r.openProvider(ctx, kind, "the origin URL "+origin); err != nil {
+			return err
+		}
+	}
+	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), r.authVars()))
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
@@ -265,6 +388,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
 	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	switch {
+	case r.provider == nil:
+		if err := r.openProvider(ctx, cfg.Git.Provider, "git.provider"); err != nil {
+			return err
+		}
+	case r.providerKind != cfg.Git.Provider:
+		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
+	}
 	if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 		return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 	}
@@ -303,10 +434,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	if r.env, r.secrets, err = agent.BuildEnv(r.d.Env, agent.EnvSpec{
+	maps.Copy(set, r.authVars())
+	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
-	}); err != nil {
+	})
+	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)
+	}
+	r.env = env
+	for _, s := range secrets {
+		r.addSecret(s)
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
@@ -365,6 +502,10 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	r.rec.Stage = name
 	r.save(ctx)
 	log := r.d.Log.With("stage", name)
+	// Refresh before the redactors below are built, so they know the new token.
+	if err := r.refreshGitAuth(ctx, r.budget.Stage+gitAuthSlack); err != nil {
+		log.Warn("refreshing git credentials failed; the agent keeps the current ones", "err", r.redact(err.Error()))
+	}
 	log.Info("stage started", "n", n)
 
 	var transcript bytes.Buffer
@@ -438,18 +579,34 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.failReason != "" {
 		ready, reason = false, r.failReason
 	}
+	if err := r.refreshGitAuth(ctx, r.wf.Timeouts.FinalizeReserve.Duration); err != nil {
+		r.d.Log.Warn("refreshing git credentials failed; pushing with the current ones", "err", r.redact(err.Error()))
+	}
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}
 	title, body := r.prText()
-	pr, err := r.d.Provider.EnsurePR(ctx, gitprov.PRSpec{
+	pr, err := r.ensurePR(ctx, gitprov.PRSpec{
 		Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
 		Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
 	})
-	if err != nil {
+	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	var partial *gitprov.PartialError
+	switch {
+	case errors.As(err, &partial):
+		r.d.Log.Warn("pull request settings not fully applied", "err", r.redact(err.Error()))
+		if ready && pr.Draft {
+			// EnsurePR's adapters can only err this way in the
+			// conservative direction: the PR was left looking more
+			// like a draft than requested, never more ready. A ready
+			// outcome must never be reported unless the PR really is
+			// ready, so this is recorded as a draft with a reason
+			// naming the failure.
+			ready, reason = false, r.redact(err.Error())
+		}
+	case err != nil:
 		return fmt.Errorf("opening pull request: %w", err)
 	}
-	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
 	r.rec.Reason = reason
 	switch {
 	case ready:
@@ -460,14 +617,42 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	report := agent.Redact(Report(r.rec, r.d.Store.Prefix()), r.secrets)
-	if err := r.d.Provider.Comment(ctx, pr, report); err != nil {
-		r.d.Log.Warn("posting the run report failed", "err", err)
+	if err := r.provider.Comment(ctx, pr, report); err != nil {
+		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
 	}
 	if err := r.d.Store.PutFile(ctx, "report.md", []byte(report), "text/markdown"); err != nil {
 		r.d.Log.Warn("storing the run report failed", "err", err)
 	}
 	r.rec.Stage = "writeback" // cache write-back arrives in M4
 	return nil
+}
+
+// ensurePR opens or updates the pull request, retrying a plain failure: a
+// transient provider error at this point would otherwise leave a pushed
+// branch with no pull request. EnsurePR finds what an earlier attempt
+// created, so retrying never duplicates the PR. A *gitprov.PartialError is
+// returned as is, with its populated PR, rather than retried: it means the
+// PR exists but some settings, in the conservative direction, could not be
+// applied. When retries run out on a plain error, the last populated PR is
+// still returned alongside it, so the caller can keep it in the record.
+func (r *run) ensurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	delay := r.d.RetryDelay
+	if delay == 0 {
+		delay = 3 * time.Second
+	}
+	for attempt := 1; ; attempt++ {
+		pr, err := r.provider.EnsurePR(ctx, spec)
+		var partial *gitprov.PartialError
+		if err == nil || errors.As(err, &partial) || attempt == prAttempts {
+			return pr, err
+		}
+		r.d.Log.Warn("opening the pull request failed; retrying", "attempt", attempt, "err", r.redact(err.Error()))
+		select {
+		case <-ctx.Done():
+			return pr, err
+		case <-time.After(delay):
+		}
+	}
 }
 
 // uploadVerifyRecords stores each verify record as verify/<n>.json in the
