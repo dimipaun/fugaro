@@ -1,0 +1,66 @@
+name: images
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths: ["images/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".dockerignore", ".github/workflows/images.yml"]
+  schedule:
+    - cron: "23 3 * * *" # nightly patch refresh of the latest release
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  base:
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [web-node] # server-jvm joins after the server spike
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pick the version
+        id: version
+        run: |
+          publish=true
+          case "$GITHUB_EVENT_NAME" in
+            push) tag=$GITHUB_REF_NAME ;;
+            pull_request) tag=""; version="pr-${{ github.event.number }}"; publish=false ;;
+            *)
+              tag=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1)
+              if [ -n "$tag" ]; then git checkout --quiet "refs/tags/$tag"; else version=nightly; publish=false; fi ;;
+          esac
+          if [ -n "$tag" ]; then version=${tag#v}; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+      - name: Build
+        env:
+          FUGARO_VERSION: ${{ steps.version.outputs.version }}
+        run: images/build-base.sh ${{ matrix.base }} fugaro-${{ matrix.base }}:ci
+      - name: Smoke test
+        run: images/smoke.sh fugaro-${{ matrix.base }}:ci ${{ matrix.base }}
+      - name: Scan
+        if: github.event_name != 'pull_request'
+        run: images/scan.sh fugaro-${{ matrix.base }}:ci
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for t in "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.major }}"; do
+            docker tag "fugaro-${{ matrix.base }}:ci" "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
+            docker push "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
+          done
+  docker-tests:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -tags docker -p 1 -timeout 45m ./images/ ./internal/image/ ./internal/e2e/

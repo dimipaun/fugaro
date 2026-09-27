@@ -1,0 +1,61 @@
+# Cloud Build config for one (repo, workflow) derived image (design §7.2).
+# M4's `fugaro image build` submits it and M5's nightly trigger runs it;
+# both set the substitutions. The git credential comes from Secret Manager as
+# a credential-store line (https://<user>:<token>@<host>). Only the source
+# step sees it as a variable; the build gets it as the git-credentials
+# BuildKit secret, which no layer keeps.
+substitutions:
+  _REPO_URL: ""       # https clone URL without credentials; also the checkout's origin
+  _BASE_BRANCH: main
+  _WORKFLOW: ""
+  _FUGARO_BASE: ""    # ghcr.io/dimipaun/fugaro-<base>:<version>; pinned by digest below
+  _IMAGE: ""          # the Artifact Registry image name, without a tag
+  _GIT_SECRET: ""     # Secret Manager version resource of the credential line
+options:
+  logging: CLOUD_LOGGING_ONLY
+availableSecrets:
+  secretManager:
+    - versionName: ${_GIT_SECRET}
+      env: GIT_CREDENTIALS
+steps:
+  # A shallow clone, so render can read fugaro.yaml and the lockfiles.
+  - id: source
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    secretEnv: [GIT_CREDENTIALS]
+    args:
+      - -c
+      - |
+        set -eu
+        (umask 077 && printf '%s\n' "$$GIT_CREDENTIALS" > /builder/home/.git-credentials)
+        git -c credential.helper='store --file=/builder/home/.git-credentials' \
+          clone --quiet --depth 1 --branch "${_BASE_BRANCH}" "${_REPO_URL}" /workspace/src
+        install -d -m 0777 /workspace/context
+  # The base image's own fugaro renders the Dockerfile. It runs as fugaro,
+  # so the root-owned clone needs safe.directory.
+  - id: render
+    name: ${_FUGARO_BASE}
+    dir: src
+    entrypoint: sh
+    env: [GIT_CONFIG_COUNT=1, GIT_CONFIG_KEY_0=safe.directory, "GIT_CONFIG_VALUE_0=*"]
+    args: [-c, 'fugaro image render --workflow "${_WORKFLOW}" > /workspace/context/Dockerfile']
+  # The Dockerfile clones the full base branch itself, with the credential
+  # as a BuildKit secret, and pins nothing but the base digest passed here.
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env: [DOCKER_BUILDKIT=1]
+    args:
+      - -c
+      - |
+        set -eu
+        docker pull --quiet "${_FUGARO_BASE}"
+        base=$$(docker inspect --format '{{index .RepoDigests 0}}' "${_FUGARO_BASE}")
+        docker build --progress plain \
+          --build-arg "FUGARO_BASE=$$base" \
+          --build-arg "REPO_URL=${_REPO_URL}" \
+          --build-arg "BASE_BRANCH=${_BASE_BRANCH}" \
+          --secret id=git-credentials,src=/builder/home/.git-credentials \
+          --tag "${_IMAGE}:latest" /workspace/context
+        rm -f /builder/home/.git-credentials
+images: ["${_IMAGE}:latest"]
