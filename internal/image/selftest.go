@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -164,16 +165,45 @@ func checkCheckout(ctx context.Context, spec SelftestSpec, add func(string, bool
 		add("origin", true, "%s", origin)
 	}
 	// Every config scope counts: the runner supplies credentials at run time,
-	// and a helper baked in anywhere would shadow it. Only the section is
+	// and a helper baked in anywhere would shadow it. The patterns are
+	// finalize-checkout's own (images.GitCredential*). Only the section is
 	// reported, because the key or value can hold a token.
-	creds, _ := output(ctx, "git", "-C", spec.RepoDir, "config", "--get-regexp", `^(credential\..*|http\..*\.extraheader|url\..*\.insteadof)$`)
-	if creds != "" {
-		section, _, _ := strings.Cut(creds, ".")
+	if section := credentialConfigSection(ctx, spec.RepoDir); section != "" {
 		add("git-credentials", false, "git config still has a %s setting", section)
 	} else {
-		add("git-credentials", true, "no credential helper, header or rewrite in any git config scope")
+		add("git-credentials", true, "no credential helper, header or credential-bearing rewrite in any git config scope")
 	}
 	return true
+}
+
+// credentialURLRE is images.GitCredentialURL, applied to insteadOf and
+// pushInsteadOf lines the way finalize-checkout greps them.
+var credentialURLRE = regexp.MustCompile(images.GitCredentialURL)
+
+// credentialConfigSection returns the section ("credential", "http" or
+// "url") of the first credential setting in any git config scope of repo, or
+// "" if there is none. It applies finalize-checkout's checks: any
+// credential.* key, any http.extraheader, and any url.*.insteadOf or
+// url.*.pushInsteadOf whose line carries a URL with userinfo.
+func credentialConfigSection(ctx context.Context, repo string) string {
+	get := func(re string) string {
+		out, _ := output(ctx, "git", "-C", repo, "config", "--get-regexp", re)
+		return out
+	}
+	if get(images.GitCredentialHelperKey) != "" {
+		return "credential"
+	}
+	if get(images.GitCredentialExtraHeaderKey) != "" {
+		return "http"
+	}
+	for _, re := range []string{images.GitCredentialInsteadOfKey, images.GitCredentialPushInsteadOfKey} {
+		for _, line := range strings.Split(get(re), "\n") {
+			if credentialURLRE.MatchString(line) {
+				return "url"
+			}
+		}
+	}
+	return ""
 }
 
 func checkHome(add func(string, bool, string, ...any)) {

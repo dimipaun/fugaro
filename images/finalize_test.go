@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -206,5 +207,27 @@ func TestFinalizeCheckoutAcceptsGlobalNonCredentialInsteadOf(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", global)
 	if out, err := finalize(t, repo, home); err != nil {
 		t.Fatalf("finalize-checkout: %v\n%s", err, out)
+	}
+}
+
+// TestFinalizeCheckoutUsesTheSharedCredentialPatterns keeps finalize-checkout
+// and fugaro image selftest on one source of truth: every pattern the
+// selftest applies (images.GitCredential*) appears verbatim, single-quoted,
+// in the script.
+func TestFinalizeCheckoutUsesTheSharedCredentialPatterns(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("common", "finalize-checkout.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, re := range []string{
+		images.GitCredentialHelperKey,
+		images.GitCredentialExtraHeaderKey,
+		images.GitCredentialInsteadOfKey,
+		images.GitCredentialPushInsteadOfKey,
+		images.GitCredentialURL,
+	} {
+		if !strings.Contains(string(data), "'"+re+"'") {
+			t.Errorf("finalize-checkout.sh does not use the pattern '%s'", re)
+		}
 	}
 }

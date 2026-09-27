@@ -82,6 +82,20 @@ func TestSelftestAcceptsAReferencedToken(t *testing.T) {
 	}
 }
 
+// TestSelftestAcceptsANonCredentialInsteadOf mirrors finalize-checkout's
+// TestFinalizeCheckoutAcceptsGlobalNonCredentialInsteadOf: a plain mirror
+// rewrite carries no credential, so an image finalize accepts must also pass
+// the selftest.
+func TestSelftestAcceptsANonCredentialInsteadOf(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	testutil.Git(t, spec.RepoDir, "config", "url.https://mirror.example.invalid/.insteadOf", "https://example.invalid/")
+	testutil.Git(t, spec.RepoDir, "config", "url.https://mirror.example.invalid/.pushInsteadOf", "https://example.invalid/")
+	if r := Selftest(context.Background(), spec, &bytes.Buffer{}); !r.Passed {
+		t.Fatalf("report %+v", r)
+	}
+}
+
 func TestSelftestFailures(t *testing.T) {
 	cases := []struct {
 		name, check string
@@ -103,6 +117,12 @@ func TestSelftestFailures(t *testing.T) {
 		}},
 		{"token in an insteadOf rule", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			testutil.Git(t, s.RepoDir, "config", "url.https://x-access-token:s3cr3t@github.com/.insteadOf", "https://github.com/")
+		}},
+		{"unscoped extraheader", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
+			testutil.Git(t, s.RepoDir, "config", "http.extraheader", "AUTHORIZATION: basic s3cr3t")
+		}},
+		{"token in a pushInsteadOf rule", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
+			testutil.Git(t, s.RepoDir, "config", "url.https://x-access-token:s3cr3t@github.com/.pushInsteadOf", "https://github.com/")
 		}},
 		{"credential helper in the global config", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			global := filepath.Join(t.TempDir(), "gitconfig")
