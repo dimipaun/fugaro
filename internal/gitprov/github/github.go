@@ -126,7 +126,10 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 		}
 	}
 	if len(spec.Reviewers) > 0 {
-		if err := p.api.Do(ctx, "POST", p.repoPath(fmt.Sprintf("/pulls/%d/requested_reviewers", pr.Number)), reviewers(spec.Reviewers), nil); err != nil {
+		body, err := p.reviewers(spec.Reviewers)
+		if err != nil {
+			errs = append(errs, err)
+		} else if err := p.api.Do(ctx, "POST", p.repoPath(fmt.Sprintf("/pulls/%d/requested_reviewers", pr.Number)), body, nil); err != nil {
 			errs = append(errs, fmt.Errorf("requesting reviewers: %w", err))
 		}
 	}
@@ -186,6 +189,16 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 	switch {
 	case draft && !pr.Draft:
 		if err := p.graphql(ctx, convertToDraftMutation, pr.NodeID); err != nil {
+			if !draftUnsupportedGraphQL(err) {
+				// Some other failure (a 5xx, a dropped connection, a
+				// permissions error): the PR is unchanged, so return it
+				// alongside a plain, retryable error. Trying the title
+				// fallback here would be presumptuous — GitHub never said
+				// drafts are unsupported, so the caller should retry the
+				// real conversion instead.
+				return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: pr.Draft},
+					fmt.Errorf("marking pull request #%d a draft: %w", pr.Number, err)
+			}
 			// No draft support: say so in the title instead. If that also
 			// fails, the PR is left looking fully ready — the unsafe
 			// direction — so report a plain, retryable error rather than
@@ -207,8 +220,14 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 		}
 	}
 	if title != pr.Title {
+		// This step only ever strips the "[DRAFT] " prefix (the switch
+		// above already returned for the case that adds it): a failure
+		// here leaves the PR's title looking more draft-like than
+		// requested, the conservative direction, so it is a PartialError
+		// with the draft-looking state rather than a plain error.
 		if err := p.retitle(ctx, pr.Number, title); err != nil {
-			return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: pr.Draft}, fmt.Errorf("retitling pull request #%d: %w", pr.Number, err)
+			return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: true},
+				&gitprov.PartialError{Err: fmt.Errorf("retitling pull request #%d: %w", pr.Number, err)}
 		}
 	}
 	return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: draft}, nil
@@ -216,6 +235,22 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 
 func (p *Provider) retitle(ctx context.Context, number int, title string) error {
 	return p.api.Do(ctx, "PATCH", p.repoPath(fmt.Sprintf("/pulls/%d", number)), map[string]any{"title": title}, nil)
+}
+
+// draftUnsupportedGraphQL reports whether err is GitHub's GraphQL API
+// refusing to convert a pull request to a draft because the repository's
+// plan does not support draft pull requests ("Draft pull requests are not
+// supported in this repository."). Unlike draftUnsupported (the REST
+// create path, which has a reliable 422 status to key off), a GraphQL
+// error carries no distinct status, so this matches on the message text;
+// requiring both "draft" and "not supported" keeps it from firing on an
+// unrelated draft-adjacent error.
+func draftUnsupportedGraphQL(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "draft") && strings.Contains(msg, "not supported")
 }
 
 func (p *Provider) graphql(ctx context.Context, query, id string) error {
@@ -238,16 +273,24 @@ func (p *Provider) graphql(ctx context.Context, query, id string) error {
 	return nil
 }
 
-func reviewers(names []string) map[string][]string {
+// reviewers splits names (user logins, or "org/team" for a team) into the
+// requested_reviewers request body. A team's org must be the repository's
+// own owner: GitHub cannot request a review from another organization's
+// team, and silently keeping just the team name would ask the wrong team
+// (or a same-named one) instead of clearly failing.
+func (p *Provider) reviewers(names []string) (map[string][]string, error) {
 	out := map[string][]string{"reviewers": {}, "team_reviewers": {}}
 	for _, n := range names {
-		if _, team, ok := strings.Cut(n, "/"); ok {
+		if org, team, ok := strings.Cut(n, "/"); ok {
+			if !strings.EqualFold(org, p.owner) {
+				return nil, fmt.Errorf("reviewer %q names a team outside %s; team reviewers must belong to the repository's own organization", n, p.owner)
+			}
 			out["team_reviewers"] = append(out["team_reviewers"], team)
 		} else {
 			out["reviewers"] = append(out["reviewers"], n)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // Comment implements gitprov.Provider.

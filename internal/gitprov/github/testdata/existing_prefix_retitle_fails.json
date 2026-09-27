@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/installation", "status": 200, "response": {"id": 777}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": "ghs_fixture_token_1", "expires_at": "2026-09-27T11:00:00Z"}},
+  {"method": "GET", "path": "/repos/acme/web/pulls?head=acme:fugaro/20260927-101500-abcd&state=open&per_page=1", "auth": "Bearer ghs_fixture_token_1", "status": 200, "response": [{"number": 16, "html_url": "https://github.com/acme/web/pull/16", "draft": false, "node_id": "PR_kwDOA16", "title": "[DRAFT] Add search"}]},
+  {"method": "PATCH", "path": "/repos/acme/web/pulls/16", "request": {"title": "Add search"}, "status": 403, "response": {"message": "Resource not accessible by integration"}}
+]

@@ -81,16 +81,57 @@ func TestReadyRemovesDraftPrefix(t *testing.T) {
 	}
 }
 
-// TestMarkReadyFailureIsAnError covers the direction rule (gitprov.go,
+// TestMarkReadyFailureIsPartial covers the direction rule (gitprov.go,
 // PartialError): a failed markPullRequestReadyForReview leaves the pull
 // request looking like a draft, the conservative direction, so it is a
 // *gitprov.PartialError with the populated (still-draft) PR rather than an
 // empty one.
-func TestMarkReadyFailureIsAnError(t *testing.T) {
+func TestMarkReadyFailureIsPartial(t *testing.T) {
 	p := open(t, "mark_ready_fails.json")
 	pr, err := p.EnsurePR(ctx, spec(false, nil, nil))
 	var partial *gitprov.PartialError
 	if !errors.As(err, &partial) || pr.Number != 15 || !pr.Draft || !strings.Contains(err.Error(), "not accessible") {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestRetitleFailureStrippingPrefixIsPartial covers "ready wanted, not a
+// draft, prefixed title": the shared retitle step only ever strips the
+// "[DRAFT] " prefix, so a failure there leaves the title looking more
+// draft-like than requested — the conservative direction — and must be a
+// *gitprov.PartialError reporting the draft-looking state, not a plain
+// error or an empty PR.
+func TestRetitleFailureStrippingPrefixIsPartial(t *testing.T) {
+	p := open(t, "existing_prefix_retitle_fails.json")
+	pr, err := p.EnsurePR(ctx, spec(false, nil, nil))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) || pr.Number != 16 || !pr.Draft || !strings.Contains(err.Error(), "not accessible") {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestDraftConversion5xxIsPlainError covers a GraphQL failure that is not
+// GitHub saying drafts are unsupported (here, a 500): the title fallback
+// must not be attempted (the fixture holds no PATCH exchange), and the
+// existing, unmodified PR is returned alongside a plain, retryable error.
+func TestDraftConversion5xxIsPlainError(t *testing.T) {
+	p := open(t, "draft_conversion_5xx.json")
+	pr, err := p.EnsurePR(ctx, spec(true, nil, nil))
+	var partial *gitprov.PartialError
+	if err == nil || errors.As(err, &partial) || pr.Number != 20 || pr.Draft {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestReviewerTeamMustBeOwnersTeam covers the "org/team" reviewer form: a
+// team outside the repository's own owner cannot be requested, so it must
+// be rejected clearly (as a PartialError alongside the created PR) rather
+// than silently asking a same-named team in the wrong organization.
+func TestReviewerTeamMustBeOwnersTeam(t *testing.T) {
+	p := open(t, "reviewer_wrong_org.json")
+	pr, err := p.EnsurePR(ctx, spec(false, nil, []string{"otherorg/platform"}))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) || pr.Number != 21 || !strings.Contains(err.Error(), "otherorg/platform") {
 		t.Fatalf("pr = %+v, err = %v", pr, err)
 	}
 }
