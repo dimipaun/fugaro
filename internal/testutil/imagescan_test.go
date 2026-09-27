@@ -97,11 +97,23 @@ func TestTarContainsZstdEarlyMatch(t *testing.T) {
 	tarball := buildSaveTar(t, map[string][]byte{
 		"layer.tar": zstdCompress(t, canary+strings.Repeat("x", 8<<20)),
 	})
-	done := make(chan bool, 1)
-	go func() { done <- TarContains(t, bytes.NewReader(tarball), canary) }()
+	// tarContains, not TarContains: the scan runs off the test goroutine,
+	// where t.Fatal must not be called, so its result comes back here.
+	type result struct {
+		found bool
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		found, err := tarContains(bytes.NewReader(tarball), canary)
+		done <- result{found, err}
+	}()
 	select {
-	case ok := <-done:
-		if !ok {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatal(r.err)
+		}
+		if !r.found {
 			t.Error("TarContains missed the canary at the start of a zstd-compressed layer")
 		}
 	case <-time.After(60 * time.Second):

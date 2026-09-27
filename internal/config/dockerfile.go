@@ -25,8 +25,13 @@ type stage struct {
 }
 
 // directiveRE matches a parser directive such as "# escape=`", which Docker
-// honours only in the comment lines at the very top of the file.
+// honours only in the comment lines at the very top of the file. Only the
+// names in knownDirectives count: Docker reads any other "# name=value" as a
+// plain comment, which ends the run of directives.
 var directiveRE = regexp.MustCompile(`^#\s*([A-Za-z][A-Za-z0-9]*)\s*=\s*(.*?)\s*$`)
+
+// knownDirectives are the parser directives BuildKit recognises.
+var knownDirectives = []string{"syntax", "escape", "check"}
 
 // parseDockerfile splits a Dockerfile into instructions. It joins
 // continuation lines, drops comment lines, and folds heredoc bodies into
@@ -45,7 +50,7 @@ func parseDockerfile(data []byte) []instruction {
 		line := strings.TrimRight(raw, "\r")
 		if directives {
 			m := directiveRE.FindStringSubmatch(line)
-			if m == nil {
+			if m == nil || !slices.Contains(knownDirectives, strings.ToLower(m[1])) {
 				directives = false
 			} else {
 				if strings.EqualFold(m[1], "escape") && (m[2] == "`" || m[2] == `\`) {

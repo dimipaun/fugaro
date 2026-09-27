@@ -26,6 +26,16 @@ import (
 // test suites do the same.
 func TarContains(t *testing.T, r io.Reader, needle string) bool {
 	t.Helper()
+	found, err := tarContains(r, needle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return found
+}
+
+// tarContains is TarContains returning its failure instead of failing a
+// test, so it can run off the test goroutine.
+func tarContains(r io.Reader, needle string) (bool, error) {
 	found := false
 	tr := tar.NewReader(r)
 	for {
@@ -34,7 +44,7 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 			break
 		}
 		if err != nil {
-			t.Fatalf("reading tar stream: %v", err)
+			return false, fmt.Errorf("reading tar stream: %w", err)
 		}
 		if hdr.Typeflag != tar.TypeReg {
 			continue
@@ -46,11 +56,13 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 		case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
 			gz, err := gzip.NewReader(br)
 			if err != nil {
-				t.Fatalf("%s: %v", hdr.Name, err)
+				return false, fmt.Errorf("%s: %w", hdr.Name, err)
 			}
 			er = gz
 		case len(magic) == 4 && magic[0] == 0x28 && magic[1] == 0xb5 && magic[2] == 0x2f && magic[3] == 0xfd:
-			er, wait = decompressZstd(t, hdr.Name, br)
+			if er, wait, err = decompressZstd(hdr.Name, br); err != nil {
+				return false, err
+			}
 		}
 		ok, scanErr := streamContains(er, []byte(needle))
 		// Reap the zstd -dc child (if any) before acting on scanErr, so a
@@ -63,11 +75,11 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 			}
 		}
 		if scanErr != nil {
-			t.Fatalf("scanning %s: %v", hdr.Name, scanErr)
+			return false, fmt.Errorf("scanning %s: %w", hdr.Name, scanErr)
 		}
 		found = found || ok
 	}
-	return found
+	return found, nil
 }
 
 // decompressZstd streams r through `zstd -dc`, returning its stdout and a
@@ -77,18 +89,17 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 // reading before EOF (a match or a read error), it kills zstd first, since
 // zstd may be blocked writing to the unread pipe and Wait would never return,
 // and ignores the resulting exit status.
-func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func(stoppedEarly bool) error) {
-	t.Helper()
+func decompressZstd(name string, r io.Reader) (io.Reader, func(stoppedEarly bool) error, error) {
 	cmd := exec.Command("zstd", "-dc", "-q")
 	cmd.Stdin = r
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		t.Fatal(err)
+		return nil, nil, err
 	}
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("running zstd -dc for %s: %v (install zstd to scan zstd-compressed layers)", name, err)
+		return nil, nil, fmt.Errorf("running zstd -dc for %s: %w (install zstd to scan zstd-compressed layers)", name, err)
 	}
 	return stdout, func(stoppedEarly bool) error {
 		if stoppedEarly {
@@ -100,7 +111,7 @@ func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func(sto
 			return fmt.Errorf("%v: %s", err, stderr.String())
 		}
 		return nil
-	}
+	}, nil
 }
 
 // streamContains reports whether needle occurs in r, reading it in chunks.

@@ -113,6 +113,10 @@ func TestParseDockerfileContinuations(t *testing.T) {
 			[]instruction{{"FROM", "base"}, {"RUN", "a b"}}},
 		{"escape comment after an instruction is not a directive", "FROM base\n# escape=`\nRUN a `\nRUN b \\\n c\n",
 			[]instruction{{"FROM", "base"}, {"RUN", "a `"}, {"RUN", "b c"}}},
+		{"escape after an unknown directive is not honoured", "# foo=bar\n# escape=`\nFROM base\nRUN a `\nRUN b \\\n c\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "a `"}, {"RUN", "b c"}}},
+		{"escape after a check directive is honoured", "# check=skip=all\n# escape=`\nFROM base\nRUN a `\n b\n",
+			[]instruction{{"FROM", "base"}, {"RUN", "a b"}}},
 		{"escape comment after a plain comment is not a directive", "# hello\n# escape=`\nFROM base\nRUN b \\\n c\n",
 			[]instruction{{"FROM", "base"}, {"RUN", "b c"}}},
 	}

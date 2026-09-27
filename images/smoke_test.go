@@ -39,7 +39,10 @@ case "$cmd" in
     printf 'gh version %s (2026-09-15)\nhttps://github.com/cli/cli/releases/tag/v%s\n' "$FAKE_GH_VERSION" "$FAKE_GH_VERSION" ;;
   "node -v")
     [ "$missing" = node ] && fail_missing node
-    echo "v$FAKE_NODE_VERSION.21.0" ;;
+    case "$FAKE_NODE_VERSION" in
+      *.*.*) echo "v$FAKE_NODE_VERSION" ;;
+      *) echo "v$FAKE_NODE_VERSION.21.0" ;;
+    esac ;;
   "corepack --version")
     [ "$missing" = corepack ] && fail_missing corepack
     echo "0.36.0" ;;
@@ -155,6 +158,30 @@ func TestSmokeChecksTheDockerfilePinsByDefault(t *testing.T) {
 			out, err := runSmoke(t, "", tc.fake)
 			if err == nil || !strings.Contains(out, "not pinned "+tc.pin) {
 				t.Fatalf("smoke.sh with %s: err=%v\n%s", tc.fake, err, out)
+			}
+		})
+	}
+}
+
+// TestSmokeNodePinMajorOrExact: NODE_VERSION may pin a major (24), which
+// matches any 24.x.y, or an exact release (24.19.0), which must match
+// exactly.
+func TestSmokeNodePinMajorOrExact(t *testing.T) {
+	for _, tc := range []struct {
+		pin, image string
+		ok         bool
+	}{
+		{"24", "24.19.0", true},
+		{"24", "240.1.0", false},
+		{"24", "25.0.0", false},
+		{"24.19.0", "24.19.0", true},
+		{"24.19.0", "24.19.1", false},
+		{"24.1", "24.19.0", false},
+	} {
+		t.Run(tc.pin+" vs "+tc.image, func(t *testing.T) {
+			out, err := runSmoke(t, "", "NODE_VERSION="+tc.pin, "FAKE_NODE_VERSION="+tc.image)
+			if ok := err == nil && strings.Contains(out, "smoke: fake-image ok"); ok != tc.ok {
+				t.Fatalf("smoke.sh NODE_VERSION=%s against node v%s: err=%v, want ok=%t\n%s", tc.pin, tc.image, err, tc.ok, out)
 			}
 		})
 	}

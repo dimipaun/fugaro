@@ -157,8 +157,9 @@ func TestCIWorkflowNoUnsafeInterpolation(t *testing.T) {
 }
 
 // TestWorkflowActionsPinnedBySHA pins every third-party action in both
-// workflows to a full commit SHA, with the tag it resolves to as a comment,
-// so a moved or compromised tag can't change what CI runs.
+// workflows to a full commit SHA, with the exact release tag it sits on as
+// a comment, so a moved or compromised tag can't change what CI runs, and a
+// Dependabot config keeps the pins current.
 func TestWorkflowActionsPinnedBySHA(t *testing.T) {
 	usesRE := regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)(.*)$`)
 	pinnedRE := regexp.MustCompile(`^[\w.-]+/[\w./-]+@[0-9a-f]{40}$`)
@@ -172,10 +173,32 @@ func TestWorkflowActionsPinnedBySHA(t *testing.T) {
 			t.Errorf("%s has no uses: lines", wf)
 		}
 		for _, m := range matches {
-			if !pinnedRE.MatchString(m[1]) || !regexp.MustCompile(`^\s+# v\d`).MatchString(m[2]) {
-				t.Errorf("%s: %q is not pinned as owner/repo@<40-hex sha> # vX", wf, strings.TrimSpace(m[0]))
+			if !pinnedRE.MatchString(m[1]) || !regexp.MustCompile(`^\s+# v\d+\.\d+\.\d+\s*$`).MatchString(m[2]) {
+				t.Errorf("%s: %q is not pinned as owner/repo@<40-hex sha> # vX.Y.Z", wf, strings.TrimSpace(m[0]))
 			}
 		}
+	}
+	data, err := os.ReadFile("../.github/dependabot.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var db struct {
+		Updates []struct {
+			Ecosystem string `yaml:"package-ecosystem"`
+			Schedule  struct {
+				Interval string `yaml:"interval"`
+			} `yaml:"schedule"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(data, &db); err != nil {
+		t.Fatal(err)
+	}
+	weekly := false
+	for _, u := range db.Updates {
+		weekly = weekly || (u.Ecosystem == "github-actions" && u.Schedule.Interval == "weekly")
+	}
+	if !weekly {
+		t.Errorf("dependabot.yml has no weekly github-actions update: %+v", db.Updates)
 	}
 }
 

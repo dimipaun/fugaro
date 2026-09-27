@@ -48,9 +48,17 @@ case "$base" in
     echo "node $node_version, corepack $corepack_version"
     NODE_VERSION=${NODE_VERSION:-$(arg_default NODE_VERSION)}
     [ -n "$NODE_VERSION" ] || fail "$dockerfile has no ARG NODE_VERSION=... pin"
-    case "$node_version" in
-      v"$NODE_VERSION".*) ;;
-      *) fail "node -v reports '$node_version', not pinned NODE_VERSION major=$NODE_VERSION" ;;
+    # A dotted pin (24.19.0) must match exactly; a bare major (24) matches
+    # any release in it.
+    case "$NODE_VERSION" in
+      *.*)
+        [ "$node_version" = "v$NODE_VERSION" ] \
+          || fail "node -v reports '$node_version', not pinned NODE_VERSION=$NODE_VERSION" ;;
+      *)
+        case "$node_version" in
+          v"$NODE_VERSION".*) ;;
+          *) fail "node -v reports '$node_version', not pinned NODE_VERSION major=$NODE_VERSION" ;;
+        esac ;;
     esac
     ;;
   server-jvm)

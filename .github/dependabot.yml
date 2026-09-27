@@ -1,0 +1,8 @@
+# Dependabot keeps the SHA-pinned GitHub Actions current, updating both the
+# pin and its "# vX.Y.Z" comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

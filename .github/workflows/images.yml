@@ -21,7 +21,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       move_major: ${{ steps.version.outputs.move_major }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Pick the version
@@ -79,7 +79,7 @@ jobs:
         base: [web-node] # server-jvm joins after the server spike
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: Checkout the resolved tag
@@ -99,7 +99,7 @@ jobs:
       - name: Save the image for the publish job
         if: needs.version.outputs.publish == 'true'
         run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: needs.version.outputs.publish == 'true'
         with:
           name: fugaro-${{ matrix.base }}-image
@@ -110,6 +110,12 @@ jobs:
   publish:
     needs: [version, base]
     if: needs.version.outputs.publish == 'true'
+    # Publishes queue rather than race: move_major is decided from the tags
+    # present when the version job ran, so two close tag pushes in one major
+    # must push in order or :<major> could end on the older one.
+    concurrency:
+      group: images-publish
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
@@ -119,7 +125,7 @@ jobs:
         base: [web-node] # server-jvm joins after the server spike
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: fugaro-${{ matrix.base }}-image
       - name: Load and publish
@@ -147,8 +153,8 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
       - run: go test -tags docker -p 1 -timeout 45m ./images/ ./internal/image/ ./internal/e2e/
