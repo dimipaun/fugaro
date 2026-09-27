@@ -27,14 +27,18 @@ type SelftestSpec struct {
 	Node      string          `json:"node,omitempty"` // the Node.js version image.node pinned, if any
 	CheckInit bool            `json:"check_init"`     // require tini as PID 1
 	Verify    verify.Settings `json:"verify"`         // the workflow's settings for `fugaro verify build`
-	// CheckHardening requires the finished image's own root-filesystem
-	// hardening: no setuid-root binary beyond the standard Ubuntu set (with
-	// sudo's setuid stripped, per the derived-image template), and
-	// /etc/sudoers.d holding only its README with /etc/sudoers granting the
-	// fugaro user nothing. It inspects real absolute paths (/, /etc/sudoers.d,
-	// /etc/sudoers), so it is only meaningful inside the real container, the
-	// same way CheckInit is; both are false in the host-only unit tests.
+	// CheckHardening requires /etc/sudoers.d to hold only its README and
+	// /etc/sudoers to grant the fugaro user nothing. It inspects real
+	// absolute paths, so it is only meaningful inside the real container,
+	// the same way CheckInit is; both are false in the host-only unit tests.
 	CheckHardening bool `json:"check_hardening,omitempty"`
+	// RootChecks makes the selftest run only the filesystem scans
+	// (no-setuid, no-setgid, no-file-caps) over /, and only as root:
+	// running as fugaro, a directory it can't list (mode 0711, say) could
+	// hide a setuid binary or a capability. `fugaro image build --local`
+	// runs it in a second container with --user 0 and merges the report.
+	// Every other field is ignored.
+	RootChecks bool `json:"root_checks,omitempty"`
 }
 
 // Check is one smoke-test result.
@@ -61,14 +65,15 @@ var literalTokenRE = regexp.MustCompile(`(?m)(_authToken\s*=|npmAuthToken\s*:)\s
 
 // expectedSetuidBinaries is the standard Ubuntu 24.04 setuid-root set,
 // observed directly on the fugaro-web-node base image (`find / -xdev -perm
-// -4000 -type f`, run as the fugaro user): chfn, chsh, gpasswd, mount,
-// newgrp, passwd, su and umount, all shipped by Ubuntu's login/util-linux
-// packages that images/web-node/Dockerfile installs transitively. sudo is
-// deliberately absent from this set: the base image ships it setuid, but
-// every derived-image build strips its setuid bit (`chmod u-s /usr/bin/sudo`
-// in images/derived/Dockerfile.tmpl) once image.setup steps are done, so a
-// finished image must never have a setuid sudo. If sudo (or anything else)
-// shows up here, that is a real finding, not noise.
+// -4000 -type f`): chfn, chsh, gpasswd, mount, newgrp, passwd and umount,
+// all shipped by Ubuntu's login/util-linux packages that
+// images/web-node/Dockerfile installs transitively. sudo and su are
+// deliberately absent from this set: the base image ships both setuid, but
+// every derived-image build strips their setuid bits (`chmod u-s` in
+// images/derived/Dockerfile.tmpl) once image.setup steps are done. For su
+// this closes the route a setup step's `passwd -d root` would open, since
+// Ubuntu's pam_unix allows an empty password (nullok). If sudo, su or
+// anything else shows up here, that is a real finding, not noise.
 //
 // A package installed by image.setup or image.apt that ships its own setuid
 // binary (for example openssh-client's ssh-keysign) will trip this check and
@@ -80,7 +85,6 @@ var expectedSetuidBinaries = map[string]bool{
 	"usr/bin/mount":   true,
 	"usr/bin/newgrp":  true,
 	"usr/bin/passwd":  true,
-	"usr/bin/su":      true,
 	"usr/bin/umount":  true,
 }
 
@@ -111,6 +115,20 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 
 	uid := os.Geteuid()
+	if spec.RootChecks {
+		if uid != 0 {
+			add("root-scan", false, "the filesystem scans must run as root (uid 0), not uid %d, or unreadable directories could hide files", uid)
+		} else {
+			checkSetuid(ctx, "/", add)
+			checkSetgid(ctx, "/", add)
+			checkFileCaps(ctx, "/", add)
+		}
+		r.Passed = len(r.Checks) > 0
+		for _, c := range r.Checks {
+			r.Passed = r.Passed && c.OK
+		}
+		return r
+	}
 	add("user", uid != 0, "uid %d", uid)
 	if _, err := exec.LookPath("sudo"); err == nil {
 		if _, err := output(ctx, "sudo", "-n", "true"); err == nil {
@@ -120,9 +138,6 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		}
 	}
 	if spec.CheckHardening {
-		checkSetuid(ctx, "/", add)
-		checkSetgid(ctx, "/", add)
-		checkFileCaps(ctx, "/", add)
 		checkSudoers("/etc/sudoers.d", "/etc/sudoers", add)
 	}
 	if spec.CheckInit {
@@ -200,11 +215,12 @@ func checkCheckout(ctx context.Context, spec SelftestSpec, add func(string, bool
 // pushInsteadOf lines the way finalize-checkout greps them.
 var credentialURLRE = regexp.MustCompile(images.GitCredentialURL)
 
-// credentialConfigSection returns the section ("credential", "http" or
-// "url") of the first credential setting in any git config scope of repo, or
-// "" if there is none. It applies finalize-checkout's checks: any
-// credential.* key, any http.extraheader, and any url.*.insteadOf or
-// url.*.pushInsteadOf whose line carries a URL with userinfo.
+// credentialConfigSection returns the section ("credential", "http", "url"
+// or "remote") of the first credential setting in any git config scope of
+// repo, or "" if there is none. It applies finalize-checkout's checks: any
+// credential.* key, any http.extraheader, and any url.*.insteadOf,
+// url.*.pushInsteadOf or remote.*.url/pushurl whose line carries a URL with
+// userinfo.
 func credentialConfigSection(ctx context.Context, repo string) string {
 	get := func(re string) string {
 		out, _ := output(ctx, "git", "-C", repo, "config", "--get-regexp", re)
@@ -216,10 +232,13 @@ func credentialConfigSection(ctx context.Context, repo string) string {
 	if get(images.GitCredentialExtraHeaderKey) != "" {
 		return "http"
 	}
-	for _, re := range []string{images.GitCredentialInsteadOfKey, images.GitCredentialPushInsteadOfKey} {
+	for _, re := range []string{images.GitCredentialInsteadOfKey, images.GitCredentialPushInsteadOfKey, images.GitCredentialRemoteURLKey} {
 		for _, line := range strings.Split(get(re), "\n") {
 			if credentialURLRE.MatchString(line) {
-				return "url"
+				// The section ("url" or "remote") only: the rest of the
+				// line can hold the token.
+				section, _, _ := strings.Cut(line, ".")
+				return section
 			}
 		}
 	}
@@ -252,10 +271,9 @@ func checkHome(add func(string, bool, string, ...any)) {
 
 // checkSetuid reports the "no-setuid" check: no setuid-root binary exists
 // under root beyond expectedSetuidBinaries. It runs `find -xdev -perm -4000
-// -type f`, which walks a single filesystem and stops at mount points; only
-// stdout is inspected; permission-denied noise on stderr from directories
-// the caller can't read (expected, since the checked-for real caller is the
-// non-root fugaro user) is discarded rather than treated as a failure.
+// -type f`, which walks a single filesystem and stops at mount points. Any
+// find error, such as a directory it can't read, fails the check (see
+// scan), which is why the real scan runs as root (SelftestSpec.RootChecks).
 func checkSetuid(ctx context.Context, root string, add func(string, bool, string, ...any)) {
 	checkModeBit(ctx, root, "-4000", "no-setuid", "setuid-root", expectedSetuidBinaries, add)
 }
@@ -271,11 +289,12 @@ func checkSetgid(ctx context.Context, root string, add func(string, bool, string
 // filesystem has the mode bits perm (a find -perm argument) unless its
 // root-relative path is in expected.
 func checkModeBit(ctx context.Context, root, perm, name, what string, expected map[string]bool, add func(string, bool, string, ...any)) {
-	var stdout bytes.Buffer
-	cmd := exec.CommandContext(ctx, "find", root, "-xdev", "-perm", perm, "-type", "f")
-	cmd.Stdout = &stdout
-	_ = cmd.Run()
-	all, extra := unexpectedPaths(root, strings.Split(stdout.String(), "\n"), expected)
+	out, err := scan(ctx, "find", root, "-xdev", "-perm", perm, "-type", "f")
+	if err != nil {
+		add(name, false, "scanning for %s binaries: %v", what, err)
+		return
+	}
+	all, extra := unexpectedPaths(root, strings.Split(out, "\n"), expected)
 	if len(extra) > 0 {
 		add(name, false, "unexpected %s binaries: %s", what, strings.Join(extra, ", "))
 		return
@@ -296,12 +315,13 @@ func checkFileCaps(ctx context.Context, root string, add func(string, bool, stri
 		add("no-file-caps", false, "getcap (libcap2-bin) is not in the image, so file capabilities can't be checked")
 		return
 	}
-	var stdout bytes.Buffer
-	cmd := exec.CommandContext(ctx, "find", root, "-xdev", "-type", "f", "-exec", getcap, "{}", "+")
-	cmd.Stdout = &stdout
-	_ = cmd.Run()
+	out, err := scan(ctx, "find", root, "-xdev", "-type", "f", "-exec", getcap, "{}", "+")
+	if err != nil {
+		add("no-file-caps", false, "scanning for file capabilities: %v", err)
+		return
+	}
 	var paths []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		// getcap prints "<path> <capabilities>" for each file that has any.
 		if i := strings.LastIndex(strings.TrimSpace(line), " "); i > 0 {
 			paths = append(paths, strings.TrimSpace(line)[:i])
@@ -313,6 +333,25 @@ func checkFileCaps(ctx context.Context, root string, add func(string, bool, stri
 		return
 	}
 	add("no-file-caps", true, "no file capabilities")
+}
+
+// scan runs a filesystem scan and returns its stdout. Any failure fails the
+// check that asked for it: a directory find can't read, or a cancelled
+// context, would otherwise shrink the result into a false pass. Only the
+// last line of stderr is reported, trimmed, since it names a path at most.
+func scan(ctx context.Context, name string, args ...string) (string, error) {
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	if ctx.Err() != nil {
+		return "", ctx.Err()
+	}
+	if err != nil {
+		lines := strings.Split(strings.TrimSpace(stderr.String()), "\n")
+		return "", fmt.Errorf("%s: %w: %s", name, err, lines[len(lines)-1])
+	}
+	return stdout.String(), nil
 }
 
 // unexpectedPaths turns find-style absolute paths under root into
@@ -344,9 +383,10 @@ func unexpectedPaths(root string, lines []string, expected map[string]bool) (int
 // /etc/sudoers.d) holds nothing but its README, and sudoersFile (normally
 // /etc/sudoers) grants the fugaro user nothing. sudoersFile is normally
 // mode 0440 root:root, unreadable to the non-root fugaro user the selftest
-// runs as; that permission-denied result itself is treated as a pass, since
-// it means fugaro has no special grant to read it, let alone one it
-// contains. No sudoers line is ever printed in a check's detail, because it
+// runs as. That permission-denied result is treated as a pass, not because
+// unreadability proves the file grants nothing, but because no grant in it
+// could take effect: the derived image strips sudo's setuid bit, which the
+// no-setuid scan and the no-sudo check enforce. No sudoers line is ever printed in a check's detail, because it
 // could describe (though not itself contain) sensitive configuration.
 func checkSudoers(sudoersDir, sudoersFile string, add func(string, bool, string, ...any)) {
 	entries, err := os.ReadDir(sudoersDir)

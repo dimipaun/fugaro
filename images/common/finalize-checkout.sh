@@ -68,3 +68,9 @@ case "$origin" in
     echo "finalize-checkout: the origin must be an https URL (Fugaro adds credentials at run time); pass REPO_ORIGIN" >&2
     exit 1 ;;
 esac
+# Every remote's url and pushurl, in any scope, not only origin's fetch URL.
+if git -C "$repo" config --get-regexp '^remote\..*\.(url|pushurl)$' 2>/dev/null \
+    | grep -Eq '://[^/[:space:]]*@'; then
+  echo "finalize-checkout: a remote URL or pushurl embeds credentials; the baked checkout's remotes must carry none" >&2
+  exit 1
+fi

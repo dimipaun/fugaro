@@ -353,3 +353,37 @@ func TestCIWorkflowJobsHaveTimeouts(t *testing.T) {
 		}
 	}
 }
+
+// TestCIWorkflowCheckoutsDropCredentials: no job needs the GITHUB_TOKEN in
+// .git/config after checkout, so every actions/checkout sets
+// persist-credentials: false.
+func TestCIWorkflowCheckoutsDropCredentials(t *testing.T) {
+	files, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("workflow files = %v (%v)", files, err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wf struct {
+			Jobs map[string]struct {
+				Steps []struct {
+					Uses string         `yaml:"uses"`
+					With map[string]any `yaml:"with"`
+				} `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &wf); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		for name, job := range wf.Jobs {
+			for _, s := range job.Steps {
+				if strings.HasPrefix(s.Uses, "actions/checkout@") && s.With["persist-credentials"] != false {
+					t.Errorf("%s: job %q checks out without persist-credentials: false", f, name)
+				}
+			}
+		}
+	}
+}

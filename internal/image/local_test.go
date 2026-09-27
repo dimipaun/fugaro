@@ -58,7 +58,9 @@ type fakeDocker struct {
 	heads      string // `git bundle list-heads` of the bundle
 	runs       [][]string
 	runEnv     [][]string
-	spec       SelftestSpec
+	spec       SelftestSpec // the first (unprivileged) selftest run's spec
+	rootSpec   SelftestSpec // the second, --user 0 run's spec
+	rootReport *Report      // printed by the --user 0 run; nil means a passing empty report
 }
 
 func (f *fakeDocker) run(ctx context.Context, c Cmd) error {
@@ -85,6 +87,22 @@ func (f *fakeDocker) run(ctx context.Context, c Cmd) error {
 		return f.buildErr
 	case "run":
 		f.runs, f.runEnv = append(f.runs, c.Args), append(f.runEnv, c.Env)
+		if slices.Contains(c.Args, "--user") {
+			if err := json.NewDecoder(c.Stdin).Decode(&f.rootSpec); err != nil {
+				f.t.Fatal(err)
+			}
+			rep := f.rootReport
+			if rep == nil {
+				rep = &Report{Passed: true, Checks: []Check{{Name: "no-setuid", OK: true}}}
+			}
+			if err := json.NewEncoder(c.Stdout).Encode(rep); err != nil {
+				f.t.Fatal(err)
+			}
+			if !rep.Passed {
+				return errors.New("exit status 1")
+			}
+			return nil
+		}
 		if err := json.NewDecoder(c.Stdin).Decode(&f.spec); err != nil {
 			f.t.Fatal(err)
 		}
@@ -172,8 +190,42 @@ func TestBuildLocal(t *testing.T) {
 		s.RepoDir != "/work/repo" || s.Verify.RepoDir != "/work/repo" || s.Verify.Build != "sh build.sh" || !slices.Equal(s.Verify.Reports, []string{"junit.xml"}) {
 		t.Errorf("selftest spec = %+v", s)
 	}
-	if !s.CheckHardening {
-		t.Errorf("selftest spec = %+v, want CheckHardening true", s)
+	if !s.CheckHardening || s.RootChecks {
+		t.Errorf("selftest spec = %+v, want CheckHardening true and RootChecks false", s)
+	}
+	// The filesystem scans run in a second container as root, with no
+	// secrets, so no unreadable directory can hide a file from them.
+	if len(f.runs) != 2 {
+		t.Fatalf("docker runs = %q, want the selftest and the root scan", f.runs)
+	}
+	rootRun := f.runs[1]
+	if !slices.Contains(rootRun, "--user") || rootRun[slices.Index(rootRun, "--user")+1] != "0" ||
+		!slices.Equal(rootRun[len(rootRun)-4:], []string{"app:local", "fugaro", "image", "selftest"}) || slices.Contains(rootRun, "NPM_TOKEN") {
+		t.Errorf("root scan docker run args = %q", rootRun)
+	}
+	if len(f.runEnv[1]) != 0 {
+		t.Errorf("root scan docker run env = %q, want none", f.runEnv[1])
+	}
+	if !f.rootSpec.RootChecks {
+		t.Errorf("root scan spec = %+v, want RootChecks", f.rootSpec)
+	}
+	if !slices.ContainsFunc(res.Smoke.Checks, func(c Check) bool { return c.Name == "no-setuid" }) {
+		t.Errorf("smoke report %+v lacks the root scan's checks", res.Smoke)
+	}
+}
+
+// TestBuildLocalRootScanFailureFailsTheSmoke: a failing root scan fails
+// the whole smoke report even when the unprivileged selftest passed.
+func TestBuildLocalRootScanFailureFailsTheSmoke(t *testing.T) {
+	root, cfg := localFixture(t)
+	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "user", OK: true}}},
+		rootReport: &Report{Passed: false, Checks: []Check{{Name: "no-setgid", OK: false, Detail: "unexpected setgid binaries: opt/x"}}}}
+	res, err := BuildLocal(context.Background(), localOptions(root, cfg, f, &bytes.Buffer{}))
+	if err != nil || res.Smoke == nil || res.Smoke.Passed {
+		t.Fatalf("res %+v, err %v", res, err)
+	}
+	if c, _ := checkNamed(*res.Smoke, "no-setgid"); c.OK || c.Detail == "" {
+		t.Errorf("smoke report %+v lacks the failing root check", res.Smoke)
 	}
 }
 

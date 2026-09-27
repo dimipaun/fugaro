@@ -38,8 +38,8 @@ RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch "$REPO_URL" /work/repo \
- && git remote set-url origin "$REPO_ORIGIN"
+      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && git remote set-url origin -- "$REPO_ORIGIN"
 {{- if .WarmUp}}
 
 # Dependency warm-up for {{.WarmUpFor}}.
@@ -62,7 +62,8 @@ RUN{{$.SecretMounts}} {{.}}
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
- && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \
+ && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo

@@ -225,6 +225,7 @@ func TestFinalizeCheckoutUsesTheSharedCredentialPatterns(t *testing.T) {
 		images.GitCredentialInsteadOfKey,
 		images.GitCredentialPushInsteadOfKey,
 		images.GitCredentialURL,
+		images.GitCredentialRemoteURLKey,
 	} {
 		if !strings.Contains(string(data), "'"+re+"'") {
 			t.Errorf("finalize-checkout.sh does not use the pattern '%s'", re)
@@ -266,5 +267,38 @@ func TestFinalizeCheckoutRejectsIncludedCredential(t *testing.T) {
 	out, err := finalize(t, repo, home)
 	if err == nil || !strings.Contains(out, "credential helper is still configured") || !strings.Contains(out, "included") {
 		t.Fatalf("err = %v, output %q", err, out)
+	}
+}
+
+// TestFinalizeCheckoutRejectsCredentialRemoteURLs: every remote's url and
+// pushurl count, not only origin's fetch URL. A token in a pushurl or in a
+// second remote's URL must fail the build without being printed.
+func TestFinalizeCheckoutRejectsCredentialRemoteURLs(t *testing.T) {
+	for name, args := range map[string][]string{
+		"origin pushurl": {"config", "remote.origin.pushurl", "https://x-access-token:s3cr3t@github.com/acme/app.git"},
+		"second remote":  {"remote", "add", "upstream", "https://s3cr3t@github.com/acme/upstream.git"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, home := finalizeFixture(t)
+			testutil.Git(t, repo, args...)
+			out, err := finalize(t, repo, home)
+			if err == nil || !strings.Contains(out, "embeds credentials") {
+				t.Fatalf("err = %v, output %q", err, out)
+			}
+			if strings.Contains(out, "s3cr3t") {
+				t.Fatalf("finalize-checkout printed the token: %q", out)
+			}
+		})
+	}
+}
+
+// TestFinalizeCheckoutAcceptsACleanSecondRemote: a second remote without
+// credentials is fine.
+func TestFinalizeCheckoutAcceptsACleanSecondRemote(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	testutil.Git(t, repo, "remote", "add", "upstream", "https://github.com/acme/upstream.git")
+	testutil.Git(t, repo, "config", "remote.origin.pushurl", "https://github.com/acme/app.git")
+	if out, err := finalize(t, repo, home); err != nil {
+		t.Fatalf("finalize-checkout: %v\n%s", err, out)
 	}
 }

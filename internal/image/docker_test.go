@@ -119,7 +119,8 @@ workflows:
 
 // TestSelftestFlagsSetgidAndFileCaps: a setup step with sudo that leaves a
 // setgid binary or grants a file capability must fail the smoke test, the
-// way a leftover setuid binary does.
+// way a leftover setuid binary does. The setgid binary sits in a 0711
+// directory fugaro can't list, which only the root scan can see into.
 func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 	base := testutil.BaseImage(t)
 	testutil.IsolateGit(t)
@@ -127,14 +128,14 @@ func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
 	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", `    base: web-node
     image:
       setup:
-        - sudo -n install -m 2755 /usr/bin/true /usr/local/bin/sgid-true
+        - sudo -n install -d -m 0711 /opt/hidden && sudo -n install -m 2755 /usr/bin/true /opt/hidden/sgid-true
         - sudo -n install -m 0755 /usr/bin/true /usr/local/bin/capped-true && sudo -n setcap cap_net_raw+ep /usr/local/bin/capped-true
 `, 1)
 	res, stderr, err := buildImageResult(t, checkout(t, files), base, "fugaro-test-hardening:local")
 	if err == nil || res.Smoke == nil || res.Smoke.Passed {
 		t.Fatalf("want the smoke test to fail, got err=%v result %+v\nstderr:\n%s", err, res, testutil.Tail(stderr))
 	}
-	for name, want := range map[string]string{"no-setgid": "usr/local/bin/sgid-true", "no-file-caps": "usr/local/bin/capped-true"} {
+	for name, want := range map[string]string{"no-setgid": "opt/hidden/sgid-true", "no-file-caps": "usr/local/bin/capped-true"} {
 		if c := smokeCheck(res, name); c.OK || !strings.Contains(c.Detail, want) {
 			t.Errorf("smoke check %s = %+v, want a failure naming %s", name, c, want)
 		}

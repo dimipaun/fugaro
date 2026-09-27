@@ -37,4 +37,9 @@ const (
 	// deliberately broad: ssh://git@host is refused too, because run-time
 	// credential injection can't use it either.
 	GitCredentialURL = `://[^/[:space:]]*@`
+	// GitCredentialRemoteURLKey matches every remote's url and pushurl,
+	// which are a credential when the line also matches GitCredentialURL.
+	// All remotes count, not only origin's fetch URL: a token in a pushurl
+	// would also send the runner's pushes to a stale embedded credential.
+	GitCredentialRemoteURLKey = `^remote\..*\.(url|pushurl)$`
 )

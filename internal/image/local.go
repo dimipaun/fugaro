@@ -210,9 +210,9 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 	}
 
 	// Controller ruling: `image build --local`'s in-image selftest always
-	// checks the finished image's own hardening (no stray setuid binary, no
-	// sudoers grant), alongside the checkout check; this is not a user
-	// option.
+	// checks the finished image's own hardening, alongside the checkout
+	// check; this is not a user option. The sudoers check runs here, and
+	// the setuid, setgid and file-capability scans run as root below.
 	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true, Verify: verify.Settings{
 		RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,
 		Reports: w.Commands.Reports, TimeoutS: int(w.Timeouts.Verify.Seconds()),
@@ -239,8 +239,41 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 		}
 		return res, fmt.Errorf("smoke test printed no report: %w%s", err, hint)
 	}
+	// The filesystem scans run as root in a second container, with no
+	// secrets and no environment, so no directory fugaro can't list can
+	// hide a setuid binary or a capability from them.
+	if rep, err = rootScan(ctx, run, o, rep); err != nil {
+		return res, err
+	}
 	res.Smoke = &rep
 	return res, nil
+}
+
+// rootScan runs `fugaro image selftest` with RootChecks as root in the
+// built image and appends its checks to rep, which then passes only if both
+// did.
+func rootScan(ctx context.Context, run Runner, o LocalOptions, rep Report) (Report, error) {
+	in, err := json.Marshal(SelftestSpec{RootChecks: true})
+	if err != nil {
+		return rep, err
+	}
+	args := []string{"run", "--rm", "-i", "--user", "0"}
+	if o.Platform != "" {
+		args = append(args, "--platform", o.Platform)
+	}
+	args = append(args, o.Tag, "fugaro", "image", "selftest")
+	var out bytes.Buffer
+	runErr := run(ctx, Cmd{Name: "docker", Args: args, Stdin: bytes.NewReader(in), Stdout: &out, Stderr: o.Log})
+	var root Report
+	if err := json.Unmarshal(out.Bytes(), &root); err != nil {
+		if runErr != nil {
+			return rep, fmt.Errorf("root filesystem scan: %w", runErr)
+		}
+		return rep, fmt.Errorf("root filesystem scan printed no report: %w", err)
+	}
+	rep.Checks = append(rep.Checks, root.Checks...)
+	rep.Passed = rep.Passed && root.Passed
+	return rep, nil
 }
 
 // bundle writes a git bundle of root's HEAD, published as refs/heads/branch.

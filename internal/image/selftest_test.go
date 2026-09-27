@@ -124,6 +124,12 @@ func TestSelftestFailures(t *testing.T) {
 		{"token in a pushInsteadOf rule", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			testutil.Git(t, s.RepoDir, "config", "url.https://x-access-token:s3cr3t@github.com/.pushInsteadOf", "https://github.com/")
 		}},
+		{"token in the origin pushurl", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
+			testutil.Git(t, s.RepoDir, "config", "remote.origin.pushurl", "https://x-access-token:s3cr3t@github.com/acme/app.git")
+		}},
+		{"token in a second remote", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
+			testutil.Git(t, s.RepoDir, "remote", "add", "upstream", "https://s3cr3t@github.com/acme/upstream.git")
+		}},
 		{"credential helper in the global config", "git-credentials", 1, func(t *testing.T, s *SelftestSpec) {
 			global := filepath.Join(t.TempDir(), "gitconfig")
 			if err := os.WriteFile(global, []byte("[credential]\n\thelper = store\n"), 0o644); err != nil {
@@ -193,7 +199,7 @@ func mkSetuid(t *testing.T, path string) {
 
 func TestCheckSetuidAllowsTheExpectedSet(t *testing.T) {
 	root := t.TempDir()
-	mkSetuid(t, filepath.Join(root, "usr/bin/su"))
+	mkSetuid(t, filepath.Join(root, "usr/bin/passwd"))
 	mkSetuid(t, filepath.Join(root, "usr/bin/mount"))
 	add, r := addRecorder()
 	checkSetuid(context.Background(), root, add)
@@ -205,7 +211,7 @@ func TestCheckSetuidAllowsTheExpectedSet(t *testing.T) {
 
 func TestCheckSetuidFlagsAnUnexpectedBinary(t *testing.T) {
 	root := t.TempDir()
-	mkSetuid(t, filepath.Join(root, "usr/bin/su"))
+	mkSetuid(t, filepath.Join(root, "usr/bin/passwd"))
 	mkSetuid(t, filepath.Join(root, "opt/evil"))
 	add, r := addRecorder()
 	checkSetuid(context.Background(), root, add)
@@ -213,7 +219,7 @@ func TestCheckSetuidFlagsAnUnexpectedBinary(t *testing.T) {
 	if !ok || c.OK {
 		t.Fatalf("want no-setuid to fail on an unexpected setuid binary, got %+v", r.Checks)
 	}
-	if !strings.Contains(c.Detail, "evil") || strings.Contains(c.Detail, "usr/bin/su") {
+	if !strings.Contains(c.Detail, "evil") || strings.Contains(c.Detail, "usr/bin/passwd") {
 		t.Errorf("detail should name the unexpected binary only, not the expected one: %q", c.Detail)
 	}
 }
@@ -226,6 +232,72 @@ func TestCheckSetuidFlagsSudoIfNotStripped(t *testing.T) {
 	c, ok := checkNamed(*r, "no-setuid")
 	if !ok || c.OK {
 		t.Fatalf("want no-setuid to fail when sudo's setuid bit was not stripped, got %+v", r.Checks)
+	}
+}
+
+// TestCheckSetuidFlagsSuIfNotStripped: the template strips su's setuid bit
+// like sudo's (a setup step's `passwd -d root` plus pam_unix's nullok would
+// otherwise leave su as a passwordless way back to root), so a setuid su is
+// a finding too.
+func TestCheckSetuidFlagsSuIfNotStripped(t *testing.T) {
+	root := t.TempDir()
+	mkSetuid(t, filepath.Join(root, "usr/bin/su"))
+	add, r := addRecorder()
+	checkSetuid(context.Background(), root, add)
+	if c, ok := checkNamed(*r, "no-setuid"); !ok || c.OK || !strings.Contains(c.Detail, "usr/bin/su") {
+		t.Fatalf("want no-setuid to fail on a setuid su, got %+v", r.Checks)
+	}
+}
+
+// TestFilesystemChecksFailOnFindErrors: a directory the scan can't read
+// could hide a setuid binary or a capability, so find's errors fail the
+// checks instead of shrinking the result, and so does a cancelled context.
+func TestFilesystemChecksFailOnFindErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every directory")
+	}
+	fakeGetcap(t)
+	root := t.TempDir()
+	hidden := filepath.Join(root, "opt/hidden")
+	mkSetuid(t, filepath.Join(hidden, "evil"))
+	if err := os.Chmod(hidden, 0o311); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(hidden, 0o755) })
+	add, r := addRecorder()
+	checkSetuid(context.Background(), root, add)
+	checkSetgid(context.Background(), root, add)
+	checkFileCaps(context.Background(), root, add)
+	for _, name := range []string{"no-setuid", "no-setgid", "no-file-caps"} {
+		if c, ok := checkNamed(*r, name); !ok || c.OK {
+			t.Errorf("want %s to fail when find can't read a directory, got %+v", name, c)
+		}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	add, r = addRecorder()
+	clean := t.TempDir()
+	checkSetuid(ctx, clean, add)
+	checkSetgid(ctx, clean, add)
+	checkFileCaps(ctx, clean, add)
+	for _, name := range []string{"no-setuid", "no-setgid", "no-file-caps"} {
+		if c, ok := checkNamed(*r, name); !ok || c.OK {
+			t.Errorf("want %s to fail with a cancelled context, got %+v", name, c)
+		}
+	}
+}
+
+// TestSelftestRootChecksOnly: a RootChecks spec runs only the filesystem
+// scans, and refuses to run them as anyone but root, where an unreadable
+// directory would hide files.
+func TestSelftestRootChecksOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("the non-root refusal needs a non-root test run")
+	}
+	r := Selftest(context.Background(), SelftestSpec{RootChecks: true}, &bytes.Buffer{})
+	if r.Passed || len(r.Checks) != 1 || r.Checks[0].Name != "root-scan" || r.Checks[0].OK {
+		t.Fatalf("report %+v, want a single failing root-scan check", r)
 	}
 }
 

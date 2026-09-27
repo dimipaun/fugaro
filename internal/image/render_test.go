@@ -39,8 +39,8 @@ RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch "$REPO_URL" /work/repo \
- && git remote set-url origin "$REPO_ORIGIN"
+      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && git remote set-url origin -- "$REPO_ORIGIN"
 
 # Dependency warm-up for yarn.lock.
 RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false yarn install --immutable
@@ -58,7 +58,8 @@ RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false mkdir -p build
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
- && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \
+ && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
@@ -88,12 +89,13 @@ RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
     GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
-      clone --quiet --branch "$BASE_BRANCH" --single-branch "$REPO_URL" /work/repo \
- && git remote set-url origin "$REPO_ORIGIN"
+      clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && git remote set-url origin -- "$REPO_ORIGIN"
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
- && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \
+ && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
@@ -122,7 +124,7 @@ func TestRenderFull(t *testing.T) {
 	// Controller ruling: once image.setup steps run as fugaro with
 	// build-time sudo, the derived image must remove both the sudo grant
 	// and sudo's setuid bit, leaving no privilege-escalation path.
-	if !strings.Contains(string(got), "RUN rm -f /etc/sudoers.d/fugaro-build \\\n && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }\n") {
+	if !strings.Contains(string(got), "RUN rm -f /etc/sudoers.d/fugaro-build \\\n && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \\\n && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }\n") {
 		t.Errorf("Render does not remove the sudo grant and drop sudo's setuid bit:\n%s", got)
 	}
 	// Fix round 1 (security review): the sudo grant must be active only
