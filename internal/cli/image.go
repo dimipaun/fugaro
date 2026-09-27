@@ -193,7 +193,7 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 	}
 	cfg, problems := config.Parse(data)
 	if cfg != nil {
-		problems = config.Check(cfg, root)
+		problems = append(config.Check(cfg, root), computeProblems(cfg)...)
 	}
 	if len(problems) > 0 {
 		msgs := make([]string, len(problems))

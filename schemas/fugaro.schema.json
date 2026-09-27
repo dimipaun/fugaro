@@ -131,7 +131,11 @@
             "additionalProperties": false,
             "required": ["name", "env"],
             "properties": {
-              "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{0,62}$" },
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+                "not": { "enum": ["bitbucket-token", "github-app-key", "claude-oauth-token", "anthropic-api-key"] }
+              },
               "env": {
                 "type": "string",
                 "pattern": "^[A-Z_][A-Z0-9_]*$",
@@ -144,7 +148,7 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "cpu": { "enum": [1, 2, 4, 6, 8] },
+            "cpu": { "type": "integer", "minimum": 1 },
             "memory": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" }
           }
         },
