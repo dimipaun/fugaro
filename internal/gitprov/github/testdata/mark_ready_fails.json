@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/installation", "status": 200, "response": {"id": 777}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": "ghs_fixture_token_1", "expires_at": "2026-09-27T11:00:00Z"}},
+  {"method": "GET", "path": "/repos/acme/web/pulls?head=acme:fugaro/20260927-101500-abcd&state=open&per_page=1", "auth": "Bearer ghs_fixture_token_1", "status": 200, "response": [{"number": 15, "html_url": "https://github.com/acme/web/pull/15", "draft": true, "node_id": "PR_kwDOA15", "title": "Add search"}]},
+  {"method": "POST", "path": "/graphql", "request": {"query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", "variables": {"id": "PR_kwDOA15"}}, "status": 200, "response": {"data": null, "errors": [{"type": "FORBIDDEN", "message": "Resource not accessible by integration"}]}}
+]
