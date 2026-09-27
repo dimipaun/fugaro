@@ -73,7 +73,7 @@ Map what you find to `image:`:
 | Evidence in the repository | Setting |
 |---|---|
 | `.nvmrc`, `.node-version`, `nodejs` in `.tool-versions`, `node-version:` of `actions/setup-node`, a CI image such as `node:24.19.0`, or `engines.node` | `image.node`: the exact version when the repository pins one (`"24.19.0"`), otherwise the major (`"24"`). Quote it. Leave it out if nothing pins a version. |
-| `apt-get install` lines in CI | `image.apt`: the package names, dropping those the base already has (`ca-certificates curl git procps sudo tini xz-utils zstd`). |
+| `apt-get install` lines in CI | `image.apt`: the package names, dropping those the base already has (`ca-certificates curl dirmngr git gnupg procps sudo tini xz-utils zstd`). |
 | `playwright install --with-deps`, or CI running in a `mcr.microsoft.com/playwright` image | `image.setup`: install the browsers the tests use through the repository's own Playwright, so the version matches the lockfile. Use `npx playwright install --with-deps chromium`, `pnpm exec playwright install --with-deps chromium`, or `yarn playwright install --with-deps chromium`; in a Yarn workspace, use `yarn workspace <workspace> playwright install --with-deps chromium`. |
 | Other steps CI runs after installing dependencies and before building, such as code generation | `image.setup`, one step each, only if the build can't run without them. |
 
@@ -81,7 +81,7 @@ How `setup` steps run:
 - They run after the dependency install, as the non-root `fugaro` user, in `/work/repo`.
 - `sudo` works during these steps and only then. That is what `--with-deps` needs.
 - Browsers and other downloads land in `fugaro`'s home, so they are there at run time.
-- Each step is one line: no newlines, no `<<`, no trailing backslash. Chain commands with `&&`, or call a script in the repository.
+- Each step is one line: no newlines, no `<<`, no trailing backslash, and it must not start with `-` or `[`. Chain commands with `&&`, or call a script in the repository.
 
 ### When to write a Dockerfile instead
 
