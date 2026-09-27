@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.10
+# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
 # Fugaro web-node base image (design §7.1): Node.js LTS with corepack, git,
 # zstd, tini, gh, Claude Code (native installer) and fugaro. It runs as the
 # non-root user fugaro (uid 1000) in /work/repo. Build it from the repository

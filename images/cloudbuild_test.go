@@ -1,7 +1,10 @@
 package images_test
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/images"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 type cloudBuild struct {
@@ -149,5 +153,108 @@ func TestCIWorkflowNoUnsafeInterpolation(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestWorkflowActionsPinnedBySHA pins every third-party action in both
+// workflows to a full commit SHA, with the tag it resolves to as a comment,
+// so a moved or compromised tag can't change what CI runs.
+func TestWorkflowActionsPinnedBySHA(t *testing.T) {
+	usesRE := regexp.MustCompile(`(?m)^\s*-?\s*uses:\s*(\S+)(.*)$`)
+	pinnedRE := regexp.MustCompile(`^[\w.-]+/[\w./-]+@[0-9a-f]{40}$`)
+	for _, wf := range []string{"../.github/workflows/images.yml", "../.github/workflows/ci.yml"} {
+		data, err := os.ReadFile(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches := usesRE.FindAllStringSubmatch(string(data), -1)
+		if len(matches) == 0 {
+			t.Errorf("%s has no uses: lines", wf)
+		}
+		for _, m := range matches {
+			if !pinnedRE.MatchString(m[1]) || !regexp.MustCompile(`^\s+# v\d`).MatchString(m[2]) {
+				t.Errorf("%s: %q is not pinned as owner/repo@<40-hex sha> # vX", wf, strings.TrimSpace(m[0]))
+			}
+		}
+	}
+}
+
+// versionStep extracts the version job's "Pick the version" script from
+// images.yml, with the one GitHub expression it holds replaced, so it can
+// run under plain sh.
+func versionStep(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range wf.Jobs["version"].Steps {
+		if s.Name == "Pick the version" {
+			return strings.ReplaceAll(s.Run, "${{ github.event.number }}", "7")
+		}
+	}
+	t.Fatal("images.yml has no version job step named \"Pick the version\"")
+	return ""
+}
+
+// TestCIWorkflowMovesMajorOnlyForTheNewestRelease: a backport tag publishes
+// :X.Y.Z but must not move :X backwards past a newer release in the same
+// major.
+func TestCIWorkflowMovesMajorOnlyForTheNewestRelease(t *testing.T) {
+	testutil.IsolateGit(t)
+	script := versionStep(t)
+	repo := t.TempDir()
+	testutil.Git(t, repo, "init", "--quiet", "-b", "main", repo)
+	testutil.Git(t, repo, "commit", "--quiet", "--allow-empty", "-m", "seed")
+	for _, tag := range []string{"v1.1.4", "v1.1.5", "v1.2.0", "v1.10.0-rc1", "v2.0.0", "v10.0.0"} {
+		testutil.Git(t, repo, "tag", tag)
+	}
+	for _, tc := range []struct {
+		event, ref, version string
+		moveMajor           bool
+	}{
+		{"push", "v1.1.5", "1.1.5", false},
+		{"push", "v1.2.0", "1.2.0", true},
+		{"push", "v2.0.0", "2.0.0", true},
+		{"push", "v10.0.0", "10.0.0", true},
+		{"schedule", "main", "10.0.0", true},
+	} {
+		t.Run(tc.event+" "+tc.ref, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "output")
+			cmd := exec.Command("sh", "-c", script)
+			cmd.Dir = repo
+			cmd.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+tc.event, "GITHUB_REF_NAME="+tc.ref, "GITHUB_OUTPUT="+out)
+			if b, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("Pick the version: %v\n%s", err, b)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := string(data)
+			for _, want := range []string{"version=" + tc.version + "\n", "publish=true\n", fmt.Sprintf("move_major=%t\n", tc.moveMajor)} {
+				if !strings.Contains(got, want) {
+					t.Errorf("outputs lack %q:\n%s", want, got)
+				}
+			}
+		})
+	}
+	data, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "MOVE_MAJOR: ${{ needs.version.outputs.move_major }}") {
+		t.Error("the publish step does not take move_major from the version job")
 	}
 }
