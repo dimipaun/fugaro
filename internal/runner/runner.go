@@ -72,15 +72,19 @@ type run struct {
 	providerFrom string          // where providerKind came from, for mismatch errors
 	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
 	auth         gitprov.GitAuth // current git credentials
+	authWarned   bool            // whether a mid-run refresh failure has already been logged
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
 // token, so before each stage the runner asks for one valid for the stage
 // timeout plus gitAuthSlack; bootstrap's clone and fetch need only
-// bootstrapAuthMinValid.
+// bootstrapAuthMinValid. authRefreshTimeout bounds how long a mid-run
+// refresh itself may take, so a slow or hanging provider call cannot eat
+// into the stage's own budget.
 const (
 	gitAuthSlack          = 5 * time.Minute
 	bootstrapAuthMinValid = 10 * time.Minute
+	authRefreshTimeout    = 30 * time.Second
 )
 
 // prAttempts is how many times finalize tries to open the pull request.
@@ -203,9 +207,18 @@ func (r *run) openProvider(ctx context.Context, kind, from string) error {
 // refreshGitAuth gets git credentials valid for at least minValid and puts
 // them in the environment of the runner's git and of the agent (design
 // §6.2). With the GitHub provider this is what replaces a near-expiry
-// installation token between stages.
+// installation token between stages. The credentials are validated (and the
+// environment built) before r.auth is updated, so a bad refresh — for
+// instance a token or username CredentialVars refuses — never clobbers
+// working credentials with ones that can't be turned into an environment;
+// the caller decides how to handle the error (fail at open, warn and keep
+// the current ones mid-run).
 func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error {
 	auth, err := r.provider.GitAuth(ctx, minValid)
+	if err != nil {
+		return err
+	}
+	vars, err := r.credentialVars(auth)
 	if err != nil {
 		return err
 	}
@@ -214,7 +227,6 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 		r.addSecret(v)
 	}
 	r.auth = auth
-	vars := r.authVars()
 	if r.repo != nil {
 		r.repo.Env = gitops.WithVars(r.repo.Env, vars)
 	}
@@ -225,17 +237,36 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 }
 
 // authVars is the environment that carries the current git credentials.
-func (r *run) authVars() map[string]string {
+func (r *run) authVars() (map[string]string, error) {
+	return r.credentialVars(r.auth)
+}
+
+// credentialVars builds the environment that carries auth's credentials
+// against r.credURL. It errors when gitops.CredentialVars refuses auth's
+// username or token (for instance one holding a newline), rather than
+// silently dropping the credentials.
+func (r *run) credentialVars(auth gitprov.GitAuth) (map[string]string, error) {
 	vars := map[string]string{}
-	if r.auth.Token != "" && r.credURL != "" {
-		if cred, err := gitops.CredentialVars(r.credURL, r.auth.Username, r.auth.Token); err == nil {
-			maps.Copy(vars, cred)
-		} else {
-			r.d.Log.Warn("git credentials not applied", "err", r.redact(err.Error()))
+	if auth.Token != "" && r.credURL != "" {
+		cred, err := gitops.CredentialVars(r.credURL, auth.Username, auth.Token)
+		if err != nil {
+			return nil, err
 		}
+		maps.Copy(vars, cred)
 	}
-	maps.Copy(vars, r.auth.Env)
-	return vars
+	maps.Copy(vars, auth.Env)
+	return vars, nil
+}
+
+// warnAuthRefresh logs a mid-run git-credential refresh failure once per
+// run: a persistent problem (an expiring provider, a misconfigured token)
+// would otherwise print the same warning before every stage.
+func (r *run) warnAuthRefresh(err error) {
+	if r.authWarned {
+		return
+	}
+	r.authWarned = true
+	r.d.Log.Warn("refreshing git credentials failed; keeping the current ones", "err", r.redact(err.Error()))
 }
 
 // originURL returns the checkout's origin URL, or the remote it will be
@@ -354,11 +385,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	} else if kind := gitprov.KindForURL(origin); kind != "" {
-		if err := r.openProvider(ctx, kind, "the origin URL "+origin); err != nil {
+		// origin may carry embedded userinfo (a token in the remote
+		// URL); the message never quotes more than scheme://host.
+		display := origin
+		if r.credURL != "" {
+			display = r.credURL
+		}
+		if err := r.openProvider(ctx, kind, "the origin URL "+display); err != nil {
 			return err
 		}
 	}
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), r.authVars()))
+	cloneVars, err := r.authVars()
+	if err != nil {
+		return fmt.Errorf("building git credentials: %w", err)
+	}
+	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars))
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
@@ -434,7 +475,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	maps.Copy(set, r.authVars())
+	agentAuthVars, err := r.authVars()
+	if err != nil {
+		return fmt.Errorf("building git credentials: %w", err)
+	}
+	maps.Copy(set, agentAuthVars)
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 	})
@@ -502,9 +547,14 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	r.rec.Stage = name
 	r.save(ctx)
 	log := r.d.Log.With("stage", name)
-	// Refresh before the redactors below are built, so they know the new token.
-	if err := r.refreshGitAuth(ctx, r.budget.Stage+gitAuthSlack); err != nil {
-		log.Warn("refreshing git credentials failed; the agent keeps the current ones", "err", r.redact(err.Error()))
+	// Refresh before the redactors below are built, so they know the new
+	// token. Bounded on its own: a slow or hanging provider call must not
+	// eat into the stage's own budget.
+	authCtx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
+	err := r.refreshGitAuth(authCtx, r.budget.Stage+gitAuthSlack)
+	cancelAuth()
+	if err != nil {
+		r.warnAuthRefresh(err)
 	}
 	log.Info("stage started", "n", n)
 
@@ -580,7 +630,7 @@ func (r *run) finalize(ctx context.Context) error {
 		ready, reason = false, r.failReason
 	}
 	if err := r.refreshGitAuth(ctx, r.wf.Timeouts.FinalizeReserve.Duration); err != nil {
-		r.d.Log.Warn("refreshing git credentials failed; pushing with the current ones", "err", r.redact(err.Error()))
+		r.warnAuthRefresh(err)
 	}
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
@@ -590,7 +640,9 @@ func (r *run) finalize(ctx context.Context) error {
 		Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
 		Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
 	})
-	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	if pr.Number != 0 {
+		r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	}
 	var partial *gitprov.PartialError
 	switch {
 	case errors.As(err, &partial):
@@ -640,16 +692,23 @@ func (r *run) ensurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, er
 	if delay == 0 {
 		delay = 3 * time.Second
 	}
+	var last gitprov.PR // the most recent populated PR seen across attempts
 	for attempt := 1; ; attempt++ {
 		pr, err := r.provider.EnsurePR(ctx, spec)
+		if pr.Number != 0 {
+			last = pr
+		}
 		var partial *gitprov.PartialError
-		if err == nil || errors.As(err, &partial) || attempt == prAttempts {
+		if err == nil || errors.As(err, &partial) {
 			return pr, err
+		}
+		if attempt == prAttempts {
+			return last, err
 		}
 		r.d.Log.Warn("opening the pull request failed; retrying", "attempt", attempt, "err", r.redact(err.Error()))
 		select {
 		case <-ctx.Done():
-			return pr, err
+			return last, err
 		case <-time.After(delay):
 		}
 	}

@@ -33,10 +33,25 @@ type Provider struct {
 	// Auth, when set, supplies GitAuth's result for each minValid asked
 	// for. When nil, GitAuth returns no credentials (local remotes need none).
 	Auth func(minValid time.Duration) gitprov.GitAuth
-	// FailEnsure makes that many EnsurePR calls fail before any succeeds.
+	// FailEnsure makes that many EnsurePR calls fail before any succeeds,
+	// without creating or touching the PR: it models a request that never
+	// reached the provider at all.
 	FailEnsure int
-	mu         sync.Mutex
-	State      State
+	// FailEnsureAfterCreate makes that many EnsurePR calls create or
+	// update the PR as usual and still report failure: it models a
+	// request the provider actually applied, whose success response was
+	// then lost (a dropped connection, a 5xx after the write landed). The
+	// PR created or found this way must survive in State.
+	FailEnsureAfterCreate int
+	// PartialEnsure, when set, makes EnsurePR create or update the PR
+	// with its Draft state forced to PartialEnsureDraft — regardless of
+	// spec.Draft — and report a *gitprov.PartialError wrapping this
+	// error, simulating a provider that could only partly apply the
+	// requested PR settings.
+	PartialEnsure      error
+	PartialEnsureDraft bool
+	mu                 sync.Mutex
+	State              State
 }
 
 // Load reads a persisted state file; a missing file is an empty state.
@@ -76,21 +91,43 @@ func (p *Provider) save() error {
 func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return gitprov.PR{}, err
+	}
+	if p.FailEnsureAfterCreate > 0 {
+		p.FailEnsureAfterCreate--
+		pr, err := p.ensureLocked(spec.Branch, spec.Draft, spec)
+		if err != nil {
+			return gitprov.PR{}, err
+		}
+		return pr, errors.New("fake provider: injected EnsurePR failure after creating the PR")
+	}
 	if p.FailEnsure > 0 {
 		p.FailEnsure--
 		return gitprov.PR{}, errors.New("fake provider: injected EnsurePR failure")
 	}
-	if err := p.load(); err != nil {
-		return gitprov.PR{}, err
+	if p.PartialEnsure != nil {
+		pr, err := p.ensureLocked(spec.Branch, p.PartialEnsureDraft, spec)
+		if err != nil {
+			return gitprov.PR{}, err
+		}
+		return pr, &gitprov.PartialError{Err: p.PartialEnsure}
 	}
+	return p.ensureLocked(spec.Branch, spec.Draft, spec)
+}
+
+// ensureLocked finds the PR for branch and updates its draft state, or
+// creates it, saving the state either way. Callers hold p.mu and have
+// already called p.load.
+func (p *Provider) ensureLocked(branch string, draft bool, spec gitprov.PRSpec) (gitprov.PR, error) {
 	for i := range p.State.PRs {
-		if p.State.PRs[i].Spec.Branch == spec.Branch {
-			p.State.PRs[i].Draft = spec.Draft
+		if p.State.PRs[i].Spec.Branch == branch {
+			p.State.PRs[i].Draft = draft
 			return p.State.PRs[i].PR, p.save()
 		}
 	}
 	n := len(p.State.PRs) + 1
-	pr := gitprov.PR{Number: n, URL: fmt.Sprintf("https://example.invalid/pr/%d", n), Draft: spec.Draft}
+	pr := gitprov.PR{Number: n, URL: fmt.Sprintf("https://example.invalid/pr/%d", n), Draft: draft}
 	p.State.PRs = append(p.State.PRs, PRState{PR: pr, Spec: spec})
 	return pr, p.save()
 }

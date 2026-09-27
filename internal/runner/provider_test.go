@@ -186,4 +186,94 @@ func TestEnsurePRGivesUp(t *testing.T) {
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "injected EnsurePR failure") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
+	// Every attempt failed before ever reaching the provider, so nothing
+	// was created: the record must not carry a phantom PR.
+	if rec.PR != nil {
+		t.Fatalf("rec.PR = %+v, want nil: nothing was ever created", rec.PR)
+	}
+	if len(h.provider.State.PRs) != 0 {
+		t.Fatalf("a PR was created despite every attempt failing: %+v", h.provider.State.PRs)
+	}
+}
+
+// TestEnsurePRGivesUpKeepsPopulatedPR covers a run where an earlier
+// EnsurePR attempt creates the PR but reports failure (the request landed
+// but its response was lost), and a later attempt fails outright with no
+// PR at all: the populated PR from the earlier attempt must survive into
+// the final, still-failed record.
+func TestEnsurePRGivesUpKeepsPopulatedPR(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.RetryDelay = time.Millisecond
+	h.provider.FailEnsureAfterCreate = 1 // attempt 1: creates the PR, still errors
+	h.provider.FailEnsure = 2            // attempts 2 and 3: fail with no PR at all
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if rec.PR == nil || rec.PR.Number == 0 {
+		t.Fatalf("the populated PR from the earlier attempt was dropped: %+v", rec.PR)
+	}
+	onlyPR(t, h.provider)
+}
+
+// TestPartialEnsureDowngradesReadyToDraft covers a run whose tests pass and
+// whose review shipped, but whose provider could only leave the PR looking
+// like a draft. The run must not report readiness it cannot back up.
+func TestPartialEnsureDowngradesReadyToDraft(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.provider.PartialEnsure = errors.New("drafts are unsupported on this repository")
+	h.provider.PartialEnsureDraft = true
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if !strings.Contains(rec.Reason, "drafts are unsupported on this repository") {
+		t.Fatalf("reason does not name the failure: %q", rec.Reason)
+	}
+	if rec.PR == nil || rec.PR.Number == 0 {
+		t.Fatalf("PR was not recorded: %+v", rec.PR)
+	}
+	if !onlyPR(t, h.provider).Draft {
+		t.Fatal("the fake's PR is not a draft")
+	}
+}
+
+// TestPartialEnsureNonDraftKeepsReady covers the other direction: the
+// provider reports a PartialError (say, labels could not be applied) but
+// still returns the PR in the state the run actually asked for (not a
+// draft). The run must still report readiness.
+func TestPartialEnsureNonDraftKeepsReady(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.provider.PartialEnsure = errors.New("labels could not be applied")
+	h.provider.PartialEnsureDraft = false
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if rec.PR == nil || rec.PR.Number == 0 {
+		t.Fatalf("PR was not recorded: %+v", rec.PR)
+	}
+	if onlyPR(t, h.provider).Draft {
+		t.Fatal("the fake's PR should not be a draft")
+	}
+}
+
+// TestGitAuthTokenWithNewlineIsInfraError checks that a provider handing
+// back a token gitops.CredentialVars refuses (here, one containing a
+// newline) fails the run outright at open, as an infra_error, instead of
+// silently dropping git credentials.
+func TestGitAuthTokenWithNewlineIsInfraError(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.useHTTPRemote(t, testutil.Token("x-token-auth", "irrelevant"))
+	h.provider.Auth = staticAuth("bad\ntoken")
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "newline") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
 }
