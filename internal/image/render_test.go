@@ -32,10 +32,6 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends libvips-dev fonts-liberation \
  && rm -rf /var/lib/apt/lists/*
 RUN /usr/local/lib/fugaro/install-node 24.19.0
-# Setup steps run as fugaro but may use sudo, for example for
-# playwright install --with-deps. The rule is removed below.
-RUN echo 'fugaro ALL=(root) NOPASSWD: ALL' > /etc/sudoers.d/fugaro-build \
- && chmod 0440 /etc/sudoers.d/fugaro-build
 USER fugaro
 
 WORKDIR /work/repo
@@ -49,12 +45,20 @@ RUN --mount=type=bind,target=/src \
 # Dependency warm-up for yarn.lock.
 RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false yarn install --immutable
 
+# Setup steps run as fugaro but may use sudo, for example for
+# playwright install --with-deps. The rule is removed below.
+USER root
+RUN echo 'fugaro ALL=(root) NOPASSWD: ALL' > /etc/sudoers.d/fugaro-build \
+ && chmod 0440 /etc/sudoers.d/fugaro-build
+USER fugaro
+
 # image.setup steps.
 RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false npx playwright install --with-deps chromium
 RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false mkdir -p build
+
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
- && chmod u-s /usr/bin/sudo
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
@@ -87,6 +91,11 @@ RUN --mount=type=bind,target=/src \
       clone --quiet --branch "$BASE_BRANCH" --single-branch "$REPO_URL" /work/repo \
  && git remote set-url origin "$REPO_ORIGIN"
 
+USER root
+RUN rm -f /etc/sudoers.d/fugaro-build \
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
+USER fugaro
+
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
 `
 
@@ -113,8 +122,37 @@ func TestRenderFull(t *testing.T) {
 	// Controller ruling: once image.setup steps run as fugaro with
 	// build-time sudo, the derived image must remove both the sudo grant
 	// and sudo's setuid bit, leaving no privilege-escalation path.
-	if !strings.Contains(string(got), "RUN rm -f /etc/sudoers.d/fugaro-build \\\n && chmod u-s /usr/bin/sudo\n") {
+	if !strings.Contains(string(got), "RUN rm -f /etc/sudoers.d/fugaro-build \\\n && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }\n") {
 		t.Errorf("Render does not remove the sudo grant and drop sudo's setuid bit:\n%s", got)
+	}
+	// Fix round 1 (security review): the sudo grant must be active only
+	// around the setup steps, not during the dependency warm-up, so it
+	// must be written after "Dependency warm-up" and before "image.setup
+	// steps.".
+	grantIdx := strings.Index(string(got), "fugaro ALL=(root) NOPASSWD: ALL")
+	warmUpIdx := strings.Index(string(got), "# Dependency warm-up")
+	setupIdx := strings.Index(string(got), "# image.setup steps.")
+	if grantIdx < 0 || warmUpIdx < 0 || setupIdx < 0 || !(warmUpIdx < grantIdx && grantIdx < setupIdx) {
+		t.Errorf("the passwordless-sudo grant must be written after the warm-up and before the image.setup steps, not before it:\n%s", got)
+	}
+}
+
+// Fix round 1 (security review): a setup step starting with "-" or "["
+// would be read as a RUN flag (a build-time secret mount, for example) or
+// exec form rather than a shell command, which could smuggle the clone
+// credential into a layer. internal/config already rejects this at
+// fugaro.yaml validation time, but Render is exported and doesn't
+// re-validate, so it must refuse such steps too.
+func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
+	cases := []string{
+		"--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak",
+		`["sh", "-c", "cp /run/secrets/git-credentials /work/repo/.leak"]`,
+		"  --also-leading-whitespace",
+	}
+	for _, step := range cases {
+		if _, err := Render(RenderInput{Workflow: "web", Base: "web-node", Image: config.Image{Setup: []string{step}}}); err == nil {
+			t.Errorf("Render(%q) = nil error, want a refusal", step)
+		}
 	}
 }
 

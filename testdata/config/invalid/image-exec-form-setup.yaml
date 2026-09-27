@@ -1,0 +1,8 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image:
+      setup: ["[\"sh\", \"-c\", \"echo hi\"]"]
+    commands: { build: npm run build, test: npm test }

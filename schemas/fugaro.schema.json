@@ -78,7 +78,7 @@
               "items": {
                 "type": "string",
                 "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
-                "not": { "pattern": "<<|\\\\\\s*$" }
+                "not": { "pattern": "<<|\\\\\\s*$|^\\s*[-\\[]" }
               }
             }
           }

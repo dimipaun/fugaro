@@ -50,6 +50,9 @@ func TestImageProblems(t *testing.T) {
 		{"setup multi-line", webYAML + "    image: { setup: [\"echo a\\necho b\"] }\n", "workflows.web.image.setup[0]", "single line"},
 		{"setup heredoc", webYAML + "    image: { setup: [\"cat <<EOF > notes.txt\"] }\n", "workflows.web.image.setup[0]", "must not contain <<"},
 		{"setup trailing backslash", webYAML + "    image: { setup: [\"echo a \\\\\"] }\n", "workflows.web.image.setup[0]", "must not end with a backslash"},
+		{"setup flag-like (RUN mount)", webYAML + "    image: { setup: [\"--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
+		{"setup exec form", webYAML + "    image: { setup: [\"[\\\"sh\\\", \\\"-c\\\", \\\"echo hi\\\"]\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
+		{"setup leading whitespace then flag", webYAML + "    image: { setup: [\"  --mount=type=bind,target=/x\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"dockerfile absolute", webYAML + "    dockerfile: /etc/Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 		{"dockerfile parent", webYAML + "    dockerfile: .fugaro/../../x.Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 	}

@@ -50,15 +50,18 @@ func validateImage(p string, w Workflow) []Problem {
 	}
 	for i, step := range img.Setup {
 		sp := fmt.Sprintf("%s.image.setup[%d]", p, i)
+		trimmed := strings.TrimSpace(step)
 		switch {
-		case strings.TrimSpace(step) == "":
+		case trimmed == "":
 			add(sp, "must not be empty")
 		case strings.ContainsAny(step, "\r\n"):
 			add(sp, "must be a single line; chain commands with && or call a script in the repository")
 		case strings.Contains(step, "<<"):
 			add(sp, "must not contain << (a Dockerfile heredoc); call a script in the repository instead")
-		case strings.HasSuffix(strings.TrimSpace(step), `\`):
+		case strings.HasSuffix(trimmed, `\`):
 			add(sp, "must not end with a backslash")
+		case strings.HasPrefix(trimmed, "-") || strings.HasPrefix(trimmed, "["):
+			add(sp, "must not start with - or [ (it would be read as a RUN flag or exec form, not a shell command)")
 		}
 	}
 	if d := w.Dockerfile; d != "" && (strings.HasPrefix(d, "/") || slices.Contains(strings.Split(d, "/"), "..")) {

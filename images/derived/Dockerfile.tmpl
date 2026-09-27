@@ -16,7 +16,7 @@ FROM ${FUGARO_BASE}
 ARG REPO_URL
 ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
-{{- if or .Image.Apt .Image.Node .Image.JDK .Image.Setup}}
+{{- if or .Image.Apt .Image.Node .Image.JDK}}
 
 USER root
 {{- if .Image.Apt}}
@@ -29,12 +29,6 @@ RUN /usr/local/lib/fugaro/install-node {{.Image.Node}}
 {{- end}}
 {{- if .Image.JDK}}
 RUN /usr/local/lib/fugaro/install-jdk {{.Image.JDK}}
-{{- end}}
-{{- if .Image.Setup}}
-# Setup steps run as fugaro but may use sudo, for example for
-# playwright install --with-deps. The rule is removed below.
-RUN echo 'fugaro ALL=(root) NOPASSWD: ALL' > /etc/sudoers.d/fugaro-build \
- && chmod 0440 /etc/sudoers.d/fugaro-build
 {{- end}}
 USER fugaro
 {{- end}}
@@ -53,14 +47,22 @@ RUN{{.SecretMounts}} {{.WarmUp}}
 {{- end}}
 {{- if .Image.Setup}}
 
+# Setup steps run as fugaro but may use sudo, for example for
+# playwright install --with-deps. The rule is removed below.
+USER root
+RUN echo 'fugaro ALL=(root) NOPASSWD: ALL' > /etc/sudoers.d/fugaro-build \
+ && chmod 0440 /etc/sudoers.d/fugaro-build
+USER fugaro
+
 # image.setup steps.
 {{- range .Image.Setup}}
 RUN{{$.SecretMounts}} {{.}}
 {{- end}}
+{{- end}}
+
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
- && chmod u-s /usr/bin/sudo
+ && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; }
 USER fugaro
-{{- end}}
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo

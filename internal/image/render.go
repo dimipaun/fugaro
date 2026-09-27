@@ -38,6 +38,11 @@ func Render(in RenderInput) ([]byte, error) {
 	if err := checkBase(in.Base); err != nil {
 		return nil, err
 	}
+	for i, step := range in.Image.Setup {
+		if t := strings.TrimSpace(step); strings.HasPrefix(t, "-") || strings.HasPrefix(t, "[") {
+			return nil, fmt.Errorf("image.setup[%d] must not start with - or [ (it would be read as a RUN flag or exec form, not a shell command): %q", i, step)
+		}
+	}
 	data := struct {
 		RenderInput
 		WarmUp, WarmUpFor, SecretMounts string

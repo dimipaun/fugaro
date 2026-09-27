@@ -29,6 +29,13 @@ if git -C "$repo" config --get-regexp '^http\.(.*\.)?extraheader$' >/dev/null 2>
   echo "finalize-checkout: an http.extraheader is still configured (system or global git config)" >&2
   exit 1
 fi
+# The '://[^/[:space:]]*@' match is deliberately broad: it also matches a
+# non-credential userinfo-free host like 'ssh://git@github.com/...', not just
+# 'https://token@host/'. That's intentional — insteadOf rewriting a URL onto
+# ssh:// (or onto any other host@ form) is itself something Fugaro's runtime
+# credential injection can't use, so this check is conservative and refuses
+# it too, rather than trying to distinguish "safe" @ forms from credential
+# ones.
 if git -C "$repo" config --get-regexp '^url\..*\.insteadof$' 2>/dev/null \
     | grep -Eq '://[^/[:space:]]*@'; then
   echo "finalize-checkout: a credential-bearing url.insteadOf is still configured (system or global git config)" >&2
