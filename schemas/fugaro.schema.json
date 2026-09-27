@@ -14,7 +14,12 @@
       "required": ["provider"],
       "properties": {
         "provider": { "enum": ["github", "bitbucket"] },
-        "base_branch": { "type": "string", "minLength": 1 },
+        "base_branch": {
+          "type": "string",
+          "description": "A plain git branch name. Git accepts shell metacharacters in ref names; Fugaro does not, because the branch reaches git, Docker build arguments and Cloud Build.",
+          "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+          "not": { "pattern": "\\.\\.|//|(^|/)\\.|\\.lock(/|$)|[/.]$" }
+        },
         "pr": {
           "type": "object",
           "additionalProperties": false,

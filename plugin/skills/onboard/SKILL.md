@@ -73,7 +73,7 @@ Map what you find to `image:`:
 | Evidence in the repository | Setting |
 |---|---|
 | `.nvmrc`, `.node-version`, `nodejs` in `.tool-versions`, `node-version:` of `actions/setup-node`, a CI image such as `node:24.19.0`, or `engines.node` | `image.node`: the exact version when the repository pins one (`"24.19.0"`), otherwise the major (`"24"`). Quote it. Leave it out if nothing pins a version. |
-| `apt-get install` lines in CI | `image.apt`: the package names, dropping those the base already has (`ca-certificates curl dirmngr git gnupg procps sudo tini xz-utils zstd`). |
+| `apt-get install` lines in CI | `image.apt`: the package names, dropping those the base already has (`ca-certificates curl dirmngr git gnupg libcap2-bin procps sudo tini xz-utils zstd`). |
 | `playwright install --with-deps`, or CI running in a `mcr.microsoft.com/playwright` image | `image.setup`: install the browsers the tests use through the repository's own Playwright, so the version matches the lockfile. Use `npx playwright install --with-deps chromium`, `pnpm exec playwright install --with-deps chromium`, or `yarn playwright install --with-deps chromium`; in a Yarn workspace, use `yarn workspace <workspace> playwright install --with-deps chromium`. |
 | Other steps CI runs after installing dependencies and before building, such as code generation | `image.setup`, one step each, only if the build can't run without them. |
 
@@ -135,7 +135,7 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 | Smoke `origin`, `git-credentials` or `home-credentials` fails | Something wrote credentials into the image, or changed the origin. Remove that step. |
 | Smoke `user`, `init` or `no-sudo` fails | The repository Dockerfile changed `USER`, `ENTRYPOINT` or the sudo rules. Restore the contract. |
 | Smoke `checkout` fails | `/work/repo` is not at the commit that was built. Remove the `setup` step or Dockerfile line that checks out, resets or pulls. |
-| Smoke `claude`, `no-setuid` or `sudoers` fails | The repository Dockerfile removed Claude Code, added setuid binaries or left sudo rules behind. Restore the contract. |
+| Smoke `claude`, `no-setuid`, `no-setgid`, `no-file-caps` or `sudoers` fails | The repository Dockerfile or a setup step removed Claude Code, added setuid or setgid binaries or file capabilities, or left sudo rules behind. Restore the contract. |
 
 If the same failure survives three different fixes, stop and ask the user.
 

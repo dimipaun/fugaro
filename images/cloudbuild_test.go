@@ -25,10 +25,12 @@ type cloudBuild struct {
 		} `yaml:"secretManager"`
 	} `yaml:"availableSecrets"`
 	Steps []struct {
-		ID        string   `yaml:"id"`
-		Name      string   `yaml:"name"`
-		Args      []string `yaml:"args"`
-		SecretEnv []string `yaml:"secretEnv"`
+		ID         string   `yaml:"id"`
+		Name       string   `yaml:"name"`
+		Entrypoint string   `yaml:"entrypoint"`
+		Env        []string `yaml:"env"`
+		Args       []string `yaml:"args"`
+		SecretEnv  []string `yaml:"secretEnv"`
 	} `yaml:"steps"`
 	Images []string `yaml:"images"`
 }
@@ -75,6 +77,42 @@ func TestCloudBuildConfig(t *testing.T) {
 	}
 }
 
+// TestCloudBuildNoSubstitutionsInScripts keeps Cloud Build substitutions
+// out of shell script text. Substitution is textual, so a crafted value (a
+// branch name such as x$(curl…|sh) is a valid git ref) would run as shell
+// next to GIT_CREDENTIALS. Each value must reach a shell step through env:
+// instead, and every $$VAR a script reads must be one it was given.
+func TestCloudBuildNoSubstitutionsInScripts(t *testing.T) {
+	data, err := os.ReadFile("derived/cloudbuild.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cb cloudBuild
+	if err := yaml.Unmarshal(data, &cb); err != nil {
+		t.Fatal(err)
+	}
+	varRE := regexp.MustCompile(`\$\$\{?([A-Z][A-Z0-9_]*)`)
+	for _, s := range cb.Steps {
+		if s.Entrypoint != "bash" && s.Entrypoint != "sh" {
+			continue
+		}
+		script := strings.Join(s.Args, "\n")
+		if strings.Contains(script, "${_") {
+			t.Errorf("step %s interpolates a substitution into its script; pass it through env: and read it as $$VAR", s.ID)
+		}
+		given := map[string]bool{}
+		for _, e := range append(append([]string{}, s.Env...), s.SecretEnv...) {
+			name, _, _ := strings.Cut(e, "=")
+			given[name] = true
+		}
+		for _, m := range varRE.FindAllStringSubmatch(script, -1) {
+			if !given[m[1]] {
+				t.Errorf("step %s reads $$%s, which is not in its env: or secretEnv:", s.ID, m[1])
+			}
+		}
+	}
+}
+
 // TestCIWorkflowUsesScripts keeps CI and local runs identical: the workflow
 // may only build, smoke-test and scan through the scripts developers run.
 func TestCIWorkflowUsesScripts(t *testing.T) {
@@ -92,35 +130,41 @@ func TestCIWorkflowUsesScripts(t *testing.T) {
 	}
 }
 
-// TestCIWorkflowPermissionsScoped keeps packages:write off any job that can
-// run on pull_request: the workflow-level default must be read-only, and
-// only a job whose `if:` gates on the resolved publish flag (never true for
-// pull_request; see the version job's "Pick the version" step) may declare
-// packages:write.
+// TestCIWorkflowPermissionsScoped holds every workflow file to a read-only
+// GITHUB_TOKEN by default: the workflow-level permissions must be exactly
+// contents: read, and only a job whose `if:` gates on the resolved publish
+// flag (never true for pull_request; see images.yml's "Pick the version"
+// step) may declare packages:write.
 func TestCIWorkflowPermissionsScoped(t *testing.T) {
-	data, err := os.ReadFile("../.github/workflows/images.yml")
-	if err != nil {
-		t.Fatal(err)
+	files, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil || len(files) < 2 {
+		t.Fatalf("workflow files = %v (%v)", files, err)
 	}
-	var wf struct {
-		Permissions map[string]string `yaml:"permissions"`
-		Jobs        map[string]struct {
-			If          string            `yaml:"if"`
-			Permissions map[string]string `yaml:"permissions"`
-		} `yaml:"jobs"`
-	}
-	if err := yaml.Unmarshal(data, &wf); err != nil {
-		t.Fatal(err)
-	}
-	if wf.Permissions["contents"] != "read" || wf.Permissions["packages"] != "" {
-		t.Errorf("workflow-level permissions = %+v, want only contents: read", wf.Permissions)
-	}
-	for name, job := range wf.Jobs {
-		if job.Permissions["packages"] != "write" {
-			continue
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
 		}
-		if !strings.Contains(job.If, "publish") {
-			t.Errorf("job %q grants packages:write but its `if:` (%q) does not gate on the resolved publish flag, so it could run on pull_request", name, job.If)
+		var wf struct {
+			Permissions map[string]string `yaml:"permissions"`
+			Jobs        map[string]struct {
+				If          string            `yaml:"if"`
+				Permissions map[string]string `yaml:"permissions"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &wf); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if len(wf.Permissions) != 1 || wf.Permissions["contents"] != "read" {
+			t.Errorf("%s: workflow-level permissions = %+v, want only contents: read", f, wf.Permissions)
+		}
+		for name, job := range wf.Jobs {
+			if job.Permissions["packages"] != "write" {
+				continue
+			}
+			if !strings.Contains(job.If, "publish") {
+				t.Errorf("%s: job %q grants packages:write but its `if:` (%q) does not gate on the resolved publish flag, so it could run on pull_request", f, name, job.If)
+			}
 		}
 	}
 }
@@ -279,5 +323,33 @@ func TestCIWorkflowMovesMajorOnlyForTheNewestRelease(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "MOVE_MAJOR: ${{ needs.version.outputs.move_major }}") {
 		t.Error("the publish step does not take move_major from the version job")
+	}
+}
+
+// TestCIWorkflowJobsHaveTimeouts bounds every job in every workflow, so a
+// hung build or test can't hold a runner for GitHub's 6-hour default.
+func TestCIWorkflowJobsHaveTimeouts(t *testing.T) {
+	files, err := filepath.Glob("../.github/workflows/*.yml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("workflow files = %v (%v)", files, err)
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wf struct {
+			Jobs map[string]struct {
+				TimeoutMinutes int `yaml:"timeout-minutes"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(data, &wf); err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		for name, job := range wf.Jobs {
+			if job.TimeoutMinutes <= 0 || job.TimeoutMinutes > 120 {
+				t.Errorf("%s: job %q timeout-minutes = %d, want 1..120", f, name, job.TimeoutMinutes)
+			}
+		}
 	}
 }

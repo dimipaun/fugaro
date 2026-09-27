@@ -14,7 +14,20 @@ var (
 	secretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	memoryRE       = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
+	// branchNameRE is a conservative branch-name charset: no shell
+	// metacharacters, whitespace or leading "-". badBranchRE adds the
+	// `git check-ref-format --branch` rules that charset still allows.
+	branchNameRE = regexp.MustCompile(`^[A-Za-z0-9._][A-Za-z0-9._/-]*$`)
+	badBranchRE  = regexp.MustCompile(`\.\.|//|(^|/)\.|\.lock(/|$)|[/.]$`)
 )
+
+// validBranchName reports whether b is a safe git branch name. base_branch
+// reaches git, Docker build arguments and Cloud Build, and git itself
+// accepts shell metacharacters such as $( and | in a ref name, so the rule
+// is stricter than git's own.
+func validBranchName(b string) bool {
+	return branchNameRE.MatchString(b) && !badBranchRE.MatchString(b)
+}
 
 // reservedEnvPrefixes are set by Fugaro itself or change git and Claude Code behavior.
 var reservedEnvPrefixes = []string{"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_"}
@@ -30,6 +43,9 @@ func Validate(c *Config) []Problem {
 	}
 	if !slices.Contains([]string{"github", "bitbucket"}, c.Git.Provider) {
 		add("git.provider", "must be one of github, bitbucket")
+	}
+	if !validBranchName(c.Git.BaseBranch) {
+		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
 	}
 	if !slices.Contains([]string{"vertex", "api-key", "oauth"}, c.Agent.Auth) {
 		add("agent.auth", "must be one of vertex, api-key, oauth")

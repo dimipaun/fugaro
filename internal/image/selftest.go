@@ -84,6 +84,24 @@ var expectedSetuidBinaries = map[string]bool{
 	"usr/bin/umount":  true,
 }
 
+// expectedSetgidBinaries is the standard Ubuntu 24.04 setgid set, observed
+// on the fugaro-web-node base image the same way (`find / -xdev -perm -2000
+// -type f`): chage and expiry (group shadow, from passwd) and the PAM
+// password helpers. It has the same semantics as expectedSetuidBinaries:
+// anything else is a finding, and a package that legitimately ships one
+// needs an explicit allowance here.
+var expectedSetgidBinaries = map[string]bool{
+	"usr/bin/chage":                  true,
+	"usr/bin/expiry":                 true,
+	"usr/sbin/pam_extrausers_chkpwd": true,
+	"usr/sbin/unix_chkpwd":           true,
+}
+
+// expectedFileCaps is the set of files allowed to carry file capabilities
+// (security.capability): none, since the base installs nothing that needs
+// one. It follows expectedSetuidBinaries' semantics.
+var expectedFileCaps = map[string]bool{}
+
 // Selftest runs the derived-image smoke checks in the current environment,
 // which is the image itself. The verify build's output goes to log.
 func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
@@ -103,6 +121,8 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 	if spec.CheckHardening {
 		checkSetuid(ctx, "/", add)
+		checkSetgid(ctx, "/", add)
+		checkFileCaps(ctx, "/", add)
 		checkSudoers("/etc/sudoers.d", "/etc/sudoers", add)
 	}
 	if spec.CheckInit {
@@ -237,13 +257,71 @@ func checkHome(add func(string, bool, string, ...any)) {
 // the caller can't read (expected, since the checked-for real caller is the
 // non-root fugaro user) is discarded rather than treated as a failure.
 func checkSetuid(ctx context.Context, root string, add func(string, bool, string, ...any)) {
+	checkModeBit(ctx, root, "-4000", "no-setuid", "setuid-root", expectedSetuidBinaries, add)
+}
+
+// checkSetgid reports the "no-setgid" check: no setgid binary exists under
+// root beyond expectedSetgidBinaries, found the way checkSetuid finds
+// setuid ones (`find -xdev -perm -2000 -type f`).
+func checkSetgid(ctx context.Context, root string, add func(string, bool, string, ...any)) {
+	checkModeBit(ctx, root, "-2000", "no-setgid", "setgid", expectedSetgidBinaries, add)
+}
+
+// checkModeBit reports check name: no regular file under root on its
+// filesystem has the mode bits perm (a find -perm argument) unless its
+// root-relative path is in expected.
+func checkModeBit(ctx context.Context, root, perm, name, what string, expected map[string]bool, add func(string, bool, string, ...any)) {
 	var stdout bytes.Buffer
-	cmd := exec.CommandContext(ctx, "find", root, "-xdev", "-perm", "-4000", "-type", "f")
+	cmd := exec.CommandContext(ctx, "find", root, "-xdev", "-perm", perm, "-type", "f")
 	cmd.Stdout = &stdout
 	_ = cmd.Run()
+	all, extra := unexpectedPaths(root, strings.Split(stdout.String(), "\n"), expected)
+	if len(extra) > 0 {
+		add(name, false, "unexpected %s binaries: %s", what, strings.Join(extra, ", "))
+		return
+	}
+	add(name, true, "%d %s binaries, all in the expected Ubuntu set", all, what)
+}
 
-	var all, extra []string
+// checkFileCaps reports the "no-file-caps" check: no file under root on its
+// filesystem carries file capabilities beyond expectedFileCaps. A setup
+// step with sudo could grant one (setcap cap_setuid+ep …), which the
+// setuid check can't see. It runs getcap over `find -xdev -type f`, since
+// `getcap -r` would descend into /proc and other mounts. The base image
+// ships getcap (libcap2-bin); without it the check fails rather than pass
+// unchecked.
+func checkFileCaps(ctx context.Context, root string, add func(string, bool, string, ...any)) {
+	getcap, err := exec.LookPath("getcap")
+	if err != nil {
+		add("no-file-caps", false, "getcap (libcap2-bin) is not in the image, so file capabilities can't be checked")
+		return
+	}
+	var stdout bytes.Buffer
+	cmd := exec.CommandContext(ctx, "find", root, "-xdev", "-type", "f", "-exec", getcap, "{}", "+")
+	cmd.Stdout = &stdout
+	_ = cmd.Run()
+	var paths []string
 	for _, line := range strings.Split(stdout.String(), "\n") {
+		// getcap prints "<path> <capabilities>" for each file that has any.
+		if i := strings.LastIndex(strings.TrimSpace(line), " "); i > 0 {
+			paths = append(paths, strings.TrimSpace(line)[:i])
+		}
+	}
+	_, extra := unexpectedPaths(root, paths, expectedFileCaps)
+	if len(extra) > 0 {
+		add("no-file-caps", false, "unexpected file capabilities on: %s", strings.Join(extra, ", "))
+		return
+	}
+	add("no-file-caps", true, "no file capabilities")
+}
+
+// unexpectedPaths turns find-style absolute paths under root into
+// root-relative ones and returns how many there were and, sorted, those not
+// in expected.
+func unexpectedPaths(root string, lines []string, expected map[string]bool) (int, []string) {
+	n := 0
+	var extra []string
+	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -253,17 +331,13 @@ func checkSetuid(ctx context.Context, root string, add func(string, bool, string
 			rel = line
 		}
 		rel = filepath.ToSlash(rel)
-		all = append(all, rel)
-		if !expectedSetuidBinaries[rel] {
+		n++
+		if !expected[rel] {
 			extra = append(extra, rel)
 		}
 	}
-	if len(extra) > 0 {
-		sort.Strings(extra)
-		add("no-setuid", false, "unexpected setuid-root binaries: %s", strings.Join(extra, ", "))
-		return
-	}
-	add("no-setuid", true, "%d setuid-root binaries, all in the expected Ubuntu set", len(all))
+	sort.Strings(extra)
+	return n, extra
 }
 
 // checkSudoers reports the "sudoers" check: sudoersDir (normally

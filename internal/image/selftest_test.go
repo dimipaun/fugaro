@@ -239,6 +239,97 @@ func TestCheckSetuidPassesWithNone(t *testing.T) {
 	}
 }
 
+func mkSetgid(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, os.ModeSetgid|0o755); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(path); err != nil || fi.Mode()&os.ModeSetgid == 0 {
+		t.Skipf("this filesystem won't set the setgid bit for this user (%v)", err)
+	}
+}
+
+func TestCheckSetgidAllowsTheExpectedSet(t *testing.T) {
+	root := t.TempDir()
+	mkSetgid(t, filepath.Join(root, "usr/bin/chage"))
+	mkSetgid(t, filepath.Join(root, "usr/sbin/unix_chkpwd"))
+	add, r := addRecorder()
+	checkSetgid(context.Background(), root, add)
+	c, ok := checkNamed(*r, "no-setgid")
+	if !ok || !c.OK {
+		t.Fatalf("want no-setgid to pass with only the expected binaries, got %+v", r.Checks)
+	}
+}
+
+func TestCheckSetgidFlagsAnUnexpectedBinary(t *testing.T) {
+	root := t.TempDir()
+	mkSetgid(t, filepath.Join(root, "usr/bin/chage"))
+	mkSetgid(t, filepath.Join(root, "opt/evil"))
+	add, r := addRecorder()
+	checkSetgid(context.Background(), root, add)
+	c, ok := checkNamed(*r, "no-setgid")
+	if !ok || c.OK || !strings.Contains(c.Detail, "opt/evil") || strings.Contains(c.Detail, "chage") {
+		t.Fatalf("want no-setgid to fail naming only opt/evil, got %+v", r.Checks)
+	}
+}
+
+// fakeGetcap puts a getcap on PATH that reports cap_net_raw=ep for any file
+// named "capped", the way libcap's getcap prints "<path> <caps>" for each
+// file that has capabilities and nothing for the rest.
+func fakeGetcap(t *testing.T) {
+	t.Helper()
+	bin := t.TempDir()
+	testutil.WriteFiles(t, bin, map[string]string{
+		"getcap": "#!/bin/sh\nfor f in \"$@\"; do case \"$f\" in */capped) echo \"$f cap_net_raw=ep\" ;; esac; done\n",
+	})
+	if err := os.Chmod(filepath.Join(bin, "getcap"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestCheckFileCapsPassesWithNone(t *testing.T) {
+	fakeGetcap(t)
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{"usr/bin/plain": "x"})
+	add, r := addRecorder()
+	checkFileCaps(context.Background(), root, add)
+	if c, ok := checkNamed(*r, "no-file-caps"); !ok || !c.OK {
+		t.Fatalf("want no-file-caps to pass, got %+v", r.Checks)
+	}
+}
+
+func TestCheckFileCapsFlagsACapability(t *testing.T) {
+	fakeGetcap(t)
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{"usr/bin/plain": "x", "usr/local/bin/capped": "x"})
+	add, r := addRecorder()
+	checkFileCaps(context.Background(), root, add)
+	c, ok := checkNamed(*r, "no-file-caps")
+	if !ok || c.OK || !strings.Contains(c.Detail, "usr/local/bin/capped") || strings.Contains(c.Detail, "plain") {
+		t.Fatalf("want no-file-caps to fail naming only usr/local/bin/capped, got %+v", r.Checks)
+	}
+}
+
+// TestCheckFileCapsFailsWithoutGetcap: the check fails closed rather than
+// passing unchecked when the image has no getcap (the base ships
+// libcap2-bin for it).
+func TestCheckFileCapsFailsWithoutGetcap(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+	add, r := addRecorder()
+	checkFileCaps(context.Background(), t.TempDir(), add)
+	c, ok := checkNamed(*r, "no-file-caps")
+	if !ok || c.OK || !strings.Contains(c.Detail, "getcap") {
+		t.Fatalf("want no-file-caps to fail naming getcap, got %+v", r.Checks)
+	}
+}
+
 func TestCheckSudoersPasses(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "sudoers.d")

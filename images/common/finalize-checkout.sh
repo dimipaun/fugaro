@@ -13,20 +13,29 @@ set -eu
 repo=${1:-/work/repo}
 git -C "$repo" rev-parse --git-dir >/dev/null
 strip_pattern='^(credential\..*|http\.(.*\.)?extraheader|url\..*\.(insteadof|pushinsteadof))$'
-keys=$(git -C "$repo" config --local --name-only --get-regexp "$strip_pattern" || true)
-for key in $keys; do
-  git -C "$repo" config --local --unset-all "$key"
-done
+# Key names are read one per line and taken whole: a URL subsection may
+# contain spaces. git's own error is discarded, because it would echo the
+# key, and the key's URL can hold a token.
+git -C "$repo" config --local --name-only --get-regexp "$strip_pattern" 2>/dev/null \
+  | while IFS= read -r key; do
+      git -C "$repo" config --local --unset-all "$key" 2>/dev/null || {
+        echo "finalize-checkout: could not strip a credential setting from $repo/.git/config" >&2
+        exit 1
+      }
+    done
 rm -f "$HOME/.git-credentials"
 # Whatever a credential.*, http.extraheader or url.insteadOf key survives
-# past the local strip above must come from the system or global git
-# config, which the baked image must not carry.
+# past the local strip above comes from a config file the strip can't
+# rewrite: the system or global git config, or a file any scope pulls in
+# with include.path (`git config --local` doesn't follow includes). The
+# baked image must carry none of them.
+where="system or global git config, or an included config file"
 if git -C "$repo" config --get-regexp '^credential\.' >/dev/null 2>&1; then
-  echo "finalize-checkout: a git credential helper is still configured (system or global git config)" >&2
+  echo "finalize-checkout: a git credential helper is still configured ($where)" >&2
   exit 1
 fi
 if git -C "$repo" config --get-regexp '^http\.(.*\.)?extraheader$' >/dev/null 2>&1; then
-  echo "finalize-checkout: an http.extraheader is still configured (system or global git config)" >&2
+  echo "finalize-checkout: an http.extraheader is still configured ($where)" >&2
   exit 1
 fi
 # The '://[^/[:space:]]*@' match is deliberately broad: it also matches a
@@ -38,12 +47,12 @@ fi
 # ones.
 if git -C "$repo" config --get-regexp '^url\..*\.insteadof$' 2>/dev/null \
     | grep -Eq '://[^/[:space:]]*@'; then
-  echo "finalize-checkout: a credential-bearing url.insteadOf is still configured (system or global git config)" >&2
+  echo "finalize-checkout: a credential-bearing url.insteadOf is still configured ($where)" >&2
   exit 1
 fi
 if git -C "$repo" config --get-regexp '^url\..*\.pushinsteadof$' 2>/dev/null \
     | grep -Eq '://[^/[:space:]]*@'; then
-  echo "finalize-checkout: a credential-bearing url.pushInsteadOf is still configured (system or global git config)" >&2
+  echo "finalize-checkout: a credential-bearing url.pushInsteadOf is still configured ($where)" >&2
   exit 1
 fi
 origin=$(git -C "$repo" remote get-url origin 2>/dev/null || true)

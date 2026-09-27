@@ -33,6 +33,18 @@ func checkout(t *testing.T, files map[string]string) string {
 // test unless the build and its smoke test pass.
 func buildImage(t *testing.T, dir, base, tag string, env ...string) image.LocalResult {
 	t.Helper()
+	res, stderr, err := buildImageResult(t, dir, base, tag, env...)
+	if err != nil || res.Smoke == nil || !res.Smoke.Passed {
+		t.Fatalf("image build: %v\nresult %+v\nstderr:\n%s", err, res, testutil.Tail(stderr))
+	}
+	return res
+}
+
+// buildImageResult is buildImage without the pass requirement: it returns
+// the JSON result, the command's stderr and its error, and fails the test
+// only when there is no JSON result at all.
+func buildImageResult(t *testing.T, dir, base, tag string, env ...string) (image.LocalResult, string, error) {
+	t.Helper()
 	cmd := exec.Command(testutil.BuildFugaro(t), "image", "build", "--local", "--json",
 		"--base", base, "--tag", tag, "--platform", testutil.DockerPlatform(t))
 	cmd.Dir = dir
@@ -45,10 +57,7 @@ func buildImage(t *testing.T, dir, base, tag string, env ...string) image.LocalR
 	if jerr := json.Unmarshal(stdout.Bytes(), &res); jerr != nil {
 		t.Fatalf("no JSON result (exit: %v): %v\nstderr:\n%s", err, jerr, testutil.Tail(stderr.String()))
 	}
-	if err != nil || res.Smoke == nil || !res.Smoke.Passed {
-		t.Fatalf("image build: %v\nresult %+v\nstderr:\n%s", err, res, testutil.Tail(stderr.String()))
-	}
-	return res
+	return res, stderr.String(), err
 }
 
 func smokeCheck(res image.LocalResult, name string) image.Check {
@@ -88,7 +97,7 @@ workflows:
 	// Controller ruling: the selftest's own hardening checks (no unexpected
 	// setuid-root binary, no leftover sudoers rule) must have run and passed
 	// too, not just the checkout-facing checks the brief names.
-	for _, name := range []string{"no-sudo", "no-setuid", "sudoers", "init", "user", "git-credentials", "home-credentials", "verify-build"} {
+	for _, name := range []string{"no-sudo", "no-setuid", "no-setgid", "no-file-caps", "sudoers", "init", "user", "git-credentials", "home-credentials", "verify-build"} {
 		if c := smokeCheck(res, name); !c.OK {
 			t.Errorf("smoke check %s = %+v", name, c)
 		}
@@ -105,6 +114,33 @@ workflows:
 	}
 	if testutil.ImageContains(t, tag, canary) {
 		t.Fatal("the build secret is baked into an image layer")
+	}
+}
+
+// TestSelftestFlagsSetgidAndFileCaps: a setup step with sudo that leaves a
+// setgid binary or grants a file capability must fail the smoke test, the
+// way a leftover setuid binary does.
+func TestSelftestFlagsSetgidAndFileCaps(t *testing.T) {
+	base := testutil.BaseImage(t)
+	testutil.IsolateGit(t)
+	files := testutil.FixtureFiles(t)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", `    base: web-node
+    image:
+      setup:
+        - sudo -n install -m 2755 /usr/bin/true /usr/local/bin/sgid-true
+        - sudo -n install -m 0755 /usr/bin/true /usr/local/bin/capped-true && sudo -n setcap cap_net_raw+ep /usr/local/bin/capped-true
+`, 1)
+	res, stderr, err := buildImageResult(t, checkout(t, files), base, "fugaro-test-hardening:local")
+	if err == nil || res.Smoke == nil || res.Smoke.Passed {
+		t.Fatalf("want the smoke test to fail, got err=%v result %+v\nstderr:\n%s", err, res, testutil.Tail(stderr))
+	}
+	for name, want := range map[string]string{"no-setgid": "usr/local/bin/sgid-true", "no-file-caps": "usr/local/bin/capped-true"} {
+		if c := smokeCheck(res, name); c.OK || !strings.Contains(c.Detail, want) {
+			t.Errorf("smoke check %s = %+v, want a failure naming %s", name, c, want)
+		}
+	}
+	if c := smokeCheck(res, "no-setuid"); !c.OK {
+		t.Errorf("no-setuid = %+v, want it to pass", c)
 	}
 }
 

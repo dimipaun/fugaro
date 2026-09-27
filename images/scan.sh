@@ -8,7 +8,9 @@ cache=${TRIVY_CACHE_DIR:-$HOME/.cache/trivy}
 mkdir -p "$cache"
 # Pinned by digest (not just the 0.65.0 tag, which is mutable): checked with
 # `docker inspect aquasec/trivy:0.65.0 --format '{{index .RepoDigests 0}}'`
-# on 2026-09-27.
+# on 2026-09-27. Dependabot doesn't cover this pin (it's a shell variable,
+# not a Dockerfile FROM): bump it by hand monthly, alongside the base
+# refreshes, to the latest Trivy release's digest.
 trivy_image=aquasec/trivy@sha256:a22415a38938a56c379387a8163fcb0ce38b10ace73e593475d3658d578b2436
 trivy() {
   docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$cache:/root/.cache/trivy" \

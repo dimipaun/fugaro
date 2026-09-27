@@ -231,3 +231,40 @@ func TestFinalizeCheckoutUsesTheSharedCredentialPatterns(t *testing.T) {
 		}
 	}
 }
+
+// TestFinalizeCheckoutStripsKeysWithSpaces: a URL subsection may contain a
+// space, so the strip loop must take each key name whole. Split on
+// whitespace, the fragments fail --unset-all and git's error can echo part
+// of a credential-bearing URL into the build log.
+func TestFinalizeCheckoutStripsKeysWithSpaces(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	testutil.Git(t, repo, "config", "url.https://x-access-token:s3cr3t@my host.invalid/.insteadOf", "https://example.invalid/")
+	testutil.Git(t, repo, "config", "http.https://my host.invalid/.extraheader", "AUTHORIZATION: basic s3cr3t")
+	out, err := finalize(t, repo, home)
+	if err != nil {
+		t.Fatalf("finalize-checkout: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "s3cr3t") {
+		t.Fatalf("finalize-checkout printed a credential: %q", out)
+	}
+	if cfg, _ := os.ReadFile(filepath.Join(repo, ".git", "config")); strings.Contains(string(cfg), "s3cr3t") {
+		t.Fatalf("the local config still holds the credential:\n%s", cfg)
+	}
+}
+
+// TestFinalizeCheckoutRejectsIncludedCredential: `git config --local` does
+// not follow include.path, so a helper in an included file survives the
+// local strip. The all-scope check must still refuse it, without blaming
+// the system or global config alone.
+func TestFinalizeCheckoutRejectsIncludedCredential(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	inc := filepath.Join(t.TempDir(), "included.gitconfig")
+	if err := os.WriteFile(inc, []byte("[credential]\n\thelper = store\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo, "config", "include.path", inc)
+	out, err := finalize(t, repo, home)
+	if err == nil || !strings.Contains(out, "credential helper is still configured") || !strings.Contains(out, "included") {
+		t.Fatalf("err = %v, output %q", err, out)
+	}
+}

@@ -1,4 +1,8 @@
 # syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
+# The frontend pin above (also in images/derived/Dockerfile.tmpl and the
+# render_test goldens) isn't covered by Dependabot, which doesn't update
+# "# syntax" lines: bump it by hand monthly, alongside the base refreshes,
+# with `docker buildx imagetools inspect docker/dockerfile:<version>`.
 # Fugaro web-node base image (design §7.1): Node.js LTS with corepack, git,
 # zstd, tini, gh, Claude Code (native installer) and fugaro. It runs as the
 # non-root user fugaro (uid 1000) in /work/repo. Build it from the repository
@@ -39,10 +43,12 @@ ENV HOME=/home/fugaro \
     COREPACK_HOME=/home/fugaro/.cache/corepack \
     PLAYWRIGHT_BROWSERS_PATH=/home/fugaro/.cache/ms-playwright
 # sudo is installed with no rules; derived builds grant it to image.setup
-# steps only and remove the grant before the image is finished.
+# steps only and remove the grant before the image is finished. libcap2-bin
+# provides getcap, which fugaro image selftest uses to check that no file
+# carries capabilities.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      ca-certificates curl dirmngr git gnupg procps sudo tini xz-utils zstd \
+      ca-certificates curl dirmngr git gnupg libcap2-bin procps sudo tini xz-utils zstd \
  && rm -rf /var/lib/apt/lists/* \
  && userdel --remove ubuntu \
  && useradd --uid 1000 --user-group --create-home --shell /bin/bash fugaro \
