@@ -141,11 +141,21 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 	if res.Commit, err = git("rev-parse", "HEAD"); err != nil {
 		return res, err
 	}
-	if status, err := git("status", "--porcelain"); err == nil && status != "" {
+	if status, err := git("--no-optional-locks", "status", "--porcelain"); err == nil && status != "" {
 		fmt.Fprintf(o.Log, "fugaro: uncommitted changes are not in the image; it bakes commit %s\n", res.Commit)
 	}
 	origin, err := git("remote", "get-url", "origin")
-	if err != nil || origin == "" {
+	switch {
+	case err != nil && strings.Contains(strings.ToLower(err.Error()), "no such remote"):
+		// The expected shape of "no origin configured": keep the friendly
+		// message rather than the raw git error.
+		return res, errors.New("the checkout has no origin remote; the image keeps it as the URL runs fetch from")
+	case err != nil:
+		// A real git failure (a corrupt checkout, git itself misbehaving);
+		// wrap it, but the error text never carries the origin URL, which
+		// could hold a token.
+		return res, fmt.Errorf("reading the checkout's origin remote: %w", err)
+	case origin == "":
 		return res, errors.New("the checkout has no origin remote; the image keeps it as the URL runs fetch from")
 	}
 	res.Origin = HTTPSOrigin(origin)
@@ -223,10 +233,11 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 	runErr := run(ctx, Cmd{Name: "docker", Args: runArgs, Env: secretEnv, Stdin: bytes.NewReader(in), Stdout: &out, Stderr: o.Log})
 	var rep Report
 	if err := json.Unmarshal(out.Bytes(), &rep); err != nil {
+		const hint = " (the base image's fugaro may predate `image selftest`; rebuild it with images/build-base.sh)"
 		if runErr != nil {
-			return res, fmt.Errorf("smoke test: %w", runErr)
+			return res, fmt.Errorf("smoke test: %w%s", runErr, hint)
 		}
-		return res, fmt.Errorf("smoke test printed no report: %w", err)
+		return res, fmt.Errorf("smoke test printed no report: %w%s", err, hint)
 	}
 	res.Smoke = &rep
 	return res, nil
@@ -239,7 +250,9 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 func bundle(ctx context.Context, run Runner, root, scratch, out, branch string) error {
 	quiet := []string{"-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	steps := [][]string{
-		{"init", "--quiet", "--bare", scratch},
+		// --template= (empty) skips copying any system or user git template
+		// (which can carry hooks) into this scratch repository.
+		{"init", "--quiet", "--bare", "--template=", scratch},
 		append(append([]string{"-C", scratch}, quiet...), "fetch", "--quiet", "--no-tags", root, "+HEAD:refs/heads/"+branch),
 		{"-C", scratch, "bundle", "create", "--quiet", out, "refs/heads/" + branch},
 	}

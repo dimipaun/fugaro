@@ -161,6 +161,12 @@ func TestBuildLocal(t *testing.T) {
 	if !slices.Contains(run, "NPM_TOKEN") || !slices.Equal(run[len(run)-4:], []string{"app:local", "fugaro", "image", "selftest"}) {
 		t.Errorf("docker run args = %q", run)
 	}
+	if strings.Contains(strings.Join(build, " "), "npm-canary-1234") || strings.Contains(strings.Join(run, " "), "npm-canary-1234") {
+		t.Error("the secret value reached docker build or run arguments; only its env name may appear")
+	}
+	if !slices.Contains(f.runEnv[0], "NPM_TOKEN=npm-canary-1234") {
+		t.Errorf("docker run env = %q, want it to carry NPM_TOKEN", f.runEnv[0])
+	}
 	s := f.spec
 	if s.Base != "web-node" || s.Commit != head || s.Origin != "https://github.com/acme/app.git" || s.Node != "24.19.0" || !s.CheckInit ||
 		s.RepoDir != "/work/repo" || s.Verify.RepoDir != "/work/repo" || s.Verify.Build != "sh build.sh" || !slices.Equal(s.Verify.Reports, []string{"junit.xml"}) {

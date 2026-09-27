@@ -7,15 +7,17 @@ import (
 
 func TestHTTPSOrigin(t *testing.T) {
 	cases := map[string]string{
-		"git@bitbucket.org:team/repo.git":                       "https://bitbucket.org/team/repo.git",
-		"bitbucket.org:team/repo.git":                           "https://bitbucket.org/team/repo.git",
-		"ssh://git@github.com/acme/app.git":                     "https://github.com/acme/app.git",
-		"ssh://git@github.com:22/acme/app.git":                  "https://github.com/acme/app.git",
-		"https://x-access-token:s3cr3t@github.com/acme/app.git": "https://github.com/acme/app.git",
-		"https://github.com/acme/app.git":                       "https://github.com/acme/app.git",
-		"http://github.com/acme/app.git":                        "https://github.com/acme/app.git",
-		"/srv/git/app.git":                                      "/srv/git/app.git",
-		"file:///srv/git/app.git":                               "file:///srv/git/app.git",
+		"git@bitbucket.org:team/repo.git":                         "https://bitbucket.org/team/repo.git",
+		"bitbucket.org:team/repo.git":                             "https://bitbucket.org/team/repo.git",
+		"ssh://git@github.com/acme/app.git":                       "https://github.com/acme/app.git",
+		"ssh://git@github.com:22/acme/app.git":                    "https://github.com:22/acme/app.git",
+		"https://x-access-token:s3cr3t@github.com/acme/app.git":   "https://github.com/acme/app.git",
+		"https://github.com/acme/app.git":                         "https://github.com/acme/app.git",
+		"http://github.com/acme/app.git":                          "https://github.com/acme/app.git",
+		"ssh://git@git.example.invalid:2222/team/repo.git":        "https://git.example.invalid:2222/team/repo.git",
+		"https://user:tok@git.example.invalid:8443/team/repo.git": "https://git.example.invalid:8443/team/repo.git",
+		"/srv/git/app.git":                                        "/srv/git/app.git",
+		"file:///srv/git/app.git":                                 "file:///srv/git/app.git",
 	}
 	for in, want := range cases {
 		if got := HTTPSOrigin(in); got != want {

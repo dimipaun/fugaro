@@ -13,9 +13,10 @@ var scpLikeRE = regexp.MustCompile(`^(?:[^@/:]+@)?([^/:]+):(.+)$`)
 // HTTPSOrigin returns the origin URL a derived image's checkout keeps under
 // the baked-checkout contract: an https URL on the provider host, with no
 // credentials, to which Fugaro's runner adds credentials at run time. SSH
-// remotes become https on the same host, and userinfo is dropped. Anything
-// else, such as a local path or file:// URL (tests only), is returned
-// unchanged.
+// remotes become https on the same host, keeping a non-default port (a
+// self-hosted provider can run both git-over-ssh and its https API on a
+// non-standard port), and userinfo is dropped. Anything else, such as a
+// local path or file:// URL (tests only), is returned unchanged.
 func HTTPSOrigin(origin string) string {
 	// u.Opaque == "" excludes scp-like origins that net/url happily parses
 	// as scheme:opaque (such as "bitbucket.org:team/repo.git", where "." is
@@ -24,7 +25,10 @@ func HTTPSOrigin(origin string) string {
 		switch u.Scheme {
 		case "https", "http", "ssh", "git+ssh", "ssh+git":
 			if u.Host != "" {
-				return "https://" + u.Hostname() + "/" + strings.TrimPrefix(u.Path, "/")
+				// u.Host, unlike u.Hostname(), keeps a non-default port; it
+				// already excludes userinfo (that lives in u.User), so this
+				// alone drops any embedded credentials.
+				return "https://" + u.Host + "/" + strings.TrimPrefix(u.Path, "/")
 			}
 		}
 		return origin
