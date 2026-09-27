@@ -123,11 +123,12 @@ These are the failure modes the design implies that are easiest to miss, most li
    - The CLI can die between `jobs.run` and writing `launch.json`, or two agents can retry the same `--run-id` at once.
    - There must be exactly one execution. A repeated launch prints the existing run, and `--retry` refuses while a launch may still be in flight.
    - The claim is never deleted after a launch, a held claim always triggers a re-read of `launch.json`, and a stale claim is taken over with a generation-matched replace.
-   - Task 10, deterministic through `launchHooks`: `TestLaunchWinnerFinishesBeforeLoserClaims`, `TestLaunchStaleClaimTakeoverHasOneWinner` and `TestLaunchRechecksAfterTakingTheClaim`. Also `TestRunIdempotentRunID`, `TestRetryBackfillsLaunchFromRecord` (with the name exactly as the runner records it), `TestRetryRefusesFreshClaim` and the smoke test `TestRunConcurrentSameRunID`.
+   - Task 10, deterministic through `launchHooks`: `TestLaunchWinnerFinishesBeforeLoserClaims`, `TestLaunchStaleClaimTakeoverHasOneWinner`, `TestLaunchStaleJudgementRacesAFreshClaim`, `TestLaunchRechecksAfterTakingTheClaim`, `TestLaunchLoserReportsWinnersLaunch` and `TestLaunchAmbiguousFailureKeepsTheClaim`. Also `TestRunIdempotentRunID`, `TestRetryBackfillsLaunchFromRecord` (with the name exactly as the runner records it), `TestRetryRefusesFreshClaim` and the smoke test `TestRunConcurrentSameRunID`.
 2. **A second execution of the same run.**
    - Cloud Run, or a double launch that slipped through, may start two executions of one run.
    - The first record is created with create-if-absent, so the second execution finds it, exits, and writes nothing. It never overwrites `result.json` or steals the lock.
    - The same execution spelled with a project number is not a duplicate.
+   - If a double launch happens anyway, every view follows `result.json`'s execution, the owner, not `launch.json`'s (Task 13 `TestDoubleLaunchViewsFollowTheRecord`).
    - Defensive only: if the first execution's record vanished but its lock is held, the duplicate has written just its own first record, and stops there.
    - Task 6: `TestDuplicateExecutionWritesNothing`, `TestSameExecutionSpelledDifferentlyIsNotADuplicate`, `TestDuplicateExecutionLosesLock`.
 3. **Secret values leaking through the new secrets path.**
@@ -262,7 +263,11 @@ Three worktree lanes branch from `m4` and merge back into it at three points. Ea
 | T19 | `docs/design/v1.md`, `docs/git-providers.md`, `docs/gcp-bootstrap.md`, `plugin/skills/onboard/SKILL.md`, maybe `README.md` |
 
 **Hot files shared across lanes** (bold above), and how they're kept safe:
-- **`internal/cli/root.go`:** T17 (C, before M2), T10 (A, before M2), then T11, T12, T13 (A) and T14 (C) after M2. Each adds exactly one `newXxxCmd()` to the `AddCommand` call. On conflict keep every line; the resolved list is sorted by task number.
+- **`internal/cli/root.go`:** T17 (C, before M2), T10 (A, before M2), then T11, T12, T13 (A) and T14 (C) after M2. Each adds exactly one `newXxxCmd()` to the `AddCommand` call. Conflicts at M2 and M3 are certain and managed (N-5). To resolve them:
+  1. `git fetch && git rebase origin/m4` in the lane's worktree.
+  2. On the `root.go` conflict, write the `AddCommand` call as the union of both sides: the commands already on `m4`, then this lane's, each once, in task-number order (`version, validate, config, verify, exec, image, run, ls, logs, diagnose, cancel, secrets, gcp`, keeping whichever exist so far).
+  3. `gofmt -w internal/cli/root.go && go build ./... && go test ./internal/cli/`, then `git add internal/cli/root.go && git rebase --continue`.
+  4. Never resolve by taking one side: a dropped command fails `TestSkillCommandsExist` or the command's own tests.
 - **`internal/runner/runner.go` and `internal/cli/exec.go`:** lane B only, in the order T6 → T7 → T8. No other lane touches them.
 - **`go.mod`/`go.sum`:** T4 and T5 (B), then T14 (C, after M2). T9 adds no module: `google.golang.org/api` is already direct from T4. Resolve any conflict with `go mod tidy`, never by hand.
 - **`internal/runstore/runstore.go`:** T3 (C, before M1), then T7 (B, after M1). The order is sequential through M1.
@@ -297,7 +302,7 @@ Three worktree lanes branch from `m4` and merge back into it at three points. Ea
   - `backend.ListFilter{Jobs []string; Since time.Time; ActiveOnly bool}`
   - `backend.LogQuery{Execution string; Since time.Time; Follow bool; Poll time.Duration}` and `backend.LogEntry{Time time.Time; Severity, InsertID, Message string; Fields map[string]any}`
   - the `backend.Backend` interface: `Launch`, `Execution`, `List`, `Logs` and `Cancel`
-  - `backend.ErrNotFound`
+  - `backend.ErrNotFound`, and `backend.ErrRejected` for a definitive refusal (a 4xx other than 408/429), the only launch error after which nothing can have started
   - `backend.ExecID{Project, Region, Job, Name string}`, `backend.ParseExecution(name string) (ExecID, bool)`, `(ExecID).Key() string` (`<region>/<job>/<name>`), `(ExecID).String() string`, `backend.SameExecution(a, b string) bool` and `backend.ExecutionFromEnv(getenv func(string) string) (string, error)`: the canonical execution name (C-1, below)
   - `backend.Prices{VCPUSecondUSD, GiBSecondUSD float64; Source string}` with `(Prices).ComputeUSD(cpu, memGiB float64, d time.Duration) float64`, and `backend.MemoryGiB(s string) (float64, error)`
   - `gcp.JobName(slug, workflow string) string`, `gcp.ServiceAccountID(slug, workflow string) string`, `gcp.SecretID(slug, logical string) string`, `gcp.ImageName(registry, slug, workflow string) string`
@@ -563,7 +568,7 @@ workflows:
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `go test ./internal/backend/... ./internal/config/ ./schemas/ ./internal/cli/ -run 'MemoryGiB|ComputeUSD|ExecutionBilled|Names|CheckResources|TestParseProblems|Corpus|CloudRunLimits'`
+Run: `go test ./internal/backend/... ./internal/config/ ./schemas/ ./internal/cli/ -run 'MemoryGiB|ComputeUSD|ParseExecution|ExecutionFromEnv|ExecutionBilled|Names|CheckResources|TestParseProblems|Corpus|CloudRunLimits'`
 Expected: FAIL. The new packages don't compile yet, the config `cpu` case expects the new message, and the corpus fails on `cpu-outside-cloud-run.yaml`, which the schema's enum and `Validate` still reject.
 
 - [ ] **Step 3: Implement**
@@ -725,8 +730,13 @@ type Backend interface {
 	Cancel(ctx context.Context, name string) error
 }
 
-// ErrNotFound means the execution does not exist.
+// ErrNotFound means the execution (or job) does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrRejected means the platform definitively refused a request (a 4xx
+// other than 408 and 429): nothing was created. Callers may undo their own
+// bookkeeping only for this error; any other error is ambiguous.
+var ErrRejected = errors.New("rejected")
 
 // Prices are compute list prices per second (design §10.1).
 type Prices struct {
@@ -1347,7 +1357,7 @@ git commit -m "localcfg: read the local CLI config"
   - `(*Store).CreateTask(ctx, *task.Spec) error`, which returns `ErrExists` when `task.json` is already there
   - `runstore.Launch{Version int; RunID, Backend, Execution, Job, LogURL, LaunchedBy string; LaunchedAt time.Time}` with JSON keys `version`, `run_id`, `backend`, `execution`, `job`, `log_url`, `launched_by` and `launched_at`
   - `(*Store).WriteLaunch(ctx, *Launch) error`, which returns `ErrExists`, and `(*Store).ReadLaunch(ctx) (*Launch, error)`
-  - `runstore.Claim{Holder string; At time.Time}`, `(*Store).Claim(ctx, holder string, at time.Time) (ok bool, existing *Claim, err error)` and `(*Store).ClaimKey() string`. There is deliberately no way to clear a claim here: a successful launch leaves it in place for good, and a stale one is taken over with a generation-matched overwrite in Task 10 (`blobx.ReplaceIf`), never by delete-then-create.
+  - `runstore.Claim{Holder string; At time.Time}`, `(*Store).Claim(ctx, holder string, at time.Time) (ok bool, existing *Claim, err error)`, `(*Store).ClaimKey() string`, `(*Store).ReadClaim(ctx) (*Claim, error)` and `runstore.ClaimTTL = 10 * time.Minute`. There is deliberately no way to clear a claim here: a successful launch leaves it in place for good, and a stale one is taken over with a generation-matched overwrite in Task 10 (`blobx.ReplaceIf`), never by delete-then-create.
   - `(*Store).CreateRecord(ctx, *Record) error`, which returns `ErrExists`: the runner's first write of `result.json` on Cloud Run (Task 6, I-10)
   - `runstore.Record.Deadline *time.Time` (JSON `deadline,omitempty`): when the run must be over (`started_at + total + 3m`), written by the runner; `ls` uses it for a run whose execution the backend no longer knows
   - `(*Store).ReadFile(ctx, name string) ([]byte, error)`
@@ -1654,26 +1664,52 @@ func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool
 	if err != nil {
 		return false, nil, err
 	}
-	err = s.create(ctx, "launching", data, "application/json")
-	if err == nil {
-		return true, nil, nil
+	for attempt := 0; ; attempt++ {
+		err = s.create(ctx, "launching", data, "application/json")
+		if err == nil {
+			return true, nil, nil
+		}
+		if !errors.Is(err, ErrExists) {
+			return false, nil, err
+		}
+		raw, rerr := s.read(ctx, "launching")
+		if errors.Is(rerr, ErrNotFound) && attempt == 0 {
+			continue // released between our create and our read: absent, so try once more (N-10)
+		}
+		if rerr != nil {
+			return false, nil, rerr
+		}
+		var c Claim
+		if jerr := json.Unmarshal(raw, &c); jerr != nil {
+			return false, &Claim{}, nil // unreadable: treat as held since the zero time
+		}
+		// existing is informational (ls, messages). A takeover must judge
+		// staleness on its own generation-carrying read (Task 10, N-1).
+		return false, &c, nil
 	}
-	if !errors.Is(err, ErrExists) {
-		return false, nil, err
-	}
-	raw, rerr := s.read(ctx, "launching")
-	if rerr != nil {
-		return false, nil, rerr
-	}
-	var c Claim
-	if jerr := json.Unmarshal(raw, &c); jerr != nil {
-		return false, &Claim{}, nil // unreadable: treat as held since the zero time
-	}
-	return false, &c, nil
 }
 
 // ClaimKey is the claim's object name, for Task 10's conditional takeover.
 func (s *Store) ClaimKey() string { return s.prefix + "launching" }
+
+// ClaimTTL is how long a launch claim protects a launch in flight. After
+// it, the claim is stale: fugaro run may take it over and ls shows the run
+// as unlaunched.
+const ClaimTTL = 10 * time.Minute
+
+// ReadClaim returns the launch claim, ErrNotFound when there is none, or
+// a zero Claim when it can't be parsed.
+func (s *Store) ReadClaim(ctx context.Context) (*Claim, error) {
+	raw, err := s.read(ctx, "launching")
+	if err != nil {
+		return nil, err
+	}
+	var c Claim
+	if json.Unmarshal(raw, &c) != nil {
+		return &Claim{}, nil
+	}
+	return &c, nil
+}
 ```
 
 Add `"errors"` to the imports.
@@ -2490,7 +2526,7 @@ func (l *Lock) Release(ctx context.Context) error {
 }
 ```
 
-`go.mod`: run `go get cloud.google.com/go/storage google.golang.org/api` and then `go mod tidy`. `storage` is justified because design §4.1 needs generation preconditions, and gocloud has no portable form of them. T4 owns `go.mod` in lane B; T5 comes after it in the same lane. Later tasks that add a module (T9, T14) resolve `go.mod`/`go.sum` conflicts at merge time with `go mod tidy` and never by hand.
+`go.mod`: run `go get cloud.google.com/go/storage google.golang.org/api` and then `go mod tidy`. `storage` is justified because design §4.1 needs generation preconditions, and gocloud has no portable form of them. T4 owns `go.mod` in lane B; T5 comes after it in the same lane. T9 adds no module (`google.golang.org/api` is already direct from here). The one later task that adds a module, T14 (`golang.org/x/term`), and any lane that conflicts on these files, resolve `go.mod`/`go.sum` conflicts at merge time with `go mod tidy` and never by hand.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -3112,7 +3148,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -4260,6 +4298,8 @@ git commit -m "agent: relay the agent's stream-json events to the run log as the
     - `AddJob(name string, cpu, memory string)`
     - `OnRun func(c gcpfake.RunCall)`, with `RunCall{Execution, Job string; Env map[string]string}`, where `Execution` is the **short** name, as Cloud Run hands `CLOUD_RUN_EXECUTION` to the container, called synchronously for every `:run`
     - `Start(job string) string`, which creates an execution directly, as another tool would
+    - `FailRunWith int`: when non-zero, `:run` answers that HTTP status without creating anything
+    - **Key form (N-9):** the fake stores executions by `(job, short name)`. `SetState`, `State` and every route accept a name in any form: full with the project ID, full with `ProjectNumber`, or short with the job known from the path. Names it returns use `ProjectNumber` when set, else the project ID.
     - `SetState(exec string, s backend.State)`
     - `Executions() []string`
     - `ProjectNumber string`: when set, every name the fake returns uses it instead of the project ID, as the real API may
@@ -4269,7 +4309,7 @@ git commit -m "agent: relay the agent's stream-json events to the run log as the
 - **Launch:** `POST v2/{job}:run`, where `{job}` is `projects/<p>/locations/<r>/jobs/<JobName>`.
   - The body is `{"overrides": {"containerOverrides": [{"env": [{"name": "FUGARO_RUN", "value": "<slug>/<id>"}]}]}}`. Cloud Run merges the override with the job's env. It needs `run.jobs.runWithOverrides`, which plain `run.invoker` lacks: M5's IAM must grant it to whoever runs `fugaro run` (the owner has it in M4).
   - The long-running operation completes only when the execution ends, so `Launch` never waits for it. It reads the Execution from `operation.metadata` (`name`, `logUri`).
-  - A 404 on the job is `backend.ErrNotFound`, wrapped with "job <name> does not exist; create it with the bootstrap (M5: fugaro init)".
+  - A 404 on the job is `backend.ErrNotFound` and `backend.ErrRejected` (`fmt.Errorf("…: %w: %w", backend.ErrNotFound, backend.ErrRejected)`), wrapped with "job <name> does not exist; create it with the bootstrap (M5: fugaro init)". Any other 4xx except 408 and 429 wraps `ErrRejected`. Timeouts, 408, 429, 5xx and transport errors wrap neither: the caller must treat them as "may have started".
 - **State:**
   - `completionTime` set, with `cancelledCount > 0` → cancelled
   - `completionTime` set, with `succeededCount > 0` and `failedCount == 0` → succeeded
@@ -4385,8 +4425,24 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 func TestLaunchMissingJob(t *testing.T) {
 	b, _, _ := newTestBackend(t)
 	_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
-	if !errors.Is(err, backend.ErrNotFound) || !strings.Contains(err.Error(), "fugaro-acme-app-web") {
+	if !errors.Is(err, backend.ErrNotFound) || !errors.Is(err, backend.ErrRejected) || !strings.Contains(err.Error(), "fugaro-acme-app-web") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLaunchAmbiguousErrorsAreNotRejected(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	for _, code := range []int{429, 500, 503} {
+		fr.FailRunWith = code
+		_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+		if err == nil || errors.Is(err, backend.ErrRejected) {
+			t.Errorf("HTTP %d: err = %v (must be ambiguous, not rejected)", code, err)
+		}
+	}
+	fr.FailRunWith = 403
+	if _, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"}); !errors.Is(err, backend.ErrRejected) {
+		t.Errorf("HTTP 403: err = %v", err)
 	}
 }
 
@@ -4642,9 +4698,10 @@ git commit -m "gcp: launch, inspect, list and cancel Cloud Run executions, and r
 10. **`launchRun`** is race-free (C-2, I-2); its doc comment below states the protocol:
     - `launch.json`, or `result.json` with an `execution` (backfilled into `launch.json`), means `already-launched`. That covers a CLI that died after `jobs.run`.
     - Take the claim with create-if-absent. **The claim is never deleted after a launch**, so no later caller can take it between another caller's checks, and whoever holds it writes `launch.json` before returning.
-    - When the claim is held: re-read `launch.json` (the holder may have finished) → `already-launched`. Otherwise, a claim younger than `claimTTL` is exit 1, "may still be in flight"; an older one is taken over with `blobx.ReplaceIf` on the generation just read. Losing that race re-reads `launch.json`, and otherwise exits 1.
-    - Having won, re-check `launch.json` and `result.json` once more, then `be.Launch`.
-    - On a launch error, delete our own claim only (`DeleteIf` on the exact object we hold), so a retry can go at once.
+    - When the claim is held, read it **once** with `blobx.Read`, getting content and generation together. Staleness is judged on that content, and a takeover's `ReplaceIf` matches that generation, so a claim that turned fresh after the read can't be replaced (N-1). A claim that vanished before the read counts as absent: take it once more (N-10).
+    - A fresh claim, or a lost takeover: wait up to `claimWait` (30s) for the holder's `launch.json`, and report it as `already-launched` with exit 0 (N-4). After that, exit 1, "still in flight".
+    - Having won, re-check `launch.json` and `result.json` once more, then `be.Launch`, bounded by `launchTimeout` (2m, well under `claimTTL`).
+    - On a **definitive** launch error (`backend.ErrRejected`: a 4xx other than 408/429), delete our own claim only (`DeleteIf` on the exact object we hold), so a corrected retry can go at once. On an ambiguous one (timeout, 5xx, transport), keep the claim: the execution may exist, and its `result.json` will say so (N-3).
     - `WriteLaunch`. `ErrExists` reads theirs and reports `already-launched`. A failed write keeps the claim, and `--retry` later backfills from `result.json`.
 11. **Human output:** `launched <slug>/<id>`, then the indented lines `branch fugaro/<id>` and `logs <url>`. With `--json`, it prints `launchResult`.
 
@@ -4834,6 +4891,16 @@ func setHooks(t *testing.T, before, takeover, after func()) {
 	t.Helper()
 	launchHooks.beforeClaim, launchHooks.beforeTakeover, launchHooks.afterClaim = before, takeover, after
 	t.Cleanup(func() { launchHooks.beforeClaim, launchHooks.beforeTakeover, launchHooks.afterClaim = nil, nil, nil })
+	shortWait(t)
+}
+
+// shortWait shrinks the loser's wait for launch.json. Tests that touch
+// these package variables (or launchHooks) must not use t.Parallel.
+func shortWait(t *testing.T) {
+	t.Helper()
+	w, p := claimWait, claimPoll
+	claimWait, claimPoll = 100*time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { claimWait, claimPoll = w, p })
 }
 
 func raceSpec(t *testing.T, env *cloudEnv) *task.Spec {
@@ -4912,17 +4979,103 @@ func TestLaunchRechecksAfterTakingTheClaim(t *testing.T) {
 	}
 }
 
-func TestLaunchFailureReleasesOnlyOurClaim(t *testing.T) {
+// N-1: after we judge the claim stale, another CLI replaces it with a fresh
+// one. Our takeover must fail on the generation it read, and nobody may
+// launch while the fresh holder is (supposedly) launching.
+func TestLaunchStaleJudgementRacesAFreshClaim(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)
 	spec := raceSpec(t, env)
-	spec.Workflow = "missing" // no such job: Launch fails with ErrNotFound
+	now := time.Now()
+	s := runstore.Open(env.bucket.Bucket, "acme-app", spec.RunID)
+	if ok, _, _ := s.Claim(context.Background(), "dead-laptop/1/1", now.Add(-2*claimTTL)); !ok {
+		t.Fatal("seed claim")
+	}
+	setHooks(t, nil, func() {
+		fresh, _ := json.Marshal(runstore.Claim{Holder: "other-laptop/2/2", At: now})
+		if err := env.bucket.WriteAll(context.Background(), s.ClaimKey(), fresh, nil); err != nil {
+			t.Fatal(err)
+		}
+	}, nil)
+	_, err := launchRun(context.Background(), env, spec, now)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "in flight") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want 0", n)
+	}
+}
+
+// N-4: a loser that finds a fresh claim waits for the winner's launch.json
+// and reports it, exit 0.
+func TestLaunchLoserReportsWinnersLaunch(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	shortWait(t)
+	claimWait = 2 * time.Second
+	s := runstore.Open(env.bucket.Bucket, "acme-app", spec.RunID)
+	_, _, _ = s.Claim(context.Background(), "winner/1/1", time.Now())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		_ = s.WriteLaunch(context.Background(), &runstore.Launch{Version: 1, RunID: spec.RunID, Execution: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-w"})
+	}()
+	res, err := launchRun(context.Background(), env, spec, time.Now())
+	if err != nil || res.Status != "already-launched" || !strings.HasSuffix(res.Execution, "-w") {
+		t.Fatalf("res = %+v, err = %v", res, err)
+	}
+}
+
+func TestLaunchRejectedReleasesOurClaim(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	spec.Workflow = "missing" // no such job: Launch fails with ErrNotFound + ErrRejected
 	if _, err := launchRun(context.Background(), env, spec, time.Now()); ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v", err)
 	}
 	spec.Workflow = "web"
 	if res, err := launchRun(context.Background(), env, spec, time.Now()); err != nil || res.Status != "launched" {
-		t.Fatalf("retry right after a failed launch: %+v, %v", res, err)
+		t.Fatalf("retry right after a rejected launch: %+v, %v", res, err)
+	}
+}
+
+// N-3: an ambiguous error (5xx, timeout) may have started an execution, so
+// the claim stays and an immediate retry is refused.
+func TestLaunchAmbiguousFailureKeepsTheClaim(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	shortWait(t)
+	f.run.FailRunWith = 503
+	if _, err := launchRun(context.Background(), env, spec, time.Now()); ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("err = %v", err)
+	}
+	f.run.FailRunWith = 0
+	if _, err := launchRun(context.Background(), env, spec, time.Now()); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "in flight") {
+		t.Fatalf("immediate retry after an ambiguous failure: %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions", n)
+	}
+}
+
+// N-12: releaseClaim deletes only the claim it holds.
+func TestReleaseClaimLeavesAForeignClaim(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	s := runstore.Open(env.bucket.Bucket, "acme-app", spec.RunID)
+	if ok, _, _ := s.Claim(context.Background(), "someone-else/9/9", time.Now()); !ok {
+		t.Fatal("seed claim")
+	}
+	releaseClaim(context.Background(), env, s, "me/1/1")
+	if ok, _ := env.bucket.Exists(context.Background(), s.ClaimKey()); !ok {
+		t.Fatal("releaseClaim deleted a claim it doesn't hold")
+	}
+	releaseClaim(context.Background(), env, s, "someone-else/9/9")
+	if ok, _ := env.bucket.Exists(context.Background(), s.ClaimKey()); ok {
+		t.Fatal("releaseClaim left its own claim")
 	}
 }
 
@@ -4970,6 +5123,7 @@ func TestRetryRefusesFreshClaim(t *testing.T) {
 	spec := &task.Spec{Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}
 	s := runstore.Open(env.bucket.Bucket, "acme-app", spec.RunID)
 	_ = s.CreateTask(ctx, spec)
+	shortWait(t)
 	now := time.Now()
 	_, _, _ = s.Claim(ctx, "other-laptop/1", now.Add(-time.Minute))
 	if _, err := launchRun(ctx, env, spec, now); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "in flight") {
@@ -5160,7 +5314,16 @@ Add `TestGitprovSafe`: `https://user:tok@host/o/r` and `ssh://user:tok@host/o/r`
 `internal/cli/run.go` implements the command following the flow above. Its core:
 
 ```go
-const claimTTL = 10 * time.Minute
+// Launch timing. claimWait and claimPoll are variables so tests can shrink them.
+const (
+	claimTTL      = runstore.ClaimTTL
+	launchTimeout = 2 * time.Minute // well under claimTTL: a hung RunJob can't outlive its claim
+)
+
+var (
+	claimWait = 30 * time.Second // how long a loser waits for the winner's launch.json
+	claimPoll = time.Second
+)
 
 type launchResult struct {
 	Run       string `json:"run"`
@@ -5194,9 +5357,12 @@ func hook(f func()) {
 //     is never deleted after a launch, so a later caller always finds it,
 //     then re-reads launch.json, which the claim holder writes before it
 //     returns.
-//   - A stale claim (older than claimTTL, its holder presumably dead) is
-//     taken over with a generation-matched overwrite, never delete-then-
-//     create, so two takers can't both win (I-2).
+//   - A held claim is read once, content and generation together. If that
+//     content is stale (older than claimTTL, its holder presumably dead), it
+//     is taken over with an overwrite matched to that same generation, never
+//     delete-then-create, so two takers can't both win (I-2, N-1).
+//   - A fresh claim means someone is launching: wait briefly for their
+//     launch.json and report it (N-4).
 //   - Having won the claim, re-check launch.json and result.json: an earlier
 //     holder may have launched just before going stale.
 //
@@ -5241,38 +5407,37 @@ func launchRun(ctx context.Context, env *cloudEnv, spec *task.Spec, now time.Tim
 	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
-	ok, existing, err := s.Claim(ctx, holder, now)
+	ok, _, err := s.Claim(ctx, holder, now) // Claim retries once if the claim vanishes mid-call (N-10)
 	if err != nil {
 		return res, remote(err)
 	}
 	if !ok {
-		// Someone holds the claim. If they finished, launch.json is there.
-		if l, err := launched(); err != nil || l != nil {
-			if err != nil {
-				return res, err
-			}
-			return done(l, "already-launched")
-		}
-		if now.Sub(existing.At) < claimTTL {
-			return res, userErr("a launch of %s started at %s (%s) may still be in flight; retry after %s, or check fugaro ls",
-				res.Run, existing.At.Format(time.RFC3339), existing.Holder, existing.At.Add(claimTTL).Format(time.RFC3339))
-		}
+		// Someone holds the claim. Staleness and the takeover's precondition
+		// come from ONE read, so nobody can replace a claim that turned fresh
+		// after we judged it stale (N-1).
 		prev, gen, err := env.bucket.Read(ctx, s.ClaimKey())
-		if err != nil {
-			return res, remote(err)
-		}
-		hook(launchHooks.beforeTakeover)
-		mine, _ := json.Marshal(runstore.Claim{Holder: holder, At: now.UTC()})
-		if _, err := env.bucket.ReplaceIf(ctx, s.ClaimKey(), mine, gen, prev); errors.Is(err, blobx.ErrConflict) {
-			if l, err := launched(); err != nil || l != nil {
-				if err != nil {
-					return res, err
-				}
-				return done(l, "already-launched")
+		if errors.Is(err, blobx.ErrNotExist) {
+			// Released between our Claim and this read: try once more.
+			if ok, _, err = s.Claim(ctx, holder, now); err != nil {
+				return res, remote(err)
 			}
-			return res, userErr("another CLI took over the stale launch claim of %s just now; check fugaro ls", res.Run)
 		} else if err != nil {
 			return res, remote(err)
+		}
+		if !ok {
+			var cur runstore.Claim
+			stale := json.Unmarshal(prev, &cur) != nil || now.Sub(cur.At) >= claimTTL // unreadable counts as stale
+			if !stale {
+				return waitForLaunch(ctx, s, res, cur, launched, done)
+			}
+			hook(launchHooks.beforeTakeover)
+			mine, _ := json.Marshal(runstore.Claim{Holder: holder, At: now.UTC()})
+			if _, err := env.bucket.ReplaceIf(ctx, s.ClaimKey(), mine, gen, prev); errors.Is(err, blobx.ErrConflict) {
+				// Someone else took the stale claim first: they launch, we report.
+				return waitForLaunch(ctx, s, res, runstore.Claim{Holder: "another CLI", At: now}, launched, done)
+			} else if err != nil {
+				return res, remote(err)
+			}
 		}
 	}
 	hook(launchHooks.afterClaim)
@@ -5282,13 +5447,20 @@ func launchRun(ctx context.Context, env *cloudEnv, spec *task.Spec, now time.Tim
 		}
 		return done(l, "already-launched")
 	}
-	ref, err := env.be.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID})
+	lctx, cancel := context.WithTimeout(ctx, launchTimeout)
+	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID})
+	cancel()
 	if err != nil {
-		releaseClaim(context.WithoutCancel(ctx), env, s, holder)
-		if errors.Is(err, backend.ErrNotFound) {
+		if errors.Is(err, backend.ErrRejected) {
+			// Definitive: the platform refused, so nothing started. Drop our
+			// claim so a corrected retry can go at once.
+			releaseClaim(context.WithoutCancel(ctx), env, s, holder)
 			return res, userErr("%v", err)
 		}
-		return res, remote(err)
+		// Ambiguous (timeout, 5xx, dropped connection): the execution may
+		// exist. Keep the claim; the runner's result.json tells the truth.
+		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s; fugaro ls shows the run once its runner starts",
+			res.Run, err, now.Add(claimTTL).Format(time.RFC3339)))
 	}
 	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: "cloud-run", Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(ctx, l); errors.Is(err, runstore.ErrExists) {
@@ -5314,6 +5486,32 @@ func releaseClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder 
 		return
 	}
 	_ = env.bucket.DeleteIf(ctx, s.ClaimKey(), gen, data)
+}
+
+// waitForLaunch waits up to claimWait for the claim holder's launch.json
+// (N-4): a concurrent "fugaro run --run-id X" then reports the winner's
+// launch with exit 0, as a repeated launch should. Otherwise exit 1.
+func waitForLaunch(ctx context.Context, s *runstore.Store, res launchResult, holder runstore.Claim,
+	launched func() (*runstore.Launch, error), done func(*runstore.Launch, string) (launchResult, error)) (launchResult, error) {
+	deadline := time.Now().Add(claimWait)
+	for {
+		l, err := launched()
+		if err != nil {
+			return res, err
+		}
+		if l != nil {
+			return done(l, "already-launched")
+		}
+		if !time.Now().Before(deadline) {
+			return res, userErr("a launch of %s by %s (claimed %s) is still in flight after %s; run fugaro ls, or retry after %s",
+				res.Run, holder.Holder, holder.At.Format(time.RFC3339), claimWait, holder.At.Add(claimTTL).Format(time.RFC3339))
+		}
+		select {
+		case <-ctx.Done():
+			return res, ctx.Err()
+		case <-time.After(claimPoll):
+		}
+	}
 }
 
 func claimHolder() string {
@@ -5350,8 +5548,8 @@ git commit -m "cli: add fugaro run with idempotent --run-id, --retry, --batch an
 **Interfaces:**
 - Consumes: `runstore.ListSlugs`, `ListRunIDs`, `ReadTask`, `ReadLaunch`, `ReadRecord` and `CancelRequested` (Tasks 1 and 3); `runstore.NewCost` and `ModelBasis` (Task 7); `runner.CostLine`; `backend.Execution`, `Prices` and `ListFilter`; `cloudEnv` and `openCloud` (Task 10)
 - Produces:
-  - `runview.Input{Slug, RunID string; Task *task.Spec; Launch *runstore.Launch; Record *runstore.Record; Exec *backend.Execution; CancelMarker bool}`
-  - `runview.Row{Run, Repo, Workflow, RunID, Status, Stage, Reason, Batch, RequestedBy, PRURL, Execution, LogURL string; Created time.Time; Cost runstore.Cost; Terminal bool}`, with JSON snake_case tags
+  - `runview.Input{Slug, RunID string; Task *task.Spec; Launch *runstore.Launch; Record *runstore.Record; Exec *backend.Execution; CancelMarker bool; Claim *runstore.Claim}`. `loadRows` reads the claim only for runs with neither `launch.json` nor `result.json`, through `runstore.(*Store).ReadClaim`
+  - `runview.Row{Run, Repo, Workflow, RunID, Status, Stage, Reason, Batch, RequestedBy, PRURL, Execution, LogURL string; Created time.Time; Cost runstore.Cost; Terminal, Settled bool}`, with JSON snake_case tags
   - `runview.Join(in Input, prices backend.Prices, now time.Time) Row`
   - `runview.Totals{Runs int; ModelUSD, ModelNotionalUSD, ComputeUSD, TotalUSD float64}` and `runview.Sum(rows []Row) Totals`
   - `runview.StatusUnlaunched = "unlaunched"`, `runview.StatusPending = "pending"`
@@ -5365,7 +5563,8 @@ git commit -m "cli: add fugaro run with idempotent --run-id, --retry, --batch an
 |---|---|---|
 | `result.json` with a final status (anything but `running`) | that status | the record's |
 | no `launch.json` and no `result.json`, cancel marker present | `cancelled` | "cancelled before launch" |
-| no `launch.json` and no `result.json` | `unlaunched` | — |
+| no `launch.json` and no `result.json`, a launch claim younger than `runstore.ClaimTTL` | `launching` | — (N-11) |
+| no `launch.json` and no `result.json`, and no claim or a stale one | `unlaunched` | — |
 | execution terminal as `cancelled`, record missing or `running` | `cancelled` | "execution cancelled before the run finalized" |
 | execution terminal otherwise, record missing or `running` | `infra_error` | "execution ended without finalizing (<state>)" |
 | execution `pending` | `pending` | — |
@@ -5386,7 +5585,7 @@ git commit -m "cli: add fugaro run with idempotent --run-id, --retry, --batch an
   - The default is the local config's repos, or every slug when it lists none.
 - **Since:** the default is `7d`. `--since 0` means no bound. The filter uses the run ID's timestamp, so old runs are skipped without reading their objects.
 - **Loading:**
-  - Executions come from one `be.List(Since: since-1h)`, mapped by `backend.ParseExecution(name).Key()`; a run's execution (from `launch.json`, else `result.json`) is looked up by the same key, never by raw name (C-1, I-9). A run whose execution is older than the list window is fetched with `be.Execution` on its own.
+  - Executions come from one `be.List(Since: since-1h)`, mapped by `backend.ParseExecution(name).Key()`; a run's execution is `result.json`'s `execution` when set, else `launch.json`'s (N-2: after a double launch the record names the owner, and launch.json may name the duplicate that exited), and it is looked up by the same key, never by raw name (C-1, I-9). A stored name that `ParseExecution` can't parse is logged once to stderr (`warning: run <ref>: unparseable execution name`) and treated as no execution information; it never fails the listing (N-9). A run whose execution is older than the list window is fetched with `be.Execution` on its own.
   - Each run's objects are read by 8 workers.
   - A run whose `task.json` is unreadable still shows, with an empty repo and the reason "task.json unreadable".
 - **Filters:** `--mine` keeps runs whose `requested_by` is `lc.Me()`, and `--batch` keeps runs whose `task.batch` matches exactly.
@@ -5400,7 +5599,7 @@ git commit -m "cli: add fugaro run with idempotent --run-id, --retry, --batch an
 
   It ends with a totals line: `3 runs · ≈ $1.40 billed (model $0.90 + compute $0.50) · $2.10 model notional (subscription)`. The notional part is omitted when it is zero.
 - **JSON:** `{"runs": [Row…], "totals": Totals}`.
-- **`--watch`:** it redraws every 10s (the hidden `--interval` flag changes that) until every row is terminal or the context ends. On a TTY it clears the screen with `\x1b[H\x1b[2J`. With `--json` it prints one document per tick.
+- **`--watch`:** it redraws every 10s (the hidden `--interval` flag changes that) until every row is `settled` or the context ends. `unlaunched` counts as settled, since nothing will launch it on its own, and a `launching` claim older than `runstore.ClaimTTL` shows as `unlaunched`, so a dead launcher can't keep `--watch` running forever (N-11). On a TTY it clears the screen with `\x1b[H\x1b[2J`. With `--json` it prints one document per tick.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -5458,6 +5657,22 @@ func TestJoinStatuses(t *testing.T) {
 		if got := Join(tc.in, prices, now); got.Status != tc.status {
 			t.Errorf("%s: status %s, want %s", tc.name, got.Status, tc.status)
 		}
+	}
+}
+
+func TestJoinLaunchingClaim(t *testing.T) {
+	fresh := &runstore.Claim{Holder: "laptop/1/1", At: now.Add(-time.Minute)}
+	row := Join(Input{Task: spec, Claim: fresh}, prices, now)
+	if row.Status != StatusLaunching || row.Settled {
+		t.Fatalf("fresh claim: %+v", row)
+	}
+	stale := &runstore.Claim{Holder: "laptop/1/1", At: now.Add(-runstore.ClaimTTL - time.Second)}
+	row = Join(Input{Task: spec, Claim: stale}, prices, now)
+	if row.Status != StatusUnlaunched || !row.Settled {
+		t.Fatalf("stale claim: %+v (--watch must be able to stop)", row)
+	}
+	if row := Join(Input{Task: spec}, prices, now); row.Status != StatusUnlaunched || !row.Settled {
+		t.Fatalf("no claim: %+v", row)
 	}
 }
 
@@ -5622,6 +5837,7 @@ import (
 // Statuses beyond runstore's.
 const (
 	StatusUnlaunched = "unlaunched"
+	StatusLaunching  = "launching" // a fresh launch claim, no launch.json yet (N-11)
 	StatusPending    = "pending"
 )
 
@@ -5637,6 +5853,7 @@ type Input struct {
 	Record       *runstore.Record
 	Exec         *backend.Execution
 	CancelMarker bool
+	Claim        *runstore.Claim // the "launching" marker, if any
 }
 
 // Row is one run as ls and diagnose show it.
@@ -5656,6 +5873,10 @@ type Row struct {
 	Created     time.Time     `json:"created"`
 	Cost        runstore.Cost `json:"cost"`
 	Terminal    bool          `json:"terminal"`
+	// Settled means the row won't change on its own: terminal, or
+	// unlaunched (nobody is launching it). ls --watch stops when every row
+	// is settled (N-11).
+	Settled bool `json:"settled"`
 }
 
 // Join builds the row for in.
@@ -5676,7 +5897,9 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 		if r.PR != nil {
 			row.PRURL = r.PR.URL
 		}
-		if row.Execution == "" {
+		if r.Execution != "" {
+			// The runner's record names the execution that owns the run; after
+			// a double launch, launch.json may name the duplicate (N-2).
 			row.Execution = r.Execution
 		}
 	}
@@ -5689,8 +5912,10 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 		row.Status = string(r.Status)
 	case in.Launch == nil && r == nil && in.CancelMarker:
 		row.Status, row.Reason = string(runstore.StatusCancelled), "cancelled before launch"
+	case in.Launch == nil && r == nil && in.Claim != nil && now.Sub(in.Claim.At) < runstore.ClaimTTL:
+		row.Status = StatusLaunching
 	case in.Launch == nil && r == nil:
-		row.Status = StatusUnlaunched
+		row.Status = StatusUnlaunched // no claim, or a stale one: its launcher is gone
 	case e != nil && e.State == backend.StateCancelled:
 		row.Status, row.Reason = string(runstore.StatusCancelled), "execution cancelled before the run finalized"
 	case e != nil && e.State.Terminal():
@@ -5704,7 +5929,8 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 	default:
 		row.Status = StatusPending
 	}
-	row.Terminal = row.Status != StatusPending && row.Status != string(runstore.StatusRunning) && row.Status != StatusUnlaunched
+	row.Terminal = row.Status != StatusPending && row.Status != string(runstore.StatusRunning) && row.Status != StatusUnlaunched && row.Status != StatusLaunching
+	row.Settled = row.Terminal || row.Status == StatusUnlaunched
 	basis, model, compute := runstore.BasisAPIList, 0.0, 0.0
 	if r != nil {
 		model = r.CostUSD
@@ -5803,6 +6029,7 @@ git commit -m "cli: add fugaro ls with --mine, --since, --batch, --watch and cos
 - Produces:
   - `fugaro logs RUN [-f|--follow] [--json]`
   - `fugaro diagnose RUN [--json]`
+  - `cli.ownerLaunch(ctx, s *runstore.Store, id string) (*runstore.Launch, error)`: the launch with `result.json`'s execution preferred (N-2), used by `logs`, `diagnose` and `cancel`
   - `cli.Diagnosis{Row runview.Row; Verify []verify.Record; Failed, Flaky []string; Findings []runner.Finding; AgentMessage string; LogTail []string; ReportPath string}`, with snake_case JSON tags
 
 **`logs`:**
@@ -5956,17 +6183,37 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 		return nil, nil, "", err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := s.ReadLaunch(ctx)
-	if errors.Is(err, runstore.ErrNotFound) {
-		if rec, rerr := s.ReadRecord(ctx); rerr == nil && rec.Execution != "" {
-			return s, &runstore.Launch{RunID: id, Execution: rec.Execution, LaunchedAt: rec.StartedAt}, slug + "/" + id, nil
-		}
+	l, err := ownerLaunch(ctx, s, id)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if l == nil {
 		return nil, nil, "", userErr("run %s/%s was never launched (see fugaro run --retry)", slug, id)
 	}
-	if err != nil {
-		return nil, nil, "", remote(err)
-	}
 	return s, l, slug + "/" + id, nil
+}
+
+// ownerLaunch is the run's launch as the views must see it (N-2): the
+// execution result.json names, when set, since that is the one that owns
+// the run; else launch.json's. nil means never launched.
+func ownerLaunch(ctx context.Context, s *runstore.Store, id string) (*runstore.Launch, error) {
+	l, lerr := s.ReadLaunch(ctx)
+	if lerr != nil && !errors.Is(lerr, runstore.ErrNotFound) {
+		return nil, remote(lerr)
+	}
+	rec, rerr := s.ReadRecord(ctx)
+	if rerr != nil && !errors.Is(rerr, runstore.ErrNotFound) {
+		return nil, remote(rerr)
+	}
+	if rerr == nil && rec.Execution != "" {
+		if l == nil {
+			l = &runstore.Launch{RunID: id, LaunchedAt: rec.StartedAt}
+		}
+		owner := *l
+		owner.Execution = rec.Execution
+		return &owner, nil
+	}
+	return l, nil
 }
 
 // transcriptResult is the result event of transcripts/<name>.jsonl, if any.
@@ -6009,7 +6256,7 @@ git commit -m "cli: add fugaro logs and fugaro diagnose"
   - `cli.cancelResult{Run, Status string; Marker, Hard bool}`, where `Status` is `already-finished`, `not-launched`, `finalized` or `cancelled`
 
 **The flow** (design §4.5):
-1. Locate the run with `runstore.Locate` directly: `locateLaunched` errors on exactly the never-launched case, which cancel must handle (minor 15). Then read `launch.json`, falling back to `result.json`'s execution as `locateLaunched` does.
+1. Locate the run with `runstore.Locate` directly: `locateLaunched` errors on exactly the never-launched case, which cancel must handle (minor 15). Then take the execution from `ownerLaunch` (Task 12): `result.json`'s when set, else `launch.json`'s (N-2), so a cancel after a double launch targets the owner, not the duplicate that already exited.
    - **Never launched:** write the marker, so `--retry` refuses and `ls` shows `cancelled`, and report `not-launched`.
    - **Execution already terminal:** report `already-finished`. No marker.
 2. Write the cancel marker.
@@ -6109,6 +6356,33 @@ func TestCancelNeverHardCancelsDuringFinalize(t *testing.T) {
 	}
 	if f.run.State(exec) != backend.StateRunning {
 		t.Fatal("cancel hard-cancelled a run mid-finalize")
+	}
+}
+
+// N-2: after a double launch, launch.json names a duplicate that exited at
+// once, and result.json names the execution that owns the run. ls and
+// cancel must follow the record.
+func TestDoubleLaunchViewsFollowTheRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	dup := seedRun(t, f, id, "", "", true) // launch.json names this one
+	owner := f.run.Start("fugaro-acme-app-web")
+	f.run.SetState(dup, backend.StateFailed)
+	f.run.SetState(owner, backend.StateRunning)
+	writeStage(t, f, id, owner, "implement")
+	out, _, err := execute(t, "ls", "--json")
+	var got lsOut
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 1 {
+		t.Fatalf("ls = %s, %v", out, err)
+	}
+	if row := got.Runs[0]; row.Status != "running" || !backend.SameExecution(row.Execution, owner) {
+		t.Fatalf("row = %+v (want running, the owner %s)", row, owner)
+	}
+	out, _, err = execute(t, "cancel", "--json", "--grace", "30ms", "--poll", "10ms", id)
+	var res cancelResult
+	_ = json.Unmarshal([]byte(out), &res)
+	if err != nil || res.Status != "cancelled" || f.run.State(owner) != backend.StateCancelled {
+		t.Fatalf("cancel = %+v, %v; owner state %s", res, err, f.run.State(owner))
 	}
 }
 
