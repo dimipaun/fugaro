@@ -4,6 +4,9 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -106,17 +109,39 @@ func TestCommitAllIgnoresFailingHook(t *testing.T) {
 // git() captures output in a bytes.Buffer, exec.Cmd copies through an
 // internal pipe; without a bound, Wait blocks until every holder of the
 // write end closes it — including a child git itself no longer waits for.
-// See internal/procgroup, which guards agent invocations the same way.
+// See internal/procgroup, which guards agent invocations the same way. The
+// checkout itself succeeds (git exits 0), so this must not surface as an
+// error either: gitWaitDelay only forces the pipe closed early; it doesn't
+// truncate git's own (already-complete) output.
 func TestLeakedHookChildDoesNotHang(t *testing.T) {
 	repo, _ := setup(t)
+	pidFile := filepath.Join(t.TempDir(), "leaked.pid")
 	hook := filepath.Join(repo.Dir, ".git", "hooks", "post-checkout")
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 20 &\necho leaked\n"), 0o755); err != nil {
+	// sleep 8s: longer than gitWaitDelay (5s), so WaitDelay is what unblocks
+	// Wait, but short enough that the leaked process (killed in Cleanup
+	// anyway) doesn't linger.
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 8 & echo $! > "+pidFile+"\necho leaked\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		data, err := os.ReadFile(pidFile)
+		if err != nil {
+			return
+		}
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+		}
+	})
 	start := time.Now()
 	err := repo.CheckoutNewBranch(ctx, "main", "fugaro/hangtest")
 	if d := time.Since(start); d > 10*time.Second {
 		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked hook child blocked it", d, err)
+	}
+	if err != nil {
+		t.Fatalf("CheckoutNewBranch returned an error for a successful checkout with a leaked hook child: %v", err)
+	}
+	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/hangtest" {
+		t.Fatalf("branch = %q, want fugaro/hangtest", got)
 	}
 }
 

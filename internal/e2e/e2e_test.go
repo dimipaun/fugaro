@@ -3,12 +3,14 @@
 package e2e
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -16,6 +18,19 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// childTimeout bounds a fugaro exec child: long enough for any real scenario
+// (the slowest, TestStageTimeout, finishes in well under a minute even under
+// heavy load), short enough that a future hang fails the test instead of
+// stalling `go test` for its own -timeout. On expiry, cmd.Cancel sends
+// SIGQUIT rather than killing outright, so a genuine hang leaves a goroutine
+// dump in the captured output (which runScenario logs via t.Logf).
+const childTimeout = 90 * time.Second
+
+// agentStartTimeout bounds how long cancelOnAgentStart waits for the fake
+// claude to record its first call before giving up and writing the cancel
+// marker anyway.
+const agentStartTimeout = 10 * time.Second
 
 const runID = "20260926-221530-abcd"
 
@@ -32,10 +47,10 @@ type result struct {
 }
 
 type scenario struct {
-	config   string // replaces the fixture fugaro.yaml when non-empty
-	script   string // fake claude script
-	fails    string // tests that fail
-	cancelAt time.Duration
+	config             string // replaces the fixture fugaro.yaml when non-empty
+	script             string // fake claude script
+	fails              string // tests that fail
+	cancelOnAgentStart bool   // write the cancel marker once the agent has actually started
 }
 
 func runScenario(t *testing.T, sc scenario) result {
@@ -62,7 +77,10 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatal(err)
 	}
 	providerState := filepath.Join(tmp, "provider.json")
-	cmd := exec.Command(fugaro, "exec",
+
+	runCtx, cancelRun := context.WithTimeout(context.Background(), childTimeout)
+	defer cancelRun()
+	cmd := exec.CommandContext(runCtx, fugaro, "exec",
 		"--bucket", "file://"+bucket, "--task-file", taskFile,
 		"--workdir", filepath.Join(tmp, "work"), "--remote", remote, "--state-dir", filepath.Join(tmp, "state"),
 		"--provider", "fake", "--provider-state", providerState, "--claude", claude, "--cancel-poll", "100ms")
@@ -71,16 +89,41 @@ func runScenario(t *testing.T, sc scenario) result {
 		"GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_NOSYSTEM=1",
 		"ANTHROPIC_API_KEY=test-key-1234", "FIXTURE_FAILS_FILE=" + failsFile, "UNDECLARED_SECRET=hunter2",
 	}
-	if sc.cancelAt > 0 {
+	// On timeout, SIGQUIT rather than kill outright: a Go binary dumps its
+	// goroutines to stderr (captured below) before exiting, so a real hang
+	// is diagnosable instead of just "the test timed out".
+	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) }
+	cmd.WaitDelay = 5 * time.Second
+
+	var cancelDone chan struct{}
+	if sc.cancelOnAgentStart {
+		cancelDone = make(chan struct{})
+		callsFile := filepath.Join(filepath.Dir(claude), "calls.jsonl")
 		go func() {
-			time.Sleep(sc.cancelAt)
+			defer close(cancelDone)
+			deadline := time.Now().Add(agentStartTimeout)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(callsFile); err == nil {
+					break
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
 			marker := filepath.Join(bucket, "runs", "acme-app", runID, "cancel")
 			_ = os.WriteFile(marker, []byte("now"), 0o644)
 		}()
 	}
+
 	start := time.Now()
-	out, _ := cmd.CombinedOutput()
-	res := result{bucket: bucket, exitCode: cmd.ProcessState.ExitCode(), elapsed: time.Since(start), calls: testutil.FakeClaudeCalls(t, claude)}
+	out, runErr := cmd.CombinedOutput()
+	if cancelDone != nil {
+		<-cancelDone // never write the marker after we return
+	}
+	elapsed := time.Since(start)
+	t.Logf("fugaro exec output (err=%v):\n%s", runErr, out)
+	if cmd.ProcessState == nil {
+		t.Fatalf("fugaro exec never started: %v", runErr)
+	}
+	res := result{bucket: bucket, exitCode: cmd.ProcessState.ExitCode(), elapsed: elapsed, calls: testutil.FakeClaudeCalls(t, claude)}
 	data, err := os.ReadFile(filepath.Join(bucket, "runs", "acme-app", runID, "result.json"))
 	if err != nil {
 		t.Fatalf("no result.json: %v\n%s", err, out)
@@ -91,7 +134,6 @@ func runScenario(t *testing.T, sc scenario) result {
 	if res.provider, err = fake.Load(providerState); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("fugaro exec output:\n%s", out)
 	return res
 }
 
@@ -127,8 +169,9 @@ func TestReadyRun(t *testing.T) {
 
 func TestFailingTestsDraft(t *testing.T) {
 	r := runScenario(t, scenario{script: `{"calls":[` + implementOK + `,` + reviewShip + `]}`, fails: "beta"})
-	if r.rec.Outcome != runstore.OutcomeDraft || r.rec.Reason != "tests failing on the final commit" || !r.provider.PRs[0].Draft {
-		t.Fatalf("record %+v", r.rec)
+	if r.rec.Outcome != runstore.OutcomeDraft || r.rec.Reason != "tests failing on the final commit" ||
+		len(r.provider.PRs) != 1 || !r.provider.PRs[0].Draft {
+		t.Fatalf("record %+v, provider %+v", r.rec, r.provider)
 	}
 }
 
@@ -137,6 +180,9 @@ func TestFlakyRerunIsReady(t *testing.T) {
 	r := runScenario(t, scenario{script: `{"calls":[` + flaky + `,` + reviewShip + `]}`, fails: "beta"})
 	if r.rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("record %+v", r.rec)
+	}
+	if len(r.rec.Verify) == 0 {
+		t.Fatalf("record has no verify entries: %+v", r.rec)
 	}
 	last := r.rec.Verify[len(r.rec.Verify)-1]
 	if !last.Rerun || !slices.Equal(last.Flaky, []string{"pkg.Suite.beta"}) {
@@ -172,9 +218,12 @@ func TestStageTimeout(t *testing.T) {
 }
 
 func TestCancel(t *testing.T) {
-	r := runScenario(t, scenario{script: `{"calls":[{"sleep_s":30}]}`, cancelAt: time.Second})
-	if r.rec.Status != runstore.StatusCancelled || r.rec.Reason != "cancelled during implement" || len(r.provider.PRs) != 1 || !r.provider.PRs[0].Draft {
-		t.Fatalf("record %+v", r.rec)
+	r := runScenario(t, scenario{script: `{"calls":[{"sleep_s":30}]}`, cancelOnAgentStart: true})
+	// A cancel during implement still finalizes: it pushes and opens a
+	// draft PR, so runner.Run returns a nil error and exec exits 0.
+	if r.exitCode != 0 || r.rec.Status != runstore.StatusCancelled || r.rec.Reason != "cancelled during implement" ||
+		len(r.provider.PRs) != 1 || !r.provider.PRs[0].Draft {
+		t.Fatalf("exit %d, record %+v, provider %+v", r.exitCode, r.rec, r.provider)
 	}
 }
 

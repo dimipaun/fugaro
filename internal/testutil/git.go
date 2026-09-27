@@ -3,13 +3,36 @@ package testutil
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
+
+// gitWaitDelay bounds how long Git's Wait spends draining output after the
+// git process itself has exited. Without it, a leaked descendant (a hook
+// backgrounding a process, or some other process that inherits the output
+// pipe) can make Wait — and so every test that calls Git or NewRemote —
+// hang indefinitely. See the identical fix and its rationale in
+// internal/gitops, which guards production git invocations the same way.
+const gitWaitDelay = 5 * time.Second
+
+// gitCommandTimeout is a backstop: gitWaitDelay only bounds Wait once git
+// itself has exited (or ctx has ended); it does nothing if the tracked git
+// process itself is the one not returning. That case was observed on a
+// heavily loaded machine, where a plain `git clone`/`commit`/`push` against
+// a local, empty fixture repo occasionally took minutes instead of
+// milliseconds (goroutine dump: blocked in os/exec.(*Cmd).Wait →
+// syscall.Wait4, i.e. genuinely waiting on the git process itself, not a
+// leaked descendant). The 60s bound turns that into a loud, attributable
+// test failure instead of stalling the whole binary.
+const gitCommandTimeout = 60 * time.Second
 
 // ModuleRoot returns the repository root.
 func ModuleRoot() string {
@@ -31,14 +54,26 @@ func IsolateGit(t *testing.T) {
 	}
 }
 
-// Git runs git in dir and returns its trimmed stdout, failing the test on error.
+// Git runs git in dir and returns its trimmed stdout, failing the test on
+// error, or if it doesn't finish within gitCommandTimeout.
 func Git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
+	cmd.WaitDelay = gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil && errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// git itself exited 0; see internal/gitops's identical tolerance.
+		err = nil
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w (git did not finish within %s)", err, gitCommandTimeout)
+		}
 		t.Fatalf("git %s: %v\n%s", strings.Join(args, " "), err, stderr.String())
 	}
 	return strings.TrimSpace(stdout.String())
@@ -65,6 +100,16 @@ func NewRemote(t *testing.T, files map[string]string) string {
 	root := t.TempDir()
 	bare := filepath.Join(root, "remote.git")
 	Git(t, root, "init", "--quiet", "--bare", "-b", "main", bare)
+	// The client side's -c overrides don't reach receive-pack (git resets
+	// GIT_CONFIG_PARAMETERS before invoking it for local transport too), so
+	// this has to be set in the remote's own config: otherwise receive-pack
+	// spawns a detached `git maintenance run --auto --quiet --detach` after
+	// nearly every push. That process, once daemonized, can still hold the
+	// push's inherited output pipe open (the same leaked-descendant class
+	// gitWaitDelay guards elsewhere) — confirmed by tracing a real push with
+	// GIT_TRACE=1 and observing it disappear once this is set to false.
+	Git(t, bare, "config", "receive.autogc", "false")
+	Git(t, bare, "config", "maintenance.auto", "false")
 	seed := filepath.Join(root, "seed")
 	Git(t, root, "clone", "--quiet", bare, seed)
 	WriteFiles(t, seed, files)

@@ -4,6 +4,7 @@ package gitops
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -17,11 +18,17 @@ import (
 
 // gitWaitDelay bounds how long a git invocation's Wait spends draining
 // output after the git process itself has exited, or after ctx ends. A repo
-// hook (or git's own background auto-gc) can fork a child that inherits the
-// stdout/stderr pipes and keeps them open; without a bound, Wait (and so
-// this call) would hang until that leaked child closes them on its own,
-// however long that takes (see internal/procgroup, which guards the same
-// way for agent invocations).
+// hook, or git's own `receive-pack` (which, unless receive.autogc is
+// disabled on the remote, spawns a detached `git maintenance run --auto
+// --quiet --detach` after nearly every push — confirmed with GIT_TRACE=1
+// against a real push; see internal/testutil.NewRemote, which disables it on
+// the remotes tests create), can leave a descendant that inherits the
+// stdout/stderr pipes and keeps them open. Without a bound, Wait (and so
+// this call) would hang until that leaked descendant closes them on its
+// own, however long that takes (see internal/procgroup, which guards the
+// same way for agent invocations). A real remote we don't control (M2's
+// GitHub/Bitbucket) could still do this; unlike our own test remotes, we
+// can't fix its config, so this bound is production's only defense.
 const gitWaitDelay = 5 * time.Second
 
 // Identity is the author and committer of commits made during a run.
@@ -81,7 +88,16 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	cmd.WaitDelay = gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Run()
+	if err != nil && errors.Is(err, exec.ErrWaitDelay) && ctx.Err() == nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// git itself exited 0; WaitDelay fired only because a leaked
+		// descendant still held the output pipe open. git had already
+		// finished writing everything it was going to write before it
+		// exited, so stdout/stderr are complete — this is not a real
+		// failure, just the forced pipe closure that unblocked Wait.
+		err = nil
+	}
+	if err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
 	return strings.TrimSpace(stdout.String()), nil

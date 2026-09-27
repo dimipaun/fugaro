@@ -59,6 +59,9 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if o.bucket == "" {
 		return errors.New("--bucket (or FUGARO_BUCKET) is required")
 	}
+	if o.taskFile != "" && o.run != "" {
+		return errors.New("--task-file and --run (or FUGARO_RUN) are mutually exclusive; pass exactly one")
+	}
 	provider, err := openProvider(o)
 	if err != nil {
 		return err
@@ -77,7 +80,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		}
 		slug, runID = task.Slug(spec.Repo), spec.RunID
 		if err := runstore.Open(bucket, slug, runID).WriteTask(ctx, spec); err != nil {
-			return err
+			return fmt.Errorf("writing task file: %w", err)
 		}
 	} else if slug, runID, err = runstore.ParseRef(o.run); err != nil {
 		return err
@@ -85,15 +88,15 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 
 	workDir, err := filepath.Abs(o.workDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving --workdir %q: %w", o.workDir, err)
 	}
 	stateDir, err := filepath.Abs(o.stateDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("resolving --state-dir %q: %w", o.stateDir, err)
 	}
 	exe, err := os.Executable()
 	if err != nil {
-		return err
+		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
 	log := runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
@@ -101,13 +104,17 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: os.Environ(),
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 	})
+	var writeErr error
 	if rec != nil {
 		enc := json.NewEncoder(cmd.OutOrStdout())
 		enc.SetIndent("", "  ")
-		_ = enc.Encode(rec)
+		writeErr = enc.Encode(rec)
 	}
 	if runErr != nil {
 		return &ExitError{Code: ExitRemoteError, Err: runErr}
+	}
+	if writeErr != nil {
+		return fmt.Errorf("writing run record: %w", writeErr)
 	}
 	return nil
 }
@@ -146,5 +153,8 @@ func readTaskFile(path string, stdin io.Reader) (*task.Spec, error) {
 			return nil, err
 		}
 	}
-	return &s, s.Validate()
+	if err := s.Validate(); err != nil {
+		return nil, fmt.Errorf("task file: %w", err)
+	}
+	return &s, nil
 }
