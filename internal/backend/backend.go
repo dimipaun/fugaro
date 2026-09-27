@@ -185,7 +185,7 @@ func MemoryGiB(s string) (float64, error) {
 	}
 	n, err := strconv.ParseFloat(m[1], 64)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("memory %q: %w", s, err)
 	}
 	if m[2] == "Mi" {
 		n /= 1024

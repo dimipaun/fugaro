@@ -110,7 +110,7 @@ var ReservedSecrets = map[string]string{
 	"anthropic-api-key":  "ANTHROPIC_API_KEY",
 }
 
-// Resources are the Cloud Run task resources for the workflow's job.
+// Resources are the task resources for the workflow's job. The backend checks them against its own limits (Cloud Run: gcp.CheckResources).
 type Resources struct {
 	CPU    int    `yaml:"cpu"`
 	Memory string `yaml:"memory"`
