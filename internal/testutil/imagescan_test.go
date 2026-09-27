@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"os/exec"
+	"strings"
 	"testing"
+	"time"
 )
 
 // zstdCompress compresses plain with the zstd CLI, the same way a
@@ -80,6 +82,30 @@ func TestTarContainsZstdLayer(t *testing.T) {
 	})
 	if TarContains(t, bytes.NewReader(absent), canary) {
 		t.Error("TarContains found the canary in a zstd-compressed layer that doesn't have it")
+	}
+}
+
+// TestTarContainsZstdEarlyMatch pins the early-match path: the needle sits
+// ahead of far more than a pipe buffer's worth (64KB) of decompressed output,
+// so zstd -dc is still blocked writing when the scan matches. TarContains must
+// stop and reap it rather than deadlock in Wait.
+func TestTarContainsZstdEarlyMatch(t *testing.T) {
+	if !HasZstd() {
+		t.Skip("zstd is not on PATH")
+	}
+	const canary = "tarcontains-zstd-early-canary-4e1b"
+	tarball := buildSaveTar(t, map[string][]byte{
+		"layer.tar": zstdCompress(t, canary+strings.Repeat("x", 8<<20)),
+	})
+	done := make(chan bool, 1)
+	go func() { done <- TarContains(t, bytes.NewReader(tarball), canary) }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Error("TarContains missed the canary at the start of a zstd-compressed layer")
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("TarContains hung after an early match in a zstd-compressed layer")
 	}
 }
 

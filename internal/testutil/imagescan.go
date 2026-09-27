@@ -41,7 +41,7 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 		}
 		br := bufio.NewReaderSize(tr, 1<<16)
 		var er io.Reader = br
-		var wait func() error
+		var wait func(stoppedEarly bool) error
 		switch magic, _ := br.Peek(4); {
 		case len(magic) >= 2 && magic[0] == 0x1f && magic[1] == 0x8b:
 			gz, err := gzip.NewReader(br)
@@ -54,9 +54,11 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 		}
 		ok, scanErr := streamContains(er, []byte(needle))
 		// Reap the zstd -dc child (if any) before acting on scanErr, so a
-		// scan failure never leaves it behind.
+		// scan failure never leaves it behind. The scan stops early on a match
+		// or an error, with zstd possibly still blocked writing to a pipe
+		// nobody reads, so the child is killed first in that case.
 		if wait != nil {
-			if werr := wait(); werr != nil && scanErr == nil {
+			if werr := wait(ok || scanErr != nil); werr != nil && scanErr == nil {
 				scanErr = werr
 			}
 		}
@@ -69,9 +71,13 @@ func TarContains(t *testing.T, r io.Reader, needle string) bool {
 }
 
 // decompressZstd streams r through `zstd -dc`, returning its stdout and a
-// wait function the caller must call, once it has read the returned reader to
-// EOF (or hit an error), to reap the child and surface its failure.
-func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func() error) {
+// wait function the caller must always call to reap the child. Called with
+// stoppedEarly false, after reading the returned reader to EOF, it surfaces
+// zstd's failure. Called with stoppedEarly true, because the caller stopped
+// reading before EOF (a match or a read error), it kills zstd first, since
+// zstd may be blocked writing to the unread pipe and Wait would never return,
+// and ignores the resulting exit status.
+func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func(stoppedEarly bool) error) {
 	t.Helper()
 	cmd := exec.Command("zstd", "-dc", "-q")
 	cmd.Stdin = r
@@ -84,7 +90,12 @@ func decompressZstd(t *testing.T, name string, r io.Reader) (io.Reader, func() e
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("running zstd -dc for %s: %v (install zstd to scan zstd-compressed layers)", name, err)
 	}
-	return stdout, func() error {
+	return stdout, func(stoppedEarly bool) error {
+		if stoppedEarly {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil
+		}
 		if err := cmd.Wait(); err != nil {
 			return fmt.Errorf("%v: %s", err, stderr.String())
 		}
