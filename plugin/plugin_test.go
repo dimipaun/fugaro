@@ -30,6 +30,9 @@ func TestMarketplace(t *testing.T) {
 		Owner struct {
 			Name string `json:"name"`
 		} `json:"owner"`
+		Metadata struct {
+			Description string `json:"description"`
+		} `json:"metadata"`
 		Plugins []struct {
 			Name        string `json:"name"`
 			Source      string `json:"source"`
@@ -37,7 +40,7 @@ func TestMarketplace(t *testing.T) {
 		} `json:"plugins"`
 	}
 	decodeJSON(t, filepath.Join("..", ".claude-plugin", "marketplace.json"), &m)
-	if m.Name != "fugaro" || m.Owner.Name == "" || len(m.Plugins) != 1 {
+	if m.Name != "fugaro" || m.Owner.Name == "" || m.Metadata.Description == "" || len(m.Plugins) != 1 {
 		t.Fatalf("marketplace = %+v", m)
 	}
 	p := m.Plugins[0]
