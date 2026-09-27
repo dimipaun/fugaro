@@ -71,7 +71,10 @@ func TestReapsLeakedDaemon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
@@ -80,4 +83,38 @@ func TestReapsLeakedDaemon(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("leaked daemon %d is still alive", pid)
+}
+
+// errWriter always fails; a Stdout that never drains must not make Run wait
+// for the child's output to be consumed.
+type errWriter struct{}
+
+func (errWriter) Write(p []byte) (int, error) { return 0, errors.New("errWriter: boom") }
+
+func TestWriterErrorReturnsPromptly(t *testing.T) {
+	c := sh("head -c 1000000 /dev/zero")
+	c.Stdout = errWriter{}
+	start := time.Now()
+	_, err := Run(context.Background(), c)
+	if err == nil {
+		t.Fatal("err = nil, want a wrapped writer error")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Fatal("Run did not return promptly after a writer error")
+	}
+}
+
+// TestSharedWriterForStdoutAndStderr must pass under -race: Stdout and
+// Stderr are the same writer, so the two output-copy goroutines must not
+// write to it concurrently.
+func TestSharedWriterForStdoutAndStderr(t *testing.T) {
+	var buf bytes.Buffer
+	c := sh("echo out; echo err >&2")
+	c.Stdout, c.Stderr = &buf, &buf
+	if _, err := Run(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "out") || !strings.Contains(buf.String(), "err") {
+		t.Fatalf("combined output = %q", buf.String())
+	}
 }
