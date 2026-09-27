@@ -17,18 +17,20 @@ import (
 )
 
 // gitWaitDelay bounds how long a git invocation's Wait spends draining
-// output after the git process itself has exited, or after ctx ends. A repo
-// hook, or git's own `receive-pack` (which, unless receive.autogc is
-// disabled on the remote, spawns a detached `git maintenance run --auto
-// --quiet --detach` after nearly every push — confirmed with GIT_TRACE=1
-// against a real push; see internal/testutil.NewRemote, which disables it on
-// the remotes tests create), can leave a descendant that inherits the
-// stdout/stderr pipes and keeps them open. Without a bound, Wait (and so
-// this call) would hang until that leaked descendant closes them on its
-// own, however long that takes (see internal/procgroup, which guards the
-// same way for agent invocations). A real remote we don't control (M2's
-// GitHub/Bitbucket) could still do this; unlike our own test remotes, we
-// can't fix its config, so this bound is production's only defense.
+// output after the git process itself has exited, or after ctx ends. A
+// process git spawns can leave a descendant that inherits the stdout/stderr
+// pipes and keeps them open. Repository hooks never run here (see noHooks),
+// but the remote side's processes do: git's own `receive-pack`, unless
+// receive.autogc is disabled on the remote, spawns a detached `git
+// maintenance run --auto --quiet --detach` after nearly every push
+// (confirmed with GIT_TRACE=1 against a real push; see
+// internal/testutil.NewRemote, which disables it on the remotes tests
+// create). Without a bound, Wait (and so this call) would hang until that
+// leaked descendant closes them on its own, however long that takes (see
+// internal/procgroup, which guards the same way for agent invocations). A
+// real remote we don't control (M2's GitHub/Bitbucket) could still do this;
+// unlike our own test remotes, we can't fix its config, so this bound is
+// production's only defense.
 const gitWaitDelay = 5 * time.Second
 
 // Identity is the author and committer of commits made during a run.
@@ -81,8 +83,16 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, 
 	return &Repo{Dir: dir, Env: env}, nil
 }
 
+// noHooks is prepended to every runner-owned git invocation. The runner's
+// git is plumbing: a repository hook (husky, lint-staged, a pre-push test
+// run) must never block bootstrap's checkout, finalize's commit or push, and
+// --no-verify only skips pre-commit and commit-msg, not prepare-commit-msg,
+// post-checkout, post-commit or pre-push. The agent's own git calls are
+// unaffected; they run the hooks as usual.
+var noHooks = []string{"-c", "core.hooksPath=" + os.DevNull}
+
 func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
 	cmd.WaitDelay = gitWaitDelay

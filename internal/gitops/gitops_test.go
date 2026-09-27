@@ -104,25 +104,77 @@ func TestCommitAllIgnoresFailingHook(t *testing.T) {
 	}
 }
 
-// TestLeakedHookChildDoesNotHang: a repo hook that forks a background child
-// (a shell "&") hands that child the git process's stdout/stderr pipes. Since
-// git() captures output in a bytes.Buffer, exec.Cmd copies through an
-// internal pipe; without a bound, Wait blocks until every holder of the
-// write end closes it — including a child git itself no longer waits for.
-// See internal/procgroup, which guards agent invocations the same way. The
-// checkout itself succeeds (git exits 0), so this must not surface as an
-// error either: gitWaitDelay only forces the pipe closed early; it doesn't
-// truncate git's own (already-complete) output.
-func TestLeakedHookChildDoesNotHang(t *testing.T) {
-	repo, _ := setup(t)
-	pidFile := filepath.Join(t.TempDir(), "leaked.pid")
-	hook := filepath.Join(repo.Dir, ".git", "hooks", "post-checkout")
-	// sleep 8s: longer than gitWaitDelay (5s), so WaitDelay is what unblocks
-	// Wait, but short enough that the leaked process (killed in Cleanup
-	// anyway) doesn't linger.
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 8 & echo $! > "+pidFile+"\necho leaked\n"), 0o755); err != nil {
+// writeFailingHook installs a hook named name in the checkout at dir that
+// always exits 1.
+func writeFailingHook(t *testing.T, dir, name string) {
+	t.Helper()
+	hook := filepath.Join(dir, ".git", "hooks", name)
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho hook "+name+" ran >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestRunnerGitSkipsRepoHooks: runner-owned git never runs the repository's
+// hooks. A failing pre-push must not block finalize's push, a failing
+// post-checkout must not fail bootstrap, and prepare-commit-msg, which
+// --no-verify does not skip, must not block the runner's commits.
+func TestRunnerGitSkipsRepoHooks(t *testing.T) {
+	for _, h := range []string{"post-checkout", "pre-push", "prepare-commit-msg"} {
+		t.Run(h, func(t *testing.T) {
+			repo, remote := setup(t)
+			writeFailingHook(t, repo.Dir, h)
+			if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+				t.Fatal("CheckoutNewBranch:", err)
+			}
+			testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+			if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+				t.Fatal("CommitAll:", err)
+			}
+			if err := repo.CommitEmpty(ctx, "empty"); err != nil {
+				t.Fatal("CommitEmpty:", err)
+			}
+			if err := repo.Push(ctx, "fugaro/x"); err != nil {
+				t.Fatal("Push:", err)
+			}
+			head, _ := repo.HeadSHA(ctx)
+			if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != head {
+				t.Fatalf("remote branch = %s, want %s", got, head)
+			}
+		})
+	}
+}
+
+// TestLeakedChildDoesNotHang: a process git spawns that forks a background
+// child hands that child git's stdout/stderr pipes. Since git() captures
+// output in a bytes.Buffer, exec.Cmd copies through an internal pipe; without
+// a bound, Wait blocks until every holder of the write end closes it,
+// including a child git itself no longer waits for. See internal/procgroup,
+// which guards agent invocations the same way. The fetch itself succeeds
+// (git exits 0), so this must not surface as an error either: gitWaitDelay
+// only forces the pipe closed early; it doesn't truncate git's own
+// (already-complete) output.
+//
+// Runner git never runs repository hooks (see noHooks), so the leak comes
+// from the remote side instead, as in production, where receive-pack's
+// detached `git maintenance` is the known offender: remote.origin.uploadpack
+// points at a wrapper that backgrounds a child holding stderr, then execs
+// the real git-upload-pack.
+func TestLeakedChildDoesNotHang(t *testing.T) {
+	repo, _ := setup(t)
+	tmp := t.TempDir()
+	pidFile := filepath.Join(tmp, "leaked.pid")
+	wrapper := filepath.Join(tmp, "upload-pack.sh")
+	// sleep 30s: comfortably longer than both gitWaitDelay (5s) and the 20s
+	// assertion below, so a regression (waiting for the leaked child to exit
+	// on its own) fails this test instead of coincidentally finishing in
+	// time; the 15s of slack over gitWaitDelay absorbs a heavily loaded
+	// machine. Killed in Cleanup regardless. Only stderr is leaked: holding
+	// the protocol pipe (stdout) would stall upload-pack itself.
+	script := "#!/bin/sh\nsleep 30 </dev/null >/dev/null & echo $! > " + pidFile + "\nexec git-upload-pack \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "remote.origin.uploadpack", wrapper)
 	t.Cleanup(func() {
 		data, err := os.ReadFile(pidFile)
 		if err != nil {
@@ -134,11 +186,14 @@ func TestLeakedHookChildDoesNotHang(t *testing.T) {
 	})
 	start := time.Now()
 	err := repo.CheckoutNewBranch(ctx, "main", "fugaro/hangtest")
-	if d := time.Since(start); d > 10*time.Second {
-		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked hook child blocked it", d, err)
+	if d := time.Since(start); d > 20*time.Second {
+		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked child blocked it", d, err)
 	}
 	if err != nil {
-		t.Fatalf("CheckoutNewBranch returned an error for a successful checkout with a leaked hook child: %v", err)
+		t.Fatalf("CheckoutNewBranch returned an error for a successful checkout with a leaked child: %v", err)
+	}
+	if _, err := os.Stat(pidFile); err != nil {
+		t.Fatalf("the upload-pack wrapper never ran, so nothing leaked: %v", err)
 	}
 	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/hangtest" {
 		t.Fatalf("branch = %q, want fugaro/hangtest", got)
