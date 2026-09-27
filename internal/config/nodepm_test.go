@@ -46,6 +46,7 @@ func TestDetectNodePM(t *testing.T) {
 		{"yarn classic", map[string]string{"package.json": `{}`, "yarn.lock": ""}, "yarn", false, classic, "~/.cache/yarn"},
 		{"yarn berry from packageManager", map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""}, "yarn", true, berry, "~/.yarn/berry/cache"},
 		{"yarn berry from yarnrc", map[string]string{"package.json": `{}`, "yarn.lock": "", ".yarnrc.yml": "nodeLinker: node-modules\n"}, "yarn", true, berry, "~/.yarn/berry/cache"},
+		{"yarn berry from packageManager with node-modules yarnrc", map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": "", ".yarnrc.yml": "nodeLinker: node-modules\n"}, "yarn", true, berry, "~/.yarn/berry/cache"},
 		{"yarn 3 keeps a local cache", map[string]string{"package.json": `{"packageManager":"yarn@3.8.7"}`, "yarn.lock": ""}, "yarn", true, berry, ".yarn/cache"},
 		{"yarn 4 with the global cache off", map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": "", ".yarnrc.yml": "enableGlobalCache: false\n"}, "yarn", true, berry, ".yarn/cache"},
 		{"yarn 1 packageManager wins over yarnrc", map[string]string{"package.json": `{"packageManager":"yarn@1.22.22"}`, "yarn.lock": "", ".yarnrc.yml": ""}, "yarn", false, classic, "~/.cache/yarn"},

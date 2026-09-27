@@ -43,7 +43,7 @@ func DetectNodePM(root string) (*NodePM, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("package.json: %w", err)
 	}
 	var pkg struct {
 		PackageManager string `json:"packageManager"`
