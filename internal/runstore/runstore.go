@@ -64,6 +64,7 @@ type Record struct {
 	RunID      string          `json:"run_id"`
 	Repo       string          `json:"repo"`
 	Workflow   string          `json:"workflow,omitempty"`
+	Execution  string          `json:"execution,omitempty"` // canonical full name, never the short CLOUD_RUN_EXECUTION; compare only via backend.SameExecution
 	Status     Status          `json:"status"`
 	Stage      string          `json:"stage"`
 	Outcome    Outcome         `json:"outcome"`
@@ -76,11 +77,15 @@ type Record struct {
 	CostUSD    float64         `json:"cost_usd"`
 	Stages     []StageTiming   `json:"stages,omitempty"`
 	StartedAt  time.Time       `json:"started_at"`
+	Deadline   *time.Time      `json:"deadline,omitempty"`
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
 }
 
 // ErrNotFound means the requested object does not exist.
 var ErrNotFound = errors.New("not found")
+
+// ErrExists means a create-once object is already there.
+var ErrExists = errors.New("already exists")
 
 // Store addresses one run's objects: runs/<repo-slug>/<run-id>/...
 type Store struct {
@@ -125,6 +130,43 @@ func (s *Store) read(ctx context.Context, name string) ([]byte, error) {
 		return nil, fmt.Errorf("reading %s%s: %w", s.prefix, name, err)
 	}
 	return data, nil
+}
+
+// ReadFile reads one of the run's objects, such as transcripts/review-1.jsonl.
+func (s *Store) ReadFile(ctx context.Context, name string) ([]byte, error) { return s.read(ctx, name) }
+
+// create writes name only if it does not exist yet.
+func (s *Store) create(ctx context.Context, name string, data []byte, contentType string) error {
+	key := s.prefix + name
+	err := s.bucket.WriteAll(ctx, key, data, &blob.WriterOptions{ContentType: contentType, IfNotExist: true})
+	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
+		return fmt.Errorf("%s: %w", key, ErrExists)
+	}
+	if err != nil {
+		return fmt.Errorf("writing %s: %w", key, err)
+	}
+	return nil
+}
+
+// CreateRecord stores result.json only if none exists yet (ErrExists). On
+// Cloud Run the runner writes its first record this way, so a duplicate
+// execution of the same run never writes one (design §4.7).
+func (s *Store) CreateRecord(ctx context.Context, r *Record) error {
+	data, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return s.create(ctx, "result.json", data, "application/json")
+}
+
+// CreateTask stores task.json unless it already exists (ErrExists), so two
+// launches with one run ID cannot both write a task (design §4.7).
+func (s *Store) CreateTask(ctx context.Context, spec *task.Spec) error {
+	data, err := spec.Marshal()
+	if err != nil {
+		return err
+	}
+	return s.create(ctx, "task.json", data, "application/json")
 }
 
 // WriteTask stores task.json.
