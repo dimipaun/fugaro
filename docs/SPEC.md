@@ -2,6 +2,8 @@
 
 *A hosted, open-source system for running long, self-contained coding-agent loops (implement → test → review → fix → compile → open PR) in ephemeral cloud environments, instead of on a developer's laptop.*
 
+*The v1 technical design implementing this spec is in [design/v1.md](design/v1.md).*
+
 ## 1. Problem & Motivation
 
 Running several coding agents locally saturates the machine: load averages over 100, thousands of threads, thermal throttling, and leaked build daemons (stray Gradle daemons) piling up in the background. Compiles and test suites are long-running (Android 10–20 min; server ~5 min compile plus ~20 min tests), and running agents in parallel makes everything crawl in a slow-hotter-slower spiral.

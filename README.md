@@ -47,15 +47,19 @@ A warm run should take minutes, not the half hour a cold environment would.
 Each consuming repository carries a small config file describing how to build and test it. The schema is **not final**; this sketch shows the intent:
 
 ```yaml
-# fugaro.yaml (draft, subject to change)
-workflow: server            # e.g. server | web
-build: ./gradlew assemble
-test: ./gradlew test
-secrets:
-  - projects/my-project/secrets/git-token
+# fugaro.yaml (draft, subject to change; see docs/design/v1.md)
+version: 1
 git:
   provider: bitbucket       # or github
   base_branch: main
+workflows:
+  server:
+    base: server-jvm
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test
+    secrets:                # logical names; mapped to Secret Manager by the infra layer
+      - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
 ```
 
 ## Launching a task
