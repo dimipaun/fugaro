@@ -117,6 +117,20 @@ func Validate(c *Config) []Problem {
 	return ps
 }
 
+// checkDockerfile reports a workflow's repository Dockerfile if it is
+// missing or breaks the derived-image contract (LintDockerfile).
+func checkDockerfile(p, root string, w Workflow) []Problem {
+	data, err := os.ReadFile(filepath.Join(root, w.Dockerfile))
+	if err != nil {
+		return []Problem{{Path: p + ".dockerfile", Message: w.Dockerfile + " does not exist"}}
+	}
+	var ps []Problem
+	for _, msg := range LintDockerfile(data, w.Base) {
+		ps = append(ps, Problem{Path: p + ".dockerfile", Message: w.Dockerfile + " " + msg})
+	}
+	return ps
+}
+
 func reservedEnv(name string) bool {
 	for _, prefix := range reservedEnvPrefixes {
 		if strings.HasPrefix(name, prefix) {
@@ -146,7 +160,7 @@ func Check(c *Config, root string) []Problem {
 		w := c.Workflows[name]
 		p := "workflows." + name
 		if w.Dockerfile != "" {
-			mustExist(p+".dockerfile", w.Dockerfile)
+			ps = append(ps, checkDockerfile(p, root, w)...)
 		}
 		for _, cmd := range []struct{ path, value string }{
 			{p + ".commands.build", w.Commands.Build},
