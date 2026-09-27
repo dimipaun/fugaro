@@ -60,7 +60,7 @@ type fakeDocker struct {
 	runEnv     [][]string
 	spec       SelftestSpec // the first (unprivileged) selftest run's spec
 	rootSpec   SelftestSpec // the second, --user 0 run's spec
-	rootReport *Report      // printed by the --user 0 run; nil means a passing empty report
+	rootReport *Report      // printed by the --user 0 run; nil means a passing full report
 }
 
 func (f *fakeDocker) run(ctx context.Context, c Cmd) error {
@@ -93,7 +93,7 @@ func (f *fakeDocker) run(ctx context.Context, c Cmd) error {
 			}
 			rep := f.rootReport
 			if rep == nil {
-				rep = &Report{Passed: true, Checks: []Check{{Name: "no-setuid", OK: true}}}
+				rep = &Report{Passed: true, Checks: []Check{{Name: "no-setuid", OK: true}, {Name: "no-setgid", OK: true}, {Name: "no-file-caps", OK: true}}}
 			}
 			if err := json.NewEncoder(c.Stdout).Encode(rep); err != nil {
 				f.t.Fatal(err)
@@ -226,6 +226,23 @@ func TestBuildLocalRootScanFailureFailsTheSmoke(t *testing.T) {
 	}
 	if c, _ := checkNamed(*res.Smoke, "no-setgid"); c.OK || c.Detail == "" {
 		t.Errorf("smoke report %+v lacks the failing root check", res.Smoke)
+	}
+}
+
+// TestBuildLocalRootScanOmissionFailsTheSmoke: a root report that passes
+// but leaves a scan out fails the smoke rather than passing by omission.
+func TestBuildLocalRootScanOmissionFailsTheSmoke(t *testing.T) {
+	root, cfg := localFixture(t)
+	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "user", OK: true}}},
+		rootReport: &Report{Passed: true, Checks: []Check{{Name: "no-setuid", OK: true}}}}
+	res, err := BuildLocal(context.Background(), localOptions(root, cfg, f, &bytes.Buffer{}))
+	if err != nil || res.Smoke == nil || res.Smoke.Passed {
+		t.Fatalf("res %+v, err %v", res, err)
+	}
+	for _, name := range []string{"no-setgid", "no-file-caps"} {
+		if c, ok := checkNamed(*res.Smoke, name); !ok || c.OK {
+			t.Errorf("smoke report %+v: missing %s not flagged", res.Smoke, name)
+		}
 	}
 }
 

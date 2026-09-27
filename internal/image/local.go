@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -273,8 +274,18 @@ func rootScan(ctx context.Context, run Runner, o LocalOptions, rep Report) (Repo
 	}
 	rep.Checks = append(rep.Checks, root.Checks...)
 	rep.Passed = rep.Passed && root.Passed
+	// A report that leaves a scan out must not pass by omission.
+	for _, name := range rootCheckNames {
+		if !slices.ContainsFunc(root.Checks, func(c Check) bool { return c.Name == name }) {
+			rep.Checks = append(rep.Checks, Check{Name: name, Detail: "the root filesystem scan did not report this check"})
+			rep.Passed = false
+		}
+	}
 	return rep, nil
 }
+
+// rootCheckNames are the checks rootScan's report must contain.
+var rootCheckNames = []string{"no-setuid", "no-setgid", "no-file-caps"}
 
 // bundle writes a git bundle of root's HEAD, published as refs/heads/branch.
 // It goes through a scratch bare repository, so root's own refs are never
