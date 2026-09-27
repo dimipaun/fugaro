@@ -13,8 +13,35 @@ import (
 
 const token = "tok-secret-1234"
 
-func credEnv(remote string) []string {
-	return WithVars(IdentityEnv(), CredentialVars(CredentialURL(remote), "x-token-auth", token))
+func credEnv(t *testing.T, remote string) []string {
+	t.Helper()
+	vars, err := CredentialVars(CredentialURL(remote), "x-token-auth", token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return WithVars(IdentityEnv(), vars)
+}
+
+func TestCredentialVarsRejectsUnscopedBaseURL(t *testing.T) {
+	// "" is what CredentialURL returns for an ssh or local remote, so the
+	// natural CredentialVars(CredentialURL(remote), ...) pattern must not
+	// silently scope the credential to every host git talks to (git treats
+	// an empty URL subsection, "credential..helper", as matching every URL).
+	for _, bad := range []string{"", "not a url", "https://", "ssh://host", "https://host/path", "https://host?x=1", "/tmp/x"} {
+		if got, err := CredentialVars(bad, "user", "tok"); err == nil {
+			t.Errorf("CredentialVars(%q, ...) = %v, <nil>, want an error", bad, got)
+		}
+	}
+}
+
+func TestCredentialVarsRejectsNewlinesInUsernameOrToken(t *testing.T) {
+	const base = "https://example.com"
+	if _, err := CredentialVars(base, "user\nname", "tok"); err == nil {
+		t.Fatal("username containing \\n was accepted")
+	}
+	if _, err := CredentialVars(base, "user", "tok\r"); err == nil {
+		t.Fatal("token containing \\r was accepted")
+	}
 }
 
 func TestCredentialURL(t *testing.T) {
@@ -46,7 +73,7 @@ func TestCredentialsCloneFetchAndPushOverHTTP(t *testing.T) {
 	if _, err := OpenOrClone(ctx, dir, remote.URL, IdentityEnv()); err == nil {
 		t.Fatal("clone without credentials succeeded")
 	}
-	repo, err := OpenOrClone(ctx, dir, remote.URL, credEnv(remote.URL))
+	repo, err := OpenOrClone(ctx, dir, remote.URL, credEnv(t, remote.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +102,7 @@ func TestCredentialsCloneFetchAndPushOverHTTP(t *testing.T) {
 func TestCredentialHelperIgnoresOtherHelpersAndHosts(t *testing.T) {
 	testutil.IsolateGit(t)
 	remote := testutil.NewHTTPRemote(t, map[string]string{"README.md": "hi\n"}, testutil.Token("x-token-auth", token))
-	repo, err := OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote.URL, credEnv(remote.URL))
+	repo, err := OpenOrClone(ctx, filepath.Join(t.TempDir(), "work"), remote.URL, credEnv(t, remote.URL))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +111,7 @@ func TestCredentialHelperIgnoresOtherHelpersAndHosts(t *testing.T) {
 	fill := func(host string) (string, error) {
 		cmd := exec.Command("git", "credential", "fill")
 		cmd.Dir = repo.Dir
-		cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), credEnv(remote.URL)...)
+		cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), credEnv(t, remote.URL)...)
 		cmd.Stdin = strings.NewReader("protocol=http\nhost=" + host + "\n\n")
 		out, err := cmd.CombinedOutput()
 		return string(out), err

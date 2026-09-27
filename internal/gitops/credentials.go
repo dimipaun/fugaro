@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"fmt"
 	"maps"
 	"net/url"
 	"slices"
@@ -19,7 +20,22 @@ const credentialHelper = `!f() { test "$1" = get || exit 0; printf 'username=%s\
 // system, global and repository config: the first entry resets any
 // credential helper configured there for baseURL, so none of them is asked
 // for, or stores, the token. Hosts other than baseURL never see it.
-func CredentialVars(baseURL, username, token string) map[string]string {
+//
+// baseURL must be exactly the scheme://host[:port] form CredentialURL
+// returns for an http(s) remote. Anything else — most importantly "", which
+// CredentialURL returns for an ssh or local remote — is refused: git's
+// config parser treats an empty URL subsection ("credential..helper") as
+// matching every URL, so CredentialVars("", ...) would hand the token to
+// every host git ever talks to. username and token must not contain "\n" or
+// "\r" either, since the credential-helper protocol they're printed into is
+// line-oriented and either could inject an extra field.
+func CredentialVars(baseURL, username, token string) (map[string]string, error) {
+	if baseURL == "" || CredentialURL(baseURL) != baseURL {
+		return nil, fmt.Errorf("gitops: CredentialVars: %q is not a scheme://host[:port] (http or https) URL: refusing to scope credentials to every host", baseURL)
+	}
+	if strings.ContainsAny(username, "\n\r") || strings.ContainsAny(token, "\n\r") {
+		return nil, fmt.Errorf("gitops: CredentialVars: username or token contains a newline or carriage return")
+	}
 	key := "credential." + baseURL + ".helper"
 	return map[string]string{
 		"GIT_CONFIG_COUNT":    "2",
@@ -29,7 +45,7 @@ func CredentialVars(baseURL, username, token string) map[string]string {
 		"GIT_CONFIG_VALUE_1":  credentialHelper,
 		"FUGARO_GIT_USERNAME": username,
 		"FUGARO_GIT_TOKEN":    token,
-	}
+	}, nil
 }
 
 // CredentialURL returns scheme://host[:port] for an http or https remote
