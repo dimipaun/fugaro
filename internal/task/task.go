@@ -105,8 +105,10 @@ func (s *Spec) Validate() error {
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {
 		bad("task spec: overrides.review_rounds must be between 1 and 10")
 	}
-	if o.MaxBudgetUSD != nil && *o.MaxBudgetUSD < 0 {
-		bad("task spec: overrides.max_budget_usd must not be negative")
+	// Zero is not "unlimited" here: it would silently drop --max-budget-usd
+	// for a task that asked to change the cap.
+	if o.MaxBudgetUSD != nil && *o.MaxBudgetUSD <= 0 {
+		bad("task spec: overrides.max_budget_usd must be greater than 0")
 	}
 	if o.TotalTimeout != "" {
 		if d, err := time.ParseDuration(o.TotalTimeout); err != nil || d <= 0 {

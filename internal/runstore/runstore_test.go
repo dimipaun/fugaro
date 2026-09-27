@@ -81,6 +81,17 @@ func TestParseRef(t *testing.T) {
 	if slug, id, err := ParseRef("acme-app/" + runID); err != nil || slug != "acme-app" || id != runID {
 		t.Fatalf("ParseRef = %q %q %v", slug, id, err)
 	}
+	// Every slug task.Slug produces for a valid repo must parse back.
+	for _, repo := range []string{"acme/my_service", "Acme/Server", "acme/app.v2", "org/sub/repo-x"} {
+		spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: "main", Task: "t"}
+		if err := spec.Validate(); err != nil {
+			t.Fatalf("%s: %v", repo, err)
+		}
+		want := task.Slug(repo)
+		if slug, id, err := ParseRef(want + "/" + runID); err != nil || slug != want || id != runID {
+			t.Errorf("ParseRef(Slug(%q)) = %q %q %v", repo, slug, id, err)
+		}
+	}
 	for _, bad := range []string{"", "acme-app", "a/b/c", "acme-app/not-a-run"} {
 		if _, _, err := ParseRef(bad); err == nil {
 			t.Errorf("ParseRef(%q) succeeded", bad)

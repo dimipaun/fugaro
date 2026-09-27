@@ -55,6 +55,7 @@ func TestParseErrorMessages(t *testing.T) {
 		`{"version":1,"run_id":"20260926-221530-a1b2","repo":"a/b","ref":"main","task":"x","pr":3}`:                            "must be set together",
 		`{"version":1,"run_id":"20260926-221530-a1b2","repo":"a/b","ref":"","task":"x"}`:                                       "ref is required",
 		`{"version":1,"run_id":"20260926-221530-a1b2","repo":"a/b","ref":"m","task":"x","overrides":{"total_timeout":"soon"}}`: "total_timeout",
+		`{"version":1,"run_id":"20260926-221530-a1b2","repo":"a/b","ref":"m","task":"x","overrides":{"max_budget_usd":0}}`:     "max_budget_usd must be greater than 0",
 	}
 	for in, want := range cases {
 		if _, err := Parse([]byte(in)); err == nil || !strings.Contains(err.Error(), want) {
