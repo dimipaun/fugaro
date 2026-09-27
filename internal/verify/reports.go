@@ -18,10 +18,16 @@ var skipDirs = map[string]bool{".git": true, "node_modules": true}
 // (relative, slash-separated) and were modified at or after since, so reports
 // left by earlier runs are ignored.
 func CollectReports(root string, globs []string, since time.Time) ([]string, error) {
+	// Validate all globs up front.
+	for _, g := range globs {
+		if !doublestar.ValidatePattern(g) {
+			return nil, fmt.Errorf("invalid glob pattern %q", g)
+		}
+	}
 	var out []string
 	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("walking %s: %w", p, err)
 		}
 		if d.IsDir() {
 			if p != root && skipDirs[d.Name()] {
@@ -31,16 +37,16 @@ func CollectReports(root string, globs []string, since time.Time) ([]string, err
 		}
 		rel, err := filepath.Rel(root, p)
 		if err != nil {
-			return err
+			return fmt.Errorf("relative path for %s: %w", p, err)
 		}
 		if !matchAny(globs, filepath.ToSlash(rel)) {
 			return nil
 		}
 		info, err := d.Info()
 		if err != nil {
-			return err
+			return fmt.Errorf("stat %s: %w", p, err)
 		}
-		if info.ModTime().Unix() < since.Unix() {
+		if info.ModTime().Before(since) {
 			return nil
 		}
 		out = append(out, p)
@@ -68,7 +74,7 @@ func ReadCases(root string, globs []string, since time.Time) ([]TestCase, error)
 	for _, f := range files {
 		fh, err := os.Open(f)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("opening %s: %w", f, err)
 		}
 		cases, err := ParseJUnit(fh)
 		fh.Close()
