@@ -84,11 +84,22 @@ type run struct {
 // bootstrapAuthMinValid. authRefreshTimeout bounds how long a mid-run
 // refresh itself may take, so a slow or hanging provider call cannot eat
 // into the stage's own budget.
+//
+// No request asks for more than maxAuthValid: a GitHub installation token
+// lives about an hour, so a longer request could never be met and every
+// refresh would fail, keeping the old token until it expired. A stage
+// longer than that therefore outlives its token; the agent's git and gh
+// calls late in such a stage fail, and only the refresh before the next
+// stage (and before finalize's push) restores working credentials.
 const (
 	gitAuthSlack          = 5 * time.Minute
 	bootstrapAuthMinValid = 10 * time.Minute
+	maxAuthValid          = 50 * time.Minute
 	authRefreshTimeout    = 30 * time.Second
 )
+
+// authValidity is the validity to ask a token for when it must last d.
+func authValidity(d time.Duration) time.Duration { return min(d, maxAuthValid) }
 
 // prAttempts is how many times finalize tries to open the pull request.
 // EnsurePR finds what an earlier attempt created, so retrying is safe.
@@ -554,7 +565,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	// token. Bounded on its own: a slow or hanging provider call must not
 	// eat into the stage's own budget.
 	authCtx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
-	err := r.refreshGitAuth(authCtx, r.budget.Stage+gitAuthSlack)
+	err := r.refreshGitAuth(authCtx, authValidity(r.budget.Stage+gitAuthSlack))
 	cancelAuth()
 	if err != nil {
 		r.warnAuthRefresh(err)
@@ -685,7 +696,7 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.failReason != "" {
 		ready, reason = false, r.failReason
 	}
-	if err := r.refreshGitAuth(ctx, r.wf.Timeouts.FinalizeReserve.Duration); err != nil {
+	if err := r.refreshGitAuth(ctx, authValidity(r.wf.Timeouts.FinalizeReserve.Duration)); err != nil {
 		r.warnAuthRefresh(err)
 	}
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {

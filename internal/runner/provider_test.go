@@ -126,6 +126,38 @@ func TestTokenRefreshedBetweenStages(t *testing.T) {
 	}
 }
 
+// TestTokenValidityCappedBelowTokenLife covers a stage timeout longer than
+// a GitHub installation token lives (about an hour): asking for more than
+// that could never be satisfied, so the refresh would fail and keep the old
+// token. The runner caps what it asks for instead, and relies on the
+// refresh between stages.
+func TestTokenValidityCappedBelowTokenLife(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
+		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
+		"timeouts: { total: 5h, stage: 2h, verify: 1m, finalize_reserve: 70m }", 1)
+	h := newHarness(t, cfg, nil)
+	h.useHTTPRemote(t, testutil.Prefix("x-token-auth", "tok-"))
+	var mu sync.Mutex
+	var asked []time.Duration
+	h.provider.Auth = func(minValid time.Duration) gitprov.GitAuth {
+		mu.Lock()
+		defer mu.Unlock()
+		asked = append(asked, minValid)
+		return gitprov.GitAuth{Username: "x-token-auth", Token: fmt.Sprintf("tok-%04d", len(asked))}
+	}
+	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	// bootstrap, implement, review, finalize.
+	want := []time.Duration{10 * time.Minute, 50 * time.Minute, 50 * time.Minute, 50 * time.Minute}
+	if !slices.Equal(asked, want) {
+		t.Fatalf("GitAuth minValid = %v, want %v", asked, want)
+	}
+	if got := envValue(h.agent.calls[1].Env, "FUGARO_GIT_TOKEN"); got != "tok-0003" {
+		t.Fatalf("review token = %q, want the refreshed tok-0003", got)
+	}
+}
+
 func TestProviderOpenedFromConfig(t *testing.T) {
 	h := newHarness(t, "", nil)
 	var kinds, repos []string
