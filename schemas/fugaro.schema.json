@@ -14,7 +14,12 @@
       "required": ["provider"],
       "properties": {
         "provider": { "enum": ["github", "bitbucket"] },
-        "base_branch": { "type": "string", "minLength": 1 },
+        "base_branch": {
+          "type": "string",
+          "description": "A plain git branch name. Git accepts shell metacharacters in ref names; Fugaro does not, because the branch reaches git, Docker build arguments and Cloud Build.",
+          "pattern": "^[A-Za-z0-9._][A-Za-z0-9._/-]*$",
+          "not": { "pattern": "\\.\\.|//|(^|/)\\.|\\.lock(/|$)|[/.]$" }
+        },
         "pr": {
           "type": "object",
           "additionalProperties": false,
@@ -50,9 +55,44 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["base", "commands"],
+      "not": { "required": ["image", "dockerfile"] },
+      "allOf": [
+        {
+          "if": { "required": ["base"], "properties": { "base": { "const": "web-node" } } },
+          "then": { "properties": { "image": { "not": { "required": ["jdk"] } } } }
+        },
+        {
+          "if": { "required": ["base"], "properties": { "base": { "const": "server-jvm" } } },
+          "then": { "properties": { "image": { "not": { "required": ["node"] } } } }
+        }
+      ],
       "properties": {
         "base": { "enum": ["server-jvm", "web-node"] },
-        "dockerfile": { "type": "string" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "jdk": { "type": ["string", "integer"], "pattern": "^[0-9]+$" },
+            "apt": {
+              "type": "array",
+              "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" }
+            },
+            "setup": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
+                "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" }
+              }
+            }
+          }
+        },
+        "dockerfile": {
+          "type": "string",
+          "pattern": "^[^/]",
+          "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+        },
         "commands": {
           "type": "object",
           "additionalProperties": false,

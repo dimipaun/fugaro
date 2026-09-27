@@ -13,7 +13,22 @@ var baseEnv = []string{
 	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ",
 	"JAVA_HOME", "GRADLE_USER_HOME", "NODE_OPTIONS", "npm_config_cache", "PNPM_HOME",
 	"XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME",
+	// Outbound proxies and extra CA certificates, for networks that need them.
+	// Claude Code and Node.js, curl, and git read these.
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "GIT_SSL_CAINFO",
+	// Set by the base images (images/*/Dockerfile) or a repository Dockerfile.
+	"DISABLE_AUTOUPDATER", "COREPACK_ENABLE_DOWNLOAD_PROMPT", "COREPACK_HOME", "PLAYWRIGHT_BROWSERS_PATH",
 }
+
+// vertexEnv is passed through with auth: vertex. CLOUD_ML_REGION and
+// ANTHROPIC_VERTEX_PROJECT_ID are required; ANTHROPIC_VERTEX_BASE_URL points
+// Claude Code at a gateway.
+var vertexEnv = []string{"CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT", "ANTHROPIC_VERTEX_BASE_URL"}
+
+// vertexRegionPrefix starts Claude Code's per-model Vertex region overrides,
+// such as VERTEX_REGION_CLAUDE_4_5_SONNET.
+const vertexRegionPrefix = "VERTEX_REGION_"
 
 // EnvSpec describes the agent's environment.
 type EnvSpec struct {
@@ -43,8 +58,8 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	switch spec.Auth {
 	case "vertex":
 		out["CLAUDE_CODE_USE_VERTEX"] = "1"
-		for _, k := range []string{"CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID", "GOOGLE_CLOUD_PROJECT"} {
-			if v, ok := p[k]; ok {
+		for k, v := range p {
+			if slices.Contains(vertexEnv, k) || strings.HasPrefix(k, vertexRegionPrefix) {
 				out[k] = v
 			}
 		}

@@ -1,0 +1,8 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image: { node: "24" }
+    dockerfile: .fugaro/web.Dockerfile
+    commands: { build: npm run build, test: npm test }

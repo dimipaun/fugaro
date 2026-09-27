@@ -1,0 +1,7 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image: { python: "3.12" }
+    commands: { build: npm run build, test: npm test }

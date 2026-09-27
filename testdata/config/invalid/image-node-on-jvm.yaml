@@ -1,0 +1,7 @@
+version: 1
+git: { provider: github }
+workflows:
+  server:
+    base: server-jvm
+    image: { node: "24" }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }

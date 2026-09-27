@@ -1,0 +1,168 @@
+name: images
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths: ["images/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".dockerignore", ".github/workflows/images.yml"]
+  schedule:
+    - cron: "23 3 * * *" # nightly patch refresh of the latest release
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  version:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      major: ${{ steps.version.outputs.major }}
+      publish: ${{ steps.version.outputs.publish }}
+      tag: ${{ steps.version.outputs.tag }}
+      move_major: ${{ steps.version.outputs.move_major }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Pick the version
+        id: version
+        run: |
+          set -eu
+          publish=true
+          tag=""
+          case "$GITHUB_EVENT_NAME" in
+            push)
+              tag=$GITHUB_REF_NAME
+              if ! printf '%s\n' "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+                echo "::error::pushed tag '$tag' is not a strict vX.Y.Z release tag" >&2
+                exit 1
+              fi
+              ;;
+            pull_request)
+              version="pr-${{ github.event.number }}"
+              publish=false
+              ;;
+            *)
+              # Nightly/dispatch: the latest strict vX.Y.Z release tag, never
+              # a pre-release like v1.2.3-rc1.
+              tag=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+              if [ -z "$tag" ]; then
+                version=nightly
+                publish=false
+              fi
+              ;;
+          esac
+          # :<major> moves only to the highest strict release in that major,
+          # so a backport tag (v1.1.5 after v1.2.0) publishes :1.1.5 alone.
+          move_major=false
+          if [ -n "$tag" ]; then
+            version=${tag#v}
+            top=$(git tag -l "v${version%%.*}.*" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+            if [ "$top" = "$tag" ]; then
+              move_major=true
+            fi
+          fi
+          {
+            echo "version=$version"
+            echo "major=${version%%.*}"
+            echo "publish=$publish"
+            echo "tag=$tag"
+            echo "move_major=$move_major"
+          } >> "$GITHUB_OUTPUT"
+  base:
+    needs: version
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [web-node] # server-jvm joins after the server spike
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Checkout the resolved tag
+        if: needs.version.outputs.tag != ''
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: git checkout --quiet "refs/tags/$TAG"
+      - name: Build
+        env:
+          FUGARO_VERSION: ${{ needs.version.outputs.version }}
+        run: images/build-base.sh ${{ matrix.base }} fugaro-${{ matrix.base }}:ci
+      - name: Smoke test
+        run: images/smoke.sh fugaro-${{ matrix.base }}:ci ${{ matrix.base }}
+      - name: Scan
+        if: github.event_name != 'pull_request'
+        run: images/scan.sh fugaro-${{ matrix.base }}:ci
+      - name: Save the image for the publish job
+        if: needs.version.outputs.publish == 'true'
+        run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: needs.version.outputs.publish == 'true'
+        with:
+          name: fugaro-${{ matrix.base }}-image
+          path: fugaro-${{ matrix.base }}.tar.gz
+          retention-days: 1
+  # Only this job ever needs packages:write, and it never runs on
+  # pull_request: `version.outputs.publish` is forced false there.
+  publish:
+    needs: [version, base]
+    if: needs.version.outputs.publish == 'true'
+    # Publishes queue rather than race: move_major is decided from the tags
+    # present when the version job ran, so two close tag pushes in one major
+    # must push in order or :<major> could end on the older one.
+    concurrency:
+      group: images-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [web-node] # server-jvm joins after the server spike
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: fugaro-${{ matrix.base }}-image
+      - name: Load and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_ACTOR: ${{ github.actor }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MAJOR: ${{ needs.version.outputs.major }}
+          MOVE_MAJOR: ${{ needs.version.outputs.move_major }}
+        run: |
+          set -eu
+          gunzip -c "fugaro-${{ matrix.base }}.tar.gz" | docker load
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GH_ACTOR" --password-stdin
+          tags=$VERSION
+          if [ "$MOVE_MAJOR" = true ]; then
+            tags="$tags $MAJOR"
+          fi
+          for t in $tags; do
+            docker tag "fugaro-${{ matrix.base }}:ci" "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
+            docker push "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
+          done
+  docker-tests:
+    if: github.event_name != 'push'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+      - run: go test -tags docker -p 1 -timeout 45m ./images/ ./internal/image/ ./internal/e2e/

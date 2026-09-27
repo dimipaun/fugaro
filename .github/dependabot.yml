@@ -1,0 +1,11 @@
+# Dependabot keeps the SHA-pinned GitHub Actions current, updating both the
+# pin and its "# vX.Y.Z" comment. Two pins it can't see are bumped by hand
+# monthly, alongside the base refreshes: the Trivy digest in images/scan.sh
+# and the "# syntax=docker/dockerfile" frontend digest in
+# images/web-node/Dockerfile and images/derived/Dockerfile.tmpl.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

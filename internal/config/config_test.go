@@ -117,7 +117,7 @@ func TestSelectWorkflow(t *testing.T) {
 		t.Fatalf("ambiguous SelectWorkflow err = %v", err)
 	}
 	name, w, err := cfg2.SelectWorkflow("web")
-	if err != nil || name != "web" || w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" {
+	if err != nil || name != "web" || w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" {
 		t.Fatalf("SelectWorkflow(web) = %q %+v %v", name, w.Resources, err)
 	}
 }
@@ -140,7 +140,7 @@ func TestCheckMissingFiles(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, ".fugaro", "server.Dockerfile"), nil, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, ".fugaro", "server.Dockerfile"), []byte(validRepoDockerfile), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if ps := Check(cfg, root); len(ps) != 0 {

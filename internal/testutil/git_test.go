@@ -23,14 +23,13 @@ func TestGitDoesNotHangOnLeakedHookChild(t *testing.T) {
 
 	pidFile := filepath.Join(t.TempDir(), "leaked.pid")
 	hook := filepath.Join(dir, ".git", "hooks", "post-commit")
-	// sleep 30s: comfortably longer than both gitWaitDelay (5s) and the
-	// 20s assertion below, so a regression (no WaitDelay, waiting for the
-	// leaked child to exit on its own) actually fails this test instead of
-	// coincidentally finishing in time. The assertion leaves 15s of slack
-	// over gitWaitDelay because a heavily loaded machine (load average
-	// above 100 on 16 cores) was observed to stretch the commit itself to
-	// 12s. Killed in Cleanup regardless.
-	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 30 & echo $! > "+pidFile+"\n"), 0o755); err != nil {
+	// sleep 600s: far longer than gitWaitDelay (5s) and the generous 180s
+	// bound below, so a regression (no WaitDelay, waiting for the leaked
+	// child to exit on its own) fails this test. The proof doesn't lean on
+	// the bound: after Git returns, the leaked child must still be alive,
+	// which shows WaitDelay, not the child exiting, ended the wait, however
+	// loaded the machine is. Killed in Cleanup regardless.
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 600 & echo $! > "+pidFile+"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -47,7 +46,18 @@ func TestGitDoesNotHangOnLeakedHookChild(t *testing.T) {
 	Git(t, dir, "add", "-A")
 	start := time.Now()
 	Git(t, dir, "commit", "--quiet", "-m", "seed") // fails the test itself on error or hang
-	if d := time.Since(start); d > 20*time.Second {
+	if d := time.Since(start); d > 180*time.Second {
 		t.Fatalf("git commit took %s; a leaked hook child blocked it", d)
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("the post-commit hook never ran, so nothing leaked: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("leaked pid %q: %v", data, err)
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the leaked hook child (pid %d) is gone (%v), so it can't have been what the wait was bounded against", pid, err)
 	}
 }

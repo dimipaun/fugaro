@@ -1,0 +1,8 @@
+{
+  "name": "fugaro",
+  "version": "0.0.0",
+  "description": "Skills for Fugaro: onboard a repository (fugaro.yaml and its image), with launch, status, logs, diagnose and follow-up to come.",
+  "author": { "name": "Dimi Paun" },
+  "repository": "https://github.com/dimipaun/fugaro",
+  "license": "MIT"
+}

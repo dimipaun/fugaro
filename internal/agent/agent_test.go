@@ -284,6 +284,47 @@ func TestRedact(t *testing.T) {
 	}
 }
 
+func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
+	pass := []string{
+		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128", "NO_PROXY=localhost",
+		"NODE_EXTRA_CA_CERTS=/etc/ssl/extra.pem", "SSL_CERT_FILE=/etc/ssl/extra.pem", "GIT_SSL_CAINFO=/etc/ssl/extra.pem",
+		"DISABLE_AUTOUPDATER=1", "COREPACK_ENABLE_DOWNLOAD_PROMPT=0", "PLAYWRIGHT_BROWSERS_PATH=/ms-playwright",
+	}
+	parent := append([]string{"ANTHROPIC_API_KEY=key-123", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1"}, pass...)
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range pass {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "VERTEX_REGION_") }) {
+		t.Errorf("a Vertex region override passed without auth: vertex: %v", env)
+	}
+}
+
+func TestBuildEnvVertexExtras(t *testing.T) {
+	parent := []string{
+		"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p",
+		"ANTHROPIC_VERTEX_BASE_URL=https://gateway.invalid/v1", "VERTEX_REGION_CLAUDE_4_5_SONNET=europe-west1",
+		"VERTEXISH=no",
+	}
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "vertex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range parent[:4] {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	if slices.Contains(env, "VERTEXISH=no") {
+		t.Errorf("an unrelated variable passed: %v", env)
+	}
+}
+
 func TestNewSessionID(t *testing.T) {
 	id := NewSessionID()
 	if len(id) != 36 || id[14] != '4' || id == NewSessionID() {

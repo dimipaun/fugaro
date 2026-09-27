@@ -164,13 +164,14 @@ func TestLeakedChildDoesNotHang(t *testing.T) {
 	tmp := t.TempDir()
 	pidFile := filepath.Join(tmp, "leaked.pid")
 	wrapper := filepath.Join(tmp, "upload-pack.sh")
-	// sleep 30s: comfortably longer than both gitWaitDelay (5s) and the 20s
-	// assertion below, so a regression (waiting for the leaked child to exit
-	// on its own) fails this test instead of coincidentally finishing in
-	// time; the 15s of slack over gitWaitDelay absorbs a heavily loaded
-	// machine. Killed in Cleanup regardless. Only stderr is leaked: holding
-	// the protocol pipe (stdout) would stall upload-pack itself.
-	script := "#!/bin/sh\nsleep 30 </dev/null >/dev/null & echo $! > " + pidFile + "\nexec git-upload-pack \"$@\"\n"
+	// sleep 600s: far longer than gitWaitDelay (5s) and the generous 180s
+	// bound below, so a regression (waiting for the leaked child to exit on
+	// its own) fails this test. The proof doesn't lean on the bound, though:
+	// after the call returns, the leaked child must still be alive, which
+	// shows WaitDelay, not the child exiting, ended the wait, however slow
+	// the machine is. Killed in Cleanup regardless. Only stderr is leaked:
+	// holding the protocol pipe (stdout) would stall upload-pack itself.
+	script := "#!/bin/sh\nsleep 600 </dev/null >/dev/null & echo $! > " + pidFile + "\nexec git-upload-pack \"$@\"\n"
 	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -186,14 +187,22 @@ func TestLeakedChildDoesNotHang(t *testing.T) {
 	})
 	start := time.Now()
 	err := repo.CheckoutNewBranch(ctx, "main", "fugaro/hangtest")
-	if d := time.Since(start); d > 20*time.Second {
+	if d := time.Since(start); d > 180*time.Second {
 		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked child blocked it", d, err)
 	}
 	if err != nil {
 		t.Fatalf("CheckoutNewBranch returned an error for a successful checkout with a leaked child: %v", err)
 	}
-	if _, err := os.Stat(pidFile); err != nil {
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
 		t.Fatalf("the upload-pack wrapper never ran, so nothing leaked: %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("leaked pid %q: %v", data, err)
+	}
+	if err := syscall.Kill(pid, 0); err != nil {
+		t.Fatalf("the leaked child (pid %d) is gone (%v), so it can't have been what the wait was bounded against", pid, err)
 	}
 	if got := testutil.Git(t, repo.Dir, "rev-parse", "--abbrev-ref", "HEAD"); got != "fugaro/hangtest" {
 		t.Fatalf("branch = %q, want fugaro/hangtest", got)

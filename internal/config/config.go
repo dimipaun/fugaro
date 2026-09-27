@@ -50,12 +50,27 @@ type Agent struct {
 // Workflow is one buildable unit of the repository, such as a server or a web app.
 type Workflow struct {
 	Base       string       `yaml:"base"`
+	Image      Image        `yaml:"image"`
 	Dockerfile string       `yaml:"dockerfile"`
 	Commands   Commands     `yaml:"commands"`
 	Cache      []CacheEntry `yaml:"cache"`
 	Secrets    []Secret     `yaml:"secrets"`
 	Resources  Resources    `yaml:"resources"`
 	Timeouts   Timeouts     `yaml:"timeouts"`
+}
+
+// Image customizes the workflow's generated derived image (design §7.2). The
+// zero value means the base image's defaults.
+type Image struct {
+	Node  string   `yaml:"node"`  // web-node: Node.js version, N or N.N.N
+	JDK   string   `yaml:"jdk"`   // server-jvm: JDK major version
+	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
+	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up
+}
+
+// IsZero reports whether the image block sets nothing.
+func (i Image) IsZero() bool {
+	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0
 }
 
 // Commands are the repository's build and test commands, run through `sh -c`.
