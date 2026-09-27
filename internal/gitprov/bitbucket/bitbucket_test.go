@@ -3,9 +3,11 @@ package bitbucket
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -114,11 +116,17 @@ func TestNewValidates(t *testing.T) {
 // EnsurePR calls each carry non-empty Labels.
 func TestLabelsWarnOnce(t *testing.T) {
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "labels_warning.json"))
-	var warnings int32
+	var mu sync.Mutex
+	var warnings int
 	var lastMsg string
 	p, err := New(Options{
 		Workspace: "acme", Slug: "web", Token: "bb-token-1234", BaseURL: srv.URL + "/2.0",
-		Warn: func(msg string) { atomic.AddInt32(&warnings, 1); lastMsg = msg },
+		Warn: func(msg string) {
+			mu.Lock()
+			defer mu.Unlock()
+			warnings++
+			lastMsg = msg
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -136,10 +144,89 @@ func TestLabelsWarnOnce(t *testing.T) {
 		t.Fatalf("second EnsurePR: pr = %+v, err = %v", pr, err)
 	}
 
-	if got := atomic.LoadInt32(&warnings); got != 1 {
-		t.Fatalf("warnings = %d, want 1", got)
+	mu.Lock()
+	defer mu.Unlock()
+	if warnings != 1 {
+		t.Fatalf("warnings = %d, want 1", warnings)
 	}
 	if !strings.Contains(lastMsg, "labels") || !strings.Contains(lastMsg, "fugaro") {
 		t.Fatalf("warning message = %q", lastMsg)
+	}
+}
+
+// TestReadyStuckAsDraftReportsPartial covers the plan-mandated fix: when a
+// ready pull request is wanted but Bitbucket still reports it as a draft
+// (it did not honor a prior draft:false), EnsurePR must still return the
+// existing, valid pull request — per the Provider contract, a *PartialError
+// means the pull request exists but a setting could not be applied — rather
+// than an empty PR with a hard error, which would break the contract and
+// fail identically on every retry.
+func TestReadyStuckAsDraftReportsPartial(t *testing.T) {
+	p := open(t, "existing_stuck_draft.json")
+	pr, err := p.EnsurePR(ctx, spec(false))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a *gitprov.PartialError", err)
+	}
+	if pr != (gitprov.PR{Number: 50, URL: "https://bitbucket.org/acme/web/pull-requests/50", Draft: true}) {
+		t.Fatalf("pr = %+v", pr)
+	}
+}
+
+// TestExistingPRNoOpSkipsPUT covers the minor fix: when an existing pull
+// request already has the wanted draft state and no fallback prefix to add
+// or remove, EnsurePR must not send a PUT at all. The fixture holds only
+// the GET exchange, so httpfixture would fail the test if a PUT were sent.
+func TestExistingPRNoOpSkipsPUT(t *testing.T) {
+	p := open(t, "existing_no_op.json")
+	pr, err := p.EnsurePR(ctx, spec(false))
+	if err != nil || pr != (gitprov.PR{Number: 47, URL: "https://bitbucket.org/acme/web/pull-requests/47"}) {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestRejectedReviewerAndStuckDraftBothReported covers the minor fix: when
+// the reviewer-fallback POST succeeds but finish then fails to get the pull
+// request out of draft, both failures must be reported, not just one.
+func TestRejectedReviewerAndStuckDraftBothReported(t *testing.T) {
+	p := open(t, "reviewer_rejected_stuck_draft.json")
+	pr, err := p.EnsurePR(ctx, spec(false, "557058:gone"))
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a *gitprov.PartialError", err)
+	}
+	if pr != (gitprov.PR{Number: 48, URL: "https://bitbucket.org/acme/web/pull-requests/48", Draft: true}) {
+		t.Fatalf("pr = %+v", pr)
+	}
+	if !strings.Contains(err.Error(), "557058:gone") {
+		t.Fatalf("err = %v, want it to mention the rejected reviewer", err)
+	}
+	if !strings.Contains(err.Error(), "ready") && !strings.Contains(err.Error(), "draft") {
+		t.Fatalf("err = %v, want it to also mention the stuck draft", err)
+	}
+}
+
+// TestFindEscapesBranchName covers the minor fix: a branch name carrying a
+// double quote or backslash must not be allowed to break out of the BBQL
+// string literal in find's ?q= parameter.
+func TestFindEscapesBranchName(t *testing.T) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("q")
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"values":[]}`))
+	}))
+	defer srv.Close()
+
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.find(ctx, `fugaro/quo"te\slash`); err != nil {
+		t.Fatal(err)
+	}
+	want := `source.branch.name="fugaro/quo\"te\\slash" AND source.repository.full_name="acme/web" AND state="OPEN"`
+	if gotQuery != want {
+		t.Fatalf("query = %q, want %q", gotQuery, want)
 	}
 }

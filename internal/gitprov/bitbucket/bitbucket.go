@@ -105,8 +105,14 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 		return gitprov.PR{}, err
 	}
 	if existing != nil {
+		title := gitprov.DraftTitle(existing.Title, false)
+		if title == existing.Title && existing.Draft == spec.Draft {
+			// Nothing would change: no fallback prefix to add or remove,
+			// and the draft state already matches. Skip the PUT.
+			return gitprov.PR{Number: existing.ID, URL: existing.Links.HTML.Href, Draft: existing.Draft}, nil
+		}
 		var pr pullRequest
-		body := map[string]any{"title": gitprov.DraftTitle(existing.Title, false), "draft": spec.Draft}
+		body := map[string]any{"title": title, "draft": spec.Draft}
 		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", existing.ID)), body, &pr); err != nil {
 			return gitprov.PR{}, fmt.Errorf("updating pull request #%d: %w", existing.ID, err)
 		}
@@ -116,7 +122,8 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 }
 
 func (p *Provider) find(ctx context.Context, branch string) (*pullRequest, error) {
-	q := url.Values{"q": {fmt.Sprintf(`source.branch.name="%s" AND state="OPEN"`, branch)}}
+	q := url.Values{"q": {fmt.Sprintf(`source.branch.name="%s" AND source.repository.full_name="%s/%s" AND state="OPEN"`,
+		escapeBBQL(branch), escapeBBQL(p.o.Workspace), escapeBBQL(p.o.Slug))}}
 	var page struct {
 		Values []pullRequest `json:"values"`
 	}
@@ -127,6 +134,15 @@ func (p *Provider) find(ctx context.Context, branch string) (*pullRequest, error
 		return nil, nil
 	}
 	return &page.Values[0], nil
+}
+
+// escapeBBQL escapes s for embedding in a double-quoted BBQL string literal
+// (Bitbucket's query language, used by find's ?q= parameter): backslashes
+// and double quotes in a branch name must not be allowed to break out of
+// the literal or, worse, splice extra query clauses in.
+func escapeBBQL(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	return strings.ReplaceAll(s, `"`, `\"`)
 }
 
 func (p *Provider) create(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
@@ -153,11 +169,26 @@ func (p *Provider) create(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR,
 	if err != nil {
 		return gitprov.PR{}, fmt.Errorf("creating the pull request for %s: %w", spec.Branch, err)
 	}
-	out, err := p.finish(ctx, pr, spec.Draft)
-	if err == nil && rejected != nil {
-		err = &gitprov.PartialError{Err: rejected}
+	out, ferr := p.finish(ctx, pr, spec.Draft)
+	return out, joinRejected(rejected, ferr)
+}
+
+// joinRejected reports rejected (a reviewer-fallback failure from create)
+// alongside err (whatever finish returned), so that neither is silently
+// dropped. The pull request was created either way, so a non-nil result is
+// always a *gitprov.PartialError.
+func joinRejected(rejected, err error) error {
+	if rejected == nil {
+		return err
 	}
-	return out, err
+	if err == nil {
+		return &gitprov.PartialError{Err: rejected}
+	}
+	var pe *gitprov.PartialError
+	if errors.As(err, &pe) {
+		return &gitprov.PartialError{Err: fmt.Errorf("%w; %s", pe.Err, rejected)}
+	}
+	return fmt.Errorf("%w (also, %s)", err, rejected)
 }
 
 func reviewers(ids []string) []map[string]string {
@@ -175,10 +206,18 @@ func reviewers(ids []string) []map[string]string {
 // finish returns pr as a gitprov.PR in the wanted draft state. If
 // Bitbucket did not make it a real draft, the draft is marked in the title
 // instead (design §15); a title prefix left from that is removed once the
-// pull request is ready.
+// pull request is ready. If a ready pull request is wanted but Bitbucket
+// still reports it as a draft (e.g. it does not honor the draft field and
+// this is the first time the run has asked it to go ready), the pull
+// request is still returned — it exists and its URL and number are valid —
+// alongside a *gitprov.PartialError, matching the Provider contract that an
+// existing pull request is always returned even when some setting could
+// not be applied.
 func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitprov.PR, error) {
 	if !draft && pr.Draft {
-		return gitprov.PR{}, fmt.Errorf("pull request #%d is still a draft after asking Bitbucket to mark it ready", pr.ID)
+		out := gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: true}
+		return out, &gitprov.PartialError{Err: fmt.Errorf(
+			"could not mark it ready: pull request #%d is still a draft after asking Bitbucket to mark it ready", pr.ID)}
 	}
 	if title := gitprov.DraftTitle(pr.Title, draft && !pr.Draft); title != pr.Title {
 		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", pr.ID)), map[string]any{"title": title}, nil); err != nil {

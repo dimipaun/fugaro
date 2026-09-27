@@ -1,5 +1,5 @@
 [
-  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND state=\"OPEN\"",
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
    "auth": "Bearer bb-token-1234", "status": 200,
    "response": {"pagelen": 10, "size": 0, "page": 1, "values": []}},
   {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests", "auth": "Bearer bb-token-1234",

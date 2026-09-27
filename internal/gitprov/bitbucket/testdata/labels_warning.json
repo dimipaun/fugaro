@@ -1,5 +1,5 @@
 [
-  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/labels-a\" AND state=\"OPEN\"",
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/labels-a\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
    "status": 200, "response": {"values": []}},
   {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests",
    "request": {"title": "Add search", "description": "Adds search.",
@@ -8,7 +8,7 @@
    "status": 201,
    "response": {"type": "pullrequest", "id": 61, "title": "Add search", "draft": false, "state": "OPEN",
                 "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/61"}}}},
-  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/labels-b\" AND state=\"OPEN\"",
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/labels-b\" AND source.repository.full_name=\"acme/web\" AND state=\"OPEN\"",
    "status": 200, "response": {"values": []}},
   {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests",
    "request": {"title": "Add search", "description": "Adds search.",

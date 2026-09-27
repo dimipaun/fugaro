@@ -12,6 +12,6 @@
                "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},
                "draft": false, "close_source_branch": true},
    "status": 201,
-   "response": {"type": "pullrequest", "id": 46, "title": "Add search", "draft": false, "state": "OPEN",
-                "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/46"}}}}
+   "response": {"type": "pullrequest", "id": 48, "title": "Add search", "draft": true, "state": "OPEN",
+                "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/48"}}}}
 ]
