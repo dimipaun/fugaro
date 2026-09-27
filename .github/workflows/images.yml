@@ -9,9 +9,57 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
-  packages: write
 jobs:
+  version:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      major: ${{ steps.version.outputs.major }}
+      publish: ${{ steps.version.outputs.publish }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Pick the version
+        id: version
+        run: |
+          set -eu
+          publish=true
+          tag=""
+          case "$GITHUB_EVENT_NAME" in
+            push)
+              tag=$GITHUB_REF_NAME
+              ;;
+            pull_request)
+              version="pr-${{ github.event.number }}"
+              publish=false
+              ;;
+            *)
+              # Nightly/dispatch: the latest strict vX.Y.Z release tag, never
+              # a pre-release like v1.2.3-rc1.
+              tag=$(git tag -l 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+              if [ -z "$tag" ]; then
+                version=nightly
+                publish=false
+              fi
+              ;;
+          esac
+          if [ -n "$tag" ]; then
+            version=${tag#v}
+          fi
+          {
+            echo "version=$version"
+            echo "major=${version%%.*}"
+            echo "publish=$publish"
+            echo "tag=$tag"
+          } >> "$GITHUB_OUTPUT"
   base:
+    needs: version
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -21,42 +69,59 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Pick the version
-        id: version
-        run: |
-          publish=true
-          case "$GITHUB_EVENT_NAME" in
-            push) tag=$GITHUB_REF_NAME ;;
-            pull_request) tag=""; version="pr-${{ github.event.number }}"; publish=false ;;
-            *)
-              tag=$(git tag --list 'v*.*.*' --sort=-v:refname | head -n 1)
-              if [ -n "$tag" ]; then git checkout --quiet "refs/tags/$tag"; else version=nightly; publish=false; fi ;;
-          esac
-          if [ -n "$tag" ]; then version=${tag#v}; fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "major=${version%%.*}" >> "$GITHUB_OUTPUT"
-          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+      - name: Checkout the resolved tag
+        if: needs.version.outputs.tag != ''
+        run: git checkout --quiet "refs/tags/${{ needs.version.outputs.tag }}"
       - name: Build
         env:
-          FUGARO_VERSION: ${{ steps.version.outputs.version }}
+          FUGARO_VERSION: ${{ needs.version.outputs.version }}
         run: images/build-base.sh ${{ matrix.base }} fugaro-${{ matrix.base }}:ci
       - name: Smoke test
         run: images/smoke.sh fugaro-${{ matrix.base }}:ci ${{ matrix.base }}
       - name: Scan
         if: github.event_name != 'pull_request'
         run: images/scan.sh fugaro-${{ matrix.base }}:ci
-      - name: Publish
-        if: steps.version.outputs.publish == 'true'
+      - name: Save the image for the publish job
+        if: needs.version.outputs.publish == 'true'
+        run: docker save "fugaro-${{ matrix.base }}:ci" | gzip > "fugaro-${{ matrix.base }}.tar.gz"
+      - uses: actions/upload-artifact@v4
+        if: needs.version.outputs.publish == 'true'
+        with:
+          name: fugaro-${{ matrix.base }}-image
+          path: fugaro-${{ matrix.base }}.tar.gz
+          retention-days: 1
+  # Only this job ever needs packages:write, and it never runs on
+  # pull_request: `version.outputs.publish` is forced false there.
+  publish:
+    needs: [version, base]
+    if: needs.version.outputs.publish == 'true'
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        base: [web-node] # server-jvm joins after the server spike
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fugaro-${{ matrix.base }}-image
+      - name: Load and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -eu
+          gunzip -c "fugaro-${{ matrix.base }}.tar.gz" | docker load
           echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-          for t in "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.major }}"; do
+          for t in "${{ needs.version.outputs.version }}" "${{ needs.version.outputs.major }}"; do
             docker tag "fugaro-${{ matrix.base }}:ci" "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
             docker push "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
           done
   docker-tests:
     if: github.event_name != 'push'
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

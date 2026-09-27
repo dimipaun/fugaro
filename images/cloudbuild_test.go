@@ -87,3 +87,36 @@ func TestCIWorkflowUsesScripts(t *testing.T) {
 		t.Error("images.yml calls docker build directly; use images/build-base.sh")
 	}
 }
+
+// TestCIWorkflowPermissionsScoped keeps packages:write off any job that can
+// run on pull_request: the workflow-level default must be read-only, and
+// only a job whose `if:` gates on the resolved publish flag (never true for
+// pull_request; see the version job's "Pick the version" step) may declare
+// packages:write.
+func TestCIWorkflowPermissionsScoped(t *testing.T) {
+	data, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Permissions map[string]string `yaml:"permissions"`
+		Jobs        map[string]struct {
+			If          string            `yaml:"if"`
+			Permissions map[string]string `yaml:"permissions"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	if wf.Permissions["contents"] != "read" || wf.Permissions["packages"] != "" {
+		t.Errorf("workflow-level permissions = %+v, want only contents: read", wf.Permissions)
+	}
+	for name, job := range wf.Jobs {
+		if job.Permissions["packages"] != "write" {
+			continue
+		}
+		if !strings.Contains(job.If, "publish") {
+			t.Errorf("job %q grants packages:write but its `if:` (%q) does not gate on the resolved publish flag, so it could run on pull_request", name, job.If)
+		}
+	}
+}

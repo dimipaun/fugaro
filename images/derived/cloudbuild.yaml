@@ -49,6 +49,7 @@ steps:
       - -c
       - |
         set -eu
+        trap 'rm -f /builder/home/.git-credentials' EXIT
         docker pull --quiet "${_FUGARO_BASE}"
         base=$$(docker inspect --format '{{index .RepoDigests 0}}' "${_FUGARO_BASE}")
         docker build --progress plain \
@@ -57,5 +58,4 @@ steps:
           --build-arg "BASE_BRANCH=${_BASE_BRANCH}" \
           --secret id=git-credentials,src=/builder/home/.git-credentials \
           --tag "${_IMAGE}:latest" /workspace/context
-        rm -f /builder/home/.git-credentials
 images: ["${_IMAGE}:latest"]
