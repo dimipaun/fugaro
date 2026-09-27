@@ -1,0 +1,5 @@
+[
+  {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests/42/comments", "auth": "Bearer bb-token-1234",
+   "request": {"content": {"raw": "### Fugaro run report"}},
+   "status": 201, "response": {"type": "pullrequest_comment", "id": 9001}}
+]

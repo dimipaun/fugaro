@@ -1,0 +1,17 @@
+[
+  {"method": "GET", "path": "/2.0/repositories/acme/web/pullrequests?q=source.branch.name=\"fugaro/20260927-101500-abcd\" AND state=\"OPEN\"",
+   "status": 200, "response": {"values": []}},
+  {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests",
+   "request": {"title": "Add search", "description": "Adds search.",
+               "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},
+               "draft": false, "close_source_branch": true, "reviewers": [{"account_id": "557058:gone"}]},
+   "status": 400,
+   "response": {"type": "error", "error": {"message": "reviewers: 557058:gone is not a valid user"}}},
+  {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests",
+   "request": {"title": "Add search", "description": "Adds search.",
+               "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},
+               "draft": false, "close_source_branch": true},
+   "status": 201,
+   "response": {"type": "pullrequest", "id": 46, "title": "Add search", "draft": false, "state": "OPEN",
+                "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/46"}}}}
+]
