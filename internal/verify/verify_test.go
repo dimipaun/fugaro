@@ -296,3 +296,25 @@ func TestClearStateRemovesLogs(t *testing.T) {
 		t.Fatalf("verify log survived ClearState: %v", err)
 	}
 }
+
+// TestLogTailKeepsLongLines checks that stored lines are not clipped to the
+// published width: the runner redacts them first and clips them after, so
+// a secret straddling the published cut is still redacted whole.
+func TestLogTailKeepsLongLines(t *testing.T) {
+	f := setup(t)
+	err := WriteSettings(f.stateDir, Settings{
+		RepoDir: f.repoDir, Test: "sh test.sh", Reports: []string{"build/test-results/*.xml"}, TimeoutS: 60,
+		Build: `printf '%01000d\n' 0; exit 1`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := run(t, f, KindBuild, false)
+	tail, err := LogTail(f.stateDir, rec.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tail != strings.Repeat("0", 1000) {
+		t.Fatalf("tail is %d bytes, want the whole 1000-byte line", len(tail))
+	}
+}

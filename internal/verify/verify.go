@@ -207,7 +207,7 @@ func Run(ctx context.Context, o Options) (Record, error) {
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(s.TimeoutS)*time.Second)
 	}
 	defer cancel()
-	tail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
+	tail := logtail.New(logtail.DefaultLines, storedLineBytes)
 	code, runErr := procgroup.Run(runCtx, procgroup.Cmd{
 		Name: "sh", Args: []string{"-c", command}, Dir: s.RepoDir, Env: env,
 		Stdout: tee(o.Stdout, tail), Stderr: tee(o.Stderr, tail), Grace: commandGrace,
@@ -255,6 +255,12 @@ func tee(w io.Writer, tail *logtail.Writer) io.Writer {
 	return io.MultiWriter(w, tail)
 }
 
+// storedLineBytes bounds each stored log line. It is well above the
+// published width (logtail.DefaultLineBytes) because the runner redacts a
+// line before clipping it to that width: clipping first could cut a secret
+// in two and leak its first part.
+const storedLineBytes = 4 << 10
+
 func logPath(stateDir string, n int) string {
 	return filepath.Join(stateDir, logsDir, fmt.Sprintf("%04d.log", n))
 }
@@ -272,8 +278,9 @@ func writeLog(stateDir string, n int, tail string) error {
 }
 
 // LogTail returns the last lines of verify record n's command output
-// (at most logtail.DefaultLines lines of logtail.DefaultLineBytes bytes),
-// unredacted. A record without a stored tail yields "".
+// (at most logtail.DefaultLines lines of 4 KiB each), unredacted and not
+// yet clipped to the published width: a caller redacts each line, then
+// clips it with logtail.Clip. A record without a stored tail yields "".
 func LogTail(stateDir string, n int) (string, error) {
 	data, err := os.ReadFile(logPath(stateDir, n))
 	if errors.Is(err, fs.ErrNotExist) {

@@ -15,6 +15,20 @@ const (
 	DefaultLineBytes = 300
 )
 
+// cutMark ends a line that was clipped.
+const cutMark = " …"
+
+// Clip returns line clipped to at most maxBytes bytes, without splitting a
+// rune, and marked as cut when anything was removed. Callers that must
+// redact a line clip it only after redacting it, so a secret straddling
+// the cut is still recognized whole.
+func Clip(line string, maxBytes int) string {
+	if len(line) <= maxBytes {
+		return line
+	}
+	return strings.ToValidUTF8(line[:maxBytes], "") + cutMark
+}
+
 // Writer is an io.Writer that remembers the last lines written to it. It is
 // safe for concurrent use, so one Writer can take a command's stdout and
 // stderr at once. Memory stays bounded however long a line is.
@@ -74,7 +88,7 @@ func (w *Writer) current() string {
 		line = line[j+1:]
 	}
 	if w.cut {
-		line = strings.ToValidUTF8(line, "") + " …"
+		line = strings.ToValidUTF8(line, "") + cutMark
 	}
 	return line
 }

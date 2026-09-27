@@ -117,3 +117,29 @@ func TestLongPRTextIsBounded(t *testing.T) {
 }
 
 func utf8Valid(s string) bool { return strings.ToValidUTF8(s, "\uFFFD") == s }
+
+// TestVerifyLogTailRedactedBeforeClipping covers a secret straddling the
+// published line width: the verify log keeps the whole line, and the
+// runner redacts it before clipping, so no prefix of the secret leaks.
+func TestVerifyLogTailRedactedBeforeClipping(t *testing.T) {
+	h := newHarness(t, "", nil)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	pad := strings.Repeat("x", 296) // the secret spans bytes 296-303 of the line
+	h.files["fugaro.yaml"] = strings.Replace(h.files["fugaro.yaml"], "test: sh test.sh", "test: echo "+pad+secret+"; sh test.sh", 1)
+	h.deps.Remote = testutil.NewRemote(t, h.files)
+	h.remote = h.deps.Remote
+	h.fails(t, "beta")
+	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	report := onlyPR(t, h.provider).Comments[0]
+	if !strings.Contains(report, "**Log tail** (fugaro verify test #1):") {
+		t.Fatalf("report lacks the verify tail:\n%s", report)
+	}
+	if strings.Contains(report, pad+secret[:1]) {
+		t.Fatalf("report leaks a prefix of the secret:\n%s", report)
+	}
+	if !strings.Contains(report, pad+"[RED …") {
+		t.Fatalf("report lacks the redacted, clipped line:\n%s", report)
+	}
+}

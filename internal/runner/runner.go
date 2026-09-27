@@ -636,7 +636,13 @@ func (r *run) logTail(ready bool, records []verify.Record) *LogTail {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	return &LogTail{Source: fmt.Sprintf("fugaro verify %s #%d", last.Kind, last.N), Lines: strings.Split(r.redact(text), "\n")}
+	// Redact whole lines first, then clip them to the published width, so
+	// a secret straddling the cut is never partly published.
+	lines := strings.Split(r.redact(text), "\n")
+	for i, l := range lines {
+		lines[i] = logtail.Clip(l, logtail.DefaultLineBytes)
+	}
+	return &LogTail{Source: fmt.Sprintf("fugaro verify %s #%d", last.Kind, last.N), Lines: lines}
 }
 
 func (r *run) finalize(ctx context.Context) error {

@@ -73,3 +73,16 @@ func TestConcurrentWrites(t *testing.T) {
 		t.Fatalf("got %d lines, want 800", n)
 	}
 }
+
+func TestClip(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"short", "short"},
+		{"exactly10!", "exactly10!"},
+		{"eleven byte", "eleven byt …"},
+		{"aaaaaaaaaé", "aaaaaaaaa …"}, // never splits a rune
+	} {
+		if got := Clip(tc.in, 10); got != tc.want {
+			t.Errorf("Clip(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
