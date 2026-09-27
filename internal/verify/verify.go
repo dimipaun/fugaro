@@ -156,6 +156,9 @@ type Options struct {
 }
 
 // Run executes the configured command, parses fresh reports and records the result.
+// The stored log tail interleaves stdout and stderr as they are copied from
+// their separate pipes, so a stderr line may land a few lines from where the
+// command wrote it.
 func Run(ctx context.Context, o Options) (Record, error) {
 	s, err := LoadSettings(o.StateDir)
 	if err != nil {
