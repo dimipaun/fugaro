@@ -26,11 +26,14 @@ type Server struct {
 	t    *testing.T
 	mu   sync.Mutex
 	reqs []Request
+	// failf reports an unhandled call; it is t.Errorf except in the fake's
+	// own tests, which check that the refusal happens.
+	failf func(format string, args ...any)
 }
 
 func newServer(t *testing.T, h func(w http.ResponseWriter, r *http.Request, body []byte)) *Server {
 	t.Helper()
-	s := &Server{t: t}
+	s := &Server{t: t, failf: t.Errorf}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		s.mu.Lock()
@@ -60,8 +63,10 @@ func writeError(w http.ResponseWriter, code int, status, msg string) {
 	writeJSON(w, code, map[string]any{"error": map[string]any{"code": code, "status": status, "message": msg}})
 }
 
-// unhandled fails the test for a call the fake doesn't implement.
+// unhandled fails the test for a call the fake doesn't implement. It
+// answers 400, not 501: Google clients retry every 5xx on idempotent calls,
+// so a 501 would stall the test in backoff instead of failing it at once.
 func (s *Server) unhandled(w http.ResponseWriter, r *http.Request) {
-	s.t.Errorf("gcpfake: unhandled %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
-	writeError(w, http.StatusNotImplemented, "UNIMPLEMENTED", "not faked")
+	s.failf("gcpfake: unhandled %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+	writeError(w, http.StatusBadRequest, "UNIMPLEMENTED", "not faked")
 }

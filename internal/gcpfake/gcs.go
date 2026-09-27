@@ -27,6 +27,21 @@ import (
 // cloud.google.com/go/storage send for Fugaro's operations: multipart and
 // resumable uploads (with ifGenerationMatch), metadata and media reads,
 // conditional deletes, customTime patches and prefix listings.
+//
+// Only ifGenerationMatch is implemented as a precondition. Any other if*
+// parameter (ifGenerationNotMatch, ifMetagenerationMatch,
+// ifMetagenerationNotMatch) is refused with a failed test, so a caller that
+// starts sending one is noticed instead of passing unchecked.
+//
+// Known differences from real GCS, none of which a current caller depends on:
+//   - A resumable upload checks its precondition when it is finalized, not
+//     when the session starts.
+//   - Resumable chunks are appended without checking their Content-Range
+//     offsets, so a retried chunk would be stored twice. A status query
+//     ("bytes */N" with no body) is treated as the final chunk.
+//   - Error bodies carry code, status and message, but no errors[].reason
+//     (real GCS answers a failed precondition with reason "conditionNotMet").
+//   - Listings are a single page: pageToken and maxResults are ignored.
 type GCS struct {
 	*Server
 	mu      sync.Mutex
@@ -101,6 +116,12 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	q := r.URL.Query()
+	for k := range q {
+		if strings.HasPrefix(k, "if") && k != "ifGenerationMatch" {
+			g.unhandled(w, r) // a precondition the fake would silently ignore
+			return
+		}
+	}
 	switch {
 	case strings.HasPrefix(r.URL.Path, uploadPrefix):
 		bucket, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, uploadPrefix), "/")

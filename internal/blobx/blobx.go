@@ -9,6 +9,7 @@ package blobx
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -119,18 +120,30 @@ func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
 
 // ReplaceIf overwrites key with data only if it is still generation gen
 // (GCS) or still holds prev (other drivers), and returns the new generation.
+// ErrConflict means the object changed or vanished; any other failure is
+// returned as itself. A data that is valid JSON (every current caller's) is
+// stored as application/json; anything else keeps gocloud's content sniffing.
 func (b *Bucket) ReplaceIf(ctx context.Context, key string, data []byte, gen int64, prev []byte) (int64, error) {
+	ct := ""
+	if json.Valid(data) {
+		ct = "application/json"
+	}
 	if b.client() != nil {
 		if gen == 0 {
 			return 0, fmt.Errorf("replacing %s: no generation to match", key)
 		}
-		return b.write(ctx, key, data, "", false, &storage.Conditions{GenerationMatch: gen})
+		return b.write(ctx, key, data, ct, false, &storage.Conditions{GenerationMatch: gen})
 	}
 	cur, _, err := b.Read(ctx, key)
-	if err != nil || !bytes.Equal(cur, prev) {
+	switch {
+	case errors.Is(err, ErrNotExist):
+		return 0, ErrConflict
+	case err != nil:
+		return 0, fmt.Errorf("replacing %s: %w", key, err)
+	case !bytes.Equal(cur, prev):
 		return 0, ErrConflict
 	}
-	return b.write(ctx, key, data, "", false, nil)
+	return b.write(ctx, key, data, ct, false, nil)
 }
 
 // DeleteIf deletes key only if it is still generation gen (GCS) or still

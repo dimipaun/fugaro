@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/iterator"
@@ -88,5 +91,54 @@ func TestGCSFakeResumableUpload(t *testing.T) {
 	}
 	if chunks < 3 {
 		t.Fatalf("%d resumable chunks, want at least 3", chunks)
+	}
+}
+
+// TestGCSFakeRefusesUnimplementedPreconditions: a precondition the fake
+// does not evaluate must fail the test rather than pass unchecked.
+func TestGCSFakeRefusesUnimplementedPreconditions(t *testing.T) {
+	ctx := context.Background()
+	g := NewGCS(t)
+	var mu sync.Mutex
+	var unhandled []string
+	g.failf = func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		unhandled = append(unhandled, fmt.Sprintf(format, args...))
+	}
+	reported := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		n := len(unhandled)
+		unhandled = nil
+		return n
+	}
+	obj := g.Client(t).Bucket("runs").Object("k")
+	w := obj.NewWriter(ctx)
+	_, _ = w.Write([]byte("v1"))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mg := w.Attrs().Metageneration
+	calls := map[string]func() error{
+		"upload": func() error {
+			w := obj.If(storage.Conditions{MetagenerationMatch: mg}).NewWriter(ctx)
+			_, _ = w.Write([]byte("v2"))
+			return w.Close()
+		},
+		"delete": func() error { return obj.If(storage.Conditions{GenerationNotMatch: 1}).Delete(ctx) },
+		"patch": func() error {
+			_, err := obj.If(storage.Conditions{MetagenerationNotMatch: mg + 1}).Update(ctx, storage.ObjectAttrsToUpdate{CustomTime: time.Now()})
+			return err
+		},
+	}
+	for name, call := range calls {
+		reported()
+		if err := call(); err == nil {
+			t.Errorf("%s with an unimplemented precondition succeeded", name)
+		}
+		if reported() == 0 {
+			t.Errorf("%s with an unimplemented precondition was not reported", name)
+		}
 	}
 }

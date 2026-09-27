@@ -3,10 +3,14 @@ package blobx_test
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"gocloud.dev/blob/fileblob"
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -83,5 +87,62 @@ func TestConditionalOpsFallback(t *testing.T) {
 	}
 	if err := b.Touch(ctx, "missing", time.Now()); err != nil {
 		t.Fatalf("Touch is a no-op off GCS: %v", err)
+	}
+}
+
+// TestReplaceIfFallbackSurfacesReadErrors: only a vanished or changed object
+// is a conflict. An I/O failure reading the current content must come back
+// as itself, or a caller would report it as a lost race.
+func TestReplaceIfFallbackSurfacesReadErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	ctx := context.Background()
+	dir := t.TempDir()
+	fb, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = fb.Close() })
+	b := blobx.Wrap(fb)
+	if _, err := b.Create(ctx, "k", []byte("v1"), ""); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "k")
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	_, err = b.ReplaceIf(ctx, "k", []byte("v2"), 0, []byte("v1"))
+	if err == nil || errors.Is(err, blobx.ErrConflict) || !errors.Is(err, fs.ErrPermission) {
+		t.Fatalf("ReplaceIf over an unreadable object = %v, want the permission error", err)
+	}
+	if _, err := b.ReplaceIf(ctx, "missing", []byte("v2"), 0, []byte("v1")); !errors.Is(err, blobx.ErrConflict) {
+		t.Fatalf("ReplaceIf of a vanished object = %v, want ErrConflict", err)
+	}
+}
+
+func TestReplaceIfStoresJSONAsJSON(t *testing.T) {
+	ctx := context.Background()
+	for name, b := range map[string]*blobx.Bucket{
+		"mem": blobx.Wrap(memblob.OpenBucket(nil)),
+		"gcs": gcpfake.NewGCS(t).Bucket(t, "runs"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := b.WriteAll(ctx, "k", []byte("garbage"), nil); err != nil {
+				t.Fatal(err)
+			}
+			prev, gen, err := b.Read(ctx, "k")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.ReplaceIf(ctx, "k", []byte(`{"run_id":"x"}`), gen, prev); err != nil {
+				t.Fatal(err)
+			}
+			a, err := b.Attributes(ctx, "k")
+			if err != nil || a.ContentType != "application/json" {
+				t.Fatalf("content type after a JSON replace = %v, %v", a, err)
+			}
+		})
 	}
 }
