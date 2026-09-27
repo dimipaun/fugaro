@@ -10,7 +10,7 @@ type baseDefault struct {
 
 var baseDefaults = map[string]baseDefault{
 	"server-jvm": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 8, memory: "32Gi"},
-	"web-node":   {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "16Gi"},
+	"web-node":   {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 }
 
 // applyDefaults fills in every field fugaro.yaml may omit. Cache defaults

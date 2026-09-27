@@ -1,0 +1,14 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image:
+      node: "24.19.0"
+      apt: [libvips-dev, fonts-liberation=1:2.1.5-3]
+      setup: ["npx playwright install --with-deps chromium"]
+    commands: { build: npm run build, test: npm test }
+  server:
+    base: server-jvm
+    image: { jdk: 21 }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }

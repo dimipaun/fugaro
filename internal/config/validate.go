@@ -52,6 +52,7 @@ func Validate(c *Config) []Problem {
 		if !slices.Contains([]string{"server-jvm", "web-node"}, w.Base) {
 			add(p+".base", "must be one of server-jvm, web-node")
 		}
+		ps = append(ps, validateImage(p, w)...)
 		if strings.TrimSpace(w.Commands.Build) == "" {
 			add(p+".commands.build", "is required")
 		}

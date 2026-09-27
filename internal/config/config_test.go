@@ -117,7 +117,7 @@ func TestSelectWorkflow(t *testing.T) {
 		t.Fatalf("ambiguous SelectWorkflow err = %v", err)
 	}
 	name, w, err := cfg2.SelectWorkflow("web")
-	if err != nil || name != "web" || w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" {
+	if err != nil || name != "web" || w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" {
 		t.Fatalf("SelectWorkflow(web) = %q %+v %v", name, w.Resources, err)
 	}
 }
