@@ -1,0 +1,11 @@
+{
+  "name": "fugaro",
+  "owner": { "name": "Dimi Paun" },
+  "plugins": [
+    {
+      "name": "fugaro",
+      "source": "./plugin",
+      "description": "Onboard a repository to Fugaro, the fleeting cloud workers that run coding-agent tasks and always end with a pull request."
+    }
+  ]
+}
