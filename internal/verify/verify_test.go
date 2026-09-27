@@ -251,3 +251,48 @@ func TestTimeoutKillsWithinGrace(t *testing.T) {
 		t.Fatalf("record = %+v", rec)
 	}
 }
+
+func TestLogTailKeepsLastOutput(t *testing.T) {
+	f := setup(t)
+	err := WriteSettings(f.stateDir, Settings{
+		RepoDir: f.repoDir, Test: "sh test.sh", Reports: []string{"build/test-results/*.xml"}, TimeoutS: 60,
+		Build: `i=0; while [ $i -lt 100 ]; do echo "step $i"; i=$((i+1)); done; echo "error: boom" >&2; exit 1`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := run(t, f, KindBuild, false)
+	tail, err := LogTail(f.stateDir, rec.N)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(tail, "\n")
+	if len(lines) != 40 || lines[len(lines)-1] != "error: boom" || lines[0] != "step 61" {
+		t.Fatalf("tail has %d lines, first %q, last %q", len(lines), lines[0], lines[len(lines)-1])
+	}
+	// The tail is stored beside the records, not among them, so numbering
+	// and Records are unaffected.
+	if rec2 := run(t, f, KindBuild, false); rec2.N != 2 {
+		t.Fatalf("second record N = %d, want 2", rec2.N)
+	}
+	if recs, err := Records(f.stateDir); err != nil || len(recs) != 2 {
+		t.Fatalf("records = %+v, %v", recs, err)
+	}
+}
+
+func TestLogTailMissingIsEmpty(t *testing.T) {
+	if tail, err := LogTail(t.TempDir(), 7); err != nil || tail != "" {
+		t.Fatalf("tail = %q, %v", tail, err)
+	}
+}
+
+func TestClearStateRemovesLogs(t *testing.T) {
+	f := setup(t)
+	rec := run(t, f, KindBuild, false)
+	if err := ClearState(f.stateDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(logPath(f.stateDir, rec.N)); !os.IsNotExist(err) {
+		t.Fatalf("verify log survived ClearState: %v", err)
+	}
+}

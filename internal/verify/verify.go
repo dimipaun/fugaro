@@ -18,12 +18,14 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/procgroup"
 )
 
 const (
 	settingsFile = "workflow.json"
 	recordsDir   = "verify"
+	logsDir      = "verify-logs" // output tails, kept apart so recordsDir holds only records
 
 	// commandGrace is how long a timed-out or cancelled verify command's
 	// group gets between SIGTERM and SIGKILL. It is shorter than the agent
@@ -61,7 +63,7 @@ func WriteSettings(stateDir string, s Settings) error {
 // ClearState removes the settings and records an earlier run left in
 // stateDir, and nothing else there.
 func ClearState(stateDir string) error {
-	for _, name := range []string{settingsFile, recordsDir} {
+	for _, name := range []string{settingsFile, recordsDir, logsDir} {
 		if err := os.RemoveAll(filepath.Join(stateDir, name)); err != nil {
 			return fmt.Errorf("removing stale %s: %w", name, err)
 		}
@@ -205,9 +207,10 @@ func Run(ctx context.Context, o Options) (Record, error) {
 		runCtx, cancel = context.WithTimeout(ctx, time.Duration(s.TimeoutS)*time.Second)
 	}
 	defer cancel()
+	tail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
 	code, runErr := procgroup.Run(runCtx, procgroup.Cmd{
 		Name: "sh", Args: []string{"-c", command}, Dir: s.RepoDir, Env: env,
-		Stdout: o.Stdout, Stderr: o.Stderr, Grace: commandGrace,
+		Stdout: tee(o.Stdout, tail), Stderr: tee(o.Stderr, tail), Grace: commandGrace,
 	})
 	timedOut := errors.Is(runErr, context.DeadlineExceeded)
 	if runErr != nil && !timedOut {
@@ -238,7 +241,45 @@ func Run(ctx context.Context, o Options) (Record, error) {
 	if err := writeRecord(o.StateDir, &rec); err != nil {
 		return Record{}, err
 	}
+	if err := writeLog(o.StateDir, rec.N, tail.String()); err != nil {
+		return Record{}, err
+	}
 	return rec, nil
+}
+
+// tee returns a writer that copies to w (which may be nil) and to tail.
+func tee(w io.Writer, tail *logtail.Writer) io.Writer {
+	if w == nil {
+		return tail
+	}
+	return io.MultiWriter(w, tail)
+}
+
+func logPath(stateDir string, n int) string {
+	return filepath.Join(stateDir, logsDir, fmt.Sprintf("%04d.log", n))
+}
+
+// writeLog stores the tail of verify record n's command output. It is the
+// raw output: the runner redacts it before publishing it.
+func writeLog(stateDir string, n int, tail string) error {
+	if err := os.MkdirAll(filepath.Join(stateDir, logsDir), 0o755); err != nil {
+		return fmt.Errorf("creating verify log directory: %w", err)
+	}
+	if err := os.WriteFile(logPath(stateDir, n), []byte(tail), 0o644); err != nil {
+		return fmt.Errorf("writing verify log %d: %w", n, err)
+	}
+	return nil
+}
+
+// LogTail returns the last lines of verify record n's command output
+// (at most logtail.DefaultLines lines of logtail.DefaultLineBytes bytes),
+// unredacted. A record without a stored tail yields "".
+func LogTail(stateDir string, n int) (string, error) {
+	data, err := os.ReadFile(logPath(stateDir, n))
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+	return string(data), err
 }
 
 func rerunCommand(stateDir string, s Settings, sha string, clean bool) (*Record, string, error) {
