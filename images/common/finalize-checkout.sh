@@ -30,7 +30,7 @@ if git -C "$repo" config --get-regexp '^http\.(.*\.)?extraheader$' >/dev/null 2>
   exit 1
 fi
 # The '://[^/[:space:]]*@' match is deliberately broad: it also matches a
-# non-credential userinfo-free host like 'ssh://git@github.com/...', not just
+# host with non-credential userinfo like 'ssh://git@github.com/...', not just
 # 'https://token@host/'. That's intentional — insteadOf rewriting a URL onto
 # ssh:// (or onto any other host@ form) is itself something Fugaro's runtime
 # credential injection can't use, so this check is conservative and refuses

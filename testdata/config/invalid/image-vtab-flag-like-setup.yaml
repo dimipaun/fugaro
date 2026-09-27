@@ -1,0 +1,13 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image:
+      # A leading vertical tab (\v) before the flag-like prefix: Go's
+      # strings.TrimSpace (unicode.IsSpace) treats \v as whitespace, so the
+      # Go validator rejects this the same as a leading space would. The
+      # schema's "not" pattern must match \v too (not just \s, which in the
+      # JSON Schema regex flavor excludes \v) to stay consistent with it.
+      setup: ["\v--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak"]
+    commands: { build: npm run build, test: npm test }

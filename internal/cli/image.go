@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -17,8 +18,38 @@ import (
 
 func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
-	cmd.AddCommand(newImageRenderCmd())
+	cmd.AddCommand(newImageRenderCmd(), newImageSelftestCmd())
 	return cmd
+}
+
+// newImageSelftestCmd is `fugaro image selftest`: it reads a
+// image.SelftestSpec as JSON on stdin, runs image.Selftest in the current
+// environment (the image itself), and prints the resulting image.Report as
+// JSON on stdout. It is hidden because `fugaro image build --local` is the
+// only intended caller, running it inside the freshly built image.
+func newImageSelftestCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "selftest",
+		Short:  "Smoke-test the image this runs in (used by image build --local)",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			var spec image.SelftestSpec
+			dec := json.NewDecoder(cmd.InOrStdin())
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(&spec); err != nil {
+				return fmt.Errorf("reading the selftest spec from stdin: %w", err)
+			}
+			rep := image.Selftest(cmd.Context(), spec, cmd.ErrOrStderr())
+			if err := json.NewEncoder(cmd.OutOrStdout()).Encode(rep); err != nil {
+				return err
+			}
+			if !rep.Passed {
+				return &ExitError{Code: ExitUserError, Err: errors.New("smoke test failed")}
+			}
+			return nil
+		},
+	}
 }
 
 func newImageRenderCmd() *cobra.Command {

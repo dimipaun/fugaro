@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -84,4 +87,41 @@ func TestImageRenderHelpNotesJSONExemption(t *testing.T) {
 	if !strings.Contains(cmd.Long, "--json") {
 		t.Fatalf("image render help does not mention the --json exemption: %q", cmd.Long)
 	}
+}
+
+// executeStdin is execute with stdin.
+func executeStdin(t *testing.T, stdin string, args ...string) (string, string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	var out, errOut bytes.Buffer
+	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), errOut.String(), err
+}
+
+// TestImageSelftestCommand checks the stdin and stdout contract; the checks
+// themselves are covered in internal/image.
+func TestImageSelftestCommand(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // keep the developer's own ~/.docker and ~/.npmrc out of it
+	if _, _, err := executeStdin(t, "{not json", "image", "selftest"); err == nil || !strings.Contains(err.Error(), "reading the selftest spec") {
+		t.Fatalf("err = %v", err)
+	}
+	spec := `{"base":"web-node","repo_dir":"` + filepath.Join(t.TempDir(), "missing") + `","commit":"abc"}`
+	out, _, err := executeStdin(t, spec, "image", "selftest")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	var rep image.Report
+	if err := json.Unmarshal([]byte(out), &rep); err != nil {
+		t.Fatalf("stdout is not a report: %v\n%s", err, out)
+	}
+	for _, c := range rep.Checks {
+		if c.Name == "checkout" && !c.OK && !rep.Passed {
+			return
+		}
+	}
+	t.Fatalf("want a failed checkout check, got %+v", rep)
 }
