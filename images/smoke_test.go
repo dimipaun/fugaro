@@ -93,7 +93,7 @@ func TestSmokeSucceedsAgainstAHealthyImage(t *testing.T) {
 	}
 }
 
-func TestSmokeFailsWhenATooIsMissing(t *testing.T) {
+func TestSmokeFailsWhenAToolIsMissing(t *testing.T) {
 	for _, missing := range []string{"fugaro", "claude", "gh", "node"} {
 		t.Run(missing, func(t *testing.T) {
 			out, err := runSmoke(t, missing)

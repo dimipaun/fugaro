@@ -87,6 +87,56 @@ func TestFinalizeCheckoutAcceptsHTTPSOrigin(t *testing.T) {
 	}
 }
 
+func TestFinalizeCheckoutStripsPushInsteadOf(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	testutil.Git(t, repo, "config", "url.https://x-access-token:tok@example.invalid/.pushInsteadOf", "https://example.invalid/")
+	if out, err := finalize(t, repo, home); err != nil {
+		t.Fatalf("finalize-checkout: %v\n%s", err, out)
+	}
+	cfg := strings.ToLower(testutil.Git(t, repo, "config", "--local", "--list"))
+	// "pushinsteadof=" (not bare "pushinsteadof"): the fixture's own temp
+	// directory name embeds this test's name, which contains "PushInsteadOf".
+	for _, bad := range []string{"pushinsteadof=", "tok@"} {
+		if strings.Contains(cfg, bad) {
+			t.Errorf("git config still has %q:\n%s", bad, cfg)
+		}
+	}
+}
+
+func TestFinalizeCheckoutRejectsGlobalPushInsteadOf(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	cfg := "[url \"https://x-access-token:s3cr3t@example.invalid/\"]\n\tpushInsteadOf = https://example.invalid/\n"
+	if err := os.WriteFile(global, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	out, err := finalize(t, repo, home)
+	if err == nil || !strings.Contains(out, "pushInsteadOf") {
+		t.Fatalf("err = %v, output %q", err, out)
+	}
+	if strings.Contains(out, "s3cr3t") {
+		t.Fatal("finalize-checkout printed the pushInsteadOf value")
+	}
+}
+
+func TestFinalizeCheckoutRejectsGlobalTokenOnlyInsteadOf(t *testing.T) {
+	repo, home := finalizeFixture(t)
+	global := filepath.Join(t.TempDir(), "gitconfig")
+	cfg := "[url \"https://ghp_s3cr3ttoken@example.invalid/\"]\n\tinsteadOf = https://example.invalid/\n"
+	if err := os.WriteFile(global, []byte(cfg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", global)
+	out, err := finalize(t, repo, home)
+	if err == nil || !strings.Contains(out, "insteadOf") {
+		t.Fatalf("err = %v, output %q", err, out)
+	}
+	if strings.Contains(out, "s3cr3ttoken") {
+		t.Fatal("finalize-checkout printed the insteadOf value")
+	}
+}
+
 func TestFinalizeCheckoutRejectsGlobalHelper(t *testing.T) {
 	repo, home := finalizeFixture(t)
 	global := filepath.Join(t.TempDir(), "gitconfig")

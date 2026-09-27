@@ -5,13 +5,14 @@
 # contract: origin is an https URL without credentials, and no git config
 # scope (local, global or system) sets a credential helper, an
 # http.extraheader (scoped to a URL or not), or a credential-bearing
-# url.insteadOf, because Fugaro's runner supplies credentials at run time. A
-# file:// or absolute-path origin is allowed for tests. It never prints the
-# origin URL or any config value, which could hold a token.
+# url.insteadOf or url.pushInsteadOf, because Fugaro's runner supplies
+# credentials at run time. A file:// or absolute-path origin is allowed for
+# tests. It never prints the origin URL or any config value, which could
+# hold a token.
 set -eu
 repo=${1:-/work/repo}
 git -C "$repo" rev-parse --git-dir >/dev/null
-strip_pattern='^(credential\..*|http\.(.*\.)?extraheader|url\..*\.insteadof)$'
+strip_pattern='^(credential\..*|http\.(.*\.)?extraheader|url\..*\.(insteadof|pushinsteadof))$'
 keys=$(git -C "$repo" config --local --name-only --get-regexp "$strip_pattern" || true)
 for key in $keys; do
   git -C "$repo" config --local --unset-all "$key"
@@ -29,8 +30,13 @@ if git -C "$repo" config --get-regexp '^http\.(.*\.)?extraheader$' >/dev/null 2>
   exit 1
 fi
 if git -C "$repo" config --get-regexp '^url\..*\.insteadof$' 2>/dev/null \
-    | grep -Eq '://[^/[:space:]]*:[^/[:space:]@]*@'; then
+    | grep -Eq '://[^/[:space:]]*@'; then
   echo "finalize-checkout: a credential-bearing url.insteadOf is still configured (system or global git config)" >&2
+  exit 1
+fi
+if git -C "$repo" config --get-regexp '^url\..*\.pushinsteadof$' 2>/dev/null \
+    | grep -Eq '://[^/[:space:]]*@'; then
+  echo "finalize-checkout: a credential-bearing url.pushInsteadOf is still configured (system or global git config)" >&2
   exit 1
 fi
 origin=$(git -C "$repo" remote get-url origin 2>/dev/null || true)
