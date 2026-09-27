@@ -1,0 +1,63 @@
+[
+  {
+    "method": "POST",
+    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments",
+    "request": {
+      "content": {
+        "raw": "### Fugaro live check\n\nA **markdown** comment."
+      }
+    },
+    "status": 201,
+    "response": {
+      "id": 871703663,
+      "created_on": "2026-09-27T18:34:21.124706+00:00",
+      "updated_on": "2026-09-27T18:34:21.130308+00:00",
+      "content": {
+        "type": "rendered",
+        "raw": "### Fugaro live check\n\nA **markdown** comment.",
+        "markup": "markdown",
+        "html": "\u003ch3 id=\"markdown-header-fugaro-live-check\"\u003eFugaro live check\u003c/h3\u003e\n\u003cp\u003eA \u003cstrong\u003emarkdown\u003c/strong\u003e comment.\u003c/p\u003e"
+      },
+      "user": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "deleted": false,
+      "pending": false,
+      "type": "pullrequest_comment",
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments/871703663"
+        },
+        "html": {
+          "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1/_/diff#comment-871703663"
+        }
+      },
+      "pullrequest": {
+        "type": "pullrequest",
+        "id": 1,
+        "title": "Fugaro live check 20260927-183406",
+        "draft": false,
+        "links": {
+          "self": {
+            "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1"
+          },
+          "html": {
+            "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1"
+          }
+        },
+        "queued": false
+      }
+    }
+  }
+]

@@ -101,6 +101,12 @@ const (
 // authValidity is the validity to ask a token for when it must last d.
 func authValidity(d time.Duration) time.Duration { return min(d, maxAuthValid) }
 
+// giveUpCommentTimeout bounds the not-ready comment finalize posts when
+// ensurePR gives up with a pull request, on a context detached from the
+// possibly expired finalize deadline, so it may run up to this long past
+// FinalizeReserve.
+const giveUpCommentTimeout = 30 * time.Second
+
 // prAttempts is how many times finalize tries to open the pull request.
 // EnsurePR finds what an earlier attempt created, so retrying is safe.
 const prAttempts = 3
@@ -696,7 +702,9 @@ func (r *run) finalize(ctx context.Context) error {
 	if r.failReason != "" {
 		ready, reason = false, r.failReason
 	}
-	if err := r.refreshGitAuth(ctx, authValidity(r.wf.Timeouts.FinalizeReserve.Duration)); err != nil {
+	// Finalize's push must not outlive its token either; a short reserve
+	// still asks for at least what bootstrap's fetch does.
+	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
 		r.warnAuthRefresh(err)
 	}
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
@@ -724,6 +732,22 @@ func (r *run) finalize(ctx context.Context) error {
 			ready, reason = false, r.redact(err.Error())
 		}
 	case err != nil:
+		if pr.Number != 0 {
+			// The PR exists but its state could not be settled, and it may
+			// even look ready: say so on the PR itself, best effort.
+			note := "**Fugaro:** this pull request is not ready. The run could not finish setting it up (" +
+				r.redact(err.Error()) + "), so it may not reflect the run's outcome, and it may look ready when it is not. " +
+				"Please check it by hand."
+			// ensurePR may have given up because finalize's reserve ran
+			// out, which is when this warning matters most: post it on a
+			// short context of its own, detached from that deadline.
+			cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+			cerr := r.provider.Comment(cctx, pr, note)
+			cancel()
+			if cerr != nil {
+				r.d.Log.Warn("posting the not-ready comment failed", "err", r.redact(cerr.Error()))
+			}
+		}
 		return fmt.Errorf("opening pull request: %w", err)
 	}
 	r.rec.Reason = reason

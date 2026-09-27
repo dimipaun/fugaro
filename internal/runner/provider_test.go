@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -110,7 +111,9 @@ func TestTokenRefreshedBetweenStages(t *testing.T) {
 	}
 	// bootstrap, implement, review, finalize; the fixture's stage timeout
 	// is 2m and its finalize reserve 30s.
-	want := []time.Duration{10 * time.Minute, 7 * time.Minute, 7 * time.Minute, 30 * time.Second}
+	// Finalize asks for no less than bootstrap does: its 30s reserve alone
+	// would let a token expire mid-push.
+	want := []time.Duration{10 * time.Minute, 7 * time.Minute, 7 * time.Minute, 10 * time.Minute}
 	if !slices.Equal(asked, want) {
 		t.Fatalf("GitAuth minValid = %v, want %v", asked, want)
 	}
@@ -245,7 +248,83 @@ func TestEnsurePRGivesUpKeepsPopulatedPR(t *testing.T) {
 	if rec.PR == nil || rec.PR.Number == 0 {
 		t.Fatalf("the populated PR from the earlier attempt was dropped: %+v", rec.PR)
 	}
-	onlyPR(t, h.provider)
+	// The PR exists but the run could not settle its state: it carries a
+	// comment saying so, in place of the run report.
+	pr := onlyPR(t, h.provider)
+	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "not ready") ||
+		!strings.Contains(pr.Comments[0], "check it by hand") || !strings.Contains(pr.Comments[0], "injected EnsurePR failure") {
+		t.Fatalf("comments = %q, want one saying the PR is not ready and needs a human check", pr.Comments)
+	}
+}
+
+// leakyEnsure wraps the fake provider so that EnsurePR creates the PR and
+// then fails with an error quoting the git token.
+type leakyEnsure struct{ *fake.Provider }
+
+func (l leakyEnsure) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	pr, err := l.Provider.EnsurePR(ctx, spec)
+	if err != nil {
+		return pr, err
+	}
+	return pr, errors.New("upstream said: bad credential " + gitToken)
+}
+
+// stallEnsure wraps the fake provider so that EnsurePR creates the PR and
+// then hangs until finalize's deadline, as a provider that stops answering
+// would; Comment, like a real HTTP call, fails on a context already done.
+type stallEnsure struct{ *fake.Provider }
+
+func (s stallEnsure) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	pr, err := s.Provider.EnsurePR(ctx, spec)
+	if err != nil {
+		return pr, err
+	}
+	<-ctx.Done()
+	return pr, ctx.Err()
+}
+
+func (s stallEnsure) Comment(ctx context.Context, pr gitprov.PR, body string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Provider.Comment(ctx, pr, body)
+}
+
+// TestEnsurePRGivesUpAfterDeadlineStillComments covers ensurePR giving up
+// because finalize's reserve ran out: the not-ready comment is exactly
+// what matters then, so it must be posted on a context of its own rather
+// than the expired finalize one.
+func TestEnsurePRGivesUpAfterDeadlineStillComments(t *testing.T) {
+	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
+	h := newHarness(t, cfg, nil)
+	h.deps.RetryDelay = time.Millisecond
+	h.deps.OpenProvider = gitprov.Static(stallEnsure{h.provider})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError || rec.PR == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	pr := onlyPR(t, h.provider)
+	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "not ready") {
+		t.Fatalf("comments = %q, want the not-ready comment despite the expired deadline", pr.Comments)
+	}
+}
+
+// TestEnsurePRGivesUpCommentIsRedacted checks that the give-up comment,
+// which quotes the provider's error, never carries a credential.
+func TestEnsurePRGivesUpCommentIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.useHTTPRemote(t, testutil.Token("x-token-auth", gitToken))
+	h.provider.Auth = staticAuth(gitToken)
+	h.deps.RetryDelay = time.Millisecond
+	h.deps.OpenProvider = gitprov.Static(leakyEnsure{h.provider})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError || rec.PR == nil {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	pr := onlyPR(t, h.provider)
+	if len(pr.Comments) != 1 || strings.Contains(pr.Comments[0], gitToken) || !strings.Contains(pr.Comments[0], "[REDACTED]") {
+		t.Fatalf("comments = %q, want one with the token redacted", pr.Comments)
+	}
 }
 
 // TestPartialEnsureDowngradesReadyToDraft covers a run whose tests pass and

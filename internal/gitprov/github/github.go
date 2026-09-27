@@ -203,7 +203,12 @@ func (p *Provider) update(ctx context.Context, pr pull, draft bool) (gitprov.PR,
 			// fails, the PR is left looking fully ready — the unsafe
 			// direction — so report a plain, retryable error rather than
 			// silently returning success.
+			// A title already carrying the prefix (an earlier run's
+			// fallback) needs no PATCH.
 			title = gitprov.DraftTitle(pr.Title, true)
+			if title == pr.Title {
+				return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: draft}, nil
+			}
 			if perr := p.retitle(ctx, pr.Number, title); perr != nil {
 				return gitprov.PR{Number: pr.Number, URL: pr.HTMLURL, Draft: pr.Draft},
 					fmt.Errorf("could not mark pull request #%d as a draft (graphql: %w) and could not retitle it either: %v", pr.Number, err, perr)

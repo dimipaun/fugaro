@@ -8,7 +8,7 @@
    "status": 201,
    "response": {"type": "pullrequest", "id": 44, "title": "Add search", "state": "OPEN",
                 "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/44"}}}},
-  {"method": "PUT", "path": "/2.0/repositories/acme/web/pullrequests/44", "request": {"title": "[DRAFT] Add search"},
+  {"method": "PUT", "path": "/2.0/repositories/acme/web/pullrequests/44", "request": {"title": "[DRAFT] Add search", "draft": true},
    "status": 200,
    "response": {"type": "pullrequest", "id": 44, "title": "[DRAFT] Add search", "state": "OPEN",
                 "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/44"}}}}

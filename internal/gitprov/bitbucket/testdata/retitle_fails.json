@@ -8,7 +8,7 @@
    "status": 201,
    "response": {"type": "pullrequest", "id": 49, "title": "Add search", "state": "OPEN",
                 "links": {"html": {"href": "https://bitbucket.org/acme/web/pull-requests/49"}}}},
-  {"method": "PUT", "path": "/2.0/repositories/acme/web/pullrequests/49", "request": {"title": "[DRAFT] Add search"},
+  {"method": "PUT", "path": "/2.0/repositories/acme/web/pullrequests/49", "request": {"title": "[DRAFT] Add search", "draft": true},
    "status": 500,
    "response": {"type": "error", "error": {"message": "internal server error"}}}
 ]

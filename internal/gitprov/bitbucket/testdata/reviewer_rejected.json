@@ -6,7 +6,7 @@
                "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},
                "draft": false, "close_source_branch": true, "reviewers": [{"account_id": "557058:gone"}]},
    "status": 400,
-   "response": {"type": "error", "error": {"message": "reviewers: 557058:gone is not a valid user"}}},
+   "response": {"type": "error", "error": {"message": "reviewers: Malformed reviewers list", "fields": {"reviewers": ["Malformed reviewers list"]}}}},
   {"method": "POST", "path": "/2.0/repositories/acme/web/pullrequests",
    "request": {"title": "Add search", "description": "Adds search.",
                "source": {"branch": {"name": "fugaro/20260927-101500-abcd"}}, "destination": {"branch": {"name": "main"}},

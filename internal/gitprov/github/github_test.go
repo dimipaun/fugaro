@@ -67,6 +67,19 @@ func TestExistingPRDraftUnsupportedRetitles(t *testing.T) {
 	}
 }
 
+// TestExistingPrefixedDraftUnsupportedSkipsPATCH covers a pull request
+// already carrying the "[DRAFT] " fallback prefix (from an earlier run on a
+// repository without draft support) when a draft is wanted again: the
+// title is already right, so no retitle PATCH is sent. The fixture ends at
+// the GraphQL call, so httpfixture would fail the test on a PATCH.
+func TestExistingPrefixedDraftUnsupportedSkipsPATCH(t *testing.T) {
+	p := open(t, "existing_prefixed_draft_unsupported.json")
+	pr, err := p.EnsurePR(ctx, spec(true, nil, nil))
+	if err != nil || pr != (gitprov.PR{Number: 18, URL: "https://github.com/acme/web/pull/18", Draft: true}) {
+		t.Fatalf("pr = %+v, %v", pr, err)
+	}
+}
+
 func TestExistingDraftMarkedReady(t *testing.T) {
 	p := open(t, "existing_to_ready.json")
 	if pr, err := p.EnsurePR(ctx, spec(false, nil, nil)); err != nil || pr.Number != 15 || pr.Draft {
