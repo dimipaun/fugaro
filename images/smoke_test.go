@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -32,13 +33,13 @@ case "$cmd" in
     echo "fugaro dev" ;;
   "claude --version")
     [ "$missing" = claude ] && fail_missing claude
-    echo "2.1.283 (Claude Code)" ;;
+    echo "$FAKE_CLAUDE_VERSION (Claude Code)" ;;
   "gh --version")
     [ "$missing" = gh ] && fail_missing gh
-    printf 'gh version 2.101.0 (2026-09-15)\nhttps://github.com/cli/cli/releases/tag/v2.101.0\n' ;;
+    printf 'gh version %s (2026-09-15)\nhttps://github.com/cli/cli/releases/tag/v%s\n' "$FAKE_GH_VERSION" "$FAKE_GH_VERSION" ;;
   "node -v")
     [ "$missing" = node ] && fail_missing node
-    echo "v24.21.0" ;;
+    echo "v$FAKE_NODE_VERSION.21.0" ;;
   "corepack --version")
     [ "$missing" = corepack ] && fail_missing corepack
     echo "0.36.0" ;;
@@ -64,10 +65,30 @@ case "$cmd" in
 esac
 `
 
+// dockerfileARG reads name's default value from an `ARG name=value` line in
+// images/web-node/Dockerfile, so tests check the image against the versions
+// actually pinned there instead of a second, driftable literal.
+func dockerfileARG(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile("web-node/Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^ARG ` + regexp.QuoteMeta(name) + `=(\S+)$`).FindSubmatch(data)
+	if m == nil {
+		t.Fatalf("web-node/Dockerfile has no ARG %s=... line", name)
+	}
+	return string(m[1])
+}
+
 // runSmoke runs smoke.sh IMAGE web-node with a fake docker on PATH, with
 // missing naming a command that fake docker should report as absent (or ""
-// for a fully healthy image).
-func runSmoke(t *testing.T, missing string) (string, error) {
+// for a fully healthy image). The fake image reports the versions pinned in
+// the Dockerfile unless fakeEnv overrides FAKE_CLAUDE_VERSION,
+// FAKE_GH_VERSION or FAKE_NODE_VERSION. The pins' own variables
+// (CLAUDE_CODE_VERSION, GH_VERSION, NODE_VERSION) are never inherited, so
+// smoke.sh reads them from the Dockerfile as it does in CI.
+func runSmoke(t *testing.T, missing string, fakeEnv ...string) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "docker")
@@ -75,7 +96,18 @@ func runSmoke(t *testing.T, missing string) (string, error) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("sh", "smoke.sh", "fake-image", "web-node")
-	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+	for _, kv := range os.Environ() {
+		switch name, _, _ := strings.Cut(kv, "="); name {
+		case "CLAUDE_CODE_VERSION", "GH_VERSION", "NODE_VERSION":
+		default:
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, "PATH="+dir+":"+os.Getenv("PATH"),
+		"FAKE_CLAUDE_VERSION="+dockerfileARG(t, "CLAUDE_CODE_VERSION"),
+		"FAKE_GH_VERSION="+dockerfileARG(t, "GH_VERSION"),
+		"FAKE_NODE_VERSION="+dockerfileARG(t, "NODE_VERSION"))
+	cmd.Env = append(cmd.Env, fakeEnv...)
 	if missing != "" {
 		cmd.Env = append(cmd.Env, "FAKE_DOCKER_MISSING="+missing)
 	}
@@ -105,6 +137,24 @@ func TestSmokeFailsWhenAToolIsMissing(t *testing.T) {
 			}
 			if !strings.Contains(out, "smoke: "+missing) {
 				t.Errorf("output doesn't name the failing check (%s):\n%s", missing, out)
+			}
+		})
+	}
+}
+
+// TestSmokeChecksTheDockerfilePinsByDefault: with none of the pin variables
+// set, as in CI, smoke.sh still checks the image against the Dockerfile's
+// ARG defaults, so a release build always has its pins asserted.
+func TestSmokeChecksTheDockerfilePinsByDefault(t *testing.T) {
+	for _, tc := range []struct{ fake, pin string }{
+		{"FAKE_CLAUDE_VERSION=0.0.1", "CLAUDE_CODE_VERSION=" + dockerfileARG(t, "CLAUDE_CODE_VERSION")},
+		{"FAKE_GH_VERSION=0.0.1", "GH_VERSION=" + dockerfileARG(t, "GH_VERSION")},
+		{"FAKE_NODE_VERSION=7", "NODE_VERSION major=" + dockerfileARG(t, "NODE_VERSION")},
+	} {
+		t.Run(tc.pin, func(t *testing.T) {
+			out, err := runSmoke(t, "", tc.fake)
+			if err == nil || !strings.Contains(out, "not pinned "+tc.pin) {
+				t.Fatalf("smoke.sh with %s: err=%v\n%s", tc.fake, err, out)
 			}
 		})
 	}

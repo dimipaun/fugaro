@@ -6,28 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
-
-// dockerfileARG reads name's default value from an `ARG name=value` line in
-// images/web-node/Dockerfile, so tests check the image against the versions
-// actually pinned there instead of a second, driftable literal.
-func dockerfileARG(t *testing.T, name string) string {
-	t.Helper()
-	data, err := os.ReadFile("web-node/Dockerfile")
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`(?m)^ARG ` + regexp.QuoteMeta(name) + `=(\S+)$`).FindSubmatch(data)
-	if m == nil {
-		t.Fatalf("web-node/Dockerfile has no ARG %s=... line", name)
-	}
-	return string(m[1])
-}
 
 // TestBaseImageSmoke runs images/smoke.sh, the check CI runs, against the
 // base image built from this checkout. It also sets the pinned versions
