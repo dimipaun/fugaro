@@ -50,7 +50,11 @@ type Provider interface {
 	// It is safe to call again after a failure: it finds what an earlier
 	// call created. A *PartialError means the pull request exists (the
 	// returned PR is valid) but some settings, such as labels or
-	// reviewers, could not be applied.
+	// reviewers, could not be applied — including a draft or title state
+	// that could not be fully applied in the conservative direction (a PR
+	// left looking more like a draft than requested is safe to leave for
+	// a retry to heal; a PR left looking more ready than requested is not,
+	// so that direction is reported as a plain, retryable error instead).
 	EnsurePR(ctx context.Context, spec PRSpec) (PR, error)
 	// Comment posts a comment on the pull request.
 	Comment(ctx context.Context, pr PR, body string) error
@@ -70,7 +74,9 @@ func Static(p Provider) Opener {
 }
 
 // PartialError reports that EnsurePR produced the pull request but could
-// not apply all of its settings.
+// not apply all of its settings, in a direction safe to leave for a retry
+// to heal (design §4.2) — for example a draft or title state that still
+// looks more like a draft than requested, never more ready than requested.
 type PartialError struct{ Err error }
 
 func (e *PartialError) Error() string { return "pull request opened, but " + e.Err.Error() }

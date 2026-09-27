@@ -213,19 +213,36 @@ func reviewers(ids []string) []map[string]string {
 // alongside a *gitprov.PartialError, matching the Provider contract that an
 // existing pull request is always returned even when some setting could
 // not be applied.
+//
+// A failure to apply the title's "[DRAFT] " prefix is split by direction
+// (design §4.2): a PR left looking more like a draft than requested is
+// safe, since a retry heals it (EnsurePR finds the PR and re-runs finish),
+// so adding the prefix that fails is reported as a plain, retryable error.
+// A PR left looking more ready than requested is not safe to leave for a
+// retry — the runner must not treat it as done — so removing the prefix
+// that fails stays a *gitprov.PartialError, the conservative direction.
 func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitprov.PR, error) {
 	if !draft && pr.Draft {
 		out := gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: true}
 		return out, &gitprov.PartialError{Err: fmt.Errorf(
 			"could not mark it ready: pull request #%d is still a draft after asking Bitbucket to mark it ready", pr.ID)}
 	}
-	if title := gitprov.DraftTitle(pr.Title, draft && !pr.Draft); title != pr.Title {
+	addPrefix := draft && !pr.Draft
+	if title := gitprov.DraftTitle(pr.Title, addPrefix); title != pr.Title {
 		if err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", pr.ID)), map[string]any{"title": title}, nil); err != nil {
 			// The pull request still exists with its title unchanged; the
 			// Provider contract (design, gitprov.go) requires it be returned
 			// alongside the failure rather than dropped.
 			out := gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: pr.Draft}
-			return out, &gitprov.PartialError{Err: fmt.Errorf("retitling pull request #%d: %w", pr.ID, err)}
+			wrapped := fmt.Errorf("retitling pull request #%d: %w", pr.ID, err)
+			if addPrefix {
+				// Leaves the PR looking more ready than requested is unsafe
+				// only in the other direction; here it still looks ready
+				// (or unmarked), which a retry can safely correct, so this
+				// is a plain error the runner will retry EnsurePR over.
+				return out, wrapped
+			}
+			return out, &gitprov.PartialError{Err: wrapped}
 		}
 	}
 	return gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: draft}, nil

@@ -206,24 +206,54 @@ func TestRejectedReviewerAndStuckDraftBothReported(t *testing.T) {
 	}
 }
 
-// TestRetitleFailureStillReturnsPR covers the folded-in fix: when the
-// fallback title PUT (adding the "[DRAFT] " prefix because Bitbucket ignored
-// draft:true) itself fails, EnsurePR must still return the pull request that
-// was created — its number, URL and known draft state — alongside a
-// *gitprov.PartialError, rather than an empty PR and a plain error, matching
-// the Provider contract that an existing pull request is always returned.
-func TestRetitleFailureStillReturnsPR(t *testing.T) {
+// TestRetitleAddFailureIsRetryable covers the round-1 correction: when the
+// fallback title PUT that ADDS the "[DRAFT] " prefix (because Bitbucket
+// ignored draft:true) fails, the PR still looks ready (or unmarked), which
+// is safe to leave for a retry — EnsurePR finds the PR again and re-runs
+// finish — so this must be a plain, retryable error, not a *PartialError
+// (the runner treats *PartialError as success and would not retry, ending
+// the run with a PR that looks more ready than requested, violating design
+// §4.2). The pull request that was created is still returned in full.
+func TestRetitleAddFailureIsRetryable(t *testing.T) {
 	p := open(t, "retitle_fails.json")
 	pr, err := p.EnsurePR(ctx, spec(true))
 	var partial *gitprov.PartialError
-	if !errors.As(err, &partial) {
-		t.Fatalf("err = %v, want a *gitprov.PartialError", err)
+	if errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a plain retryable error, not *gitprov.PartialError", err)
+	}
+	if err == nil || !strings.Contains(err.Error(), "retitling") {
+		t.Fatalf("err = %v, want it to mention retitling", err)
 	}
 	if pr != (gitprov.PR{Number: 49, URL: "https://bitbucket.org/acme/web/pull-requests/49"}) {
 		t.Fatalf("pr = %+v", pr)
 	}
+}
+
+// TestRetitleRemoveFailureIsPartial covers the round-1 correction's other
+// direction: when the fallback title PUT that REMOVES the "[DRAFT] " prefix
+// (ready was wanted, and the pull request still carries the fallback
+// prefix) fails, the PR is left looking more like a draft than requested,
+// which is the conservative direction (design §4.2) — so this must stay a
+// *gitprov.PartialError, and the existing PR must still be returned. This
+// calls finish directly (rather than routing through EnsurePR) because the
+// normal EnsurePR path for an existing PR already strips the prefix in its
+// own PUT before finish ever runs; finish's own fallback PUT only needs to
+// remove a leftover prefix when handed a PR that still carries one, which
+// is straightforward to construct directly.
+func TestRetitleRemoveFailureIsPartial(t *testing.T) {
+	p := open(t, "retitle_remove_fails.json")
+	in := pullRequest{ID: 51, Title: "[DRAFT] Add search", Draft: false}
+	in.Links.HTML.Href = "https://bitbucket.org/acme/web/pull-requests/51"
+	pr, err := p.finish(ctx, in, false)
+	var partial *gitprov.PartialError
+	if !errors.As(err, &partial) {
+		t.Fatalf("err = %v, want a *gitprov.PartialError", err)
+	}
 	if !strings.Contains(err.Error(), "retitling") {
 		t.Fatalf("err = %v, want it to mention retitling", err)
+	}
+	if pr != (gitprov.PR{Number: 51, URL: "https://bitbucket.org/acme/web/pull-requests/51"}) {
+		t.Fatalf("pr = %+v", pr)
 	}
 }
 

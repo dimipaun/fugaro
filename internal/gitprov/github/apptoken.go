@@ -110,6 +110,9 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 		if err := s.app.Do(ctx, "GET", path, nil, &inst); err != nil {
 			return "", time.Time{}, fmt.Errorf("finding the github app installation for %s/%s: %w", s.owner, s.repo, err)
 		}
+		if inst.ID == 0 {
+			return "", time.Time{}, fmt.Errorf("github returned no installation id for %s/%s", s.owner, s.repo)
+		}
 		s.installation = inst.ID
 	}
 	var tok struct {
@@ -121,7 +124,16 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 		return "", time.Time{}, fmt.Errorf("minting an installation token for %s/%s: %w", s.owner, s.repo, err)
 	}
 	if tok.Token == "" {
-		return "", time.Time{}, errors.New("github returned an empty installation token")
+		return "", time.Time{}, fmt.Errorf("github returned an empty installation token for %s/%s", s.owner, s.repo)
+	}
+	// The GitAuth contract (gitprov.go) promises a token valid for at least
+	// minValid; a token that GitHub minted with too little life left (or a
+	// missing/zero expiry) cannot honor that, so it is an error rather than
+	// a token the caller would treat as good.
+	if tok.ExpiresAt.Sub(s.now()) < minValid {
+		return "", time.Time{}, fmt.Errorf(
+			"github minted an installation token for %s/%s that expires too soon to satisfy the requested %s validity",
+			s.owner, s.repo, minValid)
 	}
 	s.token, s.expires = tok.Token, tok.ExpiresAt
 	return s.token, s.expires, nil

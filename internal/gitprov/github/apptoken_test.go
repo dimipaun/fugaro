@@ -146,3 +146,48 @@ func TestTokenAppNotInstalled(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// TestTokenExpiresTooSoonIsAnError covers the round-1 correction: the
+// GitAuth contract (gitprov.go) promises a token valid for at least
+// minValid, so a token GitHub mints with less life left than that must be
+// reported as an error, not returned as if it satisfied the caller.
+func TestTokenExpiresTooSoonIsAnError(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	s := newSource(t, "token_expires_too_soon.json", &now)
+	// The fixture's token expires at 10:05, five minutes after now; asking
+	// for 45 minutes of validity cannot be satisfied.
+	if _, _, err := s.Token(context.Background(), 45*time.Minute); err == nil || !strings.Contains(err.Error(), "acme/web") {
+		t.Fatalf("err = %v, want an error naming acme/web", err)
+	}
+}
+
+// TestTokenConcurrentCallsMintOnce covers the round-1 correction: many
+// goroutines calling Token concurrently against a fixture with exactly one
+// installation lookup and one mint must produce exactly one of each — the
+// mutex around Token must serialize the whole lookup-then-mint sequence, not
+// just the cache check, so races cannot cause a second lookup or mint.
+// httpfixture.Server itself proves this: it fails the test if a request
+// does not match the next exchange in order, or if any exchange goes
+// unused, and this fixture holds only one GET and one POST.
+func TestTokenConcurrentCallsMintOnce(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	s := newSource(t, "concurrent_token.json", &now)
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	toks := make([]string, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			tok, _, err := s.Token(context.Background(), time.Minute)
+			toks[i], errs[i] = tok, err
+		}(i)
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil || toks[i] != "ghs_fixture_token_1" {
+			t.Fatalf("goroutine %d: tok = %q, err = %v", i, toks[i], errs[i])
+		}
+	}
+}
