@@ -19,13 +19,17 @@ func latestVerifiedTest(records []verify.Record, sha string) *verify.Record {
 	return latest
 }
 
+// ReasonNoVerifiedTest is Decide's reason when no clean-tree test record
+// exists for the final commit.
+const ReasonNoVerifiedTest = "no verified test run on the final commit"
+
 // Decide applies the PR outcome rule (design §4.2): ready only if the latest
 // test record on finalSHA with a clean tree passed and the last review shipped.
 func Decide(records []verify.Record, finalSHA string, last *runstore.ReviewSummary) (bool, string) {
 	latest := latestVerifiedTest(records, finalSHA)
 	switch {
 	case latest == nil:
-		return false, "no verified test run on the final commit"
+		return false, ReasonNoVerifiedTest
 	case !latest.Passed:
 		return false, "tests failing on the final commit"
 	case last == nil:

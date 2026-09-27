@@ -273,6 +273,17 @@ func TestRedactorMultilineSecret(t *testing.T) {
 	}
 }
 
+func TestRedact(t *testing.T) {
+	pem := "-----BEGIN KEY-----\nsome-key-material-here\n-----END KEY-----"
+	quoted := `p"ss-1234`
+	in := "key s3cret-value, pem line some-key-material-here, escaped p\\\"ss-1234, short ab"
+	got := Redact(in, []string{"s3cret-value", pem, quoted, "ab"})
+	want := "key [REDACTED], pem line [REDACTED], escaped [REDACTED], short ab"
+	if got != want {
+		t.Fatalf("Redact = %q, want %q", got, want)
+	}
+}
+
 func TestNewSessionID(t *testing.T) {
 	id := NewSessionID()
 	if len(id) != 36 || id[14] != '4' || id == NewSessionID() {

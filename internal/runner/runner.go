@@ -5,11 +5,13 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,20 +146,21 @@ func (r *run) fail(reason string) {
 	}
 }
 
-// stateDirOutsideCheckout validates that stateDir can be safely wiped with
-// os.RemoveAll: non-empty, resolvable, and disjoint from workDir in both
-// directions, so it can be neither inside, equal to, nor an ancestor of the
-// checkout. This must run before any git or filesystem work.
+// stateDirOutsideCheckout validates that stateDir is non-empty, resolvable,
+// and disjoint from workDir in both directions, so it can be neither inside,
+// equal to, nor an ancestor of the checkout. Symlinks are resolved first, so
+// a state dir that only looks outside the checkout is refused too. This must
+// run before any git or filesystem work.
 func stateDirOutsideCheckout(workDir, stateDir string) error {
 	if stateDir == "" {
 		return errors.New("state dir must not be empty")
 	}
 	bad := fmt.Errorf("state dir %s must be outside the checkout %s", stateDir, workDir)
-	absWork, err := filepath.Abs(workDir)
+	absWork, err := resolvePath(workDir)
 	if err != nil {
 		return bad
 	}
-	absState, err := filepath.Abs(stateDir)
+	absState, err := resolvePath(stateDir)
 	if err != nil {
 		return bad
 	}
@@ -172,6 +175,50 @@ func stateDirOutsideCheckout(workDir, stateDir string) error {
 	}
 	return nil
 }
+
+// resolvePath returns p as an absolute path with symlinks resolved. Only the
+// part of p that exists can be resolved; the rest (a checkout still to be
+// cloned, a state dir still to be created) is appended unchanged.
+func resolvePath(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	var rest []string
+	for dir := abs; ; dir = filepath.Dir(dir) {
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(append([]string{resolved}, rest...)...), nil
+		}
+		if dir == filepath.Dir(dir) {
+			return abs, nil
+		}
+		rest = append([]string{filepath.Base(dir)}, rest...)
+	}
+}
+
+// prFile is where the agent writes the PR title and body.
+const prFile = "pr.md"
+
+// clearStateDir removes Fugaro's own entries left in stateDir by an earlier
+// run, creating stateDir if it is absent. The directory is operator-chosen,
+// so anything else in it is left alone.
+func clearStateDir(stateDir string) error {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return fmt.Errorf("creating state dir %s: %w", stateDir, err)
+	}
+	if err := verify.ClearState(stateDir); err != nil {
+		return err
+	}
+	if err := os.Remove(filepath.Join(stateDir, prFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("removing stale %s: %w", prFile, err)
+	}
+	return nil
+}
+
+// bashTimeoutSlack is added to timeouts.verify for the agent's Bash tool
+// timeout, so the tool never kills `fugaro verify` before verify's own
+// timeout does.
+const bashTimeoutSlack = 2 * time.Minute
 
 func (r *run) bootstrap(ctx context.Context) error {
 	spec, err := r.d.Store.ReadTask(ctx)
@@ -230,7 +277,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 
-	if err := os.RemoveAll(r.d.StateDir); err != nil {
+	if err := clearStateDir(r.d.StateDir); err != nil {
 		return fmt.Errorf("clearing state dir %s: %w", r.d.StateDir, err)
 	}
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
@@ -244,7 +291,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for i, s := range wf.Secrets {
 		secretEnvs[i] = s.Env
 	}
-	set := map[string]string{"FUGARO_STATE_DIR": r.d.StateDir}
+	// Claude Code's Bash tool defaults to a 2-minute timeout (10 minutes at
+	// most), which would kill a long `fugaro verify` long before
+	// timeouts.verify does.
+	bashMS := strconv.FormatInt((wf.Timeouts.Verify.Duration + bashTimeoutSlack).Milliseconds(), 10)
+	set := map[string]string{
+		"FUGARO_STATE_DIR":        r.d.StateDir,
+		"BASH_DEFAULT_TIMEOUT_MS": bashMS,
+		"BASH_MAX_TIMEOUT_MS":     bashMS,
+	}
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
@@ -347,7 +402,8 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
 	r.save(ctx)
 	base := r.cfg.Git.BaseBranch
-	if _, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize"); err != nil {
+	committed, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize")
+	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
 	ahead, err := r.repo.AheadOf(ctx, base)
@@ -369,12 +425,16 @@ func (r *run) finalize(ctx context.Context) error {
 		return fmt.Errorf("reading verify records: %w", err)
 	}
 	r.rec.HeadSHA, r.rec.Verify = sha, records
+	r.uploadVerifyRecords(ctx, records)
 
 	var last *runstore.ReviewSummary
 	if n := len(r.rec.Reviews); n > 0 {
 		last = &r.rec.Reviews[n-1]
 	}
 	ready, reason := Decide(records, sha, last)
+	if committed && reason == ReasonNoVerifiedTest {
+		reason = "uncommitted changes were committed at finalize, after the last verified test run"
+	}
 	if r.failReason != "" {
 		ready, reason = false, r.failReason
 	}
@@ -399,7 +459,7 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
-	report := Report(r.rec, r.d.Store.Prefix())
+	report := agent.Redact(Report(r.rec, r.d.Store.Prefix()), r.secrets)
 	if err := r.d.Provider.Comment(ctx, pr, report); err != nil {
 		r.d.Log.Warn("posting the run report failed", "err", err)
 	}
@@ -410,11 +470,26 @@ func (r *run) finalize(ctx context.Context) error {
 	return nil
 }
 
+// uploadVerifyRecords stores each verify record as verify/<n>.json in the
+// run's prefix (design §3.3). A failed upload is logged, not fatal: the
+// records are also embedded in result.json.
+func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) {
+	for _, v := range records {
+		data, err := json.MarshalIndent(v, "", "  ")
+		if err == nil {
+			err = r.d.Store.PutFile(ctx, fmt.Sprintf("verify/%d.json", v.N), data, "application/json")
+		}
+		if err != nil {
+			r.d.Log.Warn("storing verify record failed", "n", v.N, "err", err)
+		}
+	}
+}
+
 // prText returns the PR title and body the agent wrote to pr.md, or defaults
-// built from the task.
+// built from the task. The agent's text is redacted before it is published.
 func (r *run) prText() (string, string) {
-	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, "pr.md")); err == nil {
-		title, body, _ := strings.Cut(strings.TrimSpace(string(data)), "\n")
+	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
+		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secrets)), "\n")
 		title = strings.TrimSpace(strings.TrimLeft(title, "# "))
 		if title != "" {
 			return title, strings.TrimSpace(body)

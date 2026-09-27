@@ -302,7 +302,7 @@ func TestUncommittedWorkIsCommittedButNotVerified(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.Reason != "no verified test run on the final commit" {
+	if rec.Reason != "uncommitted changes were committed at finalize, after the last verified test run" {
 		t.Fatalf("record = %+v", rec)
 	}
 	if got := testutil.Git(t, h.remote, "log", "-1", "--format=%s", "refs/heads/fugaro/"+runID); got != "fugaro: uncommitted work at finalize" {
@@ -498,5 +498,133 @@ func assertMarkerSurvived(t *testing.T, marker string) {
 	t.Helper()
 	if _, err := os.Stat(marker); err != nil {
 		t.Fatalf("checkout marker did not survive: %v", err)
+	}
+}
+
+// TestPRTextIsRedacted checks that an agent-written pr.md never publishes a
+// secret value in the PR title or body.
+func TestPRTextIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := implement("feature")(t, ctx, req)
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if werr := os.WriteFile(pr, []byte("# Add feature "+secret+"\n\nThe key is "+secret+"."), 0o644); werr != nil {
+			t.Fatal(werr)
+		}
+		return res, err
+	}
+	if _, err := h.run(t, leak, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	pr := onlyPR(t, h.provider)
+	if pr.Spec.Title != "Add feature [REDACTED]" || pr.Spec.Body != "The key is [REDACTED]." {
+		t.Fatalf("PR text is not redacted: title %q, body %q", pr.Spec.Title, pr.Spec.Body)
+	}
+}
+
+// TestAgentStderrIsRedacted checks that the agent's stderr, which the runner
+// logs line by line, never carries a secret value in the clear.
+func TestAgentStderrIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs strings.Builder
+	h.deps.Log = runner.NewLogger(&logs)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		fmt.Fprintf(req.Stderr, "debug: using key %s\n", secret)
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, leak, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), secret) {
+		t.Fatalf("agent stderr leaks the secret into the log: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), "debug: using key [REDACTED]") {
+		t.Fatalf("agent stderr line missing from the log: %s", logs.String())
+	}
+}
+
+// TestAgentBashTimeoutCoversVerify checks that the agent's Bash tool may run
+// `fugaro verify` for the whole verify timeout (1m in the fixture) plus
+// slack, instead of Claude Code's default 2-minute cap cutting it short.
+func TestAgentBashTimeoutCoversVerify(t *testing.T) {
+	h := newHarness(t, "", nil)
+	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	env := h.agent.calls[0].Env
+	for _, k := range []string{"BASH_DEFAULT_TIMEOUT_MS", "BASH_MAX_TIMEOUT_MS"} {
+		if got := envValue(env, k); got != "180000" {
+			t.Errorf("%s = %q, want 180000 (timeouts.verify 1m + 2m)", k, got)
+		}
+	}
+}
+
+// TestStateDirKeepsForeignFiles checks that bootstrap clears only Fugaro's
+// own entries from an operator-chosen state dir, leaving anything else there
+// alone, while stale verify records and pr.md from an earlier run are gone.
+func TestStateDirKeepsForeignFiles(t *testing.T) {
+	h := newHarness(t, "", nil)
+	testutil.WriteFiles(t, h.deps.StateDir, map[string]string{
+		"operator-notes.txt": "keep me\n",
+		"verify/0001.json":   `{"n":1,"kind":"test","passed":true}`,
+		"pr.md":              "# Stale title\n",
+	})
+	nothing := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if _, err := os.Stat(filepath.Join(h.deps.StateDir, "pr.md")); !os.IsNotExist(err) {
+			t.Errorf("stale pr.md survived bootstrap: %v", err)
+		}
+		recs, err := verify.Records(h.deps.StateDir)
+		if err != nil || len(recs) != 0 {
+			t.Errorf("stale verify records survived bootstrap: %+v, %v", recs, err)
+		}
+		return agent.Result{}, nil
+	}
+	if _, err := h.run(t, nothing, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(h.deps.StateDir, "operator-notes.txt")); err != nil || string(data) != "keep me\n" {
+		t.Fatalf("bootstrap deleted an unrelated file in the state dir: %q, %v", data, err)
+	}
+}
+
+// TestStateDirSymlinkIntoCheckoutRejected checks that the state-dir guard
+// resolves symlinks, so a state dir that is really inside the checkout is
+// refused even though its path looks outside.
+func TestStateDirSymlinkIntoCheckoutRejected(t *testing.T) {
+	h := newHarness(t, "", nil)
+	seedCheckoutMarker(t, h.deps.WorkDir)
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(h.deps.WorkDir, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, sd := range []string{link, filepath.Join(link, "state")} {
+		h.deps.StateDir = sd
+		if rec, err := h.run(t); err == nil || !strings.Contains(rec.Reason, "outside the checkout") {
+			t.Fatalf("state dir %s: rec = %+v, err = %v", sd, rec, err)
+		}
+	}
+}
+
+// TestVerifyRecordsUploaded checks that finalize stores each verify record
+// as runs/<slug>/<id>/verify/<n>.json (design §3.3), not only inside
+// result.json.
+func TestVerifyRecordsUploaded(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"verify/1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got verify.Record
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.N != 1 || got.Kind != verify.KindTest || got.HeadSHA != rec.Verify[0].HeadSHA || !got.Passed {
+		t.Fatalf("uploaded verify record = %+v, want %+v", got, rec.Verify[0])
 	}
 }

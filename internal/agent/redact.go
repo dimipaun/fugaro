@@ -28,6 +28,19 @@ type Redactor struct {
 // across Write calls one line at a time, rather than JSON-escaped onto a
 // single line.
 func NewRedactor(w io.Writer, secrets []string) *Redactor {
+	return &Redactor{w: w, secrets: redactForms(secrets)}
+}
+
+// Redact returns s with every form of every secret that NewRedactor would
+// register replaced by [REDACTED]. Use it for text that is published whole
+// rather than streamed, such as an agent-written PR title and body.
+func Redact(s string, secrets []string) string {
+	return replaceAll(s, redactForms(secrets))
+}
+
+// redactForms returns the strings to redact for secrets, longest first so a
+// secret that contains another is replaced whole.
+func redactForms(secrets []string) []string {
 	seen := map[string]bool{}
 	var keep []string
 	add := func(s string) {
@@ -46,7 +59,14 @@ func NewRedactor(w io.Writer, secrets []string) *Redactor {
 		}
 	}
 	sort.Slice(keep, func(i, j int) bool { return len(keep[i]) > len(keep[j]) })
-	return &Redactor{w: w, secrets: keep}
+	return keep
+}
+
+func replaceAll(s string, forms []string) string {
+	for _, f := range forms {
+		s = strings.ReplaceAll(s, f, "[REDACTED]")
+	}
+	return s
 }
 
 // jsonEscape returns s as it would appear inside a JSON string literal,
@@ -91,10 +111,6 @@ func (r *Redactor) Flush() error {
 }
 
 func (r *Redactor) emit(line []byte) error {
-	s := string(line)
-	for _, secret := range r.secrets {
-		s = strings.ReplaceAll(s, secret, "[REDACTED]")
-	}
-	_, err := io.WriteString(r.w, s)
+	_, err := io.WriteString(r.w, replaceAll(string(line), r.secrets))
 	return err
 }
