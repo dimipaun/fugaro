@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 )
 
@@ -26,7 +27,7 @@ func ParseStream(r io.Reader, transcript io.Writer) (res Result, found bool, err
 		if len(line) > 0 {
 			if transcript != nil {
 				if _, err := transcript.Write(line); err != nil {
-					return res, found, err
+					return res, found, fmt.Errorf("writing transcript: %w", err)
 				}
 			}
 			var ev resultEvent
@@ -44,7 +45,7 @@ func ParseStream(r io.Reader, transcript io.Writer) (res Result, found bool, err
 			return res, found, nil
 		}
 		if readErr != nil {
-			return res, found, readErr
+			return res, found, fmt.Errorf("reading claude output: %w", readErr)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"slices"
@@ -92,6 +93,60 @@ func TestClaudeRunNoResult(t *testing.T) {
 	}
 }
 
+func TestClaudeRunNilEnvRefused(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"hello"}]}`)
+	_, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s"})
+	if err == nil || !strings.Contains(err.Error(), "nil Env") {
+		t.Fatalf("err = %v, want a nil-Env refusal", err)
+	}
+	if calls := testutil.FakeClaudeCalls(t, bin); len(calls) != 0 {
+		t.Fatalf("fake claude was started: %+v", calls)
+	}
+}
+
+func TestClaudeRunNonZeroExitWithResult(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"done anyway","exit":2}]}`)
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err != nil {
+		t.Fatalf("err = %v, want nil (a result event was still emitted)", err)
+	}
+	if res.ExitCode != 2 || res.Text != "done anyway" {
+		t.Fatalf("result = %+v", res)
+	}
+}
+
+func TestClaudeRunStructuredPassesThrough(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"ok","structured":{"verdict":"ship","score":3}}]}`)
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Verdict string `json:"verdict"`
+		Score   int    `json:"score"`
+	}
+	if err := json.Unmarshal(res.Structured, &got); err != nil {
+		t.Fatalf("Structured = %s: %v", res.Structured, err)
+	}
+	if got.Verdict != "ship" || got.Score != 3 {
+		t.Fatalf("Structured decoded to %+v", got)
+	}
+}
+
+func TestClaudeRunCapturesStderr(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"shell":"echo agent-stderr-marker 1>&2","text":"ok"}]}`)
+	var stderr bytes.Buffer
+	_, err := Claude{Bin: bin}.Run(context.Background(), Request{
+		SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}, Stderr: &stderr,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr.String(), "agent-stderr-marker") {
+		t.Fatalf("stderr = %q, want the shell's output", stderr.String())
+	}
+}
+
 func TestBuildEnvScrubs(t *testing.T) {
 	parent := []string{"PATH=/bin", "HOME=/h", "ANTHROPIC_API_KEY=key-123", "NPM_TOKEN=npm-456", "AWS_SECRET_ACCESS_KEY=nope", "GOOGLE_APPLICATION_CREDENTIALS=/sa.json"}
 	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Secrets: []string{"NPM_TOKEN"}, Set: map[string]string{"FUGARO_STATE_DIR": "/state"}, PathPrepend: "/fugaro/bin"})
@@ -124,8 +179,27 @@ func TestBuildEnvAuthModes(t *testing.T) {
 	if _, _, err := BuildEnv(nil, EnvSpec{Auth: "oauth"}); err == nil || !strings.Contains(err.Error(), "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("oauth without token err = %v", err)
 	}
-	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=k"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || !strings.Contains(err.Error(), "MISSING") {
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", Secrets: []string{"MISSING"}}); err == nil || !strings.Contains(err.Error(), "MISSING") {
 		t.Fatalf("missing secret err = %v", err)
+	}
+}
+
+func TestBuildEnvShortSecret(t *testing.T) {
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=abc"}, EnvSpec{Auth: "api-key"}); err == nil || !strings.Contains(err.Error(), "ANTHROPIC_API_KEY") {
+		t.Fatalf("short auth secret err = %v", err)
+	}
+	if _, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "SHORT=abc"}, EnvSpec{Auth: "api-key", Secrets: []string{"SHORT"}}); err == nil || !strings.Contains(err.Error(), "SHORT") {
+		t.Fatalf("short declared secret err = %v", err)
+	}
+}
+
+func TestBuildEnvNoPathTrailingSeparator(t *testing.T) {
+	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key", PathPrepend: "/fugaro/bin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, "PATH=/fugaro/bin") {
+		t.Fatalf("env = %v, want PATH=/fugaro/bin with no trailing separator", env)
 	}
 }
 
@@ -143,6 +217,59 @@ func TestRedactor(t *testing.T) {
 	want := "token=[REDACTED] ok\nab tail [REDACTED]"
 	if out.String() != want {
 		t.Fatalf("got %q, want %q", out.String(), want)
+	}
+}
+
+func TestRedactorJSONEscaped(t *testing.T) {
+	secret := `p"ss-1234` // contains a quote, so its JSON-escaped form differs from its raw form
+	line, err := json.Marshal(map[string]string{"key": secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	r := NewRedactor(&out, []string{secret})
+	if _, err := r.Write(append(line, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), secret) {
+		t.Fatalf("secret leaked: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "[REDACTED]") {
+		t.Fatalf("secret was not redacted: %s", out.String())
+	}
+}
+
+func TestRedactorMultilineSecret(t *testing.T) {
+	secret := "-----BEGIN KEY-----\nsome-key-material-here\n-----END KEY-----"
+	var out bytes.Buffer
+	r := NewRedactor(&out, []string{secret})
+
+	// Case 1: JSON-escaped onto a single line, as it would appear inside a
+	// stream-json transcript line.
+	escapedLine, err := json.Marshal(map[string]string{"key": secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Write(append(escapedLine, '\n')); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 2: arrives raw, split across lines (e.g. a shell echoing a PEM
+	// key straight to stderr).
+	if _, err := r.Write([]byte(secret + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, line := range strings.Split(secret, "\n") {
+		if strings.Contains(out.String(), line) {
+			t.Fatalf("secret line %q leaked: %s", line, out.String())
+		}
 	}
 }
 

@@ -63,12 +63,19 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		if v == "" {
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
 		}
+		if len(v) < 4 {
+			return nil, nil, fmt.Errorf("secret %s is shorter than 4 bytes, so it cannot be redacted safely", k)
+		}
 		out[k] = v
 		secretValues = append(secretValues, v)
 	}
 	maps.Copy(out, spec.Set)
 	if spec.PathPrepend != "" {
-		out["PATH"] = spec.PathPrepend + string(os.PathListSeparator) + out["PATH"]
+		if out["PATH"] != "" {
+			out["PATH"] = spec.PathPrepend + string(os.PathListSeparator) + out["PATH"]
+		} else {
+			out["PATH"] = spec.PathPrepend
+		}
 	}
 	for _, k := range slices.Sorted(maps.Keys(out)) {
 		env = append(env, k+"="+out[k])

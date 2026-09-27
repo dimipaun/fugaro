@@ -75,7 +75,15 @@ func Args(req Request) []string {
 }
 
 // Run invokes claude and returns its result event.
+//
+// req.Env must not be nil: procgroup treats a nil Env as "inherit the whole
+// runner environment", which would hand the permission-bypassed agent every
+// credential the runner holds. Callers build a scrubbed environment with
+// BuildEnv (even an empty one is a non-nil, zero-length slice).
 func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
+	if req.Env == nil {
+		return Result{}, fmt.Errorf("agent: refusing to run claude with a nil Env, which would inherit the runner's full environment")
+	}
 	bin := c.Bin
 	if bin == "" {
 		bin = "claude"
@@ -92,18 +100,40 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 		_, _ = io.Copy(io.Discard, pr) // keep draining if parsing stopped early
 		done <- parsed{res, found, err}
 	}()
+
+	// Stderr is routed through our own pipe, the same way stdout is, so
+	// that closing our end after procgroup.Run returns cuts off any
+	// straggling write from an abandoned internal copy goroutine (the
+	// leaked-daemon case): such a write fails immediately against a closed
+	// io.Pipe rather than ever reaching req.Stderr. That means no write to
+	// req.Stderr can happen after Run returns, so a caller can safely
+	// Flush a Redactor wrapped around it once Run is done.
+	errR, errW := io.Pipe()
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		w := io.Writer(io.Discard)
+		if req.Stderr != nil {
+			w = req.Stderr
+		}
+		_, _ = io.Copy(w, errR)
+	}()
+
 	code, runErr := procgroup.Run(ctx, procgroup.Cmd{
 		Name: bin, Args: Args(req), Dir: req.Dir, Env: req.Env,
-		Stdin: strings.NewReader(req.Prompt), Stdout: pw, Stderr: req.Stderr, Grace: c.Grace,
+		Stdin: strings.NewReader(req.Prompt), Stdout: pw, Stderr: errW, Grace: c.Grace,
 	})
 	pw.Close()
+	errW.Close()
 	p := <-done
+	<-stderrDone
 	p.res.ExitCode = code
 	switch {
 	case runErr != nil:
 		return p.res, runErr
 	case p.err != nil:
-		return p.res, fmt.Errorf("reading claude output: %w", p.err)
+		// ParseStream already wraps this with context.
+		return p.res, p.err
 	case !p.found:
 		return p.res, fmt.Errorf("claude exited with code %d without a result event", code)
 	}
