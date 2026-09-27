@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -46,6 +48,7 @@ func (a *scriptedAgent) Run(ctx context.Context, req agent.Request) (agent.Resul
 type harness struct {
 	deps      runner.Deps
 	store     *runstore.Store
+	bucket    *blob.Bucket
 	provider  *fake.Provider
 	agent     *scriptedAgent
 	remote    string
@@ -82,8 +85,20 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 			Env:        []string{"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "ANTHROPIC_API_KEY=test-key", "FIXTURE_FAILS_FILE=" + failsFile},
 			CancelPoll: 20 * time.Millisecond,
 		},
-		store: store, provider: p, agent: a, remote: remote, failsFile: failsFile,
+		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}
+}
+
+// filterEnv returns env without the entry for key.
+func filterEnv(env []string, key string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if k, _, ok := strings.Cut(kv, "="); ok && k == key {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func (h *harness) run(t *testing.T, steps ...step) (*runstore.Record, error) {
@@ -191,6 +206,35 @@ func TestReadyPR(t *testing.T) {
 	}
 	if rev.SessionID == impl.SessionID || rev.JSONSchema != runner.VerdictSchema || rev.AppendSystemPrompt != "" {
 		t.Fatalf("review request = %+v", rev)
+	}
+}
+
+// TestTranscriptIsRedacted checks that the stored transcript for a stage
+// never carries a secret value in the clear, even when the agent itself
+// writes one to the transcript stream.
+func TestTranscriptIsRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := implement("feature")(t, ctx, req)
+		if err != nil {
+			return res, err
+		}
+		fmt.Fprintf(req.Transcript, "{\"leaked\":%q}\n", secret)
+		return res, err
+	}
+	if _, err := h.run(t, leak, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"transcripts/implement-1.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "[REDACTED]") {
+		t.Fatalf("transcript is not redacted: %q", data)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Fatalf("transcript leaks the secret: %q", data)
 	}
 }
 
@@ -313,7 +357,59 @@ func TestCancelledRunStillOpensDraft(t *testing.T) {
 	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeDraft || rec.Reason != "cancelled during implement" {
 		t.Fatalf("record = %+v", rec)
 	}
-	onlyPR(t, h.provider)
+	if !onlyPR(t, h.provider).Draft {
+		t.Fatal("PR is not a draft")
+	}
+}
+
+// TestAgentLoopPanicStillOpensDraft checks that a panicking stage does not
+// skip finalize: the run must still push and open a draft PR.
+func TestAgentLoopPanicStillOpensDraft(t *testing.T) {
+	h := newHarness(t, "", nil)
+	panicky := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		panic("boom")
+	}
+	rec, err := h.run(t, panicky)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Outcome != runstore.OutcomeDraft || !strings.Contains(rec.Reason, "panicked") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !onlyPR(t, h.provider).Draft {
+		t.Fatal("PR is not a draft")
+	}
+}
+
+// TestCancelSeenAfterLastStageStillOpensDraft checks that a cancel request
+// noticed only after the agent loop has already returned successfully (no
+// stage caught it) still turns the run into a cancelled draft, instead of
+// being silently ignored.
+func TestCancelSeenAfterLastStageStillOpensDraft(t *testing.T) {
+	h := newHarness(t, "", nil)
+	shipThenCancel := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := review("ship", 0)(t, ctx, req)
+		if err != nil {
+			return res, err
+		}
+		if err := h.store.RequestCancel(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		// Give the background cancel watcher time to notice and mark
+		// runCtx done before this stage (and the agent loop) returns.
+		time.Sleep(5 * h.deps.CancelPoll)
+		return res, nil
+	}
+	rec, err := h.run(t, implement("feature"), shipThenCancel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeDraft || rec.Reason != "cancelled" {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !onlyPR(t, h.provider).Draft {
+		t.Fatal("PR is not a draft")
+	}
 }
 
 func TestInvalidConfigIsInfraError(t *testing.T) {
@@ -346,11 +442,61 @@ func TestBootstrapRejections(t *testing.T) {
 			t.Fatalf("rec = %+v, err = %v", rec, err)
 		}
 	})
+	t.Run("parent of the checkout", func(t *testing.T) {
+		h := newHarness(t, "", nil)
+		marker := seedCheckoutMarker(t, h.deps.WorkDir)
+		h.deps.StateDir = filepath.Dir(h.deps.WorkDir)
+		if rec, err := h.run(t); err == nil || !strings.Contains(rec.Reason, "outside the checkout") {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		assertMarkerSurvived(t, marker)
+	})
+	t.Run("..state sibling inside the checkout", func(t *testing.T) {
+		h := newHarness(t, "", nil)
+		marker := seedCheckoutMarker(t, h.deps.WorkDir)
+		h.deps.StateDir = filepath.Join(h.deps.WorkDir, "..state")
+		if rec, err := h.run(t); err == nil || !strings.Contains(rec.Reason, "outside the checkout") {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		assertMarkerSurvived(t, marker)
+	})
+	t.Run("empty", func(t *testing.T) {
+		h := newHarness(t, "", nil)
+		marker := seedCheckoutMarker(t, h.deps.WorkDir)
+		h.deps.StateDir = ""
+		if rec, err := h.run(t); err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "must not be empty") {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		assertMarkerSurvived(t, marker)
+	})
 	t.Run("missing secret", func(t *testing.T) {
 		h := newHarness(t, "", nil)
-		h.deps.Env = h.deps.Env[:3] // drop FIXTURE_FAILS_FILE
+		h.deps.Env = filterEnv(h.deps.Env, "FIXTURE_FAILS_FILE")
 		if rec, err := h.run(t); err == nil || !strings.Contains(rec.Reason, "FIXTURE_FAILS_FILE") {
 			t.Fatalf("rec = %+v, err = %v", rec, err)
 		}
 	})
+}
+
+// seedCheckoutMarker creates workDir with a marker file, simulating the
+// checkout baked into the container image, and returns the marker's path.
+func seedCheckoutMarker(t *testing.T, workDir string) string {
+	t.Helper()
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(workDir, "marker.txt")
+	if err := os.WriteFile(marker, []byte("keep me\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return marker
+}
+
+// assertMarkerSurvived fails the test if a bad state-dir guard let
+// bootstrap's os.RemoveAll(StateDir) delete the checkout.
+func assertMarkerSurvived(t *testing.T, marker string) {
+	t.Helper()
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("checkout marker did not survive: %v", err)
+	}
 }

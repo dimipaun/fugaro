@@ -55,7 +55,11 @@ type run struct {
 }
 
 // Run executes the run whose task spec is in d.Store. It always returns the
-// final record; the error is non-nil only for an infra_error.
+// final record, reflecting the run's actual status and outcome whether or
+// not Run itself returns an error. The error is non-nil for an infra_error,
+// for a cancellation seen during bootstrap (before any stage or finalize
+// runs, where the record's status is cancelled rather than infra_error), or
+// when writing the final record itself fails.
 func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -77,7 +81,12 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			err = fmt.Errorf("panic: %v", p)
 		}
 		if err != nil {
-			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, err.Error()
+			// A more specific outcome (such as a bootstrap cancellation) may
+			// already be recorded; only fall back to infra_error when the
+			// run never got far enough to decide anything else.
+			if r.rec.Status == runstore.StatusRunning {
+				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, err.Error()
+			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", err)
 		}
 		finished := d.Now().UTC()
@@ -91,15 +100,35 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
 	defer stopWatch()
 	if err := r.bootstrap(runCtx); err != nil {
+		if errors.Is(context.Cause(runCtx), ErrCancelled) {
+			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
-	r.agentLoop(runCtx)
+	r.runAgentLoop(runCtx)
+	if errors.Is(context.Cause(runCtx), ErrCancelled) {
+		// The cancel may have landed after the last stage already returned
+		// successfully; make sure it still turns into a draft PR.
+		r.cancelled = true
+		r.fail("cancelled")
+	}
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
 	if err := r.finalize(finCtx); err != nil {
 		return nil, fmt.Errorf("finalize: %w", err)
 	}
 	return r.rec, nil
+}
+
+// runAgentLoop runs agentLoop, recovering a panic so finalize always runs and
+// still pushes a draft PR explaining what happened.
+func (r *run) runAgentLoop(ctx context.Context) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.fail(fmt.Sprintf("stage %s panicked: %v", r.rec.Stage, p))
+		}
+	}()
+	r.agentLoop(ctx)
 }
 
 func (r *run) save(ctx context.Context) {
@@ -115,10 +144,39 @@ func (r *run) fail(reason string) {
 	}
 }
 
+// stateDirOutsideCheckout validates that stateDir can be safely wiped with
+// os.RemoveAll: non-empty, resolvable, and disjoint from workDir in both
+// directions, so it can be neither inside, equal to, nor an ancestor of the
+// checkout. This must run before any git or filesystem work.
+func stateDirOutsideCheckout(workDir, stateDir string) error {
+	if stateDir == "" {
+		return errors.New("state dir must not be empty")
+	}
+	bad := fmt.Errorf("state dir %s must be outside the checkout %s", stateDir, workDir)
+	absWork, err := filepath.Abs(workDir)
+	if err != nil {
+		return bad
+	}
+	absState, err := filepath.Abs(stateDir)
+	if err != nil {
+		return bad
+	}
+	sep := string(filepath.Separator)
+	fromWork, err := filepath.Rel(absWork, absState)
+	if err != nil || !(fromWork == ".." || strings.HasPrefix(fromWork, ".."+sep)) {
+		return bad
+	}
+	fromState, err := filepath.Rel(absState, absWork)
+	if err != nil || !strings.HasPrefix(fromState, ".."+sep) {
+		return bad
+	}
+	return nil
+}
+
 func (r *run) bootstrap(ctx context.Context) error {
 	spec, err := r.d.Store.ReadTask(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading task spec: %w", err)
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
@@ -126,17 +184,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if spec.IsFollowUp() {
 		return errors.New("follow-up runs are not supported by this version of fugaro")
 	}
-	if rel, err := filepath.Rel(r.d.WorkDir, r.d.StateDir); err == nil && !strings.HasPrefix(rel, "..") {
-		return fmt.Errorf("state dir %s must be outside the checkout %s", r.d.StateDir, r.d.WorkDir)
+	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
+		return err
 	}
 
 	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.IdentityEnv())
 	if err != nil {
-		return err
+		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
 	branch := "fugaro/" + spec.RunID
 	if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
-		return err
+		return fmt.Errorf("checking out %s: %w", spec.Ref, err)
 	}
 	r.repo = repo
 
@@ -154,14 +212,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
-		return err
+		return fmt.Errorf("selecting workflow: %w", err)
 	}
 	if err := spec.Apply(cfg, &wf); err != nil {
-		return err
+		return fmt.Errorf("applying task overrides: %w", err)
 	}
 	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
 	if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
-		return err
+		return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 	}
 	if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
 		return fmt.Errorf("agent.instructions: %w", err)
@@ -173,14 +231,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 
 	if err := os.RemoveAll(r.d.StateDir); err != nil {
-		return err
+		return fmt.Errorf("clearing state dir %s: %w", r.d.StateDir, err)
 	}
 	if err := verify.WriteSettings(r.d.StateDir, verify.Settings{
 		RepoDir: r.d.WorkDir, Build: wf.Commands.Build, Test: wf.Commands.Test,
 		RerunFailed: wf.Commands.RerunFailed, Reports: wf.Commands.Reports,
 		TimeoutS: int(wf.Timeouts.Verify.Seconds()),
 	}); err != nil {
-		return err
+		return fmt.Errorf("writing verify settings: %w", err)
 	}
 	secretEnvs := make([]string, len(wf.Secrets))
 	for i, s := range wf.Secrets {
@@ -193,7 +251,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if r.env, r.secrets, err = agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 	}); err != nil {
-		return err
+		return fmt.Errorf("building agent environment: %w", err)
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
@@ -290,25 +348,25 @@ func (r *run) finalize(ctx context.Context) error {
 	r.save(ctx)
 	base := r.cfg.Git.BaseBranch
 	if _, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize"); err != nil {
-		return err
+		return fmt.Errorf("committing leftover work: %w", err)
 	}
 	ahead, err := r.repo.AheadOf(ctx, base)
 	if err != nil {
-		return err
+		return fmt.Errorf("counting commits ahead of %s: %w", base, err)
 	}
 	if ahead == 0 {
 		r.fail("the agent made no commits")
 		if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
-			return err
+			return fmt.Errorf("recording an empty commit: %w", err)
 		}
 	}
 	sha, err := r.repo.HeadSHA(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading head sha: %w", err)
 	}
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading verify records: %w", err)
 	}
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 
@@ -321,7 +379,7 @@ func (r *run) finalize(ctx context.Context) error {
 		ready, reason = false, r.failReason
 	}
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
-		return err
+		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}
 	title, body := r.prText()
 	pr, err := r.d.Provider.EnsurePR(ctx, gitprov.PRSpec{
@@ -329,7 +387,7 @@ func (r *run) finalize(ctx context.Context) error {
 		Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
 	})
 	if err != nil {
-		return err
+		return fmt.Errorf("opening pull request: %w", err)
 	}
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
 	r.rec.Reason = reason
