@@ -12,7 +12,17 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
+
+// gitWaitDelay bounds how long a git invocation's Wait spends draining
+// output after the git process itself has exited, or after ctx ends. A repo
+// hook (or git's own background auto-gc) can fork a child that inherits the
+// stdout/stderr pipes and keeps them open; without a bound, Wait (and so
+// this call) would hang until that leaked child closes them on its own,
+// however long that takes (see internal/procgroup, which guards the same
+// way for agent invocations).
+const gitWaitDelay = 5 * time.Second
 
 // Identity is the author and committer of commits made during a run.
 var Identity = map[string]string{
@@ -68,6 +78,7 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = r.Dir
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
+	cmd.WaitDelay = gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {

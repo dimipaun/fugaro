@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -97,6 +98,25 @@ func TestCommitAllIgnoresFailingHook(t *testing.T) {
 	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
 	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
 		t.Fatal("a failing pre-commit hook blocked the runner's commit:", err)
+	}
+}
+
+// TestLeakedHookChildDoesNotHang: a repo hook that forks a background child
+// (a shell "&") hands that child the git process's stdout/stderr pipes. Since
+// git() captures output in a bytes.Buffer, exec.Cmd copies through an
+// internal pipe; without a bound, Wait blocks until every holder of the
+// write end closes it — including a child git itself no longer waits for.
+// See internal/procgroup, which guards agent invocations the same way.
+func TestLeakedHookChildDoesNotHang(t *testing.T) {
+	repo, _ := setup(t)
+	hook := filepath.Join(repo.Dir, ".git", "hooks", "post-checkout")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nsleep 20 &\necho leaked\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := repo.CheckoutNewBranch(ctx, "main", "fugaro/hangtest")
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("CheckoutNewBranch took %s (err=%v); a leaked hook child blocked it", d, err)
 	}
 }
 
