@@ -37,6 +37,7 @@ A workflow is one buildable unit with its own image.
 Set the git settings:
 - `git.provider` from `git remote get-url origin`: `github.com` means `github`, `bitbucket.org` means `bitbucket`.
 - `git.base_branch` from the remote's default branch (`git symbolic-ref refs/remotes/origin/HEAD`), or the branch CI treats as main.
+- `git.pr.reviewers` only if the user names reviewers. On Bitbucket they must be account UUIDs (`{…}`), not usernames; Fugaro's `docs/git-providers.md`, "Finding a Bitbucket reviewer's UUID", shows how to look one up without putting the token on a command line.
 
 The image keeps the https form of the remote as its `origin`, even when your clone uses SSH, and runs add credentials to it. A host other than `github.com` or `bitbucket.org` needs `FUGARO_GIT_PROVIDER` at run time; tell the user.
 
@@ -144,5 +145,5 @@ If the same failure survives three different fixes, stop and ask the user.
 Tell the user, briefly:
 - the workflows, their commands and report globs, each with the file it came from
 - the image settings with the evidence for each, and anything you couldn't express
-- the secrets to create, by logical name, and where each is used. `fugaro init --repo` binds them to Secret Manager later.
+- the secrets to create, by logical name, and where each is used. The user stores each one with `fugaro secrets set <name> --repo <owner/name>`, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. Granting the job access to them is part of provisioning (the M4 bootstrap now, `fugaro init --repo` from M5).
 - that they should commit `fugaro.yaml`, and `.fugaro/*.Dockerfile` if you wrote one, in a pull request
