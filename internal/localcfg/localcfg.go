@@ -71,11 +71,10 @@ type Repo struct {
 var ErrMissing = errors.New("no local fugaro config")
 
 var (
-	projectRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
-	regionRE   = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
-	bucketRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
-	repoRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
-	workflowRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	projectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	regionRE  = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
+	bucketRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
+	repoRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 )
 
 // Path is where the config lives: $FUGARO_CONFIG, else
@@ -167,7 +166,7 @@ func (c *Config) validate() error {
 			bad("repos.%s: provider %q must be one of %s", repo, r.Provider, strings.Join(config.Providers, ", "))
 		}
 		for _, w := range r.Workflows {
-			if !workflowRE.MatchString(w) {
+			if !config.WorkflowNameRE.MatchString(w) {
 				bad("repos.%s: workflow %q is not a workflow name", repo, w)
 			}
 		}

@@ -3,8 +3,10 @@ package schemas_test
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -175,5 +177,46 @@ func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 		if err := sch.Validate(yamlInstance(t, doc(env))); err == nil {
 			t.Errorf("schema accepts the reserved secret variable %s", env)
 		}
+	}
+}
+
+// TestFugaroSchemaReservesTheSameSecretNames keeps the schema's reserved
+// secret names equal to config.ReservedSecrets, and its providers equal to
+// config.Providers.
+func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
+	data, err := os.ReadFile("fugaro.schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	at := func(v any, path ...string) any {
+		for _, k := range path {
+			m, ok := v.(map[string]any)
+			if !ok {
+				t.Fatalf("schema has no %v", path)
+			}
+			v = m[k]
+		}
+		return v
+	}
+	strs := func(v any) []string {
+		var out []string
+		for _, x := range v.([]any) {
+			out = append(out, x.(string))
+		}
+		slices.Sort(out)
+		return out
+	}
+	wf := at(doc, "$defs", "workflow")
+	names := strs(at(wf, "properties", "secrets", "items", "properties", "name", "not", "enum"))
+	if want := slices.Sorted(maps.Keys(config.ReservedSecrets)); !slices.Equal(names, want) {
+		t.Errorf("schema reserves secret names %v, config.ReservedSecrets has %v", names, want)
+	}
+	providers := strs(at(doc, "properties", "git", "properties", "provider", "enum"))
+	if want := slices.Sorted(slices.Values(config.Providers)); !slices.Equal(providers, want) {
+		t.Errorf("schema providers %v, config.Providers %v", providers, want)
 	}
 }

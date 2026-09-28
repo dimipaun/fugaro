@@ -9,11 +9,17 @@ import (
 	"strings"
 )
 
+// WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
+// workflow is named (the local config, the CLI). SecretNameRE is a
+// workflow secret's logical name.
 var (
-	workflowNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
-	secretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-	memoryRE       = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
+	WorkflowNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	SecretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+)
+
+var (
+	envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	memoryRE  = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
 	// branchNameRE is a conservative branch-name charset: no shell
 	// metacharacters, whitespace or leading "-". badBranchRE adds the
 	// `git check-ref-format --branch` rules that charset still allows.
@@ -100,8 +106,8 @@ func Validate(c *Config) []Problem {
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
 		p := "workflows." + name
-		if !workflowNameRE.MatchString(name) {
-			add(p, "workflow name must match %s", workflowNameRE)
+		if !WorkflowNameRE.MatchString(name) {
+			add(p, "workflow name must match %s", WorkflowNameRE)
 		}
 		if !slices.Contains([]string{"server-jvm", "web-node"}, w.Base) {
 			add(p+".base", "must be one of server-jvm, web-node")
@@ -133,7 +139,7 @@ func Validate(c *Config) []Problem {
 		seen := map[string]bool{}
 		for i, s := range w.Secrets {
 			sp := fmt.Sprintf("%s.secrets[%d]", p, i)
-			if !secretNameRE.MatchString(s.Name) {
+			if !SecretNameRE.MatchString(s.Name) {
 				add(sp+".name", "must be lower-case letters, digits and dashes")
 			}
 			if _, reserved := ReservedSecrets[s.Name]; reserved {

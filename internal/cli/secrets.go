@@ -10,7 +10,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
@@ -34,10 +33,6 @@ const minSecretBytes = 4
 // multilineSecret is the one logical secret whose value spans lines: the
 // GitHub App's private key, a PEM.
 const multilineSecret = "github-app-key"
-
-// workflowSecretRE is a workflow secret's logical name (config's secret
-// name rule).
-var workflowSecretRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
 func newSecretsCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -158,10 +153,10 @@ func declares(cfg *config.Config, name string) bool {
 }
 
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
-	if _, reserved := config.ReservedSecrets[name]; !reserved && !workflowSecretRE.MatchString(name) {
+	if _, reserved := config.ReservedSecrets[name]; !reserved && !config.SecretNameRE.MatchString(name) {
 		// The name is not quoted: a value typed in its place must not be echoed.
 		return userErr("the secret NAME must be one of %s, or a workflow secret's name matching %s",
-			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), workflowSecretRE)
+			strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", "), config.SecretNameRE)
 	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
