@@ -38,7 +38,7 @@ func assertOwnerRecordIntact(t *testing.T, h *harness) {
 }
 
 // TestDuplicateExecutionFailingBeforeItsRecordWritesNothing covers a
-// duplicate that fails before it could tell it was one (C-I1): here
+// duplicate that fails before it could tell it was one: here
 // task.json can't be read. Its failure record must not replace the
 // owner's.
 func TestDuplicateExecutionFailingBeforeItsRecordWritesNothing(t *testing.T) {
@@ -138,7 +138,7 @@ func TestCreateCommittedDespiteAnErrorIsOwned(t *testing.T) {
 	}
 }
 
-// TestRecordWritesAreBounded pins C-M6: every record write has a deadline
+// TestRecordWritesAreBounded: every record write has a deadline
 // of its own, so a stalled bucket can't hold the runner.
 func TestRecordWritesAreBounded(t *testing.T) {
 	h := newHarness(t, "", nil)
@@ -169,7 +169,7 @@ func TestRecordWritesAreBounded(t *testing.T) {
 	}
 }
 
-// TestWritebackReleasesTheLockOnAFreshContext pins C-M2: when writeback's
+// TestWritebackReleasesTheLockOnAFreshContext: when writeback's
 // deadline has already passed, the lock is still released on a context of
 // its own rather than on the expired one.
 func TestWritebackReleasesTheLockOnAFreshContext(t *testing.T) {
@@ -197,7 +197,7 @@ func TestWritebackReleasesTheLockOnAFreshContext(t *testing.T) {
 	}
 }
 
-// TestCancelBeforeBootstrapIsSeenAtOnce pins the runner half of C-I3: a
+// TestCancelBeforeBootstrapIsSeenAtOnce: a
 // cancel marker already in place is seen at the start of bootstrap, not
 // only at the first poll.
 func TestCancelBeforeBootstrapIsSeenAtOnce(t *testing.T) {

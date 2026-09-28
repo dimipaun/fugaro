@@ -20,7 +20,7 @@ import (
 )
 
 // seedLost seeds a run launched long ago whose execution the backend no
-// longer knows and whose runner never wrote a record (C-I2).
+// longer knows and whose runner never wrote a record.
 func seedLost(t *testing.T, f *cloudFixture, id string) {
 	t.Helper()
 	seedRun(t, f, id, "", "someone@example.com", false)
@@ -63,7 +63,7 @@ func TestLostRunIsInfraErrorEverywhere(t *testing.T) {
 
 // Having won the claim, launchRun re-checks the cancel marker: a cancel
 // that landed while it claimed stops the launch, and the claim is released
-// so cancel sees the launch end (C-I3).
+// so cancel sees the launch end.
 func TestLaunchRechecksCancelAfterTakingTheClaim(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)
@@ -84,7 +84,7 @@ func TestLaunchRechecksCancelAfterTakingTheClaim(t *testing.T) {
 
 // cancel on a run whose launch claim is fresh doesn't say "never launched":
 // it marks the run and waits for the launch; when launch.json appears it
-// cancels the execution like any launched run (C-I3).
+// cancels the execution like any launched run.
 func TestCancelWaitsForAnInFlightLaunch(t *testing.T) {
 	f := newCloudFixture(t)
 	shortWait(t)
@@ -139,7 +139,8 @@ func TestCancelReportsALaunchStillInFlight(t *testing.T) {
 }
 
 // finishingBackend lets the runner write its final record and exit just
-// before the CLI reads the execution, the window of C-M1.
+// before the CLI reads the execution: the record it read first then
+// says running while the execution has ended.
 type finishingBackend struct {
 	backend.Backend
 	finish func(name string)
@@ -151,7 +152,7 @@ func (fb finishingBackend) Execution(ctx context.Context, name string) (backend.
 }
 
 // A run that finishes between the record read and the execution read is
-// its final record's status, not infra_error (C-M1).
+// its final record's status, not infra_error.
 func TestLoadRowsOneRunFinishingMidRead(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20200101-000000-dddd"
@@ -174,7 +175,7 @@ func TestLoadRowsOneRunFinishingMidRead(t *testing.T) {
 }
 
 // A run that already ran without a cloud execution (a local run against
-// the same bucket) is not launched again by --retry (C-M4).
+// the same bucket) is not launched again by --retry.
 func TestRetryDoesNotRelaunchARunWithARecord(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260927-100000-abcd"
@@ -198,7 +199,7 @@ func (l listRecorder) List(ctx context.Context, f backend.ListFilter) ([]backend
 
 // checkMaxParallel bounds its listing by Cloud Run's longest task timeout:
 // no active execution can be older, so it needn't page through the
-// region's whole history on every launch (C-M7).
+// region's whole history on every launch.
 func TestCheckMaxParallelBoundsTheListing(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)
@@ -214,7 +215,7 @@ func TestCheckMaxParallelBoundsTheListing(t *testing.T) {
 
 // A run whose compute was not estimated never reads as free: its row and
 // the totals line say so. A run that never launched has no compute at all
-// and is not counted (C-M10).
+// and is not counted.
 func TestLsMarksUnestimatedCompute(t *testing.T) {
 	f := newCloudFixture(t)
 	today := time.Now().UTC().Format("20060102")
@@ -233,7 +234,7 @@ func TestLsMarksUnestimatedCompute(t *testing.T) {
 }
 
 // diagnose on a run that never launched shows its row, as ls would, not
-// an error (C-M11).
+// an error.
 func TestDiagnoseUnlaunchedRunShowsItsRow(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260927-100000-abcd"

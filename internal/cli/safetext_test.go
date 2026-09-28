@@ -16,8 +16,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
-// hostile payloads a run can put in a string the views print (security
-// review I1): each must reach the terminal with no control byte left.
+// hostile payloads a run can put in a string the views print :
+// each must reach the terminal with no control byte left.
 var hostile = map[string]string{
 	"osc8":      "\x1b]8;;https://evil.example/\x1b\\https://bitbucket.org/acme/app/pull-requests/7\x1b]8;;\x1b\\",
 	"osc52":     "ok\x1b]52;c;ZXZpbA==\x07",
@@ -79,7 +79,7 @@ func hostileAll() string {
 }
 
 // The views print strings the run controls through the terminal-safe
-// helpers: ls, logs, diagnose, cancel and run (security review I1).
+// helpers: ls, logs, diagnose, cancel and run.
 func TestViewsStripTerminalControls(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260927-100000-abcd"

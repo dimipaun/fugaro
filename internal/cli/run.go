@@ -307,7 +307,7 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 const activeHorizon = gcp.MaxTaskTimeout + 24*time.Hour
 
 // checkMaxParallel refuses a new launch when max_parallel runs are active.
-// It lists only executions created within activeHorizon (C-M7), so a
+// It lists only executions created within activeHorizon, so a
 // --batch of N launches doesn't page through the region's history N times.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon)})
@@ -367,8 +367,8 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
-// name launch.json holds (C-1). Either name must be of the run's own job
-// (S-I2): the run's service account can write both objects.
+// name launch.json holds. Either name must be of the run's own job: the
+// run's service account can write both objects.
 func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec) (*runstore.Launch, error) {
 	runID := spec.RunID
 	check := func(name string) error {
@@ -394,7 +394,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	}
 	if rec.Execution == "" {
 		// It ran already, with no cloud execution (a local run against this
-		// bucket): never launch it again (C-M4). Nothing to backfill.
+		// bucket): never launch it again. Nothing to backfill.
 		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
 	}
 	if err := check(rec.Execution); err != nil {
@@ -426,10 +426,10 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 //   - A held claim is read once, content and generation together. If that
 //     content is stale (older than claimTTL, its holder presumably dead), it
 //     is taken over with an overwrite matched to that same generation, never
-//     delete-then-create, so two takers can't both win (I-2, N-1). A claim
-//     that vanished before the read counts as absent: claim once more (N-10).
+//     delete-then-create, so two takers can't both win. A claim that
+//     vanished before the read counts as absent: claim once more.
 //   - A fresh claim, or a lost takeover, means someone else is launching:
-//     wait up to claimWait for their launch.json and report it (N-4), else
+//     wait up to claimWait for their launch.json and report it, else
 //     exit 1, "still in flight". A claim that disappears while we wait was
 //     released after a refused launch: go back for it at once.
 //   - A run with a cancel marker is never launched.
@@ -438,7 +438,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 //   - Launch. Only a definitive refusal (backend.ErrRejected) releases our
 //     claim; after an ambiguous error the execution may exist, so the claim
 //     stays until it goes stale, by which time the runner's result.json says
-//     whether it started (N-3).
+//     whether it started.
 //
 // file:// buckets are single-user: fileblob's IfNotExist is not atomic.
 func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, now time.Time) (launchResult, error) {
@@ -496,7 +496,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return done(l, "already-launched")
 	}
 	// A cancel that landed while we claimed: never launch it, and release
-	// the claim so a waiting cancel sees the launch end (C-I3).
+	// the claim so a waiting cancel sees the launch end.
 	if cancelled, err := s.CancelRequested(hctx); err != nil {
 		return res, remote(err)
 	} else if cancelled {
@@ -552,7 +552,7 @@ func releaseClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder 
 }
 
 // errClaimReleased means the claim a loser was waiting on disappeared:
-// its holder's launch was refused and released it (N-12).
+// its holder's launch was refused and released it.
 var errClaimReleased = errors.New("launch claim released")
 
 // claimRounds bounds how often launchRun goes back for a released claim.
@@ -563,8 +563,8 @@ const claimRounds = 3
 //
 // A held claim is read ONCE: staleness is judged on that content and the
 // takeover's ReplaceIf matches that read's generation, so nobody can
-// replace a claim that turned fresh after we judged it stale (N-1). A
-// claim that vanished before the read counts as absent (N-10).
+// replace a claim that turned fresh after we judged it stale. A
+// claim that vanished before the read counts as absent.
 func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder string, now time.Time) (won bool, other runstore.Claim, err error) {
 	key := s.ClaimKey()
 	someone := runstore.Claim{Holder: "another CLI", At: now}
@@ -618,7 +618,7 @@ func claimError(s *runstore.Store, key string, err error) error {
 }
 
 // waitForLaunch waits up to claimWait for the claim holder's launch.json
-// (N-4): a concurrent "fugaro run --run-id X" then reports the winner's
+// so a concurrent "fugaro run --run-id X" then reports the winner's
 // launch with exit 0, as a repeated launch should. Otherwise exit 1. When
 // the claim disappears (its holder was refused and released it), it
 // returns errClaimReleased at once, so the caller can claim again.

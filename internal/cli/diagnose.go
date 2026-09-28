@@ -73,7 +73,7 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	}
 	defer env.Close()
 	// Not locateLaunched: a run that never launched still has a row that
-	// explains it (C-M11); it just has no logs.
+	// explains it; it just has no logs.
 	slug, id, err := locateRun(ctx, env, ref)
 	if err != nil {
 		return err
@@ -221,7 +221,8 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(d)
 	}
-	// Every string from the run goes through oneLine or multiLine (I1).
+	// Every string from the run goes through oneLine or multiLine, since
+	// the run can put terminal controls in it.
 	var b strings.Builder
 	r := d.Row
 	fmt.Fprintf(&b, "Run:      %s\n", oneLine(r.Run))

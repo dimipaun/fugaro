@@ -83,7 +83,7 @@ func TestImageRenderReportsConfigProblems(t *testing.T) {
 	}
 }
 
-// Controller ruling: `fugaro image render` is exempt from --json, because
+// `fugaro image render` is exempt from --json, because
 // its output is the Dockerfile itself. Its help text says so.
 func TestImageRenderHelpNotesJSONExemption(t *testing.T) {
 	cmd := newImageRenderCmd()

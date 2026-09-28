@@ -9,7 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 )
 
-// TestReadsAreCapped pins S-M4: the job's service account (and so the
+// TestReadsAreCapped: the job's service account (and so the
 // agent) can write every object here, so a hostile one of several GB
 // must fail with ErrTooLarge rather than exhaust the operator's memory.
 func TestReadsAreCapped(t *testing.T) {

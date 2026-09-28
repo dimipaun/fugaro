@@ -138,7 +138,7 @@ func raceSpec(t *testing.T, env *cloudEnv) *task.Spec {
 }
 
 // The winner launches completely between the loser's first check and its
-// Claim, the window C-2 describes. The claim was never cleared, so the
+// Claim. The claim was never cleared, so the
 // loser's Claim fails and it finds launch.json.
 func TestLaunchWinnerFinishesBeforeLoserClaims(t *testing.T) {
 	f := newCloudFixture(t)
@@ -224,7 +224,7 @@ func TestLaunchRechecksRecordAfterTakeover(t *testing.T) {
 	}
 }
 
-// N-1: after we judge the claim stale, another CLI replaces it with a fresh
+// After we judge the claim stale, another CLI replaces it with a fresh
 // one. Our takeover must fail on the generation it read, and nobody may
 // launch while the fresh holder is (supposedly) launching.
 func TestLaunchStaleJudgementRacesAFreshClaim(t *testing.T) {
@@ -251,7 +251,7 @@ func TestLaunchStaleJudgementRacesAFreshClaim(t *testing.T) {
 	}
 }
 
-// N-1 itself: Claim's own read saw a stale claim, but before our
+// The takeover race itself: Claim's own read saw a stale claim, but before our
 // generation-carrying read another CLI replaced it with a fresh one. The
 // staleness judgement must come from that read, so we wait, and nobody
 // launches while the fresh holder is (supposedly) launching.
@@ -279,7 +279,7 @@ func TestLaunchStaleClaimTurnsFreshBeforeTheRead(t *testing.T) {
 	}
 }
 
-// N-10: a claim released between our Claim and our read counts as absent,
+// A claim released between our Claim and our read counts as absent,
 // and we take it.
 func TestLaunchClaimReleasedBeforeTheRead(t *testing.T) {
 	f := newCloudFixture(t)
@@ -303,7 +303,7 @@ func TestLaunchClaimReleasedBeforeTheRead(t *testing.T) {
 	}
 }
 
-// N-4: a loser that finds a fresh claim waits for the winner's launch.json
+// A loser that finds a fresh claim waits for the winner's launch.json
 // and reports it, exit 0.
 func TestLaunchLoserReportsWinnersLaunch(t *testing.T) {
 	f := newCloudFixture(t)
@@ -339,7 +339,7 @@ func TestLaunchRejectedReleasesOurClaim(t *testing.T) {
 	}
 }
 
-// N-3: an ambiguous error (5xx, timeout) may have started an execution, so
+// An ambiguous error (5xx, timeout) may have started an execution, so
 // the claim stays and an immediate retry is refused.
 func TestLaunchAmbiguousFailureKeepsTheClaim(t *testing.T) {
 	f := newCloudFixture(t)
@@ -359,7 +359,7 @@ func TestLaunchAmbiguousFailureKeepsTheClaim(t *testing.T) {
 	}
 }
 
-// Controller note 2: :run succeeded but its metadata can't be read. The
+// :run succeeded but its metadata can't be read. The
 // execution exists, so this is ambiguous too, and the claim stays.
 func TestLaunchUnreadableMetadataKeepsTheClaim(t *testing.T) {
 	f := newCloudFixture(t)
@@ -379,7 +379,8 @@ func TestLaunchUnreadableMetadataKeepsTheClaim(t *testing.T) {
 	}
 }
 
-// N-12: releaseClaim deletes only the claim it holds.
+// releaseClaim deletes only the claim it holds, so a refused launcher
+// never removes another CLI's fresh claim.
 func TestReleaseClaimLeavesAForeignClaim(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestSecretEnvMayNotShadowProcessBehavior pins S-M1: a workflow secret's
+// TestSecretEnvMayNotShadowProcessBehavior: a workflow secret's
 // variable must not be one that changes how the runner, git, a shell or a
 // language runtime behaves, since the job mounts it into the runner's own
 // environment.

@@ -486,7 +486,7 @@ func TestCloudRunLsLogsDiagnose(t *testing.T) {
 		t.Fatalf("row = %v", row)
 	}
 	// The runner's recorded name and launch.json's are the same execution
-	// (C-1), the one jobs.run started, and ls shows it.
+	// (one canonical name), the one jobs.run started, and ls shows it.
 	l, rec := r.launched(id)
 	if !backend.SameExecution(rec.Execution, l.Execution) || !backend.SameExecution(l.Execution, full) ||
 		!backend.SameExecution(row["execution"].(string), full) {

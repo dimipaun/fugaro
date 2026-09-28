@@ -110,7 +110,7 @@ func lsJSON(t *testing.T, args ...string) (lsOut, string) {
 }
 
 // After a double launch, the record's execution (the owner) decides, not
-// launch.json's duplicate that exited (N-2).
+// launch.json's duplicate that exited.
 func TestLsFollowsTheRecordsExecution(t *testing.T) {
 	f := newCloudFixture(t)
 	f.run.Project, f.run.Region = "proj-1234", "us-east5"
@@ -133,7 +133,7 @@ func TestLsFollowsTheRecordsExecution(t *testing.T) {
 }
 
 // An execution name that can't be parsed is a warning and a per-row error,
-// not a failure of the listing (N-9, S-I2).
+// not a failure of the listing: one bad run must not hide the others.
 func TestLsUnparseableExecutionWarns(t *testing.T) {
 	f := newCloudFixture(t)
 	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"

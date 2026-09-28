@@ -15,7 +15,7 @@ import (
 
 // A run's own service account can write its result.json. A record naming
 // another repository's execution must never be followed: not cancelled, not
-// streamed, not backfilled into launch.json (security review S-I2).
+// streamed, not backfilled into launch.json.
 func TestForgedRecordExecutionIsRefused(t *testing.T) {
 	f := newCloudFixture(t)
 	other := mustSlug("github", "acme/other")

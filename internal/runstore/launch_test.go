@@ -142,7 +142,7 @@ func (r *fakeReader) Close() error                         { return nil }
 func (r *fakeReader) Attributes() *driver.ReaderAttributes { return &driver.ReaderAttributes{} }
 func (r *fakeReader) As(any) bool                          { return false }
 
-// The claim vanished between our failed create and our read (N-10): the
+// The claim vanished between our failed create and our read: the
 // second create wins.
 func TestClaimRetriesWhenTheClaimVanishes(t *testing.T) {
 	f := &fakeBucket{conflicts: 1}

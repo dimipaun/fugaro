@@ -181,8 +181,7 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 	}
 }
 
-// "." and ".." are no slug: path.Join would take them out of runs/
-// (security review S-M7).
+// "." and ".." are no slug: path.Join would take them out of runs/.
 func TestRunRefRefusesDotSlugs(t *testing.T) {
 	newCloudFixture(t)
 	for _, ref := range []string{"./20260927-100000-abcd", "../20260927-100000-abcd"} {

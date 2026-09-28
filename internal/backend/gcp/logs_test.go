@@ -155,7 +155,7 @@ func TestLogsFollowSurvivesAFutureDatedEntry(t *testing.T) {
 }
 
 // An execution the backend has forgotten has finished: follow settles on
-// its logs instead of failing (C-M12).
+// its logs instead of failing.
 func TestLogsFollowSettlesOnAForgottenExecution(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)

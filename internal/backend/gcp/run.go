@@ -36,12 +36,13 @@ func (b *Backend) JobPath(slug, workflow string) string {
 var nameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
 
 // canonical rebuilds an execution name with the backend's project ID, so a
-// project number the API sends never reaches a caller (plan C-1, I-9).
+// project number the API sends never reaches a caller: the CLI and the
+// runner store the same name for one execution.
 //
 // Names reach it from bucket objects a run's own service account can write
 // (result.json, launch.json), so it follows only a name in the backend's
-// region whose every part is [a-z0-9-]: nothing else reaches a request path
-// (security review S-I2). Callers that know the run bind the job too (the
+// region whose every part is [a-z0-9-]: nothing else reaches a request
+// path. Callers that know the run bind the job too (the
 // CLI's checkExecution).
 func (b *Backend) canonical(name string) (backend.ExecID, error) {
 	id, err := parseInRegion(name, b.o.Region)
@@ -75,7 +76,7 @@ func parseInRegion(name, region string) (backend.ExecID, error) {
 // JobName(slug, workflow), in region, spelled [a-z0-9-] throughout. The
 // run's service account can rewrite those objects, so without this check
 // a run could point the operator's cancel or logs at any job in the
-// project (security review S-I2).
+// project.
 func CheckRunExecution(name, region, slug, workflow string) error {
 	id, err := parseInRegion(name, region)
 	if err != nil {
@@ -197,7 +198,7 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 			// The API sorts by creation time, newest first: everything after
 			// the first execution older than Since is older too. For the
 			// jobs/- wildcard this assumes one ordering across every job,
-			// not per job; T20's live run must confirm it (C-M8). If it is
+			// not per job; the live checklist's run must confirm it. If it is
 			// per job, executions of other jobs are cut off here, and ls
 			// falls back to one Get per run (slower, still correct).
 			if !f.Since.IsZero() {

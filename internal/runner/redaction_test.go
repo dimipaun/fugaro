@@ -28,7 +28,7 @@ func objectsContaining(t *testing.T, h *harness, needle string) []string {
 	return out
 }
 
-// TestVerifyRecordsInResultAreRedacted pins S-M3: failed test names come
+// TestVerifyRecordsInResultAreRedacted: failed test names come
 // from reports the agent can write, so a secret in one is redacted in
 // result.json and verify/<n>.json.
 func TestVerifyRecordsInResultAreRedacted(t *testing.T) {
@@ -49,7 +49,7 @@ func TestVerifyRecordsInResultAreRedacted(t *testing.T) {
 	}
 }
 
-// TestMountedSecretsAreRedactedFromTheStart pins S-M2: every secret the
+// TestMountedSecretsAreRedactedFromTheStart: every secret the
 // job mounts is named in FUGARO_SECRET_ENVS and redacted, whether or not
 // the fugaro.yaml at the task's ref declares it.
 func TestMountedSecretsAreRedactedFromTheStart(t *testing.T) {

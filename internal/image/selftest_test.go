@@ -167,7 +167,7 @@ func TestSelftestFailures(t *testing.T) {
 	}
 }
 
-// --- Controller additions: setuid-root binaries and /etc/sudoers.d/sudoers
+// --- Hardening checks: setuid-root binaries and /etc/sudoers.d/sudoers
 // content. These are gated behind spec.CheckHardening because they inspect
 // real filesystem paths (/, /etc/sudoers.d, /etc/sudoers) that only make
 // sense inside the finished container; TestSelftestPasses above runs on the

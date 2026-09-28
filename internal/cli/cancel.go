@@ -120,7 +120,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		if claim == nil || time.Since(claim.At) >= runstore.ClaimTTL {
 			return emit(cancelResult{Run: ref, Status: cancelNotLaunched, Marker: true})
 		}
-		// A launch is in flight (C-I3). Its launcher re-checks the marker
+		// A launch is in flight. Its launcher re-checks the marker
 		// after claiming; if it had already passed that point, wait for its
 		// launch.json and cancel the execution like any launched run.
 		if l, err = awaitLaunch(ctx, env, s, id, o.poll); err != nil {
@@ -191,7 +191,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 			return emit(finalized(ref, marker, rec))
 		}
 		e, err := env.be.Execution(ctx, l.Execution)
-		gone := errors.Is(err, backend.ErrNotFound) // forgotten: finished (note 5)
+		gone := errors.Is(err, backend.ErrNotFound) // a forgotten execution has finished
 		if err != nil && !gone {
 			return remote(err)
 		}
@@ -261,11 +261,12 @@ func runTime(id string) time.Time {
 // runnerReaction is how long the runner can take to act on the cancel
 // marker before its finalize reserve even starts: one cancel poll (the
 // runner's default CancelPoll, 30s) plus the stage's SIGTERM-to-SIGKILL
-// grace (procgroup's default, 10s) (C-M5).
+// grace (procgroup's default, 10s).
 const runnerReaction = 30*time.Second + 10*time.Second
 
 // graceFloor is the least grace cancel waits, and what it is: the run's
-// finalize reserve (finalizeReserve) plus runnerReaction (plan I-4, note 8).
+// finalize reserve (finalizeReserve) plus runnerReaction, so
+// finalize gets its whole reserve after the runner notices the marker.
 func graceFloor(ctx context.Context, s *runstore.Store, o *cancelOptions) (time.Duration, string) {
 	if o.floorSet {
 		return o.floor, "--grace-floor"

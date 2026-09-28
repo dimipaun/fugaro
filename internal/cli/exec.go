@@ -60,7 +60,8 @@ func newExecCmd() *cobra.Command {
 func runExec(cmd *cobra.Command, o execOptions) error {
 	ctx := cmd.Context()
 	// The runner talks to Google too (the bucket, the metadata server), so
-	// it refuses http2debug as every cloud command does (S-M1).
+	// it refuses http2debug as every cloud command does: Go would log its
+	// bearer tokens.
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}

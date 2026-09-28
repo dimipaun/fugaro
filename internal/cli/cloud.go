@@ -134,7 +134,8 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 
 // checkExecution refuses name, an execution name read from the bucket
 // objects of run slug (whose task is spec), unless it is an execution of
-// the run's own job in this region (gcp.CheckRunExecution, S-I2). Without
+// the run's own job in this region (gcp.CheckRunExecution): the run's service account can write those
+// objects, so they could name another repository's job. Without
 // a readable task there is no job to bind it to, so it is refused too.
 func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 	if spec == nil || spec.Workflow == "" {

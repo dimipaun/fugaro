@@ -255,7 +255,7 @@ func httpStatus(err error) int {
 }
 
 // TestLiveListAndLogs lists executions read-only, records the name form the
-// API returns (project ID or number: I-9), and reads the newest execution's
+// API returns (project ID or number), and reads the newest execution's
 // first log entries through the execution_name label filter.
 func TestLiveListAndLogs(t *testing.T) {
 	e := openLive(t)
@@ -547,7 +547,7 @@ func impersonatedStorage(t *testing.T, ctx context.Context, sa string) *storage.
 	return c
 }
 
-// TestLiveJobSADeniedOutsideItsPrefixes (I-5) acts as the sandbox job's
+// TestLiveJobSADeniedOutsideItsPrefixes acts as the sandbox job's
 // service account and checks that its conditional objectUser binding allows
 // its own runs/, cache/ and locks/ prefixes and nothing else: not a slug
 // that merely shares the prefix, not another slug, and not a listing.

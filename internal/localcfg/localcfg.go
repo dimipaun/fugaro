@@ -189,7 +189,7 @@ func (c *Config) Override(project, region string) error {
 
 // checkEndpoint refuses an endpoint the operator's credentials must not
 // be sent to: anything but https, or plain http to this machine (the
-// fakes tests run), or one carrying userinfo (security review S-M5).
+// fakes tests run), or one carrying userinfo.
 func checkEndpoint(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {

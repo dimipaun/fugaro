@@ -310,7 +310,7 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 		return in, nil
 	}
 	// The record names the execution that owns the run; launch.json may
-	// name a duplicate after a double launch (N-2).
+	// name a duplicate after a double launch.
 	name := ""
 	if in.Record != nil {
 		name = in.Record.Execution
@@ -322,7 +322,7 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 		return in, nil
 	}
 	// The run's service account can write both objects: follow only an
-	// execution of the run's own job (S-I2).
+	// execution of the run's own job.
 	if err := env.checkExecution(name, slug, in.Task); err != nil {
 		in.Problem = "not following its execution: " + err.Error()
 		warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
@@ -344,7 +344,7 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	// The record was read before the execution: a runner that wrote its
 	// final record and exited in between would look like one that died
 	// without finalizing. Once the execution has ended (or is gone), read
-	// the record again, so it is as new as the execution (C-M1).
+	// the record again, so it is as new as the execution.
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
 		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
 			return in, err

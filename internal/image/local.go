@@ -210,9 +210,9 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 		return res, nil
 	}
 
-	// Controller ruling: `image build --local`'s in-image selftest always
-	// checks the finished image's own hardening, alongside the checkout
-	// check; this is not a user option. The sudoers check runs here, and
+	// `image build --local`'s in-image selftest always checks the finished
+	// image's own hardening, alongside the checkout check; this is not a
+	// user option, since an image that fails it must not be pushed. The sudoers check runs here, and
 	// the setuid, setgid and file-capability scans run as root below.
 	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true, Verify: verify.Settings{
 		RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,

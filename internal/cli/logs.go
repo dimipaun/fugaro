@@ -107,11 +107,13 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 	return s, l, slug + "/" + id, nil
 }
 
-// ownerLaunch is the run's launch as the views must see it (N-2): the
+// ownerLaunch is the run's launch as the views must see it: the
 // execution result.json names, when set, since that is the one that owns
-// the run; else launch.json's. nil means never launched. Unlike
+// the run (after a double launch, launch.json may name the duplicate);
+// else launch.json's. nil means never launched. Unlike
 // existingLaunch it never writes: it serves read-only views. An execution
-// that is not of the run's own job is an error, never followed (S-I2).
+// that is not of the run's own job is an error, never followed: the run's
+// service account can write the objects that name it.
 func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
 	l, err := absent(s.ReadLaunch(ctx))
 	if err != nil {

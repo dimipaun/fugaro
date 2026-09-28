@@ -122,13 +122,13 @@ In the commands below, `T` is short for
 
 | # | Check | Command | Expected |
 |---|---|---|---|
-| 1 | Execution names from `executions.list` (project ID or number, I-9) | `T -run TestLiveListAndLogs ./internal/backend/gcp/` | A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
+| 1 | Execution names from `executions.list` (project ID or number) | `T -run TestLiveListAndLogs ./internal/backend/gcp/` | A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
 | 2 | The log filter `labels."run.googleapis.com/execution_name"` works | same test | The newest Fugaro execution has at least 1 log entry, and at most 10 are read. It fails if there are none. |
 | 3 | The operation metadata of `jobs.run` is an Execution | `T -run TestLiveExecutionProbe ./internal/backend/gcp/` | `metadata @type="type.googleapis.com/google.cloud.run.v2.Execution"`, and `name` is a parseable execution. The probe's `task.json` has version 999, so the runner exits at once without cloning or starting an agent. |
 | 4 | The forms Cloud Run returns for CPU and memory limits | same test | `FACT` lines give the `jobs.get` and `executions.get` limits, for example `cpu="1"` or `"1000m"` and `memory="2Gi"`. The backend parses them to CPU > 0 and MemoryGiB > 0. It fails if the cost would be unknown. |
-| 5 | What cancelling a finished execution returns | same test | The HTTP code, status and message are recorded, and the state stays terminal. Expect a `FAILED_PRECONDITION` (400). `cancel` must tolerate this (controller note 3). |
+| 5 | What cancelling a finished execution returns | same test | The HTTP code, status and message are recorded, and the state stays terminal. Expect a `FAILED_PRECONDITION` (400). `cancel` must tolerate this, since a run can finish between its read and the cancel. |
 | 6 | The log label key, read raw | same test | A raw entry of the probe execution has the `run.googleapis.com/execution_name` label, and the backend's `Logs` finds at least 1 entry. |
-| 7 | The IAM prefix condition denies the job SA outside its prefixes (I-5) | `T -run TestLiveJobSADeniedOutsideItsPrefixes ./internal/backend/gcp/` | Acting as the job SA: a write and a delete under its own `runs/`, `cache/` and `locks/` `<slug>/` prefixes are allowed. Writes to `runs/<slug>-x/…` and `runs/other/…` get 403. A read of `runs/other/…/task.json` gets 403. Listing `runs/` gets 403. The test skips unless `FUGARO_LIVE_JOB_SA` is set, and fails if it names any other SA. |
+| 7 | The IAM prefix condition denies the job SA outside its prefixes | `T -run TestLiveJobSADeniedOutsideItsPrefixes ./internal/backend/gcp/` | Acting as the job SA: a write and a delete under its own `runs/`, `cache/` and `locks/` `<slug>/` prefixes are allowed. Writes to `runs/<slug>-x/…` and `runs/other/…` get 403. A read of `runs/other/…/task.json` gets 403. Listing `runs/` gets 403. The test skips unless `FUGARO_LIVE_JOB_SA` is set, and fails if it names any other SA. |
 | 8 | Secret Manager set, list and delete | `T -run TestLiveSecretsRoundTrip ./internal/backend/gcp/` | `Set` returns version `"1"`. `List` by labels shows 1 version with the matching latest. `Delete` succeeds. The value is random and never logged. |
 | 9 | The lock's generation preconditions on real GCS | `T -run TestLiveLockOnGCS ./internal/backend/gcp/` | A second holder gets `BusyError`, an expired takeover succeeds, and the old holder's `Release` leaves the new lock in place. The final `Release` deletes it. |
 | 10 | Cache save and restore, and `customTime` | `T -run TestLiveCacheOnGCS ./internal/backend/gcp/` | The 1 MiB archive is saved with a non-zero `customTime` and restores byte for byte. |
@@ -145,7 +145,7 @@ For check 13, `TestLiveSandboxRun` checks the following:
   PR URL within 30m. It is polled every 20s.
 - `cost.model_basis` is `subscription`, `compute_usd` is above 0, and
   `total_usd` is `compute_usd` rounded to the cent. `totals.total_usd` is
-  within 0.01 of the sum of the rows (I-6).
+  within 0.01 of the sum of the rows.
 - `logs --json` holds a `stage started` line and an `"event":"tool"` entry.
 - `diagnose --json` gives the same PR URL.
 - `result.json` has `stage: writeback`, and its execution matches

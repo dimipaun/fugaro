@@ -93,7 +93,7 @@ func TestCancelNeverHardCancelsDuringFinalize(t *testing.T) {
 	}
 }
 
-// N-2: after a double launch, launch.json names a duplicate that exited at
+// After a double launch, launch.json names a duplicate that exited at
 // once, and result.json names the execution that owns the run. ls and
 // cancel must follow the record.
 func TestDoubleLaunchViewsFollowTheRecord(t *testing.T) {
@@ -349,7 +349,7 @@ func TestGraceFloorDefaultsToTheFinalizeReserve(t *testing.T) {
 	defer b.Close()
 	// This test's working directory is not a checkout of acme/app, so the
 	// workflow's reserve is unknown here. The floor adds the time the runner
-	// takes to notice the marker and stop the stage (C-M5): 30s poll, 10s kill.
+	// takes to notice the marker and stop the stage: 30s poll, 10s kill.
 	if got, _ := graceFloor(context.Background(), runstore.Open(b, appSlug, id), &cancelOptions{}); got != defaultFinalizeReserve+40*time.Second {
 		t.Fatalf("floor = %s, want %s", got, defaultFinalizeReserve+40*time.Second)
 	}

@@ -16,7 +16,7 @@ import (
 // Statuses beyond runstore's.
 const (
 	StatusUnlaunched = "unlaunched"
-	StatusLaunching  = "launching" // a fresh launch claim, no launch.json yet (N-11)
+	StatusLaunching  = "launching" // a fresh launch claim, no launch.json yet
 	StatusPending    = "pending"
 	// StatusError is a run whose objects can't be trusted or read (a
 	// corrupt launch.json or result.json, an execution that isn't the
@@ -26,7 +26,7 @@ const (
 
 // ReasonLost explains a launched run that the backend doesn't know and that
 // never wrote a record, past runstore.ClaimTTL after its launch: it failed
-// before the runner started, and its execution is gone (C-I2).
+// before the runner started, and its execution is gone.
 const ReasonLost = "no execution found and the runner never recorded the run"
 
 // ReasonNoFinalRecord explains a run whose execution is gone but whose
@@ -66,7 +66,7 @@ type Row struct {
 	Terminal    bool          `json:"terminal"`
 	// Settled means the row won't change on its own: terminal, or
 	// unlaunched (nobody is launching it). ls --watch stops when every row
-	// is settled (N-11).
+	// is settled; a launching row is not, since its launch.json is coming.
 	Settled bool `json:"settled"`
 }
 
@@ -97,7 +97,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		}
 		if r.Execution != "" {
 			// The runner's record names the execution that owns the run; after
-			// a double launch, launch.json may name the duplicate (N-2).
+			// a double launch, launch.json may name the duplicate.
 			row.Execution = r.Execution
 		}
 	}
@@ -134,7 +134,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Status, row.Reason = string(runstore.StatusInfraError), "no execution found and past the run's deadline"
 	case e == nil && r != nil && r.Deadline == nil:
 		// Nothing bounds it and nothing runs it: it will never finish on
-		// its own (controller note 5).
+		// its own.
 		row.Status, row.Reason = string(runstore.StatusInfraError), "no execution found and the run has no deadline"
 	case e != nil || r != nil:
 		row.Status = string(runstore.StatusRunning)
@@ -168,7 +168,7 @@ func Lost(l *runstore.Launch, created, now time.Time) bool {
 
 // cost is the row's cost: the model spend from the record, and compute
 // from the execution when its resources are known, priced in the
-// execution's own region (C-M9), else the record's.
+// execution's own region, else the record's.
 func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.Time) runstore.Cost {
 	basis, model := runstore.BasisAPIList, 0.0
 	var stored *runstore.Cost

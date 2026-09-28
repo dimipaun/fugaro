@@ -127,13 +127,13 @@ func TestRenderFull(t *testing.T) {
 	if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
 		t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
 	}
-	// Controller ruling: once image.setup steps run as fugaro with
+	// Once image.setup steps run as fugaro with
 	// build-time sudo, the derived image must remove both the sudo grant
 	// and sudo's setuid bit, leaving no privilege-escalation path.
 	if !strings.Contains(string(got), "RUN rm -f /etc/sudoers.d/fugaro-build \\\n && { [ ! -e /usr/bin/sudo ] || chmod u-s /usr/bin/sudo; } \\\n && { [ ! -e /usr/bin/su ] || chmod u-s /usr/bin/su; }\n") {
 		t.Errorf("Render does not remove the sudo grant and drop sudo's setuid bit:\n%s", got)
 	}
-	// Fix round 1 (security review): the sudo grant must be active only
+	// The sudo grant must be active only
 	// around the setup steps, not during the dependency warm-up, so it
 	// must be written after "Dependency warm-up" and before "image.setup
 	// steps.".
@@ -145,7 +145,7 @@ func TestRenderFull(t *testing.T) {
 	}
 }
 
-// Fix round 1 (security review): a setup step starting with "-" or "["
+// A setup step starting with "-" or "["
 // would be read as a RUN flag (a build-time secret mount, for example) or
 // exec form rather than a shell command, which could smuggle the clone
 // credential into a layer. internal/config already rejects this at

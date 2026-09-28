@@ -98,7 +98,7 @@ func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		// An execution the backend has forgotten has finished (C-M12):
+		// An execution the backend has forgotten has finished:
 		// settle on its logs like any ended one.
 		ended := errors.Is(err, backend.ErrNotFound)
 		if err != nil && !ended {

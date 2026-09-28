@@ -473,7 +473,7 @@ func TestLiveSandboxRun(t *testing.T) {
 		t.Fatalf("row = %v: want succeeded or failed, with a PR", row)
 	}
 
-	// Cost (I-6): subscription basis; the total is compute to the cent.
+	// Cost: subscription basis; the total is compute to the cent.
 	cost, _ := row["cost"].(map[string]any)
 	compute, _ := cost["compute_usd"].(float64)
 	total, _ := cost["total_usd"].(float64)

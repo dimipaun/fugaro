@@ -153,7 +153,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 }
 
 // TestFugaroSchemaReservesTheSameEnv keeps the schema's reserved secret
-// variables in step with config.ReservedEnv (S-M1).
+// variables in step with config.ReservedEnv.
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(env string) []byte {

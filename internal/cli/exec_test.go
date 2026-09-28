@@ -136,7 +136,7 @@ func TestExecRejectsTaskFileOnCloudRun(t *testing.T) {
 	}
 }
 
-// TestExecRefusesHTTP2Debug pins S-M1's exec half: with GODEBUG's
+// TestExecRefusesHTTP2Debug: with GODEBUG's
 // http2debug, Go would print the runner's bearer tokens to its logs.
 func TestExecRefusesHTTP2Debug(t *testing.T) {
 	t.Setenv("FUGARO_RUN", "")

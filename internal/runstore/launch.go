@@ -66,7 +66,7 @@ func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool
 		}
 		raw, rerr := s.readRecordObject(ctx, "launching")
 		if errors.Is(rerr, ErrNotFound) && attempt == 0 {
-			continue // released between our create and our read: absent, so try once more (N-10)
+			continue // released between our create and our read: absent, so try once more
 		}
 		if rerr != nil {
 			return false, nil, rerr
@@ -76,12 +76,14 @@ func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool
 			return false, &Claim{}, nil // unreadable: treat as held since the zero time
 		}
 		// existing is informational (ls, messages). A takeover must judge
-		// staleness on its own generation-carrying read (Task 10, N-1).
+		// staleness on its own generation-carrying read, or it could replace a
+		// claim that turned fresh after this read.
 		return false, &c, nil
 	}
 }
 
-// ClaimKey is the claim's object name, for Task 10's conditional takeover.
+// ClaimKey is the claim's object name, for the CLI's conditional takeover
+// of a stale claim.
 func (s *Store) ClaimKey() string { return s.prefix + "launching" }
 
 // ClaimTTL is how long a launch claim protects a launch in flight. After

@@ -3,8 +3,8 @@
 # module (design §8) replaces every resource it creates. Dry run by default:
 # each command is printed with a leading "+" and nothing but the read-only
 # `fugaro gcp job-spec` runs. --apply runs one step, after its ⚠ CONFIRM has
-# been confirmed: typed at the terminal, or with --yes, which the controller
-# passes only after the user confirms that step.
+# been confirmed: typed at the terminal, or with --yes, which an agent
+# driving the script passes only after the user confirms that step.
 #
 # usage: gcp-m4.sh [--apply [--yes]] STEP [--all] [--secrets]
 #

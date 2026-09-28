@@ -114,7 +114,7 @@ func TestMe(t *testing.T) {
 
 // With no_auth unset the CLI sends the operator's ADC bearer token to each
 // endpoint, so only https, or plain http to this machine (fakes), is
-// allowed (security review S-M5).
+// allowed.
 func TestParseEndpoints(t *testing.T) {
 	for _, ok := range []string{"https://run.example.com/", "http://127.0.0.1:8080/", "http://localhost:9/", "http://[::1]:9/"} {
 		if _, err := Parse([]byte(sample + "endpoints: { run: \"" + ok + "\" }\n")); err != nil {

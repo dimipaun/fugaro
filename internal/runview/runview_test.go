@@ -112,7 +112,7 @@ func TestJoinCostUsesExecutionAndBasis(t *testing.T) {
 }
 
 // A running record with no deadline and no execution the backend knows
-// can never finish on its own: infra_error (controller note 5, T6 review).
+// can never finish on its own: infra_error.
 func TestJoinRunningWithoutDeadlineOrExecution(t *testing.T) {
 	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil)}, prices, now)
 	if row.Status != "infra_error" || !row.Settled {
@@ -132,14 +132,15 @@ func TestJoinCostWithoutExecution(t *testing.T) {
 		t.Fatalf("no stored cost: %+v", row.Cost)
 	}
 	e := exec(backend.StateSucceeded)
-	e.CPU, e.MemoryGiB = 0, 0 // resources unknown (controller note 3)
+	e.CPU, e.MemoryGiB = 0, 0 // resources unknown: the stored cost stands
 	row = Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, &stored), Exec: e}, prices, now)
 	if row.Cost.ComputeUSD != 0.5 || !row.Cost.ComputeEstimated {
 		t.Fatalf("unknown resources: %+v", row.Cost)
 	}
 }
 
-// The record's execution wins over launch.json's (N-2).
+// The record's execution wins over launch.json's, which may name a
+// duplicate after a double launch.
 func TestJoinPrefersRecordExecution(t *testing.T) {
 	r := rec(runstore.StatusSucceeded, nil)
 	r.Execution = "exec-owner"
@@ -160,7 +161,7 @@ func TestJoinProblemIsAnErrorRow(t *testing.T) {
 // A launched run that never wrote a record, and whose execution the
 // backend doesn't know, is lost once the claim TTL has passed: it failed
 // before the runner started (an image pull, a crash at start) and was
-// garbage-collected. It must settle, so ls --watch can stop (C-I2).
+// garbage-collected. It must settle, so ls --watch can stop.
 func TestJoinLaunchedRunLostWithoutRecord(t *testing.T) {
 	old := *launch
 	old.LaunchedAt = now.Add(-runstore.ClaimTTL - time.Second)
@@ -179,7 +180,7 @@ func TestJoinLaunchedRunLostWithoutRecord(t *testing.T) {
 	}
 }
 
-// Compute is priced in the execution's own region (C-M9).
+// Compute is priced in the execution's own region, not the local config's.
 func TestJoinPricesTheExecutionsRegion(t *testing.T) {
 	e := exec(backend.StateSucceeded)
 	e.Name = "projects/p/locations/europe-west2/jobs/j/executions/j-1"

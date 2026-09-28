@@ -110,7 +110,7 @@ var ErrExists = errors.New("already exists")
 // ErrTooLarge means an object is larger than its read cap.
 var ErrTooLarge = errors.New("object is larger than its read cap")
 
-// Read caps (S-M4). The job's service account, and so a run's agent, can
+// Read caps. The job's service account, and so a run's agent, can
 // write every object under runs/, and the CLI reads them on the
 // operator's machine: a hostile object of gigabytes must fail with
 // ErrTooLarge rather than exhaust memory. MaxRecordBytes caps the JSON

@@ -309,8 +309,8 @@ func TestCancelFinishedExecutionFails(t *testing.T) {
 }
 
 // Execution names come from bucket objects a run can write: the backend
-// follows only its own region's names, spelled [a-z0-9-] (security review
-// S-I2), and never sends another to the API.
+// follows only its own region's names, spelled [a-z0-9-], and never sends
+// another to the API.
 func TestExecutionNamesArePinnedToTheRegion(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
