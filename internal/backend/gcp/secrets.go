@@ -57,20 +57,28 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 func (s *Secrets) Set(ctx context.Context, id string, value []byte, labels map[string]string) (string, error) {
 	name := s.name(id)
 	sec, err := s.svc.Projects.Secrets.Get(name).Context(ctx).Do()
-	var ae *googleapi.Error
 	switch {
-	case errors.As(err, &ae) && ae.Code == http.StatusNotFound:
-		sec := &secretmanager.Secret{Labels: labels, Replication: &secretmanager.Replication{Automatic: &secretmanager.Automatic{}}}
-		if _, err = s.svc.Projects.Secrets.Create("projects/"+s.project, sec).SecretId(id).Context(ctx).Do(); err != nil {
+	case isStatus(err, http.StatusNotFound):
+		create := &secretmanager.Secret{Labels: labels, Replication: &secretmanager.Replication{Automatic: &secretmanager.Automatic{}}}
+		_, err = s.svc.Projects.Secrets.Create("projects/"+s.project, create).SecretId(id).Context(ctx).Do()
+		switch {
+		case isStatus(err, http.StatusConflict):
+			// Created since the get, by a concurrent set or someone else:
+			// it is ours only if its labels say so.
+			if sec, err = s.svc.Projects.Secrets.Get(name).Context(ctx).Do(); err != nil {
+				return "", fmt.Errorf("reading secret %s: %w", id, err)
+			}
+			if err := checkLabels(id, sec, labels); err != nil {
+				return "", err
+			}
+		case err != nil:
 			return "", fmt.Errorf("creating secret %s: %w", id, err)
 		}
 	case err != nil:
 		return "", fmt.Errorf("reading secret %s: %w", id, err)
 	default:
-		for _, k := range slices.Sorted(maps.Keys(labels)) {
-			if got, ok := sec.Labels[k]; !ok || got != labels[k] {
-				return "", fmt.Errorf("secret %s has label %s=%q, want %q: %w", id, k, got, labels[k], ErrForeignSecret)
-			}
+		if err := checkLabels(id, sec, labels); err != nil {
+			return "", err
 		}
 	}
 	v, err := s.svc.Projects.Secrets.AddVersion(name, &secretmanager.AddSecretVersionRequest{
@@ -80,6 +88,21 @@ func (s *Secrets) Set(ctx context.Context, id string, value []byte, labels map[s
 		return "", fmt.Errorf("adding a version to secret %s: %w", id, err)
 	}
 	return lastSegment(v.Name), nil
+}
+
+func isStatus(err error, code int) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == code
+}
+
+// checkLabels is ErrForeignSecret unless sec carries every one of labels.
+func checkLabels(id string, sec *secretmanager.Secret, labels map[string]string) error {
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		if got, ok := sec.Labels[k]; !ok || got != labels[k] {
+			return fmt.Errorf("secret %s has label %s=%q, want %q: %w", id, k, got, labels[k], ErrForeignSecret)
+		}
+	}
+	return nil
 }
 
 // List lists the secrets carrying all of labels, with their version counts

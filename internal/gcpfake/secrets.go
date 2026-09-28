@@ -27,6 +27,10 @@ type Secrets struct {
 	// FailAddVersion, when set, makes addVersion answer 400 with this
 	// message, so a test can make a server echo the payload.
 	FailAddVersion string
+	// OnCreate, when set, is called with the secret ID before a create is
+	// handled (without the fake's lock), so a test can make the secret
+	// appear between the client's get and its create.
+	OnCreate func(id string)
 
 	mu      sync.Mutex
 	secrets map[string]*fakeSecret // by ID
@@ -75,6 +79,9 @@ func (f *Secrets) Seed(id string, labels map[string]string, value []byte) {
 }
 
 func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if r.Method == http.MethodPost && secretsPathRE.MatchString(r.URL.Path) && f.OnCreate != nil {
+		f.OnCreate(r.URL.Query().Get("secretId"))
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	p := r.URL.Path

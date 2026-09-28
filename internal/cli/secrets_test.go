@@ -2,14 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const tokenValue = "sk-ant-oat01-EXAMPLEEXAMPLEEXAMPLE"
@@ -96,8 +99,22 @@ func TestSecretsSetNeverEchoes(t *testing.T) {
 			t.Fatalf("%v echoed the value: %q %q %v", args[:2], out, errOut, err)
 		}
 	}
+	// Nor where a flag or --repo's value goes, or as a subcommand.
+	for _, args := range [][]string{
+		{"secrets", "set", "claude-oauth-token", "--repo", "acme/app", "-" + tokenValue},
+		{"secrets", "set", "claude-oauth-token", "--repo", "acme/app", "--" + tokenValue},
+		{"secrets", "ls", "--" + tokenValue},
+		{"secrets", "set", "claude-oauth-token", "--repo", tokenValue},
+		{"secrets", "set", "claude-oauth-token", "--repo", "acme/" + tokenValue + ".git/.."},
+		{"secrets", tokenValue},
+	} {
+		out, errOut, err := executeStdin(t, "", args...)
+		if ExitCode(err) != ExitUserError || strings.Contains(out+errOut+err.Error(), tokenValue) {
+			t.Fatalf("%q: exit %d, echoed the value? %q %q %v", args, ExitCode(err), out, errOut, err)
+		}
+	}
 	help, _, _ := execute(t, "secrets", "set", "--help")
-	if strings.Contains(help, "--value") || !strings.Contains(help, "stdin") {
+	if strings.Contains(help, "--value") || !strings.Contains(help, "stdin") || !strings.Contains(help, "spaces or tabs") {
 		t.Fatalf("secrets set help:\n%s", help)
 	}
 }
@@ -124,25 +141,79 @@ func TestSecretsSetRejectsMultiline(t *testing.T) {
 			t.Errorf("bad name %q accepted", name)
 		}
 	}
-	// A workflow secret's name is fine.
-	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo", "acme/app"); err != nil {
-		t.Fatalf("workflow secret: %v", err)
-	}
 	if sm.Latest(bitbucketSecret) != nil {
 		t.Fatal("a refused value was stored")
 	}
 }
 
+// appCheckout makes a checkout of acme/app (the fixture's repository) the
+// working directory, with a fugaro.yaml whose web workflow declares
+// npm-token.
+func appCheckout(t *testing.T) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
+	yaml := "version: 1\ngit: { provider: github, base_branch: main }\nworkflows:\n  web:\n    base: web-node\n" +
+		"    commands: { build: sh build.sh, test: sh test.sh }\n    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n"
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+}
+
+// TestSecretsSetWorkflowSecretMustBeDeclared: reserved names work from
+// anywhere; a workflow secret only when the checkout's fugaro.yaml declares
+// it, so a typo or a value typed as NAME is refused, unquoted.
+func TestSecretsSetWorkflowSecretMustBeDeclared(t *testing.T) {
+	sm := secretsFixture(t)
+	t.Chdir(t.TempDir()) // no checkout
+	const typed = "sk-ant-oat01-lowercase-token"
+	for _, name := range []string{"npm-token", typed} {
+		if _, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
+			!strings.Contains(err.Error(), "checkout") || strings.Contains(err.Error()+errOut, typed) {
+			t.Fatalf("%s without a checkout: %v", name, err)
+		}
+	}
+	appCheckout(t)
+	for _, name := range []string{"npm-tokn", typed} {
+		if _, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
+			!strings.Contains(err.Error(), "declares") || strings.Contains(err.Error()+errOut, typed) || strings.Contains(err.Error(), "npm-tokn") {
+			t.Fatalf("undeclared %s: %v", name, err)
+		}
+	}
+	out, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token") // --repo from the origin
+	if err != nil || !strings.Contains(out, gcp.SecretID(appSlug, "npm-token")) {
+		t.Fatalf("declared workflow secret: %q, %v", out, err)
+	}
+	if got := string(sm.Latest(gcp.SecretID(appSlug, "npm-token"))); got != tokenValue {
+		t.Fatalf("stored %q", got)
+	}
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "bitbucket-token"); err != nil {
+		t.Fatalf("reserved name in a checkout: %v", err)
+	}
+}
+
+func TestSecretsUnknownSubcommand(t *testing.T) {
+	if _, _, err := execute(t, "secrets", "lss"); ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "lss") {
+		t.Fatalf("secrets lss: %v", err)
+	}
+	if out, _, err := execute(t, "secrets"); err != nil || !strings.Contains(out, "set") {
+		t.Fatalf("secrets: %q, %v", out, err)
+	}
+}
+
 func TestSecretsSetSizeCap(t *testing.T) {
 	sm := secretsFixture(t)
-	max := strings.Repeat("x", 64*1024)
-	if _, _, err := executeStdin(t, max+"\n", "secrets", "set", "bitbucket-token", "--repo", "acme/app"); err != nil {
+	limit := strings.Repeat("x", 64*1024)
+	if _, _, err := executeStdin(t, limit+"\n", "secrets", "set", "bitbucket-token", "--repo", "acme/app"); err != nil {
 		t.Fatalf("64 KiB value: %v", err)
 	}
 	if got := len(sm.Latest(bitbucketSecret)); got != 64*1024 {
 		t.Fatalf("stored %d bytes", got)
 	}
-	if _, _, err := executeStdin(t, max+"x", "secrets", "set", "bitbucket-token", "--repo", "acme/app"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "64 KiB") {
+	if _, _, err := executeStdin(t, limit+"x", "secrets", "set", "bitbucket-token", "--repo", "acme/app"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "64 KiB") {
 		t.Fatalf("oversized value: %v", err)
 	}
 }
@@ -207,12 +278,12 @@ func TestSecretsLs(t *testing.T) {
 
 func TestReadSecret(t *testing.T) {
 	var note bytes.Buffer
-	got, err := readSecret(strings.NewReader("abcd\n"), &note, "x", false)
+	got, err := readSecret(context.Background(), strings.NewReader("abcd\n"), &note, "x", false)
 	if err != nil || string(got) != "abcd" || !strings.Contains(note.String(), "trailing newline") {
 		t.Fatalf("readSecret = %q, %v, note %q", got, err, note.String())
 	}
 	note.Reset()
-	if got, err := readSecret(strings.NewReader("abcd"), &note, "x", false); err != nil || string(got) != "abcd" || note.Len() != 0 {
+	if got, err := readSecret(context.Background(), strings.NewReader("abcd"), &note, "x", false); err != nil || string(got) != "abcd" || note.Len() != 0 {
 		t.Fatalf("no newline: %q, %v, note %q", got, err, note.String())
 	}
 	// A pipe that is an *os.File (not a terminal) is read to EOF too.
@@ -222,19 +293,19 @@ func TestReadSecret(t *testing.T) {
 	}
 	_, _ = w.WriteString("piped-value\r\n")
 	w.Close()
-	if got, err := readSecret(r, &note, "x", false); err != nil || string(got) != "piped-value" {
+	if got, err := readSecret(context.Background(), r, &note, "x", false); err != nil || string(got) != "piped-value" {
 		t.Fatalf("os.Pipe = %q, %v", got, err)
 	}
 	r.Close()
 	// Only one newline is trimmed; the rest is a multi-line value.
-	if _, err := readSecret(strings.NewReader("abcd\n\n"), &note, "x", false); err == nil {
+	if _, err := readSecret(context.Background(), strings.NewReader("abcd\n\n"), &note, "x", false); err == nil {
 		t.Fatal("two trailing newlines accepted")
 	}
-	if got, err := readSecret(strings.NewReader("ab\ncd\n\n"), &note, "x", true); err != nil || string(got) != "ab\ncd\n" {
+	if got, err := readSecret(context.Background(), strings.NewReader("ab\ncd\n\n"), &note, "x", true); err != nil || string(got) != "ab\ncd\n" {
 		t.Fatalf("multi-line = %q, %v", got, err)
 	}
 	for _, v := range []string{"secret-with\x00nul", " padded-secret"} {
-		if _, err := readSecret(strings.NewReader(v), &note, "x", false); err == nil || strings.Contains(err.Error(), strings.TrimSpace(v)) {
+		if _, err := readSecret(context.Background(), strings.NewReader(v), &note, "x", false); err == nil || strings.Contains(err.Error(), strings.TrimSpace(v)) {
 			t.Errorf("readSecret(%q) = %v", v, err)
 		}
 	}

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -45,7 +46,18 @@ func newSecretsCmd() *cobra.Command {
 		// Set so cobra doesn't answer an unknown subcommand by quoting it:
 		// `fugaro secrets <value>` must not echo the value.
 		Args: cobra.ArbitraryArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return userErr("unknown secrets subcommand; want set or ls (see fugaro secrets --help)")
+		},
 	}
+	// pflag quotes an unknown flag, and a value pasted in the wrong place
+	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
+	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
+		return userErr("unknown or malformed flag; secrets commands take --repo, --json, --config, --project and --region, and never the value")
+	})
 	cmd.AddCommand(newSecretsSetCmd(), newSecretsLsCmd())
 	return cmd
 }
@@ -73,7 +85,8 @@ func newSecretsSetCmd() *cobra.Command {
 Manager, creating the secret if it doesn't exist.
 
 NAME is one of ` + strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", ") + `,
-or a workflow secret's name.
+or a secret some workflow declares under secrets: in the repository's
+fugaro.yaml (run it from a checkout of the repository for those).
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro secrets set bitbucket-token < token-file), or, when stdin is a
@@ -81,7 +94,9 @@ terminal, paste it at a hidden prompt. It is never taken from an argument,
 a flag or the environment, and never printed. One trailing newline (\n or
 \r\n) is dropped, and the command says so. Values must be 4 bytes to
 64 KiB, on one line except for github-app-key (a PEM, which must be
-redirected from a file).`,
+redirected from a file), and a one-line value may not start or end with
+spaces or tabs (a copy-and-paste slip, so it is refused rather than
+stored). Ctrl-C at the prompt stores nothing and restores the terminal.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:
@@ -99,26 +114,47 @@ redirected from a file).`,
 	return cmd
 }
 
-// secretRepo resolves --repo (or the checkout's origin) to its slug and its
-// fugaro_repo label, the same label value job-spec's repo-label gives.
-func secretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (repo, slug, label string, err error) {
+// secretRepo is the repository a secrets command works on.
+type secretRepo struct {
+	repo, slug string
+	label      string                // the fugaro_repo label, job-spec's repo-label
+	checkout   func() *config.Config // the checkout's fugaro.yaml, when it is repo's
+}
+
+// resolveSecretRepo resolves --repo (or the checkout's origin) to its slug
+// and label.
+func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretRepo, error) {
 	ctx := cmd.Context()
-	repo = flag
-	if repo == "" {
-		if repo, err = originRepo(ctx); err != nil {
-			return "", "", "", err
+	r := &secretRepo{repo: flag}
+	var err error
+	if r.repo == "" {
+		if r.repo, err = originRepo(ctx); err != nil {
+			return nil, err
 		}
 	}
-	if _, err := task.CanonicalRepo(repo); err != nil {
-		return "", "", "", userErr("--repo: %v", err)
+	if _, err := task.CanonicalRepo(r.repo); err != nil {
+		return nil, userErr("--repo: %v", err) // CanonicalRepo's error doesn't quote its input
 	}
-	if slug, err = env.repoSlug(repo, checkoutOf(ctx, repo)); err != nil {
-		return "", "", "", err
+	r.checkout = checkoutOf(ctx, r.repo)
+	if r.slug, err = env.repoSlug(r.repo, r.checkout); err != nil {
+		return nil, err
 	}
-	if label, err = repoLabel(slug); err != nil {
-		return "", "", "", userErr("%v", err)
+	if r.label, err = repoLabel(r.slug); err != nil {
+		return nil, userErr("%v", err)
 	}
-	return repo, slug, label, nil
+	return r, nil
+}
+
+// declares reports whether some workflow of cfg lists secret name.
+func declares(cfg *config.Config, name string) bool {
+	for _, wf := range cfg.Workflows {
+		for _, s := range wf.Secrets {
+			if s.Name == name {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
@@ -133,22 +169,34 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	defer env.Close()
-	_, slug, label, err := secretRepo(cmd, env, o.repo)
+	r, err := resolveSecretRepo(cmd, env, o.repo)
 	if err != nil {
 		return err
 	}
-	id := gcp.SecretID(slug, name)
+	if _, reserved := config.ReservedSecrets[name]; !reserved {
+		// A workflow secret must be one the repository declares: a typo
+		// would store an orphan nothing mounts, and a value typed as NAME
+		// would end up in the ID. Neither message quotes NAME.
+		cfg := r.checkout()
+		if cfg == nil {
+			return userErr("a workflow secret's NAME is checked against the repository's fugaro.yaml; run this from a checkout of %s", r.repo)
+		}
+		if !declares(cfg, name) {
+			return userErr("no workflow in this checkout's fugaro.yaml declares that secret NAME; add it under a workflow's secrets: first")
+		}
+	}
+	id := gcp.SecretID(r.slug, name)
 	sm, err := gcp.NewSecrets(ctx, env.gcp)
 	if err != nil {
 		return remote(err)
 	}
 
-	value, err := readSecret(cmd.InOrStdin(), cmd.ErrOrStderr(), name, name == multilineSecret)
+	value, err := readSecret(ctx, cmd.InOrStdin(), cmd.ErrOrStderr(), name, name == multilineSecret)
 	if err != nil {
 		return err
 	}
 	defer clear(value)
-	labels := map[string]string{"fugaro": "managed", "fugaro_repo": label, "fugaro_secret": name}
+	labels := map[string]string{"fugaro": "managed", "fugaro_repo": r.label, "fugaro_secret": name}
 	version, err := sm.Set(ctx, id, value, labels)
 	if err != nil {
 		// A server may echo what it received, raw or base64 as sent.
@@ -170,22 +218,20 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 }
 
 // readSecret reads the value of secret name. From a terminal it prompts on
-// prompt and reads without echo; otherwise it reads in to EOF. It drops one
-// trailing "\n" or "\r\n" (and notes that on prompt), and refuses a value
-// that is empty, shorter than the redaction floor, over 64 KiB, holds a NUL,
-// or, unless multiline, spans lines or has whitespace at either end. Errors
-// never quote the value.
-func readSecret(in io.Reader, prompt io.Writer, name string, multiline bool) ([]byte, error) {
+// prompt and reads without echo (see readHidden); otherwise it reads in to
+// EOF. It drops one trailing "\n" or "\r\n" (and notes that on prompt), and
+// refuses a value that is empty, shorter than the redaction floor, over
+// 64 KiB, holds a NUL, or, unless multiline, spans lines or has whitespace
+// at either end. Errors never quote the value.
+func readSecret(ctx context.Context, in io.Reader, prompt io.Writer, name string, multiline bool) ([]byte, error) {
 	var raw []byte
 	if f, ok := in.(*os.File); ok && term.IsTerminal(int(f.Fd())) {
 		if multiline {
 			return nil, userErr("%s spans several lines, which the hidden prompt can't take; redirect it from a file: fugaro secrets set %s < FILE", name, name)
 		}
-		fmt.Fprintf(prompt, "Paste the value for %s (input hidden), then press Enter: ", name)
-		b, err := term.ReadPassword(int(f.Fd()))
-		fmt.Fprintln(prompt)
+		b, err := readHidden(ctx, f, prompt, name)
 		if err != nil {
-			return nil, userErr("reading the value from the terminal: %v", err)
+			return nil, err
 		}
 		raw = b
 	} else {
@@ -217,6 +263,51 @@ func readSecret(in io.Reader, prompt io.Writer, name string, multiline bool) ([]
 	return raw, nil
 }
 
+// errCancelled is a read abandoned by Ctrl-C (or SIGTERM). It is exit 1,
+// within the CLI's 0/1/2 contract (design §9.1), not the shell's 130.
+var errCancelled = &ExitError{Code: ExitUserError, Err: errors.New("cancelled; nothing was stored")}
+
+// readHidden prompts for name's value on prompt and reads one line from the
+// terminal f without echo. ReadPassword blocks in a read that a signal
+// doesn't interrupt, and the first Ctrl-C only cancels ctx (see main's
+// signalContext); the second kills the process before ReadPassword can turn
+// echo back on. So the read runs in a goroutine, and on ctx.Done() the
+// terminal state saved here is restored before returning. The goroutine
+// stays blocked until the process exits.
+func readHidden(ctx context.Context, f *os.File, prompt io.Writer, name string) ([]byte, error) {
+	fd := int(f.Fd())
+	state, err := term.GetState(fd)
+	if err != nil {
+		return nil, userErr("reading the terminal's state: %v", err)
+	}
+	fmt.Fprintf(prompt, "Paste the value for %s (input hidden), then press Enter: ", name)
+	type result struct {
+		b   []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		b, err := term.ReadPassword(fd)
+		done <- result{b, err}
+	}()
+	select {
+	case r := <-done:
+		fmt.Fprintln(prompt)
+		if ctx.Err() != nil {
+			clear(r.b)
+			return nil, errCancelled
+		}
+		if r.err != nil {
+			return nil, userErr("reading the value from the terminal: %v", r.err)
+		}
+		return r.b, nil
+	case <-ctx.Done():
+		_ = term.Restore(fd, state)
+		fmt.Fprintln(prompt)
+		return nil, errCancelled
+	}
+}
+
 // secretEntry is one line of secrets ls: a secret's metadata, never its value.
 type secretEntry struct {
 	Name string `json:"name,omitempty"` // the logical name, from the fugaro_secret label
@@ -238,7 +329,7 @@ func newSecretsLsCmd() *cobra.Command {
 				return err
 			}
 			defer env.Close()
-			repo, _, label, err := secretRepo(cmd, env, o.repo)
+			r, err := resolveSecretRepo(cmd, env, o.repo)
 			if err != nil {
 				return err
 			}
@@ -246,7 +337,7 @@ func newSecretsLsCmd() *cobra.Command {
 			if err != nil {
 				return remote(err)
 			}
-			list, err := sm.List(ctx, map[string]string{"fugaro_repo": label})
+			list, err := sm.List(ctx, map[string]string{"fugaro_repo": r.label})
 			if err != nil {
 				return remote(err)
 			}
@@ -257,7 +348,7 @@ func newSecretsLsCmd() *cobra.Command {
 			slices.SortFunc(entries, func(a, b secretEntry) int {
 				return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)
 			})
-			return printSecrets(cmd.OutOrStdout(), repo, entries, o.asJSON)
+			return printSecrets(cmd.OutOrStdout(), r.repo, entries, o.asJSON)
 		},
 	}
 	o.addFlags(cmd)

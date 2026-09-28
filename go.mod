@@ -5,11 +5,13 @@ go 1.27
 require (
 	cloud.google.com/go/storage v1.68.0
 	github.com/bmatcuk/doublestar/v4 v4.10.2
+	github.com/creack/pty v1.1.24 // tests only: the hidden-prompt test needs a pseudo-terminal
 	github.com/klauspost/compress v1.20.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	gocloud.dev v0.46.0
-	golang.org/x/term v0.46.0
+	golang.org/x/sys v0.48.0
+	golang.org/x/term v0.46.0 // the hidden prompt of fugaro secrets set
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -55,7 +57,6 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

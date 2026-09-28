@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -125,10 +127,87 @@ func TestSecretsSetRefusesForeignSecret(t *testing.T) {
 	}
 }
 
+// TestSecretsSetCreateRace: a secret created between Set's get and its
+// create (409) is re-read and label-checked, not an error.
+func TestSecretsSetCreateRace(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name, repo string
+		want       error
+	}{{"a concurrent set of ours", "mine", nil}, {"someone else's", "other", ErrForeignSecret}} {
+		t.Run(c.name, func(t *testing.T) {
+			s, sm := newTestSecrets(t)
+			sm.OnCreate = func(id string) {
+				sm.OnCreate = nil
+				sm.Seed(id, map[string]string{"fugaro": "managed", "fugaro_repo": c.repo}, []byte("theirs"))
+			}
+			v, err := s.Set(ctx, "raced", []byte("mine"), map[string]string{"fugaro": "managed", "fugaro_repo": "mine"})
+			if !errors.Is(err, c.want) || (c.want == nil) != (v == "2") {
+				t.Fatalf("Set = %q, %v", v, err)
+			}
+			if want := map[bool]string{true: "mine", false: "theirs"}[c.want == nil]; string(sm.Latest("raced")) != want {
+				t.Fatalf("Latest = %q", sm.Latest("raced"))
+			}
+		})
+	}
+}
+
 func TestSecretsSetAPIError(t *testing.T) {
 	s, sm := newTestSecrets(t)
 	sm.FailAddVersion = "bad payload"
 	if _, err := s.Set(context.Background(), "x", []byte("value"), map[string]string{"fugaro": "managed"}); err == nil || !strings.Contains(err.Error(), "bad payload") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// captureStderr points os.Stderr at a file for the rest of the test (the
+// SDK's env-driven logger binds os.Stderr when a client is built) and
+// returns a function reading what was written.
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = f
+	t.Cleanup(func() { os.Stderr = old; f.Close() })
+	return func() string {
+		data, err := os.ReadFile(f.Name())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+}
+
+// TestClientsIgnoreSDKDebugLogging: GOOGLE_SDK_GO_LOGGING_LEVEL=debug makes
+// a Google client with no logger of its own log every request and its body
+// to stderr, which for addVersion is the secret, base64. Every client
+// Fugaro builds has a discarding logger instead.
+func TestClientsIgnoreSDKDebugLogging(t *testing.T) {
+	t.Setenv("GOOGLE_SDK_GO_LOGGING_LEVEL", "debug")
+	stderr := captureStderr(t)
+	ctx := context.Background()
+	s, _ := newTestSecrets(t)
+	const value = "sk-debug-EXAMPLEEXAMPLE"
+	if _, err := s.Set(ctx, "x", []byte(value), map[string]string{"fugaro": "managed"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.List(ctx, map[string]string{"fugaro": "managed"}); err != nil {
+		t.Fatal(err)
+	}
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(backend.LogEntry) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	out := stderr()
+	if strings.Contains(out, value) || strings.Contains(out, base64.StdEncoding.EncodeToString([]byte(value))) || strings.Contains(out, "api request") {
+		t.Fatalf("the SDK logged to stderr:\n%s", out)
 	}
 }
