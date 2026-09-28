@@ -217,6 +217,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		rec = r.rec
 	}()
 
+	r.addMountedSecrets()
 	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
 	defer stopWatch()
 	if err := r.bootstrap(runCtx); err != nil {
@@ -317,6 +318,63 @@ func (r *run) addSecret(v string) {
 	if v != "" && !slices.Contains(r.secrets, v) {
 		r.secrets = append(r.secrets, v)
 	}
+}
+
+// SecretEnvsVar is set on the Cloud Run job to the comma-separated names
+// of every secret variable the job mounts: the platform's own and every
+// workflow secret of the fugaro.yaml the job was deployed from. The ref a
+// task runs may declare fewer, but the values are in the runner's
+// environment either way, where the agent can read them.
+const SecretEnvsVar = "FUGARO_SECRET_ENVS"
+
+// minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
+// shorter declared secret for the same reason.
+const minSecretLen = 4
+
+// addMountedSecrets registers the values of the variables SecretEnvsVar
+// names, before anything else runs, so even a failure reason from the
+// first moments of bootstrap is redacted of them. A missing variable is
+// skipped; one too short to redact safely is skipped with a warning that
+// names only the variable.
+func (r *run) addMountedSecrets() {
+	for _, name := range strings.Split(envLookup(r.d.Env, SecretEnvsVar), ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		switch v := envLookup(r.d.Env, name); {
+		case v == "":
+		case len(v) < minSecretLen:
+			r.d.Log.Warn("a mounted secret is too short to redact", "env", name)
+		default:
+			r.addSecret(v)
+		}
+	}
+}
+
+// redactRecords returns records with the text the agent can influence
+// (test names from its reports, the warning quoting them) redacted.
+func (r *run) redactRecords(records []verify.Record) []verify.Record {
+	out := make([]verify.Record, len(records))
+	for i, v := range records {
+		v.Failed = r.redactAll(v.Failed)
+		v.Flaky = r.redactAll(v.Flaky)
+		v.Warning = r.redact(v.Warning)
+		out[i] = v
+	}
+	return out
+}
+
+// redactAll redacts each of ss, keeping nil as nil.
+func (r *run) redactAll(ss []string) []string {
+	if ss == nil {
+		return nil
+	}
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = r.redact(s)
+	}
+	return out
 }
 
 // openProvider opens the provider of kind, which from names the source of
@@ -830,6 +888,8 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
 	}
+	// Stored in result.json and verify/<n>.json, like everything published.
+	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
