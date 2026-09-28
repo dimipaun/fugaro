@@ -173,27 +173,45 @@ var excludedEntries = map[string]string{
 // excludedEntry is the entry under root that is never archived, or "".
 func excludedEntry(root string) string { return excludedEntries[filepath.Base(root)] }
 
+// walkHook, when set, runs before writeRoot handles each entry. Tests use
+// it to change the tree mid-walk.
+var walkHook func(rel string)
+
+// writeRoot archives dir as root i. It walks and opens everything through
+// an os.Root, never by path, so a directory or file swapped for a symlink
+// during the walk cannot lead it outside dir: the root refuses the escape
+// and the save fails. dir itself is pinned by comparing what was opened
+// with the non-link directory Lstat saw.
 func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) error, st *writeStats) error {
+	before, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if before.Mode()&fs.ModeSymlink != 0 {
+		return ErrLinkedRoot
+	}
 	rt, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
 	}
 	defer rt.Close()
-	return filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	if after, err := rt.Stat("."); err != nil || !os.SameFile(before, after) {
+		return ErrLinkedRoot
+	}
+	return fs.WalkDir(rt.FS(), ".", func(rel string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if p == dir {
+		if rel == "." {
 			return nil
 		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
+		if walkHook != nil {
+			walkHook(rel)
 		}
-		name := fmt.Sprintf("%d/%s", i, filepath.ToSlash(rel))
+		name := fmt.Sprintf("%d/%s", i, rel)
 		switch t := d.Type(); {
 		case exclude != "" && rel == exclude && t.IsDir():
-			return filepath.SkipDir
+			return fs.SkipDir
 		case exclude != "" && rel == exclude:
 			return nil
 		case t.IsDir():
@@ -202,13 +220,13 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 			}
 			return tw.WriteHeader(&tar.Header{Name: name + "/", Mode: 0o755, Typeflag: tar.TypeDir})
 		case t&fs.ModeSymlink != 0:
-			target, err := os.Readlink(p)
+			target, err := rt.Readlink(rel)
 			if err != nil {
 				return err
 			}
 			// The same physical check Extract makes: a link Extract
 			// would refuse would make every restore fail and poison the key.
-			if symlinkEscapes(rel, target) {
+			if symlinkEscapes(filepath.FromSlash(rel), target) {
 				st.skippedLinks++
 				return nil
 			}
@@ -221,9 +239,17 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 			}
 			return tw.WriteHeader(&tar.Header{Name: name, Linkname: filepath.ToSlash(target), Typeflag: tar.TypeSymlink})
 		case t.IsRegular():
-			fi, err := d.Info()
+			f, err := rt.OpenFile(rel, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 			if err != nil {
 				return err
+			}
+			defer f.Close()
+			fi, err := f.Stat()
+			if err != nil {
+				return err
+			}
+			if !fi.Mode().IsRegular() {
+				return nil // swapped since the listing: not cache content
 			}
 			if err := charge(fi.Size()); err != nil {
 				return err
@@ -231,15 +257,10 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 			if err := tw.WriteHeader(&tar.Header{Name: name, Mode: int64(fileMode(fi.Mode())), Size: fi.Size(), Typeflag: tar.TypeReg}); err != nil {
 				return err
 			}
-			f, err := os.Open(p)
-			if err != nil {
-				return err
-			}
 			n, err := io.CopyN(tw, f, fi.Size())
-			f.Close()
 			st.bytes += n
 			if err != nil {
-				return fmt.Errorf("archiving %s: %w", p, err)
+				return fmt.Errorf("archiving %s: %w", filepath.Join(dir, rel), err)
 			}
 		}
 		return nil // sockets, devices, FIFOs: not cache content

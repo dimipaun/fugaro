@@ -427,3 +427,45 @@ func TestAbandonLinksRemovalFailureIsBad(t *testing.T) {
 		t.Fatalf("abandonLinks = %v, want ErrBadArchive", err)
 	}
 }
+
+// A process the agent left behind can swap a directory for a symlink while
+// the save walks the root. The walk must not follow it out of the root.
+func TestWriteNeverFollowsALinkSwappedInMidWalk(t *testing.T) {
+	src, outside := t.TempDir(), t.TempDir()
+	write(t, src, map[string]string{"a/f": "x", "b/g": "y"})
+	write(t, outside, map[string]string{"secret": "hunter2"})
+	walkHook = func(rel string) {
+		if rel != "a" {
+			return
+		}
+		if err := os.Rename(filepath.Join(src, "b"), filepath.Join(src, "b.orig")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(src, "b")); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { walkHook = nil })
+	var buf bytes.Buffer
+	if _, err := Write(&buf, []string{src}, 1<<20); err != nil {
+		return // refusing the whole save is safe
+	}
+	zr, err := zstd.NewReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	tr := tar.NewReader(zr)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(h.Name, "secret") {
+			t.Fatalf("the walk followed the swapped-in link: archived %s", h.Name)
+		}
+	}
+}
