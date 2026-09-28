@@ -12,12 +12,14 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 )
 
 // Cancel statuses, as cancel --json reports them.
 const (
 	cancelAlreadyFinished = "already-finished"  // the execution had ended; no marker written
 	cancelNotLaunched     = "not-launched"      // never launched; the marker stops a --retry
+	cancelLaunching       = "launching"         // a launch is in flight; the marker stops it (launcher or runner)
 	cancelFinalized       = "finalized"         // the runner finalized (the PR exists) after the marker
 	cancelCancelled       = "cancelled"         // the execution was cancelled through the backend
 	cancelUnfinalized     = "ended-unfinalized" // the execution ended (or vanished) without a final record
@@ -58,8 +60,9 @@ func newCancelCmd() *cobra.Command {
 			"--grace, cancel stops it through Cloud Run. It never stops a run that is\n" +
 			"opening its PR (finalize) or writing back its cache: it waits up to 10 more\n" +
 			"minutes for finalize, and counts writeback as finalized. --grace is never\n" +
-			"shorter than the workflow's timeouts.finalize_reserve (5m when this checkout\n" +
-			"cannot tell). --now stops the execution at once, without waiting for the\n" +
+			"shorter than the workflow's timeouts.finalize_reserve (5m when neither the run\n" +
+			"nor this checkout tells) plus 40s for the runner to notice the cancel. --now\n" +
+			"stops the execution at once, without waiting for the\n" +
 			"draft PR, but still not mid-finalize.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -99,20 +102,53 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	}
 	ref := slug + "/" + id
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, s, id)
+	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
 		return err
 	}
 	if l == nil || l.Execution == "" {
+		claim, err := absent(s.ReadClaim(ctx))
+		if corruptObject(err) {
+			claim, err = nil, nil // no claim a CLI wrote: nobody is launching
+		}
+		if err != nil {
+			return remote(err)
+		}
 		if err := s.RequestCancel(ctx); err != nil {
 			return remote(fmt.Errorf("writing the cancel marker: %w", err))
 		}
-		return emit(cancelResult{Run: ref, Status: cancelNotLaunched, Marker: true})
+		if claim == nil || time.Since(claim.At) >= runstore.ClaimTTL {
+			return emit(cancelResult{Run: ref, Status: cancelNotLaunched, Marker: true})
+		}
+		// A launch is in flight (C-I3). Its launcher re-checks the marker
+		// after claiming; if it had already passed that point, wait for its
+		// launch.json and cancel the execution like any launched run.
+		if l, err = awaitLaunch(ctx, env, s, id, o.poll); err != nil {
+			return err
+		}
+		if l == nil {
+			return emit(cancelResult{Run: ref, Status: cancelLaunching, Marker: true})
+		}
 	}
 	e, err := env.be.Execution(ctx, l.Execution)
 	switch {
 	case errors.Is(err, backend.ErrNotFound):
-		return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished})
+		// Forgotten, or not visible yet. Agree with ls (runview.Join).
+		rec, rerr := absent(s.ReadRecord(ctx))
+		switch {
+		case rerr != nil:
+			return remote(rerr)
+		case hasFinalized(rec):
+			return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished})
+		case rec == nil && !runview.Lost(l, runTime(id), time.Now()):
+			// Launched moments ago: the backend may not list it yet. The
+			// marker makes its runner stop at bootstrap.
+			if err := s.RequestCancel(ctx); err != nil {
+				return remote(fmt.Errorf("writing the cancel marker: %w", err))
+			}
+			return emit(cancelResult{Run: ref, Status: cancelLaunching, Marker: true})
+		}
+		return emit(cancelResult{Run: ref, Status: cancelUnfinalized})
 	case err != nil:
 		return remote(err)
 	case e.State.Terminal():
@@ -191,18 +227,70 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	return emit(cancelResult{Run: ref, Status: cancelCancelled, Marker: marker, Hard: true})
 }
 
+// awaitLaunch polls up to claimWait for the launch of a run whose claim is
+// held: nil when the claim is released (the launcher refused) or the wait
+// runs out.
+func awaitLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string, poll time.Duration) (*runstore.Launch, error) {
+	deadline := time.Now().Add(claimWait)
+	for {
+		l, err := ownerLaunch(ctx, env, s, id)
+		if err != nil || (l != nil && l.Execution != "") {
+			return l, err
+		}
+		held, err := env.bucket.Exists(ctx, s.ClaimKey())
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !held || !time.Now().Before(deadline) {
+			return nil, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(poll):
+		}
+	}
+}
+
+// runTime is the time in run ID id, or zero.
+func runTime(id string) time.Time {
+	t, _ := runstore.RunTime(id)
+	return t
+}
+
+// runnerReaction is how long the runner can take to act on the cancel
+// marker before its finalize reserve even starts: one cancel poll (the
+// runner's default CancelPoll, 30s) plus the stage's SIGTERM-to-SIGKILL
+// grace (procgroup's default, 10s) (C-M5).
+const runnerReaction = 30*time.Second + 10*time.Second
+
 // graceFloor is the least grace cancel waits, and what it is: the run's
-// workflow's finalize reserve, from this checkout's fugaro.yaml when it is
-// the run's repository, else defaultFinalizeReserve (plan I-4, note 8).
+// finalize reserve (finalizeReserve) plus runnerReaction (plan I-4, note 8).
 func graceFloor(ctx context.Context, s *runstore.Store, o *cancelOptions) (time.Duration, string) {
 	if o.floorSet {
 		return o.floor, "--grace-floor"
 	}
-	if spec, err := s.ReadTask(ctx); err == nil && spec.Workflow != "" {
-		if c := checkoutConfig(ctx, spec.Repo); c != nil {
-			if w, ok := c.Workflows[spec.Workflow]; ok && w.Timeouts.FinalizeReserve.Duration > 0 {
-				return w.Timeouts.FinalizeReserve.Duration, "workflow " + spec.Workflow + "'s finalize reserve"
-			}
+	reserve, what := finalizeReserve(ctx, s)
+	return reserve + runnerReaction, what + " plus " + runnerReaction.String() + " for the runner to notice the cancel"
+}
+
+// finalizeReserve is the run's finalize reserve: from its result.json,
+// where the runner records it once bootstrap has read the workflow, else
+// from this checkout's fugaro.yaml when it is the run's repository, else
+// defaultFinalizeReserve.
+func finalizeReserve(ctx context.Context, s *runstore.Store) (time.Duration, string) {
+	if rec, err := s.ReadRecord(ctx); err == nil {
+		if d, ok := rec.FinalizeReserve(); ok {
+			return d, "the run's finalize reserve"
+		}
+	}
+	spec, err := s.ReadTask(ctx)
+	if err != nil || spec.Workflow == "" {
+		return defaultFinalizeReserve, "the default finalize reserve"
+	}
+	if c := checkoutConfig(ctx, spec.Repo); c != nil {
+		if w, ok := c.Workflows[spec.Workflow]; ok && w.Timeouts.FinalizeReserve.Duration > 0 {
+			return w.Timeouts.FinalizeReserve.Duration, "workflow " + spec.Workflow + "'s finalize reserve"
 		}
 	}
 	return defaultFinalizeReserve, "the default finalize reserve"
@@ -246,11 +334,14 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 		return err
 	}
 	var msg string
+	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
 	switch r.Status {
 	case cancelAlreadyFinished:
 		msg = fmt.Sprintf("%s has already finished; nothing to cancel", r.Run)
 	case cancelNotLaunched:
 		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", r.Run)
+	case cancelLaunching:
+		msg = fmt.Sprintf("a launch of %s is in flight; marked it cancelled, so the launch is refused or its runner stops at bootstrap; check fugaro ls", r.Run)
 	case cancelFinalized:
 		if r.PR != "" {
 			msg = fmt.Sprintf("finalized (draft PR %s)", r.PR)

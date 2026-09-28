@@ -19,6 +19,7 @@ var webJob, apiJob = JobName("acme-app", "web"), JobName("acme-app", "api")
 func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
+	fr.Project, fr.Region = "proj-1234", "us-east5"
 	b, err := New(context.Background(), Options{Project: "proj-1234", Region: "us-east5",
 		Endpoints: Endpoints{Run: fr.URL + "/", Logging: fl.URL + "/", NoAuth: true}, LogSettle: 50 * time.Millisecond})
 	if err != nil {
@@ -304,5 +305,66 @@ func TestCancelFinishedExecutionFails(t *testing.T) {
 	}
 	if fr.State(ref.Name) != backend.StateSucceeded {
 		t.Fatal("cancel changed a finished execution")
+	}
+}
+
+// Execution names come from bucket objects a run can write: the backend
+// follows only its own region's names, spelled [a-z0-9-] (security review
+// S-I2), and never sends another to the API.
+func TestExecutionNamesArePinnedToTheRegion(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	calls := 0
+	fr.OnRun = func(gcpfake.RunCall) { calls++ }
+	for _, name := range []string{
+		"projects/proj-1234/locations/europe-west1/jobs/" + webJob + "/executions/" + webJob + "-abcde",
+		"projects/proj-1234/locations/us-east5/jobs/" + webJob + "/executions/x?alt=media",
+		"projects/proj-1234/locations/us-east5/jobs/" + webJob + "%2F..%2Fother/executions/e",
+		"projects/proj-1234/locations/us-east5/jobs/Fugaro-Web/executions/e",
+		"projects/proj_1234/locations/us-east5/jobs/" + webJob + "/executions/e",
+	} {
+		if _, err := b.Execution(ctx, name); err == nil || errors.Is(err, backend.ErrNotFound) {
+			t.Errorf("Execution(%q) = %v, want a refusal", name, err)
+		}
+		if err := b.Cancel(ctx, name); err == nil || errors.Is(err, backend.ErrNotFound) {
+			t.Errorf("Cancel(%q) = %v, want a refusal", name, err)
+		}
+		if err := b.Logs(ctx, backend.LogQuery{Execution: name}, func(backend.LogEntry) error { return nil }); err == nil {
+			t.Errorf("Logs(%q) succeeded, want a refusal", name)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("%d launches", calls)
+	}
+}
+
+func TestCheckRunExecution(t *testing.T) {
+	own := backend.ExecID{Project: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
+	if err := CheckRunExecution(own.String(), "us-east5", "acme-app", "web"); err != nil {
+		t.Fatalf("own execution refused: %v", err)
+	}
+	num := own
+	num.Project = "123456789"
+	if err := CheckRunExecution(num.String(), "us-east5", "acme-app", "web"); err != nil {
+		t.Fatalf("project number refused: %v", err)
+	}
+	other := own
+	other.Job = apiJob
+	for name, n := range map[string]string{"another job": other.String(), "another region": strings.Replace(own.String(), "us-east5", "us-central1", 1), "junk": "x"} {
+		if err := CheckRunExecution(n, "us-east5", "acme-app", "web"); err == nil {
+			t.Errorf("%s accepted", name)
+		}
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	for _, u := range []string{"https://user:tok@host/o/r", "ssh://user:tok@host/o/r"} {
+		if got := RedactURL(u); strings.Contains(got, "tok") || !strings.Contains(got, "host/o/r") {
+			t.Errorf("RedactURL(%q) = %q", u, got)
+		}
+	}
+	if got := RedactURL("https://host/%zz"); got != "<unparseable URL>" {
+		t.Errorf("unparseable: %q", got)
 	}
 }

@@ -31,7 +31,7 @@ func (s *Store) WriteLaunch(ctx context.Context, l *Launch) error {
 
 // ReadLaunch loads launch.json; ErrNotFound means never launched.
 func (s *Store) ReadLaunch(ctx context.Context) (*Launch, error) {
-	data, err := s.read(ctx, "launch.json")
+	data, err := s.readRecordObject(ctx, "launch.json")
 	if err != nil {
 		return nil, err
 	}
@@ -64,7 +64,7 @@ func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool
 		if !errors.Is(err, ErrExists) {
 			return false, nil, err
 		}
-		raw, rerr := s.read(ctx, "launching")
+		raw, rerr := s.readRecordObject(ctx, "launching")
 		if errors.Is(rerr, ErrNotFound) && attempt == 0 {
 			continue // released between our create and our read: absent, so try once more (N-10)
 		}
@@ -92,7 +92,7 @@ const ClaimTTL = 10 * time.Minute
 // ReadClaim returns the launch claim, ErrNotFound when there is none, or
 // a zero Claim when it can't be parsed.
 func (s *Store) ReadClaim(ctx context.Context) (*Claim, error) {
-	raw, err := s.read(ctx, "launching")
+	raw, err := s.readRecordObject(ctx, "launching")
 	if err != nil {
 		return nil, err
 	}

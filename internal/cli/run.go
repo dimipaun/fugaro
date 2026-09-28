@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -140,7 +141,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		return err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
-	prior, err := existingLaunch(ctx, s, spec.RunID)
+	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return err
 	}
@@ -301,9 +302,15 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	return slug, spec, nil
 }
 
+// activeHorizon bounds checkMaxParallel's listing: Cloud Run's longest task
+// timeout plus a day for queueing. An older execution can't be active.
+const activeHorizon = gcp.MaxTaskTimeout + 24*time.Hour
+
 // checkMaxParallel refuses a new launch when max_parallel runs are active.
+// It lists only executions created within activeHorizon (C-M7), so a
+// --batch of N launches doesn't page through the region's history N times.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
-	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true})
+	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon)})
 	if err != nil {
 		return remote(err)
 	}
@@ -347,11 +354,11 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.Status == "already-launched" {
 		verb = "already launched"
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, res.Run, res.Branch); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, oneLine(res.Run), oneLine(res.Branch)); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
-		_, err := fmt.Fprintf(w, "  logs %s\n", res.LogURL)
+		_, err := fmt.Fprintf(w, "  logs %s\n", oneLine(res.LogURL))
 		return err
 	}
 	return nil
@@ -360,21 +367,40 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
-// name launch.json holds (C-1).
-func existingLaunch(ctx context.Context, s *runstore.Store, runID string) (*runstore.Launch, error) {
+// name launch.json holds (C-1). Either name must be of the run's own job
+// (S-I2): the run's service account can write both objects.
+func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec) (*runstore.Launch, error) {
+	runID := spec.RunID
+	check := func(name string) error {
+		if err := env.checkExecution(name, s.Slug(), spec); err != nil {
+			return remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), runID, err))
+		}
+		return nil
+	}
 	if l, err := s.ReadLaunch(ctx); err == nil {
+		if err := check(l.Execution); err != nil {
+			return nil, err
+		}
 		return l, nil
 	} else if !errors.Is(err, runstore.ErrNotFound) {
 		return nil, remote(err)
 	}
 	rec, err := s.ReadRecord(ctx)
-	if errors.Is(err, runstore.ErrNotFound) || (err == nil && rec.Execution == "") {
+	if errors.Is(err, runstore.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, remote(err)
 	}
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: "cloud-run", Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	if rec.Execution == "" {
+		// It ran already, with no cloud execution (a local run against this
+		// bucket): never launch it again (C-M4). Nothing to backfill.
+		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
+	}
+	if err := check(rec.Execution); err != nil {
+		return nil, err
+	}
+	l := &runstore.Launch{Version: 1, RunID: runID, Backend: backend.CloudRun, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
 	}
@@ -422,7 +448,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status
 		return res, nil
 	}
-	if l, err := existingLaunch(ctx, s, spec.RunID); err != nil || l != nil {
+	if l, err := existingLaunch(ctx, env, s, spec); err != nil || l != nil {
 		if err != nil {
 			return res, err
 		}
@@ -443,14 +469,14 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		if won {
 			break
 		}
-		l, err := waitForLaunch(ctx, env, s, spec.RunID, res.Run, other)
+		l, err := waitForLaunch(ctx, env, s, spec, res.Run, other)
 		if errors.Is(err, errClaimReleased) {
 			// The holder's launch was refused and it released the claim:
 			// nothing started, so try for the claim again at once.
 			if round < claimRounds-1 {
 				continue
 			}
-			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; run the same command again", res.Run)
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", res.Run, res.Run)
 		}
 		if err != nil {
 			return res, err
@@ -463,11 +489,21 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	hctx, cancelHold := context.WithDeadline(ctx, now.Add(holdTimeout))
 	defer cancelHold()
 	hook(launchHooks.afterClaim)
-	if l, err := existingLaunch(hctx, s, spec.RunID); err != nil || l != nil {
+	if l, err := existingLaunch(hctx, env, s, spec); err != nil || l != nil {
 		if err != nil {
 			return res, err
 		}
 		return done(l, "already-launched")
+	}
+	// A cancel that landed while we claimed: never launch it, and release
+	// the claim so a waiting cancel sees the launch end (C-I3).
+	if cancelled, err := s.CancelRequested(hctx); err != nil {
+		return res, remote(err)
+	} else if cancelled {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
 	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID})
@@ -481,7 +517,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
-			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause and run the same command again: %w", res.Run, err))
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim; the runner's result.json tells
@@ -489,7 +525,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
-	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: "cloud-run", Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
+	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: backend.CloudRun, Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)
 		if rerr != nil {
@@ -535,7 +571,7 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 	for attempt := 0; ; attempt++ {
 		ok, _, err := s.Claim(ctx, holder, now) // Claim itself retries once if the claim vanishes mid-call
 		if err != nil {
-			return false, other, remote(err)
+			return false, other, claimError(s, key, err)
 		}
 		if ok {
 			return true, other, nil
@@ -549,7 +585,7 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 			return false, someone, nil // released twice in a row: never loop here
 		}
 		if err != nil {
-			return false, other, remote(err)
+			return false, other, claimError(s, key, err)
 		}
 		var cur runstore.Claim
 		if json.Unmarshal(prev, &cur) == nil && now.Sub(cur.At) < claimTTL {
@@ -570,15 +606,26 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 	}
 }
 
+// claimError is a failed read of the launch claim, as a remote error. An
+// oversized claim is no claim a CLI wrote, and without its content and
+// generation it can't be judged stale or taken over safely: say so.
+func claimError(s *runstore.Store, key string, err error) error {
+	if errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge) {
+		ref := s.Slug() + "/" + s.RunID()
+		return remote(fmt.Errorf("the launch claim of %s is not one a CLI wrote (%w); delete %s, then fugaro run --retry %s", ref, err, key, ref))
+	}
+	return remote(err)
+}
+
 // waitForLaunch waits up to claimWait for the claim holder's launch.json
 // (N-4): a concurrent "fugaro run --run-id X" then reports the winner's
 // launch with exit 0, as a repeated launch should. Otherwise exit 1. When
 // the claim disappears (its holder was refused and released it), it
 // returns errClaimReleased at once, so the caller can claim again.
-func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, runID, run string, holder runstore.Claim) (*runstore.Launch, error) {
+func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec, run string, holder runstore.Claim) (*runstore.Launch, error) {
 	deadline := time.Now().Add(claimWait)
 	for {
-		l, err := existingLaunch(ctx, s, runID)
+		l, err := existingLaunch(ctx, env, s, spec)
 		if err != nil {
 			return nil, err
 		}

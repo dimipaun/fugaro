@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -67,7 +68,7 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	red := cliSecrets(os.Getenv)
+	red := agent.Redacter(cliSecrets(os.Getenv)) // forms built once per command
 	out := cmd.OutOrStdout()
 	err = env.be.Logs(ctx, logQuery(l, o.follow), func(e backend.LogEntry) error {
 		return printLogEntry(out, redactEntry(e, red), o.asJSON)
@@ -96,7 +97,7 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 		return nil, nil, "", err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, s, id)
+	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -109,8 +110,9 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 // ownerLaunch is the run's launch as the views must see it (N-2): the
 // execution result.json names, when set, since that is the one that owns
 // the run; else launch.json's. nil means never launched. Unlike
-// existingLaunch it never writes: it serves read-only views.
-func ownerLaunch(ctx context.Context, s *runstore.Store, id string) (*runstore.Launch, error) {
+// existingLaunch it never writes: it serves read-only views. An execution
+// that is not of the run's own job is an error, never followed (S-I2).
+func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
 	l, err := absent(s.ReadLaunch(ctx))
 	if err != nil {
 		return nil, remote(err)
@@ -119,15 +121,23 @@ func ownerLaunch(ctx context.Context, s *runstore.Store, id string) (*runstore.L
 	if err != nil {
 		return nil, remote(err)
 	}
+	owner := l
 	if rec != nil && rec.Execution != "" {
-		owner := runstore.Launch{Version: 1, RunID: id, LaunchedAt: rec.StartedAt}
+		o := runstore.Launch{Version: 1, RunID: id, LaunchedAt: rec.StartedAt}
 		if l != nil {
-			owner = *l
+			o = *l
 		}
-		owner.Execution = rec.Execution
-		return &owner, nil
+		o.Execution = rec.Execution
+		owner = &o
 	}
-	return l, nil
+	if owner == nil || owner.Execution == "" {
+		return owner, nil
+	}
+	spec, _ := s.ReadTask(ctx) // unreadable: checkExecution refuses
+	if err := env.checkExecution(owner.Execution, s.Slug(), spec); err != nil {
+		return nil, remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), id, err))
+	}
+	return owner, nil
 }
 
 // cliSecrets are the credential values in the CLI's own environment, the
@@ -145,14 +155,15 @@ func cliSecrets(getenv func(string) string) []string {
 	return out
 }
 
-// redactEntry redacts e's message and the string fields logs prints.
-func redactEntry(e backend.LogEntry, secrets []string) logLine {
+// redactEntry redacts e's message and the string fields logs prints with
+// red, an agent.Redacter built once per command.
+func redactEntry(e backend.LogEntry, red func(string) string) logLine {
 	field := func(k string) string {
 		s, _ := e.Fields[k].(string)
-		return agent.Redact(s, secrets)
+		return red(s)
 	}
-	return logLine{Time: e.Time, Severity: agent.Redact(e.Severity, secrets), Stage: field("stage"),
-		Stream: field("stream"), Event: field("event"), Message: agent.Redact(e.Message, secrets)}
+	return logLine{Time: e.Time, Severity: red(e.Severity), Stage: field("stage"),
+		Stream: field("stream"), Event: field("event"), Message: red(e.Message)}
 }
 
 // printLogEntry prints l as one JSON line, or as
@@ -187,5 +198,7 @@ func humanLogLine(l logLine) string {
 	if sev == "" {
 		sev = "DEFAULT"
 	}
-	return fmt.Sprintf("%s %-7s %s%s", l.Time.Local().Format("15:04:05"), sev, tag, l.Message)
+	// A message's own newlines are indented, so it can't forge an entry.
+	msg := strings.ReplaceAll(multiLine(l.Message), "\n", "\n    ")
+	return fmt.Sprintf("%s %-7s %s%s", l.Time.Local().Format("15:04:05"), oneLine(sev), oneLine(tag), msg)
 }

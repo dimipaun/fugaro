@@ -59,6 +59,11 @@ func newExecCmd() *cobra.Command {
 
 func runExec(cmd *cobra.Command, o execOptions) error {
 	ctx := cmd.Context()
+	// The runner talks to Google too (the bucket, the metadata server), so
+	// it refuses http2debug as every cloud command does (S-M1).
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	if o.bucket == "" {
 		return errors.New("--bucket (or FUGARO_BUCKET) is required")
 	}

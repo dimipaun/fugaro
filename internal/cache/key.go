@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -67,27 +68,16 @@ func KeyOf(root string, e config.CacheEntry, baseImage, toolchain string) (strin
 // git then runs) and roots that repeat or nest inside one another (the
 // same files would be archived twice) are refused, so a cache can never
 // target the system or the repository's metadata.
+//
+// The checks are lexical. A symlink at or above a cached directory would
+// defeat them, so CheckLinks must pass too, at restore and again at
+// write-back, before a root is used.
 func Resolve(paths []string, root, home string) ([]string, error) {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		base, rel := root, p
-		switch {
-		case strings.HasPrefix(p, "~/"):
-			base, rel = home, strings.TrimPrefix(p, "~/")
-		case strings.HasPrefix(p, "~"): // "~" alone or "~user/…": not a checkout directory
-			return nil, fmt.Errorf("cache path %q must be ~/<dir> or a directory inside the checkout", p)
-		}
-		clean := path.Clean(rel)
-		if rel == "" || path.IsAbs(rel) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf("cache path %q must be ~/<dir> or a directory inside the checkout", p)
-		}
-		for _, part := range strings.Split(clean, "/") {
-			if strings.EqualFold(part, ".git") {
-				return nil, fmt.Errorf("cache path %q must not be inside a .git directory", p)
-			}
-		}
-		if base == home && holdsCredentials(clean) {
-			return nil, fmt.Errorf("cache path %q may hold credentials or agent sessions, and caches are uploaded to the runs bucket; cache a tool's own directory instead, such as ~/.config/<tool> or ~/.cache/<tool>", p)
+		base, clean, err := resolveOne(p, root, home)
+		if err != nil {
+			return nil, err
 		}
 		out[i] = filepath.Join(base, filepath.FromSlash(clean))
 	}
@@ -99,6 +89,83 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// resolveOne splits the fugaro.yaml cache path p into its base (home or
+// the checkout root) and its clean slash-separated path below that base,
+// refusing what Resolve refuses.
+func resolveOne(p, root, home string) (base, clean string, err error) {
+	base, rel := root, p
+	switch {
+	case strings.HasPrefix(p, "~/"):
+		base, rel = home, strings.TrimPrefix(p, "~/")
+	case strings.HasPrefix(p, "~"): // "~" alone or "~user/…": not a checkout directory
+		return "", "", fmt.Errorf("cache path %q must be ~/<dir> or a directory inside the checkout", p)
+	}
+	clean = path.Clean(rel)
+	if rel == "" || path.IsAbs(rel) || clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", "", fmt.Errorf("cache path %q must be ~/<dir> or a directory inside the checkout", p)
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if strings.EqualFold(part, ".git") {
+			return "", "", fmt.Errorf("cache path %q must not be inside a .git directory", p)
+		}
+	}
+	if base == home && holdsCredentials(clean) {
+		return "", "", fmt.Errorf("cache path %q may hold credentials or agent sessions, and caches are uploaded to the runs bucket; cache a tool's own directory instead, such as ~/.config/<tool> or ~/.cache/<tool>", p)
+	}
+	return base, clean, nil
+}
+
+// ErrLinkedRoot means a cache root is a symlink or lies under one, below
+// its base. Such a root is never followed: a committed link, or one the
+// agent made, could point a cache at ~/.claude, the runner's credentials
+// or .git, past every check Resolve makes.
+var ErrLinkedRoot = errors.New("cache path is a symlink or lies under one")
+
+// CheckLinks refuses (ErrLinkedRoot) any fugaro.yaml cache path that is a
+// symlink, or has one on its way down from its base (home or the checkout
+// root, which are trusted as they are). Each component is judged with
+// Lstat inside an os.Root of the base, so nothing is followed. A path
+// that does not exist yet passes: a restore creates it as a directory.
+// It refuses what Resolve refuses too.
+func CheckLinks(paths []string, root, home string) error {
+	for _, p := range paths {
+		base, clean, err := resolveOne(p, root, home)
+		if err != nil {
+			return err
+		}
+		if err := linkFree(base, clean); err != nil {
+			return fmt.Errorf("cache path %q: %w", p, err)
+		}
+	}
+	return nil
+}
+
+// linkFree walks clean down from base, refusing the first symlink.
+func linkFree(base, clean string) error {
+	rt, err := os.OpenRoot(base)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil // nothing there to follow
+	}
+	if err != nil {
+		return err
+	}
+	defer rt.Close()
+	parts := strings.Split(clean, "/")
+	for i := range parts {
+		p := filepath.Join(parts[:i+1]...)
+		fi, err := rt.Lstat(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
+			return err
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return fmt.Errorf("%w (%s)", ErrLinkedRoot, filepath.ToSlash(p))
+		}
+	}
+	return nil
 }
 
 // credentialPaths are home-relative paths that hold credentials or the

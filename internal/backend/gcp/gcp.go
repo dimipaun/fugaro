@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"time"
 
 	logging "google.golang.org/api/logging/v2"
@@ -38,6 +39,17 @@ type Backend struct {
 	logs *logging.Service
 	// listPageSize is List's page size; tests shrink it to exercise paging.
 	listPageSize int64
+}
+
+// RedactURL is u without userinfo, for error messages: the one helper for
+// that, shared by the CLI and the build path.
+func RedactURL(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return "<unparseable URL>"
+	}
+	p.User = nil
+	return p.String()
 }
 
 // discardLogger is every client's logger. Without one, a Google client

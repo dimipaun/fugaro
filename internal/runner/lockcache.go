@@ -22,8 +22,9 @@ import (
 var ErrDuplicateExecution = errors.New("another execution already owns this run")
 
 // taskTimeoutSlack is what Terraform (and the M4 bootstrap) add to
-// timeouts.total for the Cloud Run task timeout (design §4.5).
-const taskTimeoutSlack = 2 * time.Minute
+// timeouts.total for the Cloud Run task timeout (design §4.5); job-spec
+// uses the same backend.TaskTimeoutSlack.
+const taskTimeoutSlack = backend.TaskTimeoutSlack
 
 // lockSlack is how far past the task timeout the branch lock (and the
 // record's deadline) lasts, so a live run never loses its lock.
@@ -116,7 +117,7 @@ func (r *run) releaseLock(ctx context.Context) {
 	if r.lock == nil {
 		return
 	}
-	if err := r.lock.Release(ctx); err != nil {
+	if err := releaseBranchLock(r.lock, ctx); err != nil {
 		r.d.Log.Warn("releasing the branch lock failed; it expires on its own", "err", r.redact(err.Error()))
 	} else {
 		r.d.Log.Info("branch lock released", "branch", r.rec.Branch)
@@ -216,6 +217,11 @@ func (r *run) restoreCaches(ctx context.Context) {
 			continue
 		}
 		roots, err := cache.Resolve(e.Paths, r.d.WorkDir, home)
+		if err == nil {
+			// A committed symlink at or above a root would take the
+			// restore past Resolve's checks, into .git or elsewhere.
+			err = cache.CheckLinks(e.Paths, r.d.WorkDir, home)
+		}
 		if err != nil {
 			r.d.Log.Warn("cache skipped", "err", r.redact(err.Error()))
 			continue
@@ -273,8 +279,15 @@ func (r *run) writeback(ctx context.Context) {
 	wctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
 	if r.d.Bucket != nil && !r.cancelled {
-		store := r.cacheStore()
+		store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
 		for _, s := range r.caches {
+			// Checked again: the agent may have replaced a root, or a
+			// directory above one, with a symlink to ~/.claude, the
+			// runner's credentials or .git.
+			if err := cache.CheckLinks(s.entry.Paths, r.d.WorkDir, home); err != nil {
+				r.d.Log.Warn("cache not written", "err", r.redact(err.Error()))
+				continue
+			}
 			// Recomputed from the final tree: when the agent changed a
 			// lockfile, the new dependencies belong under the new key.
 			key, ok, err := r.cacheKey(s)
@@ -296,7 +309,12 @@ func (r *run) writeback(ctx context.Context) {
 			}
 		}
 	}
-	r.releaseLock(wctx)
+	// On a context of its own: the uploads may have used up writeback's
+	// deadline, and a release on it would fail at once and leave the lock
+	// until it expires.
+	rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
+	defer cancelRelease()
+	r.releaseLock(rctx)
 }
 
 // envLookup is key's value in env, the last one winning as in exec.
@@ -308,3 +326,15 @@ func envLookup(env []string, key string) string {
 	}
 	return ""
 }
+
+// recordWriteTimeout bounds each result.json write, the final one
+// included, so a stalled bucket cannot hold the runner until the task
+// timeout (design §4.5 leaves the final record 30s).
+const recordWriteTimeout = 30 * time.Second
+
+// Seams for the record writes and the lock release; tests may replace them.
+var (
+	createRecord      = (*runstore.Store).CreateRecord
+	writeRecord       = (*runstore.Store).WriteRecord
+	releaseBranchLock = (*lock.Lock).Release
+)

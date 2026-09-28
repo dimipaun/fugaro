@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -143,9 +144,14 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	}
 	if !o.all && len(env.lc.Repos) > 0 {
 		var slugs []string
-		noCheckout := func() *config.Config { return nil }
-		for name := range env.lc.Repos {
-			slug, err := env.repoSlug(name, noCheckout)
+		for name, r := range env.lc.Repos {
+			// An entry without a provider takes it from this checkout's
+			// fugaro.yaml when the checkout is that repository (§5.4).
+			checkout := func() *config.Config { return nil }
+			if r.Provider == "" {
+				checkout = checkoutOf(ctx, name)
+			}
+			slug, err := env.repoSlug(name, checkout)
 			if err != nil {
 				fmt.Fprintf(warn, "warning: skipping %s: %v\n", name, err)
 				continue
@@ -163,9 +169,10 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 }
 
 // loadRows reads every run f selects, joins it with its execution, and
-// returns the rows newest first. A read that fails for any reason but
-// absence fails the whole listing: ls never shows a status guessed from a
-// partial read.
+// returns the rows newest first. A run whose launch.json or result.json is
+// corrupt, or names an execution that isn't the run's, is an error row
+// with a warning. Any other failed read but absence fails the whole
+// listing: ls never shows a status guessed from a partial read.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -174,9 +181,9 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	type ref struct{ slug, id string }
 	var refs []ref
 	if f.runRef != "" {
-		slug, id, err := runstore.ParseRef(f.runRef)
+		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
-			return nil, userErr("%v", err)
+			return nil, err
 		}
 		refs = append(refs, ref{slug, id})
 	} else {
@@ -225,7 +232,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	warnf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
-		fmt.Fprintf(warn, format, args...)
+		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
 	}
 	for range min(lsWorkers, len(refs)) {
 		wg.Add(1)
@@ -273,17 +280,31 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	case !errors.Is(err, runstore.ErrNotFound):
 		return in, err
 	}
-	if in.Launch, err = absent(s.ReadLaunch(ctx)); err != nil {
-		return in, err
-	}
-	if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
-		return in, err
+	// A corrupt object is this run's error row, with a warning; a read that
+	// fails otherwise (the bucket, the network) still fails the listing.
+	for _, read := range []struct {
+		name string
+		do   func() error
+	}{
+		{"launch.json", func() (err error) { in.Launch, err = absent(s.ReadLaunch(ctx)); return err }},
+		{"result.json", func() (err error) { in.Record, err = absent(s.ReadRecord(ctx)); return err }},
+	} {
+		if err := read.do(); corruptObject(err) {
+			in.Problem = read.name + " is unreadable: " + err.Error()
+			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
+			return in, nil
+		} else if err != nil {
+			return in, err
+		}
 	}
 	if in.Launch == nil && in.Record == nil {
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
 			return in, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
 		}
-		if in.Claim, err = absent(s.ReadClaim(ctx)); err != nil {
+		if in.Claim, err = absent(s.ReadClaim(ctx)); corruptObject(err) {
+			in.Problem = "the launch claim is unreadable: " + err.Error()
+			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
+		} else if err != nil {
 			return in, err
 		}
 		return in, nil
@@ -300,11 +321,14 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	if name == "" {
 		return in, nil
 	}
-	eid, ok := backend.ParseExecution(name)
-	if !ok {
-		warnf("warning: run %s/%s: unparseable execution name\n", slug, id)
+	// The run's service account can write both objects: follow only an
+	// execution of the run's own job (S-I2).
+	if err := env.checkExecution(name, slug, in.Task); err != nil {
+		in.Problem = "not following its execution: " + err.Error()
+		warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
 		return in, nil
 	}
+	eid, _ := backend.ParseExecution(name)
 	if e, ok := execs[eid.Key()]; ok {
 		in.Exec = &e
 		return in, nil
@@ -317,7 +341,26 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	case !errors.Is(err, backend.ErrNotFound):
 		return in, fmt.Errorf("run %s/%s: %w", slug, id, err)
 	}
+	// The record was read before the execution: a runner that wrote its
+	// final record and exited in between would look like one that died
+	// without finalizing. Once the execution has ended (or is gone), read
+	// the record again, so it is as new as the execution (C-M1).
+	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
+		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
+			return in, err
+		}
+	}
 	return in, nil
+}
+
+// corruptObject reports whether err is a run object that can't be used:
+// undecodable, or past its read cap (runstore.ErrTooLarge,
+// blobx.ErrTooLarge). That is the run's problem, not the listing's.
+func corruptObject(err error) bool {
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge)
 }
 
 // absent turns runstore.ErrNotFound into a nil value and no error.
@@ -373,7 +416,10 @@ func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) erro
 		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
 			cost += "~" // the model spend was notional
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Run, r.Status, r.Stage, age(now.Sub(r.Created)), cost, r.PRURL)
+		if !r.Cost.ComputeEstimated {
+			cost += ", compute not estimated" // never "free" (design §10.1)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, oneLine(r.PRURL))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -385,6 +431,13 @@ func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) erro
 	line := fmt.Sprintf("%d %s · ≈ $%.2f billed (model $%.2f + compute $%.2f)", tot.Runs, noun, tot.TotalUSD, tot.ModelUSD, tot.ComputeUSD)
 	if tot.ModelNotionalUSD > 0 {
 		line += fmt.Sprintf(" · $%.2f model notional (subscription)", tot.ModelNotionalUSD)
+	}
+	if n := tot.ComputeNotEstimated; n > 0 {
+		noun := "runs"
+		if n == 1 {
+			noun = "run"
+		}
+		line += fmt.Sprintf(" · compute not estimated for %d %s", n, noun)
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err

@@ -329,7 +329,8 @@ func TestLaunchRejectedReleasesOurClaim(t *testing.T) {
 	spec := raceSpec(t, env)
 	spec.Workflow = "missing" // no such job: Launch fails with ErrNotFound + ErrRejected
 	_, err := launchRun(context.Background(), env, appSlug, spec, time.Now())
-	if ExitCode(err) != ExitRemoteError || !errors.Is(err, backend.ErrRejected) || !errors.Is(err, backend.ErrNotFound) || !strings.Contains(err.Error(), "nothing started") {
+	if ExitCode(err) != ExitRemoteError || !errors.Is(err, backend.ErrRejected) || !errors.Is(err, backend.ErrNotFound) || !strings.Contains(err.Error(), "nothing started") ||
+		!strings.Contains(err.Error(), "fugaro run --retry "+appSlug+"/"+spec.RunID) {
 		t.Fatalf("err = %v", err)
 	}
 	spec.Workflow = "web"

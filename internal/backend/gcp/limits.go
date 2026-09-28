@@ -3,10 +3,17 @@ package gcp
 import (
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 )
+
+// MaxTaskTimeout is the longest task timeout a Cloud Run job accepts (168
+// hours, cloud.google.com/run/docs/configuring/task-timeout, checked
+// 2026-09-28). No execution can still be active once it is older than
+// this and its queueing, so an active-only listing may stop there.
+const MaxTaskTimeout = 168 * time.Hour
 
 // Issue is one way a workflow's resources don't fit Cloud Run.
 type Issue struct{ Field, Message string }

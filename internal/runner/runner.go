@@ -95,9 +95,13 @@ type run struct {
 	authWarned   bool            // whether a mid-run refresh failure has already been logged
 	tail         *LogTail        // output of the first failed stage, for the draft PR
 	lock         *lock.Lock      // the branch lock, while held
-	caches       []cacheSlot     // the cache entries restored at bootstrap, for writeback
-	cacheBase    string          // the base-image part of every cache key
-	toolchain    string          // the toolchain part of every cache key (toolchainHash)
+	// owned is whether this execution owns result.json: it created the
+	// first record, or found one naming itself. Until then the record is
+	// only ever created if absent, never overwritten (design §4.7).
+	owned     bool
+	caches    []cacheSlot // the cache entries restored at bootstrap, for writeback
+	cacheBase string      // the base-image part of every cache key
+	toolchain string      // the toolchain part of every cache key (toolchainHash)
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -133,12 +137,14 @@ const giveUpCommentTimeout = 30 * time.Second
 // EnsurePR finds what an earlier attempt created, so retrying is safe.
 const prAttempts = 3
 
-// Run executes the run whose task spec is in d.Store. It always returns the
-// final record, reflecting the run's actual status and outcome whether or
-// not Run itself returns an error. The error is non-nil for an infra_error,
-// for a cancellation seen during bootstrap (before any stage or finalize
-// runs, where the record's status is cancelled rather than infra_error), or
-// when writing the final record itself fails.
+// Run executes the run whose task spec is in d.Store. It returns the final
+// record, reflecting the run's actual status and outcome whether or not Run
+// itself returns an error, except when this execution does not own the run
+// (ErrDuplicateExecution, or a record it may not replace): then it writes
+// nothing and returns a nil record. The error is non-nil for an
+// infra_error, for a cancellation seen during bootstrap (before any stage
+// or finalize runs, where the record's status is cancelled rather than
+// infra_error), or when writing the final record itself fails.
 func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if d.Now == nil {
 		d.Now = time.Now
@@ -152,17 +158,19 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	r := &run{
 		d:      d,
 		stageN: map[string]int{},
-		rec: &runstore.Record{Version: 1, Status: runstore.StatusRunning, Stage: "bootstrap",
-			Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
+		rec: &runstore.Record{Version: 1, RunID: d.Store.RunID(), Execution: d.Execution, Status: runstore.StatusRunning,
+			Stage: "bootstrap", Outcome: runstore.OutcomeNone, StartedAt: d.Now().UTC()},
+		// A local run has no duplicate to tell apart: its record is its own.
+		owned: d.Execution == "",
 	}
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
-		if errors.Is(err, ErrDuplicateExecution) {
-			// Another execution owns this run: its result.json and lock
-			// are not ours to touch.
-			d.Log.Error("duplicate execution; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
+		if errors.Is(err, ErrDuplicateExecution) || errors.Is(err, errOwnerUnknown) {
+			// Another execution owns this run, or may: its result.json and
+			// lock are not ours to touch.
+			d.Log.Error("not the run's owner; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
 			rec = nil
 			return
 		}
@@ -186,16 +194,34 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		r.updateCost()
 		finished := d.Now().UTC()
 		r.rec.FinishedAt = &finished
-		if werr := d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); werr != nil && err == nil {
+		if !r.owned {
+			// The run failed before it could claim result.json: record the
+			// failure only if no execution has, so a duplicate that failed
+			// early never replaces the owner's record.
+			switch cerr := r.createRecord(ctx); {
+			case errors.Is(cerr, runstore.ErrExists):
+				d.Log.Error("another execution's run record is in place; not replacing it", "execution", d.Execution)
+				rec = nil
+				return
+			case cerr != nil && err == nil:
+				err = fmt.Errorf("writing run record: %w", cerr)
+			}
+			rec = r.rec
+			return
+		}
+		wctx, cancelWrite := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+		defer cancelWrite()
+		if werr := writeRecord(d.Store, wctx, r.rec); werr != nil && err == nil {
 			err = fmt.Errorf("writing run record: %w", werr)
 		}
 		rec = r.rec
 	}()
 
+	r.addMountedSecrets()
 	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
 	defer stopWatch()
 	if err := r.bootstrap(runCtx); err != nil {
-		if errors.Is(context.Cause(runCtx), ErrCancelled) {
+		if errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled) {
 			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
@@ -227,10 +253,61 @@ func (r *run) runAgentLoop(ctx context.Context) {
 	r.agentLoop(ctx)
 }
 
+// save writes the record, if this execution owns it, within
+// recordWriteTimeout of its own: detached from ctx's cancellation and
+// deadline, and bounded, so a stalled bucket can't hold the run.
 func (r *run) save(ctx context.Context) {
-	if err := r.d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); err != nil {
+	if !r.owned {
+		return
+	}
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	if err := writeRecord(r.d.Store, wctx, r.rec); err != nil {
 		r.d.Log.Warn("writing run record failed", "err", err)
 	}
+}
+
+// createRecord creates result.json if absent, within recordWriteTimeout.
+func (r *run) createRecord(ctx context.Context) error {
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordWriteTimeout)
+	defer cancel()
+	return createRecord(r.d.Store, wctx, r.rec)
+}
+
+// errOwnerUnknown means the first record's create failed and nothing
+// could be read back, so whether another execution owns the run is not
+// known. The run stops and writes nothing.
+var errOwnerUnknown = errors.New("could not tell whether another execution owns this run")
+
+// claimRecord makes this Cloud Run execution the owner of result.json, or
+// tells it that it is a duplicate (design §4.7). It creates the first
+// record if absent; when one is already there, or the create failed for
+// another reason, it reads the record back: one naming this very
+// execution (a restart, or a create whose response was lost) is ours,
+// one naming any other execution makes this a duplicate, and an
+// unreadable one after a failed create leaves ownership unknown.
+func (r *run) claimRecord(ctx context.Context) error {
+	cerr := r.createRecord(ctx)
+	if cerr == nil {
+		r.owned = true
+		return nil
+	}
+	exists := errors.Is(cerr, runstore.ErrExists)
+	if !exists {
+		r.d.Log.Warn("creating the first run record failed; reading it back", "err", r.redact(cerr.Error()))
+	}
+	prev, rerr := r.d.Store.ReadRecord(ctx)
+	switch {
+	case rerr != nil && exists:
+		return ErrDuplicateExecution // someone else's, unreadable: nothing written
+	case rerr != nil:
+		return fmt.Errorf("%w: creating the first run record: %w; reading it back: %w", errOwnerUnknown, cerr, rerr)
+	case !backend.SameExecution(prev.Execution, r.d.Execution):
+		return ErrDuplicateExecution
+	}
+	r.owned = true
+	r.save(ctx) // this very execution restarted, or its create landed: carry on
+	return nil
 }
 
 // redact removes every known secret value from s.
@@ -241,6 +318,63 @@ func (r *run) addSecret(v string) {
 	if v != "" && !slices.Contains(r.secrets, v) {
 		r.secrets = append(r.secrets, v)
 	}
+}
+
+// SecretEnvsVar is set on the Cloud Run job to the comma-separated names
+// of every secret variable the job mounts: the platform's own and every
+// workflow secret of the fugaro.yaml the job was deployed from. The ref a
+// task runs may declare fewer, but the values are in the runner's
+// environment either way, where the agent can read them.
+const SecretEnvsVar = "FUGARO_SECRET_ENVS"
+
+// minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
+// shorter declared secret for the same reason.
+const minSecretLen = 4
+
+// addMountedSecrets registers the values of the variables SecretEnvsVar
+// names, before anything else runs, so even a failure reason from the
+// first moments of bootstrap is redacted of them. A missing variable is
+// skipped; one too short to redact safely is skipped with a warning that
+// names only the variable.
+func (r *run) addMountedSecrets() {
+	for _, name := range strings.Split(envLookup(r.d.Env, SecretEnvsVar), ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		switch v := envLookup(r.d.Env, name); {
+		case v == "":
+		case len(v) < minSecretLen:
+			r.d.Log.Warn("a mounted secret is too short to redact", "env", name)
+		default:
+			r.addSecret(v)
+		}
+	}
+}
+
+// redactRecords returns records with the text the agent can influence
+// (test names from its reports, the warning quoting them) redacted.
+func (r *run) redactRecords(records []verify.Record) []verify.Record {
+	out := make([]verify.Record, len(records))
+	for i, v := range records {
+		v.Failed = r.redactAll(v.Failed)
+		v.Flaky = r.redactAll(v.Flaky)
+		v.Warning = r.redact(v.Warning)
+		out[i] = v
+	}
+	return out
+}
+
+// redactAll redacts each of ss, keeping nil as nil.
+func (r *run) redactAll(ss []string) []string {
+	if ss == nil {
+		return nil
+	}
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = r.redact(s)
+	}
+	return out
 }
 
 // openProvider opens the provider of kind, which from names the source of
@@ -424,19 +558,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
-	r.rec.Execution = r.d.Execution
-	if r.d.Execution == "" {
+	if r.owned {
 		r.save(ctx)
-	} else if err := r.d.Store.CreateRecord(ctx, r.rec); errors.Is(err, runstore.ErrExists) {
-		// Created before the lock, so two executions of one run are
+	} else if err := r.claimRecord(ctx); err != nil {
+		// Claimed before the lock, so two executions of one run are
 		// always told apart here (design §4.7).
-		prev, rerr := r.d.Store.ReadRecord(ctx)
-		if rerr != nil || !backend.SameExecution(prev.Execution, r.d.Execution) {
-			return ErrDuplicateExecution // nothing written
-		}
-		r.save(ctx) // this very execution restarted: carry on
-	} else if err != nil {
-		r.d.Log.Warn("writing the first run record failed", "err", r.redact(err.Error()))
+		return err
+	}
+	// A cancel that landed before the run started is seen now, not only
+	// at the watcher's first poll, before anything is cloned or locked.
+	if ok, err := r.d.Store.CancelRequested(ctx); err != nil {
+		r.d.Log.Warn("checking for a cancel request failed", "err", r.redact(err.Error()))
+	} else if ok {
+		return fmt.Errorf("%w before the run started", ErrCancelled)
 	}
 	if spec.IsFollowUp() {
 		return errors.New("follow-up runs are not supported by this version of fugaro")
@@ -499,6 +633,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
 	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
 	// The lock comes before anything changes remote state: the clone and
@@ -754,6 +889,8 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("reading verify records: %w", err)
 	}
+	// Stored in result.json and verify/<n>.json, like everything published.
+	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 

@@ -95,6 +95,7 @@
     },
     "started_at": { "type": "string", "format": "date-time" },
     "deadline": { "type": "string", "format": "date-time" },
-    "finished_at": { "type": "string", "format": "date-time" }
+    "finished_at": { "type": "string", "format": "date-time" },
+    "finalize_reserve_s": { "type": "number", "exclusiveMinimum": 0, "description": "The workflow's timeouts.finalize_reserve at the task's ref, overrides applied, in seconds; cancel floors its grace with it." }
   }
 }

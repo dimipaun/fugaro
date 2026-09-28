@@ -42,6 +42,8 @@ type cloudFixture struct {
 func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	t.Helper()
 	f := &cloudFixture{dir: t.TempDir(), run: gcpfake.NewRun(t), logging: gcpfake.NewLogging(t)}
+	// Executions the fake starts live where the config's backend looks.
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	runs := filepath.Join(f.dir, "runs")
 	if err := os.MkdirAll(runs, 0o755); err != nil {
 		t.Fatal(err)
@@ -109,14 +111,18 @@ func envOn(t *testing.T, f *cloudFixture, bucket *blobx.Bucket) *cloudEnv {
 	return &cloudEnv{lc: lc, bucket: bucket, be: be}
 }
 
-func TestGitprovSafe(t *testing.T) {
-	for _, u := range []string{"https://user:tok@host/o/r", "ssh://user:tok@host/o/r"} {
-		if got := gitprovSafe(u); strings.Contains(got, "tok") || !strings.Contains(got, "host/o/r") {
-			t.Errorf("gitprovSafe(%q) = %q", u, got)
+func TestRepoFromOrigin(t *testing.T) {
+	for origin, want := range map[string]string{
+		"git@github.com:acme/app.git":              "acme/app",
+		"https://user:tok@bitbucket.org/acme/app/": "acme/app",
+		"ssh://git@bitbucket.org:22/acme/app.git":  "acme/app",
+		"https://host/deep/group/app":              "",
+		"https://host/app":                         "",
+		"not a url":                                "",
+	} {
+		if got, ok := repoFromOrigin(origin); got != want || ok != (want != "") {
+			t.Errorf("repoFromOrigin(%q) = %q, %v; want %q", origin, got, ok, want)
 		}
-	}
-	if got := gitprovSafe("https://host/%zz"); got != "<unparseable URL>" {
-		t.Errorf("unparseable: %q", got)
 	}
 }
 
@@ -168,9 +174,23 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := env.prices(), gcp.ListPrices(region); got != want {
+		if got, want := env.prices()(""), gcp.ListPrices(region); got != want {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
+	}
+}
+
+// "." and ".." are no slug: path.Join would take them out of runs/
+// (security review S-M7).
+func TestRunRefRefusesDotSlugs(t *testing.T) {
+	newCloudFixture(t)
+	for _, ref := range []string{"./20260927-100000-abcd", "../20260927-100000-abcd"} {
+		for _, cmd := range []string{"logs", "diagnose", "cancel"} {
+			_, _, err := execute(t, cmd, ref)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "<repo-slug>/<run-id>") {
+				t.Errorf("%s %s: %v", cmd, ref, err)
+			}
+		}
 	}
 }

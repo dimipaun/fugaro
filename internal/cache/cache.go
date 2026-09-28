@@ -46,7 +46,14 @@ func (s *Store) max() int64 {
 // refused (ErrBadArchive), not on an I/O error, is deleted, conditioned on
 // the object read being the one still there, so it doesn't block its key
 // until the lifecycle rule expires it; the next run's write-back replaces it.
+// A root that is itself a symlink is refused (ErrLinkedRoot) before
+// anything is written, and the archive is kept: the fault is local.
 func (s *Store) Restore(ctx context.Context, key string, roots []string) (bool, error) {
+	for _, r := range roots {
+		if err := refuseLinkedRoot(r); err != nil {
+			return false, err
+		}
+	}
 	obj := ObjectKey(s.Slug, s.Workflow, key)
 	r, err := s.Bucket.NewReader(ctx, obj, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound {
@@ -103,8 +110,14 @@ func (s *Store) discard(ctx context.Context, obj string, r *blob.Reader) error {
 
 // Save archives roots as key unless that archive already exists. It
 // returns saved=false, nil when it does. Symlinks that resolve outside
-// their root are left out, and their count goes to Warn.
+// their root are left out, and their count goes to Warn. A root that is
+// itself a symlink is refused (ErrLinkedRoot) and nothing is written.
 func (s *Store) Save(ctx context.Context, key string, roots []string) (bool, error) {
+	for _, r := range roots {
+		if err := refuseLinkedRoot(r); err != nil {
+			return false, err
+		}
+	}
 	obj := ObjectKey(s.Slug, s.Workflow, key)
 	if ok, err := s.Bucket.Exists(ctx, obj); err != nil || ok {
 		return false, err

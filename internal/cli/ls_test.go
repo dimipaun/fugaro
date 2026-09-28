@@ -132,7 +132,8 @@ func TestLsFollowsTheRecordsExecution(t *testing.T) {
 	}
 }
 
-// An execution name that can't be parsed is a warning, not a failure (N-9).
+// An execution name that can't be parsed is a warning and a per-row error,
+// not a failure of the listing (N-9, S-I2).
 func TestLsUnparseableExecutionWarns(t *testing.T) {
 	f := newCloudFixture(t)
 	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
@@ -142,7 +143,7 @@ func TestLsUnparseableExecutionWarns(t *testing.T) {
 	_ = runstore.Open(b, appSlug, id).WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: "not-a-name"})
 	b.Close()
 	got, errOut := lsJSON(t)
-	if len(got.Runs) != 1 || got.Runs[0].Status != runview.StatusPending || strings.Count(errOut, "unparseable execution name") != 1 {
+	if len(got.Runs) != 1 || got.Runs[0].Status != runview.StatusError || strings.Count(errOut, "not a Cloud Run execution name") != 1 {
 		t.Fatalf("ls = %+v, stderr %q", got.Runs, errOut)
 	}
 }

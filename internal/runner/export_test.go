@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/cache"
+	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // ToolchainHash exposes toolchainHash to the runner_test package.
@@ -34,3 +36,28 @@ func SetSlowRestore(t *testing.T) {
 	}
 	t.Cleanup(func() { restoreCache = prev })
 }
+
+// SetCreateRecord replaces the runner's create-if-absent record write for
+// the rest of t.
+func SetCreateRecord(t *testing.T, f func(s *runstore.Store, ctx context.Context, rec *runstore.Record) error) {
+	prev := createRecord
+	createRecord = f
+	t.Cleanup(func() { createRecord = prev })
+}
+
+// SetWriteRecord replaces the runner's record overwrite for the rest of t.
+func SetWriteRecord(t *testing.T, f func(s *runstore.Store, ctx context.Context, rec *runstore.Record) error) {
+	prev := writeRecord
+	writeRecord = f
+	t.Cleanup(func() { writeRecord = prev })
+}
+
+// SetLockRelease replaces the branch lock's release for the rest of t.
+func SetLockRelease(t *testing.T, f func(l *lock.Lock, ctx context.Context) error) {
+	prev := releaseBranchLock
+	releaseBranchLock = f
+	t.Cleanup(func() { releaseBranchLock = prev })
+}
+
+// RecordWriteTimeout exposes recordWriteTimeout.
+const RecordWriteTimeout = recordWriteTimeout

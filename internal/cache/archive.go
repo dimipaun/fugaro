@@ -57,25 +57,32 @@ type manifest struct {
 	Roots   int `json:"roots"`
 }
 
-// walkRoot returns the directory to walk for root, following a symlink at
-// the root itself (an image may link ~/.cache elsewhere). ok is false when
-// root is missing or is not a directory.
+// walkRoot returns the directory to walk for root. ok is false when root
+// is missing, is not a directory, or is a symlink, which is never followed
+// (see ErrLinkedRoot; writeEntries refuses it before calling this).
 func walkRoot(root string) (string, bool) {
-	dir, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", false
-	}
-	fi, err := os.Stat(dir)
+	fi, err := os.Lstat(root)
 	if err != nil || !fi.IsDir() {
 		return "", false
 	}
-	return dir, true
+	return root, true
+}
+
+// refuseLinkedRoot returns ErrLinkedRoot when root itself is a symlink.
+// Links further up are the caller's to check, with CheckLinks, since only
+// it knows the root's base.
+func refuseLinkedRoot(root string) error {
+	if fi, err := os.Lstat(root); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+		return ErrLinkedRoot
+	}
+	return nil
 }
 
 // Write streams roots into w as a zstd-compressed tar: the manifest first,
 // then every directory, regular file and symlink of root i as "<i>/<rel>".
 // Other file types are skipped, and so are symlinks that resolve outside
-// their root, which Extract would refuse (see writeArchive). It returns the
+// their root, which Extract would refuse (see writeArchive). A root that
+// is itself a symlink is refused with ErrLinkedRoot. It returns the
 // bytes charged against maxBytes (content plus headerCost per entry), or
 // ErrTooLarge once they would pass maxBytes.
 func Write(w io.Writer, roots []string, maxBytes int64) (int64, error) {
@@ -135,6 +142,9 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 		return nil
 	}
 	for i, root := range roots {
+		if err := refuseLinkedRoot(root); err != nil {
+			return st, err
+		}
 		dir, ok := walkRoot(root)
 		if !ok {
 			continue
@@ -357,7 +367,8 @@ func (x *extractor) readErr(what string, err error) error {
 // stopped, every symlink it created is resolved again, since a later entry
 // can make an earlier link escape; one that resolves outside its root is
 // removed and reported. A refusal or a corrupt archive matches
-// ErrBadArchive.
+// ErrBadArchive. A root that is itself a symlink is refused with
+// ErrLinkedRoot before anything is written.
 func Extract(r io.Reader, roots []string, maxBytes int64) error {
 	return extract(context.Background(), r, roots, maxBytes)
 }
@@ -372,6 +383,10 @@ func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (
 		}
 	}()
 	for _, dir := range roots {
+		// Checked before MkdirAll and OpenRoot, which would both follow it.
+		if err := refuseLinkedRoot(dir); err != nil {
+			return err
+		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return fmt.Errorf("creating cache root: %w", err)
 		}

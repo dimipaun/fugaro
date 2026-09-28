@@ -146,3 +146,23 @@ func TestReplaceIfStoresJSONAsJSON(t *testing.T) {
 		})
 	}
 }
+
+// TestReadIsCapped: every object Read serves is small JSON (locks,
+// claims, records), and the job's service account can write any of them,
+// so a larger one fails with ErrTooLarge instead of being read whole.
+func TestReadIsCapped(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	if err := b.WriteAll(ctx, "ok", make([]byte, blobx.MaxReadBytes), nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := b.Read(ctx, "ok"); err != nil || len(data) != blobx.MaxReadBytes {
+		t.Fatalf("Read at the cap = %d bytes, %v", len(data), err)
+	}
+	if err := b.WriteAll(ctx, "huge", make([]byte, blobx.MaxReadBytes+1), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Read(ctx, "huge"); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("Read past the cap = %v, want ErrTooLarge", err)
+	}
+}

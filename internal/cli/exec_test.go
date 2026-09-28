@@ -135,3 +135,15 @@ func TestExecRejectsTaskFileOnCloudRun(t *testing.T) {
 		t.Fatalf("exec touched the bucket before failing: %v", serr)
 	}
 }
+
+// TestExecRefusesHTTP2Debug pins S-M1's exec half: with GODEBUG's
+// http2debug, Go would print the runner's bearer tokens to its logs.
+func TestExecRefusesHTTP2Debug(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	t.Setenv("GODEBUG", "http2debug=2")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(), "--run", "acme-app/20260926-221530-abcd")
+	if err == nil || !strings.Contains(err.Error(), "http2debug") {
+		t.Fatalf("err = %v", err)
+	}
+}

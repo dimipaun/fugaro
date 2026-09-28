@@ -101,3 +101,14 @@ func TestParseRef(t *testing.T) {
 		}
 	}
 }
+
+// TestFinalizeReserve: the record carries the run's finalize reserve, so
+// cancel can floor its grace without a checkout; an older record has none.
+func TestFinalizeReserve(t *testing.T) {
+	if d, ok := (&Record{FinalizeReserveS: 90}).FinalizeReserve(); !ok || d != 90*time.Second {
+		t.Fatalf("FinalizeReserve = %v, %v", d, ok)
+	}
+	if d, ok := (&Record{}).FinalizeReserve(); ok || d != 0 {
+		t.Fatalf("FinalizeReserve of a record without one = %v, %v", d, ok)
+	}
+}
