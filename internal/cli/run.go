@@ -29,6 +29,16 @@ const (
 	// holdTimeout bounds everything done while holding the claim (the
 	// re-check, Launch and the launch.json write), so a claim is never
 	// judged stale by another CLI while its holder is still at work.
+	//
+	// Clock assumption: a claim's age is this machine's clock minus the
+	// holder's (Claim.At). Every CLI's clock must be within
+	// claimTTL - holdTimeout (5m) of every other's, or a live claim can be
+	// judged stale and taken over. The object's server-side update time
+	// would narrow that to this machine against Cloud Storage, not remove
+	// it, and is not used. If the assumption fails, the result is a double
+	// launch, which the runner's duplicate-execution check contains: the
+	// second execution finds the first's record and exits writing nothing
+	// (design §4.7).
 	holdTimeout = claimTTL / 2
 )
 

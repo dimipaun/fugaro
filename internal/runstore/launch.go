@@ -50,7 +50,8 @@ type Claim struct {
 }
 
 // Claim takes the launch claim. When another holder has it, ok is false and
-// existing is theirs.
+// existing is theirs; when the claim vanishes twice while Claim reads it,
+// existing is a claim held since at by "another CLI".
 func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool, existing *Claim, err error) {
 	data, err := json.Marshal(Claim{Holder: holder, At: at.UTC()})
 	if err != nil {
@@ -65,8 +66,14 @@ func (s *Store) Claim(ctx context.Context, holder string, at time.Time) (ok bool
 			return false, nil, err
 		}
 		raw, rerr := s.readRecordObject(ctx, "launching")
-		if errors.Is(rerr, ErrNotFound) && attempt == 0 {
-			continue // released between our create and our read: absent, so try once more
+		if errors.Is(rerr, ErrNotFound) {
+			if attempt == 0 {
+				continue // released between our create and our read: absent, so try once more
+			}
+			// Released twice in a row: other CLIs are claiming and releasing
+			// right now. Report a claim held as of at, which the caller waits
+			// on like any fresh claim.
+			return false, &Claim{Holder: "another CLI", At: at.UTC()}, nil
 		}
 		if rerr != nil {
 			return false, nil, rerr

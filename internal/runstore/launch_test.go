@@ -160,13 +160,16 @@ func TestClaimRetriesWhenTheClaimVanishes(t *testing.T) {
 	}
 }
 
-// The retry is bounded: a claim that keeps vanishing is an error, not a loop.
+// The retry is bounded, and a claim that keeps vanishing is someone else's
+// claim in flight, held as of now: the caller waits on it, as it would on
+// any fresh claim, instead of failing with "not found".
 func TestClaimRetriesOnlyOnce(t *testing.T) {
 	f := &fakeBucket{conflicts: 100}
 	s := Open(blob.NewBucket(f), "acme-app", "20260926-221530-a1b2")
-	ok, _, err := s.Claim(context.Background(), "laptop", time.Now())
-	if ok || !errors.Is(err, ErrNotFound) {
-		t.Fatalf("Claim = %v, %v", ok, err)
+	at := time.Now()
+	ok, existing, err := s.Claim(context.Background(), "laptop", at)
+	if ok || err != nil || existing == nil || !existing.At.Equal(at.UTC()) {
+		t.Fatalf("Claim = %v, %+v, %v; want held by someone as of now", ok, existing, err)
 	}
 	if f.writes != 2 || f.reads != 2 {
 		t.Fatalf("writes=%d reads=%d, want 2 and 2", f.writes, f.reads)
