@@ -13,10 +13,12 @@ if [ ! -f "$root/images/$base/Dockerfile" ]; then
   exit 1
 fi
 [ $# -gt 0 ] || set -- "fugaro-$base:dev"
-tags=""
-for tag in "$@"; do tags="$tags --tag $tag"; done
-# $tags is deliberately unquoted: it is a list of flags.
+# Turn the tags into --tag flags in place: the positional parameters are
+# POSIX sh's only list, and each flag stays one word.
+n=$#
+for tag in "$@"; do set -- "$@" --tag "$tag"; done
+shift "$n"
 DOCKER_BUILDKIT=1 docker build --progress plain \
   --platform "${PLATFORM:-linux/amd64}" \
   --build-arg "FUGARO_VERSION=${FUGARO_VERSION:-dev}" \
-  --file "$root/images/$base/Dockerfile" $tags "$root"
+  --file "$root/images/$base/Dockerfile" "$@" "$root"
