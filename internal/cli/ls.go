@@ -300,11 +300,14 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	if name == "" {
 		return in, nil
 	}
-	eid, ok := backend.ParseExecution(name)
-	if !ok {
-		warnf("warning: run %s/%s: unparseable execution name\n", slug, id)
+	// The run's service account can write both objects: follow only an
+	// execution of the run's own job (S-I2).
+	if err := env.checkExecution(name, slug, in.Task); err != nil {
+		in.Problem = "not following its execution: " + err.Error()
+		warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
 		return in, nil
 	}
+	eid, _ := backend.ParseExecution(name)
 	if e, ok := execs[eid.Key()]; ok {
 		in.Exec = &e
 		return in, nil

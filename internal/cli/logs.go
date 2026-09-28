@@ -97,7 +97,7 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 		return nil, nil, "", err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, s, id)
+	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
 		return nil, nil, "", err
 	}
@@ -110,8 +110,9 @@ func locateLaunched(ctx context.Context, env *cloudEnv, ref string) (*runstore.S
 // ownerLaunch is the run's launch as the views must see it (N-2): the
 // execution result.json names, when set, since that is the one that owns
 // the run; else launch.json's. nil means never launched. Unlike
-// existingLaunch it never writes: it serves read-only views.
-func ownerLaunch(ctx context.Context, s *runstore.Store, id string) (*runstore.Launch, error) {
+// existingLaunch it never writes: it serves read-only views. An execution
+// that is not of the run's own job is an error, never followed (S-I2).
+func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string) (*runstore.Launch, error) {
 	l, err := absent(s.ReadLaunch(ctx))
 	if err != nil {
 		return nil, remote(err)
@@ -120,15 +121,23 @@ func ownerLaunch(ctx context.Context, s *runstore.Store, id string) (*runstore.L
 	if err != nil {
 		return nil, remote(err)
 	}
+	owner := l
 	if rec != nil && rec.Execution != "" {
-		owner := runstore.Launch{Version: 1, RunID: id, LaunchedAt: rec.StartedAt}
+		o := runstore.Launch{Version: 1, RunID: id, LaunchedAt: rec.StartedAt}
 		if l != nil {
-			owner = *l
+			o = *l
 		}
-		owner.Execution = rec.Execution
-		return &owner, nil
+		o.Execution = rec.Execution
+		owner = &o
 	}
-	return l, nil
+	if owner == nil || owner.Execution == "" {
+		return owner, nil
+	}
+	spec, _ := s.ReadTask(ctx) // unreadable: checkExecution refuses
+	if err := env.checkExecution(owner.Execution, s.Slug(), spec); err != nil {
+		return nil, remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), id, err))
+	}
+	return owner, nil
 }
 
 // cliSecrets are the credential values in the CLI's own environment, the

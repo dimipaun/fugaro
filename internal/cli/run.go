@@ -140,7 +140,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		return err
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
-	prior, err := existingLaunch(ctx, s, spec.RunID)
+	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return err
 	}
@@ -360,9 +360,20 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 // existingLaunch is the run's launch, or nil when it has not launched. When
 // the CLI that launched died before writing launch.json, it backfills one
 // from result.json, where the runner records the same canonical execution
-// name launch.json holds (C-1).
-func existingLaunch(ctx context.Context, s *runstore.Store, runID string) (*runstore.Launch, error) {
+// name launch.json holds (C-1). Either name must be of the run's own job
+// (S-I2): the run's service account can write both objects.
+func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec) (*runstore.Launch, error) {
+	runID := spec.RunID
+	check := func(name string) error {
+		if err := env.checkExecution(name, s.Slug(), spec); err != nil {
+			return remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), runID, err))
+		}
+		return nil
+	}
 	if l, err := s.ReadLaunch(ctx); err == nil {
+		if err := check(l.Execution); err != nil {
+			return nil, err
+		}
 		return l, nil
 	} else if !errors.Is(err, runstore.ErrNotFound) {
 		return nil, remote(err)
@@ -373,6 +384,9 @@ func existingLaunch(ctx context.Context, s *runstore.Store, runID string) (*runs
 	}
 	if err != nil {
 		return nil, remote(err)
+	}
+	if err := check(rec.Execution); err != nil {
+		return nil, err
 	}
 	l := &runstore.Launch{Version: 1, RunID: runID, Backend: "cloud-run", Execution: rec.Execution, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
@@ -422,7 +436,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status
 		return res, nil
 	}
-	if l, err := existingLaunch(ctx, s, spec.RunID); err != nil || l != nil {
+	if l, err := existingLaunch(ctx, env, s, spec); err != nil || l != nil {
 		if err != nil {
 			return res, err
 		}
@@ -443,7 +457,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		if won {
 			break
 		}
-		l, err := waitForLaunch(ctx, env, s, spec.RunID, res.Run, other)
+		l, err := waitForLaunch(ctx, env, s, spec, res.Run, other)
 		if errors.Is(err, errClaimReleased) {
 			// The holder's launch was refused and it released the claim:
 			// nothing started, so try for the claim again at once.
@@ -463,7 +477,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 	hctx, cancelHold := context.WithDeadline(ctx, now.Add(holdTimeout))
 	defer cancelHold()
 	hook(launchHooks.afterClaim)
-	if l, err := existingLaunch(hctx, s, spec.RunID); err != nil || l != nil {
+	if l, err := existingLaunch(hctx, env, s, spec); err != nil || l != nil {
 		if err != nil {
 			return res, err
 		}
@@ -575,10 +589,10 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 // launch with exit 0, as a repeated launch should. Otherwise exit 1. When
 // the claim disappears (its holder was refused and released it), it
 // returns errClaimReleased at once, so the caller can claim again.
-func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, runID, run string, holder runstore.Claim) (*runstore.Launch, error) {
+func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *task.Spec, run string, holder runstore.Claim) (*runstore.Launch, error) {
 	deadline := time.Now().Add(claimWait)
 	for {
-		l, err := existingLaunch(ctx, s, runID)
+		l, err := existingLaunch(ctx, env, s, spec)
 		if err != nil {
 			return nil, err
 		}

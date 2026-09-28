@@ -18,6 +18,10 @@ const (
 	StatusUnlaunched = "unlaunched"
 	StatusLaunching  = "launching" // a fresh launch claim, no launch.json yet (N-11)
 	StatusPending    = "pending"
+	// StatusError is a run whose objects can't be trusted or read (a
+	// corrupt launch.json or result.json, an execution that isn't the
+	// run's): Reason says what; nothing about its progress is guessed.
+	StatusError = "error"
 )
 
 // ReasonNoFinalRecord explains a run whose execution is gone but whose
@@ -33,6 +37,9 @@ type Input struct {
 	Exec         *backend.Execution
 	CancelMarker bool
 	Claim        *runstore.Claim // the "launching" marker, if any
+	// Problem, when set, is why the run's objects can't be followed; the
+	// row is then StatusError with Problem as its reason.
+	Problem string
 }
 
 // Row is one run as ls and diagnose show it.
@@ -89,6 +96,12 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 		row.LogURL = e.LogURL
 	}
 	unstarted := in.Launch == nil && r == nil
+	if in.Problem != "" {
+		// Settled: re-reading won't make an untrusted object trustworthy.
+		row.Status, row.Reason, row.Execution, row.Settled = StatusError, in.Problem, "", true
+		row.Cost = runstore.ModelOnlyCost(0, runstore.BasisAPIList)
+		return row
+	}
 	switch {
 	case r != nil && r.Status != runstore.StatusRunning:
 		row.Status = string(r.Status)

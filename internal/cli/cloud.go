@@ -121,6 +121,17 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 	return slug, runID, nil
 }
 
+// checkExecution refuses name, an execution name read from the bucket
+// objects of run slug (whose task is spec), unless it is an execution of
+// the run's own job in this region (gcp.CheckRunExecution, S-I2). Without
+// a readable task there is no job to bind it to, so it is refused too.
+func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
+	if spec == nil || spec.Workflow == "" {
+		return fmt.Errorf("its task.json is unreadable or names no workflow, so execution %s can't be tied to the run's job", name)
+	}
+	return gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
+}
+
 // localRepo is the local config's entry for repo, matched in canonical form.
 func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
 	want, err := task.CanonicalRepo(repo)

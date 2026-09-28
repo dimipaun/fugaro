@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,15 +31,60 @@ func (b *Backend) JobPath(slug, workflow string) string {
 	return b.location() + "/jobs/" + JobName(slug, workflow)
 }
 
+// nameRE is what every part of an execution name the backend follows must
+// look like: project IDs and numbers, regions, job and execution names.
+var nameRE = regexp.MustCompile(`^[a-z0-9-]+$`)
+
 // canonical rebuilds an execution name with the backend's project ID, so a
 // project number the API sends never reaches a caller (plan C-1, I-9).
+//
+// Names reach it from bucket objects a run's own service account can write
+// (result.json, launch.json), so it follows only a name in the backend's
+// region whose every part is [a-z0-9-]: nothing else reaches a request path
+// (security review S-I2). Callers that know the run bind the job too (the
+// CLI's checkExecution).
 func (b *Backend) canonical(name string) (backend.ExecID, error) {
+	id, err := parseInRegion(name, b.o.Region)
+	if err != nil {
+		return backend.ExecID{}, err
+	}
+	id.Project = b.o.Project
+	return id, nil
+}
+
+// parseInRegion parses name, and refuses it unless it is in region and
+// every part is [a-z0-9-].
+func parseInRegion(name, region string) (backend.ExecID, error) {
 	id, ok := backend.ParseExecution(name)
 	if !ok {
 		return backend.ExecID{}, fmt.Errorf("%q is not a Cloud Run execution name (projects/<p>/locations/<r>/jobs/<j>/executions/<e>)", name)
 	}
-	id.Project = b.o.Project
+	for _, part := range []string{id.Project, id.Region, id.Job, id.Name} {
+		if !nameRE.MatchString(part) {
+			return backend.ExecID{}, fmt.Errorf("execution name %q has a part that is not [a-z0-9-]", name)
+		}
+	}
+	if id.Region != region {
+		return backend.ExecID{}, fmt.Errorf("execution %s is in region %s, not %s", name, id.Region, region)
+	}
 	return id, nil
+}
+
+// CheckRunExecution refuses name, an execution name read from a run's
+// bucket objects, unless it is an execution of the run's own job,
+// JobName(slug, workflow), in region, spelled [a-z0-9-] throughout. The
+// run's service account can rewrite those objects, so without this check
+// a run could point the operator's cancel or logs at any job in the
+// project (security review S-I2).
+func CheckRunExecution(name, region, slug, workflow string) error {
+	id, err := parseInRegion(name, region)
+	if err != nil {
+		return err
+	}
+	if want := JobName(slug, workflow); id.Job != want {
+		return fmt.Errorf("execution %s belongs to job %s, not the run's job %s", name, id.Job, want)
+	}
+	return nil
 }
 
 // Launch starts one execution of the workflow's job with FUGARO_RUN set.

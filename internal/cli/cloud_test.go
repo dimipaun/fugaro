@@ -42,6 +42,8 @@ type cloudFixture struct {
 func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	t.Helper()
 	f := &cloudFixture{dir: t.TempDir(), run: gcpfake.NewRun(t), logging: gcpfake.NewLogging(t)}
+	// Executions the fake starts live where the config's backend looks.
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
 	runs := filepath.Join(f.dir, "runs")
 	if err := os.MkdirAll(runs, 0o755); err != nil {
 		t.Fatal(err)

@@ -146,3 +146,12 @@ func TestJoinPrefersRecordExecution(t *testing.T) {
 		t.Fatalf("execution = %q", row.Execution)
 	}
 }
+
+// A run whose objects can't be followed is an error row: settled, not
+// terminal, and it names no execution.
+func TestJoinProblemIsAnErrorRow(t *testing.T) {
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusRunning, nil), Exec: exec(backend.StateRunning), Problem: "forged"}, prices, now)
+	if row.Status != StatusError || row.Reason != "forged" || row.Terminal || !row.Settled || row.Execution != "" {
+		t.Fatalf("row = %+v", row)
+	}
+}

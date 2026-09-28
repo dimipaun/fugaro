@@ -99,7 +99,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	}
 	ref := slug + "/" + id
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	l, err := ownerLaunch(ctx, s, id)
+	l, err := ownerLaunch(ctx, env, s, id)
 	if err != nil {
 		return err
 	}
