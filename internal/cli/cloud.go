@@ -71,6 +71,9 @@ func remote(err error) error {
 // openCloud loads the local config (applying --project and --region) and
 // connects to the backend and the runs bucket.
 func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, err
+	}
 	path := o.config
 	if path == "" {
 		var err error
@@ -216,4 +219,16 @@ func gitprovSafe(u string) string {
 	}
 	p.User = nil
 	return p.String()
+}
+
+// refuseHTTP2Debug refuses to talk to Google while GODEBUG holds
+// http2debug: Go then prints HTTP/2 requests, headers (the OAuth bearer
+// token) and, at 2, frames of the body (a secret being stored) to stderr.
+// GODEBUG is read before main runs, so it can't be unset in time; every
+// command that opens the cloud refuses instead, with a fixed message.
+func refuseHTTP2Debug(getenv func(string) string) error {
+	if strings.Contains(getenv("GODEBUG"), "http2debug") {
+		return userErr("GODEBUG sets http2debug, which makes Go print HTTP requests, credentials and secrets included, to stderr; unset it (or drop http2debug) and rerun")
+	}
+	return nil
 }

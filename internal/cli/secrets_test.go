@@ -195,6 +195,45 @@ func TestSecretsSetWorkflowSecretMustBeDeclared(t *testing.T) {
 	}
 }
 
+// TestSecretsAndCloudCommandsRefuseHTTP2Debug: GODEBUG=http2debug prints requests,
+// the bearer token and body frames included, and can't be undone after
+// start, so commands that talk to Google refuse to run.
+func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
+	sm := secretsFixture(t)
+	for _, v := range []string{"http2debug=1", "gctrace=0,http2debug=2"} {
+		t.Setenv("GODEBUG", v)
+		for _, args := range [][]string{
+			{"secrets", "set", "claude-oauth-token", "--repo", "acme/app"},
+			{"secrets", "ls", "--repo", "acme/app"},
+			{"run", "--repo", "acme/app", "A task"},
+		} {
+			_, errOut, err := executeStdin(t, tokenValue, args...)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {
+				t.Fatalf("%s %q: %v", v, args[:2], err)
+			}
+		}
+	}
+	if len(sm.Requests()) != 0 {
+		t.Fatalf("requests were sent: %v", sm.Requests())
+	}
+	t.Setenv("GODEBUG", "gctrace=0")
+	if _, _, err := executeStdin(t, tokenValue, "secrets", "set", "claude-oauth-token", "--repo", "acme/app"); err != nil {
+		t.Fatalf("an unrelated GODEBUG: %v", err)
+	}
+}
+
+func TestSecretsSetBrokenFugaroYAML(t *testing.T) {
+	secretsFixture(t)
+	appCheckout(t)
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nnot_a_key: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo", "acme/app")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "problem(s)") || strings.Contains(err.Error(), "run this from a checkout") {
+		t.Fatalf("broken fugaro.yaml: %v", err)
+	}
+}
+
 func TestSecretsUnknownSubcommand(t *testing.T) {
 	if _, _, err := execute(t, "secrets", "lss"); ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "lss") {
 		t.Fatalf("secrets lss: %v", err)

@@ -23,6 +23,7 @@ type ttyFixture struct {
 	mu          sync.Mutex
 	shown       bytes.Buffer
 	copied      chan struct{}
+	abandoned   bool // a cancelled readSecret left a read pending
 }
 
 func newTTY(t *testing.T) *ttyFixture {
@@ -46,12 +47,23 @@ func newTTY(t *testing.T) *ttyFixture {
 		}
 	}()
 	t.Cleanup(func() {
-		// End any read still pending (after a cancel, the abandoned
-		// ReadPassword; in a real run it dies with the process): closing
-		// a blocking fd waits for it. Closing the tty then ends the
-		// master's read.
-		_, _ = master.WriteString("\n")
-		time.Sleep(50 * time.Millisecond)
+		// Closing a blocking fd waits for a read in flight, so first end
+		// the one a cancel abandoned (in a real run it dies with the
+		// process): feed it a line and wait until it has taken it.
+		if f.abandoned {
+			_, _ = master.WriteString("\n")
+			for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+				n, err := unix.IoctlGetInt(int(tty.Fd()), ioctlInputQueue)
+				if err != nil || n == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Error("the abandoned read never took its line")
+					break
+				}
+			}
+		}
+		// Closing the tty then ends the master's read.
 		tty.Close()
 		select {
 		case <-f.copied:
@@ -150,6 +162,7 @@ func TestReadSecretHiddenPromptCancelled(t *testing.T) {
 	f.waitEcho(t, false)
 	_, _ = f.master.WriteString("sk-partial") // typed, no Enter yet
 	cancel()
+	f.abandoned = true
 	r := waitRead(t, done)
 	if !errors.Is(r.err, errCancelled) || ExitCode(r.err) != ExitUserError || r.value != nil || strings.Contains(r.err.Error(), "partial") {
 		t.Fatalf("readSecret = %q, %v", r.value, r.err)
