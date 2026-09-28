@@ -1,15 +1,18 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +20,7 @@ import (
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -560,6 +564,62 @@ func TestAgentStderrIsRedacted(t *testing.T) {
 	}
 }
 
+func TestAgentEventsRelayedRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs bytes.Buffer
+	h.deps.Log = runner.NewLogger(&logs)
+	talk := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"my key is test-key"}]}}` + "\n"))
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, talk, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `"event":"text"`) || !strings.Contains(out, "my key is [REDACTED]") || strings.Contains(out, "test-key") {
+		t.Fatalf("logs = %s", out)
+	}
+}
+
+// TestAgentToolEventsNeverLeakEscapedSecrets checks the relay behind the
+// transcript redactor: a secret the agent's tool_use and tool_result carry
+// \u-escaped slips past the byte-level redactor and must still be redacted
+// once decoded, in the live log as it is in the transcript's view.
+func TestAgentToolEventsNeverLeakEscapedSecrets(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs bytes.Buffer
+	h.deps.Log = runner.NewLogger(&logs)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	var esc strings.Builder
+	for _, c := range []byte(secret) {
+		fmt.Fprintf(&esc, `\u%04x`, c)
+	}
+	e := esc.String()
+	talk := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		for _, l := range []string{
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo ` + e + `"}}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"content":"KEY=` + e + `"}}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"denied: ` + e + `"}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"ANTHROPIC_API_KEY=` + secret + `"}]}}`,
+		} {
+			_, _ = req.Transcript.Write([]byte(l + "\n"))
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, talk, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if strings.Contains(out, secret) || strings.Contains(out, e) || strings.Contains(out, strings.ReplaceAll(e, `\`, `\\`)) {
+		t.Fatalf("log leaks the secret: %s", out)
+	}
+	for _, want := range []string{"tool Bash: echo [REDACTED]", `tool Write: {\"content\":\"KEY=[REDACTED]\"}`, "tool error: denied: [REDACTED]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing %q: %s", want, out)
+		}
+	}
+}
+
 // TestAgentBashTimeoutCoversVerify checks that the agent's Bash tool may run
 // `fugaro verify` for the whole verify timeout (1m in the fixture) plus
 // slack, instead of Claude Code's default 2-minute cap cutting it short.
@@ -641,5 +701,54 @@ func TestVerifyRecordsUploaded(t *testing.T) {
 	}
 	if got.N != 1 || got.Kind != verify.KindTest || got.HeadSHA != rec.Verify[0].HeadSHA || !got.Passed {
 		t.Fatalf("uploaded verify record = %+v, want %+v", got, rec.Verify[0])
+	}
+}
+
+func TestCostBreakdown(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.Prices = &backend.Prices{VCPUSecondUSD: 0.001, GiBSecondUSD: 0}
+	// The clock moves only when a stage says so, 30s per stage, well inside
+	// the fixture's 5m total, so the budget can never run out under the test.
+	// It starts at the real time because stage deadlines become real
+	// context deadlines; a fixed past date would expire them at once.
+	var mu sync.Mutex
+	clock := time.Now()
+	h.deps.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	tick := func(s step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			mu.Lock()
+			clock = clock.Add(30 * time.Second)
+			mu.Unlock()
+			return s(t, ctx, req)
+		}
+	}
+	rec, err := h.run(t, tick(implement("feature")), tick(review("ship", 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := rec.Cost
+	// 60s × 4 vCPU × $0.001 = $0.24 of compute; totals are compared to the cent.
+	if c == nil || !c.ComputeEstimated || c.ModelUSD != 1.5 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-1.74) > 0.005 {
+		t.Fatalf("cost = %+v", c)
+	}
+	if rec.CostUSD != c.ModelUSD {
+		t.Fatalf("cost_usd %v must equal the model sum %v", rec.CostUSD, c.ModelUSD)
+	}
+	if !strings.Contains(onlyPR(t, h.provider).Comments[0], "(model $1.50 + compute $") {
+		t.Fatalf("report = %s", onlyPR(t, h.provider).Comments[0])
+	}
+}
+
+func TestCostWithoutPricesIsNotEstimated(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := rec.Cost; c == nil || c.ComputeEstimated || c.ComputeUSD != 0 || c.ModelUSD != 1.5 {
+		t.Fatalf("cost = %+v", rec.Cost)
+	}
+	if report := onlyPR(t, h.provider).Comments[0]; !strings.Contains(report, "**Cost:** model $1.50 (compute not estimated)") {
+		t.Fatalf("report = %s", report)
 	}
 }

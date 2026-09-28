@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +10,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // TestMain lets TestSecondSignalForceQuits re-execute this test binary as a
@@ -69,5 +73,37 @@ func TestSecondSignalForceQuits(t *testing.T) {
 		case <-deadline:
 			t.Fatal("a second SIGINT did not force-quit the process")
 		}
+	}
+}
+
+// TestQuietGoogleSDK: with GOOGLE_SDK_GO_LOGGING_LEVEL=debug exported, the
+// storage client (which ignores option.WithLogger) would log each request
+// to stderr; fugaro unsets the variable first.
+func TestQuietGoogleSDK(t *testing.T) {
+	fake := gcpfake.NewGCS(t)
+	t.Setenv("STORAGE_EMULATOR_HOST", strings.TrimPrefix(fake.URL, "http://"))
+	t.Setenv(sdkLogEnv, "debug")
+	f, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = f
+	t.Cleanup(func() { os.Stderr = old; f.Close() })
+
+	quietGoogleSDK()
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, "gs://runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	if _, err := b.Create(ctx, "runs/x/debug-marker.json", []byte(`{"k":"debug-marker-value"}`), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = old
+	out, _ := os.ReadFile(f.Name())
+	if strings.Contains(string(out), "debug-marker") || strings.Contains(string(out), "api request") {
+		t.Fatalf("the SDK logged to stderr:\n%s", out)
 	}
 }

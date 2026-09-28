@@ -1,0 +1,111 @@
+package cli
+
+import (
+	"context"
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"gocloud.dev/blob"
+
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/runstore"
+)
+
+// A run's own service account can write its result.json. A record naming
+// another repository's execution must never be followed: not cancelled, not
+// streamed, not backfilled into launch.json.
+func TestForgedRecordExecutionIsRefused(t *testing.T) {
+	f := newCloudFixture(t)
+	other := mustSlug("github", "acme/other")
+	f.run.AddJob(gcp.JobName(other, "web"), "4", "8Gi")
+	victim := f.run.Start(gcp.JobName(other, "web"))
+	f.run.SetState(victim, backend.StateRunning)
+	f.logging.AddJSONLines(victim, []byte(`{"time":"`+logTime(0)+`","severity":"INFO","message":"other repo's secret log"}`+"\n"))
+
+	const launched, unlaunched = "20260927-100000-abcd", "20260927-110000-bbbb"
+	seedRun(t, f, launched, "", "someone@example.com", true)
+	seedRun(t, f, unlaunched, "", "someone@example.com", false)
+	for _, id := range []string{launched, unlaunched} {
+		writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: victim, Status: runstore.StatusRunning, Stage: "implement"})
+	}
+
+	for _, id := range []string{launched, unlaunched} {
+		out, _, err := execute(t, "cancel", "--now", "--json", "--poll", "10ms", id)
+		if err == nil {
+			t.Fatalf("cancel %s = %s, want a refusal", id, out)
+		}
+		if f.run.State(victim) != backend.StateRunning {
+			t.Fatalf("cancel %s cancelled another repository's execution", id)
+		}
+		out, _, err = execute(t, "logs", id)
+		if err == nil || strings.Contains(out, "other repo") {
+			t.Fatalf("logs %s = %q, %v", id, out, err)
+		}
+		if _, _, err := execute(t, "diagnose", id); err == nil {
+			t.Fatalf("diagnose %s followed the forged execution", id)
+		}
+	}
+
+	// --retry must not backfill launch.json from the forged record.
+	if out, _, err := execute(t, "run", "--retry", unlaunched); err == nil {
+		t.Fatalf("run --retry = %s, want a refusal", out)
+	}
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	if l, err := runstore.Open(b, appSlug, unlaunched).ReadLaunch(context.Background()); err == nil {
+		t.Fatalf("launch.json backfilled: %+v", l)
+	}
+
+	// ls shows each such run as a per-row error, with a warning, and goes on.
+	out, errOut, err := execute(t, "ls", "--json", "--since", "0")
+	var got lsOut
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 2 {
+		t.Fatalf("ls = %s, %v (%s)", out, err, errOut)
+	}
+	for _, r := range got.Runs {
+		if r.Status != "error" || !strings.Contains(r.Reason, "execution") || backend.SameExecution(r.Execution, victim) {
+			t.Fatalf("row = %+v", r)
+		}
+	}
+	if !strings.Contains(errOut, "warning") {
+		t.Fatalf("ls stderr = %q", errOut)
+	}
+}
+
+// ls --region <other> can't follow a run launched in the configured
+// region; its error row says where the run is and how to follow it.
+func TestLsInAnotherRegionNamesTheRunsRegion(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, errOut, err := execute(t, "ls", "--json", "--since", "0", "--region", "us-west1")
+	var got lsOut
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 1 {
+		t.Fatalf("ls = %s, %v (%s)", out, err, errOut)
+	}
+	if r := got.Runs[0]; r.Status != "error" || !strings.Contains(r.Reason, "region us-east5") || !strings.Contains(r.Reason, "--region us-east5") {
+		t.Fatalf("row = %+v", r)
+	}
+}
+
+// diagnose on a run whose execution it won't follow shows the run's error
+// row, like ls, and exits 1: the problem is the run's, not a remote failure.
+func TestDiagnoseShowsTheRowOfAnExecutionItWontFollow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, _, err := execute(t, "diagnose", "--json", "--region", "us-west1", id)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("diagnose exit %d (%v), want %d", ExitCode(err), err, ExitUserError)
+	}
+	var d struct {
+		Row struct{ Status, Reason string } `json:"row"`
+	}
+	if json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != "error" || !strings.Contains(d.Row.Reason, "--region us-east5") {
+		t.Fatalf("diagnose --json = %s", out)
+	}
+}

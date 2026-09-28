@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gocloud.dev/blob"
-	_ "gocloud.dev/blob/fileblob" // file:// buckets for local runs
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -58,6 +59,12 @@ func newExecCmd() *cobra.Command {
 
 func runExec(cmd *cobra.Command, o execOptions) error {
 	ctx := cmd.Context()
+	// The runner talks to Google too (the bucket, the metadata server), so
+	// it refuses http2debug as every cloud command does: Go would log its
+	// bearer tokens.
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	if o.bucket == "" {
 		return errors.New("--bucket (or FUGARO_BUCKET) is required")
 	}
@@ -79,9 +86,19 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return err
 	}
-	bucket, err := blob.OpenBucket(ctx, o.bucket)
+	// On Cloud Run, the canonical execution name; "" for a local run.
+	execName, err := backend.ExecutionFromEnv(os.Getenv)
 	if err != nil {
-		return fmt.Errorf("opening bucket %s: %w", o.bucket, err)
+		return err
+	}
+	if execName != "" && o.taskFile != "" {
+		// --task-file writes task.json before the runner can tell a
+		// duplicate execution apart; Cloud Run launches name the run.
+		return errors.New("--task-file is for local runs; on Cloud Run the run comes from FUGARO_RUN (or --run)")
+	}
+	bucket, err := blobx.Open(ctx, o.bucket)
+	if err != nil {
+		return err
 	}
 	defer bucket.Close()
 
@@ -91,8 +108,17 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		if err != nil {
 			return err
 		}
-		slug, runID = task.Slug(spec.Repo), spec.RunID
-		if err := runstore.Open(bucket, slug, runID).WriteTask(ctx, spec); err != nil {
+		// The provider kind is part of the slug. It comes only from
+		// --provider (or FUGARO_GIT_PROVIDER), never from the origin host:
+		// on Cloud Run the slug arrives whole in FUGARO_RUN instead.
+		if o.provider == "" {
+			return errors.New("--task-file needs --provider (or FUGARO_GIT_PROVIDER): the provider kind is part of the repository's storage slug")
+		}
+		if slug, err = task.Slug(o.provider, spec.Repo); err != nil {
+			return fmt.Errorf("task file: %w", err)
+		}
+		runID = spec.RunID
+		if err := runstore.Open(bucket.Bucket, slug, runID).WriteTask(ctx, spec); err != nil {
 			return fmt.Errorf("writing task file: %w", err)
 		}
 	} else if slug, runID, err = runstore.ParseRef(o.run); err != nil {
@@ -111,11 +137,18 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
+	var prices *backend.Prices
+	if os.Getenv("FUGARO_BACKEND") == backend.CloudRun {
+		p := gcp.ListPrices(os.Getenv("FUGARO_REGION"))
+		prices = &p
+	}
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
-		Store: runstore.Open(bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
+		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
+		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
+		Prices: prices,
 	})
 	var writeErr error
 	if rec != nil {

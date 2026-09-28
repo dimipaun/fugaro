@@ -30,6 +30,18 @@ Git uses it with the username `x-token-auth`. The token is scoped to its reposit
 - **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The run logs a warning about this once, to its stderr log.
 - **Repository names** are matched in lowercase when finding an existing pull request, since Bitbucket stores workspace and repository slugs in lowercase.
 
+#### Finding a Bitbucket reviewer's UUID
+
+`git.pr.reviewers` needs account UUIDs. The repository access token can read the participants of the repository's recent pull requests, with each one's UUID and display name, so this finds anyone who took part in one of the last 30 merged pull requests. This keeps the token out of argv: `curl --config` reads the header from a process substitution, and `printf` is a shell builtin, so the token never reaches a process's command line.
+
+```bash
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/fugaro-<repo>-token)") \
+  'https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests?state=MERGED&pagelen=30&fields=values.participants.user.uuid,values.participants.user.display_name' \
+  | python3 -m json.tool
+```
+
+Pick the reviewer's `{…}` UUID by display name, and put it in the repository's own `git.pr.reviewers`. Never put it in Fugaro, its tests or its fixtures.
+
 ### GitHub
 
 Create a **GitHub App** and install it on the repositories Fugaro serves (design §6.1). It needs these repository permissions:
@@ -87,10 +99,11 @@ Set `FUGARO_LIVE_REVIEWER` to the account UUID of a dedicated sandbox account to
    export FUGARO_BITBUCKET_TOKEN=…   # or FUGARO_GITHUB_APP_ID and FUGARO_GITHUB_APP_PRIVATE_KEY_FILE
    export ANTHROPIC_API_KEY=…        # the sandbox's fugaro.yaml uses agent.auth: api-key
    export FIXTURE_FAILS_FILE=/tmp/fugaro-fails   # the fixture declares it as a workflow secret
-   fugaro exec --bucket file:///tmp/fugaro-bucket --task-file /tmp/task.json \
+   fugaro exec --bucket file:///tmp/fugaro-bucket --task-file /tmp/task.json --provider bitbucket \
      --workdir /tmp/fugaro-work --state-dir /tmp/fugaro-state \
      --remote https://bitbucket.org/<owner>/<sandbox>.git
    ```
+   `--task-file` needs `--provider` (or `FUGARO_GIT_PROVIDER`), `bitbucket` or `github`: the provider kind is part of the repository's storage slug.
 4. **Check the result:**
    - the PR exists, is ready or draft as the run record says, and carries the report comment
    - `.git/config` in `/tmp/fugaro-work` holds no token

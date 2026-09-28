@@ -88,10 +88,10 @@ foreign=$(run sh -c 'find "$HOME" ! -user fugaro 2>/dev/null') || fail "checking
 [ -z "$foreign" ] || fail "files under \$HOME are not owned by fugaro: $foreign"
 
 if run sh -c 'test -e "$HOME/.git-credentials"' 2>/dev/null; then
-  fail "~/.git-credentials exists in the image"
+  fail "\$HOME/.git-credentials exists in the image"
 fi
 if run sh -c 'test -e "$HOME/.claude.json"' 2>/dev/null; then
-  fail "~/.claude.json exists in the image"
+  fail "\$HOME/.claude.json exists in the image"
 fi
 
 echo "smoke: $image ok"

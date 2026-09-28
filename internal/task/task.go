@@ -3,6 +3,7 @@ package task
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,9 @@ var (
 	repoRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$`)
 )
 
+// BatchRE is the form of a task's batch label.
+var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
+
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
 	Version     int       `json:"version"`
@@ -33,6 +37,7 @@ type Spec struct {
 	PreviousRun string    `json:"previous_run,omitempty"`
 	Overrides   Overrides `json:"overrides"`
 	RequestedBy string    `json:"requested_by,omitempty"`
+	Batch       string    `json:"batch,omitempty"`
 }
 
 // Overrides are the only config values a single task may change.
@@ -52,9 +57,79 @@ func NewRunID(now time.Time, r io.Reader) (string, error) {
 	return now.UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b[:]), nil
 }
 
-// Slug turns a repo path such as "Acme/Server" into its storage prefix "acme-server".
-func Slug(repo string) string {
-	return strings.ReplaceAll(strings.ToLower(repo), "/", "-")
+// CanonicalRepo is the canonical form of a repository path "owner/name"
+// (nested groups allowed): ASCII lower-cased, without a trailing ".git".
+// Anything that isn't such a path, before or after the reduction (a URL,
+// "acme/.git", a "." or ".." segment), is an error.
+func CanonicalRepo(repo string) (string, error) {
+	c := strings.TrimSuffix(asciiLower(repo), ".git")
+	if !repoRE.MatchString(repo) || !repoRE.MatchString(c) {
+		return "", errors.New("the repository must look like owner/name") // never quoted: it may be a value pasted in the wrong place
+	}
+	for _, seg := range strings.Split(c, "/") {
+		if seg == "." || seg == ".." {
+			return "", errors.New("the repository must look like owner/name") // never quoted: it may be a value pasted in the wrong place
+		}
+	}
+	return c, nil
+}
+
+// asciiLower lower-cases A–Z only, so no Unicode case folding can merge
+// look-alike names (repoRE admits ASCII only anyway).
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+const (
+	// slugHashHex is the width of a slug's hash suffix, and
+	// maxSlugReadable bounds its readable part, so a slug is at most 63
+	// characters and fits a label value.
+	slugHashHex     = 16
+	maxSlugReadable = 63 - 1 - slugHashHex
+)
+
+var (
+	slugUnsafeRE = regexp.MustCompile(`[^a-z0-9]+`)
+	providerRE   = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+)
+
+// Slug is a repository's storage prefix, the IAM boundary between
+// repositories in the bucket (runs/<slug>/, cache/<slug>/, locks/<slug>/).
+// It is the canonical path made readable ("acme/app" → "acme-app"),
+// truncated, then "-" and 16 hex of sha256(provider NUL canonical path).
+// provider is the git provider kind ("github", "bitbucket", or "fake" in
+// tests): git.provider is per repository, so one deployment can hold a
+// GitHub acme/app and a Bitbucket acme/app, and they must not share a slug.
+// The readable part merges distinct repositories ("acme/app-web" and
+// "acme-app/web"); the hash keeps them apart, and is the same for every
+// spelling of one repository (case, ".git").
+//
+// A 64-bit hash stops accidental collisions, not a searched-for one; the
+// control against a chosen collision is the ownership check before an
+// existing job, service account or secret is reused.
+func Slug(provider, repo string) (string, error) {
+	if !providerRE.MatchString(provider) {
+		return "", fmt.Errorf("git provider %q is not a provider kind", provider)
+	}
+	c, err := CanonicalRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(provider + "\x00" + c))
+	readable := strings.Trim(slugUnsafeRE.ReplaceAllString(c, "-"), "-")
+	if len(readable) > maxSlugReadable {
+		readable = strings.TrimRight(readable[:maxSlugReadable], "-")
+	}
+	if readable == "" {
+		readable = "repo"
+	}
+	return readable + "-" + hex.EncodeToString(sum[:])[:slugHashHex], nil
 }
 
 // Parse decodes and validates a task spec, rejecting unknown fields.
@@ -100,6 +175,9 @@ func (s *Spec) Validate() error {
 	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)
+	}
+	if s.Batch != "" && !BatchRE.MatchString(s.Batch) {
+		bad("task spec: batch %q must be 1-63 lower-case letters, digits, '.', '_' or '-'", s.Batch)
 	}
 	o := s.Overrides
 	if o.ReviewRounds != nil && (*o.ReviewRounds < 1 || *o.ReviewRounds > 10) {

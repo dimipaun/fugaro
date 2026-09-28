@@ -9,11 +9,17 @@ import (
 	"strings"
 )
 
+// WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
+// workflow is named (the local config, the CLI). SecretNameRE is a
+// workflow secret's logical name.
 var (
-	workflowNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
-	secretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
-	envNameRE      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-	memoryRE       = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
+	WorkflowNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	SecretNameRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+)
+
+var (
+	envNameRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	memoryRE  = regexp.MustCompile(`^[1-9][0-9]*(Mi|Gi)$`)
 	// branchNameRE is a conservative branch-name charset: no shell
 	// metacharacters, whitespace or leading "-". badBranchRE adds the
 	// `git check-ref-format --branch` rules that charset still allows.
@@ -29,8 +35,46 @@ func validBranchName(b string) bool {
 	return branchNameRE.MatchString(b) && !badBranchRE.MatchString(b)
 }
 
-// reservedEnvPrefixes are set by Fugaro itself or change git and Claude Code behavior.
-var reservedEnvPrefixes = []string{"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_"}
+// A workflow secret's variable is mounted into the runner's own
+// environment on the job and into the image build step, so it must not be
+// one that Fugaro sets, or that changes how the runner, git, a shell, the
+// build or a language runtime behaves (a GODEBUG with http2debug makes Go
+// log bearer tokens; LD_PRELOAD and the proxies take over the process or
+// its traffic). ReservedEnvPrefixes are families, ReservedEnvNames single
+// variables; both are compared ignoring case, as proxies are read in
+// either. schemas/fugaro.schema.json mirrors both lists.
+var (
+	ReservedEnvPrefixes = []string{
+		"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_", // Fugaro, Claude Code and git
+		"LD_", "DYLD_", "PYTHON", "BASH", "LC_", // the loader, Python and the shell
+		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "VERTEX_REGION_", // the build, gcloud and the job
+		"GOOGLE_", "GCE_", "GRPC_", "STORAGE_EMULATOR_", // the Google clients: credentials, metadata server, gRPC, storage endpoint
+	}
+	ReservedEnvNames = []string{
+		"GODEBUG", "GOFLAGS", "GOTRACEBACK", "GOMAXPROCS", "GOMEMLIMIT",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+		"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "CURL_CA_BUNDLE",
+		"PATH", "HOME", "PWD", "OLDPWD", "SHELL", "USER", "LOGNAME", "HOSTNAME", "TMPDIR", "IFS", "LANG", "TERM", "TZ",
+		"ENV", "CDPATH", "GLOBIGNORE", "PS4", "SHELLOPTS", "PROMPT_COMMAND",
+		"NODE_OPTIONS", "NODE_PATH", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
+		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
+		"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_SDK_GO_LOGGING_LEVEL", "CLOUD_ML_REGION",
+		"GCE_METADATA_HOST", "GCE_METADATA_IP",
+		// The image build step's own variables (images/derived/cloudbuild.yaml).
+		"IMAGE", "SECRET_ENVS", "WORKFLOW", "REPO_URL", "BASE_BRANCH",
+	}
+)
+
+// ReservedEnv reports whether name, in any case, may not be a workflow
+// secret's variable: see ReservedEnvPrefixes and ReservedEnvNames.
+func ReservedEnv(name string) bool {
+	u := strings.ToUpper(name)
+	return slices.Contains(ReservedEnvNames, u) || slices.ContainsFunc(ReservedEnvPrefixes, func(p string) bool { return strings.HasPrefix(u, p) })
+}
+
+// Providers are the git provider kinds a repository may use: fugaro.yaml's
+// git.provider and the local config's repos.<repo>.provider.
+var Providers = []string{"github", "bitbucket"}
 
 // Validate reports every rule a defaulted config breaks.
 func Validate(c *Config) []Problem {
@@ -41,8 +85,8 @@ func Validate(c *Config) []Problem {
 	if c.Version != 1 {
 		add("version", "must be 1")
 	}
-	if !slices.Contains([]string{"github", "bitbucket"}, c.Git.Provider) {
-		add("git.provider", "must be one of github, bitbucket")
+	if !slices.Contains(Providers, c.Git.Provider) {
+		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")
@@ -62,8 +106,8 @@ func Validate(c *Config) []Problem {
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
 		p := "workflows." + name
-		if !workflowNameRE.MatchString(name) {
-			add(p, "workflow name must match %s", workflowNameRE)
+		if !WorkflowNameRE.MatchString(name) {
+			add(p, "workflow name must match %s", WorkflowNameRE)
 		}
 		if !slices.Contains([]string{"server-jvm", "web-node"}, w.Base) {
 			add(p+".base", "must be one of server-jvm, web-node")
@@ -95,21 +139,26 @@ func Validate(c *Config) []Problem {
 		seen := map[string]bool{}
 		for i, s := range w.Secrets {
 			sp := fmt.Sprintf("%s.secrets[%d]", p, i)
-			if !secretNameRE.MatchString(s.Name) {
+			if !SecretNameRE.MatchString(s.Name) {
 				add(sp+".name", "must be lower-case letters, digits and dashes")
+			}
+			if _, reserved := ReservedSecrets[s.Name]; reserved {
+				add(sp+".name", "%s is reserved for the platform's own secrets", s.Name)
 			}
 			switch {
 			case !envNameRE.MatchString(s.Env):
 				add(sp+".env", "must be an upper-case environment variable name")
-			case reservedEnv(s.Env):
-				add(sp+".env", "%s uses a reserved prefix (%s)", s.Env, strings.Join(reservedEnvPrefixes, ", "))
+			case slices.Contains(ReservedEnvNames, strings.ToUpper(s.Env)):
+				add(sp+".env", "%s is reserved: Fugaro sets it, or it changes how the runner, git, a shell, the build or a runtime behaves; rename it", s.Env)
+			case ReservedEnv(s.Env):
+				add(sp+".env", "%s uses a reserved prefix (%s)", s.Env, strings.Join(ReservedEnvPrefixes, ", "))
 			case seen[s.Env]:
 				add(sp+".env", "%s is declared twice", s.Env)
 			}
 			seen[s.Env] = true
 		}
-		if !slices.Contains([]int{1, 2, 4, 6, 8}, w.Resources.CPU) {
-			add(p+".resources.cpu", "must be one of 1, 2, 4, 6, 8")
+		if w.Resources.CPU < 1 {
+			add(p+".resources.cpu", "must be at least 1 (the compute backend checks its own limits)")
 		}
 		if !memoryRE.MatchString(w.Resources.Memory) {
 			add(p+".resources.memory", "must look like 512Mi or 16Gi")
@@ -145,15 +194,6 @@ func checkDockerfile(p, root string, w Workflow) []Problem {
 		ps = append(ps, Problem{Path: p + ".dockerfile", Message: w.Dockerfile + " " + msg})
 	}
 	return ps
-}
-
-func reservedEnv(name string) bool {
-	for _, prefix := range reservedEnvPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // Check reports files a config refers to that do not exist under root, the

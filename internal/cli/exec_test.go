@@ -1,8 +1,17 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"gocloud.dev/blob/fileblob"
+
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func TestExecNeedsBucket(t *testing.T) {
@@ -39,6 +48,102 @@ func TestExecRejectsTaskFileWithRun(t *testing.T) {
 	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(),
 		"--task-file", "-", "--run", "acme-app/20260926-221530-abcd")
 	if err == nil || !strings.Contains(err.Error(), "--task-file") || !strings.Contains(err.Error(), "--run") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// The provider kind is part of the slug, so a --task-file run without it is
+// refused before task.json is written anywhere.
+func TestExecTaskFileNeedsProvider(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	dir := t.TempDir()
+	spec := `{"version": 1, "run_id": "20260926-221530-abcd", "repo": "acme/app", "ref": "main", "task": "x"}`
+	_, _, err := executeStdin(t, spec, "exec", "--bucket", "file://"+dir, "--task-file", "-")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--task-file needs --provider") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if entries, rerr := os.ReadDir(dir); rerr != nil || len(entries) > 0 {
+		t.Fatalf("the refused exec wrote to the bucket: %v, %v", entries, rerr)
+	}
+}
+
+// setCloudRunEnv sets the environment a Cloud Run execution of the
+// acme-app job sees.
+func setCloudRunEnv(t *testing.T, execution string) {
+	t.Setenv("CLOUD_RUN_EXECUTION", execution)
+	t.Setenv("CLOUD_RUN_JOB", "fugaro-acme-app-app")
+	t.Setenv("FUGARO_PROJECT", "proj-1234")
+	t.Setenv("FUGARO_REGION", "us-east5")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	t.Setenv("FUGARO_RUN", "")
+}
+
+func TestExecIncompleteCloudRunEnvIsUserError(t *testing.T) {
+	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	t.Setenv("FUGARO_REGION", "")
+	dir := filepath.Join(t.TempDir(), "bucket")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/20260926-221530-abcd")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "FUGARO_REGION") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if _, serr := os.Stat(dir); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("exec touched the bucket before failing: %v", serr)
+	}
+}
+
+func TestExecDuplicateExecutionExitsRemoteError(t *testing.T) {
+	const runID = "20260926-221530-abcd"
+	setCloudRunEnv(t, "fugaro-acme-app-app-bbbbb")
+	dir := t.TempDir()
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	ctx := context.Background()
+	store := runstore.Open(b, "acme-app", runID)
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	first := &runstore.Record{Version: 1, RunID: runID, Repo: "acme/app", Status: runstore.StatusRunning, Stage: "implement",
+		Execution: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"}
+	if err := store.WriteRecord(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID,
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "another execution already owns this run") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if out != "" {
+		t.Fatalf("a duplicate printed a record: %s", out)
+	}
+	if stored, err := store.ReadRecord(ctx); err != nil || stored.Stage != "implement" || stored.Execution != first.Execution {
+		t.Fatalf("the duplicate touched result.json: %+v, %v", stored, err)
+	}
+}
+
+func TestExecRejectsTaskFileOnCloudRun(t *testing.T) {
+	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	dir := filepath.Join(t.TempDir(), "bucket")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--task-file", "-")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--task-file is for local runs") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if _, serr := os.Stat(dir); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("exec touched the bucket before failing: %v", serr)
+	}
+}
+
+// TestExecRefusesHTTP2Debug: with GODEBUG's
+// http2debug, Go would print the runner's bearer tokens to its logs.
+func TestExecRefusesHTTP2Debug(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	t.Setenv("GODEBUG", "http2debug=2")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(), "--run", "acme-app/20260926-221530-abcd")
+	if err == nil || !strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("err = %v", err)
 	}
 }

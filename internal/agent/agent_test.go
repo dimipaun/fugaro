@@ -3,8 +3,10 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -281,6 +283,64 @@ func TestRedact(t *testing.T) {
 	want := "key [REDACTED], pem line [REDACTED], escaped [REDACTED], short ab"
 	if got != want {
 		t.Fatalf("Redact = %q, want %q", got, want)
+	}
+}
+
+func TestRedactEncodedForms(t *testing.T) {
+	secret := "tok-9f3Q/zX+abc=?&"
+	for _, in := range []string{
+		base64.StdEncoding.EncodeToString([]byte(secret)),
+		base64.RawStdEncoding.EncodeToString([]byte(secret)),
+		base64.URLEncoding.EncodeToString([]byte(secret)),
+		base64.StdEncoding.EncodeToString([]byte(secret + "\n")),
+		base64.StdEncoding.EncodeToString([]byte("x" + secret)),
+		base64.StdEncoding.EncodeToString([]byte("xy" + secret)),
+		url.QueryEscape(secret),
+		url.PathEscape(secret),
+	} {
+		got := Redact("value "+in+" end", []string{secret})
+		if !strings.Contains(got, "[REDACTED]") || strings.Contains(got, in) {
+			t.Errorf("Redact(%q) = %q", in, got)
+		}
+	}
+	// Below encodedMin only the raw forms count: the base64 of a short
+	// secret is too short a pattern to redact safely.
+	short := "pw-12345"[:7]
+	enc := base64.StdEncoding.EncodeToString([]byte(short))
+	if got := Redact(enc, []string{short}); got != enc {
+		t.Errorf("short secret's base64 redacted: %q", got)
+	}
+}
+
+// TestRedactWrappedBase64 checks a long secret's base64 as GNU `base64`
+// (76 columns) and `openssl base64` (64) wrap it, through Redact and
+// through the line-by-line Redactor fed in small chunks.
+func TestRedactWrappedBase64(t *testing.T) {
+	for _, secret := range longSecrets() {
+		for _, w := range wrapWidths {
+			for _, in := range []string{secret, secret + "\n", secret + ":user@host\n"} {
+				text := "$ echo $TOKEN | base64\n" + wrapLines(base64.StdEncoding.EncodeToString([]byte(in)), w) + "\n$ echo done\n"
+				got := Redact(text, []string{secret})
+				if !strings.Contains(got, "[REDACTED]") {
+					t.Fatalf("len %d width %d: nothing redacted:\n%s", len(secret), w, got)
+				}
+				assertNoSecretRun(t, got, secret)
+
+				var out bytes.Buffer
+				r := NewRedactor(&out, []string{secret})
+				for b := []byte(text); len(b) > 0; {
+					n := min(7, len(b))
+					if _, err := r.Write(b[:n]); err != nil {
+						t.Fatal(err)
+					}
+					b = b[n:]
+				}
+				if err := r.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				assertNoSecretRun(t, out.String(), secret)
+			}
+		}
 	}
 }
 

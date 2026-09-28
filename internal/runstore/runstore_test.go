@@ -87,14 +87,28 @@ func TestParseRef(t *testing.T) {
 		if err := spec.Validate(); err != nil {
 			t.Fatalf("%s: %v", repo, err)
 		}
-		want := task.Slug(repo)
+		want, err := task.Slug("github", repo)
+		if err != nil {
+			t.Fatalf("%s: %v", repo, err)
+		}
 		if slug, id, err := ParseRef(want + "/" + runID); err != nil || slug != want || id != runID {
 			t.Errorf("ParseRef(Slug(%q)) = %q %q %v", repo, slug, id, err)
 		}
 	}
-	for _, bad := range []string{"", "acme-app", "a/b/c", "acme-app/not-a-run"} {
+	for _, bad := range []string{"", "acme-app", "a/b/c", "acme-app/not-a-run", "./" + runID, "../" + runID, "acme.app/" + runID} {
 		if _, _, err := ParseRef(bad); err == nil {
 			t.Errorf("ParseRef(%q) succeeded", bad)
 		}
+	}
+}
+
+// TestFinalizeReserve: the record carries the run's finalize reserve, so
+// cancel can floor its grace without a checkout; an older record has none.
+func TestFinalizeReserve(t *testing.T) {
+	if d, ok := (&Record{FinalizeReserveS: 90}).FinalizeReserve(); !ok || d != 90*time.Second {
+		t.Fatalf("FinalizeReserve = %v, %v", d, ok)
+	}
+	if d, ok := (&Record{}).FinalizeReserve(); ok || d != 0 {
+		t.Fatalf("FinalizeReserve of a record without one = %v, %v", d, ok)
 	}
 }

@@ -67,3 +67,18 @@ func TestConfigExample(t *testing.T) {
 		t.Fatal("config example does not print the embedded example")
 	}
 }
+
+func TestValidateReportsCloudRunLimits(t *testing.T) {
+	cfg := strings.Replace(cliMinimalYAML, "base: web-node,", "base: web-node, resources: { cpu: 3, memory: 4Gi },", 1)
+	out, _, err := execute(t, "validate", "--json", writeConfig(t, cfg))
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d (%v), output %s", ExitCode(err), err, out)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Problems) != 1 || got.Problems[0].Path != "workflows.app.resources.cpu" || !strings.Contains(got.Problems[0].Message, "Cloud Run") {
+		t.Fatalf("problems = %+v", got.Problems)
+	}
+}

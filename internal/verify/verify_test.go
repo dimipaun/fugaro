@@ -256,7 +256,10 @@ func TestLogTailKeepsLastOutput(t *testing.T) {
 	f := setup(t)
 	err := WriteSettings(f.stateDir, Settings{
 		RepoDir: f.repoDir, Test: "sh test.sh", Reports: []string{"build/test-results/*.xml"}, TimeoutS: 60,
-		Build: `i=0; while [ $i -lt 100 ]; do echo "step $i"; i=$((i+1)); done; echo "error: boom" >&2; exit 1`,
+		// One pipe for both streams: separate stdout and stderr pipes are
+		// copied concurrently, so their relative order in the tail is not
+		// deterministic (TestLogTailCapturesStderr covers stderr alone).
+		Build: `exec 2>&1; i=0; while [ $i -lt 100 ]; do echo "step $i"; i=$((i+1)); done; echo "error: boom" >&2; exit 1`,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -277,6 +280,21 @@ func TestLogTailKeepsLastOutput(t *testing.T) {
 	}
 	if recs, err := Records(f.stateDir); err != nil || len(recs) != 2 {
 		t.Fatalf("records = %+v, %v", recs, err)
+	}
+}
+
+func TestLogTailCapturesStderr(t *testing.T) {
+	f := setup(t)
+	err := WriteSettings(f.stateDir, Settings{
+		RepoDir: f.repoDir, Test: "sh test.sh", Reports: []string{"build/test-results/*.xml"}, TimeoutS: 60,
+		Build: `echo "error: boom" >&2; exit 1`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := run(t, f, KindBuild, false)
+	if tail, err := LogTail(f.stateDir, rec.N); err != nil || tail != "error: boom" {
+		t.Fatalf("tail = %q, %v; want the stderr line", tail, err)
 	}
 }
 

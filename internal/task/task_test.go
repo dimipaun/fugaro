@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -22,10 +23,137 @@ func TestNewRunID(t *testing.T) {
 	}
 }
 
-func TestSlug(t *testing.T) {
-	if got := Slug("Acme/Server"); got != "acme-server" {
-		t.Fatalf("Slug = %q", got)
+func mustSlug(t testing.TB, provider, repo string) string {
+	t.Helper()
+	s, err := Slug(provider, repo)
+	if err != nil {
+		t.Fatalf("Slug(%q, %q): %v", provider, repo, err)
 	}
+	return s
+}
+
+// Pinned: a slug names existing bucket data, so it must never drift.
+func TestSlug(t *testing.T) {
+	for _, c := range []struct{ provider, repo, want string }{
+		{"bitbucket", "acme/app", "acme-app-e5c4c0c8a3d698ee"},
+		{"github", "acme/app", "acme-app-dc4d4e59e884fc44"},
+		{"bitbucket", "acme/fugaro-sandbox", "acme-fugaro-sandbox-aaaac508c040817e"},
+		{"github", "Acme/Server", "acme-server-b198379bdcda586d"},
+	} {
+		if got := mustSlug(t, c.provider, c.repo); got != c.want {
+			t.Errorf("Slug(%q, %q) = %q, want %q", c.provider, c.repo, got, c.want)
+		}
+	}
+}
+
+var slugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?-[0-9a-f]{16}$`)
+
+// Every spelling of one repository gives one slug.
+func TestSlugIsCanonical(t *testing.T) {
+	want := mustSlug(t, "bitbucket", "acme/app")
+	for _, s := range []string{"acme/app", "Acme/App", "ACME/APP", "acme/app.git", "Acme/App.git", "acme/APP.git"} {
+		if c, err := CanonicalRepo(s); err != nil || c != "acme/app" {
+			t.Errorf("CanonicalRepo(%q) = %q, %v", s, c, err)
+		}
+		if got := mustSlug(t, "bitbucket", s); got != want {
+			t.Errorf("Slug(%q) = %q, want %q", s, got, want)
+		}
+	}
+	if c, err := CanonicalRepo("Group/Sub/Repo.git"); err != nil || c != "group/sub/repo" {
+		t.Errorf("nested group: %q, %v", c, err)
+	}
+}
+
+func TestCanonicalRepoRejectsNonPaths(t *testing.T) {
+	for _, bad := range []string{
+		"", "acme", "acme/", "/acme/app", "acme/app/", "acme//app", " acme/app",
+		"acme/.git", "acme/app/.git", "acme/..", "../app", "acme/./app",
+		"https://bitbucket.org/acme/app.git", "git@bitbucket.org:acme/app.git", "ssh://git@h/acme/app",
+		"acme/app%2Fx", "acme/K\u212aapp", // KELVIN SIGN must not fold to k
+	} {
+		if c, err := CanonicalRepo(bad); err == nil {
+			t.Errorf("CanonicalRepo(%q) = %q, want an error", bad, c)
+		}
+		if s, err := Slug("github", bad); err == nil {
+			t.Errorf("Slug(%q) = %q, want an error", bad, s)
+		}
+	}
+	for _, bad := range []string{"", "GitHub", "git hub", "-x"} {
+		if _, err := Slug(bad, "acme/app"); err == nil {
+			t.Errorf("Slug accepted provider %q", bad)
+		}
+	}
+}
+
+// Distinct repositories never share a slug by accident: the bucket
+// prefixes it names are the IAM boundary between them.
+func TestSlugIsInjective(t *testing.T) {
+	long := strings.Repeat("x", 60)
+	pairs := [][2][2]string{
+		{{"github", "acme/app-web"}, {"github", "acme-app/web"}},
+		{{"github", "acme/app.web"}, {"github", "acme/app-web"}},
+		{{"github", "acme/app_web"}, {"github", "acme/app-web"}},
+		{{"github", "acme.app/web"}, {"github", "acme-app/web"}},
+		{{"github", "acme_app/web"}, {"github", "acme-app/web"}},
+		{{"github", "acme/app--web"}, {"github", "acme/app-web"}},
+		{{"github", "acme/app"}, {"github", "acme/app.git.git"}},
+		{{"github", "acme/app.v2"}, {"github", "acme/app-v2"}},
+		{{"github", "org/sub/repo"}, {"github", "org-sub/repo"}},
+		{{"github", "org/sub/repo"}, {"github", "org/sub-repo"}},
+		{{"github", "org/sub/repo"}, {"github", "org/sub/repo/x"}},
+		{{"github", long + "/a"}, {"github", long + "/b"}},
+		{{"github", "acme/" + long + "1"}, {"github", "acme/" + long + "2"}},
+		{{"github", "acme/app"}, {"bitbucket", "acme/app"}},
+		{{"github", "acme/app"}, {"fake", "acme/app"}},
+	}
+	for _, p := range pairs {
+		if a, b := mustSlug(t, p[0][0], p[0][1]), mustSlug(t, p[1][0], p[1][1]); a == b {
+			t.Errorf("Slug%q == Slug%q == %q", p[0], p[1], a)
+		}
+	}
+	seen := map[string]string{}
+	parts := []string{"a", "b", "a-b", "a.b", "a_b", "ab", "a--b", "a-", "a.git"}
+	for _, o := range parts {
+		for _, n := range parts {
+			r := "x" + o + "/" + n
+			c, err := CanonicalRepo(r)
+			if err != nil {
+				t.Fatalf("%s: %v", r, err)
+			}
+			s := mustSlug(t, "github", r)
+			if prev, dup := seen[s]; dup && prev != c {
+				t.Errorf("%q from both %q and %q", s, prev, c)
+			}
+			seen[s] = c
+		}
+	}
+}
+
+func TestSlugShape(t *testing.T) {
+	for _, r := range []string{"acme/app", "Acme/Server", "acme/my_service", "acme/app.v2", "org/sub/repo-x",
+		strings.Repeat("verylong", 20) + "/" + strings.Repeat("name", 20), "-/-", "a/b"} {
+		s := mustSlug(t, "bitbucket", r)
+		if len(s) > 63 || !slugRE.MatchString(s) {
+			t.Errorf("Slug(%q) = %q (%d)", r, s, len(s))
+		}
+	}
+}
+
+func FuzzSlugIsInjective(f *testing.F) {
+	f.Add("github", "acme/app-web", "github", "acme-app/web")
+	f.Add("github", "acme/app", "bitbucket", "Acme/App.git")
+	f.Fuzz(func(t *testing.T, p1, a, p2, b string) {
+		s1, err1 := Slug(p1, a)
+		s2, err2 := Slug(p2, b)
+		if err1 != nil || err2 != nil {
+			return
+		}
+		c1, _ := CanonicalRepo(a)
+		c2, _ := CanonicalRepo(b)
+		if (p1 == p2 && c1 == c2) != (s1 == s2) {
+			t.Errorf("Slug(%q,%q) = %q, Slug(%q,%q) = %q", p1, a, s1, p2, b, s2)
+		}
+	})
 }
 
 func TestCorpus(t *testing.T) {
@@ -97,5 +225,18 @@ func TestMarshalRoundTrip(t *testing.T) {
 	}
 	if *s2.Overrides.ReviewRounds != 3 || s2.Task != s.Task || s2.IsFollowUp() {
 		t.Fatalf("round trip lost data: %+v", s2)
+	}
+}
+
+func TestBatch(t *testing.T) {
+	s := &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x", Batch: "tuesday-cleanup.2"}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"Tuesday", "-x", "a b", strings.Repeat("a", 64)} {
+		s.Batch = bad
+		if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "batch") {
+			t.Errorf("batch %q: %v", bad, err)
+		}
 	}
 }

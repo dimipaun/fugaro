@@ -81,7 +81,7 @@ func TestRecorderScrubsAndReplays(t *testing.T) {
 	}
 }
 
-// TestRecorderScrubsQueryInPath covers the round-1 review finding: a secret
+// TestRecorderScrubsQueryInPath: a secret
 // carried in a request's query string must not reach the fixture file
 // as-is, and the scrubbed path must still be replayable.
 func TestRecorderScrubsQueryInPath(t *testing.T) {

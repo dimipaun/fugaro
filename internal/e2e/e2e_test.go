@@ -16,8 +16,22 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// acmeSlug is the storage slug of the test repository acme/app under the
+// fake provider (--provider fake); bitbucketSlug is its slug under
+// --provider bitbucket.
+var acmeSlug, bitbucketSlug = mustSlug("fake", "acme/app"), mustSlug("bitbucket", "acme/app")
+
+func mustSlug(provider, repo string) string {
+	s, err := task.Slug(provider, repo)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
 
 // childTimeout bounds a fugaro exec child: long enough for any real scenario
 // (the slowest, TestStageTimeout, finishes in well under a minute even under
@@ -30,7 +44,7 @@ const childTimeout = 90 * time.Second
 // agentStartTimeout bounds how long cancelOnAgentStart waits for the fake
 // claude to record its first call before giving up and writing the cancel
 // marker anyway.
-const agentStartTimeout = 10 * time.Second
+const agentStartTimeout = 60 * time.Second
 
 const runID = "20260926-221530-abcd"
 
@@ -102,14 +116,26 @@ func runScenario(t *testing.T, sc scenario) result {
 		go func() {
 			defer close(cancelDone)
 			deadline := time.Now().Add(agentStartTimeout)
+			started := false
 			for time.Now().Before(deadline) {
 				if _, err := os.Stat(callsFile); err == nil {
+					started = true
 					break
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			marker := filepath.Join(bucket, "runs", "acme-app", runID, "cancel")
-			_ = os.WriteFile(marker, []byte("now"), 0o644)
+			if !started {
+				t.Errorf("the agent never started within %s", agentStartTimeout)
+			}
+			// The run's directory may not exist yet on a slow machine; a lost
+			// cancel would let the scenario run on into review.
+			marker := filepath.Join(bucket, "runs", acmeSlug, runID, "cancel")
+			if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+				t.Errorf("creating the cancel marker's directory: %v", err)
+			}
+			if err := os.WriteFile(marker, []byte("now"), 0o644); err != nil {
+				t.Errorf("writing the cancel marker: %v", err)
+			}
 		}()
 	}
 
@@ -124,7 +150,7 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatalf("fugaro exec never started: %v", runErr)
 	}
 	res := result{bucket: bucket, exitCode: cmd.ProcessState.ExitCode(), elapsed: elapsed, calls: testutil.FakeClaudeCalls(t, claude)}
-	data, err := os.ReadFile(filepath.Join(bucket, "runs", "acme-app", runID, "result.json"))
+	data, err := os.ReadFile(filepath.Join(bucket, "runs", acmeSlug, runID, "result.json"))
 	if err != nil {
 		t.Fatalf("no result.json: %v\n%s", err, out)
 	}
@@ -155,14 +181,14 @@ func TestReadyRun(t *testing.T) {
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "UNDECLARED_SECRET=") }) {
 		t.Fatal("an undeclared variable reached the agent")
 	}
-	transcript, err := os.ReadFile(filepath.Join(r.bucket, "runs", "acme-app", runID, "transcripts", "implement-1.jsonl"))
+	transcript, err := os.ReadFile(filepath.Join(r.bucket, "runs", acmeSlug, runID, "transcripts", "implement-1.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(transcript), "test-key-1234") || !strings.Contains(string(transcript), "[REDACTED]") {
 		t.Fatalf("transcript not redacted: %s", transcript)
 	}
-	if _, err := os.Stat(filepath.Join(r.bucket, "runs", "acme-app", runID, "report.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(r.bucket, "runs", acmeSlug, runID, "report.md")); err != nil {
 		t.Fatal("report.md missing")
 	}
 }
@@ -208,11 +234,21 @@ func TestStageTimeout(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
 		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
 		"timeouts: { total: 1m, stage: 2s, verify: 30s, finalize_reserve: 10s }", 1)
-	r := runScenario(t, scenario{config: cfg, script: `{"calls":[{"sleep_s":30}]}`})
+	// The agent would sleep 120s; the 2s stage timeout must kill it. The
+	// check is on the runner's own timeline, which excludes process start
+	// and harness setup, so a loaded machine can't fail it; the wall-clock
+	// guard only catches a run that slept the agent out.
+	r := runScenario(t, scenario{config: cfg, script: `{"calls":[{"sleep_s":120}]}`})
 	if r.rec.Status != runstore.StatusFailed || !strings.Contains(r.rec.Reason, "stage implement timed out") || len(r.provider.PRs) != 1 {
 		t.Fatalf("record %+v", r.rec)
 	}
-	if r.elapsed > 20*time.Second {
+	if r.rec.FinishedAt == nil {
+		t.Fatalf("record has no finished_at: %+v", r.rec)
+	}
+	if d := r.rec.FinishedAt.Sub(r.rec.StartedAt); d >= 15*time.Second {
+		t.Fatalf("the runner took %s; the stage timeout did not stop the agent", d)
+	}
+	if r.elapsed > 90*time.Second {
 		t.Fatalf("run took %s; the stage timeout did not stop the agent", r.elapsed)
 	}
 }

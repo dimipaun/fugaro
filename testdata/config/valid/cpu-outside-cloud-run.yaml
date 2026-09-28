@@ -1,0 +1,9 @@
+# Core config accepts any positive CPU count; Cloud Run's set is checked by
+# the backend (design §14), so this is valid here and flagged by fugaro validate.
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    commands: { build: npm run build, test: npm test }
+    resources: { cpu: 3, memory: 4Gi }
