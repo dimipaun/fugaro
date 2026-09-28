@@ -176,3 +176,17 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		env.Close()
 	}
 }
+
+// "." and ".." are no slug: path.Join would take them out of runs/
+// (security review S-M7).
+func TestRunRefRefusesDotSlugs(t *testing.T) {
+	newCloudFixture(t)
+	for _, ref := range []string{"./20260927-100000-abcd", "../20260927-100000-abcd"} {
+		for _, cmd := range []string{"logs", "diagnose", "cancel"} {
+			_, _, err := execute(t, cmd, ref)
+			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "<repo-slug>/<run-id>") {
+				t.Errorf("%s %s: %v", cmd, ref, err)
+			}
+		}
+	}
+}

@@ -31,7 +31,9 @@ func TestParseDefaults(t *testing.T) {
 	if r := c.Repos["acme/web"]; r.Provider != "github" || r.BaseBranch != "main" || len(r.Workflows) != 1 {
 		t.Fatalf("repo = %+v", r)
 	}
-	c.Override("other-project", "europe-west1")
+	if err := c.Override("other-project", "europe-west1"); err != nil {
+		t.Fatal(err)
+	}
 	if c.Project != "other-project" || c.Region != "europe-west1" || c.BuildRegion() != "europe-west1" {
 		t.Fatalf("override = %+v", c)
 	}
@@ -107,5 +109,32 @@ func TestMe(t *testing.T) {
 	testutil.Git(t, "", "config", "--global", "user.email", "git@example.com")
 	if me, err := c.Me(context.Background()); err != nil || me != "git@example.com" {
 		t.Fatalf("Me from git = %q, %v", me, err)
+	}
+}
+
+// With no_auth unset the CLI sends the operator's ADC bearer token to each
+// endpoint, so only https, or plain http to this machine (fakes), is
+// allowed (security review S-M5).
+func TestParseEndpoints(t *testing.T) {
+	for _, ok := range []string{"https://run.example.com/", "http://127.0.0.1:8080/", "http://localhost:9/", "http://[::1]:9/"} {
+		if _, err := Parse([]byte(sample + "endpoints: { run: \"" + ok + "\" }\n")); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"http://run.example.com/", "http://127.0.0.1.evil.example/", "ftp://127.0.0.1/", "https://user:pw@run.example.com/", "run.example.com", "https:///x"} {
+		if _, err := Parse([]byte(sample + "endpoints: { logging: \"" + bad + "\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints.logging") {
+			t.Errorf("%s: err = %v", bad, err)
+		}
+	}
+}
+
+// --project and --region go into resource paths: they are validated like
+// the config's own values.
+func TestOverrideValidates(t *testing.T) {
+	for _, tc := range [][2]string{{"x/../y", ""}, {"", "us-east5/../x"}, {"My_Project", ""}} {
+		c, _ := Parse([]byte(sample))
+		if err := c.Override(tc[0], tc[1]); err == nil {
+			t.Errorf("Override(%q, %q) accepted", tc[0], tc[1])
+		}
 	}
 }

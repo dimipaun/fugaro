@@ -85,7 +85,9 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
-	lc.Override(o.project, o.region)
+	if err := lc.Override(o.project, o.region); err != nil {
+		return nil, userErr("--project/--region: %v", err)
+	}
 	opts := gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
@@ -105,8 +107,8 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 // a user error; anything else is remote.
 func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID string, err error) {
 	if strings.Contains(ref, "/") {
-		if _, _, err := runstore.ParseRef(ref); err != nil {
-			return "", "", userErr("%v", err)
+		if _, _, err := parseRunRef(ref); err != nil {
+			return "", "", err
 		}
 	} else if _, err := runstore.RunTime(ref); err != nil {
 		return "", "", userErr("%q is neither <repo-slug>/<run-id> nor a run ID", ref)
@@ -130,6 +132,20 @@ func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 		return fmt.Errorf("its task.json is unreadable or names no workflow, so execution %s can't be tied to the run's job", name)
 	}
 	return gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
+}
+
+// parseRunRef is runstore.ParseRef, refusing "." and ".." as a slug:
+// path.Join would resolve them outside runs/ (security review S-M7). A bad
+// reference is a user error.
+func parseRunRef(ref string) (slug, runID string, err error) {
+	slug, runID, err = runstore.ParseRef(ref)
+	if err == nil && strings.Trim(slug, ".") == "" {
+		err = fmt.Errorf("run %q must look like <repo-slug>/<run-id>", ref)
+	}
+	if err != nil {
+		return "", "", userErr("%v", err)
+	}
+	return slug, runID, nil
 }
 
 // localRepo is the local config's entry for repo, matched in canonical form.

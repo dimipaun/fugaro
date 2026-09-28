@@ -174,9 +174,9 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	type ref struct{ slug, id string }
 	var refs []ref
 	if f.runRef != "" {
-		slug, id, err := runstore.ParseRef(f.runRef)
+		slug, id, err := parseRunRef(f.runRef)
 		if err != nil {
-			return nil, userErr("%v", err)
+			return nil, err
 		}
 		refs = append(refs, ref{slug, id})
 	} else {

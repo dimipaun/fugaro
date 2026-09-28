@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -147,6 +148,17 @@ func (c *Config) validate() error {
 	if c.MaxParallel < 1 {
 		bad("max_parallel must be at least 1")
 	}
+	for _, ep := range []struct{ name, url string }{
+		{"run", c.Endpoints.Run}, {"logging", c.Endpoints.Logging},
+		{"secret_manager", c.Endpoints.SecretManager}, {"cloud_build", c.Endpoints.CloudBuild},
+	} {
+		if ep.url == "" {
+			continue
+		}
+		if err := checkEndpoint(ep.url); err != nil {
+			bad("endpoints.%s: %v", ep.name, err)
+		}
+	}
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
 			bad("repos: %q must look like owner/name", repo)
@@ -163,14 +175,36 @@ func (c *Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// Override applies --project and --region when they are set.
-func (c *Config) Override(project, region string) {
+// Override applies --project and --region when they are set, and
+// validates the result: both go into resource paths.
+func (c *Config) Override(project, region string) error {
 	if project != "" {
 		c.Project = project
 	}
 	if region != "" {
 		c.Region = region
 	}
+	return c.validate()
+}
+
+// checkEndpoint refuses an endpoint the operator's credentials must not
+// be sent to: anything but https, or plain http to this machine (the
+// fakes tests run), or one carrying userinfo (security review S-M5).
+func checkEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%q is not a URL", raw)
+	}
+	if u.User != nil || u.Host == "" {
+		return fmt.Errorf("%q must be an https URL with a host and no userinfo", raw)
+	}
+	switch h := u.Hostname(); {
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http" && (h == "127.0.0.1" || h == "localhost" || h == "::1"):
+		return nil
+	}
+	return fmt.Errorf("%q must be https (plain http only to 127.0.0.1 or localhost)", raw)
 }
 
 // BucketURL is the runs bucket as a gocloud URL.
