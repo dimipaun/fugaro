@@ -3,6 +3,7 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -182,6 +183,18 @@ func TestRestoreRejectsEscapingLinkChains(t *testing.T) {
 			sym("0/d/e/up", "../.."), sym("0/p", "d/e/up/.."),
 		},
 		"grandparent": {sym("0/q", "."), sym("0/r", "q/.."), sym("0/p", "r/..")},
+		// A link made through a parent link, whose parent is then retargeted:
+		// the link's logical path no longer reaches it.
+		"retarget parent to dir": {
+			{Name: "0/a/", Mode: 0o755, Typeflag: tar.TypeDir},
+			sym("0/q", "."), sym("0/q/p", ".."), sym("0/q", "a"),
+		},
+		"retarget parent to file": {
+			sym("0/q", "."), sym("0/q/p", ".."), {Name: "0/q", Mode: 0o644, Typeflag: tar.TypeReg},
+		},
+		"retarget parent to dangling": {
+			sym("0/q", "."), sym("0/q/p", ".."), sym("0/q", "zz"),
+		},
 	}
 	for name, hdrs := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -280,5 +293,40 @@ func TestExtractClassifiesErrors(t *testing.T) {
 	err := Extract(broken, []string{t.TempDir()}, 1<<20)
 	if err == nil || errors.Is(err, ErrBadArchive) {
 		t.Errorf("I/O error: %v, want an error that is not ErrBadArchive", err)
+	}
+}
+
+// When the restore's context ends before the final link check, the links
+// not yet judged are removed rather than trusted.
+func TestExtractCancelledRemovesUncheckedLinks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	err := extract(ctx, hostile(t, sym("0/q", ".")), []string{root}, 1<<20)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrBadArchive) {
+		t.Fatalf("extract = %v, want context.Canceled and not ErrBadArchive", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "q")); err == nil {
+		t.Fatal("an unchecked link survived")
+	}
+}
+
+// inside's memo of real directories is sound only because Extract never
+// replaces a directory: a later link or file entry at a directory's path
+// fails instead, so a directory judged real stays real.
+func TestRestoreNeverReplacesADirectory(t *testing.T) {
+	for name, h := range map[string]*tar.Header{
+		"link": sym("0/d", "."),
+		"file": {Name: "0/d", Mode: 0o644, Typeflag: tar.TypeReg},
+	} {
+		root := t.TempDir()
+		err := Extract(hostile(t, &tar.Header{Name: "0/d/", Mode: 0o755, Typeflag: tar.TypeDir}, h,
+			&tar.Header{Name: "0/d/x", Mode: 0o644, Typeflag: tar.TypeReg}), []string{root}, 1<<20)
+		if err == nil {
+			t.Errorf("%s: a %s replaced a restored directory", name, name)
+		}
+		if fi, err := os.Lstat(filepath.Join(root, "d")); err != nil || !fi.IsDir() {
+			t.Errorf("%s: d is no longer a directory (%v)", name, err)
+		}
 	}
 }

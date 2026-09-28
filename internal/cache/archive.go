@@ -2,6 +2,7 @@ package cache
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -313,7 +314,9 @@ type extractor struct {
 	src     *trackedReader // the compressed archive as read
 	links   []link         // in creation order
 	linkSet map[link]bool  // the same links, to record each once
-	safe    map[link]bool  // directories resolved inside their root; reset when a link changes
+	// realDirs are directories inside found to be real (no symlink on the
+	// way). Extract never removes a directory, so they stay real.
+	realDirs map[link]bool
 }
 
 // readErr classifies an error reading the archive: an I/O error from the
@@ -328,16 +331,23 @@ func (x *extractor) readErr(what string, err error) error {
 // Extract restores an archive written by Write into roots, which must be
 // as many as the manifest says. It refuses, before writing it, any entry
 // that could land outside its root: every write goes through an os.Root,
-// which refuses ".." and symlink escapes at any path component, and each
-// entry's parent is first resolved physically inside the root. It stops at
+// which refuses ".." and symlink escapes at any path component, and an
+// entry whose directory has a symlink on its path is refused outright
+// (Write never descends into a linked directory). It stops at
 // the first refused entry, and refuses more than maxBytes of content plus
 // headerCost per entry. Once all entries are in, or the restore has
 // stopped, every symlink it created is resolved again, since a later entry
 // can make an earlier link escape; one that resolves outside its root is
 // removed and reported. A refusal or a corrupt archive matches
 // ErrBadArchive.
-func Extract(r io.Reader, roots []string, maxBytes int64) (err error) {
-	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, safe: map[link]bool{}}
+func Extract(r io.Reader, roots []string, maxBytes int64) error {
+	return extract(context.Background(), r, roots, maxBytes)
+}
+
+// extract is Extract under ctx, which bounds the final link check: the
+// read itself is bounded by the reader, which Restore opens under ctx.
+func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (err error) {
+	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}}
 	defer func() {
 		for _, rt := range x.roots {
 			rt.Close()
@@ -356,7 +366,7 @@ func Extract(r io.Reader, roots []string, maxBytes int64) (err error) {
 	// Registered after the roots are open, so it runs before they close,
 	// and on every return, a partial restore included.
 	defer func() {
-		if lerr := x.checkLinks(); lerr != nil {
+		if lerr := x.checkLinks(ctx); lerr != nil {
 			err = errors.Join(err, lerr)
 		}
 	}()
@@ -455,22 +465,41 @@ func (x *extractor) extract(maxBytes int64) error {
 	}
 }
 
-// inside refuses an entry whose directory dir resolves outside its root.
-// os.Root would refuse the write anyway; checking first makes the refusal
-// an ErrBadArchive rather than an opaque I/O error.
+// inside refuses an entry whose directory dir has a symlink at any
+// component, whether baked into the image or planted by an earlier entry.
+// Write never produces such an entry, since it doesn't descend into linked
+// directories. Refusing them keeps every link Extract records at a
+// physical path: otherwise a later entry could retarget a parent link
+// (q -> ., q/p -> .., then q -> a/) and leave the real link, root/p ->
+// .., where checkLinks no longer looks. os.Root would refuse an escaping
+// write anyway; checking first also makes the refusal an ErrBadArchive.
+// Components that don't exist yet are fine: MkdirAll creates them as real
+// directories.
 func (x *extractor) inside(idx int, dir, name string) error {
-	k := link{idx, dir}
-	if dir == "." || x.safe[k] {
+	if dir == "." || x.realDirs[link{idx, dir}] {
 		return nil
 	}
-	out, err := resolvesOutside(x.roots[idx], dir)
-	if err != nil {
-		return badf("refusing %q: resolving its directory: %w", name, err)
+	rt := x.roots[idx]
+	prefix := ""
+	for _, c := range strings.Split(dir, string(filepath.Separator)) {
+		prefix = filepath.Join(prefix, c)
+		if x.realDirs[link{idx, prefix}] {
+			continue
+		}
+		fi, err := rt.Lstat(prefix)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			return nil // the rest is created by MkdirAll, or the write fails
+		case err != nil:
+			return fmt.Errorf("refusing %q: checking %s: %w", name, prefix, err)
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return badf("refusing %q: %s on its path is a symlink, which could lead outside its root", name, filepath.ToSlash(prefix))
+		case fi.IsDir():
+			x.realDirs[link{idx, prefix}] = true
+		default:
+			return nil // a file on the path: the write fails with ENOTDIR
+		}
 	}
-	if out {
-		return badf("refusing %q: its directory resolves outside its root", name)
-	}
-	x.safe[k] = true
 	return nil
 }
 
@@ -480,13 +509,21 @@ func (x *extractor) inside(idx int, dir, name string) error {
 // lexically (q -> ., r -> q/.., p -> r/..: with r gone, p looks local).
 // It then removes each that resolves outside its root (or can't be
 // resolved) and returns an ErrBadArchive naming them, and repeats until a
-// pass removes nothing.
-func (x *extractor) checkLinks() error {
+// pass removes nothing. If ctx ends first, it removes every link not yet
+// judged, failing closed, and returns ctx's error (not ErrBadArchive: the
+// archive may be fine).
+func (x *extractor) checkLinks(ctx context.Context) error {
 	var errs []error
 	pending := slices.Clone(x.links)
 	for {
 		var kept, refused []link
-		for _, l := range pending {
+		for i, l := range pending {
+			if ctx.Err() != nil {
+				for _, u := range append(kept, pending[i:]...) {
+					_ = x.roots[u.idx].Remove(u.rel)
+				}
+				return errors.Join(append(errs, fmt.Errorf("checking restored links: %w", ctx.Err()))...)
+			}
 			rt := x.roots[l.idx]
 			fi, err := rt.Lstat(l.rel)
 			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || (err == nil && fi.Mode()&fs.ModeSymlink == 0) {
@@ -555,9 +592,6 @@ func (x *extractor) clearForReplace(idx int, rel string) error {
 	case fi.IsDir():
 		return nil // the create then fails, rather than delete a tree
 	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		clear(x.safe) // directories resolved through this link may now differ
-	}
 	return rt.Remove(rel)
 }
 
@@ -584,7 +618,6 @@ func (x *extractor) restoreSymlink(idx int, rel, target string) error {
 	if err := x.clearForReplace(idx, rel); err != nil {
 		return err
 	}
-	clear(x.safe) // a new link can redirect a directory already judged
 	if err := x.roots[idx].Symlink(target, rel); err != nil {
 		return err
 	}
