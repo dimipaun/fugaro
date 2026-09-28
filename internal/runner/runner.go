@@ -19,9 +19,12 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -52,6 +55,18 @@ type Deps struct {
 	Log         *slog.Logger
 	Now         func() time.Time
 	CancelPoll  time.Duration
+	// Bucket is the runs bucket, for the branch lock and caches
+	// (design §3.3). Nil disables both.
+	Bucket *blobx.Bucket
+	// Execution is the canonical execution name (backend.ExecID.String()),
+	// recorded in result.json; empty for local runs, which skips the
+	// duplicate-execution check. Compare with backend.SameExecution.
+	Execution string
+	// BaseImage is FUGARO_BASE_IMAGE, the base the image was built FROM;
+	// it is part of every cache key.
+	BaseImage string
+	// CacheMaxBytes caps a cache archive; zero means cache.DefaultMaxBytes.
+	CacheMaxBytes int64
 }
 
 type run struct {
@@ -76,6 +91,10 @@ type run struct {
 	auth         gitprov.GitAuth // current git credentials
 	authWarned   bool            // whether a mid-run refresh failure has already been logged
 	tail         *LogTail        // output of the first failed stage, for the draft PR
+	lock         *lock.Lock      // the branch lock, while held
+	caches       []cacheSlot     // the cache entries restored at bootstrap, for writeback
+	cacheBase    string          // the base-image part of every cache key
+	toolchain    string          // the toolchain part of every cache key (ToolchainHash)
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -137,6 +156,14 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic: %v", p)
 		}
+		if errors.Is(err, ErrDuplicateExecution) {
+			// Another execution owns this run: its result.json and lock
+			// are not ours to touch.
+			d.Log.Error("duplicate execution; exiting without writing", "execution", d.Execution, "err", r.redact(err.Error()))
+			rec = nil
+			return
+		}
+		r.releaseLock(ctx)
 		if err != nil {
 			// Provider and git errors can quote what they were sent, so
 			// the reason is redacted like everything else published.
@@ -177,6 +204,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	if err := r.finalize(finCtx); err != nil {
 		return nil, fmt.Errorf("finalize: %w", err)
 	}
+	r.writeback(ctx)
 	return r.rec, nil
 }
 
@@ -388,7 +416,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
-	r.save(ctx)
+	r.rec.Execution = r.d.Execution
+	if r.d.Execution == "" {
+		r.save(ctx)
+	} else if err := r.d.Store.CreateRecord(ctx, r.rec); errors.Is(err, runstore.ErrExists) {
+		// Created before the lock, so two executions of one run are
+		// always told apart here (design §4.7).
+		prev, rerr := r.d.Store.ReadRecord(ctx)
+		if rerr != nil || !backend.SameExecution(prev.Execution, r.d.Execution) {
+			return ErrDuplicateExecution // nothing written
+		}
+		r.save(ctx) // this very execution restarted: carry on
+	} else if err != nil {
+		r.d.Log.Warn("writing the first run record failed", "err", r.redact(err.Error()))
+	}
 	if spec.IsFollowUp() {
 		return errors.New("follow-up runs are not supported by this version of fugaro")
 	}
@@ -428,6 +469,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("checking out %s: %w", spec.Ref, err)
 	}
 	r.repo = repo
+	r.rec.Branch = branch
 
 	data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 	if err != nil {
@@ -449,6 +491,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
 	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	dl := r.lockDeadline()
+	r.rec.Deadline = &dl
+	// The lock comes before anything changes remote state: the clone and
+	// checkout above are local, and the provider has only been asked for
+	// credentials.
+	if err := r.acquireLock(ctx); err != nil {
+		return err
+	}
 	switch {
 	case r.provider == nil:
 		if err := r.openProvider(ctx, cfg.Git.Provider, "git.provider"); err != nil {
@@ -457,6 +507,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case r.providerKind != cfg.Git.Provider:
 		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
 	}
+	r.restoreCaches(ctx)
 	if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 		return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 	}
@@ -512,7 +563,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
-	r.rec.Branch = branch
 	r.save(ctx)
 	return nil
 }
@@ -766,7 +816,6 @@ func (r *run) finalize(ctx context.Context) error {
 	if err := r.d.Store.PutFile(ctx, "report.md", []byte(report), "text/markdown"); err != nil {
 		r.d.Log.Warn("storing the run report failed", "err", err)
 	}
-	r.rec.Stage = "writeback" // cache write-back arrives in M4
 	return nil
 }
 

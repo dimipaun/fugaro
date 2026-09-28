@@ -23,6 +23,9 @@ const wantFull = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1
 # for REPO_URL) and one per workflow secret, exposed as that variable.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
+# The base as built FROM (Cloud Build passes its digest); cache keys use it.
+ARG FUGARO_BASE
+ENV FUGARO_BASE_IMAGE=${FUGARO_BASE}
 ARG REPO_URL
 ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
@@ -80,6 +83,9 @@ const wantMinimal = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c
 # for REPO_URL) and one per workflow secret, exposed as that variable.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
+# The base as built FROM (Cloud Build passes its digest); cache keys use it.
+ARG FUGARO_BASE
+ENV FUGARO_BASE_IMAGE=${FUGARO_BASE}
 ARG REPO_URL
 ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH

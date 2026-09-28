@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 )
 
@@ -56,7 +57,9 @@ func Key(slug, branch string) string {
 }
 
 // Acquire takes the lock at key for h, taking over one that expired before
-// now or that cannot be parsed.
+// now or that cannot be parsed. A lock already held by h's run and
+// execution (compared with backend.SameExecution, so a run without an
+// execution never matches) is h's own and is returned as acquired.
 func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now time.Time) (*Lock, error) {
 	body, err := json.Marshal(h)
 	if err != nil {
@@ -78,7 +81,14 @@ func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now tim
 			return nil, fmt.Errorf("reading lock %s: %w", key, err)
 		}
 		var cur Holder
-		if json.Unmarshal(prev, &cur) == nil && cur.RunID != "" && now.Before(cur.ExpiresAt) {
+		parsed := json.Unmarshal(prev, &cur) == nil
+		if parsed && cur.RunID != "" && cur.RunID == h.RunID && backend.SameExecution(cur.Execution, h.Execution) {
+			// Our own lock: the storage client retried a create whose first
+			// attempt committed, or this execution restarted. It is held
+			// at the generation we just read.
+			return &Lock{b: b, key: key, gen: prevGen, body: prev}, nil
+		}
+		if parsed && cur.RunID != "" && now.Before(cur.ExpiresAt) {
 			return nil, &BusyError{Holder: cur}
 		}
 		if beforeTakeover != nil {

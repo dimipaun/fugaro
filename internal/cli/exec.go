@@ -13,10 +13,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"gocloud.dev/blob"
-	_ "gocloud.dev/blob/fileblob" // file:// buckets for local runs
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
@@ -79,9 +79,14 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return err
 	}
-	bucket, err := blob.OpenBucket(ctx, o.bucket)
+	// On Cloud Run, the canonical execution name; "" for a local run.
+	execName, err := backend.ExecutionFromEnv(os.Getenv)
 	if err != nil {
-		return fmt.Errorf("opening bucket %s: %w", o.bucket, err)
+		return err
+	}
+	bucket, err := blobx.Open(ctx, o.bucket)
+	if err != nil {
+		return err
 	}
 	defer bucket.Close()
 
@@ -92,7 +97,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 			return err
 		}
 		slug, runID = task.Slug(spec.Repo), spec.RunID
-		if err := runstore.Open(bucket, slug, runID).WriteTask(ctx, spec); err != nil {
+		if err := runstore.Open(bucket.Bucket, slug, runID).WriteTask(ctx, spec); err != nil {
 			return fmt.Errorf("writing task file: %w", err)
 		}
 	} else if slug, runID, err = runstore.ParseRef(o.run); err != nil {
@@ -113,9 +118,10 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	}
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
-		Store: runstore.Open(bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
+		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
+		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
 	})
 	var writeErr error
 	if rec != nil {
