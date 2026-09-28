@@ -225,7 +225,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	warnf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
-		fmt.Fprintf(warn, format, args...)
+		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
 	}
 	for range min(lsWorkers, len(refs)) {
 		wg.Add(1)
@@ -373,7 +373,7 @@ func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) erro
 		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
 			cost += "~" // the model spend was notional
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.Run, r.Status, r.Stage, age(now.Sub(r.Created)), cost, r.PRURL)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, oneLine(r.PRURL))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

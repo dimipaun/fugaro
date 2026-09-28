@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -187,5 +188,7 @@ func humanLogLine(l logLine) string {
 	if sev == "" {
 		sev = "DEFAULT"
 	}
-	return fmt.Sprintf("%s %-7s %s%s", l.Time.Local().Format("15:04:05"), sev, tag, l.Message)
+	// A message's own newlines are indented, so it can't forge an entry.
+	msg := strings.ReplaceAll(multiLine(l.Message), "\n", "\n    ")
+	return fmt.Sprintf("%s %-7s %s%s", l.Time.Local().Format("15:04:05"), oneLine(sev), oneLine(tag), msg)
 }

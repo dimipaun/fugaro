@@ -216,7 +216,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return remote(err)
 	}
 	if !o.noWait {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", res.ID, res.Image, res.LogURL)
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		done, waitErr := b.Wait(ctx, res.ID, 0)
 		if done.Image == "" {
 			done.Image = res.Image
@@ -238,16 +238,16 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return printBuildResult(cmd.OutOrStdout(), res)
 	}
 	if o.noWait {
-		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", res.ID, res.Image, res.LogURL)
+		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 		return nil
 	}
 	if res.Digest == "" {
 		// SUCCESS covers the push of images:, so the tag is there; only
 		// the pushed-image report is missing.
-		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", res.Image, res.ID)
+		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
 		return nil
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", strings.TrimSuffix(res.Image, ":latest"), res.Digest, res.ID)
+	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
 	return nil
 }
 
@@ -286,7 +286,7 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 	if source == "generated" {
 		source = "the generated Dockerfile"
 	}
-	fmt.Fprintf(w, "built %s from %s, FROM %s, commit %s, origin %s\n", res.Image, source, res.Base, res.Commit, res.Origin)
+	fmt.Fprintf(w, "built %s from %s, FROM %s, commit %s, origin %s\n", oneLine(res.Image), oneLine(source), oneLine(res.Base), oneLine(res.Commit), oneLine(res.Origin))
 	if res.Smoke == nil {
 		return nil
 	}
@@ -295,7 +295,7 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 		if !c.OK {
 			status = "FAIL"
 		}
-		fmt.Fprintf(w, "  %s %-16s %s\n", status, c.Name, c.Detail)
+		fmt.Fprintf(w, "  %s %-16s %s\n", status, oneLine(c.Name), oneLine(c.Detail))
 	}
 	return nil
 }

@@ -246,6 +246,7 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 		return err
 	}
 	var msg string
+	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
 	switch r.Status {
 	case cancelAlreadyFinished:
 		msg = fmt.Sprintf("%s has already finished; nothing to cancel", r.Run)

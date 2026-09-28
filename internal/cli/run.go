@@ -347,11 +347,11 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.Status == "already-launched" {
 		verb = "already launched"
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, res.Run, res.Branch); err != nil {
+	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, oneLine(res.Run), oneLine(res.Branch)); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
-		_, err := fmt.Fprintf(w, "  logs %s\n", res.LogURL)
+		_, err := fmt.Fprintf(w, "  logs %s\n", oneLine(res.LogURL))
 		return err
 	}
 	return nil
