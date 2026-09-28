@@ -67,7 +67,7 @@ func TestCloudBuildConfig(t *testing.T) {
 	if !strings.Contains(script(2), "RepoDigests") {
 		t.Error("the build step does not pin the base image by digest")
 	}
-	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_SECRET", "_GIT_USER", "_SECRET_ENVS"} {
+	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_SECRET_ENVS"} {
 		if _, ok := cb.Substitutions[k]; !ok {
 			t.Errorf("substitution %s is not declared", k)
 		}

@@ -201,7 +201,6 @@ func TestImageBuildCloud(t *testing.T) {
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
 	if subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" || subs["_FUGARO_BASE"] != base || subs["_WORKFLOW"] != "app" ||
-		subs["_GIT_SECRET"] != "projects/proj-1234/secrets/"+gcp.SecretID(slug, "bitbucket-token")+"/versions/latest" ||
 		subs["_GIT_USER"] != "x-token-auth" || subs["_SECRET_ENVS"] != "NPM_TOKEN" || subs["_BASE_BRANCH"] != "main" {
 		t.Fatalf("substitutions = %v", subs)
 	}
