@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
@@ -121,12 +122,18 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
+	var prices *backend.Prices
+	if os.Getenv("FUGARO_BACKEND") == "cloud-run" {
+		p := gcp.ListPrices(os.Getenv("FUGARO_REGION"))
+		prices = &p
+	}
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
 	rec, runErr := runner.Run(ctx, runner.Deps{
 		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
+		Prices: prices,
 	})
 	var writeErr error
 	if rec != nil {

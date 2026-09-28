@@ -138,3 +138,17 @@ func TestReportLogTail(t *testing.T) {
 		t.Fatal("a nil tail rendered a section")
 	}
 }
+
+func TestCostLine(t *testing.T) {
+	cases := map[string]runstore.Cost{
+		"**Cost:** ≈ $4.50 (model $4.12 + compute $0.38, estimate)":                                           runstore.NewCost(4.12, 0.38, runstore.BasisAPIList),
+		"**Cost:** ≈ $0.38 compute (estimate); model $4.12 notional, counted against the Claude subscription": runstore.NewCost(4.12, 0.38, runstore.BasisSubscription),
+		"**Cost:** model $4.12 (compute not estimated)":                                                       runstore.NewCost(4.12, 0, runstore.BasisAPIList),
+		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":     runstore.NewCost(4.12, 0, runstore.BasisSubscription),
+	}
+	for want, c := range cases {
+		if got := CostLine(c); got != want {
+			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
+		}
+	}
+}

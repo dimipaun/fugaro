@@ -67,6 +67,9 @@ type Deps struct {
 	BaseImage string
 	// CacheMaxBytes caps a cache archive; zero means cache.DefaultMaxBytes.
 	CacheMaxBytes int64
+	// Prices are the backend's list prices for the job's compute; nil
+	// means compute is not estimated, as on a local run.
+	Prices *backend.Prices
 }
 
 type run struct {
@@ -178,6 +181,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
+		// The report's figure stops before writeback; the record's covers
+		// the whole run.
+		r.updateCost()
 		finished := d.Now().UTC()
 		r.rec.FinishedAt = &finished
 		if werr := d.Store.WriteRecord(context.WithoutCancel(ctx), r.rec); werr != nil && err == nil {
@@ -647,6 +653,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 		log.Warn("storing transcript failed", "err", perr)
 	}
 	r.rec.CostUSD += res.CostUSD
+	r.updateCost()
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
 	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
 
@@ -811,6 +818,7 @@ func (r *run) finalize(ctx context.Context) error {
 	default:
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
+	r.updateCost()
 	report := agent.Redact(Report(r.rec, r.d.Store.Prefix(), r.logTail(ready, records)), r.secrets)
 	if err := r.provider.Comment(ctx, pr, report); err != nil {
 		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))

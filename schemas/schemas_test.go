@@ -6,11 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // compile loads a schema file and compiles it under its $id.
@@ -104,5 +107,46 @@ func TestTaskSchemaCorpus(t *testing.T) {
 		if err := sch.Validate(jsonInstance(f)); err == nil {
 			t.Errorf("%s: schema accepts an invalid task", f)
 		}
+	}
+}
+
+func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	deadline, finished := at.Add(time.Hour), at.Add(10*time.Minute)
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	rec := runstore.Record{
+		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
+		Execution: "projects/p/locations/r/jobs/j/executions/e",
+		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", HeadSHA: "abcdef1234567",
+		PR:      &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
+		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 2}},
+		Verify: []verify.Record{{
+			N: 1, Kind: verify.KindTest, Rerun: true, HeadSHA: "abcdef1234567", CleanTree: true, ExitCode: 1,
+			TimedOut: true, Tests: 3, Failures: 1, Skipped: 1, Failed: []string{"pkg.A"}, Flaky: []string{"pkg.B"},
+			Warning: "w", StartedAt: at, DurationS: 1.5,
+		}},
+		CostUSD: 4.12, Cost: &cost,
+		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61}},
+		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a runner record: %v\n%s", err, data)
+	}
+	bad, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"status":"failed"`), []byte(`"status":"done"`), 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal(`schema accepts "status": "done"`)
 	}
 }

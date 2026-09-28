@@ -74,7 +74,8 @@ type Record struct {
 	PR         *PRRef          `json:"pr,omitempty"`
 	Reviews    []ReviewSummary `json:"reviews,omitempty"`
 	Verify     []verify.Record `json:"verify,omitempty"`
-	CostUSD    float64         `json:"cost_usd"`
+	CostUSD    float64         `json:"cost_usd"` // the model spend (design §4.6)
+	Cost       *Cost           `json:"cost,omitempty"`
 	Stages     []StageTiming   `json:"stages,omitempty"`
 	StartedAt  time.Time       `json:"started_at"`
 	Deadline   *time.Time      `json:"deadline,omitempty"`
