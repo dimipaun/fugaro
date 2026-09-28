@@ -206,10 +206,15 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 			{"secrets", "set", "claude-oauth-token", "--repo", "acme/app"},
 			{"secrets", "ls", "--repo", "acme/app"},
 			{"run", "--repo", "acme/app", "A task"},
+			{"image", "build", "--repo", "acme/app"},
+			{"ls"},
+			{"logs", "some-run"},
+			{"diagnose", "some-run"},
+			{"cancel", "some-run"},
 		} {
 			_, errOut, err := executeStdin(t, tokenValue, args...)
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "http2debug") || strings.Contains(err.Error()+errOut, tokenValue) {
-				t.Fatalf("%s %q: %v", v, args[:2], err)
+				t.Fatalf("%s %q: %v", v, args, err)
 			}
 		}
 	}

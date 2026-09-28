@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -37,10 +38,12 @@ func TestLogsRedacts(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", secret)
 	f := newCloudFixture(t)
 	exec := seedRun(t, f, "20260927-100000-abcd", "", "", true)
-	f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"WARNING","message":"key is `+secret+`","stage":"implement","stream":"agent"}`+"\n"))
+	// The shared redactor's encoded forms apply here too: a base64 dump.
+	b64 := base64.StdEncoding.EncodeToString([]byte(secret))
+	f.logging.AddJSONLines(exec, []byte(`{"time":"`+logTime(time.Second)+`","severity":"WARNING","message":"key is `+secret+` or `+b64+`","stage":"implement","stream":"agent"}`+"\n"))
 	for _, args := range [][]string{{"logs"}, {"logs", "--json"}} {
 		out, _, err := execute(t, append(args, "20260927-100000-abcd")...)
-		if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "[REDACTED]") {
+		if err != nil || strings.Contains(out, secret) || strings.Contains(out, b64) || !strings.Contains(out, "[REDACTED]") {
 			t.Fatalf("%v = %s, %v", args, out, err)
 		}
 	}
