@@ -21,13 +21,14 @@ import (
 // filter shape Fugaro sends: a Cloud Run job execution's entries, optionally
 // from a timestamp on. Any other filter fails the test.
 //
-// Entries are keyed by job and short execution name, as the real
-// resource.labels.job_name and labels."run.googleapis.com/execution_name"
-// are.
+// Entries are keyed by region, job and short execution name, as the real
+// resource.labels.location, resource.labels.job_name and
+// labels."run.googleapis.com/execution_name" are. An entry added under a
+// short name has no region and matches a query in any.
 type Logging struct {
 	*Server
 	mu      sync.Mutex
-	entries map[execKey][]LogEntry
+	entries map[logExec][]LogEntry
 	nextID  int
 }
 
@@ -44,22 +45,29 @@ type LogEntry struct {
 // NewLogging starts a Cloud Logging fake that lives until the test ends.
 func NewLogging(t *testing.T) *Logging {
 	t.Helper()
-	l := &Logging{entries: map[execKey][]LogEntry{}}
+	l := &Logging{entries: map[logExec][]LogEntry{}}
 	l.Server = newServer(t, l.handle)
 	return l
 }
 
+// logExec is an execution's log key; region is "" for one added by its
+// short name.
+type logExec struct {
+	region string
+	execKey
+}
+
 // logKey keys an execution named in full or by its short name. A short name
 // is <job>-<suffix>, so the job is everything before the last dash.
-func logKey(execution string) execKey {
+func logKey(execution string) logExec {
 	if id, ok := backend.ParseExecution(execution); ok {
-		return execKey{id.Job, id.Name}
+		return logExec{id.Region, execKey{id.Job, id.Name}}
 	}
 	job := execution
 	if i := strings.LastIndex(execution, "-"); i > 0 {
 		job = execution[:i]
 	}
-	return execKey{job, execution}
+	return logExec{"", execKey{job, execution}}
 }
 
 // Add stores an entry of execution (a full or short name).
@@ -109,7 +117,7 @@ func (l *Logging) AddJSONLines(execution string, data []byte) {
 	}
 }
 
-var logFilterRE = regexp.MustCompile(`^resource\.type="cloud_run_job" AND resource\.labels\.job_name="([^"]+)" AND labels\."run\.googleapis\.com/execution_name"="([^"]+)"(?: AND timestamp>="([^"]+)")?$`)
+var logFilterRE = regexp.MustCompile(`^resource\.type="cloud_run_job" AND resource\.labels\.location="([^"]+)" AND resource\.labels\.job_name="([^"]+)" AND labels\."run\.googleapis\.com/execution_name"="([^"]+)"(?: AND timestamp>="([^"]+)")?$`)
 
 func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {
@@ -130,8 +138,8 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	m := logFilterRE.FindStringSubmatch(req.Filter)
 	var since time.Time
-	if m != nil && m[3] != "" {
-		t, err := time.Parse(time.RFC3339Nano, m[3])
+	if m != nil && m[4] != "" {
+		t, err := time.Parse(time.RFC3339Nano, m[4])
 		if err != nil {
 			m = nil
 		}
@@ -143,13 +151,15 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported request")
 		return
 	}
-	k := execKey{m[1], m[2]}
+	region, k := m[1], execKey{m[2], m[3]}
 
 	l.mu.Lock()
 	var match []LogEntry
-	for _, e := range l.entries[k] {
-		if !e.Time.Before(since) {
-			match = append(match, e)
+	for _, key := range []logExec{{region, k}, {"", k}} {
+		for _, e := range l.entries[key] {
+			if !e.Time.Before(since) {
+				match = append(match, e)
+			}
 		}
 	}
 	l.mu.Unlock()
@@ -168,7 +178,7 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			"insertId":  e.InsertID,
 			"timestamp": e.Time.UTC().Format(time.RFC3339Nano),
 			"logName":   req.ResourceNames[0] + "/logs/run.googleapis.com%2Fstdout",
-			"resource":  map[string]any{"type": "cloud_run_job", "labels": map[string]string{"job_name": k.job}},
+			"resource":  map[string]any{"type": "cloud_run_job", "labels": map[string]string{"location": region, "job_name": k.job}},
 			"labels":    map[string]string{"run.googleapis.com/execution_name": k.short},
 		}
 		if e.Severity != "" {

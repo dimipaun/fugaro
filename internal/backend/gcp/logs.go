@@ -131,7 +131,8 @@ func minTime(a, b time.Time) time.Time {
 // readLogs reads every entry of the execution at or after from (all of them
 // when from is zero), following page tokens.
 func (b *Backend) readLogs(ctx context.Context, id backend.ExecID, from time.Time, fn func(backend.LogEntry) error) error {
-	filter := `resource.type="cloud_run_job" AND resource.labels.job_name=` + strconv.Quote(id.Job) +
+	filter := `resource.type="cloud_run_job" AND resource.labels.location=` + strconv.Quote(id.Region) +
+		` AND resource.labels.job_name=` + strconv.Quote(id.Job) +
 		` AND labels."run.googleapis.com/execution_name"=` + strconv.Quote(id.Name)
 	if !from.IsZero() {
 		filter += ` AND timestamp>=` + strconv.Quote(from.UTC().Format(time.RFC3339Nano))

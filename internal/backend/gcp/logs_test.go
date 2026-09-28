@@ -171,3 +171,24 @@ func TestLogsFollowSettlesOnAForgottenExecution(t *testing.T) {
 		t.Fatalf("follow = %+v, %v", got, err)
 	}
 }
+
+// The same job and execution names in another region are another
+// execution: its logs never mix in.
+func TestLogsStayInTheBackendsRegion(t *testing.T) {
+	ctx := context.Background()
+	b, fr, fl := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	id, _ := backend.ParseExecution(ref.Name)
+	other := id
+	other.Region = "europe-west9"
+	fl.AddJSONLines(ref.Name, []byte(`{"message":"here"}`+"\n"))
+	fl.AddJSONLines(other.String(), []byte(`{"message":"elsewhere"}`+"\n"))
+	var got []string
+	if err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name, Since: time.Now().Add(-time.Hour)}, func(e backend.LogEntry) error { got = append(got, e.Message); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "here" {
+		t.Fatalf("entries = %q", got)
+	}
+}
