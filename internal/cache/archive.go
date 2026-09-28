@@ -139,7 +139,7 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 		if !ok {
 			continue
 		}
-		if err := writeRoot(tw, i, dir, excludedDir(root), charge, &st); err != nil {
+		if err := writeRoot(tw, i, dir, excludedEntry(root), charge, &st); err != nil {
 			if errors.Is(err, ErrTooLarge) {
 				return st, err
 			}
@@ -149,15 +149,19 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 	return st, nil
 }
 
-// excludedDir is the directory under root that is never archived, or ""
-// for none: npm's debug logs under ~/.npm/_logs are not cache content, and
-// they can quote the commands (and so the arguments) npm ran.
-func excludedDir(root string) string {
-	if filepath.Base(root) == ".npm" {
-		return "_logs"
-	}
-	return ""
+// excludedEntries maps a cache root's base name to the entry directly
+// under it that is never archived. npm's debug logs (~/.npm/_logs) can
+// quote the commands npm ran; Maven's ~/.m2/settings.xml and Gradle's
+// ~/.gradle/gradle.properties often hold repository credentials. None of
+// them is cache content.
+var excludedEntries = map[string]string{
+	".npm":    "_logs",
+	".m2":     "settings.xml",
+	".gradle": "gradle.properties",
 }
+
+// excludedEntry is the entry under root that is never archived, or "".
+func excludedEntry(root string) string { return excludedEntries[filepath.Base(root)] }
 
 func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) error, st *writeStats) error {
 	rt, err := os.OpenRoot(dir)
@@ -178,8 +182,10 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 		}
 		name := fmt.Sprintf("%d/%s", i, filepath.ToSlash(rel))
 		switch t := d.Type(); {
-		case t.IsDir() && exclude != "" && rel == exclude:
+		case exclude != "" && rel == exclude && t.IsDir():
 			return filepath.SkipDir
+		case exclude != "" && rel == exclude:
+			return nil
 		case t.IsDir():
 			if err := charge(0); err != nil {
 				return err

@@ -153,7 +153,7 @@ func (s *Store) create(ctx context.Context, name string, data []byte, contentTyp
 // Cloud Run the runner writes its first record this way, so a duplicate
 // execution of the same run never writes one (design §4.7).
 func (s *Store) CreateRecord(ctx context.Context, r *Record) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := encodeRecord(r)
 	if err != nil {
 		return err
 	}
@@ -190,7 +190,7 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 
 // WriteRecord stores result.json.
 func (s *Store) WriteRecord(ctx context.Context, r *Record) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := encodeRecord(r)
 	if err != nil {
 		return err
 	}

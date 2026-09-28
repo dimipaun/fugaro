@@ -87,7 +87,7 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 			}
 		}
 		if base == home && holdsCredentials(clean) {
-			return nil, fmt.Errorf("cache path %q may hold credentials or agent sessions, and caches are uploaded to the runs bucket", p)
+			return nil, fmt.Errorf("cache path %q may hold credentials or agent sessions, and caches are uploaded to the runs bucket; cache a tool's own directory instead, such as ~/.config/<tool> or ~/.cache/<tool>", p)
 		}
 		out[i] = filepath.Join(base, filepath.FromSlash(clean))
 	}
@@ -106,7 +106,8 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 // of them, inside one, or contain one: every cache is uploaded to the runs
 // bucket. A first component starting with ".claude" is refused as well.
 var credentialPaths = [][]string{
-	{".ssh"}, {".config", "gcloud"}, {".git-credentials"}, {".npmrc"}, {".netrc"}, {".docker"},
+	{".ssh"}, {".config", "gcloud"}, {".config", "gh"}, {".git-credentials"}, {".npmrc"}, {".netrc"},
+	{".docker"}, {".aws"}, {".kube"}, {".gnupg"},
 }
 
 // holdsCredentials reports whether the home-relative clean path is,

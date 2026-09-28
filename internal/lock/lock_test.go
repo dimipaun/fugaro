@@ -2,6 +2,7 @@ package lock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -213,6 +214,47 @@ func TestAcquireAdoptsOwnLock(t *testing.T) {
 			}
 			if _, err := Acquire(ctx, b, key, Holder{RunID: "20260927-100000-bbbb", ExpiresAt: t0.Add(2 * time.Hour)}, mine.ExpiresAt.Add(time.Minute)); !errors.As(err, &busy) || !busy.Holder.ExpiresAt.Equal(again.ExpiresAt) {
 				t.Fatalf("after adoption the lock holds %+v (err %v), want the refreshed expiry %s", busy, err, again.ExpiresAt)
+			}
+			if err := l.Release(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if ok, _ := b.Exists(ctx, key); ok {
+				t.Fatal("the adopted lock survives Release")
+			}
+		})
+	}
+}
+
+// TestAcquireRefreshConflictRereads covers a refresh whose write committed
+// but whose response was lost, so the client's retry conflicted: the lock
+// now holds our own new body, and Acquire must adopt it, not report the
+// branch busy on itself.
+func TestAcquireRefreshConflictRereads(t *testing.T) {
+	const (
+		execByID     = "projects/proj-1/locations/r1/jobs/j/executions/e-aaaaa"
+		execByNumber = "projects/123456/locations/r1/jobs/j/executions/e-aaaaa"
+	)
+	for name, b := range buckets(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			key := Key("acme-app", "fugaro/refresh")
+			first := Holder{RunID: "20260927-100000-aaaa", Execution: execByID, ExpiresAt: t0.Add(time.Hour)}
+			if _, err := Acquire(ctx, b, key, first, t0); err != nil {
+				t.Fatal(err)
+			}
+			again := Holder{RunID: first.RunID, Execution: execByNumber, ExpiresAt: t0.Add(2 * time.Hour)}
+			body, _ := json.Marshal(again)
+			beforeRefresh = func() {
+				beforeRefresh = nil
+				// The "lost" first attempt of the refresh lands.
+				if err := b.WriteAll(ctx, key, body, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { beforeRefresh = nil })
+			l, err := Acquire(ctx, b, key, again, t0.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("Acquire after a lost refresh response = %v", err)
 			}
 			if err := l.Release(ctx); err != nil {
 				t.Fatal(err)

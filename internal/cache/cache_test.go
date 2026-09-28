@@ -146,3 +146,29 @@ func TestSaveExcludesNpmLogs(t *testing.T) {
 		}
 	}
 }
+
+func TestSaveExcludesBuildToolCredentials(t *testing.T) {
+	ctx := context.Background()
+	s := &Store{Bucket: blobx.Wrap(memblob.OpenBucket(nil)), Slug: "acme-app", Workflow: "api", MaxBytes: 1 << 20}
+	m2 := filepath.Join(t.TempDir(), ".m2")
+	gradle := filepath.Join(t.TempDir(), ".gradle")
+	write(t, m2, map[string]string{"settings.xml": "<password>s3cret</password>", "repository/a.jar": "A", "repository/settings.xml": "K"})
+	write(t, gradle, map[string]string{"gradle.properties": "repoPassword=s3cret", "caches/b.jar": "B"})
+	if saved, err := s.Save(ctx, "k", []string{m2, gradle}); err != nil || !saved {
+		t.Fatalf("Save = %v, %v", saved, err)
+	}
+	dm2, dgradle := filepath.Join(t.TempDir(), ".m2"), filepath.Join(t.TempDir(), ".gradle")
+	if hit, err := s.Restore(ctx, "k", []string{dm2, dgradle}); err != nil || !hit {
+		t.Fatalf("Restore = %v, %v", hit, err)
+	}
+	for _, f := range []string{filepath.Join(dm2, "settings.xml"), filepath.Join(dgradle, "gradle.properties")} {
+		if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was archived: %v", f, err)
+		}
+	}
+	for _, f := range []string{filepath.Join(dm2, "repository/a.jar"), filepath.Join(dm2, "repository/settings.xml"), filepath.Join(dgradle, "caches/b.jar")} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("%s not archived: %v", f, err)
+		}
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 const (
@@ -40,7 +41,8 @@ func TestDisownRecordNeverOverwritesTheOwner(t *testing.T) {
 				t.Fatal(err)
 			}
 			before, _ := b.ReadAll(ctx, store.Prefix()+"result.json")
-			r := &run{d: Deps{Store: store, Bucket: blobx.Wrap(b), Execution: dupExec, Log: slog.New(slog.DiscardHandler)}}
+			r := &run{d: Deps{Store: store, Bucket: blobx.Wrap(b), Execution: dupExec, Log: slog.New(slog.DiscardHandler)},
+				spec: &task.Spec{RunID: "20260926-221530-abcd", Repo: "acme/app"}}
 			expires := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
 			r.disownRecord(ctx, lock.Holder{RunID: "20260926-221530-abcd", Execution: ownerExec, ExpiresAt: expires})
 			after, _ := b.ReadAll(ctx, store.Prefix()+"result.json")

@@ -77,14 +77,18 @@ func TestResolveRefusesCredentialPaths(t *testing.T) {
 		"~/.ssh", "~/.ssh/keys", "~/.claude", "~/.claude/projects", "~/.claude.json", "~/.CLAUDE",
 		"~/.config", "~/.config/gcloud", "~/.config/gcloud/logs", "~/.git-credentials", "~/.npmrc",
 		"~/.netrc", "~/.docker", "~/.docker/config.json",
+		"~/.config/gh", "~/.config/gh/hosts.yml", "~/.aws", "~/.aws/credentials", "~/.kube", "~/.kube/config", "~/.gnupg",
 	} {
-		if _, err := Resolve([]string{bad}, "/work/repo", "/home/fugaro"); err == nil {
+		_, err := Resolve([]string{bad}, "/work/repo", "/home/fugaro")
+		if err == nil {
 			t.Errorf("Resolve(%q) accepted a credential path", bad)
+		} else if !strings.Contains(err.Error(), "~/.config/<tool>") {
+			t.Errorf("Resolve(%q) = %v; the error does not suggest a narrower path", bad, err)
 		}
 	}
 	// Only home paths are credential paths: a checkout directory of the
 	// same name is the repository's own.
-	for _, ok := range []string{"~/.npm", "~/.cache/yarn", "~/.config/yarn", ".docker/cache", "~/.sshx"} {
+	for _, ok := range []string{"~/.npm", "~/.cache/yarn", "~/.config/yarn", ".docker/cache", "~/.sshx", "~/.config/ghx", "~/.m2", "~/.gradle"} {
 		if _, err := Resolve([]string{ok}, "/work/repo", "/home/fugaro"); err != nil {
 			t.Errorf("Resolve(%q) = %v", ok, err)
 		}

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
-	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -41,6 +40,11 @@ const writebackFloor = 20 * time.Second
 // restoreBound is how long cache restore may take for a run whose
 // timeouts.total is total; tests may replace it.
 var restoreBound = func(total time.Duration) time.Duration { return min(10*time.Minute, total/6) }
+
+// restoreCache restores one cache; tests may replace it.
+var restoreCache = func(ctx context.Context, s *cache.Store, key string, roots []string) (bool, error) {
+	return s.Restore(ctx, key, roots)
+}
 
 // unpinnedBase is the base-image part of a cache key when the image was
 // not built FROM a digest.
@@ -84,24 +88,19 @@ func (r *run) acquireLock(ctx context.Context) error {
 // wrote in the meantime is never overwritten; one that names any other
 // execution is left alone.
 func (r *run) disownRecord(ctx context.Context, owner lock.Holder) {
-	key := r.d.Store.Prefix() + "result.json"
-	data, gen, err := r.d.Bucket.Read(ctx, key)
+	slug := task.Slug(r.spec.Repo)
+	cur, v, err := runstore.ReadRecordVersion(ctx, r.d.Bucket, slug, r.spec.RunID)
 	if err != nil {
 		r.d.Log.Warn("reading the duplicate's own run record failed", "err", r.redact(err.Error()))
 		return
 	}
-	var cur runstore.Record
-	if json.Unmarshal(data, &cur) != nil || !backend.SameExecution(cur.Execution, r.d.Execution) {
+	if !backend.SameExecution(cur.Execution, r.d.Execution) {
 		return // not the record this execution created
 	}
 	expires := owner.ExpiresAt
 	cur.Execution, cur.Deadline = owner.Execution, &expires
-	out, err := json.MarshalIndent(&cur, "", "  ")
-	if err == nil {
-		_, err = r.d.Bucket.ReplaceIf(ctx, key, out, gen, data)
-	}
-	switch {
-	case errors.Is(err, blobx.ErrConflict):
+	switch err := runstore.ReplaceRecordIf(ctx, r.d.Bucket, slug, r.spec.RunID, cur, v); {
+	case errors.Is(err, runstore.ErrChanged):
 		// Changed since it was read: the owner wrote it. Leave it.
 	case err != nil:
 		r.d.Log.Warn("handing the run record to its owner failed", "err", r.redact(err.Error()))
@@ -236,11 +235,15 @@ func (r *run) restoreCaches(ctx context.Context) {
 			skipped++ // still written back at the end of the run
 			continue
 		}
-		err = ctx.Err() // the bound may already have passed
-		var hit bool
-		if err == nil {
-			hit, err = store.Restore(ctx, key, roots)
+		if ctx.Err() != nil {
+			// The bound passed before this entry started (the previous one
+			// finished just in time): it was never slow, so it is counted,
+			// not named.
+			timedOut = true
+			skipped++
+			continue
 		}
+		hit, err := restoreCache(ctx, store, key, roots)
 		switch {
 		case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 			// Name the object, so an operator can delete an archive that

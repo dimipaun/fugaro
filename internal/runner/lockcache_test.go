@@ -435,14 +435,40 @@ var cache2YAML = strings.Replace(cacheYAML,
 	`      - { key: [README.md], paths: ["~/.fugaro-test-cache"] }`,
 	"      - { key: [README.md], paths: [\"~/.fugaro-test-cache\"] }\n      - { key: [README.md], paths: [\"~/.fugaro-test-cache2\"] }", 1)
 
-// TestRestoreTimeoutLoggedOnce: once the restore bound passes, the entry
-// it hit is logged with its object, and later entries are only counted.
+// TestRestoreTimeoutLoggedOnce: the restore the bound interrupts is
+// logged with its object; later entries are only counted as skipped.
 func TestRestoreTimeoutLoggedOnce(t *testing.T) {
 	if cache2YAML == cacheYAML {
 		t.Fatal("cache2YAML did not add an entry")
 	}
+	runner.SetRestoreBound(t, 50*time.Millisecond)
+	runner.SetSlowRestore(t)
+	out := runLogged(t, cache2YAML)
+	if n := strings.Count(out, "cache restore timed out"); n != 1 || !strings.Contains(out, "object=cache/acme-app/app/") {
+		t.Fatalf("%d timeout warnings, want 1 naming the object:\n%s", n, out)
+	}
+	if !strings.Contains(out, "restore time bound was reached") || !strings.Contains(out, "entries=1") {
+		t.Fatalf("the later entry was not counted as skipped:\n%s", out)
+	}
+}
+
+// TestRestoreBoundPassedBeforeAnEntryStarts: an entry that never started
+// before the bound passed was not slow, so it is counted, never named.
+func TestRestoreBoundPassedBeforeAnEntryStarts(t *testing.T) {
 	runner.SetRestoreBound(t, time.Nanosecond)
-	h := newHarness(t, cache2YAML, nil)
+	out := runLogged(t, cache2YAML)
+	if strings.Contains(out, "cache restore timed out") {
+		t.Fatalf("an entry that never started was named as timed out:\n%s", out)
+	}
+	if !strings.Contains(out, "restore time bound was reached") || !strings.Contains(out, "entries=2") {
+		t.Fatalf("the entries were not counted as skipped:\n%s", out)
+	}
+}
+
+// runLogged runs a ready scenario with cfg and returns its text log.
+func runLogged(t *testing.T, cfg string) string {
+	t.Helper()
+	h := newHarness(t, cfg, nil)
 	withBucket(h)
 	var logs bytes.Buffer
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -450,11 +476,5 @@ func TestRestoreTimeoutLoggedOnce(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	out := logs.String()
-	if n := strings.Count(out, "cache restore timed out"); n != 1 || !strings.Contains(out, "object=cache/acme-app/app/") {
-		t.Fatalf("%d timeout warnings, want 1 naming the object:\n%s", n, out)
-	}
-	if !strings.Contains(out, "restore time bound was reached") || !strings.Contains(out, "entries=1") {
-		t.Fatalf("the later entry was not counted as skipped:\n%s", out)
-	}
+	return logs.String()
 }

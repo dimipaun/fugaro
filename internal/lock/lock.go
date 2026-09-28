@@ -43,6 +43,10 @@ func (e *BusyError) Error() string {
 // unreadable lock and the conditional overwrite that takes it over.
 var beforeTakeover func()
 
+// beforeRefresh, when set by a test, runs between reading our own lock
+// and the conditional overwrite that refreshes its expiry.
+var beforeRefresh func()
+
 // Lock is a held lock.
 type Lock struct {
 	b    *blobx.Bucket
@@ -91,9 +95,16 @@ func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now tim
 			if bytes.Equal(prev, body) {
 				return &Lock{b: b, key: key, gen: prevGen, body: prev}, nil
 			}
+			if beforeRefresh != nil {
+				beforeRefresh()
+			}
 			newGen, err := b.ReplaceIf(ctx, key, body, prevGen, prev)
 			if errors.Is(err, blobx.ErrConflict) {
-				return nil, &BusyError{Holder: winner(ctx, b, key)}
+				// Changed since the read. It may be our own refresh, whose
+				// response was lost and whose retry then conflicted: read
+				// again, which adopts an identical body or reports the
+				// real holder.
+				continue
 			}
 			if err != nil {
 				return nil, fmt.Errorf("refreshing lock %s: %w", key, err)
