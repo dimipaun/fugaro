@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -18,12 +19,14 @@ import (
 
 	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 )
 
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
 	Slug        string // the repository's storage slug, for its workflow secrets' IDs
-	RepoURL     string // https clone URL without credentials
+	GitProvider string // gitprov.KindBitbucket (or KindGitHub); RepoURL must be on its host
+	RepoURL     string // https clone URL without credentials, on GitProvider's host
 	BaseBranch  string
 	Workflow    string
 	Base        string // the fugaro base image, by tag or digest
@@ -162,6 +165,11 @@ func (s BuildSpec) check(reserved map[string]bool) error {
 	u, err := url.Parse(s.RepoURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return fmt.Errorf("the repository URL %s is not an https URL without credentials", redactURL(s.RepoURL))
+	}
+	// The clone sends the provider token to the URL's host, and the token
+	// is scoped to the provider's: any other host (or port) is refused.
+	if s.GitProvider == "" || u.Port() != "" || gitprov.KindForURL(s.RepoURL) != s.GitProvider {
+		return fmt.Errorf("the repository URL %s is not on %s's host; the build would send its token there", redactURL(s.RepoURL), cmp.Or(s.GitProvider, "the git provider"))
 	}
 	seen := map[string]bool{}
 	for _, ws := range s.WorkflowSecrets {
