@@ -195,7 +195,11 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 		}
 		for _, e := range resp.Executions {
 			// The API sorts by creation time, newest first: everything after
-			// the first execution older than Since is older too.
+			// the first execution older than Since is older too. For the
+			// jobs/- wildcard this assumes one ordering across every job,
+			// not per job; T20's live run must confirm it (C-M8). If it is
+			// per job, executions of other jobs are cut off here, and ls
+			// falls back to one Get per run (slower, still correct).
 			if !f.Since.IsZero() {
 				if c, err := parseTime(e.CreateTime); err == nil && !c.IsZero() && c.Before(f.Since) {
 					return out, nil

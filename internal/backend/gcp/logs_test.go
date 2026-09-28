@@ -153,3 +153,21 @@ func TestLogsFollowSurvivesAFutureDatedEntry(t *testing.T) {
 		t.Fatalf("followed = %q, %v", got, err)
 	}
 }
+
+// An execution the backend has forgotten has finished: follow settles on
+// its logs instead of failing (C-M12).
+func TestLogsFollowSettlesOnAForgottenExecution(t *testing.T) {
+	ctx := context.Background()
+	b, fr, fl := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	gone := backend.ExecID{Project: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-gone1"}.String()
+	fl.AddJSONLines(gone, []byte(`{"time":"`+at(1)+`","severity":"INFO","message":"last words"}`+"\n"))
+	var got []backend.LogEntry
+	fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := b.Logs(fctx, backend.LogQuery{Execution: gone, Since: testStart, Follow: true, Poll: 10 * time.Millisecond},
+		func(e backend.LogEntry) error { got = append(got, e); return nil })
+	if err != nil || len(got) != 1 {
+		t.Fatalf("follow = %+v, %v", got, err)
+	}
+}

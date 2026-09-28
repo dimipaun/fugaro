@@ -13,7 +13,8 @@ import (
 
 var (
 	now    = time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
-	prices = backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0}
+	flat   = backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0}
+	prices = func(string) backend.Prices { return flat }
 	spec   = &task.Spec{Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x", Batch: "b1", RequestedBy: "me@example.com"}
 	launch = &runstore.Launch{Execution: "exec-1", LogURL: "https://log", LaunchedAt: now.Add(-time.Minute)}
 )
@@ -175,5 +176,23 @@ func TestJoinLaunchedRunLostWithoutRecord(t *testing.T) {
 	// Within the TTL the backend may just not list it yet.
 	if row := Join(Input{Task: spec, Launch: launch}, prices, now); row.Status != StatusPending || row.Settled {
 		t.Fatalf("young run: %+v", row)
+	}
+}
+
+// Compute is priced in the execution's own region (C-M9).
+func TestJoinPricesTheExecutionsRegion(t *testing.T) {
+	e := exec(backend.StateSucceeded)
+	e.Name = "projects/p/locations/europe-west2/jobs/j/executions/j-1"
+	var asked []string
+	book := func(region string) backend.Prices {
+		asked = append(asked, region)
+		if region == "europe-west2" {
+			return backend.Prices{VCPUSecondUSD: 1}
+		}
+		return flat
+	}
+	row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusSucceeded, nil), Exec: e}, book, now)
+	if want := 4 * 1800.0; row.Cost.ComputeUSD != want {
+		t.Fatalf("compute = %v (asked %v), want %v", row.Cost.ComputeUSD, asked, want)
 	}
 }

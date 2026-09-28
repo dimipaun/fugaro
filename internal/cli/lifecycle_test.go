@@ -133,3 +133,117 @@ func TestCancelReportsALaunchStillInFlight(t *testing.T) {
 		t.Fatalf("cancel --json = %s, %v", out, err)
 	}
 }
+
+// finishingBackend lets the runner write its final record and exit just
+// before the CLI reads the execution, the window of C-M1.
+type finishingBackend struct {
+	backend.Backend
+	finish func(name string)
+}
+
+func (fb finishingBackend) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	fb.finish(name)
+	return fb.Backend.Execution(ctx, name)
+}
+
+// A run that finishes between the record read and the execution read is
+// its final record's status, not infra_error (C-M1).
+func TestLoadRowsOneRunFinishingMidRead(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20200101-000000-dddd"
+	e := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(e, backend.StateRunning)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: e, Status: runstore.StatusRunning, Stage: "finalize"})
+	env, err := openCloud(context.Background(), cloudOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer env.Close()
+	env.be = finishingBackend{Backend: env.be, finish: func(string) {
+		writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: e, Status: runstore.StatusSucceeded, Stage: "writeback"})
+		f.run.SetState(e, backend.StateSucceeded)
+	}}
+	rows, err := loadRows(context.Background(), env, lsFilter{runRef: appSlug + "/" + id}, time.Now())
+	if err != nil || len(rows) != 1 || rows[0].Status != "succeeded" {
+		t.Fatalf("rows = %+v, %v", rows, err)
+	}
+}
+
+// A run that already ran without a cloud execution (a local run against
+// the same bucket) is not launched again by --retry (C-M4).
+func TestRetryDoesNotRelaunchARunWithARecord(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", false)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Status: runstore.StatusSucceeded, Stage: "writeback"})
+	out, errOut, err := execute(t, "run", "--retry", id)
+	if err != nil || len(f.run.Executions()) != 0 || !strings.Contains(out+errOut, "already") {
+		t.Fatalf("run --retry = %q %q, %v; executions %v", out, errOut, err, f.run.Executions())
+	}
+}
+
+type listRecorder struct {
+	backend.Backend
+	got *backend.ListFilter
+}
+
+func (l listRecorder) List(ctx context.Context, f backend.ListFilter) ([]backend.Execution, error) {
+	*l.got = f
+	return l.Backend.List(ctx, f)
+}
+
+// checkMaxParallel bounds its listing by Cloud Run's longest task timeout:
+// no active execution can be older, so it needn't page through the
+// region's whole history on every launch (C-M7).
+func TestCheckMaxParallelBoundsTheListing(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	var got backend.ListFilter
+	env.be = listRecorder{Backend: env.be, got: &got}
+	if err := checkMaxParallel(context.Background(), env); err != nil {
+		t.Fatal(err)
+	}
+	if !got.ActiveOnly || got.Since.IsZero() || time.Since(got.Since) < gcp.MaxTaskTimeout {
+		t.Fatalf("filter = %+v", got)
+	}
+}
+
+// A run whose compute was not estimated never reads as free: its row and
+// the totals line say so. A run that never launched has no compute at all
+// and is not counted (C-M10).
+func TestLsMarksUnestimatedCompute(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", false)
+	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false)
+	c := runstore.ModelOnlyCost(1.5, runstore.BasisAPIList)
+	writeRecord(t, f, today+"-091000-bbbb", &runstore.Record{Version: 1, RunID: today + "-091000-bbbb", Status: runstore.StatusFailed, Stage: "implement", CostUSD: 1.5, Cost: &c})
+	human, _, err := execute(t, "ls")
+	if err != nil || strings.Count(human, "compute not estimated") != 2 || !strings.Contains(human, "compute not estimated for 1 run") {
+		t.Fatalf("ls =\n%s%v", human, err)
+	}
+	got, _ := lsJSON(t)
+	if got.Totals.ComputeNotEstimated != 1 {
+		t.Fatalf("totals = %+v", got.Totals)
+	}
+}
+
+// diagnose on a run that never launched shows its row, as ls would, not
+// an error (C-M11).
+func TestDiagnoseUnlaunchedRunShowsItsRow(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", false)
+	out, _, err := execute(t, "diagnose", "--json", id)
+	var d Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != runview.StatusUnlaunched {
+		t.Fatalf("diagnose = %s, %v", out, err)
+	}
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	_ = runstore.Open(b, appSlug, id).RequestCancel(context.Background())
+	b.Close()
+	out, _, err = execute(t, "diagnose", id)
+	if err != nil || !strings.Contains(out, "cancelled before launch") {
+		t.Fatalf("diagnose = %s, %v", out, err)
+	}
+}

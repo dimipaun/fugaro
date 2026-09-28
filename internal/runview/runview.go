@@ -70,8 +70,12 @@ type Row struct {
 	Settled bool `json:"settled"`
 }
 
-// Join builds the row for in.
-func Join(in Input, prices backend.Prices, now time.Time) Row {
+// PriceBook is the compute list prices of a region; "" means the
+// caller's default region.
+type PriceBook func(region string) backend.Prices
+
+// Join builds the row for in, pricing compute with prices.
+func Join(in Input, prices PriceBook, now time.Time) Row {
 	row := Row{Run: in.Slug + "/" + in.RunID, RunID: in.RunID}
 	row.Created, _ = runstore.RunTime(in.RunID)
 	if t := in.Task; t != nil {
@@ -144,6 +148,10 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 	}
 	row.Settled = row.Terminal || row.Status == StatusUnlaunched
 	row.Cost = cost(r, e, prices, now)
+	if unstarted {
+		// Never launched: no compute at all, which is known, not unestimated.
+		row.Cost = runstore.NewCost(row.Cost.ModelUSD, 0, row.Cost.ModelBasis)
+	}
 	return row
 }
 
@@ -159,8 +167,9 @@ func Lost(l *runstore.Launch, created, now time.Time) bool {
 }
 
 // cost is the row's cost: the model spend from the record, and compute
-// from the execution when its resources are known, else the record's.
-func cost(r *runstore.Record, e *backend.Execution, prices backend.Prices, now time.Time) runstore.Cost {
+// from the execution when its resources are known, priced in the
+// execution's own region (C-M9), else the record's.
+func cost(r *runstore.Record, e *backend.Execution, prices PriceBook, now time.Time) runstore.Cost {
 	basis, model := runstore.BasisAPIList, 0.0
 	var stored *runstore.Cost
 	if r != nil {
@@ -171,7 +180,11 @@ func cost(r *runstore.Record, e *backend.Execution, prices backend.Prices, now t
 	}
 	switch {
 	case e != nil && (e.CPU > 0 || e.MemoryGiB > 0):
-		return runstore.NewCost(model, prices.ComputeUSD(e.CPU, e.MemoryGiB, e.Billed(now)), basis)
+		region := ""
+		if id, ok := backend.ParseExecution(e.Name); ok {
+			region = id.Region
+		}
+		return runstore.NewCost(model, prices(region).ComputeUSD(e.CPU, e.MemoryGiB, e.Billed(now)), basis)
 	case stored != nil && stored.ComputeEstimated:
 		return runstore.NewCost(model, stored.ComputeUSD, basis)
 	default:
@@ -186,6 +199,9 @@ type Totals struct {
 	ModelNotionalUSD float64 `json:"model_notional_usd"` // subscription model spend, not billed
 	ComputeUSD       float64 `json:"compute_usd"`
 	TotalUSD         float64 `json:"total_usd"`
+	// ComputeNotEstimated counts the rows whose compute is unknown: their
+	// compute_usd 0 means "not estimated", so the sums are a lower bound.
+	ComputeNotEstimated int `json:"compute_not_estimated"`
 }
 
 // Sum totals rows.
@@ -199,6 +215,9 @@ func Sum(rows []Row) Totals {
 		}
 		t.ComputeUSD += r.Cost.ComputeUSD
 		t.TotalUSD += r.Cost.TotalUSD
+		if !r.Cost.ComputeEstimated {
+			t.ComputeNotEstimated++
+		}
 	}
 	return t
 }

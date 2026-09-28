@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -301,9 +302,15 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	return slug, spec, nil
 }
 
+// activeHorizon bounds checkMaxParallel's listing: Cloud Run's longest task
+// timeout plus a day for queueing. An older execution can't be active.
+const activeHorizon = gcp.MaxTaskTimeout + 24*time.Hour
+
 // checkMaxParallel refuses a new launch when max_parallel runs are active.
+// It lists only executions created within activeHorizon (C-M7), so a
+// --batch of N launches doesn't page through the region's history N times.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
-	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true})
+	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon)})
 	if err != nil {
 		return remote(err)
 	}
@@ -379,11 +386,16 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 		return nil, remote(err)
 	}
 	rec, err := s.ReadRecord(ctx)
-	if errors.Is(err, runstore.ErrNotFound) || (err == nil && rec.Execution == "") {
+	if errors.Is(err, runstore.ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, remote(err)
+	}
+	if rec.Execution == "" {
+		// It ran already, with no cloud execution (a local run against this
+		// bucket): never launch it again (C-M4). Nothing to backfill.
+		return &runstore.Launch{Version: 1, RunID: runID, LaunchedAt: rec.StartedAt}, nil
 	}
 	if err := check(rec.Execution); err != nil {
 		return nil, err
@@ -464,7 +476,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			if round < claimRounds-1 {
 				continue
 			}
-			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; run the same command again", res.Run)
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; fugaro run --retry %s tries again", res.Run, res.Run)
 		}
 		if err != nil {
 			return res, err
@@ -505,7 +517,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
-			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause and run the same command again: %w", res.Run, err))
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim; the runner's result.json tells

@@ -320,6 +320,15 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	case !errors.Is(err, backend.ErrNotFound):
 		return in, fmt.Errorf("run %s/%s: %w", slug, id, err)
 	}
+	// The record was read before the execution: a runner that wrote its
+	// final record and exited in between would look like one that died
+	// without finalizing. Once the execution has ended (or is gone), read
+	// the record again, so it is as new as the execution (C-M1).
+	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
+		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
+			return in, err
+		}
+	}
 	return in, nil
 }
 
@@ -376,6 +385,9 @@ func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) erro
 		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
 			cost += "~" // the model spend was notional
 		}
+		if !r.Cost.ComputeEstimated {
+			cost += ", compute not estimated" // never "free" (design §10.1)
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, oneLine(r.PRURL))
 	}
 	if err := tw.Flush(); err != nil {
@@ -388,6 +400,13 @@ func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) erro
 	line := fmt.Sprintf("%d %s · ≈ $%.2f billed (model $%.2f + compute $%.2f)", tot.Runs, noun, tot.TotalUSD, tot.ModelUSD, tot.ComputeUSD)
 	if tot.ModelNotionalUSD > 0 {
 		line += fmt.Sprintf(" · $%.2f model notional (subscription)", tot.ModelNotionalUSD)
+	}
+	if n := tot.ComputeNotEstimated; n > 0 {
+		noun := "runs"
+		if n == 1 {
+			noun = "run"
+		}
+		line += fmt.Sprintf(" · compute not estimated for %d %s", n, noun)
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err

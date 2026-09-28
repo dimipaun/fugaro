@@ -170,7 +170,7 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got, want := env.prices(), gcp.ListPrices(region); got != want {
+		if got, want := env.prices()(""), gcp.ListPrices(region); got != want {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()

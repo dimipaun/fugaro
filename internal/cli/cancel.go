@@ -60,8 +60,9 @@ func newCancelCmd() *cobra.Command {
 			"--grace, cancel stops it through Cloud Run. It never stops a run that is\n" +
 			"opening its PR (finalize) or writing back its cache: it waits up to 10 more\n" +
 			"minutes for finalize, and counts writeback as finalized. --grace is never\n" +
-			"shorter than the workflow's timeouts.finalize_reserve (5m when this checkout\n" +
-			"cannot tell). --now stops the execution at once, without waiting for the\n" +
+			"shorter than the workflow's timeouts.finalize_reserve (5m when neither the run\n" +
+			"nor this checkout tells) plus 40s for the runner to notice the cancel. --now\n" +
+			"stops the execution at once, without waiting for the\n" +
 			"draft PR, but still not mid-finalize.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -254,18 +255,46 @@ func runTime(id string) time.Time {
 	return t
 }
 
+// runnerReaction is how long the runner can take to act on the cancel
+// marker before its finalize reserve even starts: one cancel poll (the
+// runner's default CancelPoll, 30s) plus the stage's SIGTERM-to-SIGKILL
+// grace (procgroup's default, 10s) (C-M5).
+const runnerReaction = 30*time.Second + 10*time.Second
+
 // graceFloor is the least grace cancel waits, and what it is: the run's
-// workflow's finalize reserve, from this checkout's fugaro.yaml when it is
-// the run's repository, else defaultFinalizeReserve (plan I-4, note 8).
+// finalize reserve (finalizeReserve) plus runnerReaction (plan I-4, note 8).
 func graceFloor(ctx context.Context, s *runstore.Store, o *cancelOptions) (time.Duration, string) {
 	if o.floorSet {
 		return o.floor, "--grace-floor"
 	}
-	if spec, err := s.ReadTask(ctx); err == nil && spec.Workflow != "" {
-		if c := checkoutConfig(ctx, spec.Repo); c != nil {
-			if w, ok := c.Workflows[spec.Workflow]; ok && w.Timeouts.FinalizeReserve.Duration > 0 {
-				return w.Timeouts.FinalizeReserve.Duration, "workflow " + spec.Workflow + "'s finalize reserve"
-			}
+	reserve, what := finalizeReserve(ctx, s)
+	return reserve + runnerReaction, what + " plus " + runnerReaction.String() + " for the runner to notice the cancel"
+}
+
+// reserver is what the run's stored record or task offers once it keeps
+// the workflow's finalize reserve itself (the fix wave's runner half,
+// fixer 1). Until then neither implements it, and the checkout decides.
+type reserver interface{ FinalizeReserve() time.Duration }
+
+// finalizeReserve is the run's finalize reserve: from its result.json or
+// task.json when they carry it, else from this checkout's fugaro.yaml when
+// it is the run's repository, else defaultFinalizeReserve.
+func finalizeReserve(ctx context.Context, s *runstore.Store) (time.Duration, string) {
+	if rec, err := s.ReadRecord(ctx); err == nil {
+		if r, ok := any(rec).(reserver); ok && r.FinalizeReserve() > 0 {
+			return r.FinalizeReserve(), "the run's finalize reserve"
+		}
+	}
+	spec, err := s.ReadTask(ctx)
+	if err != nil || spec.Workflow == "" {
+		return defaultFinalizeReserve, "the default finalize reserve"
+	}
+	if r, ok := any(spec).(reserver); ok && r.FinalizeReserve() > 0 {
+		return r.FinalizeReserve(), "the run's finalize reserve"
+	}
+	if c := checkoutConfig(ctx, spec.Repo); c != nil {
+		if w, ok := c.Workflows[spec.Workflow]; ok && w.Timeouts.FinalizeReserve.Duration > 0 {
+			return w.Timeouts.FinalizeReserve.Duration, "workflow " + spec.Workflow + "'s finalize reserve"
 		}
 	}
 	return defaultFinalizeReserve, "the default finalize reserve"

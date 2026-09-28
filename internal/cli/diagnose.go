@@ -72,19 +72,30 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 		return err
 	}
 	defer env.Close()
-	s, l, run, err := locateLaunched(ctx, env, ref)
+	// Not locateLaunched: a run that never launched still has a row that
+	// explains it (C-M11); it just has no logs.
+	slug, id, err := locateRun(ctx, env, ref)
 	if err != nil {
 		return err
 	}
-	d, err := diagnose(ctx, env, s, l, run, cliSecrets(os.Getenv), cmd.ErrOrStderr())
+	s := runstore.Open(env.bucket.Bucket, slug, id)
+	l, err := ownerLaunch(ctx, env, s, id)
+	if err != nil {
+		return err
+	}
+	if l != nil && l.Execution == "" {
+		l = nil
+	}
+	d, err := diagnose(ctx, env, s, l, slug+"/"+id, cliSecrets(os.Getenv), cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
 	return printDiagnosis(cmd.OutOrStdout(), d, o.asJSON)
 }
 
-// diagnose gathers run's diagnosis. A failed log read is a warning: the
-// rest of the diagnosis is still worth having.
+// diagnose gathers run's diagnosis; l is its launch, nil when it never
+// launched (no logs then). A failed log read is a warning: the rest of the
+// diagnosis is still worth having.
 func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore.Launch, run string, secrets []string, warn io.Writer) (*Diagnosis, error) {
 	red := func(s string) string { return agent.Redact(s, secrets) }
 	rows, err := loadRows(ctx, env, lsFilter{runRef: run, warn: warn}, time.Now())
@@ -120,6 +131,9 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.AgentMessage = logtail.Clip(red(agentMessage(ctx, s, rec)), agentMessageBytes)
 	}
 
+	if l == nil {
+		return d, nil
+	}
 	// A ring of the newest lines: the read runs oldest first.
 	tail := make([]string, diagnoseLogLines)
 	seen := 0
