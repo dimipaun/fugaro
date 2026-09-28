@@ -62,7 +62,7 @@ func newCancelCmd() *cobra.Command {
 			"minutes for finalize, and counts writeback as finalized. --grace is never\n" +
 			"shorter than the workflow's timeouts.finalize_reserve (5m when neither the run\n" +
 			"nor this checkout tells) plus 40s for the runner to notice the cancel. --now\n" +
-			"stops the execution at once, without waiting for the\n" +
+			"stops the execution at once (so it takes no --grace), without waiting for the\n" +
 			"draft PR, but still not mid-finalize.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -86,6 +86,7 @@ func newCancelCmd() *cobra.Command {
 	f.DurationVar(&o.poll, "poll", 10*time.Second, "how often to check the run")
 	_ = f.MarkHidden("finalize-wait")
 	f.DurationVar(&o.floor, "grace-floor", 0, "the least --grace, instead of the workflow's finalize reserve (tests)")
+	cmd.MarkFlagsMutuallyExclusive("grace", "now") // --now would ignore --grace
 	_ = f.MarkHidden("poll")
 	_ = f.MarkHidden("grace-floor")
 	addCloudFlags(cmd, &o.cloud)

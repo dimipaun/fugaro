@@ -357,3 +357,13 @@ func TestGraceFloorDefaultsToTheFinalizeReserve(t *testing.T) {
 		t.Fatalf("overridden floor = %s", got)
 	}
 }
+
+// --now cancels at once, so a --grace with it would be ignored: the two
+// are refused together, as a user error.
+func TestCancelGraceAndNowAreExclusive(t *testing.T) {
+	newCloudFixture(t)
+	_, _, err := execute(t, "cancel", "--now", "--grace", "5m", "20260927-100000-abcd")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "grace") {
+		t.Fatalf("cancel --now --grace = exit %d, %v", ExitCode(err), err)
+	}
+}
