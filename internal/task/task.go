@@ -64,11 +64,11 @@ func NewRunID(now time.Time, r io.Reader) (string, error) {
 func CanonicalRepo(repo string) (string, error) {
 	c := strings.TrimSuffix(asciiLower(repo), ".git")
 	if !repoRE.MatchString(repo) || !repoRE.MatchString(c) {
-		return "", fmt.Errorf("repository %q must look like owner/name", repo)
+		return "", errors.New("the repository must look like owner/name") // never quoted: it may be a value pasted in the wrong place
 	}
 	for _, seg := range strings.Split(c, "/") {
 		if seg == "." || seg == ".." {
-			return "", fmt.Errorf("repository %q must look like owner/name", repo)
+			return "", errors.New("the repository must look like owner/name") // never quoted: it may be a value pasted in the wrong place
 		}
 	}
 	return c, nil

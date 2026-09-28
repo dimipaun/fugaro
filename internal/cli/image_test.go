@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -126,13 +129,6 @@ func TestImageSelftestCommand(t *testing.T) {
 	t.Fatalf("want a failed checkout check, got %+v", rep)
 }
 
-func TestImageBuildNeedsLocal(t *testing.T) {
-	_, _, err := execute(t, "image", "build")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M4") || !strings.Contains(err.Error(), "--local") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-}
-
 func TestImageBuildLocalRejectsRepo(t *testing.T) {
 	_, _, err := execute(t, "image", "build", "--local", "--repo", "acme/app")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--repo applies to Cloud Build") {
@@ -155,5 +151,151 @@ func TestImageBuildReportsConfigProblems(t *testing.T) {
 	_, _, err := execute(t, "image", "build", "--local", "--base", "fugaro-web-node:dev")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro.yaml has 1 problem(s)") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// bitbucketYAML is cliMinimalYAML on Bitbucket, with one workflow secret.
+var bitbucketYAML = strings.Replace(strings.Replace(cliMinimalYAML, "provider: github", "provider: bitbucket", 1),
+	"base: web-node,", "base: web-node, secrets: [{ name: npm-token, env: NPM_TOKEN }],", 1)
+
+// cloudBuildCheckout is a Bitbucket checkout of acme/app whose origin is
+// https, with a local config pointing at a Cloud Build fake. The local
+// config's repos entry is switched to Bitbucket to match; registry and
+// build.service_account are added unless bare.
+func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture) {
+	t.Helper()
+	files := npmFiles()
+	files["fugaro.yaml"] = bitbucketYAML
+	dir := checkoutWith(t, files)
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+	fb := gcpfake.NewBuild(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !bare {
+		f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
+	}
+	return fb, f
+}
+
+func TestImageBuildCloud(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	const base = "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-abc"
+	out, _, err := execute(t, "image", "build", "--json", "--base", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res gcp.BuildResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatalf("%v:\n%s", err, out)
+	}
+	slug := mustSlug("bitbucket", "acme/app")
+	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/fugaro", slug, "app")+":latest" {
+		t.Fatalf("result = %+v", res)
+	}
+	subs, _ := fb.Last()["substitutions"].(map[string]any)
+	if subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" || subs["_FUGARO_BASE"] != base || subs["_WORKFLOW"] != "app" ||
+		subs["_GIT_SECRET"] != "projects/proj-1234/secrets/"+gcp.SecretID(slug, "bitbucket-token")+"/versions/latest" ||
+		subs["_GIT_USER"] != "x-token-auth" || subs["_SECRET_ENVS"] != "NPM_TOKEN" || subs["_BASE_BRANCH"] != "main" {
+		t.Fatalf("substitutions = %v", subs)
+	}
+	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/fugaro-build@proj-1234.iam.gserviceaccount.com" {
+		t.Fatalf("serviceAccount = %q", sa)
+	}
+}
+
+func TestImageBuildCloudNoWait(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	out, _, err := execute(t, "image", "build", "--no-wait", "--base", "b:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range fb.Requests() {
+		if r.Method == "GET" {
+			t.Errorf("--no-wait polled the build: %s", r.Path)
+		}
+	}
+	if !strings.Contains(out, "submitted") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestImageBuildCloudGitHubNeedsM5(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	fb := gcpfake.NewBuild(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
+	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M5") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(fb.Requests()) != 0 {
+		t.Error("a GitHub build reached Cloud Build")
+	}
+}
+
+func TestImageBuildCloudNeedsRegistry(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, true)
+	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "registry") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\n")
+	_, _, err = execute(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "build.service_account") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(fb.Requests()) != 0 {
+		t.Error("an incomplete config reached Cloud Build")
+	}
+}
+
+func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	_, _, err := execute(t, "image", "build", "--base", "b:1", "--repo", "acme/other")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "origin") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(fb.Requests()) != 0 {
+		t.Error("a build for another repository reached Cloud Build")
+	}
+}
+
+func TestImageBuildCloudFailureIsRemote(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	fb.Outcome = "FAILURE"
+	out, _, err := execute(t, "image", "build", "--json", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	var res gcp.BuildResult
+	if json.Unmarshal([]byte(out), &res) != nil || res.Status != "FAILURE" || res.LogURL == "" {
+		t.Fatalf("output = %s", out)
+	}
+}
+
+// TestImageBuildCloudDigestUnknown: a SUCCESS without pushed-image results
+// still built and pushed the tag, so it is a success, but the output says
+// the digest is unknown rather than printing an empty one.
+func TestImageBuildCloudDigestUnknown(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	fb.NoResults = true
+	out, _, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "@ ") || strings.HasSuffix(strings.TrimSpace(out), "@") || !strings.Contains(out, "digest unknown") {
+		t.Errorf("output = %q", out)
+	}
+	out, _, err = execute(t, "image", "build", "--json", "--base", "b:1")
+	var res gcp.BuildResult
+	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != "SUCCESS" || res.Digest != "" || strings.Contains(out, `"digest"`) {
+		t.Errorf("json output = %s, %v", out, err)
 	}
 }

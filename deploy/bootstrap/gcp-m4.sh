@@ -152,6 +152,19 @@ check_job_owner() {
     die "job $1 is labelled fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not $repo_label $WORKFLOW; refusing"
 }
 
+# check_secret_owner ID: with --apply, dies unless secret ID exists and is
+# labelled fugaro_repo=$repo_label, as fugaro secrets set labels it. A secret
+# of another repository under a colliding ID must never be granted to this
+# repository's service accounts.
+check_secret_owner() {
+  [ "$APPLY" = 1 ] || return 0
+  exists gcloud secrets describe "$1" --project "$PROJECT" ||
+    die "secret $1 does not exist; store it first (gcp-m4.sh secrets prints the commands)"
+  local got
+  got=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro_repo)')
+  [ "$got" = "$repo_label" ] || die "secret $1 is labelled fugaro_repo=${got:-none}, not $repo_label; refusing"
+}
+
 need() {
   local v
   for v in "$@"; do [ -n "${!v:-}" ] || die "set $v"; done
@@ -358,7 +371,14 @@ JSON
     sa=$(spec sa)
     ids=$(spec secret-ids)
     build_ids=$(spec build-secret-ids)
+    repo_label=$(spec repo-label)
     confirm "grants secretmanager.secretAccessor to $sa on $(echo "$ids" | tr '\n' ' ')and to $BUILD_SA on $(echo "$build_ids" | tr '\n' ' ')"
+    # Every secret is checked before anything is granted.
+    if [ "$APPLY" = 1 ]; then
+      for id in $ids $build_ids; do check_secret_owner "$id"; done
+    else
+      echo "= with --apply: check that each secret exists and is labelled fugaro_repo=$repo_label first"
+    fi
     for id in $ids; do
       run gcloud secrets add-iam-policy-binding "$id" --project "$PROJECT" --member "serviceAccount:$sa" --role roles/secretmanager.secretAccessor
     done

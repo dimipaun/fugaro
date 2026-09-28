@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -39,8 +40,14 @@ type Backend struct {
 	listPageSize int64
 }
 
+// discardLogger is every client's logger. Without one, a Google client
+// builds its own from GOOGLE_SDK_GO_LOGGING_LEVEL, which at debug logs each
+// request and its body to stderr: for Secret Manager's addVersion, the
+// secret itself.
+var discardLogger = slog.New(slog.DiscardHandler)
+
 func (o Options) client(endpoint string) []option.ClientOption {
-	var opts []option.ClientOption
+	opts := []option.ClientOption{option.WithLogger(discardLogger)}
 	if endpoint != "" {
 		opts = append(opts, option.WithEndpoint(endpoint))
 	}

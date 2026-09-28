@@ -375,6 +375,7 @@ func TestDryRunNamesMatchTheContract(t *testing.T) {
 // installed runs every create step against f and returns their calls.
 func installed(t *testing.T, f *fake, env []string) [][]string {
 	t.Helper()
+	seedSecrets(t, f) // fugaro secrets set, which secrets-access requires first
 	for _, step := range []string{"apis", "bucket", "registry", "build-sa", "job-sa", "secrets-access", "base", "job"} {
 		mustScript(t, env, "--apply", "--yes", step)
 	}
@@ -526,6 +527,37 @@ func TestTeardownChecksLabels(t *testing.T) {
 	}
 }
 
+// secrets-access grants nothing unless every secret exists and carries this
+// repository's fugaro_repo label.
+func TestSecretsAccessChecksLabels(t *testing.T) {
+	testutil.IsolateGit(t)
+	for name, prep := range map[string]func(f *fake){
+		"secret of another repository": func(f *fake) {
+			f.seed(t, "secrets", probeID, "fugaro=managed,fugaro_repo="+sandboxWebSlug)
+		},
+		"unlabelled secret": func(f *fake) { f.seed(t, "secrets", oauthID, "") },
+		"missing secret":    func(f *fake) { _ = os.Remove(filepath.Join(f.state, "secrets", stateKey.Replace(gitID))) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			env := scriptEnv(t, f.bin, f)
+			for _, step := range []string{"apis", "bucket", "registry", "build-sa", "job-sa"} {
+				mustScript(t, env, "--apply", "--yes", step)
+			}
+			seedSecrets(t, f)
+			prep(f)
+			f.calls(t)
+			out, err := script(t, env, "--apply", "--yes", "secrets-access")
+			if err == nil || !strings.Contains(out, "refusing") && !strings.Contains(out, "does not exist") {
+				t.Fatalf("secrets-access: %v\n%s", err, out)
+			}
+			if m := mutating(f.calls(t)); len(m) > 0 {
+				t.Fatalf("refused secrets-access changed %q", m)
+			}
+		})
+	}
+}
+
 // job-sa and job never take over a colliding account or job.
 func TestCreatesCheckOwnership(t *testing.T) {
 	testutil.IsolateGit(t)
@@ -576,6 +608,7 @@ func TestFailuresOtherThanNotFoundStop(t *testing.T) {
 		{"run jobs describe", "job"},
 		{"run jobs describe", "teardown"},
 		{"secrets describe", "teardown --secrets"},
+		{"secrets describe", "secrets-access"},
 		{"storage buckets describe", "bucket"},
 		{"storage buckets describe", "teardown-all --all"},
 	} {

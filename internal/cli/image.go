@@ -10,11 +10,15 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func newImageCmd() *cobra.Command {
@@ -54,34 +58,42 @@ func newImageSelftestCmd() *cobra.Command {
 }
 
 type imageBuildOptions struct {
+	cloud                               cloudOptions
 	repo, workflow, base, tag, platform string
-	local, noSmoke, asJSON              bool
+	local, noSmoke, noWait, asJSON      bool
 }
 
 func newImageBuildCmd() *cobra.Command {
 	var o imageBuildOptions
 	cmd := &cobra.Command{
 		Use:   "build",
-		Short: "Build the derived image; --local builds it with local Docker and smoke-tests it",
-		Args:  cobra.NoArgs,
-		RunE:  func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
+		Short: "Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it",
+		Long: "Build the workflow's derived image.\n\n" +
+			"Without --local, Cloud Build builds it from the repository's base branch\n" +
+			"(cloning with the repository's bitbucket-token secret) and pushes it to\n" +
+			"the local config's registry. Run it from the repository's checkout: the\n" +
+			"checkout's fugaro.yaml and origin say what to build.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
 	}
 	f := cmd.Flags()
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
-	f.StringVar(&o.repo, "repo", "", "repository to build with Cloud Build (not available yet)")
+	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
 	f.StringVar(&o.base, "base", "", "base image (default: the published base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
-	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test in the built image")
+	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test in the built image (--local)")
+	f.BoolVar(&o.noWait, "no-wait", false, "submit the Cloud Build build and return without waiting for it")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
 	if !o.local {
-		return &ExitError{Code: ExitUserError, Err: errors.New("building images with Cloud Build needs the GCP backend, which is not implemented yet (milestone M4); use --local to build with your local Docker")}
+		return runImageBuildCloud(cmd, o)
 	}
 	if o.repo != "" {
 		return &ExitError{Code: ExitUserError, Err: errors.New("--repo applies to Cloud Build; --local builds the checkout you are in")}
@@ -120,6 +132,145 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s built, but its smoke test failed", res.Image)}
 	}
 	return nil
+}
+
+// runImageBuildCloud submits the derived-image build of the checkout's
+// repository and workflow to Cloud Build and, unless --no-wait, waits for
+// it. The build clones the base branch itself; only the checkout's
+// fugaro.yaml and origin are read here.
+func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
+	ctx := cmd.Context()
+	env, err := openCloud(ctx, o.cloud)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+	lc := env.lc
+	_, cfg, name, err := loadCheckout(ctx, o.workflow)
+	if err != nil {
+		return err
+	}
+	if cfg.Git.Provider != "bitbucket" {
+		return userErr("Cloud Build images for GitHub repositories need a token-minting step that arrives in M5; use --local")
+	}
+	switch {
+	case lc.Registry == "":
+		return userErr("the local config has no registry, the Artifact Registry repository images are pushed to (such as <region>-docker.pkg.dev/<project>/fugaro)")
+	case lc.Build.ServiceAccount == "":
+		return userErr("the local config has no build.service_account, the service account Cloud Build runs as")
+	}
+	origin, err := originRepo(ctx)
+	if err != nil {
+		return err
+	}
+	repo := o.repo
+	if repo == "" {
+		repo = origin
+	}
+	if a, err1 := task.CanonicalRepo(origin); err1 != nil {
+		return userErr("%v", err1)
+	} else if b, err2 := task.CanonicalRepo(repo); err2 != nil {
+		return userErr("%v", err2)
+	} else if a != b {
+		return userErr("--repo %s is not this checkout's origin (%s); run from %s's checkout", repo, origin, repo)
+	}
+	repoURL, err := originURL(ctx)
+	if err != nil {
+		return err
+	}
+	slug, err := env.repoSlug(repo, func() *config.Config { return cfg })
+	if err != nil {
+		return err
+	}
+	branch := "main"
+	if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
+		branch = r.BaseBranch
+	} else if cfg.Git.BaseBranch != "" {
+		branch = cfg.Git.BaseBranch
+	}
+	base := o.base
+	if base == "" {
+		base = lc.BaseImage
+	}
+	if base == "" {
+		if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+			return userErr("%v", err)
+		}
+	}
+	spec := gcp.BuildSpec{
+		Slug: slug, RepoURL: repoURL, BaseBranch: branch, Workflow: name, Base: base,
+		Image:       gcp.ImageName(lc.Registry, slug, name),
+		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
+		ServiceAccount: lc.Build.ServiceAccount, MachineType: lc.Build.MachineType,
+		WorkflowSecrets: cfg.Workflows[name].Secrets,
+	}
+	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
+	if err != nil {
+		return remote(err)
+	}
+	res, err := b.Submit(ctx, spec)
+	switch {
+	case errors.Is(err, gcp.ErrBadBuildSpec):
+		return userErr("%v", err)
+	case err != nil:
+		return remote(err)
+	}
+	if !o.noWait {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: Cloud Build build %s of %s submitted; log: %s\n", res.ID, res.Image, res.LogURL)
+		done, waitErr := b.Wait(ctx, res.ID, 0)
+		if done.Image == "" {
+			done.Image = res.Image
+		}
+		if done.LogURL == "" {
+			done.LogURL = res.LogURL
+		}
+		res = done
+		if waitErr != nil {
+			if o.asJSON {
+				if err := printBuildResult(cmd.OutOrStdout(), res); err != nil {
+					return err
+				}
+			}
+			return remote(waitErr)
+		}
+	}
+	if o.asJSON {
+		return printBuildResult(cmd.OutOrStdout(), res)
+	}
+	if o.noWait {
+		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", res.ID, res.Image, res.LogURL)
+		return nil
+	}
+	if res.Digest == "" {
+		// SUCCESS covers the push of images:, so the tag is there; only
+		// the pushed-image report is missing.
+		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", res.Image, res.ID)
+		return nil
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", strings.TrimSuffix(res.Image, ":latest"), res.Digest, res.ID)
+	return nil
+}
+
+func printBuildResult(w io.Writer, res gcp.BuildResult) error {
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	return enc.Encode(res)
+}
+
+// originURL is the checkout's origin as an https URL without credentials,
+// which the Cloud Build clone uses.
+func originURL(ctx context.Context) (string, error) {
+	c := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
+	c.WaitDelay = 5 * time.Second
+	out, err := c.Output()
+	if err != nil {
+		return "", userErr("no origin remote in this checkout")
+	}
+	u := image.HTTPSOrigin(strings.TrimSpace(string(out)))
+	if !strings.HasPrefix(u, "https://") {
+		return "", userErr("origin %s has no https form for Cloud Build to clone", gitprovSafe(u))
+	}
+	return u, nil
 }
 
 func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
