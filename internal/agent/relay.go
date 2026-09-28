@@ -21,7 +21,7 @@ const (
 
 // Relay logs a concise, live view of claude's stream-json output (design
 // §10: stream "agent"). It sits behind the transcript's Redactor, and it
-// redacts again after decoding, because JSON escapes (token) hide a
+// redacts again after decoding, because JSON escapes (\u0074oken) hide a
 // secret from a byte-level redactor. Every decoded string is redacted
 // before it is trimmed, cut or re-encoded, and every message once more
 // before it is clipped and logged, so no transformation can reassemble or

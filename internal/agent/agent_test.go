@@ -3,8 +3,10 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -281,6 +283,32 @@ func TestRedact(t *testing.T) {
 	want := "key [REDACTED], pem line [REDACTED], escaped [REDACTED], short ab"
 	if got != want {
 		t.Fatalf("Redact = %q, want %q", got, want)
+	}
+}
+
+func TestRedactEncodedForms(t *testing.T) {
+	secret := "tok-9f3Q/zX+abc=?&"
+	for _, in := range []string{
+		base64.StdEncoding.EncodeToString([]byte(secret)),
+		base64.RawStdEncoding.EncodeToString([]byte(secret)),
+		base64.URLEncoding.EncodeToString([]byte(secret)),
+		base64.StdEncoding.EncodeToString([]byte(secret + "\n")),
+		base64.StdEncoding.EncodeToString([]byte("x" + secret)),
+		base64.StdEncoding.EncodeToString([]byte("xy" + secret)),
+		url.QueryEscape(secret),
+		url.PathEscape(secret),
+	} {
+		got := Redact("value "+in+" end", []string{secret})
+		if !strings.Contains(got, "[REDACTED]") || strings.Contains(got, in) {
+			t.Errorf("Redact(%q) = %q", in, got)
+		}
+	}
+	// Below encodedMin only the raw forms count: the base64 of a short
+	// secret is too short a pattern to redact safely.
+	short := "pw-12345"[:7]
+	enc := base64.StdEncoding.EncodeToString([]byte(short))
+	if got := Redact(enc, []string{short}); got != enc {
+		t.Errorf("short secret's base64 redacted: %q", got)
 	}
 }
 

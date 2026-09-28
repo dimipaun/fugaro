@@ -640,7 +640,10 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	stderrTail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
 	transcriptTail := logtail.New(logtail.DefaultLines, logtail.DefaultLineBytes)
 	// The relay logs the agent's events live (design §10). It sits behind
-	// the transcript's redactor and redacts again after decoding.
+	// the transcript's redactor and redacts again after decoding. It logs
+	// synchronously in the agent's stdout path on purpose, as the stderr
+	// LineWriter does: a stalled log stalls the agent rather than dropping
+	// events or buffering without bound.
 	relay := agent.NewRelay(log, r.secrets)
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secrets)
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secrets)

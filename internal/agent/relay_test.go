@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -121,7 +123,11 @@ func TestRelayNeverLogsSecretsInToolEvents(t *testing.T) {
 	secret := `sk-live-<A&b>"9f3QzX`
 	spaced := "pass  phrase   word42" // collapsing whitespace must not unmask it
 	pem := "-----BEGIN KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEF\nAASCBKcwggSjAgEAAoIBAQC7\n-----END KEY-----"
-	secrets := []string{secret, spaced, pem}
+	// Single spaces: spelled with tabs, newlines or runs of spaces, no
+	// form of it is in the input, but toolSummary's whitespace collapse
+	// rebuilds it exactly. Only msg's final redaction catches that.
+	single := "correct horse battery"
+	secrets := []string{secret, spaced, pem, single}
 
 	enc := func(s string) string { b, _ := json.Marshal(s); return string(b) }
 	uesc := func(s string) string { return `"` + unicodeEscape(s) + `"` }
@@ -150,6 +156,12 @@ func TestRelayNeverLogsSecretsInToolEvents(t *testing.T) {
 				`{"type":"result","subtype":`+v+`,"total_cost_usd":1,"is_error":true}`,
 			)
 		}
+	}
+	for _, spelled := range []string{`correct\thorse\nbattery`, `correct  horse   battery`, ` correct\r\nhorse\t\tbattery `} {
+		lines = append(lines,
+			tool(`{"command":"login `+spelled+`"}`),
+			tool(`{"description":"`+spelled+`"}`),
+		)
 	}
 	var buf bytes.Buffer
 	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), secrets)
@@ -217,5 +229,80 @@ func TestRelayDropsOversizedLines(t *testing.T) {
 	r.Flush()
 	if strings.Count(buf.String(), "\n") != 1 || !strings.Contains(buf.String(), `"msg":"after"`) {
 		t.Fatalf("logs = %.500s", buf.String())
+	}
+}
+
+// secretOnlyRuns returns every 8-character run of the base64 encoding of
+// in whose characters encode only bytes of in[lo:hi]: the part of an
+// encoded secret that reveals it, wherever it sits in the input.
+func secretOnlyRuns(enc *base64.Encoding, in []byte, lo, hi int) []string {
+	out := enc.EncodeToString(in)
+	var runs []string
+	for g := 0; 3*g+6 <= len(in); g++ {
+		if 3*g >= lo && 3*g+6 <= hi && 4*g+8 <= len(out) {
+			runs = append(runs, out[4*g:4*g+8])
+		}
+	}
+	return runs
+}
+
+// TestRelayRedactsEncodedSecrets checks the encoded forms the shared
+// redactor registers: a tool result carrying the output of
+// `echo $TOKEN | base64` (a trailing newline shifts the final group),
+// base64 of the secret inside a longer string at each byte offset, the
+// URL-safe alphabet, and percent-encoding.
+func TestRelayRedactsEncodedSecrets(t *testing.T) {
+	secret := "ghs_T0ken+With/Sl=sh?&x~!"
+	b64 := base64.StdEncoding
+	type planted struct {
+		enc    *base64.Encoding
+		in     []byte
+		lo, hi int
+	}
+	var cases []planted
+	for _, prefix := range []string{"", "A", "AB", "Authorization: Bearer "} {
+		in := []byte(prefix + secret + "\n")
+		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.URLEncoding} {
+			cases = append(cases, planted{enc, in, len(prefix), len(prefix) + len(secret)})
+		}
+	}
+	errResult := func(content string) string {
+		c, _ := json.Marshal(content)
+		return `{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":` + string(c) + `}]}}`
+	}
+	lines := []string{
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo $TOKEN | base64"}}]}}`,
+	}
+	for _, c := range cases {
+		lines = append(lines, errResult(c.enc.EncodeToString(c.in)+"\nexit 1"))
+	}
+	for _, e := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		lines = append(lines, errResult("decoded: "+e.EncodeToString([]byte(secret))))
+	}
+	lines = append(lines,
+		errResult("curl: (22) 401 for https://api.invalid/?token="+url.QueryEscape(secret)),
+		errResult("curl: (22) 401 for https://api.invalid/t/"+url.PathEscape(secret)+"/x"),
+	)
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{secret})
+	for _, l := range lines {
+		_, _ = r.Write([]byte(l + "\n"))
+	}
+	out := buf.String()
+	if n := strings.Count(out, `"event":"tool_error"`); n != len(lines)-1 {
+		t.Fatalf("got %d tool errors, want %d:\n%s", n, len(lines)-1, out)
+	}
+	if n := strings.Count(out, "[REDACTED]"); n < len(lines)-1 {
+		t.Fatalf("only %d redactions:\n%s", n, out)
+	}
+	for _, c := range cases {
+		for _, run := range secretOnlyRuns(c.enc, c.in, c.lo, c.hi) {
+			if strings.Contains(out, run) {
+				t.Fatalf("log carries base64 run %q of the secret:\n%s", run, out)
+			}
+		}
+	}
+	for _, form := range []string{b64.EncodeToString([]byte(secret)), url.QueryEscape(secret), url.PathEscape(secret), secret} {
+		assertNoSecret(t, out, form)
 	}
 }

@@ -2,8 +2,10 @@ package agent
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
+	"net/url"
 	"sort"
 	"strings"
 )
@@ -26,7 +28,15 @@ type Redactor struct {
 // multiple lines (for example a PEM key), each individual line that is at
 // least 4 bytes long — so it is still caught when it arrives raw, split
 // across Write calls one line at a time, rather than JSON-escaped onto a
-// single line.
+// single line. For a secret of at least encodedMin bytes it also registers
+// the encodings an agent is likely to print it in (see encodedForms).
+//
+// What no redactor here can catch: a secret split across two JSON fields,
+// content blocks, events or Write-separated lines of a single-line secret;
+// a secret the agent slices, truncates, reverses or otherwise transforms;
+// and any encoding not listed in encodedForms (hex, gzip, encryption).
+// Anything published from agent output is best-effort redacted, not
+// guaranteed clean.
 func NewRedactor(w io.Writer, secrets []string) *Redactor {
 	return &Redactor{w: w, secrets: redactForms(secrets)}
 }
@@ -57,9 +67,55 @@ func redactForms(secrets []string) []string {
 				add(line)
 			}
 		}
+		for _, e := range encodedForms(s) {
+			add(e)
+		}
 	}
 	sort.Slice(keep, func(i, j int) bool { return len(keep[i]) > len(keep[j]) })
 	return keep
+}
+
+// encodedMin is the shortest secret whose encoded forms are registered:
+// shorter ones would yield base64 fragments short enough to match ordinary
+// text.
+const encodedMin = 8
+
+// encodedForms returns the encoded spellings of a secret of at least
+// encodedMin bytes:
+//   - the std, raw-std, URL and raw-URL base64 encodings of the secret
+//     alone (as `printf %s "$TOKEN" | base64` prints it);
+//   - for each alphabet, the three alignment-independent cores: the
+//     base64 characters that encode only secret bytes, whichever of the
+//     three byte offsets the secret starts at inside a longer encoded
+//     input. Those catch `echo "$TOKEN" | base64` (a trailing newline
+//     changes the final group) and a secret embedded in an encoded
+//     header or env dump. At most two bytes of the secret at each end
+//     can stay visible;
+//   - the URL query and path escapes (percent-encoding), when they differ
+//     from the raw secret.
+func encodedForms(s string) []string {
+	if len(s) < encodedMin {
+		return nil
+	}
+	forms := []string{url.QueryEscape(s), url.PathEscape(s)}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		forms = append(forms, enc.EncodeToString([]byte(s)))
+	}
+	for _, enc := range []*base64.Encoding{base64.RawStdEncoding, base64.RawURLEncoding} {
+		for off := 0; off < 3; off++ {
+			// Encode the secret behind off filler bytes; the groups that
+			// hold only secret bytes run from the first group boundary at
+			// or after off to the last complete group inside the secret.
+			in := append(make([]byte, off), s...)
+			first := (off + 2) / 3
+			last := len(in) / 3
+			if last-first < 2 { // under 8 characters: too weak a pattern
+				continue
+			}
+			forms = append(forms, enc.EncodeToString(in)[first*4:last*4])
+		}
+	}
+	return forms
 }
 
 func replaceAll(s string, forms []string) string {
