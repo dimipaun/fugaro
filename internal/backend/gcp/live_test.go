@@ -267,6 +267,11 @@ func TestLiveListAndLogs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("raw executions.list: %v", err)
 	}
+	if len(raw.Executions) == 0 {
+		// Nothing to read the name form, the order or the logs from: a
+		// pass here would record no FACT at all.
+		t.Skip("no execution in the region yet: rerun TestLiveListAndLogs after the sandbox end-to-end (checks 3 and 13 make executions)")
+	}
 	for i, x := range raw.Executions {
 		id, ok := backend.ParseExecution(x.Name)
 		if !ok {
@@ -316,8 +321,7 @@ func TestLiveListAndLogs(t *testing.T) {
 	}
 	fact(t, "List (30d, every fugaro-* job) = %d executions; raw page of every job = %d", len(got), len(raw.Executions))
 	if len(got) == 0 {
-		t.Log("no Fugaro execution in the last 30 days: the log check needs one (TestLiveExecutionProbe makes one)")
-		return
+		t.Skip("no Fugaro execution in the last 30 days, so the log checks can't run: rerun TestLiveListAndLogs after the sandbox end-to-end (checks 3 and 13 make executions)")
 	}
 	newest := got[0]
 	errStop := errors.New("stop")

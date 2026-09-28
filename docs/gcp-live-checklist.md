@@ -58,14 +58,28 @@ M4 PR description and into the runbook (`docs/gcp-bootstrap.md`).
 
 ## Preconditions
 
+Set these in the shell you run everything from, and keep that shell for the
+whole bring-up:
+
+```bash
+export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
+FUGARO=<path to the fugaro binary built from the branch under test>
+SANDBOX=<a checkout of the sandbox repository>
+```
+
 Complete the bootstrap runbook (`docs/gcp-bootstrap.md`) for the sandbox
 repository, in the runbook's order:
 
 1. `config` first: every other step refuses without the local config it
-   writes.
+   writes. `BUCKET` must start with `fugaro-runs-` (the tests refuse any
+   other runs bucket, and `config` and `bucket` refuse one too; a bucket
+   can't be renamed later). The sandbox's `REPOS` entry must use the base
+   branch `master`, as `deploy/bootstrap/sandbox/fugaro.yaml` does, for
+   example `REPOS="$FUGARO_LIVE_REPO:master:web"`.
 2. The shared steps: `apis`, `bucket`, `registry`, `build-sa`.
-3. Commit the sandbox fixture, `deploy/bootstrap/sandbox/`, to the sandbox
-   repository's base branch (see `deploy/bootstrap/README.md`).
+3. **⚠ CONFIRM** Commit the sandbox fixture, `deploy/bootstrap/sandbox/`,
+   to the sandbox repository's base branch (see
+   `deploy/bootstrap/README.md`). This pushes to a real repository.
 4. For the sandbox's `web` workflow, with `REPO`, `WORKFLOW` and `CHECKOUT`
    set: `job-sa`, `secrets` (store every secret it prints, including
    `sandbox-probe`), `secrets-access`, `base` (then set `base_image` as the
@@ -84,13 +98,13 @@ Then set up the following:
    service account (the runbook's "Live tests" section):
 
    ```bash
-   SA=$(cd <sandbox checkout> && "$FUGARO" gcp job-spec --repo "$FUGARO_LIVE_REPO" --workflow web --field sa)
+   SA=$(cd "$SANDBOX" && "$FUGARO" gcp job-spec --repo "$FUGARO_LIVE_REPO" --workflow web --field sa)
    gcloud iam service-accounts add-iam-policy-binding "$SA" \
      --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
    ```
 
-   Remove it again afterwards with `remove-iam-policy-binding` and the same
-   arguments, as the runbook's "Live tests" section says.
+   Keep `SA` set in this shell: the run below passes it as
+   `FUGARO_LIVE_JOB_SA`. Remove the grant again afterwards (see "Undo").
 
 ## Running
 
@@ -98,15 +112,34 @@ Pass `-p 1` so the two packages run one after the other.
 `TestLiveGCPCleanup` must never run while another live test is still going,
 because it would delete that test's objects.
 
+**⚠ CONFIRM** The run spends money and changes things in the project and
+the sandbox repository: it launches billable Cloud Run executions (the probe
+and the sandbox run) and a Cloud Build, creates and deletes secrets and
+bucket objects, and opens and declines a PR in the sandbox. Check the
+project with `gcloud config get project` and `echo $FUGARO_LIVE_PROJECT`
+before you start it.
+
 ```bash
-export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
 FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" FUGARO_LIVE_JOB_SA="$SA" \
   go test -tags live -p 1 -timeout 45m -run 'TestLive' -v ./internal/backend/gcp/ ./internal/e2e/ 2>&1 | tee live.log
 grep 'FACT:' live.log
 ```
 
 To run a single check, narrow `-run`. The commands are listed in the table
-below. Run the sweep after any abort:
+below.
+
+On a fresh project `TestLiveListAndLogs` (checks 1, 1b and 2) runs before
+anything has made an execution, and skips with "rerun … after the sandbox
+end-to-end". Once the run above has finished, rerun it so its `FACT`s are
+recorded:
+
+```bash
+go test -tags live -p 1 -v -timeout 10m -run 'TestLiveListAndLogs' ./internal/backend/gcp/ 2>&1 | tee -a live.log
+```
+
+**⚠ CONFIRM** Run the sweep after any abort. It cancels and deletes: every
+live-batch run's execution, PR, branch and objects, and every
+`fugaro-live-*` object and secret.
 
 ```bash
 FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
@@ -122,9 +155,9 @@ In the commands below, `T` is short for
 
 | # | Check | Command | Expected |
 |---|---|---|---|
-| 1 | Execution names from `executions.list` (project ID or number) | `T -run TestLiveListAndLogs ./internal/backend/gcp/` | A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
+| 1 | Execution names from `executions.list` (project ID or number) | `T -run TestLiveListAndLogs ./internal/backend/gcp/`, rerun after check 13 on a fresh project | It skips while the region has no execution. A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
 | 1b | The `jobs/-` listing is sorted newest first across every job, not only per job | same test | A `FACT` says `newest first across N jobs (global)`. `List` stops at the first execution older than `Since` on that assumption; `ls` falls back to one read per run if it is wrong, and `max_parallel` lists exhaustively either way. A listing that is not sorted across jobs fails the test. Telling needs executions of at least two jobs (any jobs in the region) on the first page of 20; with fewer, the `FACT` says it can't tell, and the question stays open in the PR until a project with two jobs shows it. |
-| 2 | The log filter `labels."run.googleapis.com/execution_name"` works | same test | The newest Fugaro execution has at least 1 log entry, and at most 10 are read. It fails if there are none. |
+| 2 | The log filter `labels."run.googleapis.com/execution_name"` works | same test | The newest Fugaro execution has at least 1 log entry, and at most 10 are read. It fails if that execution has none, and skips (rerun it after check 13) if there is no Fugaro execution yet. |
 | 3 | The operation metadata of `jobs.run` is an Execution | `T -run TestLiveExecutionProbe ./internal/backend/gcp/` | `metadata @type="type.googleapis.com/google.cloud.run.v2.Execution"`, and `name` is a parseable execution. The probe's `task.json` has version 999, so the runner exits at once without cloning or starting an agent. |
 | 4 | The forms Cloud Run returns for CPU and memory limits | same test | `FACT` lines give the `jobs.get` and `executions.get` limits, for example `cpu="1"` or `"1000m"` and `memory="2Gi"`. The backend parses them to CPU > 0 and MemoryGiB > 0. It fails if the cost would be unknown. |
 | 5 | What cancelling a finished execution returns | same test | The HTTP code, status and message are recorded, and the state stays terminal. Expect a `FAILED_PRECONDITION` (400). `cancel` must tolerate this, since a run can finish between its read and the cancel. |
@@ -163,3 +196,26 @@ For check 13, `TestLiveSandboxRun` checks the following:
 - **The full derived-image build.** The runbook's `image` step builds it for
   real, and its `image.setup` step fails without `SANDBOX_PROBE`. Check 11
   isolates the same mechanism.
+
+## Undo
+
+The bring-up leaves two temporary changes. Undo them once the checks are
+recorded:
+
+1. **⚠ CONFIRM** Remove your Token Creator grant on the sandbox job's
+   service account:
+
+   ```bash
+   gcloud iam service-accounts remove-iam-policy-binding "$SA" \
+     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
+   ```
+
+2. **⚠ CONFIRM**, optional: disable the IAM Credentials API if nothing
+   else uses it: `gcloud services disable iamcredentials.googleapis.com
+   --project "$FUGARO_LIVE_PROJECT"`.
+
+Keep the rest for M5, which takes the bootstrap's resources over under the
+same names: the bucket, the registry, `fugaro-build`, the sandbox job, its
+service account and its secrets, and the sandbox fixture in its repository.
+Run the sweep (above) if an aborted run left anything behind. To remove
+everything instead, use the runbook's "Teardown".
