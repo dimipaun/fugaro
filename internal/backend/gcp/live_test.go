@@ -784,7 +784,8 @@ func TestLiveCacheOnGCS(t *testing.T) {
 		t.Fatalf("Save: saved=%v, %v", saved, err)
 	}
 	obj := cache.ObjectKey(slug, liveWorkflow, "k1")
-	var oa *storage.ObjectAttrs
+	// gcsblob's Attributes.As takes *storage.ObjectAttrs (it copies into it).
+	var oa storage.ObjectAttrs
 	attrs, err := b.Attributes(ctx, obj)
 	if err != nil || !attrs.As(&oa) {
 		t.Fatalf("attributes of %s: %v", obj, err)

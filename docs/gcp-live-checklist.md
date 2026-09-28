@@ -225,3 +225,27 @@ same names: the bucket, the registry, `fugaro-build`, the sandbox job, its
 service account and its secrets, and the sandbox fixture in its repository.
 Run the sweep (above) if an aborted run left anything behind. To remove
 everything instead, use the runbook's "Teardown".
+
+## Results of the first live run (2026-09-28)
+
+These are the first live run's findings. Record every later run in the same way, and update this section if anything changes.
+
+- **Execution names:** `jobs.run`'s operation metadata is a `google.cloud.run.v2.Execution`. `executions.list` returns names that use the project ID, not the project number.
+- **Log labels:** log entries carry `run.googleapis.com/execution_name`, plus the job's `fugaro`, `fugaro_repo` and `fugaro_workflow` labels.
+- **Limits:** `jobs.get` and `executions.get` report limits as `cpu="1"` and `memory="2Gi"`.
+- **Cancelling a finished execution:** it returns HTTP 400 `FAILED_PRECONDITION`, "… cannot be cancelled because it is not running", and the execution's state is unchanged.
+- **Listing order:** `jobs/-` ordering across jobs wasn't shown, because the region held only one job. The check is still open.
+- **Storage IAM:** the job's service account can write and delete under its own `runs/`, `cache/` and `locks/` prefixes. It gets 403 on another slug's prefix (including `<slug>-x`), on reading another repository's objects, and on listing the bucket.
+- **Secret Manager:** a round-trip works, and the label filter finds the secret.
+- **Lock:** a second holder is refused while the lock is live. A takeover of an expired lock and the release both work with generation-matched writes, and a late release by the old holder leaves the new lock in place.
+- **Cache:** the archive is saved with `application/zstd` and a `customTime`, and restores byte-identical.
+- **Cloud Build:**
+  - The docker daemon is 20.10.24, and it doesn't support `env=` secret mounts (`exec.secretenv`), so secrets are mounted as files.
+  - A `src=` secret is mounted as a file.
+  - `FROM repo@sha256` resolves through the registry.
+  - The metadata server is reachable from a build step, which is the control, but blocked from a `RUN` on the default network. A `RUN --network=host` build is refused.
+- **Sandbox end to end:** one run succeeded and ended ready in about 44 seconds. Compute cost $0.0008, and the notional subscription model cost was $0.30. `total_usd` was 0, as designed for `oauth`. The PR was declined and the branch deleted.
+- **Test fixes found:**
+  - The first `jobs.run` of this project rejected an unused Cloud Build substitution.
+  - The live cache test used `Attributes.As` with the wrong pointer type.
+  - The impersonation check failed until the new Token Creator grant had propagated (a few minutes); rerun it if it fails right after the grant.
