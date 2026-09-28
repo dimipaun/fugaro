@@ -13,10 +13,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // Config is the local CLI config.
@@ -53,6 +56,12 @@ type Endpoints struct {
 
 // Repo is an onboarded repository.
 type Repo struct {
+	// Provider is the git provider kind (config.Providers: github or
+	// bitbucket), part of the repository's storage slug. Empty means the
+	// checkout's fugaro.yaml git.provider decides; when both are set they
+	// must agree. repos is keyed by owner/name, so one local config holds
+	// one provider per owner/name.
+	Provider   string   `yaml:"provider,omitempty"`
 	BaseBranch string   `yaml:"base_branch,omitempty"`
 	Workflows  []string `yaml:"workflows"`
 }
@@ -141,6 +150,9 @@ func (c *Config) validate() error {
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
 			bad("repos: %q must look like owner/name", repo)
+		}
+		if r.Provider != "" && !slices.Contains(config.Providers, r.Provider) {
+			bad("repos.%s: provider %q must be one of %s", repo, r.Provider, strings.Join(config.Providers, ", "))
 		}
 		for _, w := range r.Workflows {
 			if !workflowRE.MatchString(w) {

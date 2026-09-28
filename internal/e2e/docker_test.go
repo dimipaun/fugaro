@@ -97,7 +97,7 @@ func TestExecInDerivedImage(t *testing.T) {
 		t.Fatalf("fugaro exec: %v", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(run, "bucket", "runs", "acme-app", runID, "result.json"))
+	data, err := os.ReadFile(filepath.Join(run, "bucket", "runs", acmeSlug, runID, "result.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

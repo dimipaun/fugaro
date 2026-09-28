@@ -87,7 +87,10 @@ func TestParseRef(t *testing.T) {
 		if err := spec.Validate(); err != nil {
 			t.Fatalf("%s: %v", repo, err)
 		}
-		want := task.Slug(repo)
+		want, err := task.Slug("github", repo)
+		if err != nil {
+			t.Fatalf("%s: %v", repo, err)
+		}
 		if slug, id, err := ParseRef(want + "/" + runID); err != nil || slug != want || id != runID {
 			t.Errorf("ParseRef(Slug(%q)) = %q %q %v", repo, slug, id, err)
 		}

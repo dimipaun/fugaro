@@ -91,7 +91,16 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		if err != nil {
 			return err
 		}
-		slug, runID = task.Slug(spec.Repo), spec.RunID
+		// The provider kind is part of the slug. It comes only from
+		// --provider (or FUGARO_GIT_PROVIDER), never from the origin host:
+		// on Cloud Run the slug arrives whole in FUGARO_RUN instead.
+		if o.provider == "" {
+			return errors.New("--task-file needs --provider (or FUGARO_GIT_PROVIDER): the provider kind is part of the repository's storage slug")
+		}
+		if slug, err = task.Slug(o.provider, spec.Repo); err != nil {
+			return fmt.Errorf("task file: %w", err)
+		}
+		runID = spec.RunID
 		if err := runstore.Open(bucket, slug, runID).WriteTask(ctx, spec); err != nil {
 			return fmt.Errorf("writing task file: %w", err)
 		}

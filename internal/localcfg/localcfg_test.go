@@ -17,7 +17,7 @@ region: us-central1
 runs_bucket: my-runs
 registry: us-central1-docker.pkg.dev/my-project/fugaro
 repos:
-  acme/web: { base_branch: main, workflows: [web] }
+  acme/web: { provider: github, base_branch: main, workflows: [web] }
 `
 
 func TestParseDefaults(t *testing.T) {
@@ -28,7 +28,7 @@ func TestParseDefaults(t *testing.T) {
 	if c.MaxParallel != 20 || c.Build.MachineType != "E2_HIGHCPU_8" || c.BucketURL() != "gs://my-runs" || c.BuildRegion() != "us-central1" {
 		t.Fatalf("defaults = %+v", c)
 	}
-	if r := c.Repos["acme/web"]; r.BaseBranch != "main" || len(r.Workflows) != 1 {
+	if r := c.Repos["acme/web"]; r.Provider != "github" || r.BaseBranch != "main" || len(r.Workflows) != 1 {
 		t.Fatalf("repo = %+v", r)
 	}
 	c.Override("other-project", "europe-west1")
@@ -45,6 +45,8 @@ func TestParseRejects(t *testing.T) {
 		"bad repo":      {sample + "  nope: { workflows: [web] }\n", "owner/name"},
 		"bad workflow":  {sample + "  acme/api: { workflows: [Web] }\n", "workflow"},
 		"bad parallel":  {sample + "max_parallel: -1\n", "max_parallel"},
+		"bad provider":  {sample + "  acme/api: { provider: githbu, workflows: [web] }\n", "must be one of github, bitbucket"},
+		"fake provider": {sample + "  acme/api: { provider: fake, workflows: [web] }\n", "must be one of github, bitbucket"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
