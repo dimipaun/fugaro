@@ -3,6 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -110,5 +113,60 @@ func TestDiagnoseRedactsAndClips(t *testing.T) {
 	var d Diagnosis
 	if err := json.Unmarshal([]byte(out), &d); err != nil || len(strings.TrimSuffix(d.AgentMessage, " …")) > agentMessageBytes || !strings.HasSuffix(d.AgentMessage, " …") || !strings.HasPrefix(d.AgentMessage, "[REDACTED]") {
 		t.Fatalf("agent message %d bytes: %.40q, %v", len(d.AgentMessage), d.AgentMessage, err)
+	}
+}
+
+// A failed log read is the one GCP error diagnose tolerates: it warns on
+// stderr, exits 0 and still prints everything the bucket holds.
+func TestDiagnoseToleratesLogFailure(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "implement", Reason: "agent gave up",
+		Stages: []runstore.StageTiming{{Name: "implement"}}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.PutFile(ctx, "transcripts/implement-1.jsonl", []byte(`{"type":"result","subtype":"success","result":"could not finish"}`+"\n"), "application/x-ndjson")
+
+	// Point the local config's Logging endpoint at a server that refuses
+	// every call.
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":403,"message":"logging denied","status":"PERMISSION_DENIED"}}`))
+	}))
+	defer down.Close()
+	path := os.Getenv("FUGARO_CONFIG")
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg = []byte(strings.Replace(string(cfg), "logging: "+f.logging.URL+"/", "logging: "+down.URL+"/", 1))
+	if err := os.WriteFile(path, cfg, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut, err := execute(t, "diagnose", id)
+	if err != nil || ExitCode(err) != ExitOK {
+		t.Fatalf("diagnose with Logging down: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "warning: reading the logs") {
+		t.Fatalf("no warning on stderr: %q", errOut)
+	}
+	for _, want := range []string{"Status:   failed", "Reason:   agent gave up", "could not finish", "Report:"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("diagnosis lacks %q:\n%s", want, out)
+		}
+	}
+	js, _, err := execute(t, "diagnose", "--json", id)
+	var d Diagnosis
+	if err != nil || json.Unmarshal([]byte(js), &d) != nil || d.Row.Status != "failed" || d.AgentMessage != "could not finish" || len(d.LogTail) != 0 {
+		t.Fatalf("diagnose --json with Logging down: %s, %v", js, err)
 	}
 }

@@ -129,6 +129,12 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		return nil
 	})
 	if err != nil {
+		// Deliberately not exit 2, unlike every other GCP API error: the
+		// log tail is the one optional part of a diagnosis. The row, tests,
+		// findings and agent message all come from the bucket and matter
+		// most when a run failed, which is also when Cloud Logging may be
+		// unreachable or lack the caller's permission. fugaro logs, whose
+		// whole job is the logs, still fails with exit 2.
 		fmt.Fprintf(warn, "warning: reading the logs: %s\n", red(err.Error()))
 	}
 	for i := max(0, seen-diagnoseLogLines); i < seen; i++ {
