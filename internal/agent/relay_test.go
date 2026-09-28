@@ -308,9 +308,11 @@ func TestRelayRedactsEncodedSecrets(t *testing.T) {
 }
 
 // longSecrets are model-token-sized secrets, one per length mod 3, so the
-// wrapped last line ends on each kind of base64 group.
+// wrapped last line ends on each kind of base64 group. The prefix is the
+// length of a real key's but deliberately not its format, so secret
+// scanning never takes this fixture for a leaked key.
 func longSecrets() []string {
-	base := "sk-ant-api03-Zq8+Rv/2mXkP0wLs9TbN4yHc7GdJ1eUa6FoIr3VhQ5nWt-Bx_KzYpMg8jSl2CuEo0iAd4fR7HbT9vNq1XwLkPz6mYs3"
+	base := "fake-sk-ant-x" + "Zq8+Rv/2mXkP0wLs9TbN4yHc7GdJ1eUa6FoIr3VhQ5nWt-Bx_KzYpMg8jSl2CuEo0iAd4fR7HbT9vNq1XwLkPz6mYs3"
 	return []string{base[:100], base[:101], base[:102], base}
 }
 
