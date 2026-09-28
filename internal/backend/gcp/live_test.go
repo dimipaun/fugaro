@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -755,6 +756,25 @@ func TestLiveCacheOnGCS(t *testing.T) {
 // mounted with required=true. It pushes nothing. It records whether BuildKit
 // in gcr.io/cloud-builders/docker honours env= secrets and how the digest
 // FROM resolves (from the local image or the registry).
+//
+// It also probes the build isolation boundary (design §7.2): repository
+// code runs in the Dockerfile's RUN steps, and must not reach the metadata
+// server, which would hand it fugaro-build's token (every repository's
+// build secrets, and write access to every image). metaProbe tries the
+// token endpoint by name and by address from three places:
+//   - "step": a Cloud Build step on the cloudbuild network, the control,
+//     which must reach it (otherwise the probe proves nothing);
+//   - "default": a RUN on BuildKit's default network, as the derived build
+//     runs repository code;
+//   - "host": a `RUN --network=host`, which a repository's Dockerfile may
+//     ask for; BuildKit should refuse the entitlement, and if it doesn't,
+//     the host network must still not serve a token.
+//
+// Both RUN probes must fail. If one reaches the token, the boundary does
+// not hold: builds must move to per-repository build service accounts
+// (M5), or deny the entitlement explicitly (a BuildKit builder created
+// without --allow network.host), before repositories that don't trust each
+// other share fugaro-build.
 func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	e := openLive(t)
 	if e.lc.BaseImage == "" || e.lc.Build.ServiceAccount == "" {
@@ -766,19 +786,28 @@ func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The markers the RUN steps echo are split with "" so BuildKit's echo
+	// of the command line itself never matches them.
 	const script = `set -euo pipefail
 base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE")
 echo "LIVE base-digest $$base"
 echo "LIVE docker $$(docker version --format '{{.Server.Version}}')"
 ctx=$$(mktemp -d)
-printf 'FROM %s\nRUN --mount=type=secret,id=SANDBOX_PROBE,required=true,mode=0444 test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-mounted\n' "$$base" > "$$ctx/Dockerfile"
+printf 'FROM %s\nRUN --mount=type=secret,id=SANDBOX_PROBE,required=true,mode=0444 test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-"mounted"\n' "$$base" > "$$ctx/Dockerfile"
 docker build --progress plain --no-cache --secret id=SANDBOX_PROBE,env=SANDBOX_PROBE "$$ctx" 2>&1 | sed 's/^/LIVE build: /'
+pctx=$$(mktemp -d)
+printf '%s' "$$META_PROBE" > "$$pctx/probe.sh"
+printf 'FROM %s\nCOPY probe.sh /probe.sh\nRUN sh /probe.sh default\n' "$$base" > "$$pctx/Dockerfile.default"
+printf 'FROM %s\nCOPY probe.sh /probe.sh\nRUN --network=host sh /probe.sh host\n' "$$base" > "$$pctx/Dockerfile.host"
+if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.default" "$$pctx" 2>&1 | sed 's/^/LIVE probe: /'; then echo "LIVE meta""data default build-failed"; fi
+if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pctx" 2>&1 | sed 's/^/LIVE probe: /'; then echo "LIVE meta""data host build-refused"; fi
 `
 	req := &cloudbuild.Build{
 		Steps: []*cloudbuild.BuildStep{
-			{Id: "pull", Name: e.lc.BaseImage, Entrypoint: "sh", Args: []string{"-c", "true"}},
+			// Pulls the base, and runs the metadata control on the cloudbuild network.
+			{Id: "pull", Name: e.lc.BaseImage, Entrypoint: "sh", Args: []string{"-c", metaProbe, "sh", "step"}},
 			{Id: "probe", Name: "gcr.io/cloud-builders/docker", Entrypoint: "bash",
-				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage}, SecretEnv: []string{"SANDBOX_PROBE"},
+				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "META_PROBE=" + metaProbe}, SecretEnv: []string{"SANDBOX_PROBE"},
 				Args: []string{"-c", script}},
 		},
 		AvailableSecrets: &cloudbuild.Secrets{SecretManager: []*cloudbuild.SecretManagerSecret{{
@@ -817,7 +846,13 @@ docker build --progress plain --no-cache --secret id=SANDBOX_PROBE,env=SANDBOX_P
 	lines := buildLogLines(t, ctx, buildID)
 	var digest string
 	secret, metadata := false, false
+	meta := map[string][]string{} // "step", "default", "host" -> each outcome
 	for _, l := range lines {
+		if m := metaLineRE.FindStringSubmatch(l); m != nil {
+			meta[m[1]] = append(meta[m[1]], strings.TrimSpace(m[2]))
+			fact(t, "metadata probe from %s: %s", m[1], strings.TrimSpace(m[2]))
+			continue
+		}
 		switch {
 		case strings.Contains(l, "LIVE base-digest "):
 			digest = strings.TrimSpace(l[strings.Index(l, "LIVE base-digest ")+len("LIVE base-digest "):])
@@ -844,6 +879,46 @@ docker build --progress plain --no-cache --secret id=SANDBOX_PROBE,env=SANDBOX_P
 	if !regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`).MatchString(digest) {
 		t.Errorf("base digest %q is not repo@sha256:<64 hex>", digest)
 	}
+	checkMetadataProbes(t, meta)
+}
+
+// metaProbe is the metadata probe, a POSIX sh script taking where it runs
+// as $1. It prints one "LIVE metadata <where> blocked|REACHABLE <url>" line
+// per endpoint, or "no-curl". Every $ is doubled for Cloud Build's
+// substitution, which applies to args and env alike.
+const metaProbe = `net=$$1
+command -v curl >/dev/null 2>&1 || { echo "LIVE meta""data $$net no-curl"; exit 0; }
+for u in http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token; do
+  s=blocked
+  if curl -sf --max-time 5 -o /dev/null -H 'Metadata-Flavor: Google' "$$u"; then s=REACHABLE; fi
+  echo "LIVE meta""data $$net $$s $$u"
+done
+`
+
+// metaLineRE matches a metadata probe's result line (not BuildKit's echo of
+// the command, which spells the marker split).
+var metaLineRE = regexp.MustCompile(`LIVE metadata (step|default|host) (.*)$`)
+
+// checkMetadataProbes fails unless the control reached the token endpoint
+// and neither RUN probe did (see TestLiveCloudBuildSecretAndDigest).
+func checkMetadataProbes(t *testing.T, meta map[string][]string) {
+	t.Helper()
+	reachable := func(outcomes []string) bool {
+		return slices.ContainsFunc(outcomes, func(o string) bool { return strings.HasPrefix(o, "REACHABLE ") })
+	}
+	if !reachable(meta["step"]) {
+		t.Errorf("the control probe on the cloudbuild network did not reach the metadata server (%q), so the RUN probes prove nothing", meta["step"])
+	}
+	for _, where := range []string{"default", "host"} {
+		got := meta[where]
+		switch {
+		case len(got) == 0 || slices.Contains(got, "no-curl") || slices.Contains(got, "build-failed"):
+			t.Errorf("the %s-network RUN probe did not run (%q)", where, got)
+		case reachable(got):
+			t.Errorf("BOUNDARY BROKEN: a %s-network RUN step reached the metadata server (%q); repository code can take fugaro-build's token (design §7.2)", where, got)
+		}
+	}
+	fact(t, "metadata server from a RUN step: default network %q, --network=host %q", meta["default"], meta["host"])
 }
 
 // buildLogLines reads a Cloud Build build's log lines from Cloud Logging
