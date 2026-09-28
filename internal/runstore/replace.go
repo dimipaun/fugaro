@@ -34,6 +34,9 @@ func ReadRecordVersion(ctx context.Context, b *blobx.Bucket, slug, runID string)
 	if errors.Is(err, blobx.ErrNotExist) {
 		return nil, RecordVersion{}, fmt.Errorf("%s: %w", key, ErrNotFound)
 	}
+	if errors.Is(err, blobx.ErrTooLarge) {
+		return nil, RecordVersion{}, fmt.Errorf("%w: %w", ErrTooLarge, err)
+	}
 	if err != nil {
 		return nil, RecordVersion{}, fmt.Errorf("reading %s: %w", key, err)
 	}

@@ -39,7 +39,14 @@ var (
 	ErrExists = errors.New("object already exists")
 	// ErrNotExist means Read found no object.
 	ErrNotExist = errors.New("object does not exist")
+	// ErrTooLarge means Read found an object larger than MaxReadBytes.
+	ErrTooLarge = errors.New("object is too large")
 )
+
+// MaxReadBytes caps what Read reads. Its objects (locks, launch claims,
+// run records) are small JSON that a run's own service account, and so
+// its agent, can write; a hostile one of gigabytes must not be read whole.
+const MaxReadBytes = 1 << 20
 
 // Open opens a gocloud bucket URL (gs://, file://, mem://).
 func Open(ctx context.Context, rawURL string) (*Bucket, error) {
@@ -98,6 +105,7 @@ func (b *Bucket) Create(ctx context.Context, key string, data []byte, contentTyp
 }
 
 // Read returns key's content and generation (0 off GCS) from one reader.
+// An object larger than MaxReadBytes is ErrTooLarge.
 func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
 	r, err := b.NewReader(ctx, key, nil)
 	if gcerrors.Code(err) == gcerrors.NotFound {
@@ -107,9 +115,15 @@ func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
 		return nil, 0, err
 	}
 	defer r.Close()
-	data, err := io.ReadAll(r)
+	if r.Size() > MaxReadBytes {
+		return nil, 0, fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), MaxReadBytes)
+	}
+	data, err := io.ReadAll(io.LimitReader(r, MaxReadBytes+1))
 	if err != nil {
 		return nil, 0, err
+	}
+	if len(data) > MaxReadBytes {
+		return nil, 0, fmt.Errorf("%s: %w (the cap is %d bytes)", key, ErrTooLarge, MaxReadBytes)
 	}
 	var sr *storage.Reader
 	if r.As(&sr) {
