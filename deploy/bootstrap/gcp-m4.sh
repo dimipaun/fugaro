@@ -144,27 +144,41 @@ check_sa_owner() {
 }
 
 # check_job_owner JOB: with --apply, dies unless the existing job JOB is
-# labelled with this repository and workflow.
+# labelled fugaro=managed and with this repository and workflow.
 check_job_owner() {
   [ "$APPLY" = 1 ] || return 0
-  local got gotwf
+  local mgd got gotwf
+  mgd=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro)')
   got=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_repo)')
   gotwf=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_workflow)')
-  [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ] ||
-    die "job $1 is labelled fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not $repo_label $WORKFLOW; refusing"
+  [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ] ||
+    die "job $1 is labelled fugaro=${mgd:-none} fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not fugaro=managed $repo_label $WORKFLOW; refusing"
 }
 
-# check_secret_owner ID: with --apply, dies unless secret ID exists and is
-# labelled fugaro_repo=$repo_label, as fugaro secrets set labels it. A secret
-# of another repository under a colliding ID must never be granted to this
-# repository's service accounts.
+# check_secret_labels ID: dies unless the existing secret ID carries the
+# labels fugaro secrets set gives it: fugaro=managed, fugaro_repo=$repo_label
+# and fugaro_secret=<its logical name>, which job-spec's secret-names maps
+# the ID to. A secret of another repository, or of another logical name,
+# under a colliding ID must never be granted to this repository's service
+# accounts or deleted.
+check_secret_labels() {
+  local mgd got name want
+  mgd=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro)')
+  got=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro_repo)')
+  name=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro_secret)')
+  want=$(spec secret-names | sed -n "s/^\(.*\)=$1\$/\1/p" | head -n 1)
+  [ -n "$want" ] || die "secret $1 is not one of $REPO's secrets; refusing"
+  [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$name" = "$want" ] ||
+    die "secret $1 is labelled fugaro=${mgd:-none} fugaro_repo=${got:-none} fugaro_secret=${name:-none}, not fugaro=managed $repo_label $want; refusing"
+}
+
+# check_secret_owner ID: with --apply, dies unless secret ID exists and
+# passes check_secret_labels.
 check_secret_owner() {
   [ "$APPLY" = 1 ] || return 0
   exists gcloud secrets describe "$1" --project "$PROJECT" ||
     die "secret $1 does not exist; store it first (gcp-m4.sh secrets prints the commands)"
-  local got
-  got=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro_repo)')
-  [ "$got" = "$repo_label" ] || die "secret $1 is labelled fugaro_repo=${got:-none}, not $repo_label; refusing"
+  check_secret_labels "$1"
 }
 
 need() {
@@ -511,8 +525,7 @@ JSON
       fi
       for id in $ids; do
         if exists gcloud secrets describe "$id" --project "$PROJECT"; then
-          got=$(gcloud secrets describe "$id" --project "$PROJECT" --format 'value(labels.fugaro_repo)')
-          [ "$got" = "$repo_label" ] || die "secret $id is labelled fugaro_repo=${got:-none}, not $repo_label; refusing"
+          check_secret_labels "$id"
         fi
       done
       if [ "$SECRETS" = 1 ]; then

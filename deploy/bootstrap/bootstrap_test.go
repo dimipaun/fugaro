@@ -391,9 +391,11 @@ func installed(t *testing.T, f *fake, env []string) [][]string {
 	return f.calls(t)
 }
 
+// seedSecrets stores the sandbox's secrets as fugaro secrets set labels
+// them.
 func seedSecrets(t *testing.T, f *fake) {
-	for _, id := range []string{gitID, oauthID, probeID} {
-		f.seed(t, "secrets", id, "fugaro=managed,"+repoLbl)
+	for id, name := range map[string]string{gitID: "bitbucket-token", oauthID: "claude-oauth-token", probeID: "sandbox-probe"} {
+		f.seed(t, "secrets", id, "fugaro=managed,"+repoLbl+",fugaro_secret="+name)
 	}
 }
 
@@ -513,8 +515,17 @@ func TestTeardownChecksLabels(t *testing.T) {
 			f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo="+sandboxWebSlug+",fugaro_workflow=x")
 		},
 		"unlabelled job": func(f *fake) { f.seed(t, "jobs", jobName, "") },
+		"job not marked managed": func(f *fake) {
+			f.seed(t, "jobs", jobName, "fugaro=other,"+repoLbl+",fugaro_workflow=web")
+		},
 		"secret of another repository": func(f *fake) {
 			f.seed(t, "secrets", oauthID, "fugaro=managed,fugaro_repo="+slug("bitbucket", "acme/sandbox-claude"))
+		},
+		"secret not marked managed": func(f *fake) {
+			f.seed(t, "secrets", oauthID, "fugaro=other,"+repoLbl+",fugaro_secret=claude-oauth-token")
+		},
+		"secret of another logical name": func(f *fake) {
+			f.seed(t, "secrets", oauthID, "fugaro=managed,"+repoLbl+",fugaro_secret=bitbucket-token")
 		},
 		"service account of another repository, job already gone": func(f *fake) {
 			_ = os.Remove(filepath.Join(f.state, "jobs", jobName))
@@ -546,7 +557,13 @@ func TestSecretsAccessChecksLabels(t *testing.T) {
 			f.seed(t, "secrets", probeID, "fugaro=managed,fugaro_repo="+sandboxWebSlug)
 		},
 		"unlabelled secret": func(f *fake) { f.seed(t, "secrets", oauthID, "") },
-		"missing secret":    func(f *fake) { _ = os.Remove(filepath.Join(f.state, "secrets", stateKey.Replace(gitID))) },
+		"secret not marked managed": func(f *fake) {
+			f.seed(t, "secrets", probeID, "fugaro=other,"+repoLbl+",fugaro_secret=sandbox-probe")
+		},
+		"secret of another logical name": func(f *fake) {
+			f.seed(t, "secrets", probeID, "fugaro=managed,"+repoLbl+",fugaro_secret=claude-oauth-token")
+		},
+		"missing secret": func(f *fake) { _ = os.Remove(filepath.Join(f.state, "secrets", stateKey.Replace(gitID))) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFake(t)
@@ -596,6 +613,14 @@ func TestCreatesCheckOwnership(t *testing.T) {
 	f.calls(t)
 	if out, err := script(t, env, "--apply", "--yes", "job"); err == nil || !strings.Contains(out, "refusing") {
 		t.Fatalf("job over another repository's job: %v\n%s", err, out)
+	}
+	if m := mutating(f.calls(t)); len(m) > 0 {
+		t.Fatalf("job changed %q", m)
+	}
+	f.seed(t, "jobs", jobName, "fugaro=other,"+repoLbl+",fugaro_workflow=web")
+	f.calls(t)
+	if out, err := script(t, env, "--apply", "--yes", "job"); err == nil || !strings.Contains(out, "refusing") {
+		t.Fatalf("job over a job not marked fugaro=managed: %v\n%s", err, out)
 	}
 	if m := mutating(f.calls(t)); len(m) > 0 {
 		t.Fatalf("job changed %q", m)
