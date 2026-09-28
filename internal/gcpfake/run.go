@@ -143,6 +143,19 @@ func (f *Run) SetState(exec string, s backend.State) {
 	x.set(s)
 }
 
+// SetCreated back-dates (or post-dates) an execution's create time. The
+// listing still orders by creation sequence, so a test can build a
+// wildcard listing that isn't sorted by create time across jobs.
+func (f *Run) SetCreated(exec string, t time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	x := f.lookup(exec, "")
+	if x == nil {
+		f.t.Fatalf("gcpfake: SetCreated(%q): no such execution", exec)
+	}
+	x.created = t
+}
+
 // State reports an execution's state.
 func (f *Run) State(exec string) backend.State {
 	f.mu.Lock()

@@ -200,9 +200,13 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 			// jobs/- wildcard this assumes one ordering across every job,
 			// not per job; the live checklist's run must confirm it. If it is
 			// per job, executions of other jobs are cut off here, and ls
-			// falls back to one Get per run (slower, still correct).
+			// falls back to one Get per run (slower, still correct). An
+			// Exhaustive listing skips the old execution and reads on.
 			if !f.Since.IsZero() {
 				if c, err := parseTime(e.CreateTime); err == nil && !c.IsZero() && c.Before(f.Since) {
+					if f.Exhaustive {
+						continue
+					}
 					return out, nil
 				}
 			}

@@ -302,15 +302,19 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	return slug, spec, nil
 }
 
-// activeHorizon bounds checkMaxParallel's listing: Cloud Run's longest task
-// timeout plus a day for queueing. An older execution can't be active.
+// activeHorizon filters checkMaxParallel's listing: Cloud Run's longest
+// task timeout plus a day for queueing. An older execution can't be active.
 const activeHorizon = gcp.MaxTaskTimeout + 24*time.Hour
 
 // checkMaxParallel refuses a new launch when max_parallel runs are active.
-// It lists only executions created within activeHorizon, so a
-// --batch of N launches doesn't page through the region's history N times.
+// It counts executions created within activeHorizon, but lists
+// exhaustively: whether the jobs/- listing is sorted across jobs or only
+// per job is unconfirmed, and an early stop could cut off active
+// executions of other jobs and undercount. The cost is paging through
+// every execution the region still holds on each launch, so a --batch of
+// N launches does it N times.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
-	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon)})
+	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon), Exhaustive: true})
 	if err != nil {
 		return remote(err)
 	}

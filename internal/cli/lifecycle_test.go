@@ -197,10 +197,11 @@ func (l listRecorder) List(ctx context.Context, f backend.ListFilter) ([]backend
 	return l.Backend.List(ctx, f)
 }
 
-// checkMaxParallel bounds its listing by Cloud Run's longest task timeout:
-// no active execution can be older, so it needn't page through the
-// region's whole history on every launch.
-func TestCheckMaxParallelBoundsTheListing(t *testing.T) {
+// checkMaxParallel filters its listing by Cloud Run's longest task
+// timeout, since no active execution can be older, but never stops the
+// listing early: its count must not depend on how the jobs/- listing is
+// ordered across jobs.
+func TestCheckMaxParallelListsExhaustively(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)
 	var got backend.ListFilter
@@ -208,7 +209,7 @@ func TestCheckMaxParallelBoundsTheListing(t *testing.T) {
 	if err := checkMaxParallel(context.Background(), env); err != nil {
 		t.Fatal(err)
 	}
-	if !got.ActiveOnly || got.Since.IsZero() || time.Since(got.Since) < gcp.MaxTaskTimeout {
+	if !got.ActiveOnly || !got.Exhaustive || got.Since.IsZero() || time.Since(got.Since) < gcp.MaxTaskTimeout {
 		t.Fatalf("filter = %+v", got)
 	}
 }
