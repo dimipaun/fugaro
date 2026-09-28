@@ -79,7 +79,7 @@ func newCancelCmd() *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.DurationVar(&o.grace, "grace", 3*time.Minute, "how long to wait for the runner to finalize before cancelling the execution (at least the workflow's finalize reserve)")
+	f.DurationVar(&o.grace, "grace", 3*time.Minute, "how long to wait for the runner to finalize before cancelling the execution (at least the run's finalize reserve plus 40s)")
 	f.BoolVar(&o.now, "now", false, "cancel the execution at once, without waiting for a draft PR")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON")
 	f.DurationVar(&o.finalizeWait, "finalize-wait", 10*time.Minute, "extra wait while the runner is in finalize")

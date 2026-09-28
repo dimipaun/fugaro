@@ -281,6 +281,30 @@ func TestLiveListAndLogs(t *testing.T) {
 			fact(t, "executions.list returns names with the %s: %s", form, x.Name)
 		}
 	}
+	// Whether the jobs/- listing is sorted by create time across every job,
+	// which List's early stop at Since relies on (only an exhaustive
+	// listing doesn't). A page with executions of two jobs is needed to tell.
+	jobs, sorted := map[string]bool{}, true
+	for i, x := range raw.Executions {
+		if id, ok := backend.ParseExecution(x.Name); ok {
+			jobs[id.Job] = true
+		}
+		if i > 0 {
+			prev, perr := parseTime(raw.Executions[i-1].CreateTime)
+			cur, cerr := parseTime(x.CreateTime)
+			if perr == nil && cerr == nil && cur.After(prev) {
+				sorted = false
+			}
+		}
+	}
+	switch {
+	case len(jobs) < 2:
+		fact(t, "jobs/- ordering across jobs: not shown (the page holds executions of %d job(s); it takes two)", len(jobs))
+	case sorted:
+		fact(t, "jobs/- ordering across jobs: newest first across %d jobs (global)", len(jobs))
+	default:
+		t.Errorf("FACT: jobs/- ordering across jobs: NOT newest first across %d jobs; List's early stop at Since cuts off executions", len(jobs))
+	}
 	got, err := b.List(ctx, backend.ListFilter{Since: time.Now().Add(-30 * 24 * time.Hour)})
 	if err != nil {
 		t.Fatal(err)
