@@ -330,3 +330,63 @@ func TestRestoreNeverReplacesADirectory(t *testing.T) {
 		}
 	}
 }
+
+// countCtx's Err starts failing on its limit-th call.
+type countCtx struct {
+	context.Context
+	calls, limit int
+}
+
+func (c *countCtx) Err() error {
+	if c.calls++; c.calls >= c.limit {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// When ctx ends mid-pass, after some links were judged escaping but
+// before they were removed, every link goes and the archive counts as bad.
+func TestExtractCtxEndsMidLinkCheck(t *testing.T) {
+	root := t.TempDir()
+	// checkLinks judges q (kept), r and p (escaping), then ends at z.
+	ctx := &countCtx{Context: context.Background(), limit: 4}
+	err := extract(ctx, hostile(t, sym("0/q", "."), sym("0/r", "q/.."), sym("0/p", "r/.."), sym("0/z", "q")), []string{root}, 1<<20)
+	if !errors.Is(err, ErrBadArchive) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("extract = %v, want ErrBadArchive joined with the deadline", err)
+	}
+	for _, l := range []string{"q", "r", "p", "z"} {
+		if _, err := os.Lstat(filepath.Join(root, l)); err == nil {
+			t.Errorf("link %s survived", l)
+		}
+	}
+}
+
+// A conflict between the archive's own entries is a bad archive; one with
+// the root's own content (a baked warm cache) is a plain error.
+func TestExtractClassifiesConflicts(t *testing.T) {
+	reg := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o644, Typeflag: tar.TypeReg} }
+	dir := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o755, Typeflag: tar.TypeDir} }
+	for name, hdrs := range map[string][]*tar.Header{
+		"file then under it":     {reg("0/a"), reg("0/a/b")},
+		"file then dir":          {reg("0/a"), dir("0/a/")},
+		"dir then file":          {dir("0/d/"), reg("0/d")},
+		"implicit dir then file": {reg("0/d/x"), reg("0/d")},
+		"dir then link":          {dir("0/d/"), sym("0/d", "x")},
+	} {
+		err := Extract(hostile(t, hdrs...), []string{t.TempDir()}, 1<<20)
+		if !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: %v, want ErrBadArchive", name, err)
+		}
+	}
+	baked := t.TempDir()
+	write(t, baked, map[string]string{"a": "baked"})
+	if err := os.Mkdir(filepath.Join(baked, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, h := range map[string]*tar.Header{"under a baked file": reg("0/a/b"), "at a baked dir": reg("0/d")} {
+		err := Extract(hostile(t, h), []string{baked}, 1<<20)
+		if err == nil || errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: %v, want a plain error", name, err)
+		}
+	}
+}

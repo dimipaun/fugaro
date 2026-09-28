@@ -317,6 +317,12 @@ type extractor struct {
 	// realDirs are directories inside found to be real (no symlink on the
 	// way). Extract never removes a directory, so they stay real.
 	realDirs map[link]bool
+	// created are paths this Extract made: files, links, and directories
+	// that did not exist before it (entries and the parents MkdirAll adds).
+	// A conflict with one of them is the archive contradicting itself, so
+	// it is ErrBadArchive; a conflict with the root's own content (a baked
+	// warm cache, say) stays a plain error.
+	created map[link]bool
 }
 
 // readErr classifies an error reading the archive: an I/O error from the
@@ -347,7 +353,7 @@ func Extract(r io.Reader, roots []string, maxBytes int64) error {
 // extract is Extract under ctx, which bounds the final link check: the
 // read itself is bounded by the reader, which Restore opens under ctx.
 func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (err error) {
-	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}}
+	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}, created: map[link]bool{}}
 	defer func() {
 		for _, rt := range x.roots {
 			rt.Close()
@@ -444,6 +450,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				if in.err != nil {
 					return x.readErr(fmt.Sprintf("restoring %q", h.Name), err)
 				}
+				if x.selfConflict(idx, rel, err) {
+					return badf("restoring %q: it conflicts with a directory this archive wrote: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		case tar.TypeSymlink:
@@ -457,6 +466,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				return err
 			}
 			if err := x.restoreSymlink(idx, rel, filepath.FromSlash(h.Linkname)); err != nil {
+				if x.selfConflict(idx, rel, err) {
+					return badf("restoring %q: it conflicts with a directory this archive wrote: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		default:
@@ -481,23 +493,36 @@ func (x *extractor) inside(idx int, dir, name string) error {
 	}
 	rt := x.roots[idx]
 	prefix := ""
-	for _, c := range strings.Split(dir, string(filepath.Separator)) {
+	parts := strings.Split(dir, string(filepath.Separator))
+	for i, c := range parts {
 		prefix = filepath.Join(prefix, c)
 		if x.realDirs[link{idx, prefix}] {
 			continue
 		}
 		fi, err := rt.Lstat(prefix)
 		switch {
-		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
-			return nil // the rest is created by MkdirAll, or the write fails
+		case errors.Is(err, fs.ErrNotExist):
+			// MkdirAll creates the rest (or the write fails): all of it is ours.
+			for p, j := prefix, i; ; {
+				x.created[link{idx, p}] = true
+				if j++; j >= len(parts) {
+					break
+				}
+				p = filepath.Join(p, parts[j])
+			}
+			return nil
+		case errors.Is(err, syscall.ENOTDIR):
+			return nil // unreachable: the file on the path is met first
 		case err != nil:
 			return fmt.Errorf("refusing %q: checking %s: %w", name, prefix, err)
 		case fi.Mode()&fs.ModeSymlink != 0:
 			return badf("refusing %q: %s on its path is a symlink, which could lead outside its root", name, filepath.ToSlash(prefix))
 		case fi.IsDir():
 			x.realDirs[link{idx, prefix}] = true
+		case x.created[link{idx, prefix}]:
+			return badf("refusing %q: %s on its path is a file this archive wrote", name, filepath.ToSlash(prefix))
 		default:
-			return nil // a file on the path: the write fails with ENOTDIR
+			return nil // the root's own file on the path: the write fails with ENOTDIR
 		}
 	}
 	return nil
@@ -517,12 +542,9 @@ func (x *extractor) checkLinks(ctx context.Context) error {
 	pending := slices.Clone(x.links)
 	for {
 		var kept, refused []link
-		for i, l := range pending {
+		for _, l := range pending {
 			if ctx.Err() != nil {
-				for _, u := range append(kept, pending[i:]...) {
-					_ = x.roots[u.idx].Remove(u.rel)
-				}
-				return errors.Join(append(errs, fmt.Errorf("checking restored links: %w", ctx.Err()))...)
+				return x.abandonLinks(ctx, errs, len(refused) > 0)
 			}
 			rt := x.roots[l.idx]
 			fi, err := rt.Lstat(l.rel)
@@ -550,6 +572,32 @@ func (x *extractor) checkLinks(ctx context.Context) error {
 		}
 		pending = kept
 	}
+}
+
+// abandonLinks is checkLinks' way out when ctx ends mid-check: it removes
+// every link this Extract recorded that is still a link, judged safe,
+// judged escaping or not judged yet alike, since a partial judgement
+// can't be trusted. If any link was refused, in this pass or an earlier
+// one, the error also matches ErrBadArchive, so the archive is deleted
+// rather than replayed.
+func (x *extractor) abandonLinks(ctx context.Context, errs []error, refusedThisPass bool) error {
+	for _, l := range x.links {
+		rt := x.roots[l.idx]
+		if fi, err := rt.Lstat(l.rel); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
+			_ = rt.Remove(l.rel)
+		}
+	}
+	if refusedThisPass {
+		errs = append(errs, badf("refused links that resolve outside their root"))
+	}
+	return errors.Join(append(errs, fmt.Errorf("checking restored links: %w", ctx.Err()))...)
+}
+
+// selfConflict reports whether err is a create that failed on a path this
+// Extract itself made: a file or link entry where the archive already put
+// a directory.
+func (x *extractor) selfConflict(idx int, rel string, err error) bool {
+	return errors.Is(err, fs.ErrExist) && x.created[link{idx, rel}]
 }
 
 // splitName maps an entry name "<i>/<rel>" to its root index and a local
@@ -604,6 +652,7 @@ func (x *extractor) restoreFile(idx int, rel string, mode fs.FileMode, src io.Re
 	if err != nil {
 		return 0, err
 	}
+	x.created[link{idx, rel}] = true
 	n, err := io.Copy(f, src)
 	if err == nil {
 		err = f.Chmod(mode) // exact mode, whatever the umask
@@ -621,6 +670,7 @@ func (x *extractor) restoreSymlink(idx int, rel, target string) error {
 	if err := x.roots[idx].Symlink(target, rel); err != nil {
 		return err
 	}
+	x.created[link{idx, rel}] = true
 	if l := (link{idx, rel}); !x.linkSet[l] {
 		x.linkSet[l] = true
 		x.links = append(x.links, l)
