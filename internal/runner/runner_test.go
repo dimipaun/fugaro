@@ -671,7 +671,7 @@ func TestCostBreakdown(t *testing.T) {
 	}
 	c := rec.Cost
 	// 60s × 4 vCPU × $0.001 = $0.24 of compute; totals are compared to the cent.
-	if c == nil || c.ModelUSD != 1.5 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-1.74) > 0.005 {
+	if c == nil || !c.ComputeEstimated || c.ModelUSD != 1.5 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-1.74) > 0.005 {
 		t.Fatalf("cost = %+v", c)
 	}
 	if rec.CostUSD != c.ModelUSD {
@@ -679,5 +679,19 @@ func TestCostBreakdown(t *testing.T) {
 	}
 	if !strings.Contains(onlyPR(t, h.provider).Comments[0], "(model $1.50 + compute $") {
 		t.Fatalf("report = %s", onlyPR(t, h.provider).Comments[0])
+	}
+}
+
+func TestCostWithoutPricesIsNotEstimated(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := rec.Cost; c == nil || c.ComputeEstimated || c.ComputeUSD != 0 || c.ModelUSD != 1.5 {
+		t.Fatalf("cost = %+v", rec.Cost)
+	}
+	if report := onlyPR(t, h.provider).Comments[0]; !strings.Contains(report, "**Cost:** model $1.50 (compute not estimated)") {
+		t.Fatalf("report = %s", report)
 	}
 }

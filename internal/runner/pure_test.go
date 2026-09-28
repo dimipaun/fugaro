@@ -143,8 +143,10 @@ func TestCostLine(t *testing.T) {
 	cases := map[string]runstore.Cost{
 		"**Cost:** ≈ $4.50 (model $4.12 + compute $0.38, estimate)":                                           runstore.NewCost(4.12, 0.38, runstore.BasisAPIList),
 		"**Cost:** ≈ $0.38 compute (estimate); model $4.12 notional, counted against the Claude subscription": runstore.NewCost(4.12, 0.38, runstore.BasisSubscription),
-		"**Cost:** model $4.12 (compute not estimated)":                                                       runstore.NewCost(4.12, 0, runstore.BasisAPIList),
-		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":     runstore.NewCost(4.12, 0, runstore.BasisSubscription),
+		"**Cost:** model $4.12 (compute not estimated)":                                                       runstore.ModelOnlyCost(4.12, runstore.BasisAPIList),
+		"**Cost:** model $4.12 notional, counted against the Claude subscription (compute not estimated)":     runstore.ModelOnlyCost(4.12, runstore.BasisSubscription),
+		// An estimated compute figure of zero is shown as an estimate, not as "not estimated".
+		"**Cost:** ≈ $4.12 (model $4.12 + compute $0.00, estimate)": runstore.NewCost(4.12, 0, runstore.BasisAPIList),
 	}
 	for want, c := range cases {
 		if got := CostLine(c); got != want {

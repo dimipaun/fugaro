@@ -13,24 +13,25 @@ func (r *run) updateCost() {
 	if r.cfg == nil {
 		return
 	}
-	var compute float64
-	if r.d.Prices != nil {
+	basis := runstore.ModelBasis(r.cfg.Agent.Auth)
+	c := runstore.ModelOnlyCost(r.rec.CostUSD, basis)
+	if r.d.Prices != nil && r.wf.Resources.CPU > 0 {
 		if gib, err := backend.MemoryGiB(r.wf.Resources.Memory); err == nil {
-			compute = r.d.Prices.ComputeUSD(float64(r.wf.Resources.CPU), gib, r.d.Now().Sub(r.rec.StartedAt))
+			compute := r.d.Prices.ComputeUSD(float64(r.wf.Resources.CPU), gib, r.d.Now().Sub(r.rec.StartedAt))
+			c = runstore.NewCost(r.rec.CostUSD, compute, basis)
 		}
 	}
-	c := runstore.NewCost(r.rec.CostUSD, compute, runstore.ModelBasis(r.cfg.Agent.Auth))
 	r.rec.Cost = &c
 }
 
-// CostLine renders a cost breakdown for reports (design §10.1). A zero
-// compute figure means compute was not estimated, never that it was free.
+// CostLine renders a cost breakdown for reports (design §10.1). It keys
+// off ComputeEstimated, never off a zero compute figure.
 func CostLine(c runstore.Cost) string {
 	sub := c.ModelBasis == runstore.BasisSubscription
 	switch {
-	case c.ComputeUSD == 0 && sub:
+	case !c.ComputeEstimated && sub:
 		return fmt.Sprintf("**Cost:** model $%.2f notional, counted against the Claude subscription (compute not estimated)", c.ModelUSD)
-	case c.ComputeUSD == 0:
+	case !c.ComputeEstimated:
 		return fmt.Sprintf("**Cost:** model $%.2f (compute not estimated)", c.ModelUSD)
 	case sub:
 		return fmt.Sprintf("**Cost:** ≈ $%.2f compute (estimate); model $%.2f notional, counted against the Claude subscription", c.ComputeUSD, c.ModelUSD)

@@ -11,7 +11,10 @@ func TestListPrices(t *testing.T) {
 	if unknown.VCPUSecondUSD <= p.VCPUSecondUSD {
 		t.Fatalf("an unknown region must fall back to the higher tier: %+v", unknown)
 	}
-	if t2 := ListPrices("europe-west2"); t2 != unknown {
-		t.Fatalf("europe-west2 (tier 2) = %+v, want %+v", t2, unknown)
+	for _, region := range []string{"europe-west2", "us-east7"} {
+		// europe-west2 is listed as tier 2; us-east7 is on neither list.
+		if got := ListPrices(region); got != unknown {
+			t.Fatalf("%s = %+v, want tier 2 %+v", region, got, unknown)
+		}
 	}
 }

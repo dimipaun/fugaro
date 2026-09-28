@@ -14,14 +14,14 @@ var (
 	tier1 = backend.Prices{VCPUSecondUSD: 0.000018, GiBSecondUSD: 0.000002, Source: "Cloud Run jobs list price, tier 1 (2026-09)"}
 	tier2 = backend.Prices{VCPUSecondUSD: 0.0000216, GiBSecondUSD: 0.0000024, Source: "Cloud Run jobs list price, tier 2 (2026-09)"}
 
-	// tier1Regions is the page's "Subject to Tier 1 pricing" list, plus
-	// us-east7, which the page's price tables bill at tier 1 though its
-	// tier lists omit it.
+	// tier1Regions is the "Subject to Tier 1 pricing" list on
+	// https://cloud.google.com/run/pricing#tiers (checked 2026-09-27). A
+	// region it does not list falls to tier 2, so estimates err high.
 	tier1Regions = []string{
 		"africa-south1", "asia-east1", "asia-northeast1", "asia-northeast2", "asia-south1",
 		"asia-southeast3", "asia-southeast4", "europe-north1", "europe-north2", "europe-southwest1",
 		"europe-west1", "europe-west4", "europe-west8", "europe-west9", "me-west1",
-		"northamerica-south1", "us-central1", "us-east1", "us-east4", "us-east5", "us-east7",
+		"northamerica-south1", "us-central1", "us-east1", "us-east4", "us-east5",
 		"us-south1", "us-west1", "us-west8",
 	}
 )

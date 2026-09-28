@@ -70,10 +70,11 @@
     "cost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["model_usd", "compute_usd", "total_usd", "estimate", "model_basis"],
+      "required": ["model_usd", "compute_usd", "compute_estimated", "total_usd", "estimate", "model_basis"],
       "properties": {
         "model_usd": { "type": "number", "minimum": 0 },
-        "compute_usd": { "type": "number", "minimum": 0, "description": "Zero means compute was not estimated." },
+        "compute_usd": { "type": "number", "minimum": 0, "description": "Meaningful only when compute_estimated is true; otherwise 0." },
+        "compute_estimated": { "type": "boolean", "description": "True only when the backend's prices and the workflow's resources were known." },
         "total_usd": { "type": "number", "minimum": 0, "description": "Billed dollars only: excludes the model figure when model_basis is subscription." },
         "estimate": { "type": "boolean" },
         "model_basis": { "enum": ["api-list", "subscription"] }
