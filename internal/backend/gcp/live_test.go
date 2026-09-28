@@ -809,7 +809,7 @@ func TestLiveCacheOnGCS(t *testing.T) {
 func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	e := openLive(t)
 	if e.lc.BaseImage == "" || e.lc.Build.ServiceAccount == "" {
-		t.Fatal("the local config needs base_image and build.service_account (bootstrap steps 4 and 8)")
+		t.Fatal("the local config needs base_image and build.service_account (the bootstrap's config step writes build.service_account; set base_image after its base step)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()

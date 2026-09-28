@@ -14,7 +14,8 @@
 #
 # Environment: PROJECT, REGION, BUCKET, REPO (owner/name), WORKFLOW,
 # CHECKOUT (the target repository's checkout), FUGARO (default fugaro),
-# HEAVY (the Docker lock), FUGARO_SRC (this checkout), and for the config
+# HEAVY (optionally wraps the Docker commands, for example a lock script; by
+# default they run directly), FUGARO_SRC (this checkout), and for the config
 # step REPOS ("owner/name:branch:workflow[:provider] ...", provider bitbucket
 # or github, default bitbucket), BASE_IMAGE and FORCE.
 set -euo pipefail

@@ -27,7 +27,7 @@ This runbook describes each step: the command, what it creates, whether it costs
 | `BASE_IMAGE`, `FORCE` | `config` | an optional `base_image`; `FORCE=1` replaces an existing local config (the script shows the diff first) |
 | `REPO`, `WORKFLOW`, `CHECKOUT` | per-repository steps | the repository (`owner/name`), its workflow, and a checkout of it, whose `fugaro.yaml` the names come from |
 | `FUGARO` | per-repository steps | the `fugaro` binary (default `fugaro`); build it from the branch you are testing |
-| `FUGARO_SRC`, `HEAVY` | `base` | the Fugaro checkout to build the base image from, and the script that serializes Docker work. `HEAVY`'s default is a path on the original developer's machine; set it (a script that just runs its arguments will do) |
+| `FUGARO_SRC`, `HEAVY` | `base` | the Fugaro checkout to build the base image from; `HEAVY` optionally wraps the Docker commands (for example a lock script that serializes Docker work); by default they run directly |
 
 `FUGARO_CONFIG` moves the local config, for the script and for `fugaro` alike.
 
@@ -102,7 +102,7 @@ A change to the CLI alone (`run`, `ls`, `logs` and so on) needs none of this: re
 
 ## Live tests
 
-With the resources in place, the `live`-tagged tests in `internal/backend/gcp` and `internal/e2e` exercise the real backend and one sandbox run. They pin their project, region and sandbox repository as constants and refuse to run against anything else, and the file headers give the commands. The prefix-denial check impersonates the sandbox job's service account, so it needs you to hold `roles/iam.serviceAccountTokenCreator` on it for the duration: grant it with `gcloud iam service-accounts add-iam-policy-binding <sa> --member user:<you> --role roles/iam.serviceAccountTokenCreator --project <project>`, and remove it again afterwards with `remove-iam-policy-binding` and the same arguments.
+With the resources in place, the `live`-tagged tests in `internal/backend/gcp` and `internal/e2e` exercise the real backend and one sandbox run. They take their project and sandbox repository from `FUGARO_LIVE_PROJECT` and `FUGARO_LIVE_REPO`, refuse to run unless the local config names the same ones (and run in its region), and the file headers and docs/gcp-live-checklist.md give the commands. The prefix-denial check impersonates the sandbox job's service account, so it needs you to hold `roles/iam.serviceAccountTokenCreator` on it for the duration: grant it with `gcloud iam service-accounts add-iam-policy-binding <sa> --member user:<you> --role roles/iam.serviceAccountTokenCreator --project <project>`, and remove it again afterwards with `remove-iam-policy-binding` and the same arguments.
 
 ## Teardown
 

@@ -12,17 +12,20 @@ M4 PR description and into the runbook (`docs/gcp-bootstrap.md`).
 
 ## Guardrails the tests enforce
 
-- **Target.** The local config (`$FUGARO_CONFIG`, else
-  `~/.config/fugaro/config.yaml`) must name all of the following. Otherwise
-  every test calls `t.Fatal` before making any call.
-  - project `edge-devel-dimi`
-  - region `us-east5`
+- **Target.** `FUGARO_LIVE_PROJECT` names the live-test GCP project and
+  `FUGARO_LIVE_REPO` the sandbox repository (`owner/name`), for example
+  `my-fugaro-dev` and `acme/fugaro-sandbox`. Both are required. The local
+  config (`$FUGARO_CONFIG`, else `~/.config/fugaro/config.yaml`) must then
+  name all of the following, or every test calls `t.Fatal` before making
+  any call:
+  - the same project
+  - a region (the tests run in the local config's region)
   - a `fugaro-runs-*` runs bucket
   - no `bucket_url` or endpoint override
-  - the `edgeappinc/fugarosandbox` repository
+  - the same repository, under `repos`
 
   `GOOGLE_CLOUD_PROJECT` and `CLOUDSDK_CORE_PROJECT` may only be unset or
-  `edge-devel-dimi`.
+  the same project.
 - **Credentials.**
   - Google calls use Application Default Credentials only.
   - The prefix-denial check impersonates the job's service account, starting
@@ -55,29 +58,39 @@ M4 PR description and into the runbook (`docs/gcp-bootstrap.md`).
 
 ## Preconditions
 
-Complete the bootstrap runbook steps 1 to 10 (`docs/gcp-bootstrap.md`):
-APIs, bucket, registry, build SA, config, sandbox fixture, job SA, secrets
-(including `sandbox-probe`), secrets access, base image, derived image and
-job. Then set up the following:
+Complete the bootstrap runbook (`docs/gcp-bootstrap.md`) for the sandbox
+repository, in the runbook's order:
+
+1. `config` first: every other step refuses without the local config it
+   writes.
+2. The shared steps: `apis`, `bucket`, `registry`, `build-sa`.
+3. Commit the sandbox fixture, `deploy/bootstrap/sandbox/`, to the sandbox
+   repository's base branch (see `deploy/bootstrap/README.md`).
+4. For the sandbox's `web` workflow, with `REPO`, `WORKFLOW` and `CHECKOUT`
+   set: `job-sa`, `secrets` (store every secret it prints, including
+   `sandbox-probe`), `secrets-access`, `base` (then set `base_image` as the
+   runbook's "Setting the base image" says), `image` and `job`.
+
+Then set up the following:
 
 1. **⚠ CONFIRM** Enable the IAM Credentials API, which impersonation needs.
    The bootstrap's seven APIs don't include it. Enabling it is free.
 
    ```bash
-   gcloud services enable iamcredentials.googleapis.com --project edge-devel-dimi
+   gcloud services enable iamcredentials.googleapis.com --project "$FUGARO_LIVE_PROJECT"
    ```
 
 2. **⚠ CONFIRM** Give yourself the Token Creator role on the sandbox job's
-   service account (runbook step 11):
+   service account (the runbook's "Live tests" section):
 
    ```bash
-   SA=$(cd <sandbox checkout> && "$FUGARO" gcp job-spec --repo edgeappinc/fugarosandbox --workflow web --field sa)
+   SA=$(cd <sandbox checkout> && "$FUGARO" gcp job-spec --repo "$FUGARO_LIVE_REPO" --workflow web --field sa)
    gcloud iam service-accounts add-iam-policy-binding "$SA" \
-     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project edge-devel-dimi
+     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
    ```
 
    Remove it again afterwards with `remove-iam-policy-binding` and the same
-   arguments (runbook step 13).
+   arguments, as the runbook's "Live tests" section says.
 
 ## Running
 
@@ -86,7 +99,8 @@ Pass `-p 1` so the two packages run one after the other.
 because it would delete that test's objects.
 
 ```bash
-FUGARO_BITBUCKET_TOKEN="$(cat ~/.config/fugaro-bb-token)" FUGARO_LIVE_JOB_SA="$SA" \
+export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
+FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" FUGARO_LIVE_JOB_SA="$SA" \
   go test -tags live -p 1 -timeout 45m -run 'TestLive' -v ./internal/backend/gcp/ ./internal/e2e/ 2>&1 | tee live.log
 grep 'FACT:' live.log
 ```
@@ -95,19 +109,20 @@ To run a single check, narrow `-run`. The commands are listed in the table
 below. Run the sweep after any abort:
 
 ```bash
-FUGARO_BITBUCKET_TOKEN="$(cat ~/.config/fugaro-bb-token)" \
+FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
   go test -tags live -p 1 -timeout 15m -run 'TestLiveGCPCleanup' -v ./internal/e2e/
 ```
 
 ## Checks
 
 In the commands below, `T` is short for
-`go test -tags live -p 1 -v -timeout 20m`. Set `FUGARO_BITBUCKET_TOKEN` and
+`go test -tags live -p 1 -v -timeout 20m`. Set `FUGARO_LIVE_PROJECT` and
+`FUGARO_LIVE_REPO` for every check, and `FUGARO_BITBUCKET_TOKEN` and
 `FUGARO_LIVE_JOB_SA` as above wherever a check needs them.
 
 | # | Check | Command | Expected |
 |---|---|---|---|
-| 1 | Execution names from `executions.list` (project ID or number, I-9) | `T -run TestLiveListAndLogs ./internal/backend/gcp/` | A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/edge-devel-dimi/locations/us-east5/jobs/`. |
+| 1 | Execution names from `executions.list` (project ID or number, I-9) | `T -run TestLiveListAndLogs ./internal/backend/gcp/` | A `FACT` gives the raw form (project ID or project NUMBER). `ParseExecution` accepts every raw name. Every name `List` returns starts with `projects/<project>/locations/<region>/jobs/`. |
 | 2 | The log filter `labels."run.googleapis.com/execution_name"` works | same test | The newest Fugaro execution has at least 1 log entry, and at most 10 are read. It fails if there are none. |
 | 3 | The operation metadata of `jobs.run` is an Execution | `T -run TestLiveExecutionProbe ./internal/backend/gcp/` | `metadata @type="type.googleapis.com/google.cloud.run.v2.Execution"`, and `name` is a parseable execution. The probe's `task.json` has version 999, so the runner exits at once without cloning or starting an agent. |
 | 4 | The forms Cloud Run returns for CPU and memory limits | same test | `FACT` lines give the `jobs.get` and `executions.get` limits, for example `cpu="1"` or `"1000m"` and `memory="2Gi"`. The backend parses them to CPU > 0 and MemoryGiB > 0. It fails if the cost would be unknown. |
@@ -118,6 +133,7 @@ In the commands below, `T` is short for
 | 9 | The lock's generation preconditions on real GCS | `T -run TestLiveLockOnGCS ./internal/backend/gcp/` | A second holder gets `BusyError`, an expired takeover succeeds, and the old holder's `Release` leaves the new lock in place. The final `Release` deletes it. |
 | 10 | Cache save and restore, and `customTime` | `T -run TestLiveCacheOnGCS ./internal/backend/gcp/` | The 1 MiB archive is saved with a non-zero `customTime` and restores byte for byte. |
 | 11 | Cloud Build honours BuildKit `--secret id=…,env=…` in `gcr.io/cloud-builders/docker` | `T -run TestLiveCloudBuildSecretAndDigest ./internal/backend/gcp/` | The build succeeds, running as `build.service_account`, and its log has `LIVE secret-mounted`. That line comes from `RUN --mount=type=secret,id=SANDBOX_PROBE,required=true`. |
+| 11b | Repository code can't reach the metadata server (design §7.2) | same test | `FACT` lines give each probe's outcome for the token endpoint, by name and by address. The control, a Cloud Build step on the `cloudbuild` network, is `REACHABLE`. A `RUN` on BuildKit's default network is `blocked`, and a `RUN --network=host` is `blocked` or `build-refused`. Any `REACHABLE` from a `RUN` fails the test as `BOUNDARY BROKEN`: stop, and don't onboard a second, untrusted repository until builds get per-repository service accounts (M5) or a builder that denies `network.host` (design §7.2). |
 | 12 | How `FROM repo@sha256` resolves | same test | `FACT` lines give the pinned `repo@sha256:<64 hex>`, BuildKit's `load metadata` and `FROM` or `resolve` lines, and whether the registry was contacted for metadata. |
 | 13 | The sandbox end to end: run, `ls`, cost, `logs`, `diagnose`, objects | `FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 45m -run TestLiveSandboxRun ./internal/e2e/` | See below. |
 | 14 | Sweep | `FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 15m -run TestLiveGCPCleanup ./internal/e2e/` | It cancels, declines, deletes and logs every live-batch run, every `fugaro-live-*` prefix and every `fugaro-live-*` secret, and fails nothing. |
@@ -138,11 +154,11 @@ For check 13, `TestLiveSandboxRun` checks the following:
 - A `cache/<slug>/web/*.tar.zst` archive exists.
 - Cleanup declines the PR, deletes the branch and deletes the run's objects.
 
-## Not covered by these tests (manual, runbook step 14)
+## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the
   logic. A live check would hold a 15-minute sleep on the subscription, so
   it is a manual spot check.
-- **The full derived-image build.** Runbook step 9 builds it for real, and
-  its `image.setup` step fails without `SANDBOX_PROBE`. Check 11 isolates
-  the same mechanism.
+- **The full derived-image build.** The runbook's `image` step builds it for
+  real, and its `image.setup` step fails without `SANDBOX_PROBE`. Check 11
+  isolates the same mechanism.
