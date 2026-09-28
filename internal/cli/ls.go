@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -300,7 +301,10 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
 			return in, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
 		}
-		if in.Claim, err = absent(s.ReadClaim(ctx)); err != nil {
+		if in.Claim, err = absent(s.ReadClaim(ctx)); corruptObject(err) {
+			in.Problem = "the launch claim is unreadable: " + err.Error()
+			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
+		} else if err != nil {
 			return in, err
 		}
 		return in, nil
@@ -349,12 +353,14 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	return in, nil
 }
 
-// corruptObject reports whether err is a run object that was read but
-// can't be decoded: that run's problem, not the listing's.
+// corruptObject reports whether err is a run object that can't be used:
+// undecodable, or past its read cap (runstore.ErrTooLarge,
+// blobx.ErrTooLarge). That is the run's problem, not the listing's.
 func corruptObject(err error) bool {
 	var syn *json.SyntaxError
 	var typ *json.UnmarshalTypeError
-	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF)
+	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge)
 }
 
 // absent turns runstore.ErrNotFound into a nil value and no error.

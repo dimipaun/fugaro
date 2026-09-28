@@ -571,7 +571,7 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 	for attempt := 0; ; attempt++ {
 		ok, _, err := s.Claim(ctx, holder, now) // Claim itself retries once if the claim vanishes mid-call
 		if err != nil {
-			return false, other, remote(err)
+			return false, other, claimError(s, key, err)
 		}
 		if ok {
 			return true, other, nil
@@ -585,7 +585,7 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 			return false, someone, nil // released twice in a row: never loop here
 		}
 		if err != nil {
-			return false, other, remote(err)
+			return false, other, claimError(s, key, err)
 		}
 		var cur runstore.Claim
 		if json.Unmarshal(prev, &cur) == nil && now.Sub(cur.At) < claimTTL {
@@ -604,6 +604,17 @@ func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder str
 		}
 		return true, other, nil
 	}
+}
+
+// claimError is a failed read of the launch claim, as a remote error. An
+// oversized claim is no claim a CLI wrote, and without its content and
+// generation it can't be judged stale or taken over safely: say so.
+func claimError(s *runstore.Store, key string, err error) error {
+	if errors.Is(err, runstore.ErrTooLarge) || errors.Is(err, blobx.ErrTooLarge) {
+		ref := s.Slug() + "/" + s.RunID()
+		return remote(fmt.Errorf("the launch claim of %s is not one a CLI wrote (%w); delete %s, then fugaro run --retry %s", ref, err, key, ref))
+	}
+	return remote(err)
 }
 
 // waitForLaunch waits up to claimWait for the claim holder's launch.json

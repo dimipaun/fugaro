@@ -22,8 +22,9 @@ import (
 var ErrDuplicateExecution = errors.New("another execution already owns this run")
 
 // taskTimeoutSlack is what Terraform (and the M4 bootstrap) add to
-// timeouts.total for the Cloud Run task timeout (design §4.5).
-const taskTimeoutSlack = 2 * time.Minute
+// timeouts.total for the Cloud Run task timeout (design §4.5); job-spec
+// uses the same backend.TaskTimeoutSlack.
+const taskTimeoutSlack = backend.TaskTimeoutSlack
 
 // lockSlack is how far past the task timeout the branch lock (and the
 // record's deadline) lasts, so a live run never loses its lock.

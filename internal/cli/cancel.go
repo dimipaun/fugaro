@@ -108,6 +108,9 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	}
 	if l == nil || l.Execution == "" {
 		claim, err := absent(s.ReadClaim(ctx))
+		if corruptObject(err) {
+			claim, err = nil, nil // no claim a CLI wrote: nobody is launching
+		}
 		if err != nil {
 			return remote(err)
 		}
@@ -271,26 +274,19 @@ func graceFloor(ctx context.Context, s *runstore.Store, o *cancelOptions) (time.
 	return reserve + runnerReaction, what + " plus " + runnerReaction.String() + " for the runner to notice the cancel"
 }
 
-// reserver is what the run's stored record or task offers once it keeps
-// the workflow's finalize reserve itself (the fix wave's runner half,
-// fixer 1). Until then neither implements it, and the checkout decides.
-type reserver interface{ FinalizeReserve() time.Duration }
-
-// finalizeReserve is the run's finalize reserve: from its result.json or
-// task.json when they carry it, else from this checkout's fugaro.yaml when
-// it is the run's repository, else defaultFinalizeReserve.
+// finalizeReserve is the run's finalize reserve: from its result.json,
+// where the runner records it once bootstrap has read the workflow, else
+// from this checkout's fugaro.yaml when it is the run's repository, else
+// defaultFinalizeReserve.
 func finalizeReserve(ctx context.Context, s *runstore.Store) (time.Duration, string) {
 	if rec, err := s.ReadRecord(ctx); err == nil {
-		if r, ok := any(rec).(reserver); ok && r.FinalizeReserve() > 0 {
-			return r.FinalizeReserve(), "the run's finalize reserve"
+		if d, ok := rec.FinalizeReserve(); ok {
+			return d, "the run's finalize reserve"
 		}
 	}
 	spec, err := s.ReadTask(ctx)
 	if err != nil || spec.Workflow == "" {
 		return defaultFinalizeReserve, "the default finalize reserve"
-	}
-	if r, ok := any(spec).(reserver); ok && r.FinalizeReserve() > 0 {
-		return r.FinalizeReserve(), "the run's finalize reserve"
 	}
 	if c := checkoutConfig(ctx, spec.Repo); c != nil {
 		if w, ok := c.Workflows[spec.Workflow]; ok && w.Timeouts.FinalizeReserve.Duration > 0 {

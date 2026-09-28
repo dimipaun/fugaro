@@ -310,3 +310,50 @@ func TestLsUsesTheCheckoutForAProviderlessRepo(t *testing.T) {
 		t.Fatalf("ls = %+v, stderr %q", got.Runs, errOut)
 	}
 }
+
+// cancel's grace floor comes from the run's own record when it carries the
+// finalize reserve, with no checkout needed (queued fix; fixer 1's field).
+func TestGraceFloorReadsTheRecordsReserve(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "", false)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Status: runstore.StatusRunning, Stage: "implement", FinalizeReserveS: 90})
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	got, what := graceFloor(context.Background(), runstore.Open(b, appSlug, id), &cancelOptions{})
+	if got != 90*time.Second+runnerReaction || !strings.Contains(what, "the run's finalize reserve") {
+		t.Fatalf("floor = %s (%s)", got, what)
+	}
+}
+
+// An object past runstore's read cap is that run's error row, like a
+// corrupt one, and so is an oversized launch claim.
+func TestLsOversizedObjectIsAPerRowError(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	bigRecord, bigClaim := today+"-090000-aaaa", today+"-091000-bbbb"
+	seedRun(t, f, bigRecord, "", "someone@example.com", false)
+	seedRun(t, f, bigClaim, "", "someone@example.com", false)
+	huge := []byte(`{"pad":"` + strings.Repeat("x", int(runstore.MaxRecordBytes)) + `"}`)
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	_ = runstore.Open(b, appSlug, bigRecord).PutFile(context.Background(), "result.json", huge, "application/json")
+	_ = runstore.Open(b, appSlug, bigClaim).PutFile(context.Background(), "launching", huge, "application/json")
+	b.Close()
+	got, errOut := lsJSON(t)
+	if len(got.Runs) != 2 {
+		t.Fatalf("rows = %+v", got.Runs)
+	}
+	for _, r := range got.Runs {
+		if r.Status != runview.StatusError {
+			t.Fatalf("row = %+v", r)
+		}
+	}
+	if strings.Count(errOut, "warning") != 2 {
+		t.Fatalf("stderr = %q", errOut)
+	}
+	// A launch over an oversized claim fails with a clear remote error.
+	_, _, err := execute(t, "run", "--retry", bigClaim)
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "launch claim") {
+		t.Fatalf("run --retry over an oversized claim: %v", err)
+	}
+}
