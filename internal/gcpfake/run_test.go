@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend"
@@ -60,5 +61,40 @@ func TestLoggingFakeRefusesUnknownFilters(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusBadRequest || failed == "" {
 		t.Fatalf("status %d, failed %q", resp.StatusCode, failed)
+	}
+}
+
+// TestRunFakeSetOnRunIsSynchronized sets OnRun while :run requests are
+// served. Under -race it fails for a plain assignment to OnRun, which is
+// what a test whose requests come from a child process needs: the race
+// detector can't see that the assignment happened before them.
+func TestRunFakeSetOnRunIsSynchronized(t *testing.T) {
+	f := NewRun(t)
+	f.AddJob("fugaro-x-web", "1", "512Mi")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 10 {
+			resp, err := http.Post(f.URL+"/v2/projects/p/locations/r1/jobs/fugaro-x-web:run", "application/json", strings.NewReader(`{}`))
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			resp.Body.Close()
+		}
+	}()
+	var calls atomic.Int32
+	for range 10 {
+		f.SetOnRun(func(RunCall) { calls.Add(1) })
+	}
+	<-done
+	f.SetOnRun(func(RunCall) { calls.Add(1) })
+	resp, err := http.Post(f.URL+"/v2/projects/p/locations/r1/jobs/fugaro-x-web:run", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if calls.Load() == 0 {
+		t.Fatal("OnRun set by SetOnRun was never called")
 	}
 }

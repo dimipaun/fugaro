@@ -31,6 +31,7 @@ type Run struct {
 	*Server
 
 	// OnRun, when set, is called synchronously for every successful :run.
+	// Once the fake may be serving, set it with SetOnRun.
 	OnRun func(c RunCall)
 	// FailRunWith, when non-zero, makes :run answer that HTTP status
 	// without creating anything.
@@ -86,6 +87,16 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// SetOnRun sets OnRun under the fake's lock. Use it instead of assigning
+// OnRun when the fake is already serving, as when the requests come from a
+// child process: the race detector can't see that such an assignment
+// happened before them.
+func (f *Run) SetOnRun(fn func(RunCall)) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.OnRun = fn
 }
 
 // Start creates a pending execution of job directly, as another tool would,
