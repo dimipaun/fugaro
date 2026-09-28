@@ -16,6 +16,10 @@ func TestSecretEnvMayNotShadowProcessBehavior(t *testing.T) {
 		"PYTHONPATH", "PYTHONSTARTUP", "NODE_OPTIONS", "BASH_ENV", "ENV", "SSL_CERT_FILE",
 		"GOOGLE_APPLICATION_CREDENTIALS", "CLOUD_RUN_EXECUTION", "DOCKER_HOST",
 		"GIT_TOKEN", "FUGARO_RUN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_VERTEX",
+		// What the Google clients read: the metadata server, the storage
+		// endpoint and gRPC's logging.
+		"GOOGLE_CLOUD_QUOTA_PROJECT", "GCE_METADATA_HOST", "GCE_METADATA_IP", "STORAGE_EMULATOR_HOST",
+		"GRPC_GO_LOG_SEVERITY_LEVEL", "GRPC_TRACE",
 	} {
 		t.Run(env, func(t *testing.T) {
 			y := minimalYAML + "    secrets:\n      - { name: tok, env: " + env + " }\n"
@@ -41,7 +45,7 @@ func TestReservedEnvIgnoresCase(t *testing.T) {
 			t.Errorf("ReservedEnv(%q) = false", env)
 		}
 	}
-	for _, env := range []string{"NPM_TOKEN", "SENTRY_DSN", "GOOGLE_MAPS_KEY", "PATHWAY_KEY", "HOMEBREW_TOKEN"} {
+	for _, env := range []string{"NPM_TOKEN", "SENTRY_DSN", "MAPS_API_KEY", "PATHWAY_KEY", "HOMEBREW_TOKEN"} {
 		if ReservedEnv(env) {
 			t.Errorf("ReservedEnv(%q) = true, want an ordinary secret name allowed", env)
 		}

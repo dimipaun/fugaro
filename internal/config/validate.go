@@ -42,6 +42,7 @@ var (
 		"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_", // Fugaro, Claude Code and git
 		"LD_", "DYLD_", "PYTHON", "BASH", "LC_", // the loader, Python and the shell
 		"DOCKER_", "BUILDKIT_", "CLOUDSDK_", "CLOUD_RUN_", "VERTEX_REGION_", // the build, gcloud and the job
+		"GOOGLE_", "GCE_", "GRPC_", "STORAGE_EMULATOR_", // the Google clients: credentials, metadata server, gRPC, storage endpoint
 	}
 	ReservedEnvNames = []string{
 		"GODEBUG", "GOFLAGS", "GOTRACEBACK", "GOMAXPROCS", "GOMEMLIMIT",
@@ -52,6 +53,7 @@ var (
 		"NODE_OPTIONS", "NODE_PATH", "PERL5LIB", "PERL5OPT", "RUBYOPT", "RUBYLIB",
 		"JAVA_TOOL_OPTIONS", "_JAVA_OPTIONS", "JDK_JAVA_OPTIONS",
 		"GOOGLE_APPLICATION_CREDENTIALS", "GOOGLE_CLOUD_PROJECT", "GOOGLE_SDK_GO_LOGGING_LEVEL", "CLOUD_ML_REGION",
+		"GCE_METADATA_HOST", "GCE_METADATA_IP",
 		// The image build step's own variables (images/derived/cloudbuild.yaml).
 		"IMAGE", "SECRET_ENVS", "WORKFLOW", "REPO_URL", "BASE_BRANCH",
 	}
