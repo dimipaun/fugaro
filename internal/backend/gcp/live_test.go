@@ -1,18 +1,21 @@
 //go:build live
 
-// Live checks of the Cloud Run backend against the real edge-devel-dimi
-// resources that the M4 bootstrap creates (docs/gcp-live-checklist.md). They
+// Live checks of the Cloud Run backend against the real resources that the
+// M4 bootstrap creates in the live-test project (docs/gcp-live-checklist.md). They
 // never run in CI: they need the `live` build tag, Application Default
 // Credentials and the real local config. Run them only after the bootstrap
 // (docs/gcp-bootstrap.md) has been applied:
 //
+//	FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
 //	FUGARO_LIVE_JOB_SA=<sandbox job SA email> \
 //	  go test -tags live -p 1 -timeout 45m -run 'TestLive' -v ./internal/backend/gcp/
 //
 // Guardrails, enforced before any call:
-//   - The local config ($FUGARO_CONFIG or ~/.config/fugaro/config.yaml) must
-//     name liveProject and liveRegion, a runs bucket named fugaro-runs-*, no
-//     bucket_url override and no endpoint override. Anything else is t.Fatal.
+//   - FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO name the target (liveTarget).
+//     The local config ($FUGARO_CONFIG or ~/.config/fugaro/config.yaml) must
+//     name the same project, onboard the same repository, and name a runs
+//     bucket named fugaro-runs-*, no bucket_url override and no endpoint
+//     override. Anything else is t.Fatal. The region is the local config's.
 //   - Only the liveRepo sandbox is touched. Every object, secret, execution
 //     and build a test creates is removed (or cancelled) in a t.Cleanup that
 //     is registered before the side effect. Object names carry
@@ -66,11 +69,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// The one project, region and repository these tests may touch.
+// The sandbox's provider and workflow, and the names these tests create.
 const (
-	liveProject  = "edge-devel-dimi"
-	liveRegion   = "us-east5"
-	liveRepo     = "edgeappinc/fugarosandbox"
 	liveProvider = "bitbucket"
 	liveWorkflow = "web"
 	// livePrefix starts every name these tests create.
@@ -96,6 +96,35 @@ type liveEnv struct {
 	opts   Options
 }
 
+// The project, region and sandbox repository the live tests may touch. The
+// project and repository come from FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO
+// (for example my-fugaro-dev and acme/fugaro-sandbox), and the region from
+// the local config; liveTarget sets them, and the guard then requires the
+// local config to name the same project and onboard the same repository:
+// two independent statements of the target, so neither a stray environment
+// nor a stray config file alone can aim the tests elsewhere.
+var liveProject, liveRegion, liveRepo string
+
+var (
+	liveProjectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	liveRepoRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+)
+
+// liveTarget reads FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO, and fails the
+// test unless both are set and well formed.
+func liveTarget(t *testing.T) {
+	t.Helper()
+	liveProject, liveRepo = os.Getenv("FUGARO_LIVE_PROJECT"), os.Getenv("FUGARO_LIVE_REPO")
+	switch {
+	case liveProject == "" || liveRepo == "":
+		t.Fatal("set FUGARO_LIVE_PROJECT (the live-test GCP project) and FUGARO_LIVE_REPO (the sandbox repository, owner/name); the local config must name the same ones")
+	case !liveProjectRE.MatchString(liveProject):
+		t.Fatalf("FUGARO_LIVE_PROJECT=%q is not a GCP project ID", liveProject)
+	case !liveRepoRE.MatchString(liveRepo):
+		t.Fatalf("FUGARO_LIVE_REPO=%q is not owner/name", liveRepo)
+	}
+}
+
 // fact logs one observation in the form the runbook pastes.
 func fact(t *testing.T, format string, args ...any) {
 	t.Helper()
@@ -106,6 +135,7 @@ func fact(t *testing.T, format string, args ...any) {
 // it names exactly the live project, region and a fugaro-runs-* bucket.
 func openLive(t *testing.T) *liveEnv {
 	t.Helper()
+	liveTarget(t)
 	// Keep every Google client quiet: at debug level they log request bodies.
 	t.Setenv("GOOGLE_SDK_GO_LOGGING_LEVEL", "")
 	for _, v := range []string{"GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"} {
@@ -124,8 +154,8 @@ func openLive(t *testing.T) *liveEnv {
 	switch {
 	case lc.Project != liveProject:
 		t.Fatalf("local config %s names project %q; the live tests run only against %s", path, lc.Project, liveProject)
-	case lc.Region != liveRegion:
-		t.Fatalf("local config %s names region %q; the live tests run only in %s", path, lc.Region, liveRegion)
+	case lc.Region == "":
+		t.Fatalf("local config %s names no region", path)
 	case lc.Bucket != "" && lc.Bucket != "gs://"+lc.RunsBucket:
 		t.Fatalf("local config %s sets bucket_url %q; the live tests need runs_bucket only", path, lc.Bucket)
 	case !strings.HasPrefix(lc.RunsBucket, liveBucketPrefix):
@@ -133,6 +163,7 @@ func openLive(t *testing.T) *liveEnv {
 	case lc.Endpoints != (localcfg.Endpoints{}):
 		t.Fatalf("local config %s overrides API endpoints; the live tests talk only to Google", path)
 	}
+	liveRegion = lc.Region
 	r, ok := lc.Repos[liveRepo]
 	if !ok || (r.Provider != "" && r.Provider != liveProvider) {
 		t.Fatalf("local config %s does not onboard %s (provider %s)", path, liveRepo, liveProvider)

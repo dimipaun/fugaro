@@ -7,13 +7,16 @@
 // sandbox's repository access token. Run it only after the bootstrap
 // (docs/gcp-bootstrap.md) has been applied:
 //
-//	FUGARO_BITBUCKET_TOKEN="$(cat ~/.config/fugaro-bb-token)" \
+//	FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
+//	FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
 //	  go test -tags live -p 1 -timeout 45m -run 'TestLive' -v ./internal/e2e/
 //
 // Guardrails, enforced before any call:
-//   - The local config must name liveProject, liveRegion, a fugaro-runs-*
-//     runs bucket and no endpoint or bucket_url override; the only
-//     repository is liveRepo.
+//   - FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO name the target (liveTarget),
+//     and the local config must name the same project, onboard the same
+//     repository, a fugaro-runs-* runs bucket and no endpoint or bucket_url
+//     override; the only repository touched is liveRepo, in the local
+//     config's region.
 //   - Spend is capped before the launch: the sandbox job must have at most
 //     1 CPU, 2Gi and a 30m task timeout, and the sandbox's fugaro.yaml at
 //     most a $2 agent budget and a 20m total timeout. The test polls for at
@@ -65,11 +68,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// The one project, region and repository this test may touch.
+// The sandbox's provider, workflow and branch, and the names this test creates.
 const (
-	liveProject      = "edge-devel-dimi"
-	liveRegion       = "us-east5"
-	liveRepo         = "edgeappinc/fugarosandbox"
 	liveProvider     = "bitbucket"
 	liveWorkflow     = "web"
 	liveBaseBranch   = "master"
@@ -104,6 +104,35 @@ type liveRig struct {
 	be     *gcp.Backend
 }
 
+// The project, region and sandbox repository the live tests may touch. The
+// project and repository come from FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO
+// (for example my-fugaro-dev and acme/fugaro-sandbox), and the region from
+// the local config; liveTarget sets them, and the guard then requires the
+// local config to name the same project and onboard the same repository:
+// two independent statements of the target, so neither a stray environment
+// nor a stray config file alone can aim the tests elsewhere.
+var liveProject, liveRegion, liveRepo string
+
+var (
+	liveProjectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
+	liveRepoRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+)
+
+// liveTarget reads FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO, and fails the
+// test unless both are set and well formed.
+func liveTarget(t *testing.T) {
+	t.Helper()
+	liveProject, liveRepo = os.Getenv("FUGARO_LIVE_PROJECT"), os.Getenv("FUGARO_LIVE_REPO")
+	switch {
+	case liveProject == "" || liveRepo == "":
+		t.Fatal("set FUGARO_LIVE_PROJECT (the live-test GCP project) and FUGARO_LIVE_REPO (the sandbox repository, owner/name); the local config must name the same ones")
+	case !liveProjectRE.MatchString(liveProject):
+		t.Fatalf("FUGARO_LIVE_PROJECT=%q is not a GCP project ID", liveProject)
+	case !liveRepoRE.MatchString(liveRepo):
+		t.Fatalf("FUGARO_LIVE_REPO=%q is not owner/name", liveRepo)
+	}
+}
+
 func liveFact(t *testing.T, format string, args ...any) {
 	t.Helper()
 	t.Log("FACT: " + fmt.Sprintf(format, args...))
@@ -113,6 +142,7 @@ func liveFact(t *testing.T, format string, args ...any) {
 // the Bitbucket client. It makes no remote call but reads.
 func newLiveRig(t *testing.T, needToken bool) *liveRig {
 	t.Helper()
+	liveTarget(t)
 	t.Setenv("GOOGLE_SDK_GO_LOGGING_LEVEL", "")
 	for _, v := range []string{"GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"} {
 		if p := os.Getenv(v); p != "" && p != liveProject {
@@ -130,8 +160,8 @@ func newLiveRig(t *testing.T, needToken bool) *liveRig {
 	switch {
 	case lc.Project != liveProject:
 		t.Fatalf("local config %s names project %q; the live tests run only against %s", path, lc.Project, liveProject)
-	case lc.Region != liveRegion:
-		t.Fatalf("local config %s names region %q; the live tests run only in %s", path, lc.Region, liveRegion)
+	case lc.Region == "":
+		t.Fatalf("local config %s names no region", path)
 	case lc.Bucket != "" && lc.Bucket != "gs://"+lc.RunsBucket:
 		t.Fatalf("local config %s sets bucket_url %q; the live tests need runs_bucket only", path, lc.Bucket)
 	case !strings.HasPrefix(lc.RunsBucket, liveBucketPrefix):
@@ -139,6 +169,7 @@ func newLiveRig(t *testing.T, needToken bool) *liveRig {
 	case lc.Endpoints != (localcfg.Endpoints{}):
 		t.Fatalf("local config %s overrides API endpoints; the live tests talk only to Google", path)
 	}
+	liveRegion = lc.Region
 	if r, ok := lc.Repos[liveRepo]; !ok || (r.Provider != "" && r.Provider != liveProvider) {
 		t.Fatalf("local config %s does not onboard %s (provider %s)", path, liveRepo, liveProvider)
 	}
