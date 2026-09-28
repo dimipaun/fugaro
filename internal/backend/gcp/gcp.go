@@ -71,7 +71,7 @@ func (o Options) client(endpoint string) []option.ClientOption {
 	}
 	if !o.Endpoints.NoAuth && o.Project != "" {
 		// User ADC has no project of its own, and some APIs refuse it
-		// without a quota project (minor 9).
+		// without a quota project.
 		opts = append(opts, option.WithQuotaProject(o.Project))
 	}
 	return opts
