@@ -3,9 +3,9 @@
 # both set the substitutions.
 #
 # The git credential is the provider token the job already uses
-# (fugaro-<slug>-bitbucket-token): _GIT_SECRET names its Secret Manager
-# version and _GIT_USER its https username. Only the two steps that clone
-# see it, as GIT_TOKEN: source (the shallow clone render reads) and build
+# (fugaro-<slug>-bitbucket-token): fugaro writes its Secret Manager version
+# into availableSecrets directly, and _GIT_USER names its https username.
+# Only the two steps that clone see it, as GIT_TOKEN: source (the shallow clone render reads) and build
 # (for the Dockerfile's own clone). Each checks REPO_URL is https://, writes
 # a credential-store line (https://<user>:<token>@<host>, user and token
 # percent-encoded) into a mktemp directory inside its own container, and
@@ -22,8 +22,12 @@
 # names. This file declares none of them in availableSecrets or the build
 # step's secretEnv; the request builder (gcp.BuildRequest) adds each one to
 # both, so a trigger must build its request the same way rather than run
-# this file as is. The build step passes each as an env BuildKit secret,
-# which the template mounts with required=false.
+# this file as is. The build step writes each into its credential
+# directory (umask 077, printf, removed on exit) and passes it as a file
+# BuildKit secret (src=), which the template mounts as a file with
+# required=false and exports inside the RUN. Neither side uses env=
+# secrets: Cloud Build's docker daemon refuses env= mounts ("exec.secretenv
+# is not supported by build server").
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
@@ -35,14 +39,13 @@ substitutions:
   _WORKFLOW: ""
   _FUGARO_BASE: ""    # ghcr.io/dimipaun/fugaro-<base>:<version>; build pins the render step's image by digest
   _IMAGE: ""          # the Artifact Registry image name, without a tag
-  _GIT_SECRET: ""     # Secret Manager version of the provider token (the job's own)
   _GIT_USER: ""       # the token's https username, such as x-token-auth for Bitbucket
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
   secretManager:
-    - versionName: ${_GIT_SECRET}
+    - versionName: "set by fugaro image build: the provider token's Secret Manager version"
       env: GIT_TOKEN
 steps:
   # A shallow clone, so render can read fugaro.yaml and the lockfiles.
@@ -133,7 +136,9 @@ steps:
         set --
         for e in $$SECRET_ENVS; do
           case "$$e" in *[!A-Z0-9_]*) echo "bad secret variable name" >&2; exit 1 ;; esac
-          set -- "$$@" --secret "id=$$e,env=$$e"
+          [ -n "$${!e+set}" ] || { echo "secret variable $$e is not set" >&2; exit 1; }
+          (umask 077 && printf '%s' "$${!e}" > "$$cred/$$e")
+          set -- "$$@" --secret "id=$$e,src=$$cred/$$e"
         done
         docker build --progress plain \
           --build-arg "FUGARO_BASE=$$base" \

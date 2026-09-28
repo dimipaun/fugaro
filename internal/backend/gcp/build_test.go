@@ -2,6 +2,7 @@ package gcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"slices"
@@ -39,7 +40,7 @@ func TestBuildRequest(t *testing.T) {
 		t.Fatalf("substitutions = %v", b.Substitutions)
 	}
 	gitVersion := "projects/proj-1234/secrets/" + spec.GitSecretID + "/versions/latest"
-	if b.Substitutions["_GIT_SECRET"] != gitVersion || b.Substitutions["_REPO_URL"] != spec.RepoURL ||
+	if b.Substitutions["_REPO_URL"] != spec.RepoURL ||
 		b.Substitutions["_FUGARO_BASE"] != spec.Base || b.Substitutions["_WORKFLOW"] != "web" || b.Substitutions["_BASE_BRANCH"] != "main" {
 		t.Fatalf("substitutions = %v", b.Substitutions)
 	}
@@ -104,6 +105,28 @@ func TestBuildRequest(t *testing.T) {
 		mutate(&s)
 		if _, err := BuildRequest("proj-1234", s); err == nil {
 			t.Errorf("an incomplete or unsafe spec was accepted: %+v", s)
+		}
+	}
+}
+
+// TestBuildRequestUsesEverySubstitution: Cloud Build rejects a request whose
+// substitutions include a key the build doesn't reference ("key … in the
+// substitution data is not matched in the template"), so every key sent must
+// appear as ${KEY} in the request itself.
+func TestBuildRequestUsesEverySubstitution(t *testing.T) {
+	b, err := BuildRequest("proj-1234", buildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	subs := b.Substitutions
+	b.Substitutions = nil
+	body, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for k := range subs {
+		if !strings.Contains(string(body), "${"+k+"}") {
+			t.Errorf("substitution %s is sent but not referenced, which Cloud Build rejects", k)
 		}
 	}
 }

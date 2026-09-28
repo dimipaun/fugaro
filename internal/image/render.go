@@ -45,19 +45,39 @@ func Render(in RenderInput) ([]byte, error) {
 	}
 	data := struct {
 		RenderInput
-		WarmUp, WarmUpFor, SecretMounts string
+		WarmUp, WarmUpFor, SecretMounts, SecretEnv string
 	}{RenderInput: in}
 	if in.PM != nil {
 		data.WarmUp, data.WarmUpFor = in.PM.Install, in.PM.Lockfile
 	}
-	for _, env := range in.Secrets {
-		data.SecretMounts += fmt.Sprintf(" --mount=type=secret,id=%s,env=%s,required=false", env, env)
-	}
+	data.SecretMounts, data.SecretEnv = secretMounts(in.Secrets)
 	var buf bytes.Buffer
 	if err := derived.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("rendering the derived-image template: %w", err)
 	}
 	return buf.Bytes(), nil
+}
+
+// secretMounts returns the RUN flags that mount each workflow secret and the
+// shell prefix that exports it, for the warm-up and setup steps.
+//
+// Each secret is mounted as a file, /run/secrets/<VAR>, readable only by
+// fugaro (uid 1000, which those steps run as), and the prefix reads it into
+// <VAR> inside the RUN's own shell, so the value is on no command line and
+// in no layer, ENV, build argument or log. A secret the build lacks is not
+// mounted (required=false) and its variable stays unset; one that is
+// mounted but unreadable fails the step. Like any $(…), the read drops the
+// value's trailing newlines. BuildKit's env=
+// secret mounts would be simpler, but Cloud Build's docker daemon refuses
+// them ("requested experimental feature exec.secretenv is not supported").
+// vars are environment variable names (config validates them), so they
+// need no quoting.
+func secretMounts(vars []string) (mounts, prefix string) {
+	for _, v := range vars {
+		mounts += fmt.Sprintf(" --mount=type=secret,id=%s,uid=1000,mode=0400,required=false", v)
+		prefix += fmt.Sprintf(`if test -e /run/secrets/%[1]s; then %[1]s="$(cat /run/secrets/%[1]s)" || exit 1; export %[1]s; fi; `, v)
+	}
+	return mounts, prefix
 }
 
 func checkBase(base string) error {

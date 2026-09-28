@@ -61,6 +61,7 @@ import (
 	"google.golang.org/api/option"
 	run "google.golang.org/api/run/v2"
 
+	"github.com/dimipaun/fugaro/images"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
@@ -811,10 +812,15 @@ func TestLiveCacheOnGCS(t *testing.T) {
 // the configured build service account, that does what the derived-image
 // build step does and nothing else: it pulls the base image, pins it by its
 // RepoDigest, and builds FROM repo@sha256:… with the sandbox-probe workflow
-// secret passed as `--secret id=SANDBOX_PROBE,env=SANDBOX_PROBE` and
-// mounted with required=true. It pushes nothing. It records whether BuildKit
-// in gcr.io/cloud-builders/docker honours env= secrets and how the digest
-// FROM resolves (from the local image or the registry).
+// secret written to a file and passed as `--secret id=SANDBOX_PROBE,src=…`,
+// and mounted as a file with required=true, under the same pinned
+// dockerfile frontend (# syntax=) as the derived template, exactly as the
+// derived build passes and mounts workflow secrets. (Without the syntax
+// line this check once passed while the derived build failed: the pinned
+// frontend asked the daemon for env= secret mounts, which Cloud Build's
+// docker refuses.) It pushes nothing. It records whether the secret was
+// mounted and how the digest FROM resolves (from the local image or the
+// registry).
 //
 // It also probes the build isolation boundary (design §7.2): repository
 // code runs in the Dockerfile's RUN steps, and must not reach the metadata
@@ -852,8 +858,11 @@ base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE"
 echo "LIVE base-digest $$base"
 echo "LIVE docker $$(docker version --format '{{.Server.Version}}')"
 ctx=$$(mktemp -d)
-printf 'FROM %s\nRUN --mount=type=secret,id=SANDBOX_PROBE,required=true,mode=0444 test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-"mounted"\n' "$$base" > "$$ctx/Dockerfile"
-docker build --progress plain --no-cache --secret id=SANDBOX_PROBE,env=SANDBOX_PROBE "$$ctx" 2>&1 | sed 's/^/LIVE build: /'
+sec=$$(mktemp -d)
+trap 'rm -rf "$$sec"' EXIT
+(umask 077 && printf '%s' "$$SANDBOX_PROBE" > "$$sec/SANDBOX_PROBE")
+printf '%s\nFROM %s\nRUN --mount=type=secret,id=SANDBOX_PROBE,uid=1000,mode=0400,required=true test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-"mounted"\n' "$$DOCKERFILE_SYNTAX" "$$base" > "$$ctx/Dockerfile"
+docker build --progress plain --no-cache --secret "id=SANDBOX_PROBE,src=$$sec/SANDBOX_PROBE" "$$ctx" 2>&1 | sed 's/^/LIVE build: /'
 pctx=$$(mktemp -d)
 printf '%s' "$$META_PROBE" > "$$pctx/probe.sh"
 printf 'FROM %s\nCOPY probe.sh /probe.sh\nRUN sh /probe.sh default\n' "$$base" > "$$pctx/Dockerfile.default"
@@ -866,7 +875,7 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 			// Pulls the base, and runs the metadata control on the cloudbuild network.
 			{Id: "pull", Name: e.lc.BaseImage, Entrypoint: "sh", Args: []string{"-c", metaProbe, "sh", "step"}},
 			{Id: "probe", Name: "gcr.io/cloud-builders/docker", Entrypoint: "bash",
-				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "META_PROBE=" + metaProbe}, SecretEnv: []string{"SANDBOX_PROBE"},
+				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "META_PROBE=" + metaProbe, "DOCKERFILE_SYNTAX=" + dockerfileSyntax}, SecretEnv: []string{"SANDBOX_PROBE"},
 				Args: []string{"-c", script}},
 		},
 		AvailableSecrets: &cloudbuild.Secrets{SecretManager: []*cloudbuild.SecretManagerSecret{{
@@ -927,7 +936,7 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 			fact(t, "FROM resolution: %s", strings.TrimSpace(l[strings.Index(l, "LIVE build:")+len("LIVE build:"):]))
 		}
 	}
-	fact(t, "BuildKit env= secret mounted with required=true: %v", secret)
+	fact(t, "BuildKit src= secret mounted as a file with required=true: %v", secret)
 	fact(t, "FROM repo@sha256 contacted the registry for metadata: %v", metadata)
 	if werr != nil {
 		t.Fatalf("probe build failed: %v", werr)
@@ -940,6 +949,10 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 	}
 	checkMetadataProbes(t, meta)
 }
+
+// dockerfileSyntax is the derived template's # syntax= line, so the probe
+// build uses the same pinned frontend.
+var dockerfileSyntax, _, _ = strings.Cut(images.DerivedTemplate, "\n")
 
 // metaProbe is the metadata probe, a POSIX sh script taking where it runs
 // as $1. It prints one "LIVE metadata <where> blocked|REACHABLE <url>" line

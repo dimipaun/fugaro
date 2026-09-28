@@ -10,7 +10,8 @@
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
 # Build secrets, all optional: git-credentials (a git credential-store file
-# for REPO_URL) and one per workflow secret, exposed as that variable.
+# for REPO_URL) and one per workflow secret, mounted as a file and exported
+# as that variable inside the warm-up and setup commands only.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
 # The base as built FROM (Cloud Build passes its digest); cache keys use it.
@@ -46,7 +47,7 @@ RUN --mount=type=bind,target=/src \
 {{- if .WarmUp}}
 
 # Dependency warm-up for {{.WarmUpFor}}.
-RUN{{.SecretMounts}} {{.WarmUp}}
+RUN{{.SecretMounts}} {{.SecretEnv}}{{.WarmUp}}
 {{- end}}
 {{- if .Image.Setup}}
 
@@ -59,7 +60,7 @@ USER fugaro
 
 # image.setup steps.
 {{- range .Image.Setup}}
-RUN{{$.SecretMounts}} {{.}}
+RUN{{$.SecretMounts}} {{$.SecretEnv}}{{.}}
 {{- end}}
 {{- end}}
 

@@ -163,7 +163,7 @@ func TestBuildLocal(t *testing.T) {
 		t.Errorf("bundle heads = %q, want HEAD published as develop", f.heads)
 	}
 	for _, want := range []string{"RUN /usr/local/lib/fugaro/install-node 24.19.0",
-		"--mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false --mount=type=secret,id=OTHER_TOKEN,env=OTHER_TOKEN,required=false npm ci"} {
+		`--mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false --mount=type=secret,id=OTHER_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; if test -e /run/secrets/OTHER_TOKEN; then OTHER_TOKEN="$(cat /run/secrets/OTHER_TOKEN)" || exit 1; export OTHER_TOKEN; fi; npm ci`} {
 		if !strings.Contains(f.dockerfile, want) {
 			t.Errorf("Dockerfile lacks %q", want)
 		}

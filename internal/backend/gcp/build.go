@@ -110,7 +110,6 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		"_WORKFLOW":    s.Workflow,
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
-		"_GIT_SECRET":  gitVersion,
 		"_GIT_USER":    s.GitUser,
 		"_SECRET_ENVS": strings.Join(envs, " "),
 	}

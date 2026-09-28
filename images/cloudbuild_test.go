@@ -67,7 +67,7 @@ func TestCloudBuildConfig(t *testing.T) {
 	if !strings.Contains(script(2), "RepoDigests") {
 		t.Error("the build step does not pin the base image by digest")
 	}
-	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_SECRET", "_GIT_USER", "_SECRET_ENVS"} {
+	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_SECRET_ENVS"} {
 		if _, ok := cb.Substitutions[k]; !ok {
 			t.Errorf("substitution %s is not declared", k)
 		}
@@ -445,6 +445,7 @@ func TestCloudBuildCredentialScripts(t *testing.T) {
 	}
 	const token = "t/o@k:e%n+ 'x\"y"
 	const user = "x-token-auth"
+	const npmToken = "-n 'p\"m %s\\n"
 	dir := t.TempDir()
 	ws := filepath.Join(dir, "workspace")
 	bin := filepath.Join(dir, "bin")
@@ -464,7 +465,10 @@ for a in "$@"; do case "$a" in credential.helper=store\ --file=*) cp "${a#creden
 		"docker": `#!/bin/sh
 printf '%s\n' "docker $*" >> "$ARGV"
 case "$1 $2" in "image inspect") echo "example.com/base@sha256:abc"; exit 0 ;; esac
-for a in "$@"; do case "$a" in id=git-credentials,src=*) cp "${a#id=git-credentials,src=}" "$CAPTURE/build" ;; esac; done
+for a in "$@"; do case "$a" in
+  id=git-credentials,src=*) cp "${a#id=git-credentials,src=}" "$CAPTURE/build" ;;
+  id=NPM_TOKEN,src=*) f=${a#id=NPM_TOKEN,src=}; cp "$f" "$CAPTURE/npm"; ls -l "$f" | cut -c1-10 > "$CAPTURE/npm-mode" ;;
+esac; done
 `,
 	}
 	for name, body := range stubs {
@@ -486,7 +490,7 @@ for a in "$@"; do case "$a" in id=git-credentials,src=*) cp "${a#id=git-credenti
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + tmp, "ARGV=" + argv, "CAPTURE=" + capture,
 			"GIT_TOKEN=" + token, "GIT_USER=" + user, "REPO_URL=https://bitbucket.org/acme/app.git", "BASE_BRANCH=main",
-			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=n"}
+			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=" + npmToken}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("step %s: %v\n%s", st.ID, err, out)
 		} else if strings.Contains(string(out), token) {
@@ -500,8 +504,19 @@ for a in "$@"; do case "$a" in id=git-credentials,src=*) cp "${a#id=git-credenti
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(logged), "k:e") || !strings.Contains(string(logged), "--secret id=NPM_TOKEN,env=NPM_TOKEN") {
+	if strings.Contains(string(logged), "k:e") || !regexp.MustCompile(`--secret id=NPM_TOKEN,src=\S*/NPM_TOKEN `).Match(logged) || strings.Contains(string(logged), "env=") {
 		t.Errorf("argv:\n%s", logged)
+	}
+	// The build step hands docker the workflow secret as a file it wrote
+	// with umask 077, holding the value exactly, never on its argv.
+	if got, err := os.ReadFile(filepath.Join(capture, "npm")); err != nil || string(got) != npmToken {
+		t.Errorf("the NPM_TOKEN secret file = %q, %v; want %q", got, err, npmToken)
+	}
+	if mode, _ := os.ReadFile(filepath.Join(capture, "npm-mode")); string(mode) != "-rw-------\n" {
+		t.Errorf("the NPM_TOKEN secret file mode = %q, want -rw-------", mode)
+	}
+	if strings.Contains(string(logged), "p\"m") {
+		t.Error("the workflow secret value reached docker's argv")
 	}
 	for _, f := range []string{"source", "build"} {
 		file := filepath.Join(capture, f)
