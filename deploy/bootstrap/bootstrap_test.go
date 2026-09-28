@@ -37,7 +37,7 @@ func TestMain(m *testing.M) {
 
 const (
 	project  = "proj-1234"
-	bucket   = "proj-1234-fugaro-runs"
+	bucket   = "fugaro-runs-proj-1234"
 	buildSA  = "fugaro-build@proj-1234.iam.gserviceaccount.com"
 	bucketGS = "gs://" + bucket
 	registry = "us-east5-docker.pkg.dev/proj-1234/fugaro"
@@ -288,7 +288,7 @@ func sandboxCheckout(t *testing.T) string {
 	return dir
 }
 
-const localConfig = "version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: proj-1234-fugaro-runs\n" +
+const localConfig = "version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
 	"registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n"
 
 // writeLocalConfig writes a minimal local config for project proj-1234.
@@ -434,7 +434,7 @@ func TestApplyExactCalls(t *testing.T) {
 			"--image", image + ":latest", "--service-account", jobSA,
 			"--cpu", "1", "--memory", "2Gi", "--task-timeout", "1320s", "--max-retries", "0", "--tasks", "1",
 			"--labels", "fugaro=managed," + repoLbl + ",fugaro_workflow=web",
-			"--set-env-vars", "^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://proj-1234-fugaro-runs;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;" +
+			"--set-env-vars", "^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://fugaro-runs-proj-1234;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;" +
 				"FUGARO_SECRET_ENVS=CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,SANDBOX_PROBE",
 			"--set-secrets", "CLAUDE_CODE_OAUTH_TOKEN=" + oauthID + ":latest,FUGARO_BITBUCKET_TOKEN=" + gitID + ":latest,SANDBOX_PROBE=" + probeID + ":latest"},
 	})
@@ -782,7 +782,7 @@ func TestConfigStep(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "fugaro", "config.yaml")
 	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+gitcfg, "FUGARO_CONFIG="+path, "PATH="+fakeBin(t)+":"+os.Getenv("PATH"),
-		"PROJECT=proj-1234", "REGION=us-east5", "BUCKET=proj-1234-fugaro-runs", "REPOS=acme/sandbox:master:web acme/app:main:web:github")
+		"PROJECT=proj-1234", "REGION=us-east5", "BUCKET=fugaro-runs-proj-1234", "REPOS=acme/sandbox:master:web acme/app:main:web:github")
 	with := func(extra ...string) []string { return append(slices.Clone(env), extra...) }
 	if out, err := script(t, env, "config"); err != nil || !strings.Contains(out, "project: proj-1234") || !strings.Contains(out, "⚠ CONFIRM (project proj-1234)") {
 		t.Fatalf("dry run: %v\n%s", err, out)
@@ -852,7 +852,7 @@ func TestScriptGuards(t *testing.T) {
 		"bucket mismatch":               {[]string{"FUGARO_CONFIG=" + cfg, "BUCKET=prod-data"}, []string{"teardown-all", "--all"}},
 		"region mismatch":               {[]string{"FUGARO_CONFIG=" + cfg, "REGION=europe-west1"}, []string{"registry"}},
 		"other build service account":   {[]string{"FUGARO_CONFIG=" + writeConfig(t, strings.Replace(localConfig, "fugaro-build@", "ci@", 1))}, []string{"build-sa"}},
-		"config with no bucket, BUCKET": {[]string{"FUGARO_CONFIG=" + writeConfig(t, strings.Replace(localConfig, "runs_bucket: proj-1234-fugaro-runs\n", "", 1))}, []string{"bucket"}},
+		"config with no bucket, BUCKET": {[]string{"FUGARO_CONFIG=" + writeConfig(t, strings.Replace(localConfig, "runs_bucket: fugaro-runs-proj-1234\n", "", 1))}, []string{"bucket"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if out, err := script(t, append(slices.Clone(base), c.env...), c.args...); err == nil || !strings.Contains(out, "refusing") {
@@ -889,5 +889,36 @@ func TestScriptShellcheck(t *testing.T) {
 	}
 	if out, err := exec.Command("shellcheck", "gcp-m4.sh").CombinedOutput(); err != nil {
 		t.Fatalf("shellcheck:\n%s", out)
+	}
+}
+
+// base prints the whole config command that records its tag: config needs
+// PROJECT, REGION, BUCKET and REPOS as well, and rewrites the whole file.
+func TestBasePrintsTheWholeConfigCommand(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newFake(t)
+	env := scriptEnv(t, f.bin, f)
+	out := mustScript(t, env, "--apply", "--yes", "base")
+	for _, want := range []string{"PROJECT=" + project, "REGION=us-east5", "BUCKET=" + bucket, "REPOS='", "BASE_IMAGE=", "FORCE=1", "gcp-m4.sh --apply config"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("base's config command lacks %s:\n%s", want, out)
+		}
+	}
+}
+
+// The live tests refuse a runs bucket not named fugaro-runs-*, and a bucket
+// can't be renamed, so config and bucket refuse one before anything exists.
+func TestBucketNameMustStartFugaroRuns(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newFake(t)
+	env := append(scriptEnv(t, f.bin, f), "BUCKET=proj-1234-runs", "REPOS=acme/sandbox:master:web")
+	for _, step := range []string{"config", "bucket"} {
+		out, err := script(t, env, "--apply", "--yes", step)
+		if err == nil || !strings.Contains(out, "fugaro-runs-") {
+			t.Fatalf("%s with BUCKET=proj-1234-runs: %v\n%s", step, err, out)
+		}
+		if m := mutating(f.calls(t)); len(m) > 0 {
+			t.Fatalf("%s changed %q", step, m)
+		}
 	}
 }

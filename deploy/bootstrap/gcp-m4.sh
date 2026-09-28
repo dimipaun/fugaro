@@ -181,6 +181,16 @@ check_secret_owner() {
   check_secret_labels "$1"
 }
 
+# bucket_name_ok: dies unless BUCKET starts with fugaro-runs-. The live
+# tests refuse any other runs bucket, and a bucket can't be renamed, so the
+# name is checked before one is written into the config or created.
+bucket_name_ok() {
+  case "$BUCKET" in
+    fugaro-runs-?*) ;;
+    *) die "BUCKET=$BUCKET must start with fugaro-runs- (the live tests refuse any other runs bucket, and a bucket can't be renamed); refusing" ;;
+  esac
+}
+
 need() {
   local v
   for v in "$@"; do [ -n "${!v:-}" ] || die "set $v"; done
@@ -308,6 +318,7 @@ need_build_sa() { [ -n "$BUILD_SA" ] || die "$cfgfile has no build.service_accou
 case "$STEP" in
   config)
     need REGION BUCKET REPOS
+    bucket_name_ok
     path=$cfgfile
     user=$(git config user.email || true)
     [ -n "$user" ] || die "git config user.email is not set"
@@ -350,6 +361,7 @@ case "$STEP" in
     ;;
   bucket)
     need REGION BUCKET
+    bucket_name_ok
     confirm "creates bucket gs://$BUCKET in $REGION with lifecycle rules: runs/ deleted after 90 days, cache/ 30 days after its custom time or 180 days after creation (storage billed per GB-month)"
     if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then
       own_bucket
@@ -463,7 +475,10 @@ JSON
     run "$HEAVY" sh "$FUGARO_SRC/images/build-base.sh" web-node "$tag"
     run gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet --project "$PROJECT"
     run "$HEAVY" docker push "$tag"
-    echo "set base_image: $tag in the local config (BASE_IMAGE=$tag FORCE=1 gcp-m4.sh --apply config)"
+    # config rewrites the whole file, so the command carries everything it
+    # needs; REPOS must be the same list as before.
+    echo "set base_image: $tag in the local config, with the same REPOS as before:"
+    echo "  PROJECT=$PROJECT REGION=$REGION BUCKET=${BUCKET:-<bucket>} REPOS='${REPOS:-<as before>}' BASE_IMAGE=$tag FORCE=1 gcp-m4.sh --apply config"
     ;;
   image)
     need REPO WORKFLOW CHECKOUT

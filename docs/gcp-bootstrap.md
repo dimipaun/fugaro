@@ -12,7 +12,7 @@ This runbook describes each step: the command, what it creates, whether it costs
 - **The project is always explicit.** Every `gcloud` call passes `--project`, and gcloud prompts are disabled (`CLOUDSDK_CORE_DISABLE_PROMPTS=1`), so gcloud's active project never matters.
 - **The bucket is pinned.** Bucket names are global, so before any bucket write, IAM change or deletion, a read-only describe checks that the bucket belongs to `PROJECT`.
 - **Steps can be rerun.** A create skips a resource that already exists (a bucket only when it is in the same project and region), and a delete skips what is already gone.
-- **Ownership is checked before reuse or deletion.** An existing job must carry this repository's `fugaro_repo` and `fugaro_workflow` labels, a job's service account this repository's and workflow's display name (`fugaro gcp job-spec --field sa-display-name`), and a secret this repository's `fugaro_repo` label. Otherwise the step refuses.
+- **Ownership is checked before reuse or deletion.** An existing job must carry `fugaro=managed` and this repository's `fugaro_repo` and `fugaro_workflow` labels; a job's service account this repository's and workflow's display name (`fugaro gcp job-spec --field sa-display-name`); and a secret the labels `fugaro secrets set` gives it, `fugaro=managed`, this repository's `fugaro_repo` and its own logical name as `fugaro_secret`. Otherwise the step refuses.
 - **The shared resources carry a mark too.** The script labels the bucket and the `fugaro` registry `fugaro=managed` when it creates them, and gives `fugaro-build` the display name `Fugaro image builds (M4 bootstrap)`. A bucket, registry or `fugaro-build` that exists under the same name without that mark is someone else's: `bucket`, `registry`, `build-sa`, `job-sa`, `secrets-access`, `teardown` and `teardown-all` refuse to adopt it, rewrite its lifecycle, grant on it or delete it. A bucket created before the label existed (or whose create succeeded but whose label update didn't) is refused too; if it is really the bootstrap's, label it by hand with `gcloud storage buckets update gs://<bucket> --update-labels fugaro=managed --project <project>` (and `gcloud artifacts repositories update fugaro --location <region> --update-labels fugaro=managed --project <project>` for the registry).
 - **Only Bitbucket repositories.** The job spec needs a GitHub App's ID and installation, which M5's Terraform provides, so the script refuses a GitHub repository. It also doesn't grant `roles/aiplatform.user`, so a job with `agent.auth: vertex` can't reach the model; use `oauth` or `api-key`.
 
@@ -22,7 +22,7 @@ This runbook describes each step: the command, what it creates, whether it costs
 |---|---|---|
 | `PROJECT` | every step | the GCP project ID |
 | `REGION` | most steps | the region of the jobs, the bucket, the registry and Cloud Build |
-| `BUCKET` | `config`, `bucket`, `job-sa`, `teardown*` | the runs bucket's name |
+| `BUCKET` | `config`, `bucket`, `job-sa`, `teardown*` | the runs bucket's name, which must start with `fugaro-runs-` (for example `fugaro-runs-<project>`): the live tests refuse any other runs bucket, and a bucket can't be renamed, so `config` and `bucket` refuse another name before anything is written |
 | `REPOS` | `config` | the repositories, space-separated, each `owner/name:base_branch:workflow[:provider]` (provider `bitbucket`, the default, or `github`) |
 | `BASE_IMAGE`, `FORCE` | `config` | an optional `base_image`; `FORCE=1` replaces an existing local config (the script shows the diff first) |
 | `REPO`, `WORKFLOW`, `CHECKOUT` | per-repository steps | the repository (`owner/name`), its workflow, and a checkout of it, whose `fugaro.yaml` the names come from |
@@ -81,9 +81,11 @@ A new version reaches new executions, which mount `latest`; `secrets-access` nee
 After `base`, put the printed tag in the local config, so cloud image builds use it:
 
 ```bash
-PROJECT=<project> BASE_IMAGE=<the printed tag> FORCE=1 REGION=<region> BUCKET=<bucket> REPOS='<as before>' \
+PROJECT=<project> REGION=<region> BUCKET=<bucket> REPOS='<as before>' BASE_IMAGE=<the printed tag> FORCE=1 \
   gcp-m4.sh --apply config
 ```
+
+`base` prints this command filled in with the values in its environment.
 
 `config` rewrites the whole file, so pass the same `REPOS` as before; it shows the diff before asking.
 
