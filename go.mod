@@ -9,6 +9,7 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/spf13/cobra v1.10.2
 	gocloud.dev v0.46.0
+	golang.org/x/term v0.46.0
 	google.golang.org/api v0.299.0
 	gopkg.in/yaml.v3 v3.0.1
 )
