@@ -238,27 +238,34 @@ func repoFromOrigin(origin string) (string, bool) {
 // checkout, another repository, no or an unparseable fugaro.yaml) is nil:
 // the caller then asks for the flag it was after.
 func checkoutConfig(ctx context.Context, repo string) *config.Config {
+	cfg, _ := checkoutParse(ctx, repo)
+	return cfg
+}
+
+// checkoutParse is checkoutConfig with the parse's problems: nil and no
+// problems when there is no such checkout or file, nil and the problems
+// when its fugaro.yaml doesn't parse.
+func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.Problem) {
 	origin, err := originRepo(ctx)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	a, err1 := task.CanonicalRepo(origin)
 	b, err2 := task.CanonicalRepo(repo)
 	if err1 != nil || err2 != nil || a != b {
-		return nil
+		return nil, nil
 	}
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	data, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "fugaro.yaml"))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	cfg, _ := config.Parse(data)
-	return cfg
+	return config.Parse(data)
 }
 
 // refuseHTTP2Debug refuses to talk to Google while GODEBUG holds

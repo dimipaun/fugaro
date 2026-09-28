@@ -14,7 +14,8 @@
 #
 # Environment: PROJECT, REGION, BUCKET, REPO (owner/name), WORKFLOW,
 # CHECKOUT (the target repository's checkout), FUGARO (default fugaro),
-# HEAVY (the Docker lock), FUGARO_SRC (this checkout), and for the config
+# HEAVY (optionally wraps the Docker commands, for example a lock script; by
+# default they run directly), FUGARO_SRC (this checkout), and for the config
 # step REPOS ("owner/name:branch:workflow[:provider] ...", provider bitbucket
 # or github, default bitbucket), BASE_IMAGE and FORCE.
 set -euo pipefail
@@ -122,15 +123,15 @@ confirm() {
   [ "$answer" = "$PROJECT" ] || die "not confirmed; nothing done"
 }
 
-# The display name the script gives a job's service account. Service
-# accounts carry no labels, so this is how a reused or deleted account is
-# recognized as this repository's and workflow's. It names the repository by
-# its slug (set from `spec slug` by each step that calls this), which, like
-# the fugaro_repo label, includes the provider kind. At most 14+63+1+20 = 98
-# characters, within the 100 IAM allows.
+# The display name a job's service account gets. Service accounts carry no
+# labels, so this is how a reused or deleted account is recognized as this
+# repository's and workflow's. It comes from `spec sa-display-name` (set by
+# each step that calls this), job-spec being its one definition; it names
+# the repository by its slug, which, like the fugaro_repo label, includes
+# the provider kind.
 job_sa_display() {
-  [ -n "${repo_slug:-}" ] || die "internal error: job_sa_display before repo_slug is set"
-  echo "Fugaro M4 job $repo_slug $WORKFLOW"
+  [ -n "${sa_display:-}" ] || die "internal error: job_sa_display before sa_display is set"
+  echo "$sa_display"
 }
 
 # check_sa_owner SA: with --apply, dies unless the existing account SA has
@@ -201,6 +202,50 @@ pin_bucket() {
   pn=$(gcloud projects describe "$PROJECT" --project "$PROJECT" --format 'value(projectNumber)')
   bn=$(gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --raw --format 'value(projectNumber)')
   [ -n "$pn" ] && [ "$pn" = "$bn" ] || die "gs://$BUCKET belongs to project number ${bn:-unknown}, not $PROJECT ($pn); refusing"
+}
+
+# The shared resources' ownership marks. The bucket and the registry get the
+# label fugaro=managed when this script creates them, and fugaro-build this
+# display name (service accounts carry no labels). A resource under one of
+# these names without its mark is someone else's: it is never adopted,
+# rewritten (the bucket's lifecycle), granted on or deleted.
+BUILD_SA_DISPLAY="Fugaro image builds (M4 bootstrap)"
+
+# own_bucket: pin_bucket, and with --apply die unless gs://$BUCKET carries
+# the label fugaro=managed.
+own_bucket() {
+  pin_bucket
+  if [ "$APPLY" != 1 ]; then
+    echo "= with --apply: check that gs://$BUCKET is labelled fugaro=managed"
+    return 0
+  fi
+  local got
+  got=$(gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --raw --format 'value(labels.fugaro)')
+  [ "$got" = managed ] || die "gs://$BUCKET is labelled fugaro=${got:-none}, not fugaro=managed, so this script did not create it; refusing. \
+If it is this script's (its create succeeded but the label update did not), label it: gcloud storage buckets update gs://$BUCKET --update-labels fugaro=managed --project $PROJECT"
+}
+
+# own_registry: with --apply, dies unless repository fugaro in $REGION
+# carries the label fugaro=managed.
+own_registry() {
+  if [ "$APPLY" != 1 ]; then
+    echo "= with --apply: check that repository fugaro is labelled fugaro=managed"
+    return 0
+  fi
+  local got
+  got=$(gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT" --format 'value(labels.fugaro)')
+  [ "$got" = managed ] || die "Artifact Registry repository fugaro is labelled fugaro=${got:-none}, not fugaro=managed, so this script did not create it; refusing"
+}
+
+# own_build_sa: with --apply, dies unless $BUILD_SA has BUILD_SA_DISPLAY.
+own_build_sa() {
+  if [ "$APPLY" != 1 ]; then
+    echo "= with --apply: check that $BUILD_SA is \"$BUILD_SA_DISPLAY\""
+    return 0
+  fi
+  local dn
+  dn=$(gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT" --format 'value(displayName)')
+  [ "$dn" = "$BUILD_SA_DISPLAY" ] || die "service account $BUILD_SA is \"$dn\", not \"$BUILD_SA_DISPLAY\", so this script did not create it; refusing"
 }
 
 # The local config, read without a YAML parser: top-level scalars and
@@ -292,11 +337,12 @@ case "$STEP" in
     need REGION BUCKET
     confirm "creates bucket gs://$BUCKET in $REGION with lifecycle rules: runs/ deleted after 90 days, cache/ 30 days after its custom time or 180 days after creation (storage billed per GB-month)"
     if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then
-      pin_bucket
+      own_bucket
       loc=$(gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --raw --format 'value(location)')
       [ "$(echo "$loc" | tr '[:upper:]' '[:lower:]')" = "$REGION" ] || die "gs://$BUCKET is in $loc, not $REGION; refusing"
-      echo "= gs://$BUCKET exists in $PROJECT, $REGION; create skipped"
+      echo "= gs://$BUCKET exists in $PROJECT, $REGION and is labelled fugaro=managed; create skipped"
     else
+      # buckets create takes no labels; the update below sets it, with the lifecycle.
       run gcloud storage buckets create "gs://$BUCKET" --project "$PROJECT" --location "$REGION" \
         --uniform-bucket-level-access --public-access-prevention
       pin_bucket
@@ -310,25 +356,31 @@ case "$STEP" in
   {"action": {"type": "Delete"}, "condition": {"age": 180, "matchesPrefix": ["cache/"]}}
 ]}
 JSON
-    run gcloud storage buckets update "gs://$BUCKET" --project "$PROJECT" --lifecycle-file="$lifecycle"
+    run gcloud storage buckets update "gs://$BUCKET" --project "$PROJECT" --update-labels fugaro=managed --lifecycle-file="$lifecycle"
     ;;
   registry)
     need REGION
     confirm "creates Artifact Registry repository fugaro (docker) in $REGION (storage billed per GB-month)"
     if exists gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT"; then
-      echo "= repository fugaro exists; create skipped"
+      own_registry
+      echo "= repository fugaro exists and is labelled fugaro=managed; create skipped"
     else
-      run gcloud artifacts repositories create fugaro --repository-format docker --location "$REGION" --project "$PROJECT"
+      run gcloud artifacts repositories create fugaro --repository-format docker --location "$REGION" --labels fugaro=managed --project "$PROJECT"
     fi
     ;;
   build-sa)
     need REGION
     need_build_sa
     confirm "creates service account $BUILD_SA and grants it artifactregistry.writer on repository fugaro and logging.logWriter on $PROJECT"
+    if [ "$APPLY" = 1 ] && ! exists gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT"; then
+      die "Artifact Registry repository fugaro does not exist in $REGION; run the registry step first"
+    fi
+    own_registry
     if exists gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT"; then
-      echo "= $BUILD_SA exists; create skipped"
+      own_build_sa
+      echo "= $BUILD_SA exists and is \"$BUILD_SA_DISPLAY\"; create skipped"
     else
-      run gcloud iam service-accounts create fugaro-build --project "$PROJECT" --display-name "Fugaro image builds (M4 bootstrap)"
+      run gcloud iam service-accounts create fugaro-build --project "$PROJECT" --display-name "$BUILD_SA_DISPLAY"
       wait_sa "$BUILD_SA"
     fi
     run gcloud artifacts repositories add-iam-policy-binding fugaro --location "$REGION" --project "$PROJECT" \
@@ -341,9 +393,9 @@ JSON
     sa_id=$(spec sa-id)
     sa=$(spec sa)
     cond=$(spec bucket-condition)
-    repo_slug=$(spec slug)
+    sa_display=$(spec sa-display-name)
     confirm "creates service account $sa and grants it storage.objectUser on gs://$BUCKET, limited to its runs/, cache/ and locks/ prefixes"
-    pin_bucket
+    own_bucket
     if exists gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
       check_sa_owner "$sa"
       echo "= $sa exists and is $(job_sa_display); create skipped"
@@ -374,7 +426,8 @@ JSON
     build_ids=$(spec build-secret-ids)
     repo_label=$(spec repo-label)
     confirm "grants secretmanager.secretAccessor to $sa on $(echo "$ids" | tr '\n' ' ')and to $BUILD_SA on $(echo "$build_ids" | tr '\n' ' ')"
-    # Every secret is checked before anything is granted.
+    # Every secret, and fugaro-build, is checked before anything is granted.
+    own_build_sa
     if [ "$APPLY" = 1 ]; then
       for id in $ids $build_ids; do check_secret_owner "$id"; done
     else
@@ -433,7 +486,7 @@ JSON
     cond=$(spec bucket-condition)
     ids=$(spec secret-ids)
     repo_label=$(spec repo-label)
-    repo_slug=$(spec slug)
+    sa_display=$(spec sa-display-name)
     job_checked=0
     sa_checked=0
     idlist=$(echo "$ids" | tr '\n' ' ')
@@ -446,7 +499,7 @@ JSON
 
     # Ownership: names can collide across repositories, so the labels decide.
     if [ "$APPLY" = 1 ]; then
-      if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then pin_bucket; fi
+      if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then own_bucket; fi
       if exists gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION"; then
         check_job_owner "$job"
         job_checked=1
@@ -505,6 +558,11 @@ JSON
       left=$(gcloud run jobs list --project "$PROJECT" --region "$REGION" --filter 'metadata.name~^fugaro- OR metadata.labels.fugaro=managed' --format 'value(metadata.name)')
       [ -z "$left" ] || die "fugaro jobs still exist ($(echo "$left" | tr '\n' ' ')); run teardown for each repository first"
     fi
+    # Every shared resource that exists is checked before anything is deleted.
+    if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then own_bucket; fi
+    if exists gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT"; then own_registry; fi
+    if exists gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT"; then own_build_sa; fi
+    [ "$APPLY" = 1 ] || echo "= with --apply: check the bucket's and the registry's fugaro=managed label, and $BUILD_SA's display name, first"
     if ! gone gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then
       pin_bucket
       run gcloud storage rm --recursive "gs://$BUCKET" --project "$PROJECT"

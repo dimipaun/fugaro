@@ -21,7 +21,7 @@ func buildSpec(t *testing.T) BuildSpec {
 		t.Fatal(err)
 	}
 	return BuildSpec{
-		Slug: slug, RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main", Workflow: "web",
+		Slug: slug, GitProvider: "bitbucket", RepoURL: "https://bitbucket.org/acme/app.git", BaseBranch: "main", Workflow: "web",
 		Base: "us-east5-docker.pkg.dev/p/fugaro/fugaro-web-node:dev-abc", Image: ImageName("us-east5-docker.pkg.dev/p/fugaro", slug, "web"),
 		GitSecretID: SecretID(slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: "fugaro-build@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
@@ -64,7 +64,7 @@ func TestBuildRequest(t *testing.T) {
 	}
 	// The request is built fresh each time: a second call does not see the
 	// first one's workflow secrets.
-	again, err := BuildRequest("proj-1234", BuildSpec{Slug: spec.Slug, RepoURL: spec.RepoURL, BaseBranch: "main", Workflow: "web",
+	again, err := BuildRequest("proj-1234", BuildSpec{Slug: spec.Slug, GitProvider: spec.GitProvider, RepoURL: spec.RepoURL, BaseBranch: "main", Workflow: "web",
 		Base: spec.Base, Image: spec.Image, GitSecretID: spec.GitSecretID, GitUser: "x-token-auth", ServiceAccount: spec.ServiceAccount})
 	if err != nil || len(again.AvailableSecrets.SecretManager) != 1 || len(again.Steps[2].SecretEnv) != 1 || again.Substitutions["_SECRET_ENVS"] != "" {
 		t.Fatalf("second request = %+v, %v", again, err)
@@ -87,6 +87,14 @@ func TestBuildRequest(t *testing.T) {
 	for _, mutate := range []func(*BuildSpec){
 		func(s *BuildSpec) { s.RepoURL = "ssh://git@bitbucket.org/acme/app.git" },
 		func(s *BuildSpec) { s.RepoURL = "https://user:tok@bitbucket.org/acme/app.git" },
+		// The token is scoped to the provider's host; the clone must never
+		// send it anywhere else.
+		func(s *BuildSpec) { s.RepoURL = "https://evil.example/acme/app.git" },
+		func(s *BuildSpec) { s.RepoURL = "https://bitbucket.org.evil.example/acme/app.git" },
+		func(s *BuildSpec) { s.RepoURL = "https://bitbucket.org:8443/acme/app.git" },
+		func(s *BuildSpec) { s.RepoURL = "https://github.com/acme/app.git" },
+		func(s *BuildSpec) { s.GitProvider = "" },
+		func(s *BuildSpec) { s.GitProvider = "github" },
 		func(s *BuildSpec) { s.GitSecretID = "" },
 		func(s *BuildSpec) { s.ServiceAccount = "" },
 		func(s *BuildSpec) { s.Image = "" },

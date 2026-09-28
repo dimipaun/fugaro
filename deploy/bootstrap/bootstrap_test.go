@@ -80,6 +80,9 @@ func condition(slug string) string {
 	return strings.Join(conds, " || ")
 }
 
+// buildSADisplay is fugaro-build's fixed display name, its ownership mark.
+const buildSADisplay = "Fugaro image builds (M4 bootstrap)"
+
 // saDisplay is the display name the script gives a job's service account.
 func saDisplay(slug, workflow string) string { return "Fugaro M4 job " + slug + " " + workflow }
 
@@ -100,7 +103,8 @@ func fakeBin(t *testing.T) string {
 // file under $FAKE_STATE/<kind>/ does, describes of missing ones fail with
 // NOT_FOUND, creates of existing ones with ALREADY_EXISTS, and bindings are
 // files under $FAKE_STATE/bind/; a service account's file holds its display
-// name. A call whose argv starts with $FAKE_FAIL fails with
+// name, and a bucket's or repository's its labels (from --labels at create
+// or --update-labels at update). A call whose argv starts with $FAKE_FAIL fails with
 // PERMISSION_DENIED. Every call's argv is appended to
 // $FAKE_LOG, NUL-separated, one call per line. docker only records.
 const fakeGcloud = `#!/usr/bin/env bash
@@ -127,7 +131,9 @@ mkdir -p "$st/$kind" "$st/bind"
 f="$st/$kind/$(key "$name")"
 b="$st/bind/$(key "$kind $name $(flag --member "$@") $(flag --role "$@")")"
 case "$verb" in
-  create) if [ -e "$f" ]; then echo "ERROR: ALREADY_EXISTS: $name" >&2; exit 1; fi; flag --display-name "$@" > "$f" ;;
+  create)
+    if [ -e "$f" ]; then echo "ERROR: ALREADY_EXISTS: $name" >&2; exit 1; fi
+    if [ -n "$(flag --labels "$@")" ]; then flag --labels "$@" > "$f"; else flag --display-name "$@" > "$f"; fi ;;
   deploy) flag --labels "$@" > "$f" ;;
   describe)
     [ -e "$f" ] || nf describe "$name"
@@ -137,7 +143,10 @@ case "$verb" in
       *labels.*) l=${fmt#*labels.}; label "${l%)}" "$f" ;;
       *displayName*) cat "$f" ;;
     esac ;;
-  update) [ -e "$f" ] || nf update "$name" ;;
+  update)
+    [ -e "$f" ] || nf update "$name"
+    ul=$(flag --update-labels "$@")
+    if [ -n "$ul" ]; then c=$(tr ',' '\n' < "$f" | grep -v "^${ul%%=*}=" | paste -sd, - || true); printf '%s' "${c:+$c,}$ul" > "$f"; fi ;;
   delete) [ -e "$f" ] || nf delete "$name"; rm -f "$f" ;;
   list)
     filt=$(flag --filter "$@")
@@ -409,9 +418,9 @@ func TestApplyExactCalls(t *testing.T) {
 	assertCalls(t, "install", mutating(calls), [][]string{
 		{"services", "enable", "run.googleapis.com", "storage.googleapis.com", "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "cloudbuild.googleapis.com", "logging.googleapis.com", "iam.googleapis.com", P, project},
 		{"storage", "buckets", "create", bucketGS, P, project, "--location", "us-east5", "--uniform-bucket-level-access", "--public-access-prevention"},
-		{"storage", "buckets", "update", bucketGS, P, project, "--lifecycle-file=*"},
-		{"artifacts", "repositories", "create", "fugaro", "--repository-format", "docker", "--location", "us-east5", P, project},
-		{"iam", "service-accounts", "create", "fugaro-build", P, project, "--display-name", "Fugaro image builds (M4 bootstrap)"},
+		{"storage", "buckets", "update", bucketGS, P, project, "--update-labels", "fugaro=managed", "--lifecycle-file=*"},
+		{"artifacts", "repositories", "create", "fugaro", "--repository-format", "docker", "--location", "us-east5", "--labels", "fugaro=managed", P, project},
+		{"iam", "service-accounts", "create", "fugaro-build", P, project, "--display-name", buildSADisplay},
 		{"artifacts", "repositories", "add-iam-policy-binding", "fugaro", "--location", "us-east5", P, project, "--member", "serviceAccount:" + buildSA, "--role", "roles/artifactregistry.writer"},
 		{"projects", "add-iam-policy-binding", project, P, project, "--member", "serviceAccount:" + buildSA, "--role", "roles/logging.logWriter", "--condition", "None"},
 		{"iam", "service-accounts", "create", saID, P, project, "--display-name", saDisplay(sandboxSlug, "web")},
@@ -423,7 +432,8 @@ func TestApplyExactCalls(t *testing.T) {
 			"--image", image + ":latest", "--service-account", jobSA,
 			"--cpu", "1", "--memory", "2Gi", "--task-timeout", "1320s", "--max-retries", "0", "--tasks", "1",
 			"--labels", "fugaro=managed," + repoLbl + ",fugaro_workflow=web",
-			"--set-env-vars", "FUGARO_BACKEND=cloud-run,FUGARO_BUCKET=gs://proj-1234-fugaro-runs,FUGARO_PROJECT=proj-1234,FUGARO_REGION=us-east5",
+			"--set-env-vars", "^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://proj-1234-fugaro-runs;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;" +
+				"FUGARO_SECRET_ENVS=CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,SANDBOX_PROBE",
 			"--set-secrets", "CLAUDE_CODE_OAUTH_TOKEN=" + oauthID + ":latest,FUGARO_BITBUCKET_TOKEN=" + gitID + ":latest,SANDBOX_PROBE=" + probeID + ":latest"},
 	})
 
@@ -653,6 +663,50 @@ func TestBucketOfAnotherProjectIsRefused(t *testing.T) {
 				t.Fatalf("%s mismatch, %s changed %q", name, step, m)
 			}
 		}
+	}
+}
+
+// The bucket, the registry and fugaro-build are shared and global to the
+// project: one that exists without the bootstrap's mark (the fugaro=managed
+// label, or fugaro-build's display name) is the user's own, and is never
+// adopted, rewritten, granted on or deleted.
+func TestSharedResourcesCheckOwnership(t *testing.T) {
+	testutil.IsolateGit(t)
+	for name, c := range map[string]struct {
+		kind, id, content string
+		steps             []string
+	}{
+		"unlabelled bucket":             {"buckets", bucketGS, "", []string{"bucket", "job-sa", "teardown-all"}},
+		"bucket labelled otherwise":     {"buckets", bucketGS, "fugaro=other,team=data", []string{"bucket", "teardown-all"}},
+		"unlabelled registry":           {"repositories", "fugaro", "", []string{"registry", "build-sa", "teardown-all"}},
+		"someone else's fugaro-build":   {"service-accounts", buildSA, "CI builder", []string{"build-sa", "secrets-access", "teardown-all"}},
+		"fugaro-build, no display name": {"service-accounts", buildSA, "", []string{"build-sa", "teardown-all"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFake(t)
+			env := scriptEnv(t, f.bin, f)
+			installed(t, f, env)
+			seedSecrets(t, f)
+			mustScript(t, env, "--apply", "--yes", "teardown") // teardown-all refuses while a job exists
+			f.seed(t, c.kind, c.id, c.content)
+			f.calls(t)
+			for _, step := range c.steps {
+				args := []string{"--apply", "--yes", step}
+				if step == "teardown-all" {
+					args = append(args, "--all")
+				}
+				out, err := script(t, env, args...)
+				if err == nil || !strings.Contains(out, "refusing") {
+					t.Fatalf("%s over %s: %v\n%s", step, name, err, out)
+				}
+				if m := mutating(f.calls(t)); len(m) > 0 {
+					t.Fatalf("%s over %s changed %q", step, name, m)
+				}
+			}
+			if !f.has(c.kind, c.id) {
+				t.Fatalf("%s was deleted", c.id)
+			}
+		})
 	}
 }
 

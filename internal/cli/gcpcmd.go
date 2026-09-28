@@ -23,28 +23,32 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // jobSpec is everything the M4 bootstrap passes to gcloud for one
 // repository's workflow. It is derived here, from the naming contract in
 // internal/backend/gcp, so the script never re-implements it.
 type jobSpec struct {
-	Project             string            `json:"project"`
-	Region              string            `json:"region"`
-	Slug                string            `json:"slug"` // task.Slug(git.provider, repo)
-	Job                 string            `json:"job"`
-	ServiceAccountID    string            `json:"service_account_id"`
-	ServiceAccount      string            `json:"service_account"`
-	Image               string            `json:"image"`
-	CPU                 int               `json:"cpu"`
-	Memory              string            `json:"memory"`
-	TaskTimeoutS        int               `json:"task_timeout_s"`
-	Env                 map[string]string `json:"env"`
-	Secrets             map[string]string `json:"secrets"` // env var → secret ID
-	GitSecret           string            `json:"git_secret"`
-	BuildServiceAccount string            `json:"build_service_account,omitempty"`
-	Labels              map[string]string `json:"labels"` // on the job; fugaro_repo matches the secrets' label
+	Project          string `json:"project"`
+	Region           string `json:"region"`
+	Slug             string `json:"slug"` // task.Slug(git.provider, repo)
+	Job              string `json:"job"`
+	ServiceAccountID string `json:"service_account_id"`
+	ServiceAccount   string `json:"service_account"`
+	// ServiceAccountDisplayName is the job account's display name, the
+	// ownership mark the bootstrap checks before reusing or deleting it
+	// (service accounts carry no labels). This is its one definition.
+	ServiceAccountDisplayName string            `json:"service_account_display_name"`
+	Image                     string            `json:"image"`
+	CPU                       int               `json:"cpu"`
+	Memory                    string            `json:"memory"`
+	TaskTimeoutS              int               `json:"task_timeout_s"`
+	Env                       map[string]string `json:"env"`
+	Secrets                   map[string]string `json:"secrets"` // env var → secret ID
+	GitSecret                 string            `json:"git_secret"`
+	BuildServiceAccount       string            `json:"build_service_account,omitempty"`
+	Labels                    map[string]string `json:"labels"` // on the job; fugaro_repo matches the secrets' label
 
 	secretNames     map[string]string // logical name → secret ID
 	buildSecretIDs  []string          // the git secret and the workflow secrets
@@ -52,7 +56,7 @@ type jobSpec struct {
 }
 
 // jobSpecFields are the values of --field.
-var jobSpecFields = []string{"slug", "job", "sa-id", "sa", "image", "cpu", "memory", "task-timeout", "git-secret",
+var jobSpecFields = []string{"slug", "job", "sa-id", "sa", "sa-display-name", "image", "cpu", "memory", "task-timeout", "git-secret",
 	"env", "secrets", "secret-ids", "secret-names", "build-secret-ids", "bucket-condition", "labels", "repo-label"}
 
 var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
@@ -137,28 +141,15 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	if err != nil {
 		return nil, &ExitError{Code: ExitUserError, Err: err}
 	}
+	// loadCheckout has already refused resources Cloud Run can't run.
 	w := cfg.Workflows[name]
-	if issues := gcp.CheckResources(w.Resources); len(issues) > 0 {
-		msgs := make([]string, len(issues))
-		for i, is := range issues {
-			msgs[i] = "resources." + is.Field + ": " + is.Message
-		}
-		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("workflow %s cannot run on Cloud Run: %s", name, strings.Join(msgs, "; "))}
-	}
 
 	// The slug hashes the provider kind, which comes from the checkout's
 	// fugaro.yaml. A local config entry that names another provider would
-	// give `fugaro run` a different slug, so it is refused here.
-	for name, r := range lc.Repos {
-		a, err1 := task.CanonicalRepo(name)
-		b, err2 := task.CanonicalRepo(repo)
-		if err1 == nil && err2 == nil && a == b && r.Provider != "" && r.Provider != cfg.Git.Provider {
-			return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("the local config says %s is on %s, but the checkout's fugaro.yaml says %s; make them agree", repo, r.Provider, cfg.Git.Provider)}
-		}
-	}
-	slug, err := task.Slug(cfg.Git.Provider, repo)
+	// give `fugaro run` a different slug, so repoSlug refuses it.
+	slug, err := (&cloudEnv{lc: lc}).repoSlug(repo, func() *config.Config { return cfg })
 	if err != nil {
-		return nil, &ExitError{Code: ExitUserError, Err: err}
+		return nil, err
 	}
 	label, err := repoLabel(slug)
 	if err != nil {
@@ -172,10 +163,12 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		Job:              gcp.JobName(slug, name),
 		ServiceAccountID: saID,
 		ServiceAccount:   saID + "@" + lc.Project + ".iam.gserviceaccount.com",
-		Image:            gcp.ImageName(lc.Registry, slug, name),
-		CPU:              w.Resources.CPU,
-		Memory:           w.Resources.Memory,
-		TaskTimeoutS:     int((w.Timeouts.Total.Duration + 2*time.Minute) / time.Second),
+		// At most 14+63+1+20 = 98 characters, within the 100 IAM allows.
+		ServiceAccountDisplayName: "Fugaro M4 job " + slug + " " + name,
+		Image:                     gcp.ImageName(lc.Registry, slug, name),
+		CPU:                       w.Resources.CPU,
+		Memory:                    w.Resources.Memory,
+		TaskTimeoutS:              int((w.Timeouts.Total.Duration + runner.TaskTimeoutSlack) / time.Second),
 		Env: map[string]string{
 			"FUGARO_BUCKET":  "gs://" + bucket,
 			"FUGARO_BACKEND": "cloud-run",
@@ -228,6 +221,13 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	}
 	slices.Sort(js.buildSecretIDs)
 	js.buildSecretIDs = slices.Compact(js.buildSecretIDs)
+	// Every variable a secret is mounted as, so the runner can register
+	// them all for redaction before bootstrap, declared at the task's ref
+	// or not.
+	js.Env["FUGARO_SECRET_ENVS"] = strings.Join(slices.Sorted(maps.Keys(js.Secrets)), ",")
+	if jobSpecField(js, "env") == "" {
+		return nil, &ExitError{Code: ExitUserError, Err: errors.New("the job's env holds every delimiter gcloud's --set-env-vars could use")}
+	}
 
 	// Trailing slashes, so a slug can never reach another slug it is a
 	// string prefix of (design §6.1).
@@ -317,6 +317,23 @@ func printJobSpec(w io.Writer, js *jobSpec, o jobSpecOptions) error {
 	return err
 }
 
+// gcloudDict joins KEY=VALUE pairs for a gcloud dict flag such as
+// --set-env-vars: with commas, or, when a pair holds one (as
+// FUGARO_SECRET_ENVS does), in gcloud's ^DELIM^ form with a delimiter no
+// pair contains (see gcloud topic escaping).
+func gcloudDict(pairs []string) string {
+	joined := strings.Join(pairs, "")
+	if !strings.Contains(joined, ",") {
+		return strings.Join(pairs, ",")
+	}
+	for _, d := range []string{";", "|", "@", "#", "~"} {
+		if !strings.Contains(joined, d) {
+			return "^" + d + "^" + strings.Join(pairs, d)
+		}
+	}
+	return "" // buildJobSpec refuses this; its values never hold them all
+}
+
 // jobSpecField renders one --field value in the form gcloud takes it.
 func jobSpecField(js *jobSpec, field string) string {
 	pairs := func(m map[string]string, format string) []string {
@@ -335,6 +352,8 @@ func jobSpecField(js *jobSpec, field string) string {
 		return js.ServiceAccountID
 	case "sa":
 		return js.ServiceAccount
+	case "sa-display-name":
+		return js.ServiceAccountDisplayName
 	case "image":
 		return js.Image
 	case "cpu":
@@ -346,7 +365,7 @@ func jobSpecField(js *jobSpec, field string) string {
 	case "git-secret":
 		return js.GitSecret
 	case "env":
-		return strings.Join(pairs(js.Env, "%s=%s"), ",")
+		return gcloudDict(pairs(js.Env, "%s=%s"))
 	case "secrets":
 		return strings.Join(pairs(js.Secrets, "%s=%s:latest"), ",")
 	case "secret-ids":

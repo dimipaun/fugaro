@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -150,7 +151,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Git.Provider != "bitbucket" {
+	if cfg.Git.Provider != gitprov.KindBitbucket {
 		return userErr("Cloud Build images for GitHub repositories need a token-minting step that arrives in M5; use --local")
 	}
 	switch {
@@ -198,7 +199,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		}
 	}
 	spec := gcp.BuildSpec{
-		Slug: slug, RepoURL: repoURL, BaseBranch: branch, Workflow: name, Base: base,
+		Slug: slug, GitProvider: cfg.Git.Provider, RepoURL: repoURL, BaseBranch: branch, Workflow: name, Base: base,
 		Image:       gcp.ImageName(lc.Registry, slug, name),
 		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
 		ServiceAccount: lc.Build.ServiceAccount, MachineType: lc.Build.MachineType,

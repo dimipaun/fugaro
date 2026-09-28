@@ -29,9 +29,13 @@ M4 live tests need. The runbook is [docs/gcp-bootstrap.md](../../docs/gcp-bootst
     job of the repository exists.
   - It checks the `fugaro_repo` and `fugaro_workflow` labels before deleting
     anything.
+- **The shared resources carry a mark.** The bucket and the registry are
+  labelled `fugaro=managed` at creation, and `fugaro-build` has a fixed
+  display name. One that exists under the same name without the mark is
+  never adopted, rewritten, granted on or deleted.
 - **`teardown-all --all` removes the shared resources.**
   - It deletes the bucket, the registry, `fugaro-build` and its project
-    binding.
+    binding, after checking each one's mark.
   - It refuses while any Fugaro job remains in the region.
 - **The names come from job-spec.** Job names, service accounts, secrets,
   env, labels and the IAM condition all come from `fugaro gcp job-spec`
