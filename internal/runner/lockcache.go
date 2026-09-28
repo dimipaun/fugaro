@@ -30,9 +30,17 @@ const taskTimeoutSlack = backend.TaskTimeoutSlack
 // record's deadline) lasts, so a live run never loses its lock.
 const lockSlack = time.Minute
 
-// writebackGrace is how far past timeouts.total writeback may run: the
-// task timeout's slack minus 30s for the final record.
-const writebackGrace = 90 * time.Second
+// startupMargin is what writebackGrace leaves for the container's
+// startup: StartedAt, which the grace is measured from, comes after Cloud
+// Run starts the task timeout's clock.
+const startupMargin = 15 * time.Second
+
+// writebackGrace is how far past timeouts.total writeback's uploads may
+// run: the task timeout's slack, less what follows them (the lock release
+// and the final record, each on a bounded context of its own) and
+// startupMargin, so the task timeout never kills the run before its lock
+// is released and its final record is written.
+const writebackGrace = taskTimeoutSlack - releaseDeferredTimeout - recordWriteTimeout - startupMargin
 
 // writebackFloor is the least time writeback gets, however late it starts.
 const writebackFloor = 20 * time.Second
@@ -336,7 +344,7 @@ func envLookup(env []string, key string) string {
 
 // recordWriteTimeout bounds each result.json write, the final one
 // included, so a stalled bucket cannot hold the runner until the task
-// timeout (design §4.5 leaves the final record 30s).
+// timeout (writebackGrace leaves room for it).
 const recordWriteTimeout = 30 * time.Second
 
 // Seams for the record writes and the lock release; tests may replace them.
