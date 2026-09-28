@@ -241,6 +241,12 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", res.ID, res.Image, res.LogURL)
 		return nil
 	}
+	if res.Digest == "" {
+		// SUCCESS covers the push of images:, so the tag is there; only
+		// the pushed-image report is missing.
+		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", res.Image, res.ID)
+		return nil
+	}
 	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", strings.TrimSuffix(res.Image, ":latest"), res.Digest, res.ID)
 	return nil
 }

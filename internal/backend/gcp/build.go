@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
+	"google.golang.org/api/googleapi"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/images"
@@ -52,8 +54,8 @@ var ErrBadBuildSpec = errors.New("invalid Cloud Build request")
 // re-checks it before using the name in --secret.
 var secretEnvRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// gitTokenEnv is the variable the source step reads the provider token
-// from; a workflow secret may not reuse it.
+// gitTokenEnv is the variable the source and build steps read the provider
+// token from.
 const gitTokenEnv = "GIT_TOKEN"
 
 // BuildRequest is the Cloud Build request for s in project: images.CloudBuild
@@ -61,9 +63,6 @@ const gitTokenEnv = "GIT_TOKEN"
 // availableSecrets, and each workflow secret added to availableSecrets and
 // to the build step's secretEnv (and nowhere else). It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
-	if err := s.check(); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
-	}
 	var raw map[string]any
 	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
 		return nil, fmt.Errorf("parsing the embedded cloudbuild.yaml: %w", err)
@@ -87,6 +86,9 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	}
 	if build == nil {
 		return nil, errors.New("the embedded cloudbuild.yaml has no build step")
+	}
+	if err := s.check(buildStepEnv(build)); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
 
 	version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
@@ -119,9 +121,35 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	return &b, nil
 }
 
+// shellEnv are variables bash, the docker CLI or the step image itself read,
+// which a workflow secret must not shadow in the build step; reservedPrefixes
+// covers their families.
+var (
+	shellEnv         = []string{"PATH", "HOME", "PWD", "OLDPWD", "SHELL", "USER", "HOSTNAME", "TMPDIR", "IFS", "LANG", "ENV", "CDPATH", "GLOBIGNORE", "PS4", "SHELLOPTS"}
+	reservedPrefixes = []string{"DOCKER_", "BUILDKIT_", "BASH", "LC_"}
+)
+
+// buildStepEnv is every variable the build step sets or relies on: its
+// env: and secretEnv: from cloudbuild.yaml, plus shellEnv.
+func buildStepEnv(step *cloudbuild.BuildStep) map[string]bool {
+	used := map[string]bool{}
+	for _, e := range step.Env {
+		name, _, _ := strings.Cut(e, "=")
+		used[name] = true
+	}
+	for _, e := range step.SecretEnv {
+		used[e] = true
+	}
+	for _, e := range shellEnv {
+		used[e] = true
+	}
+	return used
+}
+
 // check refuses a spec that is incomplete or would put an unsafe value in
-// the build.
-func (s BuildSpec) check() error {
+// the build. reserved are the build step's own variables, which a workflow
+// secret may not reuse.
+func (s BuildSpec) check(reserved map[string]bool) error {
 	for _, f := range []struct{ name, v string }{
 		{"repository slug", s.Slug}, {"repository URL", s.RepoURL}, {"base branch", s.BaseBranch},
 		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image}, {"git token secret", s.GitSecretID},
@@ -135,10 +163,13 @@ func (s BuildSpec) check() error {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 		return fmt.Errorf("the repository URL %s is not an https URL without credentials", redactURL(s.RepoURL))
 	}
-	seen := map[string]bool{gitTokenEnv: true}
+	seen := map[string]bool{}
 	for _, ws := range s.WorkflowSecrets {
 		if !secretEnvRE.MatchString(ws.Env) {
 			return fmt.Errorf("workflow secret %s: variable %q is not [A-Z_][A-Z0-9_]*", ws.Name, ws.Env)
+		}
+		if reserved[ws.Env] || slices.ContainsFunc(reservedPrefixes, func(p string) bool { return strings.HasPrefix(ws.Env, p) }) {
+			return fmt.Errorf("workflow secret %s: variable %s is one the image build step sets or uses itself; rename it", ws.Name, ws.Env)
 		}
 		if seen[ws.Env] {
 			return fmt.Errorf("workflow secret %s: variable %s is already used in the build", ws.Name, ws.Env)
@@ -192,24 +223,67 @@ func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) 
 	return BuildResult{ID: md.Build.Id, Status: md.Build.Status, Image: s.Image + ":latest", LogURL: md.Build.LogUrl}, nil
 }
 
+// waitRetries and waitRetryBase bound Wait's retries of a failed status
+// read: up to waitRetries in a row, backing off from waitRetryBase and
+// doubling to at most 30s (about a minute in all). Tests shrink the base.
+var (
+	waitRetries   = 6
+	waitRetryBase = time.Second
+)
+
+// retryable reports whether a failed status read is worth repeating: a
+// 5xx, 429 or 408 from the API, or a transport error (anything that is not
+// an API answer), but not the caller's own cancellation.
+func retryable(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+	var ae *googleapi.Error
+	if errors.As(err, &ae) {
+		return ae.Code >= 500 || ae.Code == http.StatusTooManyRequests || ae.Code == http.StatusRequestTimeout
+	}
+	return true
+}
+
 // terminal are the build statuses Wait stops at.
 var terminal = []string{"SUCCESS", "FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
 
 // Wait polls build id every poll (zero means 10s) until it finishes. A
 // build that finishes other than SUCCESS comes back with an error naming
 // its status and log URL. Image and Digest are set only on SUCCESS, from
-// the build's pushed-image results.
+// the build's pushed-image results (a SUCCESS without them leaves Digest
+// empty). A transient failure to read the status is retried (see
+// waitRetries); when Wait gives up, the build may still be running, and
+// the error says so.
 func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (BuildResult, error) {
 	if poll == 0 {
 		poll = 10 * time.Second
 	}
 	name := b.parent() + "/builds/" + id
+	last := BuildResult{ID: id}
+	failures := 0
 	for {
 		bd, err := b.svc.Projects.Locations.Builds.Get(name).Context(ctx).Do()
 		if err != nil {
-			return BuildResult{ID: id}, fmt.Errorf("reading Cloud Build build %s: %w", id, err)
+			failures++
+			if !retryable(ctx, err) || failures > waitRetries {
+				where := ""
+				if last.LogURL != "" {
+					where = "; its log is at " + last.LogURL
+				}
+				return last, fmt.Errorf("reading the status of Cloud Build build %s failed (%d attempts); the build may still be running%s: %w", id, failures, where, err)
+			}
+			wait := min(waitRetryBase<<(failures-1), 30*time.Second)
+			select {
+			case <-ctx.Done():
+				return last, fmt.Errorf("waiting for Cloud Build build %s, which may still be running: %w", id, ctx.Err())
+			case <-time.After(wait):
+			}
+			continue
 		}
+		failures = 0
 		res := BuildResult{ID: id, Status: bd.Status, LogURL: bd.LogUrl}
+		last = res
 		if slices.Contains(terminal, bd.Status) {
 			if bd.Status != "SUCCESS" {
 				return res, fmt.Errorf("Cloud Build build %s ended %s; its log is at %s", id, bd.Status, bd.LogUrl)
@@ -221,7 +295,7 @@ func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (Buil
 		}
 		select {
 		case <-ctx.Done():
-			return res, ctx.Err()
+			return res, fmt.Errorf("waiting for Cloud Build build %s, which may still be running: %w", id, ctx.Err())
 		case <-time.After(poll):
 		}
 	}

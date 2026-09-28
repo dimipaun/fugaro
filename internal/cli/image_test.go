@@ -279,3 +279,23 @@ func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 		t.Fatalf("output = %s", out)
 	}
 }
+
+// TestImageBuildCloudDigestUnknown: a SUCCESS without pushed-image results
+// still built and pushed the tag, so it is a success, but the output says
+// the digest is unknown rather than printing an empty one.
+func TestImageBuildCloudDigestUnknown(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	fb.NoResults = true
+	out, _, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "@ ") || strings.HasSuffix(strings.TrimSpace(out), "@") || !strings.Contains(out, "digest unknown") {
+		t.Errorf("output = %q", out)
+	}
+	out, _, err = execute(t, "image", "build", "--json", "--base", "b:1")
+	var res gcp.BuildResult
+	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != "SUCCESS" || res.Digest != "" || strings.Contains(out, `"digest"`) {
+		t.Errorf("json output = %s, %v", out, err)
+	}
+}

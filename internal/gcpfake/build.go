@@ -18,6 +18,11 @@ type Build struct {
 	// Outcome is the status every build reports when read back; empty
 	// means SUCCESS. Set it before the build is read.
 	Outcome string
+	// FailGets makes the next FailGets build reads answer FailGetCode
+	// (default 503), so a test can exercise the caller's retries.
+	FailGets, FailGetCode int
+	// NoResults makes a SUCCESS build report no pushed images.
+	NoResults bool
 
 	mu     sync.Mutex
 	builds map[string]map[string]any // request bodies, by build ID
@@ -72,6 +77,15 @@ func (f *Build) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	case r.Method == http.MethodGet && buildPathRE.MatchString(p):
 		m := buildPathRE.FindStringSubmatch(p)
 		req := f.builds[m[3]]
+		if f.FailGets > 0 {
+			f.FailGets--
+			code := f.FailGetCode
+			if code == 0 {
+				code = http.StatusServiceUnavailable
+			}
+			writeError(w, code, "UNAVAILABLE", "try again")
+			return
+		}
 		if req == nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "build "+m[3]+" not found")
 			return
@@ -81,7 +95,7 @@ func (f *Build) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			status = "SUCCESS"
 		}
 		out := map[string]any{"id": m[3], "status": status, "logUrl": logURL(m[1], m[2], m[3])}
-		if status == "SUCCESS" {
+		if status == "SUCCESS" && !f.NoResults {
 			name := ""
 			if subs, ok := req["substitutions"].(map[string]any); ok {
 				name, _ = subs["_IMAGE"].(string)

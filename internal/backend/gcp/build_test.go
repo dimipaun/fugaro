@@ -2,9 +2,12 @@ package gcp
 
 import (
 	"context"
+	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -49,8 +52,8 @@ func TestBuildRequest(t *testing.T) {
 		t.Fatalf("availableSecrets = %v", versions)
 	}
 	build := b.Steps[2]
-	if build.Id != "build" || !slices.Contains(build.SecretEnv, "NPM_TOKEN") || slices.Contains(b.Steps[1].SecretEnv, "NPM_TOKEN") ||
-		slices.Contains(build.SecretEnv, "GIT_TOKEN") || !slices.Equal(b.Steps[0].SecretEnv, []string{"GIT_TOKEN"}) {
+	if build.Id != "build" || !slices.Equal(build.SecretEnv, []string{"GIT_TOKEN", "NPM_TOKEN"}) || len(b.Steps[1].SecretEnv) != 0 ||
+		!slices.Equal(b.Steps[0].SecretEnv, []string{"GIT_TOKEN"}) {
 		t.Fatalf("secretEnv = %v / %v / %v", b.Steps[0].SecretEnv, b.Steps[1].SecretEnv, build.SecretEnv)
 	}
 	if b.ServiceAccount != "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount || b.Options.MachineType != "E2_HIGHCPU_8" || b.Options.Logging != "CLOUD_LOGGING_ONLY" || b.Timeout != "3600s" {
@@ -63,15 +66,23 @@ func TestBuildRequest(t *testing.T) {
 	// first one's workflow secrets.
 	again, err := BuildRequest("proj-1234", BuildSpec{Slug: spec.Slug, RepoURL: spec.RepoURL, BaseBranch: "main", Workflow: "web",
 		Base: spec.Base, Image: spec.Image, GitSecretID: spec.GitSecretID, GitUser: "x-token-auth", ServiceAccount: spec.ServiceAccount})
-	if err != nil || len(again.AvailableSecrets.SecretManager) != 1 || len(again.Steps[2].SecretEnv) != 0 || again.Substitutions["_SECRET_ENVS"] != "" {
+	if err != nil || len(again.AvailableSecrets.SecretManager) != 1 || len(again.Steps[2].SecretEnv) != 1 || again.Substitutions["_SECRET_ENVS"] != "" {
 		t.Fatalf("second request = %+v, %v", again, err)
 	}
-	for _, bad := range []config.Secret{{Name: "x", Env: "BAD NAME"}, {Name: "x", Env: "lower"}, {Name: "x", Env: "1X"}, {Name: "x", Env: "GIT_TOKEN"}, {Name: "x", Env: ""}} {
+	for _, env := range []string{"BAD NAME", "lower", "1X", "", "GIT_TOKEN", "GIT_USER",
+		// The build step's own variables, and ones bash or docker read.
+		"IMAGE", "REPO_URL", "BASE_BRANCH", "SECRET_ENVS", "FUGARO_BASE", "DOCKER_BUILDKIT", "DOCKER_HOST", "BUILDKIT_PROGRESS",
+		"PATH", "HOME", "TMPDIR", "IFS", "BASH_ENV", "LC_ALL"} {
 		s := spec
-		s.WorkflowSecrets = []config.Secret{bad}
-		if _, err := BuildRequest("proj-1234", s); err == nil {
-			t.Errorf("the secret env name %q was accepted", bad.Env)
+		s.WorkflowSecrets = []config.Secret{{Name: "x", Env: env}}
+		if _, err := BuildRequest("proj-1234", s); !errors.Is(err, ErrBadBuildSpec) {
+			t.Errorf("the secret env name %q was accepted (%v)", env, err)
 		}
+	}
+	dup := spec
+	dup.WorkflowSecrets = []config.Secret{{Name: "a", Env: "X_TOKEN"}, {Name: "b", Env: "X_TOKEN"}}
+	if _, err := BuildRequest("proj-1234", dup); !errors.Is(err, ErrBadBuildSpec) {
+		t.Errorf("a repeated secret env name was accepted (%v)", err)
 	}
 	for _, mutate := range []func(*BuildSpec){
 		func(s *BuildSpec) { s.RepoURL = "ssh://git@bitbucket.org/acme/app.git" },
@@ -118,5 +129,50 @@ func TestSubmitAndWait(t *testing.T) {
 	done, err = b.Wait(context.Background(), res.ID, 0)
 	if err == nil || done.Status != "FAILURE" || !strings.Contains(err.Error(), "FAILURE") || !strings.Contains(err.Error(), done.LogURL) {
 		t.Fatalf("failed build = %+v, %v", done, err)
+	}
+}
+
+func TestWaitRetriesTransientErrors(t *testing.T) {
+	defer func(n int, d time.Duration) { waitRetries, waitRetryBase = n, d }(waitRetries, waitRetryBase)
+	waitRetries, waitRetryBase = 3, time.Millisecond
+	spec := buildSpec(t)
+	fb := gcpfake.NewBuild(t)
+	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Submit(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A few 503s and 429s in a row are ridden out.
+	fb.FailGets = 2
+	if done, err := b.Wait(context.Background(), res.ID, 0); err != nil || done.Status != "SUCCESS" {
+		t.Fatalf("Wait after 503s = %+v, %v", done, err)
+	}
+	fb.FailGets, fb.FailGetCode = 3, http.StatusTooManyRequests
+	if done, err := b.Wait(context.Background(), res.ID, 0); err != nil || done.Status != "SUCCESS" {
+		t.Fatalf("Wait after 429s = %+v, %v", done, err)
+	}
+
+	// Past the limit it gives up, saying the build may still be running.
+	fb.FailGets, fb.FailGetCode = 10, 0
+	_, err = b.Wait(context.Background(), res.ID, 0)
+	if err == nil || !strings.Contains(err.Error(), "may still be running") || !strings.Contains(err.Error(), res.ID) {
+		t.Fatalf("Wait past the retry limit = %v", err)
+	}
+
+	// A 4xx other than 408/429 is not retried.
+	fb.FailGets, fb.FailGetCode = 10, http.StatusForbidden
+	before := len(fb.Requests())
+	if _, err := b.Wait(context.Background(), res.ID, 0); err == nil || len(fb.Requests()) != before+1 {
+		t.Fatalf("a 403 was retried (%d calls) or accepted: %v", len(fb.Requests())-before, err)
+	}
+
+	// A SUCCESS without pushed-image results has no digest, and no error.
+	fb.FailGets, fb.NoResults = 0, true
+	if done, err := b.Wait(context.Background(), res.ID, 0); err != nil || done.Status != "SUCCESS" || done.Digest != "" {
+		t.Fatalf("Wait without results = %+v, %v", done, err)
 	}
 }

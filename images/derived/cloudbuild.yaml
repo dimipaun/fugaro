@@ -4,11 +4,14 @@
 #
 # The git credential is the provider token the job already uses
 # (fugaro-<slug>-bitbucket-token): _GIT_SECRET names its Secret Manager
-# version and _GIT_USER its https username. Only the source step sees it as
-# GIT_TOKEN; that step checks REPO_URL is https:// and writes the
-# credential-store line (https://<user>:<token>@<host>) itself. The build
-# gets the file as the git-credentials BuildKit secret, which no layer
-# keeps, and removes it on exit.
+# version and _GIT_USER its https username. Only the two steps that clone
+# see it, as GIT_TOKEN: source (the shallow clone render reads) and build
+# (for the Dockerfile's own clone). Each checks REPO_URL is https://, writes
+# a credential-store line (https://<user>:<token>@<host>, user and token
+# percent-encoded) into a mktemp directory inside its own container, and
+# removes it on exit. Nothing is written to /workspace or /builder/home, so
+# the render step never sees a credential. The build passes its file as the
+# git-credentials BuildKit secret, which no layer keeps.
 #
 # Render and build use one base image. Cloud Build pulls _FUGARO_BASE once,
 # to run the render step; the build step does not pull again but pins the
@@ -52,11 +55,27 @@ steps:
       - -c
       - |
         set -eu
+        export LC_ALL=C
+        # urlenc percent-encodes $$1 byte by byte (bash builtins only, so the
+        # value never reaches an argv), as git's credential-store expects.
+        urlenc() {
+          local s=$$1 out= c i
+          for ((i = 0; i < $${#s}; i++)); do
+            c=$${s:i:1}
+            case "$$c" in
+              [A-Za-z0-9._~-]) out+=$$c ;;
+              *) printf -v c '%%%02X' "'$$c"; out+=$$c ;;
+            esac
+          done
+          printf '%s' "$$out"
+        }
         case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
         host=$${REPO_URL#https://}; host=$${host%%/*}
         case "$$host" in ""|*@*) echo "REPO_URL must name a host and no credentials" >&2; exit 1 ;; esac
-        (umask 077 && printf 'https://%s:%s@%s\n' "$$GIT_USER" "$$GIT_TOKEN" "$$host" > /builder/home/.git-credentials)
-        git -c credential.helper='store --file=/builder/home/.git-credentials' \
+        cred=$$(mktemp -d)
+        trap 'rm -rf "$$cred"' EXIT
+        (umask 077 && printf 'https://%s:%s@%s\n' "$$(urlenc "$$GIT_USER")" "$$(urlenc "$$GIT_TOKEN")" "$$host" > "$$cred/git-credentials")
+        git -c credential.helper="store --file=$$cred/git-credentials" \
           clone --quiet --depth 1 --branch "$$BASE_BRANCH" -- "$$REPO_URL" /workspace/src
         install -d -m 0777 /workspace/context
   # The base image's own fugaro renders the Dockerfile. It runs as fugaro,
@@ -74,6 +93,7 @@ steps:
   - id: build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
+    secretEnv: [GIT_TOKEN]
     env:
       - DOCKER_BUILDKIT=1
       - "FUGARO_BASE=${_FUGARO_BASE}"
@@ -81,11 +101,31 @@ steps:
       - "BASE_BRANCH=${_BASE_BRANCH}"
       - "IMAGE=${_IMAGE}"
       - "SECRET_ENVS=${_SECRET_ENVS}"
+      - "GIT_USER=${_GIT_USER}"
     args:
       - -c
       - |
         set -eu
-        trap 'rm -f /builder/home/.git-credentials' EXIT
+        export LC_ALL=C
+        # urlenc percent-encodes $$1 byte by byte (bash builtins only, so the
+        # value never reaches an argv), as git's credential-store expects.
+        urlenc() {
+          local s=$$1 out= c i
+          for ((i = 0; i < $${#s}; i++)); do
+            c=$${s:i:1}
+            case "$$c" in
+              [A-Za-z0-9._~-]) out+=$$c ;;
+              *) printf -v c '%%%02X' "'$$c"; out+=$$c ;;
+            esac
+          done
+          printf '%s' "$$out"
+        }
+        case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
+        host=$${REPO_URL#https://}; host=$${host%%/*}
+        case "$$host" in ""|*@*) echo "REPO_URL must name a host and no credentials" >&2; exit 1 ;; esac
+        cred=$$(mktemp -d)
+        trap 'rm -rf "$$cred"' EXIT
+        (umask 077 && printf 'https://%s:%s@%s\n' "$$(urlenc "$$GIT_USER")" "$$(urlenc "$$GIT_TOKEN")" "$$host" > "$$cred/git-credentials")
         base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE") \
           || { echo "the render step's base image is not on this worker" >&2; exit 1; }
         printf '%s\n' "$$base" > /workspace/base-digest
@@ -99,7 +139,7 @@ steps:
           --build-arg "FUGARO_BASE=$$base" \
           --build-arg "REPO_URL=$$REPO_URL" \
           --build-arg "BASE_BRANCH=$$BASE_BRANCH" \
-          --secret id=git-credentials,src=/builder/home/.git-credentials \
+          --secret "id=git-credentials,src=$$cred/git-credentials" \
           "$$@" \
           --tag "$$IMAGE:latest" /workspace/context
 images: ["${_IMAGE}:latest"]
