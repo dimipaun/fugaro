@@ -82,6 +82,20 @@ type Record struct {
 	StartedAt  time.Time       `json:"started_at"`
 	Deadline   *time.Time      `json:"deadline,omitempty"`
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	// FinalizeReserveS is the workflow's timeouts.finalize_reserve at the
+	// task's ref, overrides applied, in seconds; read it with
+	// FinalizeReserve. Absent until bootstrap has read fugaro.yaml.
+	FinalizeReserveS float64 `json:"finalize_reserve_s,omitempty"`
+}
+
+// FinalizeReserve is the run's finalize reserve, for cancel's grace floor
+// without a checkout. ok is false when the record has none: an older
+// record, or a run that failed before bootstrap read its workflow.
+func (r *Record) FinalizeReserve() (d time.Duration, ok bool) {
+	if r.FinalizeReserveS <= 0 {
+		return 0, false
+	}
+	return time.Duration(r.FinalizeReserveS * float64(time.Second)), true
 }
 
 // ErrNotFound means the requested object does not exist.

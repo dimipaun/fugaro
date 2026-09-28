@@ -130,6 +130,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		CostUSD: 4.12, Cost: &cost,
 		Stages:    []runstore.StageTiming{{Name: "implement", StartedAt: at, DurationS: 61}},
 		StartedAt: at, Deadline: &deadline, FinishedAt: &finished,
+		FinalizeReserveS: 90,
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {

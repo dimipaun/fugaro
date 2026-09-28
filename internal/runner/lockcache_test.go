@@ -195,6 +195,10 @@ func TestRecordsExecutionAndDeadline(t *testing.T) {
 	if err != nil || rec.Execution != exec1 {
 		t.Fatalf("rec.Execution = %q, err = %v", rec.Execution, err)
 	}
+	// The fixture's finalize_reserve is 30s, stored for cancel's grace floor.
+	if d, ok := rec.FinalizeReserve(); !ok || d != 30*time.Second {
+		t.Fatalf("finalize reserve = %v, %v", d, ok)
+	}
 	// The fixture's total is 5m: deadline = started_at + 5m + 3m.
 	if rec.Deadline == nil || !rec.Deadline.Equal(rec.StartedAt.Add(8*time.Minute)) {
 		t.Fatalf("deadline = %v, started %v", rec.Deadline, rec.StartedAt)

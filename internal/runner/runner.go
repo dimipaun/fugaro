@@ -633,6 +633,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
 	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
 	// The lock comes before anything changes remote state: the clone and
