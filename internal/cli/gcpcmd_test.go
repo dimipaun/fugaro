@@ -29,7 +29,9 @@ func jobSpecCheckout(t *testing.T, cfg string) {
 	dir := checkoutWith(t, files)
 	testutil.Git(t, dir, "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
 	lc := filepath.Join(t.TempDir(), "config.yaml")
-	_ = os.WriteFile(lc, []byte("version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: proj-1234-fugaro-runs\nregistry: us-east5-docker.pkg.dev/proj-1234/fugaro\n"), 0o600)
+	if err := os.WriteFile(lc, []byte("version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: proj-1234-fugaro-runs\nregistry: us-east5-docker.pkg.dev/proj-1234/fugaro\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("FUGARO_CONFIG", lc)
 }
 
@@ -85,6 +87,10 @@ func TestGCPJobSpecFields(t *testing.T) {
 		"sa":               "fugaro-acme-app-web@proj-1234.iam.gserviceaccount.com",
 		"image":            "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-app-web",
 		"task-timeout":     "1320",
+		"cpu":              "4", // the web-node defaults
+		"memory":           "8Gi",
+		"labels":           "fugaro=managed,fugaro_repo=acme-app,fugaro_workflow=web",
+		"repo-label":       "acme-app",
 		"git-secret":       "fugaro-acme-app-bitbucket-token",
 		"env":              "FUGARO_BACKEND=cloud-run,FUGARO_BUCKET=gs://proj-1234-fugaro-runs,FUGARO_PROJECT=proj-1234,FUGARO_REGION=us-east5",
 		"secret-ids":       "fugaro-acme-app-bitbucket-token\nfugaro-acme-app-claude-oauth-token\nfugaro-acme-app-npm-token",
@@ -123,8 +129,9 @@ func TestGCPJobSpecVertex(t *testing.T) {
 
 func TestGCPJobSpecRefuses(t *testing.T) {
 	for name, cfg := range map[string]string{
-		"github": strings.Replace(jobSpecYAML, "bitbucket", "github", 1),
-		"cpu 3":  strings.Replace(jobSpecYAML, "    timeouts:", "    resources: { cpu: 3, memory: 4Gi }\n    timeouts:", 1),
+		"github":                           strings.Replace(jobSpecYAML, "bitbucket", "github", 1),
+		"cpu 3":                            strings.Replace(jobSpecYAML, "    timeouts:", "    resources: { cpu: 3, memory: 4Gi }\n    timeouts:", 1),
+		"env collides with the platform's": strings.Replace(jobSpecYAML, "env: NPM_TOKEN", "env: FUGARO_BUCKET", 1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			jobSpecCheckout(t, cfg)
@@ -133,6 +140,14 @@ func TestGCPJobSpecRefuses(t *testing.T) {
 			}
 		})
 	}
+	t.Run("no origin", func(t *testing.T) {
+		jobSpecCheckout(t, jobSpecYAML)
+		testutil.Git(t, ".", "remote", "remove", "origin")
+		_, _, err := execute(t, "gcp", "job-spec", "--repo", "acme/app", "--json")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "origin") {
+			t.Fatalf("err = %v", err)
+		}
+	})
 	t.Run("no local config", func(t *testing.T) {
 		jobSpecCheckout(t, jobSpecYAML)
 		t.Setenv("FUGARO_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))

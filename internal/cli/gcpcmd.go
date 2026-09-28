@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ type jobSpec struct {
 	Secrets             map[string]string `json:"secrets"` // env var → secret ID
 	GitSecret           string            `json:"git_secret"`
 	BuildServiceAccount string            `json:"build_service_account,omitempty"`
+	Labels              map[string]string `json:"labels"` // on the job; fugaro_repo matches the secrets' label
 
 	secretNames     map[string]string // logical name → secret ID
 	buildSecretIDs  []string          // the git secret and the workflow secrets
@@ -50,7 +52,19 @@ type jobSpec struct {
 
 // jobSpecFields are the values of --field.
 var jobSpecFields = []string{"job", "sa-id", "sa", "image", "cpu", "memory", "task-timeout", "git-secret",
-	"env", "secrets", "secret-ids", "secret-names", "build-secret-ids", "bucket-condition"}
+	"env", "secrets", "secret-ids", "secret-names", "build-secret-ids", "bucket-condition", "labels", "repo-label"}
+
+var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
+
+// repoLabel is the fugaro_repo label value of a repository slug: GCP label
+// values allow only [a-z0-9_-], at most 63 characters.
+func repoLabel(slug string) string {
+	v := unsafeLabelRE.ReplaceAllString(slug, "_")
+	if len(v) > 63 {
+		v = v[:63]
+	}
+	return v
+}
 
 func newGCPCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -147,9 +161,17 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		},
 		Secrets:             map[string]string{},
 		BuildServiceAccount: lc.Build.ServiceAccount,
+		Labels:              map[string]string{"fugaro": "managed", "fugaro_repo": repoLabel(slug), "fugaro_workflow": name},
 		secretNames:         map[string]string{},
 	}
+	var collisions []string
 	mount := func(logical, env string) {
+		if _, dup := js.Secrets[env]; dup {
+			collisions = append(collisions, env)
+		}
+		if _, dup := js.Env[env]; dup {
+			collisions = append(collisions, env)
+		}
 		id := gcp.SecretID(slug, logical)
 		js.Secrets[env] = id
 		js.secretNames[logical] = id
@@ -178,6 +200,9 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		mount(s.Name, s.Env)
 		js.buildSecretIDs = append(js.buildSecretIDs, gcp.SecretID(slug, s.Name))
 	}
+	if len(collisions) > 0 {
+		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(collisions, ", "))}
+	}
 	slices.Sort(js.buildSecretIDs)
 	js.buildSecretIDs = slices.Compact(js.buildSecretIDs)
 
@@ -196,7 +221,12 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 func checkoutRepo(ctx context.Context, root, flag string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
 	cmd.WaitDelay = 5 * time.Second
-	out, _ := cmd.Output()
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", &ExitError{Code: ExitUserError, Err: fmt.Errorf("reading the checkout's origin: %w: %s", err, strings.TrimSpace(stderr.String()))}
+	}
 	origin := ""
 	if u, err := url.Parse(image.HTTPSOrigin(strings.TrimSpace(string(out)))); err == nil && u.Scheme == "https" {
 		origin = strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
@@ -302,6 +332,10 @@ func jobSpecField(js *jobSpec, field string) string {
 		return strings.Join(js.buildSecretIDs, "\n")
 	case "bucket-condition":
 		return js.bucketCondition
+	case "labels":
+		return strings.Join(pairs(js.Labels, "%s=%s"), ",")
+	case "repo-label":
+		return js.Labels["fugaro_repo"]
 	}
 	return ""
 }
