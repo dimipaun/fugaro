@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +15,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // seedLost seeds a run launched long ago whose execution the backend no
@@ -278,5 +282,31 @@ func TestLsCorruptObjectIsAPerRowError(t *testing.T) {
 	var d Diagnosis
 	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != runview.StatusError {
 		t.Fatalf("diagnose = %s, %v", out, err)
+	}
+}
+
+// ls without --repo lists a config repository that has no provider when
+// the working directory is its checkout, whose fugaro.yaml names one
+// (design §5.4), instead of skipping it.
+func TestLsUsesTheCheckoutForAProviderlessRepo(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newCloudFixture(t)
+	f.appendConfig(t, "  acme/other: { workflows: [svc] }\n")
+	slug := mustSlug("github", "acme/other")
+	id := time.Now().UTC().Format("20060102") + "-090000-aaaa"
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	_ = runstore.Open(b, slug, id).CreateTask(context.Background(), &task.Spec{Version: 1, RunID: id, Repo: "acme/other", Ref: "main", Workflow: "svc", Task: "x"})
+	b.Close()
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\ngit: { provider: github, base_branch: main }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	got, errOut := lsJSON(t)
+	if len(got.Runs) != 1 || got.Runs[0].RunID != id || strings.Contains(errOut, "skipping") {
+		t.Fatalf("ls = %+v, stderr %q", got.Runs, errOut)
 	}
 }

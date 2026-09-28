@@ -143,9 +143,14 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 	}
 	if !o.all && len(env.lc.Repos) > 0 {
 		var slugs []string
-		noCheckout := func() *config.Config { return nil }
-		for name := range env.lc.Repos {
-			slug, err := env.repoSlug(name, noCheckout)
+		for name, r := range env.lc.Repos {
+			// An entry without a provider takes it from this checkout's
+			// fugaro.yaml when the checkout is that repository (§5.4).
+			checkout := func() *config.Config { return nil }
+			if r.Provider == "" {
+				checkout = checkoutOf(ctx, name)
+			}
+			slug, err := env.repoSlug(name, checkout)
 			if err != nil {
 				fmt.Fprintf(warn, "warning: skipping %s: %v\n", name, err)
 				continue

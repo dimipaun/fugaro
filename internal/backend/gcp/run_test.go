@@ -357,3 +357,14 @@ func TestCheckRunExecution(t *testing.T) {
 		}
 	}
 }
+
+func TestRedactURL(t *testing.T) {
+	for _, u := range []string{"https://user:tok@host/o/r", "ssh://user:tok@host/o/r"} {
+		if got := RedactURL(u); strings.Contains(got, "tok") || !strings.Contains(got, "host/o/r") {
+			t.Errorf("RedactURL(%q) = %q", u, got)
+		}
+	}
+	if got := RedactURL("https://host/%zz"); got != "<unparseable URL>" {
+		t.Errorf("unparseable: %q", got)
+	}
+}

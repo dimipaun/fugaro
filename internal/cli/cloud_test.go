@@ -111,14 +111,18 @@ func envOn(t *testing.T, f *cloudFixture, bucket *blobx.Bucket) *cloudEnv {
 	return &cloudEnv{lc: lc, bucket: bucket, be: be}
 }
 
-func TestGitprovSafe(t *testing.T) {
-	for _, u := range []string{"https://user:tok@host/o/r", "ssh://user:tok@host/o/r"} {
-		if got := gitprovSafe(u); strings.Contains(got, "tok") || !strings.Contains(got, "host/o/r") {
-			t.Errorf("gitprovSafe(%q) = %q", u, got)
+func TestRepoFromOrigin(t *testing.T) {
+	for origin, want := range map[string]string{
+		"git@github.com:acme/app.git":              "acme/app",
+		"https://user:tok@bitbucket.org/acme/app/": "acme/app",
+		"ssh://git@bitbucket.org:22/acme/app.git":  "acme/app",
+		"https://host/deep/group/app":              "",
+		"https://host/app":                         "",
+		"not a url":                                "",
+	} {
+		if got, ok := repoFromOrigin(origin); got != want || ok != (want != "") {
+			t.Errorf("repoFromOrigin(%q) = %q, %v; want %q", origin, got, ok, want)
 		}
-	}
-	if got := gitprovSafe("https://host/%zz"); got != "<unparseable URL>" {
-		t.Errorf("unparseable: %q", got)
 	}
 }
 

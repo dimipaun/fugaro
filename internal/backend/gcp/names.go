@@ -5,6 +5,7 @@ package gcp
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -39,6 +40,34 @@ const (
 	secretHashHex = 16
 	imageHashHex  = 16
 )
+
+// Labels on the resources Fugaro manages (design §3.2): every one carries
+// LabelManaged=ManagedValue; jobs and secrets carry LabelRepo (RepoLabel of
+// the slug) and LabelWorkflow or LabelSecret. They are the ownership check
+// before a reuse or a delete.
+const (
+	LabelManaged  = "fugaro"
+	ManagedValue  = "managed"
+	LabelRepo     = "fugaro_repo"
+	LabelWorkflow = "fugaro_workflow"
+	LabelSecret   = "fugaro_secret"
+)
+
+var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
+
+// RepoLabel is the LabelRepo value of a repository slug: every character
+// outside [a-z0-9_-] becomes "_", the rule Secret Manager labels use too.
+// GCP label values are at most 63 characters. The label derives from the
+// slug and must never be truncated: a long slug ends in its hash suffix,
+// and cutting it off would make two repositories' labels equal. So a label
+// that would be too long is an error, not a shorter label.
+func RepoLabel(slug string) (string, error) {
+	v := unsafeLabelRE.ReplaceAllString(slug, "_")
+	if len(v) > 63 {
+		return "", fmt.Errorf("repository slug %s is too long for a GCP label (%d > 63 characters)", slug, len(v))
+	}
+	return v, nil
+}
 
 var unsafeNameRE = regexp.MustCompile(`[^a-z0-9-]+`)
 

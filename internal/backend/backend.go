@@ -14,6 +14,16 @@ import (
 	"time"
 )
 
+// CloudRun is the Cloud Run backend's name: launch.json's backend field
+// and the job's FUGARO_BACKEND.
+const CloudRun = "cloud-run"
+
+// TaskTimeoutSlack is what the job's task timeout adds to the workflow's
+// timeouts.total (design §4.5): the bootstrap's job-spec (and M5's
+// Terraform) set it, and the runner's lock expiry and writeback window rely
+// on it. It is the single source for both.
+const TaskTimeoutSlack = 2 * time.Minute
+
 // State is an execution's lifecycle state as the platform reports it.
 type State string
 
@@ -156,7 +166,7 @@ type Backend interface {
 var ErrNotFound = errors.New("not found")
 
 // ErrRejected means the platform definitively refused a request (a 4xx
-// other than 408 and 429): nothing was created. Callers may undo their own
+// other than 408, 429 and 499): nothing was created. Callers may undo their own
 // bookkeeping only for this error; any other error is ambiguous.
 var ErrRejected = errors.New("rejected")
 

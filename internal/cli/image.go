@@ -80,7 +80,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
 	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
-	f.StringVar(&o.base, "base", "", "base image (default: the published base matching this fugaro version)")
+	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_image, else the published base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
 	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test in the built image (--local)")
@@ -268,7 +268,7 @@ func originURL(ctx context.Context) (string, error) {
 	}
 	u := image.HTTPSOrigin(strings.TrimSpace(string(out)))
 	if !strings.HasPrefix(u, "https://") {
-		return "", userErr("origin %s has no https form for Cloud Build to clone", gitprovSafe(u))
+		return "", userErr("origin %s has no https form for Cloud Build to clone", gcp.RedactURL(u))
 	}
 	return u, nil
 }

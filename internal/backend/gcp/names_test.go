@@ -179,3 +179,16 @@ func realSlug(t *testing.T, provider, repo string) string {
 	}
 	return s
 }
+
+func TestRepoLabel(t *testing.T) {
+	if got, err := RepoLabel("acme-my.app"); err != nil || got != "acme-my_app" {
+		t.Fatalf("RepoLabel = %q, %v", got, err)
+	}
+	// Never truncated: a long slug ends in its hash, which must survive.
+	if got, err := RepoLabel(strings.Repeat("a", 64)); err == nil {
+		t.Fatalf("64-character slug gave label %q", got)
+	}
+	if got, err := RepoLabel(strings.Repeat("a", 63)); err != nil || len(got) != 63 {
+		t.Fatalf("63-character slug: %q, %v", got, err)
+	}
+}

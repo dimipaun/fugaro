@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -30,7 +31,7 @@ type cloudOptions struct{ config, project, region string }
 // addCloudFlags registers --config, --project and --region on cmd.
 func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
 	f := cmd.Flags()
-	f.StringVar(&o.config, "config", "", "local config file (default $FUGARO_CONFIG or ~/.config/fugaro/config.yaml)")
+	f.StringVar(&o.config, "config", "", "local config file (default $FUGARO_CONFIG, else $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml)")
 	f.StringVar(&o.project, "project", "", "GCP project (overrides the local config)")
 	f.StringVar(&o.region, "region", "", "GCP region (overrides the local config)")
 }
@@ -209,13 +210,27 @@ func originRepo(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", userErr("no --repo, and no origin remote here to take it from")
 	}
-	u := image.HTTPSOrigin(strings.TrimSpace(string(out)))
-	_, path, ok := strings.Cut(strings.TrimPrefix(u, "https://"), "/")
-	path = strings.TrimSuffix(strings.Trim(path, "/"), ".git")
-	if !ok || strings.Count(path, "/") != 1 {
-		return "", userErr("origin %s does not name owner/name; pass --repo", gitprovSafe(u))
+	origin := strings.TrimSpace(string(out))
+	repo, ok := repoFromOrigin(origin)
+	if !ok {
+		return "", userErr("origin %s does not name owner/name; pass --repo", gcp.RedactURL(image.HTTPSOrigin(origin)))
 	}
-	return path, nil
+	return repo, nil
+}
+
+// repoFromOrigin is the owner/name an origin remote URL (https, ssh or
+// scp-like) names: the one rule for run, ls, secrets, image build and
+// job-spec. A nested path (group/subgroup/name) is not owner/name.
+func repoFromOrigin(origin string) (string, bool) {
+	u, err := url.Parse(image.HTTPSOrigin(origin))
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", false
+	}
+	repo := strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
+	if _, _, ok := gitprov.SplitRepo(repo); !ok {
+		return "", false
+	}
+	return repo, true
 }
 
 // checkoutConfig is the fugaro.yaml of the checkout in the working
@@ -244,16 +259,6 @@ func checkoutConfig(ctx context.Context, repo string) *config.Config {
 	}
 	cfg, _ := config.Parse(data)
 	return cfg
-}
-
-// gitprovSafe returns u without userinfo, for error messages.
-func gitprovSafe(u string) string {
-	p, err := url.Parse(u)
-	if err != nil {
-		return "<unparseable URL>"
-	}
-	p.User = nil
-	return p.String()
 }
 
 // refuseHTTP2Debug refuses to talk to Google while GODEBUG holds

@@ -400,7 +400,7 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 	if err := check(rec.Execution); err != nil {
 		return nil, err
 	}
-	l := &runstore.Launch{Version: 1, RunID: runID, Backend: "cloud-run", Execution: rec.Execution, LaunchedAt: rec.StartedAt}
+	l := &runstore.Launch{Version: 1, RunID: runID, Backend: backend.CloudRun, Execution: rec.Execution, LaunchedAt: rec.StartedAt}
 	if id, ok := backend.ParseExecution(rec.Execution); ok {
 		l.Job = id.Job
 	}
@@ -525,7 +525,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))
 	}
-	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: "cloud-run", Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
+	l := &runstore.Launch{Version: 1, RunID: spec.RunID, Backend: backend.CloudRun, Execution: ref.Name, Job: ref.Job, LogURL: ref.LogURL, LaunchedBy: spec.RequestedBy, LaunchedAt: now.UTC()}
 	if err := s.WriteLaunch(hctx, l); errors.Is(err, runstore.ErrExists) {
 		theirs, rerr := s.ReadLaunch(hctx)
 		if rerr != nil {
