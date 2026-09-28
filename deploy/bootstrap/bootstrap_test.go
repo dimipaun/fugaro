@@ -68,11 +68,16 @@ func fakeBin(t *testing.T) string {
 // fakeGcloud is a stateful gcloud stand-in: a resource exists while its
 // file under $FAKE_STATE/<kind>/ does, describes of missing ones fail with
 // NOT_FOUND, creates of existing ones with ALREADY_EXISTS, and bindings are
-// files under $FAKE_STATE/bind/. Every call's argv is appended to
+// files under $FAKE_STATE/bind/; a service account's file holds its display
+// name. A call whose argv starts with $FAKE_FAIL fails with
+// PERMISSION_DENIED. Every call's argv is appended to
 // $FAKE_LOG, NUL-separated, one call per line. docker only records.
 const fakeGcloud = `#!/usr/bin/env bash
 { printf '%s\0' "$@"; printf '\n'; } >> "$FAKE_LOG"
 st=$FAKE_STATE
+if [ -n "${FAKE_FAIL:-}" ]; then
+  case "$*" in "$FAKE_FAIL"*) echo "ERROR: (gcloud) PERMISSION_DENIED: fake failure of $FAKE_FAIL" >&2; exit 1 ;; esac
+fi
 key() { printf '%s' "$*" | tr '/:@ ' '____'; }
 flag() { local f=$1; shift; while [ $# -gt 0 ]; do if [ "$1" = "$f" ]; then printf '%s' "$2"; return; fi; shift; done; }
 nf() { echo "ERROR: (gcloud.$1) NOT_FOUND: fake: $2 not found" >&2; exit 1; }
@@ -91,7 +96,7 @@ mkdir -p "$st/$kind" "$st/bind"
 f="$st/$kind/$(key "$name")"
 b="$st/bind/$(key "$kind $name $(flag --member "$@") $(flag --role "$@")")"
 case "$verb" in
-  create) if [ -e "$f" ]; then echo "ERROR: ALREADY_EXISTS: $name" >&2; exit 1; fi; : > "$f" ;;
+  create) if [ -e "$f" ]; then echo "ERROR: ALREADY_EXISTS: $name" >&2; exit 1; fi; flag --display-name "$@" > "$f" ;;
   deploy) flag --labels "$@" > "$f" ;;
   describe)
     [ -e "$f" ] || nf describe "$name"
@@ -99,6 +104,7 @@ case "$verb" in
       *projectNumber*) echo "${FAKE_BUCKET_NUMBER:-111}" ;;
       *location*) echo "${FAKE_BUCKET_LOCATION:-US-EAST5}" ;;
       *labels.*) l=${fmt#*labels.}; label "${l%)}" "$f" ;;
+      *displayName*) cat "$f" ;;
     esac ;;
   update) [ -e "$f" ] || nf update "$name" ;;
   delete) [ -e "$f" ] || nf delete "$name"; rm -f "$f" ;;
@@ -468,6 +474,10 @@ func TestTeardownChecksLabels(t *testing.T) {
 		"secret of another repository": func(f *fake) {
 			f.seed(t, "secrets", oauthID, "fugaro=managed,fugaro_repo=acme-sandbox-claude")
 		},
+		"service account of another repository, job already gone": func(f *fake) {
+			_ = os.Remove(filepath.Join(f.state, "jobs", jobName))
+			f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox-web x (M4 bootstrap)")
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFake(t)
@@ -482,6 +492,67 @@ func TestTeardownChecksLabels(t *testing.T) {
 				t.Fatalf("refused teardown deleted %q", d)
 			}
 		})
+	}
+}
+
+// job-sa and job never take over a colliding account or job.
+func TestCreatesCheckOwnership(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newFake(t)
+	env := scriptEnv(t, f.bin, f)
+	for _, step := range []string{"apis", "bucket", "registry", "build-sa"} {
+		mustScript(t, env, "--apply", "--yes", step)
+	}
+	f.calls(t)
+	f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox-web x (M4 bootstrap)")
+	if out, err := script(t, env, "--apply", "--yes", "job-sa"); err == nil || !strings.Contains(out, "refusing") {
+		t.Fatalf("job-sa over another repository's account: %v\n%s", err, out)
+	}
+	if m := mutating(f.calls(t)); len(m) > 0 {
+		t.Fatalf("job-sa changed %q", m)
+	}
+	f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox web (M4 bootstrap)")
+	mustScript(t, env, "--apply", "--yes", "job-sa") // its own account is reused
+	f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo=acme-sandbox-web,fugaro_workflow=x")
+	f.calls(t)
+	if out, err := script(t, env, "--apply", "--yes", "job"); err == nil || !strings.Contains(out, "refusing") {
+		t.Fatalf("job over another repository's job: %v\n%s", err, out)
+	}
+	if m := mutating(f.calls(t)); len(m) > 0 {
+		t.Fatalf("job changed %q", m)
+	}
+	f.seed(t, "jobs", jobName, "fugaro=managed,"+repoLbl+",fugaro_workflow=web")
+	mustScript(t, env, "--apply", "--yes", "job") // its own job is updated
+}
+
+// A describe or list that fails for any reason but not-found stops the
+// step: nothing is created, deleted or taken for absent.
+func TestFailuresOtherThanNotFoundStop(t *testing.T) {
+	testutil.IsolateGit(t)
+	f := newFake(t)
+	env := scriptEnv(t, f.bin, f)
+	installed(t, f, env)
+	seedSecrets(t, f)
+	for _, c := range []struct{ fail, step string }{
+		{"run jobs list", "teardown --secrets"}, // the sibling check must not read a failure as "no siblings"
+		{"iam service-accounts describe", "job-sa"},
+		{"run jobs describe", "job"},
+		{"run jobs describe", "teardown"},
+		{"secrets describe", "teardown --secrets"},
+		{"storage buckets describe", "bucket"},
+		{"storage buckets describe", "teardown-all --all"},
+	} {
+		if c.step == "teardown-all --all" {
+			mustScript(t, env, "--apply", "--yes", "teardown") // no job may remain
+			f.calls(t)
+		}
+		out, err := script(t, append(slices.Clone(env), "FAKE_FAIL="+c.fail), append([]string{"--apply", "--yes"}, strings.Fields(c.step)...)...)
+		if err == nil || !strings.Contains(out, "PERMISSION_DENIED") {
+			t.Fatalf("%s with %s failing: %v\n%s", c.step, c.fail, err, out)
+		}
+		if m := mutating(f.calls(t)); len(m) > 0 {
+			t.Fatalf("%s with %s failing changed %q", c.step, c.fail, m)
+		}
 	}
 }
 
@@ -634,7 +705,7 @@ func TestScriptGuards(t *testing.T) {
 }
 
 func TestScriptRefusesUnknownStep(t *testing.T) {
-	for _, args := range [][]string{{"everything"}, {}, {"apis", "--force"}, {"apis", "job"}} {
+	for _, args := range [][]string{{"everything"}, {}, {"apis", "--force"}, {"apis", "job"}, {"apis job"}, {"job teardown"}, {"Apis"}} {
 		if out, err := script(t, os.Environ(), args...); err == nil || !strings.Contains(out, "usage") {
 			t.Fatalf("%q: %v\n%s", args, err, out)
 		}

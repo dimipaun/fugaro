@@ -44,7 +44,8 @@ for arg in "$@"; do
     *) [ -z "$STEP" ] || usage; STEP=$arg ;;
   esac
 done
-case " $STEPS " in *" $STEP "*) [ -n "$STEP" ] || usage ;; *) usage ;; esac
+case "$STEP" in ""|*[!a-z-]*) usage ;; esac
+case " $STEPS " in *" $STEP "*) ;; *) usage ;; esac
 FUGARO=${FUGARO:-fugaro}
 HEAVY=${HEAVY:-/Users/dimi/git.lattica/Fugaro/.superpowers/heavy.sh}
 
@@ -117,6 +118,31 @@ confirm() {
   printf 'Type the project ID (%s) to go ahead: ' "$PROJECT" >&2
   read -r answer
   [ "$answer" = "$PROJECT" ] || die "not confirmed; nothing done"
+}
+
+# The display name the script gives a job's service account. Service
+# accounts carry no labels, so this is how a reused or deleted account is
+# recognized as this repository's and workflow's.
+job_sa_display() { echo "Fugaro job $REPO $WORKFLOW (M4 bootstrap)"; }
+
+# check_sa_owner SA: with --apply, dies unless the existing account SA has
+# this repository's and workflow's display name.
+check_sa_owner() {
+  [ "$APPLY" = 1 ] || return 0
+  local dn
+  dn=$(gcloud iam service-accounts describe "$1" --project "$PROJECT" --format 'value(displayName)')
+  [ "$dn" = "$(job_sa_display)" ] || die "service account $1 is \"$dn\", not \"$(job_sa_display)\"; refusing"
+}
+
+# check_job_owner JOB: with --apply, dies unless the existing job JOB is
+# labelled with this repository and workflow.
+check_job_owner() {
+  [ "$APPLY" = 1 ] || return 0
+  local got gotwf
+  got=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_repo)')
+  gotwf=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_workflow)')
+  [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ] ||
+    die "job $1 is labelled fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not $repo_label $WORKFLOW; refusing"
 }
 
 need() {
@@ -292,9 +318,10 @@ JSON
     confirm "creates service account $sa and grants it storage.objectUser on gs://$BUCKET, limited to its runs/, cache/ and locks/ prefixes"
     pin_bucket
     if exists gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
-      echo "= $sa exists; create skipped"
+      check_sa_owner "$sa"
+      echo "= $sa exists and is $(job_sa_display); create skipped"
     else
-      run gcloud iam service-accounts create "$sa_id" --project "$PROJECT" --display-name "Fugaro job $REPO $WORKFLOW (M4 bootstrap)"
+      run gcloud iam service-accounts create "$sa_id" --project "$PROJECT" --display-name "$(job_sa_display)"
       wait_sa "$sa"
     fi
     run gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$sa" \
@@ -352,7 +379,13 @@ JSON
     envs=$(spec env)
     secrets=$(spec secrets)
     labels=$(spec labels)
+    repo_label=$(spec repo-label)
     confirm "creates or updates Cloud Run job $job in $REGION (billed per execution second)"
+    if exists gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION"; then
+      check_job_owner "$job"
+    elif [ "$APPLY" != 1 ]; then
+      echo "= with --apply: if $job exists, check its fugaro_repo and fugaro_workflow labels first"
+    fi
     run gcloud run jobs deploy "$job" --project "$PROJECT" --region "$REGION" \
       --image "$img:latest" --service-account "$sa" \
       --cpu "$cpu" --memory "$mem" --task-timeout "${timeout}s" \
@@ -366,6 +399,8 @@ JSON
     cond=$(spec bucket-condition)
     ids=$(spec secret-ids)
     repo_label=$(spec repo-label)
+    job_checked=0
+    sa_checked=0
     idlist=$(echo "$ids" | tr '\n' ' ')
     if [ "$SECRETS" = 1 ]; then
       what="DELETES secrets ${idlist}(with every binding on them; refused while another job of $REPO exists)"
@@ -378,10 +413,12 @@ JSON
     if [ "$APPLY" = 1 ]; then
       if exists gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then pin_bucket; fi
       if exists gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION"; then
-        got=$(gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_repo)')
-        gotwf=$(gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_workflow)')
-        [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ] ||
-          die "job $job is labelled fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not $repo_label $WORKFLOW; refusing"
+        check_job_owner "$job"
+        job_checked=1
+      fi
+      if exists gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
+        check_sa_owner "$sa"
+        sa_checked=1
       fi
       for id in $ids; do
         if exists gcloud secrets describe "$id" --project "$PROJECT"; then
@@ -390,15 +427,21 @@ JSON
         fi
       done
       if [ "$SECRETS" = 1 ]; then
-        others=$(gcloud run jobs list --project "$PROJECT" --region "$REGION" --filter "metadata.labels.fugaro_repo=$repo_label" --format 'value(metadata.name)' | grep -vx "$job" || true)
+        # On its own line, so a failing list stops the step (set -e) rather
+        # than reading as "no other jobs".
+        jobs=$(gcloud run jobs list --project "$PROJECT" --region "$REGION" --filter "metadata.labels.fugaro_repo=$repo_label" --format 'value(metadata.name)')
+        others=$(printf '%s\n' "$jobs" | grep -vxF -e "$job" -e '' || true)
         [ -z "$others" ] || die "other jobs of $REPO still use its secrets ($(echo "$others" | tr '\n' ' ')); refusing --secrets"
       fi
     else
-      echo "= with --apply: check the fugaro_repo and fugaro_workflow labels of $job and each secret first"
+      echo "= with --apply: check the labels of $job and each secret, and the display name of $sa, first"
     fi
 
-    gone gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION" ||
+    # Only what the checks above recognized as this repository's is deleted.
+    if ! gone gcloud run jobs describe "$job" --project "$PROJECT" --region "$REGION"; then
+      [ "$APPLY" != 1 ] || [ "$job_checked" = 1 ] || die "job $job appeared after its label check; refusing"
       run gcloud run jobs delete "$job" --project "$PROJECT" --region "$REGION" --quiet
+    fi
     if ! gone gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --format 'value(name)'; then
       pin_bucket
       run_gone_ok gcloud storage buckets remove-iam-policy-binding "gs://$BUCKET" --member "serviceAccount:$sa" \
@@ -413,8 +456,10 @@ JSON
           --member "serviceAccount:$sa" --role roles/secretmanager.secretAccessor
       fi
     done
-    gone gcloud iam service-accounts describe "$sa" --project "$PROJECT" ||
+    if ! gone gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
+      [ "$APPLY" != 1 ] || [ "$sa_checked" = 1 ] || die "service account $sa appeared after its owner check; refusing"
       run gcloud iam service-accounts delete "$sa" --project "$PROJECT" --quiet
+    fi
     ;;
   teardown-all)
     need REGION BUCKET
@@ -435,5 +480,8 @@ JSON
       --member "serviceAccount:$BUILD_SA" --role roles/logging.logWriter --condition None
     gone gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT" ||
       run gcloud iam service-accounts delete "$BUILD_SA" --project "$PROJECT" --quiet
+    ;;
+  *)
+    usage
     ;;
 esac

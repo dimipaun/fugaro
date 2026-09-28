@@ -156,3 +156,16 @@ func TestGCPJobSpecRefuses(t *testing.T) {
 		}
 	})
 }
+
+func TestRepoLabel(t *testing.T) {
+	if got, err := repoLabel("acme-my.app"); err != nil || got != "acme-my_app" {
+		t.Fatalf("repoLabel = %q, %v", got, err)
+	}
+	// Never truncated: a long slug ends in its hash, which must survive.
+	if got, err := repoLabel(strings.Repeat("a", 64)); err == nil {
+		t.Fatalf("64-character slug gave label %q", got)
+	}
+	if got, err := repoLabel(strings.Repeat("a", 63)); err != nil || len(got) != 63 {
+		t.Fatalf("63-character slug: %q, %v", got, err)
+	}
+}

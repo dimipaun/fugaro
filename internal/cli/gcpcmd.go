@@ -56,14 +56,18 @@ var jobSpecFields = []string{"job", "sa-id", "sa", "image", "cpu", "memory", "ta
 
 var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
 
-// repoLabel is the fugaro_repo label value of a repository slug: GCP label
-// values allow only [a-z0-9_-], at most 63 characters.
-func repoLabel(slug string) string {
+// repoLabel is the fugaro_repo label value of a repository slug: every
+// character outside [a-z0-9_-] becomes "_", the rule Secret Manager labels
+// use too (T14). GCP label values are at most 63 characters. The label
+// derives from the slug and must never be truncated: a long slug ends in its
+// hash suffix, and cutting it off would make two repositories' labels equal.
+// So a label that would be too long is an error, not a shorter label.
+func repoLabel(slug string) (string, error) {
 	v := unsafeLabelRE.ReplaceAllString(slug, "_")
 	if len(v) > 63 {
-		v = v[:63]
+		return "", fmt.Errorf("repository slug %s is too long for a GCP label (%d > 63 characters)", slug, len(v))
 	}
-	return v
+	return v, nil
 }
 
 func newGCPCmd() *cobra.Command {
@@ -142,6 +146,10 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	}
 
 	slug := task.Slug(repo)
+	label, err := repoLabel(slug)
+	if err != nil {
+		return nil, &ExitError{Code: ExitUserError, Err: err}
+	}
 	saID := gcp.ServiceAccountID(slug, name)
 	js := &jobSpec{
 		Project:          lc.Project,
@@ -161,7 +169,7 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		},
 		Secrets:             map[string]string{},
 		BuildServiceAccount: lc.Build.ServiceAccount,
-		Labels:              map[string]string{"fugaro": "managed", "fugaro_repo": repoLabel(slug), "fugaro_workflow": name},
+		Labels:              map[string]string{"fugaro": "managed", "fugaro_repo": label, "fugaro_workflow": name},
 		secretNames:         map[string]string{},
 	}
 	var collisions []string
