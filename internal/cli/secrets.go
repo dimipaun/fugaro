@@ -90,8 +90,7 @@ a flag or the environment, and never printed. One trailing newline (\n or
 \r\n) is dropped, and the command says so. Values must be 4 bytes to
 64 KiB, on one line except for github-app-key (a PEM, which must be
 redirected from a file), and a one-line value may not start or end with
-spaces or tabs (a copy-and-paste slip, so it is refused rather than
-stored). Ctrl-C at the prompt stores nothing and restores the terminal.`,
+whitespace (a copy-and-paste slip, so it is refused rather than stored). Ctrl-C at the prompt stores nothing and restores the terminal.`,
 		Args: func(_ *cobra.Command, args []string) error {
 			switch {
 			case len(args) == 0:

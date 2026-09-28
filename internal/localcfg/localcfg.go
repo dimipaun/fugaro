@@ -203,7 +203,7 @@ func checkEndpoint(raw string) error {
 	case u.Scheme == "http" && (h == "127.0.0.1" || h == "localhost" || h == "::1"):
 		return nil
 	}
-	return fmt.Errorf("%q must be https (plain http only to 127.0.0.1 or localhost)", raw)
+	return fmt.Errorf("%q must be https (plain http only to 127.0.0.1, localhost or ::1)", raw)
 }
 
 // BucketURL is the runs bucket as a gocloud URL.

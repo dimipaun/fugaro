@@ -114,7 +114,7 @@ func TestSecretsSetNeverEchoes(t *testing.T) {
 		}
 	}
 	help, _, _ := execute(t, "secrets", "set", "--help")
-	if strings.Contains(help, "--value") || !strings.Contains(help, "stdin") || !strings.Contains(help, "spaces or tabs") {
+	if strings.Contains(help, "--value") || !strings.Contains(help, "stdin") || !strings.Contains(help, "whitespace") {
 		t.Fatalf("secrets set help:\n%s", help)
 	}
 }

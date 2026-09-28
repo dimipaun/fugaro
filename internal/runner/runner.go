@@ -321,10 +321,10 @@ func (r *run) addSecret(v string) {
 }
 
 // SecretEnvsVar is set on the Cloud Run job to the comma-separated names
-// of every secret variable the job mounts: the platform's own and every
-// workflow secret of the fugaro.yaml the job was deployed from. The ref a
-// task runs may declare fewer, but the values are in the runner's
-// environment either way, where the agent can read them.
+// of every secret variable the job mounts: the platform's own and the
+// job's own workflow's secrets in the fugaro.yaml it was deployed from.
+// The ref a task runs may declare fewer, but the values are in the
+// runner's environment either way, where the agent can read them.
 const SecretEnvsVar = "FUGARO_SECRET_ENVS"
 
 // minSecretLen is the shortest value redacted; agent.BuildEnv refuses a
