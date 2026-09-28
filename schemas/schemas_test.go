@@ -150,3 +150,29 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		t.Fatal(`schema accepts "status": "done"`)
 	}
 }
+
+// TestFugaroSchemaReservesTheSameEnv keeps the schema's reserved secret
+// variables in step with config.ReservedEnv (S-M1).
+func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	doc := func(env string) []byte {
+		return []byte("version: 1\ngit: { provider: github }\nworkflows:\n  server:\n    base: server-jvm\n" +
+			"    commands: { build: make, test: make test }\n    secrets: [{ name: tok, env: " + env + " }]\n")
+	}
+	if err := sch.Validate(yamlInstance(t, doc("NPM_TOKEN"))); err != nil {
+		t.Fatalf("schema rejects an ordinary secret variable: %v", err)
+	}
+	var envs []string
+	envs = append(envs, config.ReservedEnvNames...)
+	for _, p := range config.ReservedEnvPrefixes {
+		envs = append(envs, p+"X")
+	}
+	for _, env := range envs {
+		if !config.ReservedEnv(env) {
+			t.Fatalf("config.ReservedEnv(%q) = false", env)
+		}
+		if err := sch.Validate(yamlInstance(t, doc(env))); err == nil {
+			t.Errorf("schema accepts the reserved secret variable %s", env)
+		}
+	}
+}
