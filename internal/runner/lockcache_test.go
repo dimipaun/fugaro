@@ -289,7 +289,7 @@ func TestCorruptCacheDoesNotFailTheRun(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(h.files["README.md"]), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	key, ok, err := cache.KeyOf(root, cacheEntry(t, cacheYAML), "unpinned", runner.ToolchainHash(config.Image{}))
+	key, ok, err := cache.KeyOf(context.Background(), root, cacheEntry(t, cacheYAML), "unpinned", runner.ToolchainHash(config.Image{}), nil)
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestWritebackRekeysFromFinalTree(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		key, _, err := cache.KeyOf(root, cacheEntry(t, cacheYAML), "base@sha256:abc", runner.ToolchainHash(config.Image{}))
+		key, _, err := cache.KeyOf(context.Background(), root, cacheEntry(t, cacheYAML), "base@sha256:abc", runner.ToolchainHash(config.Image{}), nil)
 		if err != nil {
 			t.Fatal(err)
 		}

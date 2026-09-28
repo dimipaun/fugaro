@@ -170,9 +170,10 @@ func (r *run) cacheStore() *cache.Store {
 		MaxBytes: r.d.CacheMaxBytes, Warn: r.d.Log.Warn}
 }
 
-// cacheKey is s's key in the current checkout.
-func (r *run) cacheKey(s cacheSlot) (string, bool, error) {
-	return cache.KeyOf(r.d.WorkDir, s.entry, r.cacheBase, r.toolchain)
+// cacheKey is s's key in the current checkout, read within ctx. A key file
+// that isn't a regular file is left out, with a warning.
+func (r *run) cacheKey(ctx context.Context, s cacheSlot) (string, bool, error) {
+	return cache.KeyOf(ctx, r.d.WorkDir, s.entry, r.cacheBase, r.toolchain, r.d.Log.Warn)
 }
 
 // restoreCaches restores every cache entry it can; nothing here fails the
@@ -228,8 +229,14 @@ func (r *run) restoreCaches(ctx context.Context) {
 		}
 		slot := cacheSlot{entry: e, roots: roots}
 		r.caches = append(r.caches, slot)
-		key, ok, err := r.cacheKey(slot)
+		key, ok, err := r.cacheKey(ctx, slot)
 		switch {
+		case err != nil && ctx.Err() != nil:
+			// The bound passed while the key was read: counted, like an
+			// entry the bound stopped before it started.
+			timedOut = true
+			skipped++
+			continue
 		case err != nil:
 			r.d.Log.Warn("cache skipped", "err", r.redact(err.Error()))
 			continue
@@ -290,7 +297,7 @@ func (r *run) writeback(ctx context.Context) {
 			}
 			// Recomputed from the final tree: when the agent changed a
 			// lockfile, the new dependencies belong under the new key.
-			key, ok, err := r.cacheKey(s)
+			key, ok, err := r.cacheKey(wctx, s)
 			if err != nil {
 				r.d.Log.Warn("cache not written", "err", r.redact(err.Error()))
 				continue

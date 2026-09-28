@@ -5,6 +5,7 @@
 package cache
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,11 +17,27 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/dimipaun/fugaro/internal/config"
 )
+
+// Key-file caps. A key file is hashed whole, so an oversized one (or one
+// that grows while it is read) makes the entry not cached rather than
+// holding the run.
+const (
+	maxKeyFileBytes = 64 << 20  // one key file
+	maxKeyBytes     = 256 << 20 // every key file of one entry
+)
+
+// ErrKeyTooLarge means an entry's key files pass maxKeyFileBytes or
+// maxKeyBytes; the entry is not cached.
+var ErrKeyTooLarge = errors.New("cache key files are too large to hash")
+
+// errNotRegular marks a key file that is left out of the key.
+var errNotRegular = errors.New("not a regular file")
 
 // KeyOf computes e's key in the checkout at root. ok is false when none of
 // the key files exist, which means the entry is not cached.
@@ -30,7 +47,14 @@ import (
 // toolchain, a hash the runner computes over the repo's image: settings
 // (node, jdk, apt, setup). A toolchain change such as a Node bump then
 // invalidates caches holding native binaries built for the old one.
-func KeyOf(root string, e config.CacheEntry, baseImage, toolchain string) (string, bool, error) {
+//
+// The committed tree and the agent both control the key files, so each is
+// opened through an os.Root of root, with O_NOFOLLOW and O_NONBLOCK, and
+// hashed only if it is a regular file and not a symlink: a symlink (to
+// /dev/zero, say), a
+// FIFO or a device is left out, with a warning through warn (which may be
+// nil). Reads stop when ctx ends, and past the size caps (ErrKeyTooLarge).
+func KeyOf(ctx context.Context, root string, e config.CacheEntry, baseImage, toolchain string, warn func(msg string, args ...any)) (string, bool, error) {
 	var files []string
 	for _, pattern := range e.Key {
 		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly())
@@ -44,22 +68,92 @@ func KeyOf(root string, e config.CacheEntry, baseImage, toolchain string) (strin
 	if len(files) == 0 {
 		return "", false, nil
 	}
+	rt, err := os.OpenRoot(root)
+	if err != nil {
+		return "", false, err
+	}
+	defer rt.Close()
 	h := sha256.New()
 	fmt.Fprintf(h, "fugaro-cache-v1\nbase %s\ntoolchain %s\npaths %s\n", baseImage, toolchain, strings.Join(e.Paths, "\x00"))
+	var total int64
+	hashed := 0
 	for _, f := range files {
-		fh := sha256.New()
-		file, err := os.Open(filepath.Join(root, f))
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
-		_, err = io.Copy(fh, file)
-		file.Close()
-		if err != nil {
-			return "", false, err
+		sum, n, err := hashKeyFile(ctx, rt, f, maxKeyBytes-total)
+		switch {
+		case errors.Is(err, errNotRegular):
+			if warn != nil {
+				warn("cache key file left out", "file", f, "err", err.Error())
+			}
+			continue
+		case err != nil:
+			return "", false, fmt.Errorf("cache key file %s: %w", f, err)
 		}
-		fmt.Fprintf(h, "file %s %x\n", f, fh.Sum(nil))
+		total += n
+		hashed++
+		fmt.Fprintf(h, "file %s %x\n", f, sum)
+	}
+	if hashed == 0 {
+		return "", false, nil
 	}
 	return hex.EncodeToString(h.Sum(nil)), true, nil
+}
+
+// hashKeyFile hashes the key file name inside rt, reading at most
+// min(maxKeyFileBytes, budget) bytes. errNotRegular marks a file that
+// can't be opened as, or isn't, a regular file.
+func hashKeyFile(ctx context.Context, rt *os.Root, name string, budget int64) ([]byte, int64, error) {
+	name = filepath.FromSlash(name)
+	// os.Root follows a final symlink that stays inside it, O_NOFOLLOW or
+	// not, so a link is refused on Lstat first; one swapped in after that
+	// still can't leave the root, and the fstat below still wants a
+	// regular file.
+	if fi, err := rt.Lstat(name); err != nil || fi.Mode()&fs.ModeSymlink != 0 {
+		if err == nil {
+			err = errors.New("a symlink")
+		}
+		return nil, 0, fmt.Errorf("%w: %w", errNotRegular, err)
+	}
+	f, err := rt.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, 0, fmt.Errorf("%w: %w", errNotRegular, err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, 0, fmt.Errorf("%w (%s)", errNotRegular, fi.Mode().Type())
+	}
+	limit := min(int64(maxKeyFileBytes), budget)
+	if fi.Size() > limit {
+		return nil, 0, ErrKeyTooLarge
+	}
+	fh := sha256.New()
+	n, err := io.Copy(fh, io.LimitReader(ctxReader{ctx, f}, limit+1))
+	switch {
+	case err != nil:
+		return nil, n, err
+	case n > limit:
+		return nil, n, ErrKeyTooLarge // it grew while being read
+	}
+	return fh.Sum(nil), n, nil
+}
+
+// ctxReader stops reading once ctx ends.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // Resolve turns fugaro.yaml cache paths into absolute directories: "~/x"

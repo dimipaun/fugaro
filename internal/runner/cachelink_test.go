@@ -120,7 +120,7 @@ func TestCommittedLinkAboveCacheRootIsNotRestored(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(keyRoot, "README.md"), []byte(h.files["README.md"]), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	key, ok, err := cache.KeyOf(keyRoot, cacheEntry(t, linkCacheYAML), "unpinned", runner.ToolchainHash(config.Image{}))
+	key, ok, err := cache.KeyOf(context.Background(), keyRoot, cacheEntry(t, linkCacheYAML), "unpinned", runner.ToolchainHash(config.Image{}), nil)
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
