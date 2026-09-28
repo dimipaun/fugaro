@@ -317,12 +317,6 @@ type extractor struct {
 	// realDirs are directories inside found to be real (no symlink on the
 	// way). Extract never removes a directory, so they stay real.
 	realDirs map[link]bool
-	// created are paths this Extract made: files, links, and directories
-	// that did not exist before it (entries and the parents MkdirAll adds).
-	// A conflict with one of them is the archive contradicting itself, so
-	// it is ErrBadArchive; a conflict with the root's own content (a baked
-	// warm cache, say) stays a plain error.
-	created map[link]bool
 }
 
 // readErr classifies an error reading the archive: an I/O error from the
@@ -353,7 +347,7 @@ func Extract(r io.Reader, roots []string, maxBytes int64) error {
 // extract is Extract under ctx, which bounds the final link check: the
 // read itself is bounded by the reader, which Restore opens under ctx.
 func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (err error) {
-	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}, created: map[link]bool{}}
+	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}}
 	defer func() {
 		for _, rt := range x.roots {
 			rt.Close()
@@ -431,6 +425,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				return err
 			}
 			if err := x.roots[idx].MkdirAll(rel, 0o755); err != nil {
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		case tar.TypeReg:
@@ -450,8 +447,8 @@ func (x *extractor) extract(maxBytes int64) error {
 				if in.err != nil {
 					return x.readErr(fmt.Sprintf("restoring %q", h.Name), err)
 				}
-				if x.selfConflict(idx, rel, err) {
-					return badf("restoring %q: it conflicts with a directory this archive wrote: %w", h.Name, err)
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
 				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
@@ -466,8 +463,8 @@ func (x *extractor) extract(maxBytes int64) error {
 				return err
 			}
 			if err := x.restoreSymlink(idx, rel, filepath.FromSlash(h.Linkname)); err != nil {
-				if x.selfConflict(idx, rel, err) {
-					return badf("restoring %q: it conflicts with a directory this archive wrote: %w", h.Name, err)
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
 				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
@@ -493,8 +490,7 @@ func (x *extractor) inside(idx int, dir, name string) error {
 	}
 	rt := x.roots[idx]
 	prefix := ""
-	parts := strings.Split(dir, string(filepath.Separator))
-	for i, c := range parts {
+	for _, c := range strings.Split(dir, string(filepath.Separator)) {
 		prefix = filepath.Join(prefix, c)
 		if x.realDirs[link{idx, prefix}] {
 			continue
@@ -502,15 +498,7 @@ func (x *extractor) inside(idx int, dir, name string) error {
 		fi, err := rt.Lstat(prefix)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			// MkdirAll creates the rest (or the write fails): all of it is ours.
-			for p, j := prefix, i; ; {
-				x.created[link{idx, p}] = true
-				if j++; j >= len(parts) {
-					break
-				}
-				p = filepath.Join(p, parts[j])
-			}
-			return nil
+			return nil // MkdirAll creates the rest as real directories
 		case errors.Is(err, syscall.ENOTDIR):
 			return nil // unreachable: the file on the path is met first
 		case err != nil:
@@ -519,10 +507,8 @@ func (x *extractor) inside(idx int, dir, name string) error {
 			return badf("refusing %q: %s on its path is a symlink, which could lead outside its root", name, filepath.ToSlash(prefix))
 		case fi.IsDir():
 			x.realDirs[link{idx, prefix}] = true
-		case x.created[link{idx, prefix}]:
-			return badf("refusing %q: %s on its path is a file this archive wrote", name, filepath.ToSlash(prefix))
 		default:
-			return nil // the root's own file on the path: the write fails with ENOTDIR
+			return badf("refusing %q: %s on its path is not a directory", name, filepath.ToSlash(prefix))
 		}
 	}
 	return nil
@@ -577,27 +563,45 @@ func (x *extractor) checkLinks(ctx context.Context) error {
 // abandonLinks is checkLinks' way out when ctx ends mid-check: it removes
 // every link this Extract recorded that is still a link, judged safe,
 // judged escaping or not judged yet alike, since a partial judgement
-// can't be trusted. If any link was refused, in this pass or an earlier
-// one, the error also matches ErrBadArchive, so the archive is deleted
-// rather than replayed.
-func (x *extractor) abandonLinks(ctx context.Context, errs []error, refusedThisPass bool) error {
+// can't be trusted. If any link was refused (bad: in this pass; errs: in
+// an earlier one), or one could not be checked or removed, the error also
+// matches ErrBadArchive, so the archive is deleted rather than replayed.
+func (x *extractor) abandonLinks(ctx context.Context, errs []error, bad bool) error {
 	for _, l := range x.links {
 		rt := x.roots[l.idx]
-		if fi, err := rt.Lstat(l.rel); err == nil && fi.Mode()&fs.ModeSymlink != 0 {
-			_ = rt.Remove(l.rel)
+		fi, err := rt.Lstat(l.rel)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			continue
+		case err != nil:
+			errs = append(errs, fmt.Errorf("checking link %d/%s: %w", l.idx, filepath.ToSlash(l.rel), err))
+			bad = true
+			continue
+		case fi.Mode()&fs.ModeSymlink == 0:
+			continue // replaced by a later entry
+		}
+		if rerr := rt.Remove(l.rel); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			// A link that may escape is still on disk: this must never
+			// read as a plain ctx error that keeps the archive.
+			errs = append(errs, fmt.Errorf("removing link %d/%s: %w", l.idx, filepath.ToSlash(l.rel), rerr))
+			bad = true
 		}
 	}
-	if refusedThisPass {
-		errs = append(errs, badf("refused links that resolve outside their root"))
+	if bad {
+		errs = append(errs, badf("links that resolve outside their root, or could not be removed"))
 	}
 	return errors.Join(append(errs, fmt.Errorf("checking restored links: %w", ctx.Err()))...)
 }
 
-// selfConflict reports whether err is a create that failed on a path this
-// Extract itself made: a file or link entry where the archive already put
-// a directory.
-func (x *extractor) selfConflict(idx int, rel string, err error) bool {
-	return errors.Is(err, fs.ErrExist) && x.created[link{idx, rel}]
+// conflict reports whether err is a structural conflict: a create where a
+// directory stands, or a path through a non-directory. Every such conflict
+// is ErrBadArchive, whether with the archive's own entries or with the
+// root's baked content: deleting the archive heals itself, since
+// write-back re-saves from the current image, while keeping it would leave
+// honest drift between image rebuilds keeping its key cold for 30 days.
+// Plain errors stay for I/O, ctx, ENOSPC and permissions.
+func conflict(err error) bool {
+	return errors.Is(err, fs.ErrExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.EISDIR)
 }
 
 // splitName maps an entry name "<i>/<rel>" to its root index and a local
@@ -652,7 +656,6 @@ func (x *extractor) restoreFile(idx int, rel string, mode fs.FileMode, src io.Re
 	if err != nil {
 		return 0, err
 	}
-	x.created[link{idx, rel}] = true
 	n, err := io.Copy(f, src)
 	if err == nil {
 		err = f.Chmod(mode) // exact mode, whatever the umask
@@ -670,7 +673,6 @@ func (x *extractor) restoreSymlink(idx int, rel, target string) error {
 	if err := x.roots[idx].Symlink(target, rel); err != nil {
 		return err
 	}
-	x.created[link{idx, rel}] = true
 	if l := (link{idx, rel}); !x.linkSet[l] {
 		x.linkSet[l] = true
 		x.links = append(x.links, l)

@@ -361,8 +361,9 @@ func TestExtractCtxEndsMidLinkCheck(t *testing.T) {
 	}
 }
 
-// A conflict between the archive's own entries is a bad archive; one with
-// the root's own content (a baked warm cache) is a plain error.
+// Every structural conflict is a bad archive, with the archive's own
+// entries or with the root's baked content alike: deleting it heals, as
+// write-back re-saves from the current image.
 func TestExtractClassifiesConflicts(t *testing.T) {
 	reg := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o644, Typeflag: tar.TypeReg} }
 	dir := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o755, Typeflag: tar.TypeDir} }
@@ -383,10 +384,46 @@ func TestExtractClassifiesConflicts(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(baked, "d"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for name, h := range map[string]*tar.Header{"under a baked file": reg("0/a/b"), "at a baked dir": reg("0/d")} {
+	for name, h := range map[string]*tar.Header{
+		"under a baked file":  reg("0/a/b"),
+		"at a baked dir":      reg("0/d"),
+		"link at a baked dir": sym("0/d", "x"),
+		"dir at a baked file": dir("0/a/"),
+	} {
 		err := Extract(hostile(t, h), []string{baked}, 1<<20)
-		if err == nil || errors.Is(err, ErrBadArchive) {
-			t.Errorf("%s: %v, want a plain error", name, err)
+		if !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: %v, want ErrBadArchive (write-back re-saves from the current image)", name, err)
 		}
+	}
+}
+
+// A link abandonLinks can't remove is still on disk and may escape: the
+// result must be ErrBadArchive, never a plain ctx error.
+func TestAbandonLinksRemovalFailureIsBad(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "s")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".", filepath.Join(sub, "l")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	rt, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	x := &extractor{roots: []*os.Root{rt}, links: []link{{0, filepath.Join("s", "l")}}}
+	if err := x.abandonLinks(ctx, nil, false); !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("abandonLinks = %v, want ErrBadArchive", err)
 	}
 }
