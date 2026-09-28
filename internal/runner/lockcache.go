@@ -216,6 +216,11 @@ func (r *run) restoreCaches(ctx context.Context) {
 			continue
 		}
 		roots, err := cache.Resolve(e.Paths, r.d.WorkDir, home)
+		if err == nil {
+			// A committed symlink at or above a root would take the
+			// restore past Resolve's checks, into .git or elsewhere.
+			err = cache.CheckLinks(e.Paths, r.d.WorkDir, home)
+		}
 		if err != nil {
 			r.d.Log.Warn("cache skipped", "err", r.redact(err.Error()))
 			continue
@@ -273,8 +278,15 @@ func (r *run) writeback(ctx context.Context) {
 	wctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
 	if r.d.Bucket != nil && !r.cancelled {
-		store := r.cacheStore()
+		store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
 		for _, s := range r.caches {
+			// Checked again: the agent may have replaced a root, or a
+			// directory above one, with a symlink to ~/.claude, the
+			// runner's credentials or .git.
+			if err := cache.CheckLinks(s.entry.Paths, r.d.WorkDir, home); err != nil {
+				r.d.Log.Warn("cache not written", "err", r.redact(err.Error()))
+				continue
+			}
 			// Recomputed from the final tree: when the agent changed a
 			// lockfile, the new dependencies belong under the new key.
 			key, ok, err := r.cacheKey(s)
