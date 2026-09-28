@@ -143,14 +143,11 @@ func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 	return gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
 }
 
-// parseRunRef is runstore.ParseRef, refusing "." and ".." as a slug:
-// path.Join would resolve them outside runs/ (security review S-M7). A bad
-// reference is a user error.
+// parseRunRef is runstore.ParseRef, with a bad reference as a user error.
+// ParseRef takes only task.Slug's alphabet, so "." and "..", which
+// path.Join would resolve outside runs/, never parse.
 func parseRunRef(ref string) (slug, runID string, err error) {
 	slug, runID, err = runstore.ParseRef(ref)
-	if err == nil && strings.Trim(slug, ".") == "" {
-		err = fmt.Errorf("run %q must look like <repo-slug>/<run-id>", ref)
-	}
 	if err != nil {
 		return "", "", userErr("%v", err)
 	}

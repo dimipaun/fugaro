@@ -95,7 +95,7 @@ func TestParseRef(t *testing.T) {
 			t.Errorf("ParseRef(Slug(%q)) = %q %q %v", repo, slug, id, err)
 		}
 	}
-	for _, bad := range []string{"", "acme-app", "a/b/c", "acme-app/not-a-run"} {
+	for _, bad := range []string{"", "acme-app", "a/b/c", "acme-app/not-a-run", "./" + runID, "../" + runID, "acme.app/" + runID} {
 		if _, _, err := ParseRef(bad); err == nil {
 			t.Errorf("ParseRef(%q) succeeded", bad)
 		}

@@ -143,7 +143,10 @@ func (s *Store) RunID() string { return s.runID }
 // own prefix, however the slug was obtained (FUGARO_RUN or --task-file).
 func (s *Store) Slug() string { return s.slug }
 
-var runRefRE = regexp.MustCompile(`^([a-z0-9._-]+)/([0-9]{8}-[0-9]{6}-[0-9a-f]{4})$`)
+// runRefRE takes a slug in task.Slug's alphabet, [a-z0-9-]. With no "."
+// allowed, a slug can't be "." or "..", which path.Join would resolve
+// outside runs/.
+var runRefRE = regexp.MustCompile(`^([a-z0-9-]+)/([0-9]{8}-[0-9]{6}-[0-9a-f]{4})$`)
 
 // ParseRef splits "<repo-slug>/<run-id>".
 func ParseRef(ref string) (slug, runID string, err error) {

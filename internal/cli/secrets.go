@@ -139,7 +139,7 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 	if r.slug, err = env.repoSlug(r.repo, r.checkout); err != nil {
 		return nil, err
 	}
-	if r.label, err = repoLabel(r.slug); err != nil {
+	if r.label, err = gcp.RepoLabel(r.slug); err != nil {
 		return nil, userErr("%v", err)
 	}
 	return r, nil
@@ -199,7 +199,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		return err
 	}
 	defer clear(value)
-	labels := map[string]string{"fugaro": "managed", "fugaro_repo": r.label, "fugaro_secret": name}
+	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: r.label, gcp.LabelSecret: name}
 	version, err := sm.Set(ctx, id, value, labels)
 	if err != nil {
 		// A server may echo what it received, raw or base64 as sent.
@@ -344,13 +344,13 @@ func newSecretsLsCmd() *cobra.Command {
 			if err != nil {
 				return remote(err)
 			}
-			list, err := sm.List(ctx, map[string]string{"fugaro_repo": r.label})
+			list, err := sm.List(ctx, map[string]string{gcp.LabelRepo: r.label})
 			if err != nil {
 				return remote(err)
 			}
 			entries := make([]secretEntry, 0, len(list))
 			for _, s := range list {
-				entries = append(entries, secretEntry{Name: s.Labels["fugaro_secret"], SecretInfo: s})
+				entries = append(entries, secretEntry{Name: s.Labels[gcp.LabelSecret], SecretInfo: s})
 			}
 			slices.SortFunc(entries, func(a, b secretEntry) int {
 				return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)

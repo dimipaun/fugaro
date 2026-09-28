@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -25,7 +25,7 @@ var (
 	bbGit    = gcp.SecretID(bbSlug, "bitbucket-token")
 	bbOAuth  = gcp.SecretID(bbSlug, "claude-oauth-token")
 	bbNPM    = gcp.SecretID(bbSlug, "npm-token")
-	bbLabel  = bbSlug // a slug is [a-z0-9-] only, so repoLabel keeps it whole
+	bbLabel  = bbSlug // a slug is [a-z0-9-] only, so gcp.RepoLabel keeps it whole
 	registry = "us-east5-docker.pkg.dev/proj-1234/fugaro"
 )
 
@@ -79,7 +79,7 @@ func TestGCPJobSpec(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &js); err != nil {
 		t.Fatal(err)
 	}
-	if js.Job != bbJob || js.TaskTimeoutS != 20*60+int(runner.TaskTimeoutSlack/time.Second) || js.Env["FUGARO_BACKEND"] != "cloud-run" || js.Env["FUGARO_PROJECT"] != "proj-1234" || js.Env["FUGARO_REGION"] != "us-east5" {
+	if js.Job != bbJob || js.TaskTimeoutS != 20*60+int(backend.TaskTimeoutSlack/time.Second) || js.Env["FUGARO_BACKEND"] != backend.CloudRun || js.Env["FUGARO_PROJECT"] != "proj-1234" || js.Env["FUGARO_REGION"] != "us-east5" {
 		t.Fatalf("spec = %+v", js)
 	}
 	// The display name is the account's ownership mark (IAM allows 100 characters).
@@ -174,7 +174,7 @@ func TestGCPJobSpecFields(t *testing.T) {
 		"sa-id":           bbSAID,
 		"sa":              bbSAID + "@proj-1234.iam.gserviceaccount.com",
 		"image":           gcp.ImageName(registry, bbSlug, "web"),
-		"task-timeout":    strconv.Itoa(20*60 + int(runner.TaskTimeoutSlack/time.Second)),
+		"task-timeout":    strconv.Itoa(20*60 + int(backend.TaskTimeoutSlack/time.Second)),
 		"sa-display-name": "Fugaro M4 job " + bbSlug + " web",
 		"cpu":             "4", // the web-node defaults
 		"memory":          "8Gi",
@@ -265,19 +265,6 @@ func TestGCPJobSpecRefuses(t *testing.T) {
 			t.Fatalf("err = %v", err)
 		}
 	})
-}
-
-func TestRepoLabel(t *testing.T) {
-	if got, err := repoLabel("acme-my.app"); err != nil || got != "acme-my_app" {
-		t.Fatalf("repoLabel = %q, %v", got, err)
-	}
-	// Never truncated: a long slug ends in its hash, which must survive.
-	if got, err := repoLabel(strings.Repeat("a", 64)); err == nil {
-		t.Fatalf("64-character slug gave label %q", got)
-	}
-	if got, err := repoLabel(strings.Repeat("a", 63)); err != nil || len(got) != 63 {
-		t.Fatalf("63-character slug: %q, %v", got, err)
-	}
 }
 
 func sorted(s ...string) []string { return slices.Sorted(slices.Values(s)) }

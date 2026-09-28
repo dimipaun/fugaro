@@ -137,7 +137,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
 	var prices *backend.Prices
-	if os.Getenv("FUGARO_BACKEND") == "cloud-run" {
+	if os.Getenv("FUGARO_BACKEND") == backend.CloudRun {
 		p := gcp.ListPrices(os.Getenv("FUGARO_REGION"))
 		prices = &p
 	}

@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,10 +17,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runner"
 )
@@ -58,22 +57,6 @@ type jobSpec struct {
 // jobSpecFields are the values of --field.
 var jobSpecFields = []string{"slug", "job", "sa-id", "sa", "sa-display-name", "image", "cpu", "memory", "task-timeout", "git-secret",
 	"env", "secrets", "secret-ids", "secret-names", "build-secret-ids", "bucket-condition", "labels", "repo-label"}
-
-var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
-
-// repoLabel is the fugaro_repo label value of a repository slug: every
-// character outside [a-z0-9_-] becomes "_", the rule Secret Manager labels
-// use too (T14). GCP label values are at most 63 characters. The label
-// derives from the slug and must never be truncated: a long slug ends in its
-// hash suffix, and cutting it off would make two repositories' labels equal.
-// So a label that would be too long is an error, not a shorter label.
-func repoLabel(slug string) (string, error) {
-	v := unsafeLabelRE.ReplaceAllString(slug, "_")
-	if len(v) > 63 {
-		return "", fmt.Errorf("repository slug %s is too long for a GCP label (%d > 63 characters)", slug, len(v))
-	}
-	return v, nil
-}
 
 func newGCPCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -151,7 +134,7 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	if err != nil {
 		return nil, err
 	}
-	label, err := repoLabel(slug)
+	label, err := gcp.RepoLabel(slug)
 	if err != nil {
 		return nil, &ExitError{Code: ExitUserError, Err: err}
 	}
@@ -168,16 +151,16 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		Image:                     gcp.ImageName(lc.Registry, slug, name),
 		CPU:                       w.Resources.CPU,
 		Memory:                    w.Resources.Memory,
-		TaskTimeoutS:              int((w.Timeouts.Total.Duration + runner.TaskTimeoutSlack) / time.Second),
+		TaskTimeoutS:              int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second),
 		Env: map[string]string{
 			"FUGARO_BUCKET":  "gs://" + bucket,
-			"FUGARO_BACKEND": "cloud-run",
+			"FUGARO_BACKEND": backend.CloudRun,
 			"FUGARO_PROJECT": lc.Project,
 			"FUGARO_REGION":  lc.Region,
 		},
 		Secrets:             map[string]string{},
 		BuildServiceAccount: lc.Build.ServiceAccount,
-		Labels:              map[string]string{"fugaro": "managed", "fugaro_repo": label, "fugaro_workflow": name},
+		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: name},
 		secretNames:         map[string]string{},
 	}
 	var collisions []string
@@ -224,7 +207,7 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	// Every variable a secret is mounted as, so the runner can register
 	// them all for redaction before bootstrap, declared at the task's ref
 	// or not.
-	js.Env["FUGARO_SECRET_ENVS"] = strings.Join(slices.Sorted(maps.Keys(js.Secrets)), ",")
+	js.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(js.Secrets)), ",")
 	if jobSpecField(js, "env") == "" {
 		return nil, &ExitError{Code: ExitUserError, Err: errors.New("the job's env holds every delimiter gcloud's --set-env-vars could use")}
 	}
@@ -251,13 +234,7 @@ func checkoutRepo(ctx context.Context, root, flag string) (string, error) {
 	if err != nil {
 		return "", &ExitError{Code: ExitUserError, Err: fmt.Errorf("reading the checkout's origin: %w: %s", err, strings.TrimSpace(stderr.String()))}
 	}
-	origin := ""
-	if u, err := url.Parse(image.HTTPSOrigin(strings.TrimSpace(string(out)))); err == nil && u.Scheme == "https" {
-		origin = strings.TrimSuffix(strings.Trim(u.Path, "/"), ".git")
-		if _, _, ok := gitprov.SplitRepo(origin); !ok {
-			origin = ""
-		}
-	}
+	origin, _ := repoFromOrigin(strings.TrimSpace(string(out)))
 	switch {
 	case flag == "" && origin == "":
 		return "", &ExitError{Code: ExitUserError, Err: errors.New("cannot tell the repository from the checkout's origin; pass --repo owner/name")}
@@ -380,7 +357,7 @@ func jobSpecField(js *jobSpec, field string) string {
 	case "labels":
 		return strings.Join(pairs(js.Labels, "%s=%s"), ",")
 	case "repo-label":
-		return js.Labels["fugaro_repo"]
+		return js.Labels[gcp.LabelRepo]
 	}
 	return ""
 }

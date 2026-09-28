@@ -124,16 +124,9 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	return &b, nil
 }
 
-// shellEnv are variables bash, the docker CLI or the step image itself read,
-// which a workflow secret must not shadow in the build step; reservedPrefixes
-// covers their families.
-var (
-	shellEnv         = []string{"PATH", "HOME", "PWD", "OLDPWD", "SHELL", "USER", "HOSTNAME", "TMPDIR", "IFS", "LANG", "ENV", "CDPATH", "GLOBIGNORE", "PS4", "SHELLOPTS"}
-	reservedPrefixes = []string{"DOCKER_", "BUILDKIT_", "BASH", "LC_"}
-)
-
-// buildStepEnv is every variable the build step sets or relies on: its
-// env: and secretEnv: from cloudbuild.yaml, plus shellEnv.
+// buildStepEnv is every variable the build step sets itself: its env: and
+// secretEnv: from cloudbuild.yaml. The variables bash, the docker CLI and
+// the step image read are in config.ReservedEnv, which check applies too.
 func buildStepEnv(step *cloudbuild.BuildStep) map[string]bool {
 	used := map[string]bool{}
 	for _, e := range step.Env {
@@ -141,9 +134,6 @@ func buildStepEnv(step *cloudbuild.BuildStep) map[string]bool {
 		used[name] = true
 	}
 	for _, e := range step.SecretEnv {
-		used[e] = true
-	}
-	for _, e := range shellEnv {
 		used[e] = true
 	}
 	return used
@@ -164,19 +154,19 @@ func (s BuildSpec) check(reserved map[string]bool) error {
 	}
 	u, err := url.Parse(s.RepoURL)
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-		return fmt.Errorf("the repository URL %s is not an https URL without credentials", redactURL(s.RepoURL))
+		return fmt.Errorf("the repository URL %s is not an https URL without credentials", RedactURL(s.RepoURL))
 	}
 	// The clone sends the provider token to the URL's host, and the token
 	// is scoped to the provider's: any other host (or port) is refused.
 	if s.GitProvider == "" || u.Port() != "" || gitprov.KindForURL(s.RepoURL) != s.GitProvider {
-		return fmt.Errorf("the repository URL %s is not on %s's host; the build would send its token there", redactURL(s.RepoURL), cmp.Or(s.GitProvider, "the git provider"))
+		return fmt.Errorf("the repository URL %s is not on %s's host; the build would send its token there", RedactURL(s.RepoURL), cmp.Or(s.GitProvider, "the git provider"))
 	}
 	seen := map[string]bool{}
 	for _, ws := range s.WorkflowSecrets {
 		if !secretEnvRE.MatchString(ws.Env) {
 			return fmt.Errorf("workflow secret %s: variable %q is not [A-Z_][A-Z0-9_]*", ws.Name, ws.Env)
 		}
-		if reserved[ws.Env] || slices.ContainsFunc(reservedPrefixes, func(p string) bool { return strings.HasPrefix(ws.Env, p) }) {
+		if reserved[ws.Env] || config.ReservedEnv(ws.Env) {
 			return fmt.Errorf("workflow secret %s: variable %s is one the image build step sets or uses itself; rename it", ws.Name, ws.Env)
 		}
 		if seen[ws.Env] {
@@ -185,16 +175,6 @@ func (s BuildSpec) check(reserved map[string]bool) error {
 		seen[ws.Env] = true
 	}
 	return nil
-}
-
-// redactURL is u without userinfo, for error messages.
-func redactURL(u string) string {
-	p, err := url.Parse(u)
-	if err != nil {
-		return "<unparseable URL>"
-	}
-	p.User = nil
-	return p.String()
 }
 
 // Builder submits derived-image builds to Cloud Build in one region.

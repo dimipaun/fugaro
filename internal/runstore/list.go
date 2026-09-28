@@ -14,7 +14,7 @@ import (
 
 var (
 	runIDRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
-	slugRE  = regexp.MustCompile(`^[a-z0-9._-]+$`)
+	slugRE  = regexp.MustCompile(`^[a-z0-9-]+$`) // task.Slug's alphabet, so never "." or ".."
 )
 
 // RunTime is when a run ID was minted (its UTC timestamp prefix).
@@ -53,7 +53,7 @@ func ListSlugs(ctx context.Context, b *blob.Bucket) ([]string, error) {
 // ListRunIDs lists slug's run IDs minted at or after since, newest first.
 // A zero since lists all of them.
 func ListRunIDs(ctx context.Context, b *blob.Bucket, slug string, since time.Time) ([]string, error) {
-	if !slugRE.MatchString(slug) || slug == "." || slug == ".." {
+	if !slugRE.MatchString(slug) {
 		return nil, fmt.Errorf("%q is not a repo slug", slug)
 	}
 	all, err := dirs(ctx, b, "runs/"+slug+"/")

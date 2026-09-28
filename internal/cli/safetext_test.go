@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -129,4 +130,13 @@ func TestRunOutputStripsTerminalControls(t *testing.T) {
 func jsonString(s string) string {
 	data, _ := json.Marshal(s)
 	return string(data)
+}
+
+// ErrorText is what the command prints for a failed command's error, which
+// can quote a stored value: controls go, newlines stay.
+func TestErrorTextStripsTerminalControls(t *testing.T) {
+	err := fmt.Errorf("reading run: \x1b]8;;https://evil.example\x07click\x1b]8;;\x07\nsecond line\x1b[2J")
+	if got, want := ErrorText(err), "reading run: click\nsecond line"; got != want {
+		t.Fatalf("ErrorText = %q, want %q", got, want)
+	}
 }

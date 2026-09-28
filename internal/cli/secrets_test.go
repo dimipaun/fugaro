@@ -60,7 +60,7 @@ func TestSecretsSetFromPipe(t *testing.T) {
 	}
 	// The labels tie the secret to its repository (the bootstrap's
 	// teardown checks fugaro_repo against job-spec's repo-label).
-	label, err := repoLabel(appSlug)
+	label, err := gcp.RepoLabel(appSlug)
 	if err != nil {
 		t.Fatal(err)
 	}

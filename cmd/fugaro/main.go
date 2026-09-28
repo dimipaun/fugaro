@@ -19,7 +19,7 @@ func main() {
 	err := cli.NewRootCmd().ExecuteContext(ctx)
 	stop()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "fugaro:", err)
+		fmt.Fprintln(os.Stderr, "fugaro:", cli.ErrorText(err))
 		os.Exit(cli.ExitCode(err))
 	}
 }
