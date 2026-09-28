@@ -2,6 +2,7 @@ package lock
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -168,4 +169,99 @@ func TestBusyErrorWithoutHolder(t *testing.T) {
 func setBeforeTakeover(t *testing.T, f func()) {
 	beforeTakeover = f
 	t.Cleanup(func() { beforeTakeover = nil })
+}
+
+// TestAcquireAdoptsOwnLock covers a create whose first attempt committed
+// but whose response was lost: the storage client's retry finds this very
+// holder's lock. The same run and execution (however the project is
+// spelled) is acquired at the existing generation; the same run from
+// another execution, or a run with no execution, is still busy.
+func TestAcquireAdoptsOwnLock(t *testing.T) {
+	const (
+		execByID     = "projects/proj-1/locations/r1/jobs/j/executions/e-aaaaa"
+		execByNumber = "projects/123456/locations/r1/jobs/j/executions/e-aaaaa"
+		otherExec    = "projects/proj-1/locations/r1/jobs/j/executions/e-bbbbb"
+	)
+	for name, b := range buckets(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			key := Key("acme-app", "fugaro/own")
+			mine := Holder{RunID: "20260927-100000-aaaa", Execution: execByID, ExpiresAt: t0.Add(time.Hour)}
+			if _, err := Acquire(ctx, b, key, mine, t0); err != nil {
+				t.Fatal(err)
+			}
+			var busy *BusyError
+			for _, h := range []Holder{
+				{RunID: mine.RunID, Execution: otherExec, ExpiresAt: mine.ExpiresAt},
+				{RunID: mine.RunID, ExpiresAt: mine.ExpiresAt},
+			} {
+				if _, err := Acquire(ctx, b, key, h, t0); !errors.As(err, &busy) {
+					t.Fatalf("Acquire for %+v = %v, want busy", h, err)
+				}
+			}
+			// The identical holder (a retried create) is adopted as is.
+			if _, err := Acquire(ctx, b, key, mine, t0); err != nil {
+				t.Fatalf("Acquire of our identical lock = %v", err)
+			}
+			// A restart of the same execution, spelled with the project
+			// number, gets the lock with its own later expiry.
+			again := mine
+			again.Execution = execByNumber
+			again.ExpiresAt = mine.ExpiresAt.Add(10 * time.Minute)
+			l, err := Acquire(ctx, b, key, again, t0.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("Acquire of our own lock = %v", err)
+			}
+			if _, err := Acquire(ctx, b, key, Holder{RunID: "20260927-100000-bbbb", ExpiresAt: t0.Add(2 * time.Hour)}, mine.ExpiresAt.Add(time.Minute)); !errors.As(err, &busy) || !busy.Holder.ExpiresAt.Equal(again.ExpiresAt) {
+				t.Fatalf("after adoption the lock holds %+v (err %v), want the refreshed expiry %s", busy, err, again.ExpiresAt)
+			}
+			if err := l.Release(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if ok, _ := b.Exists(ctx, key); ok {
+				t.Fatal("the adopted lock survives Release")
+			}
+		})
+	}
+}
+
+// TestAcquireRefreshConflictRereads covers a refresh whose write committed
+// but whose response was lost, so the client's retry conflicted: the lock
+// now holds our own new body, and Acquire must adopt it, not report the
+// branch busy on itself.
+func TestAcquireRefreshConflictRereads(t *testing.T) {
+	const (
+		execByID     = "projects/proj-1/locations/r1/jobs/j/executions/e-aaaaa"
+		execByNumber = "projects/123456/locations/r1/jobs/j/executions/e-aaaaa"
+	)
+	for name, b := range buckets(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			key := Key("acme-app", "fugaro/refresh")
+			first := Holder{RunID: "20260927-100000-aaaa", Execution: execByID, ExpiresAt: t0.Add(time.Hour)}
+			if _, err := Acquire(ctx, b, key, first, t0); err != nil {
+				t.Fatal(err)
+			}
+			again := Holder{RunID: first.RunID, Execution: execByNumber, ExpiresAt: t0.Add(2 * time.Hour)}
+			body, _ := json.Marshal(again)
+			beforeRefresh = func() {
+				beforeRefresh = nil
+				// The "lost" first attempt of the refresh lands.
+				if err := b.WriteAll(ctx, key, body, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Cleanup(func() { beforeRefresh = nil })
+			l, err := Acquire(ctx, b, key, again, t0.Add(time.Minute))
+			if err != nil {
+				t.Fatalf("Acquire after a lost refresh response = %v", err)
+			}
+			if err := l.Release(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if ok, _ := b.Exists(ctx, key); ok {
+				t.Fatal("the adopted lock survives Release")
+			}
+		})
+	}
 }

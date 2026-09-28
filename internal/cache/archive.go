@@ -2,6 +2,7 @@ package cache
 
 import (
 	"archive/tar"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -138,7 +139,7 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 		if !ok {
 			continue
 		}
-		if err := writeRoot(tw, i, dir, charge, &st); err != nil {
+		if err := writeRoot(tw, i, dir, excludedEntry(root), charge, &st); err != nil {
 			if errors.Is(err, ErrTooLarge) {
 				return st, err
 			}
@@ -148,7 +149,21 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 	return st, nil
 }
 
-func writeRoot(tw *tar.Writer, i int, dir string, charge func(int64) error, st *writeStats) error {
+// excludedEntries maps a cache root's base name to the entry directly
+// under it that is never archived. npm's debug logs (~/.npm/_logs) can
+// quote the commands npm ran; Maven's ~/.m2/settings.xml and Gradle's
+// ~/.gradle/gradle.properties often hold repository credentials. None of
+// them is cache content.
+var excludedEntries = map[string]string{
+	".npm":    "_logs",
+	".m2":     "settings.xml",
+	".gradle": "gradle.properties",
+}
+
+// excludedEntry is the entry under root that is never archived, or "".
+func excludedEntry(root string) string { return excludedEntries[filepath.Base(root)] }
+
+func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) error, st *writeStats) error {
 	rt, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -167,6 +182,10 @@ func writeRoot(tw *tar.Writer, i int, dir string, charge func(int64) error, st *
 		}
 		name := fmt.Sprintf("%d/%s", i, filepath.ToSlash(rel))
 		switch t := d.Type(); {
+		case exclude != "" && rel == exclude && t.IsDir():
+			return filepath.SkipDir
+		case exclude != "" && rel == exclude:
+			return nil
 		case t.IsDir():
 			if err := charge(0); err != nil {
 				return err
@@ -313,7 +332,9 @@ type extractor struct {
 	src     *trackedReader // the compressed archive as read
 	links   []link         // in creation order
 	linkSet map[link]bool  // the same links, to record each once
-	safe    map[link]bool  // directories resolved inside their root; reset when a link changes
+	// realDirs are directories inside found to be real (no symlink on the
+	// way). Extract never removes a directory, so they stay real.
+	realDirs map[link]bool
 }
 
 // readErr classifies an error reading the archive: an I/O error from the
@@ -328,16 +349,23 @@ func (x *extractor) readErr(what string, err error) error {
 // Extract restores an archive written by Write into roots, which must be
 // as many as the manifest says. It refuses, before writing it, any entry
 // that could land outside its root: every write goes through an os.Root,
-// which refuses ".." and symlink escapes at any path component, and each
-// entry's parent is first resolved physically inside the root. It stops at
+// which refuses ".." and symlink escapes at any path component, and an
+// entry whose directory has a symlink on its path is refused outright
+// (Write never descends into a linked directory). It stops at
 // the first refused entry, and refuses more than maxBytes of content plus
 // headerCost per entry. Once all entries are in, or the restore has
 // stopped, every symlink it created is resolved again, since a later entry
 // can make an earlier link escape; one that resolves outside its root is
 // removed and reported. A refusal or a corrupt archive matches
 // ErrBadArchive.
-func Extract(r io.Reader, roots []string, maxBytes int64) (err error) {
-	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, safe: map[link]bool{}}
+func Extract(r io.Reader, roots []string, maxBytes int64) error {
+	return extract(context.Background(), r, roots, maxBytes)
+}
+
+// extract is Extract under ctx, which bounds the final link check: the
+// read itself is bounded by the reader, which Restore opens under ctx.
+func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (err error) {
+	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}}
 	defer func() {
 		for _, rt := range x.roots {
 			rt.Close()
@@ -356,7 +384,7 @@ func Extract(r io.Reader, roots []string, maxBytes int64) (err error) {
 	// Registered after the roots are open, so it runs before they close,
 	// and on every return, a partial restore included.
 	defer func() {
-		if lerr := x.checkLinks(); lerr != nil {
+		if lerr := x.checkLinks(ctx); lerr != nil {
 			err = errors.Join(err, lerr)
 		}
 	}()
@@ -415,6 +443,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				return err
 			}
 			if err := x.roots[idx].MkdirAll(rel, 0o755); err != nil {
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		case tar.TypeReg:
@@ -434,6 +465,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				if in.err != nil {
 					return x.readErr(fmt.Sprintf("restoring %q", h.Name), err)
 				}
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		case tar.TypeSymlink:
@@ -447,6 +481,9 @@ func (x *extractor) extract(maxBytes int64) error {
 				return err
 			}
 			if err := x.restoreSymlink(idx, rel, filepath.FromSlash(h.Linkname)); err != nil {
+				if conflict(err) {
+					return badf("restoring %q: it conflicts with what is at its path: %w", h.Name, err)
+				}
 				return fmt.Errorf("restoring %q: %w", h.Name, err)
 			}
 		default:
@@ -455,22 +492,43 @@ func (x *extractor) extract(maxBytes int64) error {
 	}
 }
 
-// inside refuses an entry whose directory dir resolves outside its root.
-// os.Root would refuse the write anyway; checking first makes the refusal
-// an ErrBadArchive rather than an opaque I/O error.
+// inside refuses an entry whose directory dir has a symlink at any
+// component, whether baked into the image or planted by an earlier entry.
+// Write never produces such an entry, since it doesn't descend into linked
+// directories. Refusing them keeps every link Extract records at a
+// physical path: otherwise a later entry could retarget a parent link
+// (q -> ., q/p -> .., then q -> a/) and leave the real link, root/p ->
+// .., where checkLinks no longer looks. os.Root would refuse an escaping
+// write anyway; checking first also makes the refusal an ErrBadArchive.
+// Components that don't exist yet are fine: MkdirAll creates them as real
+// directories.
 func (x *extractor) inside(idx int, dir, name string) error {
-	k := link{idx, dir}
-	if dir == "." || x.safe[k] {
+	if dir == "." || x.realDirs[link{idx, dir}] {
 		return nil
 	}
-	out, err := resolvesOutside(x.roots[idx], dir)
-	if err != nil {
-		return badf("refusing %q: resolving its directory: %w", name, err)
+	rt := x.roots[idx]
+	prefix := ""
+	for _, c := range strings.Split(dir, string(filepath.Separator)) {
+		prefix = filepath.Join(prefix, c)
+		if x.realDirs[link{idx, prefix}] {
+			continue
+		}
+		fi, err := rt.Lstat(prefix)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil // MkdirAll creates the rest as real directories
+		case errors.Is(err, syscall.ENOTDIR):
+			return nil // unreachable: the file on the path is met first
+		case err != nil:
+			return fmt.Errorf("refusing %q: checking %s: %w", name, prefix, err)
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return badf("refusing %q: %s on its path is a symlink, which could lead outside its root", name, filepath.ToSlash(prefix))
+		case fi.IsDir():
+			x.realDirs[link{idx, prefix}] = true
+		default:
+			return badf("refusing %q: %s on its path is not a directory", name, filepath.ToSlash(prefix))
+		}
 	}
-	if out {
-		return badf("refusing %q: its directory resolves outside its root", name)
-	}
-	x.safe[k] = true
 	return nil
 }
 
@@ -480,13 +538,18 @@ func (x *extractor) inside(idx int, dir, name string) error {
 // lexically (q -> ., r -> q/.., p -> r/..: with r gone, p looks local).
 // It then removes each that resolves outside its root (or can't be
 // resolved) and returns an ErrBadArchive naming them, and repeats until a
-// pass removes nothing.
-func (x *extractor) checkLinks() error {
+// pass removes nothing. If ctx ends first, it removes every link not yet
+// judged, failing closed, and returns ctx's error (not ErrBadArchive: the
+// archive may be fine).
+func (x *extractor) checkLinks(ctx context.Context) error {
 	var errs []error
 	pending := slices.Clone(x.links)
 	for {
 		var kept, refused []link
 		for _, l := range pending {
+			if ctx.Err() != nil {
+				return x.abandonLinks(ctx, errs, len(refused) > 0)
+			}
 			rt := x.roots[l.idx]
 			fi, err := rt.Lstat(l.rel)
 			if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) || (err == nil && fi.Mode()&fs.ModeSymlink == 0) {
@@ -513,6 +576,50 @@ func (x *extractor) checkLinks() error {
 		}
 		pending = kept
 	}
+}
+
+// abandonLinks is checkLinks' way out when ctx ends mid-check: it removes
+// every link this Extract recorded that is still a link, judged safe,
+// judged escaping or not judged yet alike, since a partial judgement
+// can't be trusted. If any link was refused (bad: in this pass; errs: in
+// an earlier one), or one could not be checked or removed, the error also
+// matches ErrBadArchive, so the archive is deleted rather than replayed.
+func (x *extractor) abandonLinks(ctx context.Context, errs []error, bad bool) error {
+	for _, l := range x.links {
+		rt := x.roots[l.idx]
+		fi, err := rt.Lstat(l.rel)
+		switch {
+		case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
+			continue
+		case err != nil:
+			errs = append(errs, fmt.Errorf("checking link %d/%s: %w", l.idx, filepath.ToSlash(l.rel), err))
+			bad = true
+			continue
+		case fi.Mode()&fs.ModeSymlink == 0:
+			continue // replaced by a later entry
+		}
+		if rerr := rt.Remove(l.rel); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			// A link that may escape is still on disk: this must never
+			// read as a plain ctx error that keeps the archive.
+			errs = append(errs, fmt.Errorf("removing link %d/%s: %w", l.idx, filepath.ToSlash(l.rel), rerr))
+			bad = true
+		}
+	}
+	if bad {
+		errs = append(errs, badf("links that resolve outside their root, or could not be removed"))
+	}
+	return errors.Join(append(errs, fmt.Errorf("checking restored links: %w", ctx.Err()))...)
+}
+
+// conflict reports whether err is a structural conflict: a create where a
+// directory stands, or a path through a non-directory. Every such conflict
+// is ErrBadArchive, whether with the archive's own entries or with the
+// root's baked content: deleting the archive heals itself, since
+// write-back re-saves from the current image, while keeping it would leave
+// honest drift between image rebuilds keeping its key cold for 30 days.
+// Plain errors stay for I/O, ctx, ENOSPC and permissions.
+func conflict(err error) bool {
+	return errors.Is(err, fs.ErrExist) || errors.Is(err, syscall.ENOTDIR) || errors.Is(err, syscall.EISDIR)
 }
 
 // splitName maps an entry name "<i>/<rel>" to its root index and a local
@@ -555,9 +662,6 @@ func (x *extractor) clearForReplace(idx int, rel string) error {
 	case fi.IsDir():
 		return nil // the create then fails, rather than delete a tree
 	}
-	if fi.Mode()&fs.ModeSymlink != 0 {
-		clear(x.safe) // directories resolved through this link may now differ
-	}
 	return rt.Remove(rel)
 }
 
@@ -584,7 +688,6 @@ func (x *extractor) restoreSymlink(idx int, rel, target string) error {
 	if err := x.clearForReplace(idx, rel); err != nil {
 		return err
 	}
-	clear(x.safe) // a new link can redirect a directory already judged
 	if err := x.roots[idx].Symlink(target, rel); err != nil {
 		return err
 	}

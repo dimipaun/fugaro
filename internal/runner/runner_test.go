@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"gocloud.dev/blob/memblob"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -641,5 +644,54 @@ func TestVerifyRecordsUploaded(t *testing.T) {
 	}
 	if got.N != 1 || got.Kind != verify.KindTest || got.HeadSHA != rec.Verify[0].HeadSHA || !got.Passed {
 		t.Fatalf("uploaded verify record = %+v, want %+v", got, rec.Verify[0])
+	}
+}
+
+func TestCostBreakdown(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.Prices = &backend.Prices{VCPUSecondUSD: 0.001, GiBSecondUSD: 0}
+	// The clock moves only when a stage says so, 30s per stage, well inside
+	// the fixture's 5m total, so the budget can never run out under the test.
+	// It starts at the real time because stage deadlines become real
+	// context deadlines; a fixed past date would expire them at once.
+	var mu sync.Mutex
+	clock := time.Now()
+	h.deps.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	tick := func(s step) step {
+		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+			mu.Lock()
+			clock = clock.Add(30 * time.Second)
+			mu.Unlock()
+			return s(t, ctx, req)
+		}
+	}
+	rec, err := h.run(t, tick(implement("feature")), tick(review("ship", 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := rec.Cost
+	// 60s × 4 vCPU × $0.001 = $0.24 of compute; totals are compared to the cent.
+	if c == nil || !c.ComputeEstimated || c.ModelUSD != 1.5 || c.ModelBasis != "api-list" || math.Abs(c.ComputeUSD-0.24) > 1e-9 || math.Abs(c.TotalUSD-1.74) > 0.005 {
+		t.Fatalf("cost = %+v", c)
+	}
+	if rec.CostUSD != c.ModelUSD {
+		t.Fatalf("cost_usd %v must equal the model sum %v", rec.CostUSD, c.ModelUSD)
+	}
+	if !strings.Contains(onlyPR(t, h.provider).Comments[0], "(model $1.50 + compute $") {
+		t.Fatalf("report = %s", onlyPR(t, h.provider).Comments[0])
+	}
+}
+
+func TestCostWithoutPricesIsNotEstimated(t *testing.T) {
+	h := newHarness(t, "", nil)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := rec.Cost; c == nil || c.ComputeEstimated || c.ComputeUSD != 0 || c.ModelUSD != 1.5 {
+		t.Fatalf("cost = %+v", rec.Cost)
+	}
+	if report := onlyPR(t, h.provider).Comments[0]; !strings.Contains(report, "**Cost:** model $1.50 (compute not estimated)") {
+		t.Fatalf("report = %s", report)
 	}
 }

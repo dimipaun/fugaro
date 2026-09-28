@@ -56,7 +56,7 @@ func (s *Store) Restore(ctx context.Context, key string, roots []string) (bool, 
 		return false, fmt.Errorf("opening %s: %w", obj, err)
 	}
 	defer r.Close()
-	if err := Extract(r, roots, s.max()); err != nil {
+	if err := extract(ctx, r, roots, s.max()); err != nil {
 		err = fmt.Errorf("restoring %s: %w", obj, err)
 		if errors.Is(err, ErrBadArchive) {
 			if derr := s.discard(ctx, obj, r); derr != nil {

@@ -44,7 +44,11 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 		fmt.Fprintf(&b, "**Reviews:** %s\n\n", strings.Join(parts, "; "))
 	}
 	b.WriteString(testsLine(rec))
-	fmt.Fprintf(&b, "**Cost:** $%.2f\n\n", rec.CostUSD)
+	if rec.Cost != nil {
+		b.WriteString(CostLine(*rec.Cost) + "\n\n")
+	} else {
+		fmt.Fprintf(&b, "**Cost:** $%.2f\n\n", rec.CostUSD)
+	}
 	if tail != nil && len(tail.Lines) > 0 {
 		text := strings.Join(tail.Lines, "\n")
 		f := fence(text)

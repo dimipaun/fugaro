@@ -74,7 +74,8 @@ type Record struct {
 	PR         *PRRef          `json:"pr,omitempty"`
 	Reviews    []ReviewSummary `json:"reviews,omitempty"`
 	Verify     []verify.Record `json:"verify,omitempty"`
-	CostUSD    float64         `json:"cost_usd"`
+	CostUSD    float64         `json:"cost_usd"` // the model spend (design §4.6)
+	Cost       *Cost           `json:"cost,omitempty"`
 	Stages     []StageTiming   `json:"stages,omitempty"`
 	StartedAt  time.Time       `json:"started_at"`
 	Deadline   *time.Time      `json:"deadline,omitempty"`
@@ -93,13 +94,19 @@ var ErrExists = errors.New("already exists")
 // Store addresses one run's objects: runs/<repo-slug>/<run-id>/...
 type Store struct {
 	bucket *blob.Bucket
+	slug   string
 	prefix string
 }
 
 // Open returns the store for one run.
 func Open(b *blob.Bucket, repoSlug, runID string) *Store {
-	return &Store{bucket: b, prefix: path.Join("runs", repoSlug, runID) + "/"}
+	return &Store{bucket: b, slug: repoSlug, prefix: path.Join("runs", repoSlug, runID) + "/"}
 }
+
+// Slug is the repository slug this store was opened with. The runner keys
+// the branch lock and caches on it, so they always agree with the run's
+// own prefix, however the slug was obtained (FUGARO_RUN or --task-file).
+func (s *Store) Slug() string { return s.slug }
 
 var runRefRE = regexp.MustCompile(`^([a-z0-9._-]+)/([0-9]{8}-[0-9]{6}-[0-9a-f]{4})$`)
 
@@ -155,7 +162,7 @@ func (s *Store) create(ctx context.Context, name string, data []byte, contentTyp
 // Cloud Run the runner writes its first record this way, so a duplicate
 // execution of the same run never writes one (design §4.7).
 func (s *Store) CreateRecord(ctx context.Context, r *Record) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := encodeRecord(r)
 	if err != nil {
 		return err
 	}
@@ -192,7 +199,7 @@ func (s *Store) ReadTask(ctx context.Context) (*task.Spec, error) {
 
 // WriteRecord stores result.json.
 func (s *Store) WriteRecord(ctx context.Context, r *Record) error {
-	data, err := json.MarshalIndent(r, "", "  ")
+	data, err := encodeRecord(r)
 	if err != nil {
 		return err
 	}

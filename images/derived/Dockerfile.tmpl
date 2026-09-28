@@ -13,6 +13,9 @@
 # for REPO_URL) and one per workflow secret, exposed as that variable.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
+# The base as built FROM (Cloud Build passes its digest); cache keys use it.
+ARG FUGARO_BASE
+ENV FUGARO_BASE_IMAGE=${FUGARO_BASE}
 ARG REPO_URL
 ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH

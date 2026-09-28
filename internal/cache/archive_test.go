@@ -3,6 +3,7 @@ package cache
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -182,6 +183,18 @@ func TestRestoreRejectsEscapingLinkChains(t *testing.T) {
 			sym("0/d/e/up", "../.."), sym("0/p", "d/e/up/.."),
 		},
 		"grandparent": {sym("0/q", "."), sym("0/r", "q/.."), sym("0/p", "r/..")},
+		// A link made through a parent link, whose parent is then retargeted:
+		// the link's logical path no longer reaches it.
+		"retarget parent to dir": {
+			{Name: "0/a/", Mode: 0o755, Typeflag: tar.TypeDir},
+			sym("0/q", "."), sym("0/q/p", ".."), sym("0/q", "a"),
+		},
+		"retarget parent to file": {
+			sym("0/q", "."), sym("0/q/p", ".."), {Name: "0/q", Mode: 0o644, Typeflag: tar.TypeReg},
+		},
+		"retarget parent to dangling": {
+			sym("0/q", "."), sym("0/q/p", ".."), sym("0/q", "zz"),
+		},
 	}
 	for name, hdrs := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -280,5 +293,137 @@ func TestExtractClassifiesErrors(t *testing.T) {
 	err := Extract(broken, []string{t.TempDir()}, 1<<20)
 	if err == nil || errors.Is(err, ErrBadArchive) {
 		t.Errorf("I/O error: %v, want an error that is not ErrBadArchive", err)
+	}
+}
+
+// When the restore's context ends before the final link check, the links
+// not yet judged are removed rather than trusted.
+func TestExtractCancelledRemovesUncheckedLinks(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	root := t.TempDir()
+	err := extract(ctx, hostile(t, sym("0/q", ".")), []string{root}, 1<<20)
+	if !errors.Is(err, context.Canceled) || errors.Is(err, ErrBadArchive) {
+		t.Fatalf("extract = %v, want context.Canceled and not ErrBadArchive", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "q")); err == nil {
+		t.Fatal("an unchecked link survived")
+	}
+}
+
+// inside's memo of real directories is sound only because Extract never
+// replaces a directory: a later link or file entry at a directory's path
+// fails instead, so a directory judged real stays real.
+func TestRestoreNeverReplacesADirectory(t *testing.T) {
+	for name, h := range map[string]*tar.Header{
+		"link": sym("0/d", "."),
+		"file": {Name: "0/d", Mode: 0o644, Typeflag: tar.TypeReg},
+	} {
+		root := t.TempDir()
+		err := Extract(hostile(t, &tar.Header{Name: "0/d/", Mode: 0o755, Typeflag: tar.TypeDir}, h,
+			&tar.Header{Name: "0/d/x", Mode: 0o644, Typeflag: tar.TypeReg}), []string{root}, 1<<20)
+		if err == nil {
+			t.Errorf("%s: a %s replaced a restored directory", name, name)
+		}
+		if fi, err := os.Lstat(filepath.Join(root, "d")); err != nil || !fi.IsDir() {
+			t.Errorf("%s: d is no longer a directory (%v)", name, err)
+		}
+	}
+}
+
+// countCtx's Err starts failing on its limit-th call.
+type countCtx struct {
+	context.Context
+	calls, limit int
+}
+
+func (c *countCtx) Err() error {
+	if c.calls++; c.calls >= c.limit {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// When ctx ends mid-pass, after some links were judged escaping but
+// before they were removed, every link goes and the archive counts as bad.
+func TestExtractCtxEndsMidLinkCheck(t *testing.T) {
+	root := t.TempDir()
+	// checkLinks judges q (kept), r and p (escaping), then ends at z.
+	ctx := &countCtx{Context: context.Background(), limit: 4}
+	err := extract(ctx, hostile(t, sym("0/q", "."), sym("0/r", "q/.."), sym("0/p", "r/.."), sym("0/z", "q")), []string{root}, 1<<20)
+	if !errors.Is(err, ErrBadArchive) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("extract = %v, want ErrBadArchive joined with the deadline", err)
+	}
+	for _, l := range []string{"q", "r", "p", "z"} {
+		if _, err := os.Lstat(filepath.Join(root, l)); err == nil {
+			t.Errorf("link %s survived", l)
+		}
+	}
+}
+
+// Every structural conflict is a bad archive, with the archive's own
+// entries or with the root's baked content alike: deleting it heals, as
+// write-back re-saves from the current image.
+func TestExtractClassifiesConflicts(t *testing.T) {
+	reg := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o644, Typeflag: tar.TypeReg} }
+	dir := func(name string) *tar.Header { return &tar.Header{Name: name, Mode: 0o755, Typeflag: tar.TypeDir} }
+	for name, hdrs := range map[string][]*tar.Header{
+		"file then under it":     {reg("0/a"), reg("0/a/b")},
+		"file then dir":          {reg("0/a"), dir("0/a/")},
+		"dir then file":          {dir("0/d/"), reg("0/d")},
+		"implicit dir then file": {reg("0/d/x"), reg("0/d")},
+		"dir then link":          {dir("0/d/"), sym("0/d", "x")},
+	} {
+		err := Extract(hostile(t, hdrs...), []string{t.TempDir()}, 1<<20)
+		if !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: %v, want ErrBadArchive", name, err)
+		}
+	}
+	baked := t.TempDir()
+	write(t, baked, map[string]string{"a": "baked"})
+	if err := os.Mkdir(filepath.Join(baked, "d"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, h := range map[string]*tar.Header{
+		"under a baked file":  reg("0/a/b"),
+		"at a baked dir":      reg("0/d"),
+		"link at a baked dir": sym("0/d", "x"),
+		"dir at a baked file": dir("0/a/"),
+	} {
+		err := Extract(hostile(t, h), []string{baked}, 1<<20)
+		if !errors.Is(err, ErrBadArchive) {
+			t.Errorf("%s: %v, want ErrBadArchive (write-back re-saves from the current image)", name, err)
+		}
+	}
+}
+
+// A link abandonLinks can't remove is still on disk and may escape: the
+// result must be ErrBadArchive, never a plain ctx error.
+func TestAbandonLinksRemovalFailureIsBad(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "s")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(".", filepath.Join(sub, "l")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(sub, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(sub, 0o755) })
+	rt, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	x := &extractor{roots: []*os.Root{rt}, links: []link{{0, filepath.Join("s", "l")}}}
+	if err := x.abandonLinks(ctx, nil, false); !errors.Is(err, ErrBadArchive) {
+		t.Fatalf("abandonLinks = %v, want ErrBadArchive", err)
 	}
 }

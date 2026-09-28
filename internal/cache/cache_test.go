@@ -124,3 +124,51 @@ func TestSaveWarnsAboutSkippedLinks(t *testing.T) {
 		t.Fatalf("Warn got %v, want the key and skipped_links=1", warned)
 	}
 }
+
+func TestSaveExcludesNpmLogs(t *testing.T) {
+	ctx := context.Background()
+	s := &Store{Bucket: blobx.Wrap(memblob.OpenBucket(nil)), Slug: "acme-app", Workflow: "web", MaxBytes: 1 << 20}
+	src := filepath.Join(t.TempDir(), ".npm")
+	write(t, src, map[string]string{"_cacache/index": "I", "_logs/debug-0.log": "npm ran with a token", "sub/_logs/keep": "K"})
+	if saved, err := s.Save(ctx, "k", []string{src}); err != nil || !saved {
+		t.Fatalf("Save = %v, %v", saved, err)
+	}
+	dst := filepath.Join(t.TempDir(), ".npm")
+	if hit, err := s.Restore(ctx, "k", []string{dst}); err != nil || !hit {
+		t.Fatalf("Restore = %v, %v", hit, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "_logs")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("~/.npm/_logs was archived: %v", err)
+	}
+	for _, f := range []string{"_cacache/index", "sub/_logs/keep"} {
+		if _, err := os.Stat(filepath.Join(dst, f)); err != nil {
+			t.Errorf("%s not archived: %v", f, err)
+		}
+	}
+}
+
+func TestSaveExcludesBuildToolCredentials(t *testing.T) {
+	ctx := context.Background()
+	s := &Store{Bucket: blobx.Wrap(memblob.OpenBucket(nil)), Slug: "acme-app", Workflow: "api", MaxBytes: 1 << 20}
+	m2 := filepath.Join(t.TempDir(), ".m2")
+	gradle := filepath.Join(t.TempDir(), ".gradle")
+	write(t, m2, map[string]string{"settings.xml": "<password>s3cret</password>", "repository/a.jar": "A", "repository/settings.xml": "K"})
+	write(t, gradle, map[string]string{"gradle.properties": "repoPassword=s3cret", "caches/b.jar": "B"})
+	if saved, err := s.Save(ctx, "k", []string{m2, gradle}); err != nil || !saved {
+		t.Fatalf("Save = %v, %v", saved, err)
+	}
+	dm2, dgradle := filepath.Join(t.TempDir(), ".m2"), filepath.Join(t.TempDir(), ".gradle")
+	if hit, err := s.Restore(ctx, "k", []string{dm2, dgradle}); err != nil || !hit {
+		t.Fatalf("Restore = %v, %v", hit, err)
+	}
+	for _, f := range []string{filepath.Join(dm2, "settings.xml"), filepath.Join(dgradle, "gradle.properties")} {
+		if _, err := os.Stat(f); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was archived: %v", f, err)
+		}
+	}
+	for _, f := range []string{filepath.Join(dm2, "repository/a.jar"), filepath.Join(dm2, "repository/settings.xml"), filepath.Join(dgradle, "caches/b.jar")} {
+		if _, err := os.Stat(f); err != nil {
+			t.Errorf("%s not archived: %v", f, err)
+		}
+	}
+}

@@ -86,6 +86,9 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 				return nil, fmt.Errorf("cache path %q must not be inside a .git directory", p)
 			}
 		}
+		if base == home && holdsCredentials(clean) {
+			return nil, fmt.Errorf("cache path %q may hold credentials or agent sessions, and caches are uploaded to the runs bucket; cache a tool's own directory instead, such as ~/.config/<tool> or ~/.cache/<tool>", p)
+		}
 		out[i] = filepath.Join(base, filepath.FromSlash(clean))
 	}
 	for i, a := range out {
@@ -96,6 +99,56 @@ func Resolve(paths []string, root, home string) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// credentialPaths are home-relative paths that hold credentials or the
+// agent's sessions (which can quote tool output). A cache must not be one
+// of them, inside one, or contain one: every cache is uploaded to the runs
+// bucket. A first component starting with ".claude" is refused as well.
+var credentialPaths = [][]string{
+	{".ssh"}, {".config", "gcloud"}, {".config", "gh"}, {".git-credentials"}, {".npmrc"}, {".netrc"},
+	{".docker"}, {".aws"}, {".kube"}, {".gnupg"},
+}
+
+// holdsCredentials reports whether the home-relative clean path is,
+// is inside, or contains a credential path.
+func holdsCredentials(clean string) bool {
+	parts := strings.Split(clean, "/")
+	if strings.HasPrefix(strings.ToLower(parts[0]), ".claude") {
+		return true
+	}
+	for _, c := range credentialPaths {
+		n := min(len(parts), len(c))
+		match := true
+		for i := range n {
+			if !strings.EqualFold(parts[i], c[i]) {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveWarnings returns a warning for each cache path that Resolve
+// accepts but that may still hold credentials: anything under ~/.config
+// (such as gh's hosts.yml). Callers log them; they do not refuse the path.
+func ResolveWarnings(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		rel, ok := strings.CutPrefix(p, "~/")
+		if !ok {
+			continue
+		}
+		parts := strings.Split(path.Clean(rel), "/")
+		if strings.EqualFold(parts[0], ".config") {
+			out = append(out, fmt.Sprintf("cache path %q is under ~/.config, which often holds credentials; it is uploaded to the runs bucket", p))
+		}
+	}
+	return out
 }
 
 // ObjectKey is where key's archive lives.

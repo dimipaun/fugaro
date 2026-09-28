@@ -6,6 +6,7 @@
 package lock
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 )
 
@@ -41,6 +43,10 @@ func (e *BusyError) Error() string {
 // unreadable lock and the conditional overwrite that takes it over.
 var beforeTakeover func()
 
+// beforeRefresh, when set by a test, runs between reading our own lock
+// and the conditional overwrite that refreshes its expiry.
+var beforeRefresh func()
+
 // Lock is a held lock.
 type Lock struct {
 	b    *blobx.Bucket
@@ -56,7 +62,9 @@ func Key(slug, branch string) string {
 }
 
 // Acquire takes the lock at key for h, taking over one that expired before
-// now or that cannot be parsed.
+// now or that cannot be parsed. A lock already held by h's run and
+// execution (compared with backend.SameExecution, so a run without an
+// execution never matches) is h's own and is returned as acquired.
 func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now time.Time) (*Lock, error) {
 	body, err := json.Marshal(h)
 	if err != nil {
@@ -78,7 +86,32 @@ func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now tim
 			return nil, fmt.Errorf("reading lock %s: %w", key, err)
 		}
 		var cur Holder
-		if json.Unmarshal(prev, &cur) == nil && cur.RunID != "" && now.Before(cur.ExpiresAt) {
+		parsed := json.Unmarshal(prev, &cur) == nil
+		if parsed && cur.RunID != "" && cur.RunID == h.RunID && backend.SameExecution(cur.Execution, h.Execution) {
+			// Our own lock: the storage client retried a create whose first
+			// attempt committed (the body is identical), or this execution
+			// restarted. A restart has a later start and so a later expiry,
+			// which the lock is refreshed to, generation-matched.
+			if bytes.Equal(prev, body) {
+				return &Lock{b: b, key: key, gen: prevGen, body: prev}, nil
+			}
+			if beforeRefresh != nil {
+				beforeRefresh()
+			}
+			newGen, err := b.ReplaceIf(ctx, key, body, prevGen, prev)
+			if errors.Is(err, blobx.ErrConflict) {
+				// Changed since the read. It may be our own refresh, whose
+				// response was lost and whose retry then conflicted: read
+				// again, which adopts an identical body or reports the
+				// real holder.
+				continue
+			}
+			if err != nil {
+				return nil, fmt.Errorf("refreshing lock %s: %w", key, err)
+			}
+			return &Lock{b: b, key: key, gen: newGen, body: body}, nil
+		}
+		if parsed && cur.RunID != "" && now.Before(cur.ExpiresAt) {
 			return nil, &BusyError{Holder: cur}
 		}
 		if beforeTakeover != nil {

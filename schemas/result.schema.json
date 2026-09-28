@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/result.schema.json",
+  "title": "Fugaro run record (result.json)",
+  "description": "The run record the runner writes to runs/<repo-slug>/<run-id>/result.json (design §4.6).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "run_id", "status", "stage", "outcome", "cost_usd", "started_at"],
+  "properties": {
+    "version": { "const": 1 },
+    "run_id": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+    "repo": { "type": "string" },
+    "workflow": { "type": "string" },
+    "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
+    "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled"] },
+    "stage": { "enum": ["bootstrap", "implement", "review", "fix", "finalize", "writeback"] },
+    "outcome": { "enum": ["ready", "draft", "none"] },
+    "reason": { "type": "string" },
+    "branch": { "type": "string" },
+    "head_sha": { "type": "string" },
+    "pr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": {
+        "number": { "type": "integer" },
+        "url": { "type": "string" }
+      }
+    },
+    "reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["round", "verdict", "findings"],
+        "properties": {
+          "round": { "type": "integer", "minimum": 1 },
+          "verdict": { "type": "string" },
+          "findings": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "verify": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["n", "kind", "head_sha", "clean_tree", "exit_code", "passed", "tests", "failures", "skipped", "started_at", "duration_s"],
+        "properties": {
+          "n": { "type": "integer" },
+          "kind": { "enum": ["build", "test"] },
+          "rerun": { "type": "boolean" },
+          "head_sha": { "type": "string" },
+          "clean_tree": { "type": "boolean" },
+          "exit_code": { "type": "integer" },
+          "timed_out": { "type": "boolean" },
+          "passed": { "type": "boolean" },
+          "tests": { "type": "integer", "minimum": 0 },
+          "failures": { "type": "integer", "minimum": 0 },
+          "skipped": { "type": "integer", "minimum": 0 },
+          "failed": { "type": "array", "items": { "type": "string" } },
+          "flaky": { "type": "array", "items": { "type": "string" } },
+          "warning": { "type": "string" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "duration_s": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "cost_usd": { "type": "number", "minimum": 0, "description": "The model spend, summed over stages." },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["model_usd", "compute_usd", "compute_estimated", "total_usd", "estimate", "model_basis"],
+      "properties": {
+        "model_usd": { "type": "number", "minimum": 0 },
+        "compute_usd": { "type": "number", "minimum": 0, "description": "Meaningful only when compute_estimated is true; otherwise 0." },
+        "compute_estimated": { "type": "boolean", "description": "True only when the backend's prices and the workflow's resources were known." },
+        "total_usd": { "type": "number", "minimum": 0, "description": "Billed dollars only: excludes the model figure when model_basis is subscription." },
+        "estimate": { "type": "boolean" },
+        "model_basis": { "enum": ["api-list", "subscription"] }
+      }
+    },
+    "stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "started_at", "duration_s"],
+        "properties": {
+          "name": { "type": "string" },
+          "started_at": { "type": "string", "format": "date-time" },
+          "duration_s": { "type": "number", "minimum": 0 }
+        }
+      }
+    },
+    "started_at": { "type": "string", "format": "date-time" },
+    "deadline": { "type": "string", "format": "date-time" },
+    "finished_at": { "type": "string", "format": "date-time" }
+  }
+}

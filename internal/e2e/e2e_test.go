@@ -234,11 +234,21 @@ func TestStageTimeout(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
 		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
 		"timeouts: { total: 1m, stage: 2s, verify: 30s, finalize_reserve: 10s }", 1)
-	r := runScenario(t, scenario{config: cfg, script: `{"calls":[{"sleep_s":30}]}`})
+	// The agent would sleep 120s; the 2s stage timeout must kill it. The
+	// check is on the runner's own timeline, which excludes process start
+	// and harness setup, so a loaded machine can't fail it; the wall-clock
+	// guard only catches a run that slept the agent out.
+	r := runScenario(t, scenario{config: cfg, script: `{"calls":[{"sleep_s":120}]}`})
 	if r.rec.Status != runstore.StatusFailed || !strings.Contains(r.rec.Reason, "stage implement timed out") || len(r.provider.PRs) != 1 {
 		t.Fatalf("record %+v", r.rec)
 	}
-	if r.elapsed > 20*time.Second {
+	if r.rec.FinishedAt == nil {
+		t.Fatalf("record has no finished_at: %+v", r.rec)
+	}
+	if d := r.rec.FinishedAt.Sub(r.rec.StartedAt); d >= 15*time.Second {
+		t.Fatalf("the runner took %s; the stage timeout did not stop the agent", d)
+	}
+	if r.elapsed > 90*time.Second {
 		t.Fatalf("run took %s; the stage timeout did not stop the agent", r.elapsed)
 	}
 }
