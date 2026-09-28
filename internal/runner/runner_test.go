@@ -1,6 +1,7 @@
 package runner_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -560,6 +561,62 @@ func TestAgentStderrIsRedacted(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), "debug: using key [REDACTED]") {
 		t.Fatalf("agent stderr line missing from the log: %s", logs.String())
+	}
+}
+
+func TestAgentEventsRelayedRedacted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs bytes.Buffer
+	h.deps.Log = runner.NewLogger(&logs)
+	talk := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_, _ = req.Transcript.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":"my key is test-key"}]}}` + "\n"))
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, talk, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if !strings.Contains(out, `"event":"text"`) || !strings.Contains(out, "my key is [REDACTED]") || strings.Contains(out, "test-key") {
+		t.Fatalf("logs = %s", out)
+	}
+}
+
+// TestAgentToolEventsNeverLeakEscapedSecrets checks the relay behind the
+// transcript redactor: a secret the agent's tool_use and tool_result carry
+// \u-escaped slips past the byte-level redactor and must still be redacted
+// once decoded, in the live log as it is in the transcript's view.
+func TestAgentToolEventsNeverLeakEscapedSecrets(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs bytes.Buffer
+	h.deps.Log = runner.NewLogger(&logs)
+	secret := envValue(h.deps.Env, "ANTHROPIC_API_KEY")
+	var esc strings.Builder
+	for _, c := range []byte(secret) {
+		fmt.Fprintf(&esc, `\u%04x`, c)
+	}
+	e := esc.String()
+	talk := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		for _, l := range []string{
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo ` + e + `"}}]}}`,
+			`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"content":"KEY=` + e + `"}}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":"denied: ` + e + `"}]}}`,
+			`{"type":"user","message":{"content":[{"type":"tool_result","is_error":false,"content":"ANTHROPIC_API_KEY=` + secret + `"}]}}`,
+		} {
+			_, _ = req.Transcript.Write([]byte(l + "\n"))
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, talk, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	out := logs.String()
+	if strings.Contains(out, secret) || strings.Contains(out, e) || strings.Contains(out, strings.ReplaceAll(e, `\`, `\\`)) {
+		t.Fatalf("log leaks the secret: %s", out)
+	}
+	for _, want := range []string{"tool Bash: echo [REDACTED]", `tool Write: {\"content\":\"KEY=[REDACTED]\"}`, "tool error: denied: [REDACTED]"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("log missing %q: %s", want, out)
+		}
 	}
 }
 
