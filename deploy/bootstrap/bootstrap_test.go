@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -33,24 +35,53 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// The names every test expects, spelled out so a drift in the naming
-// contract or in the script shows up here.
 const (
 	project  = "proj-1234"
 	bucket   = "proj-1234-fugaro-runs"
-	jobName  = "fugaro-acme-sandbox-web"
-	jobSA    = "fugaro-acme-sandbox-web@proj-1234.iam.gserviceaccount.com"
 	buildSA  = "fugaro-build@proj-1234.iam.gserviceaccount.com"
-	gitID    = "fugaro-acme-sandbox-bitbucket-token"
-	oauthID  = "fugaro-acme-sandbox-claude-oauth-token"
-	probeID  = "fugaro-acme-sandbox-sandbox-probe"
-	repoLbl  = "fugaro_repo=acme-sandbox"
 	bucketGS = "gs://" + bucket
+	registry = "us-east5-docker.pkg.dev/proj-1234/fugaro"
 )
 
-var bucketCond = `expression=resource.name.startsWith("projects/_/buckets/proj-1234-fugaro-runs/objects/runs/acme-sandbox/") || ` +
-	`resource.name.startsWith("projects/_/buckets/proj-1234-fugaro-runs/objects/cache/acme-sandbox/") || ` +
-	`resource.name.startsWith("projects/_/buckets/proj-1234-fugaro-runs/objects/locks/acme-sandbox/"),title=fugaro-fugaro-acme-sandbox-web`
+// The names every test expects, computed through the naming contract from
+// the sandbox checkout, Bitbucket's acme/sandbox, and never spelled out.
+var (
+	sandboxSlug = slug("bitbucket", "acme/sandbox")
+	jobName     = gcp.JobName(sandboxSlug, "web")
+	saID        = gcp.ServiceAccountID(sandboxSlug, "web")
+	jobSA       = saID + "@" + project + ".iam.gserviceaccount.com"
+	gitID       = gcp.SecretID(sandboxSlug, "bitbucket-token")
+	oauthID     = gcp.SecretID(sandboxSlug, "claude-oauth-token")
+	probeID     = gcp.SecretID(sandboxSlug, "sandbox-probe")
+	repoLbl     = "fugaro_repo=" + sandboxSlug // a slug is [a-z0-9-], so it is its own label
+	image       = gcp.ImageName(registry, sandboxSlug, "web")
+	bucketCond  = "expression=" + condition(sandboxSlug) + ",title=fugaro-" + saID
+
+	// Repositories whose names collide with the sandbox's under the old,
+	// unhashed naming, for the ownership checks.
+	sandboxWebSlug = slug("bitbucket", "acme/sandbox-web")
+	otherSlug      = slug("bitbucket", "acme/other")
+)
+
+func slug(provider, repo string) string {
+	s, err := task.Slug(provider, repo)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+// condition is the bucket IAM condition of a repository slug.
+func condition(slug string) string {
+	var conds []string
+	for _, p := range []string{"runs", "cache", "locks"} {
+		conds = append(conds, `resource.name.startsWith("projects/_/buckets/`+bucket+`/objects/`+p+`/`+slug+`/")`)
+	}
+	return strings.Join(conds, " || ")
+}
+
+// saDisplay is the display name the script gives a job's service account.
+func saDisplay(slug, workflow string) string { return "Fugaro M4 job " + slug + " " + workflow }
 
 // fakeBin puts gcloud and docker stand-ins on PATH that fail the test if
 // the dry run ever calls them.
@@ -304,15 +335,15 @@ func TestDryRunNamesMatchTheContract(t *testing.T) {
 		}
 		switch step {
 		case "job":
-			for _, want := range []string{gcp.JobName("acme-sandbox", "web"), "--max-retries 0", "--task-timeout 1320s", "FUGARO_BACKEND=cloud-run",
-				"--labels fugaro=managed,fugaro_repo=acme-sandbox,fugaro_workflow=web",
-				"CLAUDE_CODE_OAUTH_TOKEN=" + gcp.SecretID("acme-sandbox", "claude-oauth-token") + ":latest"} {
+			for _, want := range []string{jobName, "--max-retries 0", "--task-timeout 1320s", "FUGARO_BACKEND=cloud-run",
+				"--labels fugaro=managed," + repoLbl + ",fugaro_workflow=web",
+				"CLAUDE_CODE_OAUTH_TOKEN=" + oauthID + ":latest"} {
 				if !strings.Contains(s, want) {
 					t.Errorf("job step lacks %q:\n%s", want, s)
 				}
 			}
 		case "job-sa":
-			if !strings.Contains(s, gcp.ServiceAccountID("acme-sandbox", "web")) {
+			if !strings.Contains(s, saID) {
 				t.Errorf("job-sa step lacks the service account ID:\n%s", s)
 			}
 		case "secrets":
@@ -382,15 +413,15 @@ func TestApplyExactCalls(t *testing.T) {
 		{"iam", "service-accounts", "create", "fugaro-build", P, project, "--display-name", "Fugaro image builds (M4 bootstrap)"},
 		{"artifacts", "repositories", "add-iam-policy-binding", "fugaro", "--location", "us-east5", P, project, "--member", "serviceAccount:" + buildSA, "--role", "roles/artifactregistry.writer"},
 		{"projects", "add-iam-policy-binding", project, P, project, "--member", "serviceAccount:" + buildSA, "--role", "roles/logging.logWriter", "--condition", "None"},
-		{"iam", "service-accounts", "create", "fugaro-acme-sandbox-web", P, project, "--display-name", "Fugaro job acme/sandbox web (M4 bootstrap)"},
+		{"iam", "service-accounts", "create", saID, P, project, "--display-name", saDisplay(sandboxSlug, "web")},
 		{"storage", "buckets", "add-iam-policy-binding", bucketGS, "--member", "serviceAccount:" + jobSA, "--role", "roles/storage.objectUser", "--condition", bucketCond, P, project},
 		grant(gitID, jobSA), grant(oauthID, jobSA), grant(probeID, jobSA),
 		grant(gitID, buildSA), grant(probeID, buildSA),
 		{"auth", "configure-docker", "us-east5-docker.pkg.dev", "--quiet", P, project},
 		{"run", "jobs", "deploy", jobName, P, project, "--region", "us-east5",
-			"--image", "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-sandbox-web:latest", "--service-account", jobSA,
+			"--image", image + ":latest", "--service-account", jobSA,
 			"--cpu", "1", "--memory", "2Gi", "--task-timeout", "1320s", "--max-retries", "0", "--tasks", "1",
-			"--labels", "fugaro=managed,fugaro_repo=acme-sandbox,fugaro_workflow=web",
+			"--labels", "fugaro=managed," + repoLbl + ",fugaro_workflow=web",
 			"--set-env-vars", "FUGARO_BACKEND=cloud-run,FUGARO_BUCKET=gs://proj-1234-fugaro-runs,FUGARO_PROJECT=proj-1234,FUGARO_REGION=us-east5",
 			"--set-secrets", "CLAUDE_CODE_OAUTH_TOKEN=" + oauthID + ":latest,FUGARO_BITBUCKET_TOKEN=" + gitID + ":latest,SANDBOX_PROBE=" + probeID + ":latest"},
 	})
@@ -443,7 +474,7 @@ func TestTeardownSecrets(t *testing.T) {
 	seedSecrets(t, f)
 
 	// Another job of the repository still needs the secrets.
-	f.seed(t, "jobs", "fugaro-acme-sandbox-api", "fugaro=managed,"+repoLbl+",fugaro_workflow=api")
+	f.seed(t, "jobs", gcp.JobName(sandboxSlug, "api"), "fugaro=managed,"+repoLbl+",fugaro_workflow=api")
 	if out, err := script(t, env, "--apply", "--yes", "teardown", "--secrets"); err == nil || !strings.Contains(out, "refusing --secrets") {
 		t.Fatalf("teardown --secrets with a sibling job: %v\n%s", err, out)
 	}
@@ -451,7 +482,7 @@ func TestTeardownSecrets(t *testing.T) {
 		t.Fatalf("refused teardown deleted %q", d)
 	}
 	// Another repository's job doesn't count.
-	f.seed(t, "jobs", "fugaro-acme-sandbox-api", "fugaro=managed,fugaro_repo=acme-other,fugaro_workflow=api")
+	f.seed(t, "jobs", gcp.JobName(sandboxSlug, "api"), "fugaro=managed,fugaro_repo="+otherSlug+",fugaro_workflow=api")
 	mustScript(t, env, "--apply", "--yes", "teardown", "--secrets")
 	del := func(id string) []string { return []string{"secrets", "delete", id, "--project", project, "--quiet"} }
 	assertCalls(t, "teardown --secrets", deletions(f.calls(t)), [][]string{
@@ -468,15 +499,15 @@ func TestTeardownChecksLabels(t *testing.T) {
 	testutil.IsolateGit(t)
 	for name, prep := range map[string]func(f *fake){
 		"job of another repository": func(f *fake) {
-			f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo=acme-sandbox-web,fugaro_workflow=x")
+			f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo="+sandboxWebSlug+",fugaro_workflow=x")
 		},
 		"unlabelled job": func(f *fake) { f.seed(t, "jobs", jobName, "") },
 		"secret of another repository": func(f *fake) {
-			f.seed(t, "secrets", oauthID, "fugaro=managed,fugaro_repo=acme-sandbox-claude")
+			f.seed(t, "secrets", oauthID, "fugaro=managed,fugaro_repo="+slug("bitbucket", "acme/sandbox-claude"))
 		},
 		"service account of another repository, job already gone": func(f *fake) {
 			_ = os.Remove(filepath.Join(f.state, "jobs", jobName))
-			f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox-web x (M4 bootstrap)")
+			f.seed(t, "service-accounts", jobSA, saDisplay(sandboxWebSlug, "x"))
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -504,16 +535,22 @@ func TestCreatesCheckOwnership(t *testing.T) {
 		mustScript(t, env, "--apply", "--yes", step)
 	}
 	f.calls(t)
-	f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox-web x (M4 bootstrap)")
-	if out, err := script(t, env, "--apply", "--yes", "job-sa"); err == nil || !strings.Contains(out, "refusing") {
-		t.Fatalf("job-sa over another repository's account: %v\n%s", err, out)
+	for _, other := range []string{
+		saDisplay(sandboxWebSlug, "x"),
+		saDisplay(slug("github", "acme/sandbox"), "web"), // the same owner/name and workflow on another provider
+		"Fugaro job acme/sandbox web (M4 bootstrap)",     // the pre-slug display name
+	} {
+		f.seed(t, "service-accounts", jobSA, other)
+		if out, err := script(t, env, "--apply", "--yes", "job-sa"); err == nil || !strings.Contains(out, "refusing") {
+			t.Fatalf("job-sa over an account named %q: %v\n%s", other, err, out)
+		}
+		if m := mutating(f.calls(t)); len(m) > 0 {
+			t.Fatalf("job-sa changed %q", m)
+		}
 	}
-	if m := mutating(f.calls(t)); len(m) > 0 {
-		t.Fatalf("job-sa changed %q", m)
-	}
-	f.seed(t, "service-accounts", jobSA, "Fugaro job acme/sandbox web (M4 bootstrap)")
+	f.seed(t, "service-accounts", jobSA, saDisplay(sandboxSlug, "web"))
 	mustScript(t, env, "--apply", "--yes", "job-sa") // its own account is reused
-	f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo=acme-sandbox-web,fugaro_workflow=x")
+	f.seed(t, "jobs", jobName, "fugaro=managed,fugaro_repo="+sandboxWebSlug+",fugaro_workflow=x")
 	f.calls(t)
 	if out, err := script(t, env, "--apply", "--yes", "job"); err == nil || !strings.Contains(out, "refusing") {
 		t.Fatalf("job over another repository's job: %v\n%s", err, out)
@@ -625,7 +662,7 @@ func TestConfigStep(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "fugaro", "config.yaml")
 	env := append(os.Environ(), "GIT_CONFIG_GLOBAL="+gitcfg, "FUGARO_CONFIG="+path, "PATH="+fakeBin(t)+":"+os.Getenv("PATH"),
-		"PROJECT=proj-1234", "REGION=us-east5", "BUCKET=proj-1234-fugaro-runs", "REPOS=acme/sandbox:master:web acme/app:main:web")
+		"PROJECT=proj-1234", "REGION=us-east5", "BUCKET=proj-1234-fugaro-runs", "REPOS=acme/sandbox:master:web acme/app:main:web:github")
 	with := func(extra ...string) []string { return append(slices.Clone(env), extra...) }
 	if out, err := script(t, env, "config"); err != nil || !strings.Contains(out, "project: proj-1234") || !strings.Contains(out, "⚠ CONFIRM (project proj-1234)") {
 		t.Fatalf("dry run: %v\n%s", err, out)
@@ -644,9 +681,23 @@ func TestConfigStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"user: dev@example.invalid", "service_account: fugaro-build@proj-1234.iam.gserviceaccount.com",
-		"acme/sandbox: { base_branch: master, workflows: [web] }", "acme/app: { base_branch: main, workflows: [web] }"} {
+		"acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }",
+		"acme/app: { provider: github, base_branch: main, workflows: [web] }"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("config lacks %q:\n%s", want, data)
+		}
+	}
+	// fugaro reads the providers back: they decide the repositories' slugs.
+	lc, err := localcfg.Load(path)
+	if err != nil {
+		t.Fatalf("fugaro cannot load the written config: %v\n%s", err, data)
+	}
+	if lc.Repos["acme/sandbox"].Provider != "bitbucket" || lc.Repos["acme/app"].Provider != "github" {
+		t.Fatalf("repos = %+v", lc.Repos)
+	}
+	for _, bad := range []string{"acme/x:main:web:gitlab", "acme/x:main:web:bitbucket:extra", "acme/x:main"} {
+		if out, err := script(t, with("REPOS="+bad, "FORCE=1"), "config"); err == nil || !strings.Contains(out, "REPOS entry") {
+			t.Errorf("REPOS=%s: %v\n%s", bad, err, out)
 		}
 	}
 	// What config writes, the guard reads back.

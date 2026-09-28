@@ -15,7 +15,8 @@
 # Environment: PROJECT, REGION, BUCKET, REPO (owner/name), WORKFLOW,
 # CHECKOUT (the target repository's checkout), FUGARO (default fugaro),
 # HEAVY (the Docker lock), FUGARO_SRC (this checkout), and for the config
-# step REPOS ("owner/name:branch:workflow ..."), BASE_IMAGE and FORCE.
+# step REPOS ("owner/name:branch:workflow[:provider] ...", provider bitbucket
+# or github, default bitbucket), BASE_IMAGE and FORCE.
 set -euo pipefail
 
 # gcloud must never ask anything (such as "enable this API?"); a prompt's
@@ -122,8 +123,14 @@ confirm() {
 
 # The display name the script gives a job's service account. Service
 # accounts carry no labels, so this is how a reused or deleted account is
-# recognized as this repository's and workflow's.
-job_sa_display() { echo "Fugaro job $REPO $WORKFLOW (M4 bootstrap)"; }
+# recognized as this repository's and workflow's. It names the repository by
+# its slug (set from `spec slug` by each step that calls this), which, like
+# the fugaro_repo label, includes the provider kind. At most 14+63+1+20 = 98
+# characters, within the 100 IAM allows.
+job_sa_display() {
+  [ -n "${repo_slug:-}" ] || die "internal error: job_sa_display before repo_slug is set"
+  echo "Fugaro M4 job $repo_slug $WORKFLOW"
+}
 
 # check_sa_owner SA: with --apply, dies unless the existing account SA has
 # this repository's and workflow's display name.
@@ -243,9 +250,14 @@ case "$STEP" in
       echo "user: $user"
       echo "repos:"
       for r in $REPOS; do
-        IFS=: read -r name branch wf <<<"$r"
-        [ -n "$name" ] && [ -n "$branch" ] && [ -n "$wf" ] || die "REPOS entry $r is not owner/name:branch:workflow"
-        echo "  $name: { base_branch: $branch, workflows: [$wf] }"
+        IFS=: read -r name branch wf provider extra <<<"$r"
+        [ -n "$name" ] && [ -n "$branch" ] && [ -n "$wf" ] && [ -z "${extra:-}" ] ||
+          die "REPOS entry $r is not owner/name:branch:workflow[:provider]"
+        # The provider kind is part of the repository's slug; `fugaro run`
+        # reads it from here (it must agree with the checkout's git.provider).
+        provider=${provider:-bitbucket}
+        case "$provider" in bitbucket|github) ;; *) die "REPOS entry $r: provider $provider is not bitbucket or github" ;; esac
+        echo "  $name: { provider: $provider, base_branch: $branch, workflows: [$wf] }"
       done
     } > "$body"
     cat "$body"
@@ -315,6 +327,7 @@ JSON
     sa_id=$(spec sa-id)
     sa=$(spec sa)
     cond=$(spec bucket-condition)
+    repo_slug=$(spec slug)
     confirm "creates service account $sa and grants it storage.objectUser on gs://$BUCKET, limited to its runs/, cache/ and locks/ prefixes"
     pin_bucket
     if exists gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
@@ -399,6 +412,7 @@ JSON
     cond=$(spec bucket-condition)
     ids=$(spec secret-ids)
     repo_label=$(spec repo-label)
+    repo_slug=$(spec slug)
     job_checked=0
     sa_checked=0
     idlist=$(echo "$ids" | tr '\n' ' ')

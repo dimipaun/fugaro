@@ -32,6 +32,7 @@ import (
 type jobSpec struct {
 	Project             string            `json:"project"`
 	Region              string            `json:"region"`
+	Slug                string            `json:"slug"` // task.Slug(git.provider, repo)
 	Job                 string            `json:"job"`
 	ServiceAccountID    string            `json:"service_account_id"`
 	ServiceAccount      string            `json:"service_account"`
@@ -51,7 +52,7 @@ type jobSpec struct {
 }
 
 // jobSpecFields are the values of --field.
-var jobSpecFields = []string{"job", "sa-id", "sa", "image", "cpu", "memory", "task-timeout", "git-secret",
+var jobSpecFields = []string{"slug", "job", "sa-id", "sa", "image", "cpu", "memory", "task-timeout", "git-secret",
 	"env", "secrets", "secret-ids", "secret-names", "build-secret-ids", "bucket-condition", "labels", "repo-label"}
 
 var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
@@ -145,7 +146,20 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("workflow %s cannot run on Cloud Run: %s", name, strings.Join(msgs, "; "))}
 	}
 
-	slug := task.Slug(repo)
+	// The slug hashes the provider kind, which comes from the checkout's
+	// fugaro.yaml. A local config entry that names another provider would
+	// give `fugaro run` a different slug, so it is refused here.
+	for name, r := range lc.Repos {
+		a, err1 := task.CanonicalRepo(name)
+		b, err2 := task.CanonicalRepo(repo)
+		if err1 == nil && err2 == nil && a == b && r.Provider != "" && r.Provider != cfg.Git.Provider {
+			return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("the local config says %s is on %s, but the checkout's fugaro.yaml says %s; make them agree", repo, r.Provider, cfg.Git.Provider)}
+		}
+	}
+	slug, err := task.Slug(cfg.Git.Provider, repo)
+	if err != nil {
+		return nil, &ExitError{Code: ExitUserError, Err: err}
+	}
 	label, err := repoLabel(slug)
 	if err != nil {
 		return nil, &ExitError{Code: ExitUserError, Err: err}
@@ -154,6 +168,7 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	js := &jobSpec{
 		Project:          lc.Project,
 		Region:           lc.Region,
+		Slug:             slug,
 		Job:              gcp.JobName(slug, name),
 		ServiceAccountID: saID,
 		ServiceAccount:   saID + "@" + lc.Project + ".iam.gserviceaccount.com",
@@ -214,7 +229,8 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	slices.Sort(js.buildSecretIDs)
 	js.buildSecretIDs = slices.Compact(js.buildSecretIDs)
 
-	// Trailing slashes, so acme-app can never reach acme-app-x (design §6.1).
+	// Trailing slashes, so a slug can never reach another slug it is a
+	// string prefix of (design §6.1).
 	var conds []string
 	for _, prefix := range []string{"runs", "cache", "locks"} {
 		conds = append(conds, fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug))
@@ -311,6 +327,8 @@ func jobSpecField(js *jobSpec, field string) string {
 		return out
 	}
 	switch field {
+	case "slug":
+		return js.Slug
 	case "job":
 		return js.Job
 	case "sa-id":
