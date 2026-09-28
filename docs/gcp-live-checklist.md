@@ -63,8 +63,12 @@ whole bring-up:
 
 ```bash
 export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
-FUGARO=<path to the fugaro binary built from the branch under test>
-SANDBOX=<a checkout of the sandbox repository>
+# FUGARO must be exported: the bootstrap script reads it, and would otherwise
+# use whatever fugaro is on PATH.
+export FUGARO=<path to the fugaro binary built from the branch under test>
+export SANDBOX=<a checkout of the sandbox repository>
+# The bootstrap's shared settings, the same values config wrote:
+export PROJECT="$FUGARO_LIVE_PROJECT" REGION=<region> BUCKET=fugaro-runs-<suffix>
 ```
 
 Complete the bootstrap runbook (`docs/gcp-bootstrap.md`) for the sandbox
@@ -80,7 +84,8 @@ repository, in the runbook's order:
 3. **⚠ CONFIRM** Commit the sandbox fixture, `deploy/bootstrap/sandbox/`,
    to the sandbox repository's base branch (see
    `deploy/bootstrap/README.md`). This pushes to a real repository.
-4. For the sandbox's `web` workflow, with `REPO`, `WORKFLOW` and `CHECKOUT`
+4. For the sandbox's `web` workflow, with
+   `export REPO="$FUGARO_LIVE_REPO" WORKFLOW=web CHECKOUT="$SANDBOX"`
    set: `job-sa`, `secrets` (store every secret it prints, including
    `sandbox-probe`), `secrets-access`, `base` (then set `base_image` as the
    runbook's "Setting the base image" says), `image` and `job`.

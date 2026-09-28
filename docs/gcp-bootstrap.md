@@ -13,7 +13,7 @@ This runbook describes each step: the command, what it creates, whether it costs
 - **The bucket is pinned.** Bucket names are global, so before any bucket write, IAM change or deletion, a read-only describe checks that the bucket belongs to `PROJECT`.
 - **Steps can be rerun.** A create skips a resource that already exists (a bucket only when it is in the same project and region), and a delete skips what is already gone.
 - **Ownership is checked before reuse or deletion.** An existing job must carry `fugaro=managed` and this repository's `fugaro_repo` and `fugaro_workflow` labels; a job's service account this repository's and workflow's display name (`fugaro gcp job-spec --field sa-display-name`); and a secret the labels `fugaro secrets set` gives it, `fugaro=managed`, this repository's `fugaro_repo` and its own logical name as `fugaro_secret`. Otherwise the step refuses.
-- **The shared resources carry a mark too.** The script labels the bucket and the `fugaro` registry `fugaro=managed` when it creates them, and gives `fugaro-build` the display name `Fugaro image builds (M4 bootstrap)`. A bucket, registry or `fugaro-build` that exists under the same name without that mark is someone else's: `bucket`, `registry`, `build-sa`, `job-sa`, `secrets-access`, `teardown` and `teardown-all` refuse to adopt it, rewrite its lifecycle, grant on it or delete it. A bucket created before the label existed (or whose create succeeded but whose label update didn't) is refused too; if it is really the bootstrap's, label it by hand with `gcloud storage buckets update gs://<bucket> --update-labels fugaro=managed --project <project>` (and `gcloud artifacts repositories update fugaro --location <region> --update-labels fugaro=managed --project <project>` for the registry).
+- **The shared resources carry a mark too.** The script labels the bucket and the `fugaro` registry `fugaro=managed` when it creates them, and gives `fugaro-build` the display name `Fugaro image builds (M4 bootstrap)`. A bucket, registry or `fugaro-build` that exists under the same name without that mark is someone else's: `bucket`, `registry`, `build-sa`, `job-sa`, `secrets-access`, `teardown` and `teardown-all` refuse to adopt it, rewrite its lifecycle, grant on it or delete it. A bucket created before the label existed (or whose create succeeded but whose label update didn't) is refused too; if it is really the bootstrap's, **⚠ CONFIRM** label it by hand with `gcloud storage buckets update gs://<bucket> --update-labels fugaro=managed --project <project>` (and `gcloud artifacts repositories update fugaro --location <region> --update-labels fugaro=managed --project <project>` for the registry).
 - **Only Bitbucket repositories.** The job spec needs a GitHub App's ID and installation, which M5's Terraform provides, so the script refuses a GitHub repository. It also doesn't grant `roles/aiplatform.user`, so a job with `agent.auth: vertex` can't reach the model; use `oauth` or `api-key`.
 
 ### Environment
@@ -95,10 +95,10 @@ PROJECT=<project> REGION=<region> BUCKET=<bucket> REPOS='<as before>' BASE_IMAGE
 
 To try a change to the runner (anything under `fugaro exec`) on Cloud Run:
 
-1. Rebuild and push the base from your branch: `gcp-m4.sh --apply base` with `FUGARO_SRC` at the branch. The tag carries the commit.
+1. **⚠ CONFIRM** Rebuild and push the base from your branch: `gcp-m4.sh --apply base` with `FUGARO_SRC` at the branch. The tag carries the commit.
 2. Set `base_image` to the printed tag, as above.
-3. Rebuild the derived image from the repository's checkout: `fugaro image build` (or `gcp-m4.sh --apply image`). It builds `FROM` the new base, pinned by digest.
-4. Launch: `fugaro run --repo <owner/name> "<task>"`, then follow it with `fugaro logs -f <run>`, `fugaro ls` and `fugaro diagnose <run>`.
+3. **⚠ CONFIRM** (a billable Cloud Build) Rebuild the derived image from the repository's checkout: `fugaro image build` (or `gcp-m4.sh --apply image`). It builds `FROM` the new base, pinned by digest.
+4. **⚠ CONFIRM** (a billable execution that opens a PR) Launch: `fugaro run --repo <owner/name> "<task>"`, then follow it with `fugaro logs -f <run>`, `fugaro ls` and `fugaro diagnose <run>`.
 
 The job runs the image's `:latest` tag. If a run still starts the previous image, redeploy the job with `gcp-m4.sh --apply job`; it is safe to rerun.
 
