@@ -151,7 +151,7 @@ check_job_owner() {
   mgd=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro)')
   got=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_repo)')
   gotwf=$(gcloud run jobs describe "$1" --project "$PROJECT" --region "$REGION" --format 'value(metadata.labels.fugaro_workflow)')
-  [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ] ||
+  { [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$gotwf" = "$WORKFLOW" ]; } ||
     die "job $1 is labelled fugaro=${mgd:-none} fugaro_repo=${got:-none} fugaro_workflow=${gotwf:-none}, not fugaro=managed $repo_label $WORKFLOW; refusing"
 }
 
@@ -168,7 +168,7 @@ check_secret_labels() {
   name=$(gcloud secrets describe "$1" --project "$PROJECT" --format 'value(labels.fugaro_secret)')
   want=$(spec secret-names | sed -n "s/^\(.*\)=$1\$/\1/p" | head -n 1)
   [ -n "$want" ] || die "secret $1 is not one of $REPO's secrets; refusing"
-  [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$name" = "$want" ] ||
+  { [ "$mgd" = managed ] && [ "$got" = "$repo_label" ] && [ "$name" = "$want" ]; } ||
     die "secret $1 is labelled fugaro=${mgd:-none} fugaro_repo=${got:-none} fugaro_secret=${name:-none}, not fugaro=managed $repo_label $want; refusing"
 }
 
@@ -225,7 +225,7 @@ pin_bucket() {
   local pn bn
   pn=$(gcloud projects describe "$PROJECT" --project "$PROJECT" --format 'value(projectNumber)')
   bn=$(gcloud storage buckets describe "gs://$BUCKET" --project "$PROJECT" --raw --format 'value(projectNumber)')
-  [ -n "$pn" ] && [ "$pn" = "$bn" ] || die "gs://$BUCKET belongs to project number ${bn:-unknown}, not $PROJECT ($pn); refusing"
+  { [ -n "$pn" ] && [ "$pn" = "$bn" ]; } || die "gs://$BUCKET belongs to project number ${bn:-unknown}, not $PROJECT ($pn); refusing"
 }
 
 # The shared resources' ownership marks. The bucket and the registry get the
@@ -336,7 +336,7 @@ case "$STEP" in
       echo "repos:"
       for r in $REPOS; do
         IFS=: read -r name branch wf provider extra <<<"$r"
-        [ -n "$name" ] && [ -n "$branch" ] && [ -n "$wf" ] && [ -z "${extra:-}" ] ||
+        { [ -n "$name" ] && [ -n "$branch" ] && [ -n "$wf" ] && [ -z "${extra:-}" ]; } ||
           die "REPOS entry $r is not owner/name:branch:workflow[:provider]"
         # The provider kind is part of the repository's slug; `fugaro run`
         # reads it from here (it must agree with the checkout's git.provider).
