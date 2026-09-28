@@ -234,7 +234,8 @@ own_registry() {
   fi
   local got
   got=$(gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT" --format 'value(labels.fugaro)')
-  [ "$got" = managed ] || die "Artifact Registry repository fugaro is labelled fugaro=${got:-none}, not fugaro=managed, so this script did not create it; refusing"
+  [ "$got" = managed ] || die "Artifact Registry repository fugaro is labelled fugaro=${got:-none}, not fugaro=managed, so this script did not create it; refusing. \
+If it is this script's (an earlier bootstrap created it without the label), label it: gcloud artifacts repositories update fugaro --location $REGION --update-labels fugaro=managed --project $PROJECT"
 }
 
 # own_build_sa: with --apply, dies unless $BUILD_SA has BUILD_SA_DISPLAY.

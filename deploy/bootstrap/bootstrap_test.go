@@ -672,15 +672,20 @@ func TestBucketOfAnotherProjectIsRefused(t *testing.T) {
 // adopted, rewritten, granted on or deleted.
 func TestSharedResourcesCheckOwnership(t *testing.T) {
 	testutil.IsolateGit(t)
+	// A bucket or registry made by an earlier bootstrap may lack the label;
+	// the refusal names the one command that adds it.
+	bucketHint := "gcloud storage buckets update " + bucketGS + " --update-labels fugaro=managed"
+	registryHint := "gcloud artifacts repositories update fugaro --location us-east5 --update-labels fugaro=managed"
 	for name, c := range map[string]struct {
 		kind, id, content string
 		steps             []string
+		hint              string
 	}{
-		"unlabelled bucket":             {"buckets", bucketGS, "", []string{"bucket", "job-sa", "teardown-all"}},
-		"bucket labelled otherwise":     {"buckets", bucketGS, "fugaro=other,team=data", []string{"bucket", "teardown-all"}},
-		"unlabelled registry":           {"repositories", "fugaro", "", []string{"registry", "build-sa", "teardown-all"}},
-		"someone else's fugaro-build":   {"service-accounts", buildSA, "CI builder", []string{"build-sa", "secrets-access", "teardown-all"}},
-		"fugaro-build, no display name": {"service-accounts", buildSA, "", []string{"build-sa", "teardown-all"}},
+		"unlabelled bucket":             {"buckets", bucketGS, "", []string{"bucket", "job-sa", "teardown-all"}, bucketHint},
+		"bucket labelled otherwise":     {"buckets", bucketGS, "fugaro=other,team=data", []string{"bucket", "teardown-all"}, ""},
+		"unlabelled registry":           {"repositories", "fugaro", "", []string{"registry", "build-sa", "teardown-all"}, registryHint},
+		"someone else's fugaro-build":   {"service-accounts", buildSA, "CI builder", []string{"build-sa", "secrets-access", "teardown-all"}, ""},
+		"fugaro-build, no display name": {"service-accounts", buildSA, "", []string{"build-sa", "teardown-all"}, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newFake(t)
@@ -698,6 +703,9 @@ func TestSharedResourcesCheckOwnership(t *testing.T) {
 				out, err := script(t, env, args...)
 				if err == nil || !strings.Contains(out, "refusing") {
 					t.Fatalf("%s over %s: %v\n%s", step, name, err, out)
+				}
+				if c.hint != "" && !strings.Contains(out, c.hint) {
+					t.Fatalf("%s over %s names no relabel command (%s):\n%s", step, name, c.hint, out)
 				}
 				if m := mutating(f.calls(t)); len(m) > 0 {
 					t.Fatalf("%s over %s changed %q", step, name, m)
