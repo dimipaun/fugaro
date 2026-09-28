@@ -247,3 +247,36 @@ func TestDiagnoseUnlaunchedRunShowsItsRow(t *testing.T) {
 		t.Fatalf("diagnose = %s, %v", out, err)
 	}
 }
+
+// A corrupt launch.json or result.json is that run's error row, with a
+// warning; the other runs are listed as usual (queued fix).
+func TestLsCorruptObjectIsAPerRowError(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	good, badLaunch, badRecord := today+"-090000-aaaa", today+"-091000-bbbb", today+"-092000-cccc"
+	for _, id := range []string{good, badLaunch, badRecord} {
+		seedRun(t, f, id, "", "someone@example.com", false)
+	}
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	_ = runstore.Open(b, appSlug, badLaunch).PutFile(context.Background(), "launch.json", []byte("{not json"), "application/json")
+	_ = runstore.Open(b, appSlug, badRecord).PutFile(context.Background(), "result.json", []byte(`{"status": 7}`), "application/json")
+	b.Close()
+	got, errOut := lsJSON(t)
+	status := map[string]string{}
+	for _, r := range got.Runs {
+		status[r.RunID] = r.Status + ": " + r.Reason
+	}
+	if len(got.Runs) != 3 || !strings.HasPrefix(status[good], runview.StatusUnlaunched) ||
+		!strings.Contains(status[badLaunch], "error: launch.json") || !strings.Contains(status[badRecord], "error: result.json") {
+		t.Fatalf("rows = %v", status)
+	}
+	if strings.Count(errOut, "warning") != 2 {
+		t.Fatalf("stderr = %q", errOut)
+	}
+	// diagnose shows the same row.
+	out, _, err := execute(t, "diagnose", "--json", badRecord)
+	var d Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != runview.StatusError {
+		t.Fatalf("diagnose = %s, %v", out, err)
+	}
+}

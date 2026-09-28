@@ -163,9 +163,10 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 }
 
 // loadRows reads every run f selects, joins it with its execution, and
-// returns the rows newest first. A read that fails for any reason but
-// absence fails the whole listing: ls never shows a status guessed from a
-// partial read.
+// returns the rows newest first. A run whose launch.json or result.json is
+// corrupt, or names an execution that isn't the run's, is an error row
+// with a warning. Any other failed read but absence fails the whole
+// listing: ls never shows a status guessed from a partial read.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -273,11 +274,22 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	case !errors.Is(err, runstore.ErrNotFound):
 		return in, err
 	}
-	if in.Launch, err = absent(s.ReadLaunch(ctx)); err != nil {
-		return in, err
-	}
-	if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
-		return in, err
+	// A corrupt object is this run's error row, with a warning; a read that
+	// fails otherwise (the bucket, the network) still fails the listing.
+	for _, read := range []struct {
+		name string
+		do   func() error
+	}{
+		{"launch.json", func() (err error) { in.Launch, err = absent(s.ReadLaunch(ctx)); return err }},
+		{"result.json", func() (err error) { in.Record, err = absent(s.ReadRecord(ctx)); return err }},
+	} {
+		if err := read.do(); corruptObject(err) {
+			in.Problem = read.name + " is unreadable: " + err.Error()
+			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
+			return in, nil
+		} else if err != nil {
+			return in, err
+		}
 	}
 	if in.Launch == nil && in.Record == nil {
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
@@ -330,6 +342,14 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 		}
 	}
 	return in, nil
+}
+
+// corruptObject reports whether err is a run object that was read but
+// can't be decoded: that run's problem, not the listing's.
+func corruptObject(err error) bool {
+	var syn *json.SyntaxError
+	var typ *json.UnmarshalTypeError
+	return errors.As(err, &syn) || errors.As(err, &typ) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // absent turns runstore.ErrNotFound into a nil value and no error.

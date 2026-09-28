@@ -80,6 +80,9 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	l, err := ownerLaunch(ctx, env, s, id)
+	if corruptObject(err) {
+		l, err = nil, nil // the row says which object is unreadable
+	}
 	if err != nil {
 		return err
 	}
@@ -97,7 +100,7 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 // launched (no logs then). A failed log read is a warning: the rest of the
 // diagnosis is still worth having.
 func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore.Launch, run string, secrets []string, warn io.Writer) (*Diagnosis, error) {
-	red := func(s string) string { return agent.Redact(s, secrets) }
+	red := agent.Redacter(secrets)
 	rows, err := loadRows(ctx, env, lsFilter{runRef: run, warn: warn}, time.Now())
 	if err != nil {
 		return nil, err
@@ -109,6 +112,9 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	d.Row.Reason = red(d.Row.Reason)
 
 	rec, err := absent(s.ReadRecord(ctx))
+	if corruptObject(err) {
+		rec, err = nil, nil // the row already says so
+	}
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -138,7 +144,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	tail := make([]string, diagnoseLogLines)
 	seen := 0
 	err = env.be.Logs(ctx, logQuery(l, false), func(e backend.LogEntry) error {
-		tail[seen%diagnoseLogLines] = humanLogLine(redactEntry(e, secrets))
+		tail[seen%diagnoseLogLines] = humanLogLine(redactEntry(e, red))
 		seen++
 		return nil
 	})
