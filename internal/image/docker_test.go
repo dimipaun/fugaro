@@ -5,6 +5,8 @@ package image_test
 import (
 	"archive/tar"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"maps"
@@ -84,9 +86,11 @@ workflows:
       setup:
         - sudo -n apt-get update -qq && sudo -n apt-get install -y -qq --no-install-recommends tree >/dev/null
         - test -n "$NPM_TOKEN" && mkdir -p ~/.cache/fugaro-fixture && echo warm > ~/.cache/fugaro-fixture/marker
+        - printf %s "$NPM_TOKEN" | sha256sum > ~/.cache/fugaro-fixture/token-sha && test -z "${OTHER_TOKEN+set}"
     commands: { build: sh build.sh, test: sh test.sh, reports: ["build/test-results/*.xml"] }
     secrets:
       - { name: npm-token, env: NPM_TOKEN }
+      - { name: other-token, env: OTHER_TOKEN }
 `
 	const canary = "npm-canary-7d41c2e9"
 	const tag = "fugaro-test-npm:local"
@@ -107,6 +111,12 @@ workflows:
 		"jq --version && tree --version >/dev/null && cat ~/.cache/fugaro-fixture/marker && stat -c %U ~/.cache/fugaro-fixture/marker")
 	if !strings.HasPrefix(out, "jq-") || !strings.HasSuffix(out, "warm\nfugaro") {
 		t.Fatalf("image contents: %q", out)
+	}
+	// The setup step saw the secret's exact value (through the file mount and
+	// the RUN's export), and the unset OTHER_TOKEN stayed unset.
+	sum := sha256.Sum256([]byte(canary))
+	if got := testutil.Docker(t, "run", "--rm", tag, "cat", "/home/fugaro/.cache/fugaro-fixture/token-sha"); !strings.HasPrefix(got, hex.EncodeToString(sum[:])+" ") {
+		t.Fatalf("the setup step saw NPM_TOKEN hashing to %q, want %x", got, sum)
 	}
 	// The setup step saw the secret, so the build had it, but nothing kept it.
 	if strings.Contains(testutil.Docker(t, "history", "--no-trunc", tag), canary) {

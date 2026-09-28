@@ -6,8 +6,9 @@ workflows:
     base: web-node
     commands: { build: "node --check test.js", test: "npm test" }
     image:
-      # Proves Cloud Build passes workflow secrets (--secret id=…,env=…): the
-      # build fails if SANDBOX_PROBE is missing. The value is random, not a secret.
+      # Proves Cloud Build passes workflow secrets (a file secret, --secret
+      # id=…,src=…, mounted as a file and exported in the RUN): the build
+      # fails if SANDBOX_PROBE is missing. The value is random, not a secret.
       setup: ['test -n "$SANDBOX_PROBE"']
     secrets:
       - { name: sandbox-probe, env: SANDBOX_PROBE }

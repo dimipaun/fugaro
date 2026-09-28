@@ -190,6 +190,9 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 			fmt.Fprintf(o.Log, "fugaro: %s is not set, so the build runs without that secret\n", s.Env)
 			continue
 		}
+		// env= here is the CLI's source of the secret, which Docker Desktop
+		// and current BuildKit support; the Dockerfile still mounts it as a
+		// file (Render), which is all Cloud Build's daemon accepts.
 		secretArgs = append(secretArgs, "--secret", "id="+s.Env+",env="+s.Env)
 		runEnvArgs = append(runEnvArgs, "-e", s.Env)
 		secretEnv = append(secretEnv, s.Env+"="+v)

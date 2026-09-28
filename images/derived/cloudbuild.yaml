@@ -22,8 +22,12 @@
 # names. This file declares none of them in availableSecrets or the build
 # step's secretEnv; the request builder (gcp.BuildRequest) adds each one to
 # both, so a trigger must build its request the same way rather than run
-# this file as is. The build step passes each as an env BuildKit secret,
-# which the template mounts with required=false.
+# this file as is. The build step writes each into its credential
+# directory (umask 077, printf, removed on exit) and passes it as a file
+# BuildKit secret (src=), which the template mounts as a file with
+# required=false and exports inside the RUN. Neither side uses env=
+# secrets: Cloud Build's docker daemon refuses env= mounts ("exec.secretenv
+# is not supported by build server").
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
@@ -132,7 +136,9 @@ steps:
         set --
         for e in $$SECRET_ENVS; do
           case "$$e" in *[!A-Z0-9_]*) echo "bad secret variable name" >&2; exit 1 ;; esac
-          set -- "$$@" --secret "id=$$e,env=$$e"
+          [ -n "$${!e+set}" ] || { echo "secret variable $$e is not set" >&2; exit 1; }
+          (umask 077 && printf '%s' "$${!e}" > "$$cred/$$e")
+          set -- "$$@" --secret "id=$$e,src=$$cred/$$e"
         done
         docker build --progress plain \
           --build-arg "FUGARO_BASE=$$base" \

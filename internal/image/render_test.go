@@ -1,6 +1,9 @@
 package image
 
 import (
+	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -20,7 +23,8 @@ const wantFull = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
 # Build secrets, all optional: git-credentials (a git credential-store file
-# for REPO_URL) and one per workflow secret, exposed as that variable.
+# for REPO_URL) and one per workflow secret, mounted as a file and exported
+# as that variable inside the warm-up and setup commands only.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
 # The base as built FROM (Cloud Build passes its digest); cache keys use it.
@@ -46,7 +50,7 @@ RUN --mount=type=bind,target=/src \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 # Dependency warm-up for yarn.lock.
-RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false yarn install --immutable
+RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; yarn install --immutable
 
 # Setup steps run as fugaro but may use sudo, for example for
 # playwright install --with-deps. The rule is removed below.
@@ -56,8 +60,8 @@ RUN echo 'fugaro ALL=(root) NOPASSWD: ALL' > /etc/sudoers.d/fugaro-build \
 USER fugaro
 
 # image.setup steps.
-RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false npx playwright install --with-deps chromium
-RUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false mkdir -p build
+RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; npx playwright install --with-deps chromium
+RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; mkdir -p build
 
 USER root
 RUN rm -f /etc/sudoers.d/fugaro-build \
@@ -80,7 +84,8 @@ const wantMinimal = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
 # Build secrets, all optional: git-credentials (a git credential-store file
-# for REPO_URL) and one per workflow secret, exposed as that variable.
+# for REPO_URL) and one per workflow secret, mounted as a file and exported
+# as that variable inside the warm-up and setup commands only.
 ARG FUGARO_BASE
 FROM ${FUGARO_BASE}
 # The base as built FROM (Cloud Build passes its digest); cache keys use it.
@@ -164,6 +169,78 @@ func TestRenderRefusesFlagLikeSetupStep(t *testing.T) {
 	}
 }
 
+// Cloud Build's docker daemon refuses env= secret mounts ("requested
+// experimental feature exec.secretenv is not supported by build server"),
+// so every secret mount in a rendered Dockerfile must be a file mount.
+func TestRenderSecretMountsAreFiles(t *testing.T) {
+	got, err := Render(RenderInput{
+		Workflow: "web", Base: "web-node",
+		Image:   config.Image{Setup: []string{"true"}},
+		PM:      &config.NodePM{Lockfile: "package-lock.json", Install: "npm ci"},
+		Secrets: []string{"NPM_TOKEN", "OTHER_TOKEN"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mounts := regexp.MustCompile(`--mount=type=secret,\S*`).FindAllString(string(got), -1)
+	if len(mounts) != 5 { // git-credentials, then both secrets on the warm-up and the setup step
+		t.Fatalf("secret mounts = %q", mounts)
+	}
+	for _, m := range mounts {
+		if strings.Contains(m, "env=") {
+			t.Errorf("secret mount %q uses env=, which Cloud Build's daemon refuses", m)
+		}
+	}
+}
+
+// The prefix Render puts before a warm-up or setup command exports each
+// mounted secret, leaves a missing one unset, and keeps the value off the
+// command line. It runs here under sh with /run/secrets pointed at a
+// temporary directory.
+func TestRenderSecretPrefixExports(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	got, err := Render(RenderInput{
+		Workflow: "web", Base: "web-node",
+		Image:   config.Image{Setup: []string{`printf '%s|%s|%s' "$A_TOKEN" "${B_TOKEN-unset}" "$C_TOKEN" && env | grep -c _TOKEN= >&2`}},
+		Secrets: []string{"A_TOKEN", "B_TOKEN", "C_TOKEN"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(string(got), "\n") {
+		if strings.Contains(l, "printf") {
+			line = l
+		}
+	}
+	_, cmd, ok := strings.Cut(line, ",required=false if ")
+	if !ok || strings.Count(line, "--mount=type=secret,") != 3 {
+		t.Fatalf("setup line = %q", line)
+	}
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"A_TOKEN": "a value; $(x) 'q\"\n", "C_TOKEN": "c"})
+	c := exec.Command(sh, "-c", strings.ReplaceAll("if "+cmd, "/run/secrets/", dir+"/"))
+	c.Env = []string{"PATH=" + os.Getenv("PATH")}
+	var stderr strings.Builder
+	c.Stderr = &stderr
+	out, err := c.Output()
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr.String())
+	}
+	if want := `a value; $(x) 'q"|unset|c`; string(out) != want {
+		t.Errorf("the command saw %q, want %q", out, want)
+	}
+	if strings.TrimSpace(stderr.String()) != "2" {
+		t.Errorf("exported secret variables = %s, want 2 (B_TOKEN unset)", stderr.String())
+	}
+	if strings.Contains(line, "a value") {
+		t.Error("the secret value is on the RUN line")
+	}
+}
+
 func TestRenderMinimal(t *testing.T) {
 	got, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
 	if err != nil {
@@ -209,7 +286,7 @@ func TestDockerfileDetectsPackageManager(t *testing.T) {
 	if err != nil || repoFile != "" {
 		t.Fatalf("repoFile %q, err %v", repoFile, err)
 	}
-	if want := "# Dependency warm-up for package-lock.json.\nRUN --mount=type=secret,id=NPM_TOKEN,env=NPM_TOKEN,required=false npm ci\n"; !strings.Contains(string(data), want) {
+	if want := "# Dependency warm-up for package-lock.json.\n" + `RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; npm ci` + "\n"; !strings.Contains(string(data), want) {
 		t.Fatalf("Dockerfile lacks %q:\n%s", want, data)
 	}
 }
