@@ -73,3 +73,20 @@ func TestForgedRecordExecutionIsRefused(t *testing.T) {
 		t.Fatalf("ls stderr = %q", errOut)
 	}
 }
+
+// ls --region <other> can't follow a run launched in the configured
+// region; its error row says where the run is and how to follow it.
+func TestLsInAnotherRegionNamesTheRunsRegion(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, errOut, err := execute(t, "ls", "--json", "--since", "0", "--region", "us-west1")
+	var got lsOut
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Runs) != 1 {
+		t.Fatalf("ls = %s, %v (%s)", out, err, errOut)
+	}
+	if r := got.Runs[0]; r.Status != "error" || !strings.Contains(r.Reason, "region us-east5") || !strings.Contains(r.Reason, "--region us-east5") {
+		t.Fatalf("row = %+v", r)
+	}
+}

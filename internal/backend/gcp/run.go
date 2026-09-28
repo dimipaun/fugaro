@@ -66,9 +66,21 @@ func parseInRegion(name, region string) (backend.ExecID, error) {
 		}
 	}
 	if id.Region != region {
-		return backend.ExecID{}, fmt.Errorf("execution %s is in region %s, not %s", name, id.Region, region)
+		return backend.ExecID{}, &WrongRegionError{Name: name, Region: id.Region, Want: region}
 	}
 	return id, nil
+}
+
+// WrongRegionError is an execution name outside the backend's region.
+// Region has passed the [a-z0-9-] check, so it is safe to quote.
+type WrongRegionError struct {
+	Name   string // the execution
+	Region string // the execution's region
+	Want   string // the backend's region
+}
+
+func (e *WrongRegionError) Error() string {
+	return fmt.Sprintf("execution %s is in region %s, not %s", e.Name, e.Region, e.Want)
 }
 
 // CheckRunExecution refuses name, an execution name read from a run's

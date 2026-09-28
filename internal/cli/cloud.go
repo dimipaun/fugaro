@@ -141,7 +141,12 @@ func (e *cloudEnv) checkExecution(name, slug string, spec *task.Spec) error {
 	if spec == nil || spec.Workflow == "" {
 		return fmt.Errorf("its task.json is unreadable or names no workflow, so execution %s can't be tied to the run's job", name)
 	}
-	return gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
+	err := gcp.CheckRunExecution(name, e.lc.Region, slug, spec.Workflow)
+	var wr *gcp.WrongRegionError
+	if errors.As(err, &wr) {
+		return fmt.Errorf("the run's execution is in region %s, not %s; pass --region %s to follow it", wr.Region, wr.Want, wr.Region)
+	}
+	return err
 }
 
 // parseRunRef is runstore.ParseRef, with a bad reference as a user error.
