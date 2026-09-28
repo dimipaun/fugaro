@@ -6,6 +6,7 @@
 package lock
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -84,9 +85,20 @@ func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now tim
 		parsed := json.Unmarshal(prev, &cur) == nil
 		if parsed && cur.RunID != "" && cur.RunID == h.RunID && backend.SameExecution(cur.Execution, h.Execution) {
 			// Our own lock: the storage client retried a create whose first
-			// attempt committed, or this execution restarted. It is held
-			// at the generation we just read.
-			return &Lock{b: b, key: key, gen: prevGen, body: prev}, nil
+			// attempt committed (the body is identical), or this execution
+			// restarted. A restart has a later start and so a later expiry,
+			// which the lock is refreshed to, generation-matched.
+			if bytes.Equal(prev, body) {
+				return &Lock{b: b, key: key, gen: prevGen, body: prev}, nil
+			}
+			newGen, err := b.ReplaceIf(ctx, key, body, prevGen, prev)
+			if errors.Is(err, blobx.ErrConflict) {
+				return nil, &BusyError{Holder: winner(ctx, b, key)}
+			}
+			if err != nil {
+				return nil, fmt.Errorf("refreshing lock %s: %w", key, err)
+			}
+			return &Lock{b: b, key: key, gen: newGen, body: body}, nil
 		}
 		if parsed && cur.RunID != "" && now.Before(cur.ExpiresAt) {
 			return nil, &BusyError{Holder: cur}

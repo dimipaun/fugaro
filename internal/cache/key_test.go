@@ -3,6 +3,7 @@ package cache
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -68,5 +69,31 @@ func TestResolve(t *testing.T) {
 	}
 	if _, err := Resolve([]string{"~/.cache/a", "~/.cache/ab"}, "/work/repo", "/home/fugaro"); err != nil {
 		t.Errorf("sibling roots with a common prefix refused: %v", err)
+	}
+}
+
+func TestResolveRefusesCredentialPaths(t *testing.T) {
+	for _, bad := range []string{
+		"~/.ssh", "~/.ssh/keys", "~/.claude", "~/.claude/projects", "~/.claude.json", "~/.CLAUDE",
+		"~/.config", "~/.config/gcloud", "~/.config/gcloud/logs", "~/.git-credentials", "~/.npmrc",
+		"~/.netrc", "~/.docker", "~/.docker/config.json",
+	} {
+		if _, err := Resolve([]string{bad}, "/work/repo", "/home/fugaro"); err == nil {
+			t.Errorf("Resolve(%q) accepted a credential path", bad)
+		}
+	}
+	// Only home paths are credential paths: a checkout directory of the
+	// same name is the repository's own.
+	for _, ok := range []string{"~/.npm", "~/.cache/yarn", "~/.config/yarn", ".docker/cache", "~/.sshx"} {
+		if _, err := Resolve([]string{ok}, "/work/repo", "/home/fugaro"); err != nil {
+			t.Errorf("Resolve(%q) = %v", ok, err)
+		}
+	}
+}
+
+func TestResolveWarnings(t *testing.T) {
+	got := ResolveWarnings([]string{"~/.config/yarn", "~/.cache/yarn", ".config/x", "~/./.config/gh"})
+	if len(got) != 2 || !strings.Contains(got[0], "~/.config/yarn") || !strings.Contains(got[1], "~/./.config/gh") {
+		t.Fatalf("ResolveWarnings = %q", got)
 	}
 }

@@ -124,3 +124,25 @@ func TestSaveWarnsAboutSkippedLinks(t *testing.T) {
 		t.Fatalf("Warn got %v, want the key and skipped_links=1", warned)
 	}
 }
+
+func TestSaveExcludesNpmLogs(t *testing.T) {
+	ctx := context.Background()
+	s := &Store{Bucket: blobx.Wrap(memblob.OpenBucket(nil)), Slug: "acme-app", Workflow: "web", MaxBytes: 1 << 20}
+	src := filepath.Join(t.TempDir(), ".npm")
+	write(t, src, map[string]string{"_cacache/index": "I", "_logs/debug-0.log": "npm ran with a token", "sub/_logs/keep": "K"})
+	if saved, err := s.Save(ctx, "k", []string{src}); err != nil || !saved {
+		t.Fatalf("Save = %v, %v", saved, err)
+	}
+	dst := filepath.Join(t.TempDir(), ".npm")
+	if hit, err := s.Restore(ctx, "k", []string{dst}); err != nil || !hit {
+		t.Fatalf("Restore = %v, %v", hit, err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "_logs")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("~/.npm/_logs was archived: %v", err)
+	}
+	for _, f := range []string{"_cacache/index", "sub/_logs/keep"} {
+		if _, err := os.Stat(filepath.Join(dst, f)); err != nil {
+			t.Errorf("%s not archived: %v", f, err)
+		}
+	}
+}

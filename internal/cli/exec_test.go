@@ -107,3 +107,15 @@ func TestExecDuplicateExecutionExitsRemoteError(t *testing.T) {
 		t.Fatalf("the duplicate touched result.json: %+v, %v", stored, err)
 	}
 }
+
+func TestExecRejectsTaskFileOnCloudRun(t *testing.T) {
+	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	dir := filepath.Join(t.TempDir(), "bucket")
+	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--task-file", "-")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--task-file is for local runs") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if _, serr := os.Stat(dir); !errors.Is(serr, os.ErrNotExist) {
+		t.Fatalf("exec touched the bucket before failing: %v", serr)
+	}
+}

@@ -198,11 +198,21 @@ func TestAcquireAdoptsOwnLock(t *testing.T) {
 					t.Fatalf("Acquire for %+v = %v, want busy", h, err)
 				}
 			}
+			// The identical holder (a retried create) is adopted as is.
+			if _, err := Acquire(ctx, b, key, mine, t0); err != nil {
+				t.Fatalf("Acquire of our identical lock = %v", err)
+			}
+			// A restart of the same execution, spelled with the project
+			// number, gets the lock with its own later expiry.
 			again := mine
 			again.Execution = execByNumber
+			again.ExpiresAt = mine.ExpiresAt.Add(10 * time.Minute)
 			l, err := Acquire(ctx, b, key, again, t0.Add(time.Minute))
 			if err != nil {
 				t.Fatalf("Acquire of our own lock = %v", err)
+			}
+			if _, err := Acquire(ctx, b, key, Holder{RunID: "20260927-100000-bbbb", ExpiresAt: t0.Add(2 * time.Hour)}, mine.ExpiresAt.Add(time.Minute)); !errors.As(err, &busy) || !busy.Holder.ExpiresAt.Equal(again.ExpiresAt) {
+				t.Fatalf("after adoption the lock holds %+v (err %v), want the refreshed expiry %s", busy, err, again.ExpiresAt)
 			}
 			if err := l.Release(ctx); err != nil {
 				t.Fatal(err)

@@ -139,7 +139,7 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 		if !ok {
 			continue
 		}
-		if err := writeRoot(tw, i, dir, charge, &st); err != nil {
+		if err := writeRoot(tw, i, dir, excludedDir(root), charge, &st); err != nil {
 			if errors.Is(err, ErrTooLarge) {
 				return st, err
 			}
@@ -149,7 +149,17 @@ func writeEntries(tw *tar.Writer, roots []string, maxBytes int64) (writeStats, e
 	return st, nil
 }
 
-func writeRoot(tw *tar.Writer, i int, dir string, charge func(int64) error, st *writeStats) error {
+// excludedDir is the directory under root that is never archived, or ""
+// for none: npm's debug logs under ~/.npm/_logs are not cache content, and
+// they can quote the commands (and so the arguments) npm ran.
+func excludedDir(root string) string {
+	if filepath.Base(root) == ".npm" {
+		return "_logs"
+	}
+	return ""
+}
+
+func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) error, st *writeStats) error {
 	rt, err := os.OpenRoot(dir)
 	if err != nil {
 		return err
@@ -168,6 +178,8 @@ func writeRoot(tw *tar.Writer, i int, dir string, charge func(int64) error, st *
 		}
 		name := fmt.Sprintf("%d/%s", i, filepath.ToSlash(rel))
 		switch t := d.Type(); {
+		case t.IsDir() && exclude != "" && rel == exclude:
+			return filepath.SkipDir
 		case t.IsDir():
 			if err := charge(0); err != nil {
 				return err

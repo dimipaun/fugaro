@@ -84,6 +84,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return err
 	}
+	if execName != "" && o.taskFile != "" {
+		// --task-file writes task.json before the runner can tell a
+		// duplicate execution apart; Cloud Run launches name the run.
+		return errors.New("--task-file is for local runs; on Cloud Run the run comes from FUGARO_RUN (or --run)")
+	}
 	bucket, err := blobx.Open(ctx, o.bucket)
 	if err != nil {
 		return err

@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -35,6 +37,10 @@ const writebackGrace = 90 * time.Second
 
 // writebackFloor is the least time writeback gets, however late it starts.
 const writebackFloor = 20 * time.Second
+
+// restoreBound is how long cache restore may take for a run whose
+// timeouts.total is total; tests may replace it.
+var restoreBound = func(total time.Duration) time.Duration { return min(10*time.Minute, total/6) }
 
 // unpinnedBase is the base-image part of a cache key when the image was
 // not built FROM a digest.
@@ -59,6 +65,7 @@ func (r *run) acquireLock(ctx context.Context) error {
 	l, err := lock.Acquire(ctx, r.d.Bucket, lock.Key(task.Slug(r.spec.Repo), r.rec.Branch), h, r.d.Now())
 	var busy *lock.BusyError
 	if errors.As(err, &busy) && busy.Holder.RunID == r.spec.RunID && r.d.Execution != "" && !backend.SameExecution(busy.Holder.Execution, r.d.Execution) {
+		r.disownRecord(ctx, busy.Holder)
 		return ErrDuplicateExecution
 	}
 	if err != nil {
@@ -69,11 +76,49 @@ func (r *run) acquireLock(ctx context.Context) error {
 	return nil
 }
 
+// disownRecord is the defensive end of a duplicate caught at the lock:
+// the owner's result.json had vanished, so this execution created its own.
+// It rewrites that record, and only that one, to name the lock's holder
+// and its expiry, so every view follows the owner. The replace is
+// generation-matched against the record just read, so a record the owner
+// wrote in the meantime is never overwritten; one that names any other
+// execution is left alone.
+func (r *run) disownRecord(ctx context.Context, owner lock.Holder) {
+	key := r.d.Store.Prefix() + "result.json"
+	data, gen, err := r.d.Bucket.Read(ctx, key)
+	if err != nil {
+		r.d.Log.Warn("reading the duplicate's own run record failed", "err", r.redact(err.Error()))
+		return
+	}
+	var cur runstore.Record
+	if json.Unmarshal(data, &cur) != nil || !backend.SameExecution(cur.Execution, r.d.Execution) {
+		return // not the record this execution created
+	}
+	expires := owner.ExpiresAt
+	cur.Execution, cur.Deadline = owner.Execution, &expires
+	out, err := json.MarshalIndent(&cur, "", "  ")
+	if err == nil {
+		_, err = r.d.Bucket.ReplaceIf(ctx, key, out, gen, data)
+	}
+	switch {
+	case errors.Is(err, blobx.ErrConflict):
+		// Changed since it was read: the owner wrote it. Leave it.
+	case err != nil:
+		r.d.Log.Warn("handing the run record to its owner failed", "err", r.redact(err.Error()))
+	}
+}
+
+// releaseDeferredTimeout bounds the lock release on Run's deferred path,
+// so a hanging delete cannot eat the time left for the final record.
+const releaseDeferredTimeout = 15 * time.Second
+
+// releaseLock releases the branch lock, if held, within ctx: callers pass
+// a context that is already detached from cancellation and bounded.
 func (r *run) releaseLock(ctx context.Context) {
 	if r.lock == nil {
 		return
 	}
-	if err := r.lock.Release(context.WithoutCancel(ctx)); err != nil {
+	if err := r.lock.Release(ctx); err != nil {
 		r.d.Log.Warn("releasing the branch lock failed; it expires on its own", "err", r.redact(err.Error()))
 	} else {
 		r.d.Log.Info("branch lock released", "branch", r.rec.Branch)
@@ -81,20 +126,27 @@ func (r *run) releaseLock(ctx context.Context) {
 	r.lock = nil
 }
 
-// ToolchainHash is the toolchain part of a cache key: a stable hash of a
+// toolchainHash is the toolchain part of a cache key: a stable hash of a
 // workflow's image: settings (node, jdk, apt, setup, in that order), so a
 // toolchain change such as a Node bump invalidates caches holding native
 // binaries built for the old one. Apt packages are sorted (their order
 // does not change what is installed); setup steps keep their order.
-func ToolchainHash(img config.Image) string {
-	apt := slices.Clone(img.Apt)
+func toolchainHash(img config.Image) string {
+	apt, setup := slices.Clone(img.Apt), img.Setup
 	slices.Sort(apt)
+	// An empty list and an absent one are the same toolchain.
+	if len(apt) == 0 {
+		apt = nil
+	}
+	if len(setup) == 0 {
+		setup = nil
+	}
 	canon := struct {
 		Node  string   `json:"node"`
 		JDK   string   `json:"jdk"`
 		Apt   []string `json:"apt"`
 		Setup []string `json:"setup"`
-	}{img.Node, img.JDK, apt, img.Setup}
+	}{img.Node, img.JDK, apt, setup}
 	data, _ := json.Marshal(canon) // strings and slices of them always marshal
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
@@ -143,14 +195,24 @@ func (r *run) restoreCaches(ctx context.Context) {
 	}
 	var pinned bool
 	r.cacheBase, pinned = cacheBase(r.d.BaseImage)
-	r.toolchain = ToolchainHash(r.wf.Image)
+	r.toolchain = toolchainHash(r.wf.Image)
 	if !pinned {
 		r.d.Log.Warn("the base image is not pinned by digest; caches may be stale after a base change", "cache_base", r.cacheBase)
 	}
-	ctx, cancel := context.WithTimeout(ctx, min(10*time.Minute, r.wf.Timeouts.Total.Duration/6))
+	ctx, cancel := context.WithTimeout(ctx, restoreBound(r.wf.Timeouts.Total.Duration))
 	defer cancel()
 	store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
+	var timedOut bool
+	var skipped int // entries not restored once the bound was reached
+	defer func() {
+		if skipped > 0 {
+			r.d.Log.Warn("cache restore skipped: the restore time bound was reached", "entries", skipped)
+		}
+	}()
 	for _, e := range entries {
+		for _, w := range cache.ResolveWarnings(e.Paths) {
+			r.d.Log.Warn(w)
+		}
 		if home == "" && slices.ContainsFunc(e.Paths, func(p string) bool { return strings.HasPrefix(p, "~") }) {
 			r.d.Log.Warn("cache skipped: HOME is not set", "paths", e.Paths)
 			continue
@@ -170,12 +232,21 @@ func (r *run) restoreCaches(ctx context.Context) {
 		case !ok:
 			r.d.Log.Info("cache skipped: no key file", "key_files", e.Key)
 			continue
+		case timedOut:
+			skipped++ // still written back at the end of the run
+			continue
 		}
-		hit, err := store.Restore(ctx, key, roots)
+		err = ctx.Err() // the bound may already have passed
+		var hit bool
+		if err == nil {
+			hit, err = store.Restore(ctx, key, roots)
+		}
 		switch {
 		case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 			// Name the object, so an operator can delete an archive that
-			// is always too slow to restore.
+			// is always too slow to restore. Later entries would all fail
+			// at once and are only counted.
+			timedOut = true
 			r.d.Log.Warn("cache restore timed out", "key", key, "object", cache.ObjectKey(store.Slug, store.Workflow, key))
 		case err != nil:
 			r.d.Log.Warn("cache restore failed", "key", key, "err", r.redact(err.Error()))

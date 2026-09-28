@@ -146,7 +146,8 @@ func TestDuplicateExecutionLosesLock(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)
 	key := lock.Key("acme-app", "fugaro/"+runID)
-	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: runID, Execution: exec1, ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
+	expires := time.Now().Add(time.Hour).UTC().Truncate(time.Second)
+	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: runID, Execution: exec1, ExpiresAt: expires}, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	h.deps.Execution = exec2
@@ -154,9 +155,12 @@ func TestDuplicateExecutionLosesLock(t *testing.T) {
 	if !errors.Is(err, runner.ErrDuplicateExecution) {
 		t.Fatalf("err = %v", err)
 	}
+	// The duplicate hands the record it created to the lock's holder, so
+	// every view follows the owner.
 	stored, _ := h.store.ReadRecord(context.Background())
-	if stored.Status != runstore.StatusRunning || stored.Execution != exec2 || stored.Stage != "bootstrap" {
-		t.Fatalf("the duplicate went past its first record: %+v", stored)
+	if stored.Status != runstore.StatusRunning || stored.Execution != exec1 || stored.Stage != "bootstrap" ||
+		stored.Deadline == nil || !stored.Deadline.Equal(expires) {
+		t.Fatalf("the duplicate's record = %+v, want it running in bootstrap, naming %s until %s", stored, exec1, expires)
 	}
 	if ok, _ := b.Exists(context.Background(), key); !ok {
 		t.Fatal("the duplicate released the first execution's lock")
@@ -307,6 +311,9 @@ func TestToolchainHashIsStable(t *testing.T) {
 	if got := runner.ToolchainHash(config.Image{}); got != runner.ToolchainHash(config.Image{}) || got == "" {
 		t.Fatalf("empty image settings hash = %q", got)
 	}
+	if runner.ToolchainHash(config.Image{Apt: []string{}, Setup: []string{}}) != runner.ToolchainHash(config.Image{}) {
+		t.Error("empty and absent apt/setup lists hash differently")
+	}
 	for name, other := range map[string]config.Image{
 		"node":        {Node: "24.20.0", Apt: img.Apt, Setup: img.Setup},
 		"jdk":         {Node: img.Node, JDK: "21", Apt: img.Apt, Setup: img.Setup},
@@ -366,5 +373,88 @@ func TestUnpinnedBaseWarnsButRuns(t *testing.T) {
 				t.Fatalf("%d unpinned warnings, want warn=%v:\n%s", got, wantWarn, logs.String())
 			}
 		})
+	}
+}
+
+// TestLockReleasedAfterPostLockBootstrapFailure: a bootstrap error after
+// the lock (here git.provider disagreeing with --provider) still releases it.
+func TestLockReleasedAfterPostLockBootstrapFailure(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	h.deps.ProviderKind = "bitbucket" // the fixture's git.provider is github
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "git.provider") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+		t.Fatal("a failed bootstrap kept the branch lock")
+	}
+}
+
+// TestWritebackRekeysFromFinalTree: the agent changed the key file, so the
+// dependencies it installed are written under the new key, not the one
+// bootstrap restored from.
+func TestWritebackRekeysFromFinalTree(t *testing.T) {
+	h := newHarness(t, cacheYAML, nil)
+	b := withBucket(h)
+	h.deps.BaseImage = "base@sha256:abc"
+	home := envValue(h.deps.Env, "HOME")
+	const newReadme = "a new lockfile\n"
+	bump := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_ = os.MkdirAll(filepath.Join(home, ".fugaro-test-cache"), 0o755)
+		_ = os.WriteFile(filepath.Join(home, ".fugaro-test-cache", "pkg.tgz"), []byte("deps"), 0o644)
+		if err := os.WriteFile(filepath.Join(req.Dir, "README.md"), []byte(newReadme), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := h.run(t, bump, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	keyFor := func(readme string) string {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, "README.md"), []byte(readme), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		key, _, err := cache.KeyOf(root, cacheEntry(t, cacheYAML), "base@sha256:abc", runner.ToolchainHash(config.Image{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cache.ObjectKey("acme-app", "app", key)
+	}
+	if ok, _ := b.Exists(context.Background(), keyFor(newReadme)); !ok {
+		t.Fatal("no archive under the final tree's key")
+	}
+	if ok, _ := b.Exists(context.Background(), keyFor(h.files["README.md"])); ok {
+		t.Fatal("the archive was written under the key bootstrap started from")
+	}
+}
+
+// cache2YAML declares two caches, so a restore timeout has a later entry.
+var cache2YAML = strings.Replace(cacheYAML,
+	`      - { key: [README.md], paths: ["~/.fugaro-test-cache"] }`,
+	"      - { key: [README.md], paths: [\"~/.fugaro-test-cache\"] }\n      - { key: [README.md], paths: [\"~/.fugaro-test-cache2\"] }", 1)
+
+// TestRestoreTimeoutLoggedOnce: once the restore bound passes, the entry
+// it hit is logged with its object, and later entries are only counted.
+func TestRestoreTimeoutLoggedOnce(t *testing.T) {
+	if cache2YAML == cacheYAML {
+		t.Fatal("cache2YAML did not add an entry")
+	}
+	runner.SetRestoreBound(t, time.Nanosecond)
+	h := newHarness(t, cache2YAML, nil)
+	withBucket(h)
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	out := logs.String()
+	if n := strings.Count(out, "cache restore timed out"); n != 1 || !strings.Contains(out, "object=cache/acme-app/app/") {
+		t.Fatalf("%d timeout warnings, want 1 naming the object:\n%s", n, out)
+	}
+	if !strings.Contains(out, "restore time bound was reached") || !strings.Contains(out, "entries=1") {
+		t.Fatalf("the later entry was not counted as skipped:\n%s", out)
 	}
 }

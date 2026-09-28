@@ -94,7 +94,7 @@ type run struct {
 	lock         *lock.Lock      // the branch lock, while held
 	caches       []cacheSlot     // the cache entries restored at bootstrap, for writeback
 	cacheBase    string          // the base-image part of every cache key
-	toolchain    string          // the toolchain part of every cache key (ToolchainHash)
+	toolchain    string          // the toolchain part of every cache key (toolchainHash)
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -163,7 +163,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			rec = nil
 			return
 		}
-		r.releaseLock(ctx)
+		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
+		r.releaseLock(rctx)
+		cancelRelease()
 		if err != nil {
 			// Provider and git errors can quote what they were sent, so
 			// the reason is redacted like everything else published.
