@@ -1,9 +1,26 @@
 # Cloud Build config for one (repo, workflow) derived image (design §7.2).
 # M4's `fugaro image build` submits it and M5's nightly trigger runs it;
-# both set the substitutions. The git credential comes from Secret Manager as
-# a credential-store line (https://<user>:<token>@<host>). Only the source
-# step sees it as a variable; the build gets it as the git-credentials
-# BuildKit secret, which no layer keeps.
+# both set the substitutions.
+#
+# The git credential is the provider token the job already uses
+# (fugaro-<slug>-bitbucket-token): _GIT_SECRET names its Secret Manager
+# version and _GIT_USER its https username. Only the source step sees it as
+# GIT_TOKEN; that step checks REPO_URL is https:// and writes the
+# credential-store line (https://<user>:<token>@<host>) itself. The build
+# gets the file as the git-credentials BuildKit secret, which no layer
+# keeps, and removes it on exit.
+#
+# Render and build use one base image. Cloud Build pulls _FUGARO_BASE once,
+# to run the render step; the build step does not pull again but pins the
+# digest of that same local image (written to /workspace/base-digest), so a
+# republished tag between the steps cannot give them different bases.
+#
+# Workflow secrets: _SECRET_ENVS is a space-separated list of variable
+# names. This file declares none of them in availableSecrets or the build
+# step's secretEnv; the request builder (gcp.BuildRequest) adds each one to
+# both, so a trigger must build its request the same way rather than run
+# this file as is. The build step passes each as an env BuildKit secret,
+# which the template mounts with required=false.
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
@@ -13,27 +30,32 @@ substitutions:
   _REPO_URL: ""       # https clone URL without credentials; also the checkout's origin
   _BASE_BRANCH: main
   _WORKFLOW: ""
-  _FUGARO_BASE: ""    # ghcr.io/dimipaun/fugaro-<base>:<version>; pinned by digest below
+  _FUGARO_BASE: ""    # ghcr.io/dimipaun/fugaro-<base>:<version>; build pins the render step's image by digest
   _IMAGE: ""          # the Artifact Registry image name, without a tag
-  _GIT_SECRET: ""     # Secret Manager version resource of the credential line
+  _GIT_SECRET: ""     # Secret Manager version of the provider token (the job's own)
+  _GIT_USER: ""       # the token's https username, such as x-token-auth for Bitbucket
+  _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
   secretManager:
     - versionName: ${_GIT_SECRET}
-      env: GIT_CREDENTIALS
+      env: GIT_TOKEN
 steps:
   # A shallow clone, so render can read fugaro.yaml and the lockfiles.
   - id: source
     name: gcr.io/cloud-builders/git
     entrypoint: bash
-    secretEnv: [GIT_CREDENTIALS]
-    env: ["BASE_BRANCH=${_BASE_BRANCH}", "REPO_URL=${_REPO_URL}"]
+    secretEnv: [GIT_TOKEN]
+    env: ["BASE_BRANCH=${_BASE_BRANCH}", "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"]
     args:
       - -c
       - |
         set -eu
-        (umask 077 && printf '%s\n' "$$GIT_CREDENTIALS" > /builder/home/.git-credentials)
+        case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
+        host=$${REPO_URL#https://}; host=$${host%%/*}
+        case "$$host" in ""|*@*) echo "REPO_URL must name a host and no credentials" >&2; exit 1 ;; esac
+        (umask 077 && printf 'https://%s:%s@%s\n' "$$GIT_USER" "$$GIT_TOKEN" "$$host" > /builder/home/.git-credentials)
         git -c credential.helper='store --file=/builder/home/.git-credentials' \
           clone --quiet --depth 1 --branch "$$BASE_BRANCH" -- "$$REPO_URL" /workspace/src
         install -d -m 0777 /workspace/context
@@ -45,8 +67,10 @@ steps:
     entrypoint: sh
     env: [GIT_CONFIG_COUNT=1, GIT_CONFIG_KEY_0=safe.directory, "GIT_CONFIG_VALUE_0=*", "WORKFLOW=${_WORKFLOW}"]
     args: [-c, 'fugaro image render --workflow "$$WORKFLOW" > /workspace/context/Dockerfile']
-  # The Dockerfile clones the full base branch itself, with the credential
-  # as a BuildKit secret, and pins nothing but the base digest passed here.
+  # Reuses the exact base image the render step ran (no second pull), so a
+  # republished tag between the steps cannot split render and build. The
+  # Dockerfile clones the full base branch itself, with the credential as a
+  # BuildKit secret, and pins nothing but that base digest.
   - id: build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -56,17 +80,26 @@ steps:
       - "REPO_URL=${_REPO_URL}"
       - "BASE_BRANCH=${_BASE_BRANCH}"
       - "IMAGE=${_IMAGE}"
+      - "SECRET_ENVS=${_SECRET_ENVS}"
     args:
       - -c
       - |
         set -eu
         trap 'rm -f /builder/home/.git-credentials' EXIT
-        docker pull --quiet "$$FUGARO_BASE"
-        base=$$(docker inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE")
+        base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE") \
+          || { echo "the render step's base image is not on this worker" >&2; exit 1; }
+        printf '%s\n' "$$base" > /workspace/base-digest
+        echo "base $$base"
+        set --
+        for e in $$SECRET_ENVS; do
+          case "$$e" in *[!A-Z0-9_]*) echo "bad secret variable name" >&2; exit 1 ;; esac
+          set -- "$$@" --secret "id=$$e,env=$$e"
+        done
         docker build --progress plain \
           --build-arg "FUGARO_BASE=$$base" \
           --build-arg "REPO_URL=$$REPO_URL" \
           --build-arg "BASE_BRANCH=$$BASE_BRANCH" \
           --secret id=git-credentials,src=/builder/home/.git-credentials \
+          "$$@" \
           --tag "$$IMAGE:latest" /workspace/context
 images: ["${_IMAGE}:latest"]

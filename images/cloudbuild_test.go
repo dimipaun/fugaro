@@ -1,6 +1,7 @@
 package images_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -66,11 +67,32 @@ func TestCloudBuildConfig(t *testing.T) {
 	if !strings.Contains(script(2), "RepoDigests") {
 		t.Error("the build step does not pin the base image by digest")
 	}
-	if !slices.Equal(cb.Steps[0].SecretEnv, []string{"GIT_CREDENTIALS"}) || len(cb.Steps[1].SecretEnv)+len(cb.Steps[2].SecretEnv) != 0 {
-		t.Error("only the source step may see GIT_CREDENTIALS as a variable")
+	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_SECRET", "_GIT_USER", "_SECRET_ENVS"} {
+		if _, ok := cb.Substitutions[k]; !ok {
+			t.Errorf("substitution %s is not declared", k)
+		}
 	}
-	if len(cb.AvailableSecrets.SecretManager) != 1 || cb.AvailableSecrets.SecretManager[0].Env != "GIT_CREDENTIALS" {
+	build := strings.Join(cb.Steps[2].Args, " ")
+	if strings.Contains(build, "docker pull") || !strings.Contains(build, "docker image inspect") {
+		t.Error("the build step must reuse the render step's base image, not pull it again")
+	}
+	if !strings.Contains(build, "SECRET_ENVS") || !strings.Contains(build, "--secret") {
+		t.Error("the build step does not pass workflow secrets")
+	}
+	if !slices.Equal(cb.Steps[0].SecretEnv, []string{"GIT_TOKEN"}) {
+		t.Errorf("source secretEnv = %v", cb.Steps[0].SecretEnv)
+	}
+	if len(cb.Steps[1].SecretEnv)+len(cb.Steps[2].SecretEnv) != 0 {
+		t.Error("only the source step may see GIT_TOKEN as a variable; workflow secrets are added per request")
+	}
+	if src := strings.Join(cb.Steps[0].Args, " "); !strings.Contains(src, "https://*)") {
+		t.Error("the source step must refuse a non-https REPO_URL")
+	}
+	if len(cb.AvailableSecrets.SecretManager) != 1 || cb.AvailableSecrets.SecretManager[0].Env != "GIT_TOKEN" {
 		t.Errorf("availableSecrets = %+v", cb.AvailableSecrets)
+	}
+	if !bytes.Equal(images.CloudBuild, data) {
+		t.Error("images.CloudBuild is not derived/cloudbuild.yaml")
 	}
 	if !slices.Equal(cb.Images, []string{"${_IMAGE}:latest"}) {
 		t.Errorf("images = %v", cb.Images)

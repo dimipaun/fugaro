@@ -19,8 +19,9 @@ import (
 // DefaultBaseURL is the Bitbucket Cloud API root.
 const DefaultBaseURL = "https://api.bitbucket.org/2.0"
 
-// gitUsername is the HTTPS username git uses with a repository access token.
-const gitUsername = "x-token-auth"
+// GitUsername is the HTTPS username git uses with a repository access
+// token; Cloud Build image builds use it too.
+const GitUsername = "x-token-auth"
 
 // Options configure a Provider.
 type Options struct {
@@ -291,5 +292,5 @@ func (p *Provider) Comment(ctx context.Context, pr gitprov.PR, body string) erro
 // GitAuth implements gitprov.Provider. A repository access token is used
 // as is (design §6.2); it does not expire during a run.
 func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, error) {
-	return gitprov.GitAuth{Username: gitUsername, Token: p.o.Token}, nil
+	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil
 }

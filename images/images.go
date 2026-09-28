@@ -43,3 +43,9 @@ const (
 	// would also send the runner's pushes to a stale embedded credential.
 	GitCredentialRemoteURLKey = `^remote\..*\.(url|pushurl)$`
 )
+
+// CloudBuild is images/derived/cloudbuild.yaml, which fugaro image build
+// submits (with per-workflow secrets added) and M5's nightly trigger runs.
+//
+//go:embed derived/cloudbuild.yaml
+var CloudBuild []byte
