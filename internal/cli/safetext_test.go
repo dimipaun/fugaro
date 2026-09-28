@@ -140,3 +140,23 @@ func TestErrorTextStripsTerminalControls(t *testing.T) {
 		t.Fatalf("ErrorText = %q, want %q", got, want)
 	}
 }
+
+// TestSafeTextMarksBidiAndZeroWidth: bidi controls and zero-width
+// characters can't rewrite the screen, but they make a PR URL or a reason
+// read differently from what it is, so they print as "?".
+func TestSafeTextMarksBidiAndZeroWidth(t *testing.T) {
+	for _, r := range []rune{
+		0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069, 0x200e, 0x200f, 0x061c,
+		0x200b, 0x200c, 0x200d, 0x2060, 0xfeff,
+	} {
+		in := "a" + string(r) + "b"
+		for name, got := range map[string]string{"oneLine": oneLine(in), "multiLine": multiLine(in)} {
+			if got != "a?b" {
+				t.Errorf("%s(%q) = %q, want %q", name, in, got, "a?b")
+			}
+		}
+	}
+	if got := oneLine("café ✓"); got != "café ✓" {
+		t.Errorf("oneLine changed ordinary text: %q", got)
+	}
+}

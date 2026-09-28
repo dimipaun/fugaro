@@ -15,8 +15,9 @@ import (
 
 // oneLine is s made safe for one line of a terminal: ESC, CSI, OSC, DCS,
 // SOS, PM and APC sequences (7- and 8-bit) are dropped, and every other C0
-// control but tab, DEL, C1 control and invalid UTF-8 byte becomes "?". A
-// newline becomes "?" too, so a field can't forge a line of its own.
+// control but tab, DEL, C1 control, bidi control, zero-width character
+// and invalid UTF-8 byte becomes "?". A newline becomes "?" too, so a
+// field can't forge a line of its own.
 func oneLine(s string) string { return safeText(s, false) }
 
 // ErrorText is err's message made safe for the terminal, for the command's
@@ -57,7 +58,7 @@ func safeText(s string, keepNewlines bool) string {
 		case r == '\t' || (r == '\n' && keepNewlines):
 			b.WriteRune(r)
 			i += size
-		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f):
+		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || spoofing(r):
 			b.WriteByte('?')
 			i += size
 		default:
@@ -66,6 +67,22 @@ func safeText(s string, keepNewlines bool) string {
 		}
 	}
 	return b.String()
+}
+
+// spoofing reports whether r is a bidi control or a zero-width character.
+// Neither rewrites the screen, but both let text read differently from
+// what it is: a PR URL or a reason reordered or split by something the
+// operator can't see.
+func spoofing(r rune) bool {
+	switch {
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069: // embeddings, overrides, isolates
+		return true
+	case r == 0x200e || r == 0x200f || r == 0x061c: // LRM, RLM, ALM
+		return true
+	case r >= 0x200b && r <= 0x200d, r == 0x2060, r == 0xfeff: // zero-width space, non-joiner, joiner; word joiner; BOM
+		return true
+	}
+	return false
 }
 
 // skipEscape returns the index just past the escape sequence whose ESC
