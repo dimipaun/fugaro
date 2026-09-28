@@ -1,0 +1,9 @@
+{
+  "name": "fugarosandbox",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fugaro's live-test sandbox: a tiny npm project with no dependencies.",
+  "scripts": {
+    "test": "node --test --test-reporter=junit --test-reporter-destination=junit.xml"
+  }
+}
