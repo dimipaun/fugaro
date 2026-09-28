@@ -483,6 +483,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		}
 		return done(l, "already-launched")
 	}
+	// A cancel that landed while we claimed: never launch it, and release
+	// the claim so a waiting cancel sees the launch end (C-I3).
+	if cancelled, err := s.CancelRequested(hctx); err != nil {
+		return res, remote(err)
+	} else if cancelled {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, userErr("run %s was cancelled; start a new one", res.Run)
+	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
 	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID})
 	cancel()

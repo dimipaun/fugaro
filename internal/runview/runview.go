@@ -24,6 +24,11 @@ const (
 	StatusError = "error"
 )
 
+// ReasonLost explains a launched run that the backend doesn't know and that
+// never wrote a record, past runstore.ClaimTTL after its launch: it failed
+// before the runner started, and its execution is gone (C-I2).
+const ReasonLost = "no execution found and the runner never recorded the run"
+
 // ReasonNoFinalRecord explains a run whose execution is gone but whose
 // record never reached a final status (OOM kill, task timeout, node loss).
 const ReasonNoFinalRecord = "execution ended without finalizing"
@@ -117,6 +122,10 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 		row.Status, row.Reason = string(runstore.StatusInfraError), ReasonNoFinalRecord+" ("+string(e.State)+")"
 	case e != nil && e.State == backend.StatePending:
 		row.Status = StatusPending
+	case e == nil && r == nil && Lost(in.Launch, row.Created, now):
+		// A live execution is always found by the backend; past the claim
+		// TTL, lag can't explain its absence.
+		row.Status, row.Reason = string(runstore.StatusInfraError), ReasonLost
 	case e == nil && r != nil && r.Deadline != nil && now.After(*r.Deadline):
 		row.Status, row.Reason = string(runstore.StatusInfraError), "no execution found and past the run's deadline"
 	case e == nil && r != nil && r.Deadline == nil:
@@ -136,6 +145,17 @@ func Join(in Input, prices backend.Prices, now time.Time) Row {
 	row.Settled = row.Terminal || row.Status == StatusUnlaunched
 	row.Cost = cost(r, e, prices, now)
 	return row
+}
+
+// Lost reports whether launch l, of a run with no record and no execution
+// the backend knows, is older than runstore.ClaimTTL, by launched_at, else
+// by created (the run ID's time): the run is then lost, not pending.
+func Lost(l *runstore.Launch, created, now time.Time) bool {
+	at := created
+	if l != nil && !l.LaunchedAt.IsZero() {
+		at = l.LaunchedAt
+	}
+	return l != nil && !at.IsZero() && now.Sub(at) > runstore.ClaimTTL
 }
 
 // cost is the row's cost: the model spend from the record, and compute
