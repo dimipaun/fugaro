@@ -116,7 +116,7 @@ func (r *run) releaseLock(ctx context.Context) {
 	if r.lock == nil {
 		return
 	}
-	if err := r.lock.Release(ctx); err != nil {
+	if err := releaseBranchLock(r.lock, ctx); err != nil {
 		r.d.Log.Warn("releasing the branch lock failed; it expires on its own", "err", r.redact(err.Error()))
 	} else {
 		r.d.Log.Info("branch lock released", "branch", r.rec.Branch)
@@ -296,7 +296,12 @@ func (r *run) writeback(ctx context.Context) {
 			}
 		}
 	}
-	r.releaseLock(wctx)
+	// On a context of its own: the uploads may have used up writeback's
+	// deadline, and a release on it would fail at once and leave the lock
+	// until it expires.
+	rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
+	defer cancelRelease()
+	r.releaseLock(rctx)
 }
 
 // envLookup is key's value in env, the last one winning as in exec.
@@ -308,3 +313,15 @@ func envLookup(env []string, key string) string {
 	}
 	return ""
 }
+
+// recordWriteTimeout bounds each result.json write, the final one
+// included, so a stalled bucket cannot hold the runner until the task
+// timeout (design §4.5 leaves the final record 30s).
+const recordWriteTimeout = 30 * time.Second
+
+// Seams for the record writes and the lock release; tests may replace them.
+var (
+	createRecord      = (*runstore.Store).CreateRecord
+	writeRecord       = (*runstore.Store).WriteRecord
+	releaseBranchLock = (*lock.Lock).Release
+)

@@ -95,13 +95,17 @@ var ErrExists = errors.New("already exists")
 type Store struct {
 	bucket *blob.Bucket
 	slug   string
+	runID  string
 	prefix string
 }
 
 // Open returns the store for one run.
 func Open(b *blob.Bucket, repoSlug, runID string) *Store {
-	return &Store{bucket: b, slug: repoSlug, prefix: path.Join("runs", repoSlug, runID) + "/"}
+	return &Store{bucket: b, slug: repoSlug, runID: runID, prefix: path.Join("runs", repoSlug, runID) + "/"}
 }
+
+// RunID is the run ID this store was opened with.
+func (s *Store) RunID() string { return s.runID }
 
 // Slug is the repository slug this store was opened with. The runner keys
 // the branch lock and caches on it, so they always agree with the run's
