@@ -37,7 +37,7 @@ func TestSlug(t *testing.T) {
 	for _, c := range []struct{ provider, repo, want string }{
 		{"bitbucket", "acme/app", "acme-app-e5c4c0c8a3d698ee"},
 		{"github", "acme/app", "acme-app-dc4d4e59e884fc44"},
-		{"bitbucket", "edgeappinc/fugarosandbox", "edgeappinc-fugarosandbox-27be4c45d773e3b9"},
+		{"bitbucket", "acme/fugaro-sandbox", "acme-fugaro-sandbox-aaaac508c040817e"},
 		{"github", "Acme/Server", "acme-server-b198379bdcda586d"},
 	} {
 		if got := mustSlug(t, c.provider, c.repo); got != c.want {
