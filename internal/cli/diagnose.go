@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -80,8 +81,14 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	}
 	s := runstore.Open(env.bucket.Bucket, slug, id)
 	l, err := ownerLaunch(ctx, env, s, id)
-	if corruptObject(err) {
+	var refused error // an execution checkExecution won't follow
+	switch {
+	case corruptObject(err):
 		l, err = nil, nil // the row says which object is unreadable
+	case errors.Is(err, errNotFollowing):
+		// The row says why, as in ls; exit 1 afterwards, since the run's
+		// problem is one the user sees and may act on (--region).
+		l, refused, err = nil, err, nil
 	}
 	if err != nil {
 		return err
@@ -93,7 +100,13 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	return printDiagnosis(cmd.OutOrStdout(), d, o.asJSON)
+	if err := printDiagnosis(cmd.OutOrStdout(), d, o.asJSON); err != nil {
+		return err
+	}
+	if refused != nil {
+		return &ExitError{Code: ExitUserError, Err: errors.Unwrap(refused)}
+	}
+	return nil
 }
 
 // diagnose gathers run's diagnosis; l is its launch, nil when it never

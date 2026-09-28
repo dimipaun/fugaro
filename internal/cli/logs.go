@@ -137,10 +137,15 @@ func ownerLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id strin
 	}
 	spec, _ := s.ReadTask(ctx) // unreadable: checkExecution refuses
 	if err := env.checkExecution(owner.Execution, s.Slug(), spec); err != nil {
-		return nil, remote(fmt.Errorf("run %s/%s: not following its execution: %w", s.Slug(), id, err))
+		return nil, remote(fmt.Errorf("run %s/%s: %w: %w", s.Slug(), id, errNotFollowing, err))
 	}
 	return owner, nil
 }
+
+// errNotFollowing marks ownerLaunch's refusal of an execution the run's
+// objects name but checkExecution won't follow (another job, another
+// region).
+var errNotFollowing = errors.New("not following its execution")
 
 // cliSecrets are the credential values in the CLI's own environment, the
 // platform's reserved secrets' variables, which the runner redacts too.

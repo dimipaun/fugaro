@@ -90,3 +90,22 @@ func TestLsInAnotherRegionNamesTheRunsRegion(t *testing.T) {
 		t.Fatalf("row = %+v", r)
 	}
 }
+
+// diagnose on a run whose execution it won't follow shows the run's error
+// row, like ls, and exits 1: the problem is the run's, not a remote failure.
+func TestDiagnoseShowsTheRowOfAnExecutionItWontFollow(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, _, err := execute(t, "diagnose", "--json", "--region", "us-west1", id)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("diagnose exit %d (%v), want %d", ExitCode(err), err, ExitUserError)
+	}
+	var d struct {
+		Row struct{ Status, Reason string } `json:"row"`
+	}
+	if json.Unmarshal([]byte(out), &d) != nil || d.Row.Status != "error" || !strings.Contains(d.Row.Reason, "--region us-east5") {
+		t.Fatalf("diagnose --json = %s", out)
+	}
+}
