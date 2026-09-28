@@ -15,7 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const tokenValue = "sk-ant-oat01-EXAMPLEEXAMPLEEXAMPLE"
+const tokenValue = "fake-oauth-token-EXAMPLEEXAMPLE"
 
 var (
 	claudeSecret    = gcp.SecretID(appSlug, "claude-oauth-token")
@@ -169,7 +169,7 @@ func appCheckout(t *testing.T) {
 func TestSecretsSetWorkflowSecretMustBeDeclared(t *testing.T) {
 	sm := secretsFixture(t)
 	t.Chdir(t.TempDir()) // no checkout
-	const typed = "sk-ant-oat01-lowercase-token"
+	const typed = "fake-oauth-lowercase-token"
 	for _, name := range []string{"npm-token", typed} {
 		if _, errOut, err := executeStdin(t, tokenValue, "secrets", "set", name, "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
 			!strings.Contains(err.Error(), "checkout") || strings.Contains(err.Error()+errOut, typed) {

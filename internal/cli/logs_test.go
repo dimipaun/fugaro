@@ -34,7 +34,7 @@ func TestLogs(t *testing.T) {
 // Cloud Logging entries were redacted by the relay; logs redacts again, with
 // the credentials the CLI itself holds, as defence in depth.
 func TestLogsRedacts(t *testing.T) {
-	const secret = "sk-ant-test-0123456789"
+	const secret = "fake-token-test-0123456789"
 	t.Setenv("ANTHROPIC_API_KEY", secret)
 	f := newCloudFixture(t)
 	exec := seedRun(t, f, "20260927-100000-abcd", "", "", true)
