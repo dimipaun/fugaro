@@ -24,6 +24,10 @@ type Options struct {
 	Endpoints       Endpoints
 	HTTPClient      *http.Client  // optional
 	LogSettle       time.Duration // follow's quiet period after the execution ends; zero means 30s
+	// Warn, when set, receives problems that don't fail a call: an
+	// execution whose limits or times can't be parsed (it is kept, with
+	// CPU and memory 0: cost unknown), or a listed job that doesn't exist.
+	Warn func(msg string)
 }
 
 // Backend is the Cloud Run backend.
@@ -59,6 +63,9 @@ func (o Options) client(endpoint string) []option.ClientOption {
 func New(ctx context.Context, o Options) (*Backend, error) {
 	if o.LogSettle == 0 {
 		o.LogSettle = 30 * time.Second
+	}
+	if o.Warn == nil {
+		o.Warn = func(string) {}
 	}
 	rs, err := run.NewService(ctx, o.client(o.Endpoints.Run)...)
 	if err != nil {

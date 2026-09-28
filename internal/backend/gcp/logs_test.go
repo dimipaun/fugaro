@@ -2,20 +2,31 @@ package gcp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
+// at is a log timestamp sec seconds after the test starts. Entries must
+// be dated after their execution's creation, from which a read without
+// Since starts.
+func at(sec int) string {
+	return testStart.Add(time.Duration(sec) * time.Second).UTC().Format(time.RFC3339Nano)
+}
+
+var testStart = time.Now()
+
 func TestLogsOnceAndFollow(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
 	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
-	fl.AddJSONLines(ref.Name, []byte(`{"time":"2026-09-27T10:00:01Z","severity":"INFO","message":"stage started","stage":"implement","run_id":"20260927-100000-abcd"}
-{"time":"2026-09-27T10:00:02Z","severity":"WARNING","message":"cache miss","stage":"bootstrap"}
+	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(1)+`","severity":"INFO","message":"stage started","stage":"implement","run_id":"20260927-100000-abcd"}
+{"time":"`+at(2)+`","severity":"WARNING","message":"cache miss","stage":"bootstrap"}
 `))
 	var got []backend.LogEntry
 	collect := func(e backend.LogEntry) error { got = append(got, e); return nil }
@@ -31,7 +42,7 @@ func TestLogsOnceAndFollow(t *testing.T) {
 	got = nil
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		fl.AddJSONLines(ref.Name, []byte(`{"time":"2026-09-27T10:00:03Z","severity":"INFO","message":"run finished"}`+"\n"))
+		fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(3)+`","severity":"INFO","message":"run finished"}`+"\n"))
 		fr.SetState(ref.Name, backend.StateSucceeded)
 	}()
 	fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -51,11 +62,11 @@ func TestLogsFollowCatchesLateIngestedEntries(t *testing.T) {
 	b, fr, fl := newTestBackend(t)
 	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
-	fl.AddJSONLines(ref.Name, []byte(`{"time":"2026-09-27T10:00:05Z","message":"newer"}`+"\n"))
+	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(5)+`","message":"newer"}`+"\n"))
 	var got []string
 	go func() {
 		time.Sleep(30 * time.Millisecond)
-		fl.AddJSONLines(ref.Name, []byte(`{"time":"2026-09-27T10:00:03Z","message":"late"}`+"\n"))
+		fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(3)+`","message":"late"}`+"\n"))
 		fr.SetState(ref.Name, backend.StateFailed)
 	}()
 	fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -94,5 +105,51 @@ func TestLogsTextPayloadAndShortNameRefused(t *testing.T) {
 	}
 	if err := b.Logs(ctx, backend.LogQuery{Execution: "fugaro-acme-app-web-1"}, func(backend.LogEntry) error { return nil }); err == nil {
 		t.Fatal("a short name was sent to the API")
+	}
+}
+
+func TestLogsWithoutSinceStartAtTheExecutionsCreation(t *testing.T) {
+	ctx := context.Background()
+	b, fr, fl := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	e, _ := b.Execution(ctx, ref.Name)
+	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+e.Created.Add(-time.Hour).UTC().Format(time.RFC3339Nano)+`","message":"before"}`+"\n"+
+		`{"time":"`+e.Created.Add(time.Second).UTC().Format(time.RFC3339Nano)+`","message":"after"}`+"\n"))
+	var got []string
+	if err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(e backend.LogEntry) error { got = append(got, e.Message); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "after" {
+		t.Fatalf("entries = %q", got)
+	}
+	reqs := fl.Requests()
+	want := `timestamp>="` + e.Created.Add(-createdMargin).UTC().Format(time.RFC3339Nano) + `"`
+	var req struct{ Filter string }
+	if err := json.Unmarshal(reqs[len(reqs)-1].Body, &req); err != nil || !strings.HasSuffix(req.Filter, " AND "+want) {
+		t.Fatalf("filter lacks %s: %q, %v", want, req.Filter, err)
+	}
+}
+
+// A single entry dated far in the future must not make follow skip the
+// entries that follow it.
+func TestLogsFollowSurvivesAFutureDatedEntry(t *testing.T) {
+	ctx := context.Background()
+	b, fr, fl := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339Nano)+`","message":"future"}`+"\n"))
+	var got []string
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		fl.AddJSONLines(ref.Name, []byte(`{"time":"`+time.Now().UTC().Format(time.RFC3339Nano)+`","message":"now"}`+"\n"))
+		fr.SetState(ref.Name, backend.StateSucceeded)
+	}()
+	fctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	err := b.Logs(fctx, backend.LogQuery{Execution: ref.Name, Follow: true, Poll: 10 * time.Millisecond},
+		func(e backend.LogEntry) error { got = append(got, e.Message); return nil })
+	if err != nil || len(got) != 2 || got[0] != "future" || got[1] != "now" {
+		t.Fatalf("followed = %q, %v", got, err)
 	}
 }

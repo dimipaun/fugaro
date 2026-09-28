@@ -3,6 +3,7 @@ package gcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -21,15 +22,36 @@ const (
 	// emitted twice.
 	followLookback = 10 * time.Second
 	logPageSize    = 1000
+	// createdMargin is how far before the execution's createTime a read
+	// without Since starts, for clock skew between Cloud Run and the
+	// container.
+	createdMargin = time.Minute
 )
 
 // Logs streams one execution's log entries, oldest first, to fn. With
 // q.Follow it keeps polling until the execution has ended and no new entry
 // has arrived for LogSettle, or until ctx is done (it then returns ctx.Err()).
+// Without q.Since, the read starts shortly before the execution was created.
 func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.LogEntry) error) error {
 	id, err := b.canonical(q.Execution)
 	if err != nil {
 		return err
+	}
+	since := q.Since
+	if since.IsZero() {
+		// Bound the read: without a timestamp Cloud Logging scans the whole
+		// retention. Logs can outlive the execution, so a missing one reads
+		// unbounded.
+		ex, err := b.Execution(ctx, id.String())
+		switch {
+		case err == nil && !ex.Created.IsZero():
+			since = ex.Created.Add(-createdMargin)
+		case err != nil && !errors.Is(err, backend.ErrNotFound):
+			return err
+		}
+	}
+	if !q.Follow {
+		return b.readLogs(ctx, id, since, fn)
 	}
 	poll := q.Poll
 	if poll <= 0 {
@@ -38,9 +60,11 @@ func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.
 	seen := map[string]time.Time{} // insertId|timestamp → timestamp, within the lookback
 	var newest, settleFrom time.Time
 	for {
-		from := q.Since
+		// Read from the lookback before the newest entry seen, but never
+		// from the future: one future-dated entry must not hide the rest.
+		from := since
 		if !newest.IsZero() {
-			if f := newest.Add(-followLookback); f.After(from) {
+			if f := minTime(newest, time.Now()).Add(-followLookback); f.After(from) {
 				from = f
 			}
 		}
@@ -57,15 +81,15 @@ func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.
 			fresh++
 			return fn(e)
 		})
-		if q.Follow && ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err != nil || !q.Follow {
+		if err != nil {
 			return err
 		}
-		// The next poll reads from newest-lookback: older keys can't recur.
+		// The next read starts no earlier than this one: older keys can't recur.
 		for k, t := range seen {
-			if t.Before(newest.Add(-followLookback)) {
+			if t.Before(from) {
 				delete(seen, k)
 			}
 		}
@@ -92,6 +116,13 @@ func (b *Backend) Logs(ctx context.Context, q backend.LogQuery, fn func(backend.
 		case <-time.After(poll):
 		}
 	}
+}
+
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }
 
 // readLogs reads every entry of the execution at or after from (all of them

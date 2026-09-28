@@ -25,7 +25,8 @@ import (
 //
 // Known differences from real Cloud Run: execution names end in a counter
 // (<job>-1, <job>-2, …), not a random suffix; states change only through
-// SetState and cancel; cancelling a finished execution is a no-op.
+// SetState and cancel; cancelling a finished execution answers 400
+// FAILED_PRECONDITION, which the docs don't specify (the live test confirms).
 type Run struct {
 	*Server
 
@@ -37,6 +38,9 @@ type Run struct {
 	// ProjectNumber, when set, replaces the project ID in every name the
 	// fake returns, as the real API may.
 	ProjectNumber string
+	// BadRunMetadata makes a successful :run (the execution is created)
+	// answer with operation metadata the client can't read.
+	BadRunMetadata bool
 	// Project and Region locate the names Start returns, which no request
 	// path supplies; they default to "fake-project" and "fake-region".
 	Project, Region string
@@ -288,9 +292,13 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "execution not found")
 			return
 		}
-		if !x.state.Terminal() {
-			x.set(backend.StateCancelled)
+		if x.state.Terminal() {
+			// The docs don't say; FAILED_PRECONDITION is the API's usual
+			// answer for a finished resource. The live test confirms it.
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", "execution "+id.Name+" has already completed")
+			return
 		}
+		x.set(backend.StateCancelled)
 		f.ops++
 		writeJSON(w, http.StatusOK, map[string]any{
 			"name":     fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(id.Project), id.Region, f.ops),
@@ -359,10 +367,11 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		f.mu.Lock()
 	}
 	f.ops++
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name":     fmt.Sprintf("%s/operations/%d", jp, f.ops),
-		"metadata": f.withType(f.render(project, region, x)),
-	})
+	var meta any = f.withType(f.render(project, region, x))
+	if f.BadRunMetadata {
+		meta = "unreadable"
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": fmt.Sprintf("%s/operations/%d", jp, f.ops), "metadata": meta})
 }
 
 func (f *Run) list(w http.ResponseWriter, r *http.Request, parent string) {

@@ -231,3 +231,75 @@ func TestParseCPU(t *testing.T) {
 		}
 	}
 }
+
+func launchSpec() backend.LaunchSpec {
+	return backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"}
+}
+
+func TestLaunchCancelledRequestIsAmbiguous(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.FailRunWith = 499
+	if _, err := b.Launch(context.Background(), launchSpec()); err == nil || errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("HTTP 499: err = %v (must be ambiguous, not rejected)", err)
+	}
+}
+
+// :run succeeded, so the execution exists: an unreadable operation must
+// not let the caller release its claim.
+func TestLaunchUnreadableMetadataIsAmbiguous(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.BadRunMetadata = true
+	_, err := b.Launch(context.Background(), launchSpec())
+	if err == nil || errors.Is(err, backend.ErrRejected) || errors.Is(err, backend.ErrNotFound) || len(fr.Executions()) != 1 {
+		t.Fatalf("err = %v, executions %v", err, fr.Executions())
+	}
+}
+
+func TestListKeepsExecutionsWithUnparseableLimits(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	var warns []string
+	b.o.Warn = func(m string) { warns = append(warns, m) }
+	fr.AddJob("fugaro-acme-app-web", "four", "8G")
+	fr.Start("fugaro-acme-app-web")
+	got, err := b.List(ctx, backend.ListFilter{ActiveOnly: true})
+	if err != nil || len(got) != 1 || got[0].CPU != 0 || got[0].MemoryGiB != 0 || got[0].State != backend.StatePending {
+		t.Fatalf("List = %+v, %v", got, err)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "cost unknown") {
+		t.Fatalf("warnings = %q", warns)
+	}
+}
+
+func TestListSkipsAMissingJob(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	var warns []string
+	b.o.Warn = func(m string) { warns = append(warns, m) }
+	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
+	fr.Start("fugaro-acme-app-web")
+	got, err := b.List(ctx, backend.ListFilter{Jobs: []string{"fugaro-acme-app-gone", "fugaro-acme-app-web"}})
+	if err != nil || len(got) != 1 || got[0].Job != "fugaro-acme-app-web" {
+		t.Fatalf("List = %+v, %v", got, err)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "fugaro-acme-app-gone") {
+		t.Fatalf("warnings = %q", warns)
+	}
+}
+
+func TestCancelFinishedExecutionFails(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
+	ref, _ := b.Launch(ctx, launchSpec())
+	fr.SetState(ref.Name, backend.StateSucceeded)
+	err := b.Cancel(ctx, ref.Name)
+	if err == nil || errors.Is(err, backend.ErrNotFound) {
+		t.Fatalf("Cancel(finished) = %v", err)
+	}
+	if fr.State(ref.Name) != backend.StateSucceeded {
+		t.Fatal("cancel changed a finished execution")
+	}
+}

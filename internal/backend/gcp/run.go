@@ -69,8 +69,12 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	return backend.ExecutionRef{Name: id.String(), Job: id.Job, LogURL: meta.LogURI}, nil
 }
 
+// statusClientClosed is 499, gRPC CANCELLED over HTTP: the request was
+// abandoned, not refused, so it is ambiguous.
+const statusClientClosed = 499
+
 // launchError classifies a jobs.run failure. Only a definitive refusal (a
-// 4xx other than 408 and 429) wraps ErrRejected: nothing can have started.
+// 4xx other than 408, 429 and 499) wraps ErrRejected: nothing can have started.
 // Anything else, including timeouts and transport errors, is ambiguous.
 func launchError(job string, err error) error {
 	var ge *googleapi.Error
@@ -78,7 +82,8 @@ func launchError(job string, err error) error {
 		switch {
 		case ge.Code == http.StatusNotFound:
 			return fmt.Errorf("launching: job %s does not exist; create it with the bootstrap (M5: fugaro init) (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
-		case ge.Code >= 400 && ge.Code < 500 && ge.Code != http.StatusRequestTimeout && ge.Code != http.StatusTooManyRequests:
+		case ge.Code >= 400 && ge.Code < 500 && ge.Code != http.StatusRequestTimeout && ge.Code != http.StatusTooManyRequests &&
+			ge.Code != statusClientClosed:
 			return fmt.Errorf("launching %s: %w: %w", job, backend.ErrRejected, err)
 		}
 	}
@@ -119,6 +124,10 @@ func (b *Backend) List(ctx context.Context, f backend.ListFilter) ([]backend.Exe
 	var out []backend.Execution
 	for _, parent := range parents {
 		got, err := b.list(ctx, parent, len(f.Jobs) == 0, f)
+		if len(f.Jobs) > 0 && errors.Is(err, backend.ErrNotFound) {
+			b.o.Warn("job " + parent + " does not exist; skipped")
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -201,28 +210,37 @@ func (b *Backend) toExecution(e *run.GoogleCloudRunV2Execution) (backend.Executi
 		return backend.Execution{}, fmt.Errorf("Cloud Run returned an execution: %w", err)
 	}
 	x := backend.Execution{Name: id.String(), Job: id.Job, State: stateOf(e), LogURL: e.LogUri}
+	// Anything but the name degrades: a bad time is zero, and bad limits
+	// make the cost unknown (0) rather than failing every listing.
 	for _, t := range []struct {
-		dst *time.Time
-		src string
-	}{{&x.Created, e.CreateTime}, {&x.Started, e.StartTime}, {&x.Completed, e.CompletionTime}} {
+		dst  *time.Time
+		src  string
+		what string
+	}{{&x.Created, e.CreateTime, "createTime"}, {&x.Started, e.StartTime, "startTime"}, {&x.Completed, e.CompletionTime, "completionTime"}} {
+		var err error
 		if *t.dst, err = parseTime(t.src); err != nil {
-			return backend.Execution{}, fmt.Errorf("execution %s: %w", x.Name, err)
+			b.o.Warn(fmt.Sprintf("execution %s: %s: %v", x.Name, t.what, err))
 		}
 	}
 	if e.Template != nil && len(e.Template.Containers) > 0 && e.Template.Containers[0].Resources != nil {
 		limits := e.Template.Containers[0].Resources.Limits
-		if s := limits["cpu"]; s != "" {
-			if x.CPU, err = parseCPU(s); err != nil {
-				return backend.Execution{}, fmt.Errorf("execution %s: %w", x.Name, err)
-			}
-		}
-		if s := limits["memory"]; s != "" {
-			if x.MemoryGiB, err = backend.MemoryGiB(s); err != nil {
-				return backend.Execution{}, fmt.Errorf("execution %s: %w", x.Name, err)
-			}
+		cpu, cerr := parseLimit(limits["cpu"], parseCPU)
+		mem, merr := parseLimit(limits["memory"], backend.MemoryGiB)
+		if err := errors.Join(cerr, merr); err != nil {
+			b.o.Warn(fmt.Sprintf("execution %s: cost unknown: %v", x.Name, err))
+		} else {
+			x.CPU, x.MemoryGiB = cpu, mem
 		}
 	}
 	return x, nil
+}
+
+// parseLimit parses a resource limit; an absent one is 0.
+func parseLimit(s string, parse func(string) (float64, error)) (float64, error) {
+	if s == "" {
+		return 0, nil
+	}
+	return parse(s)
 }
 
 // parseTime parses an API timestamp; empty is the zero time.
