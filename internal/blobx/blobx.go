@@ -61,7 +61,11 @@ func Open(ctx context.Context, rawURL string) (*Bucket, error) {
 	return out, nil
 }
 
-// Wrap treats b as a non-GCS bucket.
+// Wrap treats b as a non-GCS bucket. Production code opens buckets with
+// Open; Wrap stays exported because the tests of several packages (cache,
+// lock, runstore, runner, cli) wrap an in-memory or fault-injecting
+// gocloud bucket with it, and an export_test.go serves only its own
+// package.
 func Wrap(b *blob.Bucket) *Bucket { return &Bucket{Bucket: b} }
 
 func (b *Bucket) client() *storage.Client {

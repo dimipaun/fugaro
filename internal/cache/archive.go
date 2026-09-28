@@ -22,7 +22,7 @@ import (
 // version and how many roots the entries are indexed against.
 const manifestName = "fugaro-cache.json"
 
-// manifestVersion is the only archive format Extract accepts.
+// manifestVersion is the only archive format extract accepts.
 const manifestVersion = 1
 
 // maxWindow caps the zstd window a restore will allocate for. Write uses
@@ -41,7 +41,7 @@ const maxEntries = 1 << 20
 // maxHops caps the symlinks followed while resolving one path.
 const maxHops = 40
 
-// ErrBadArchive marks an archive that is corrupt or that Extract refused
+// ErrBadArchive marks an archive that is corrupt or that extract refused
 // (an unsafe entry, the size cap, a bad manifest). It is never set for an
 // I/O error reading the archive or writing the roots, so an archive that
 // fails with it will fail every restore.
@@ -81,7 +81,7 @@ func refuseLinkedRoot(root string) error {
 // Write streams roots into w as a zstd-compressed tar: the manifest first,
 // then every directory, regular file and symlink of root i as "<i>/<rel>".
 // Other file types are skipped, and so are symlinks that resolve outside
-// their root, which Extract would refuse (see writeArchive). A root that
+// their root, which extract would refuse (see writeArchive). A root that
 // is itself a symlink is refused with ErrLinkedRoot. It returns the
 // bytes charged against maxBytes (content plus headerCost per entry), or
 // ErrTooLarge once they would pass maxBytes.
@@ -224,7 +224,7 @@ func writeRoot(tw *tar.Writer, i int, dir, exclude string, charge func(int64) er
 			if err != nil {
 				return err
 			}
-			// The same physical check Extract makes: a link Extract
+			// The same physical check extract makes: a link extract
 			// would refuse would make every restore fail and poison the key.
 			if symlinkEscapes(filepath.FromSlash(rel), target) {
 				st.skippedLinks++
@@ -351,20 +351,20 @@ func (t *trackedReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// link is a symlink Extract created, rechecked once all entries are in.
+// link is a symlink extract created, rechecked once all entries are in.
 type link struct {
 	idx int
 	rel string
 }
 
-// extractor holds one Extract's state.
+// extractor holds one extract's state.
 type extractor struct {
 	roots   []*os.Root
 	src     *trackedReader // the compressed archive as read
 	links   []link         // in creation order
 	linkSet map[link]bool  // the same links, to record each once
 	// realDirs are directories inside found to be real (no symlink on the
-	// way). Extract never removes a directory, so they stay real.
+	// way). extract never removes a directory, so they stay real.
 	realDirs map[link]bool
 }
 
@@ -377,7 +377,7 @@ func (x *extractor) readErr(what string, err error) error {
 	return badf("%s: %w", what, err)
 }
 
-// Extract restores an archive written by Write into roots, which must be
+// extract restores an archive written by Write into roots, which must be
 // as many as the manifest says. It refuses, before writing it, any entry
 // that could land outside its root: every write goes through an os.Root,
 // which refuses ".." and symlink escapes at any path component, and an
@@ -389,13 +389,9 @@ func (x *extractor) readErr(what string, err error) error {
 // can make an earlier link escape; one that resolves outside its root is
 // removed and reported. A refusal or a corrupt archive matches
 // ErrBadArchive. A root that is itself a symlink is refused with
-// ErrLinkedRoot before anything is written.
-func Extract(r io.Reader, roots []string, maxBytes int64) error {
-	return extract(context.Background(), r, roots, maxBytes)
-}
-
-// extract is Extract under ctx, which bounds the final link check: the
-// read itself is bounded by the reader, which Restore opens under ctx.
+// ErrLinkedRoot before anything is written. ctx bounds the final link
+// check; the read itself is bounded by the reader, which Restore opens
+// under ctx.
 func extract(ctx context.Context, r io.Reader, roots []string, maxBytes int64) (err error) {
 	x := &extractor{src: &trackedReader{r: r}, linkSet: map[link]bool{}, realDirs: map[link]bool{}}
 	defer func() {
@@ -531,7 +527,7 @@ func (x *extractor) extract(maxBytes int64) error {
 // inside refuses an entry whose directory dir has a symlink at any
 // component, whether baked into the image or planted by an earlier entry.
 // Write never produces such an entry, since it doesn't descend into linked
-// directories. Refusing them keeps every link Extract records at a
+// directories. Refusing them keeps every link extract records at a
 // physical path: otherwise a later entry could retarget a parent link
 // (q -> ., q/p -> .., then q -> a/) and leave the real link, root/p ->
 // .., where checkLinks no longer looks. os.Root would refuse an escaping
@@ -568,7 +564,7 @@ func (x *extractor) inside(idx int, dir, name string) error {
 	return nil
 }
 
-// checkLinks resolves every link this Extract created. It judges them all
+// checkLinks resolves every link this extract created. It judges them all
 // against the tree as restored before removing any: removing one first
 // would leave a missing component that the next is judged through
 // lexically (q -> ., r -> q/.., p -> r/..: with r gone, p looks local).
@@ -615,7 +611,7 @@ func (x *extractor) checkLinks(ctx context.Context) error {
 }
 
 // abandonLinks is checkLinks' way out when ctx ends mid-check: it removes
-// every link this Extract recorded that is still a link, judged safe,
+// every link this extract recorded that is still a link, judged safe,
 // judged escaping or not judged yet alike, since a partial judgement
 // can't be trusted. If any link was refused (bad: in this pass; errs: in
 // an earlier one), or one could not be checked or removed, the error also
