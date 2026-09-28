@@ -312,6 +312,38 @@ func TestRedactEncodedForms(t *testing.T) {
 	}
 }
 
+// TestRedactWrappedBase64 checks a long secret's base64 as GNU `base64`
+// (76 columns) and `openssl base64` (64) wrap it, through Redact and
+// through the line-by-line Redactor fed in small chunks.
+func TestRedactWrappedBase64(t *testing.T) {
+	for _, secret := range longSecrets() {
+		for _, w := range wrapWidths {
+			for _, in := range []string{secret, secret + "\n", secret + ":user@host\n"} {
+				text := "$ echo $TOKEN | base64\n" + wrapLines(base64.StdEncoding.EncodeToString([]byte(in)), w) + "\n$ echo done\n"
+				got := Redact(text, []string{secret})
+				if !strings.Contains(got, "[REDACTED]") {
+					t.Fatalf("len %d width %d: nothing redacted:\n%s", len(secret), w, got)
+				}
+				assertNoSecretRun(t, got, secret)
+
+				var out bytes.Buffer
+				r := NewRedactor(&out, []string{secret})
+				for b := []byte(text); len(b) > 0; {
+					n := min(7, len(b))
+					if _, err := r.Write(b[:n]); err != nil {
+						t.Fatal(err)
+					}
+					b = b[n:]
+				}
+				if err := r.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				assertNoSecretRun(t, out.String(), secret)
+			}
+		}
+	}
+}
+
 func TestBuildEnvPassesNetworkAndImageVariables(t *testing.T) {
 	pass := []string{
 		"HTTPS_PROXY=http://proxy.invalid:3128", "https_proxy=http://proxy.invalid:3128", "NO_PROXY=localhost",

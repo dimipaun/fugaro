@@ -306,3 +306,83 @@ func TestRelayRedactsEncodedSecrets(t *testing.T) {
 		assertNoSecret(t, out, form)
 	}
 }
+
+// longSecrets are model-token-sized secrets, one per length mod 3, so the
+// wrapped last line ends on each kind of base64 group.
+func longSecrets() []string {
+	base := "sk-ant-api03-Zq8+Rv/2mXkP0wLs9TbN4yHc7GdJ1eUa6FoIr3VhQ5nWt-Bx_KzYpMg8jSl2CuEo0iAd4fR7HbT9vNq1XwLkPz6mYs3"
+	return []string{base[:100], base[:101], base[:102], base}
+}
+
+// wrapLines wraps s at width w, as `base64` (76) and `openssl base64` (64)
+// print it.
+func wrapLines(s string, w int) string {
+	var lines []string
+	for len(s) > w {
+		lines, s = append(lines, s[:w]), s[w:]
+	}
+	return strings.Join(append(lines, s), "\n")
+}
+
+// assertNoSecretRun fails if any line of out, between redactions, decodes
+// at any character offset to 6 or more consecutive bytes of secret.
+func assertNoSecretRun(t *testing.T, out, secret string) {
+	t.Helper()
+	windows := map[string]bool{}
+	for i := 0; i+6 <= len(secret); i++ {
+		windows[secret[i:i+6]] = true
+	}
+	for _, line := range strings.Split(out, "\n") {
+		for _, seg := range strings.Split(line, "[REDACTED]") {
+			seg = strings.TrimRight(strings.TrimSpace(seg), "=")
+			for off := 0; off < 4 && off < len(seg); off++ {
+				part := seg[off:]
+				if len(part)%4 == 1 {
+					part = part[:len(part)-1]
+				}
+				dec, err := base64.RawStdEncoding.DecodeString(part)
+				if err != nil {
+					continue // not base64 at this offset
+				}
+				for i := 0; i+6 <= len(dec); i++ {
+					if windows[string(dec[i:i+6])] {
+						t.Fatalf("line %q decodes to secret bytes %q", line, dec[i:i+6])
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestRelayRedactsWrappedBase64 checks a long secret printed by
+// `echo $TOKEN | base64` (wrapped at 76) and `openssl base64` (at 64): the
+// relay logs an assistant text quoting the whole output and an error
+// tool_result carrying it, and no logged line decodes to secret bytes.
+func TestRelayRedactsWrappedBase64(t *testing.T) {
+	for _, secret := range longSecrets() {
+		for _, w := range wrapWidths {
+			for _, in := range []string{secret, secret + "\n", secret + ":user@host\n"} {
+				wrapped := wrapLines(base64.StdEncoding.EncodeToString([]byte(in)), w)
+				text, _ := json.Marshal("The token encodes as:\n" + wrapped + "\ndone")
+				res, _ := json.Marshal(wrapped)
+				var buf bytes.Buffer
+				r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{secret})
+				_, _ = r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"text","text":` + string(text) + `},{"type":"tool_use","name":"Bash","input":{"command":"echo $TOKEN | base64 -w ` + fmt.Sprint(w) + `"}}]}}` + "\n"))
+				_, _ = r.Write([]byte(`{"type":"user","message":{"content":[{"type":"tool_result","is_error":true,"content":` + string(res) + `}]}}` + "\n"))
+				var msgs []string
+				for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+					var m map[string]any
+					if err := json.Unmarshal([]byte(l), &m); err != nil {
+						t.Fatal(err)
+					}
+					msgs = append(msgs, fmt.Sprint(m["msg"]))
+				}
+				out := strings.Join(msgs, "\n")
+				if len(msgs) != 3 || !strings.Contains(out, "[REDACTED]") {
+					t.Fatalf("len %d width %d: logs = %s", len(secret), w, out)
+				}
+				assertNoSecretRun(t, out, secret)
+			}
+		}
+	}
+}

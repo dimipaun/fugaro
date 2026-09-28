@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -34,7 +35,9 @@ type Redactor struct {
 // What no redactor here can catch: a secret split across two JSON fields,
 // content blocks, events or Write-separated lines of a single-line secret;
 // a secret the agent slices, truncates, reverses or otherwise transforms;
-// and any encoding not listed in encodedForms (hex, gzip, encryption).
+// a secret embedded mid-stream inside wrapped base64 (wrapped forms are
+// registered only for a secret that starts the encoded input); and any
+// encoding not listed in encodedForms (hex, gzip, encryption).
 // Anything published from agent output is best-effort redacted, not
 // guaranteed clean.
 func NewRedactor(w io.Writer, secrets []string) *Redactor {
@@ -92,7 +95,9 @@ const encodedMin = 8
 //     header or env dump. At most two bytes of the secret at each end
 //     can stay visible;
 //   - the URL query and path escapes (percent-encoding), when they differ
-//     from the raw secret.
+//     from the raw secret;
+//   - the wrapped line pieces (see wrappedForms), because the redactor
+//     works line by line and base64 tools wrap long output.
 func encodedForms(s string) []string {
 	if len(s) < encodedMin {
 		return nil
@@ -115,7 +120,36 @@ func encodedForms(s string) []string {
 			forms = append(forms, enc.EncodeToString(in)[first*4:last*4])
 		}
 	}
-	return forms
+	return append(forms, wrappedForms(s)...)
+}
+
+// wrapWidths are the line widths base64 tools wrap at: GNU coreutils
+// `base64` at 76 columns, `openssl base64` at 64.
+var wrapWidths = []int{76, 64}
+
+// wrappedForms returns, for each wrap width, the lines the std base64 of s
+// and of s+"\n" (as `echo "$TOKEN" | base64` prints it) is wrapped into,
+// the secret starting the encoded input. Each line of 8 characters or
+// more is a form. The last line is also registered trimmed to the
+// characters that encode only bytes of s, so it matches whatever follows
+// the secret; what can stay visible there is under 8 characters, at most
+// 5 bytes of the secret. The count is linear in len(s).
+func wrappedForms(s string) []string {
+	var forms []string
+	core := len(s) / 3 * 4 // characters encoding only bytes of s, at offset 0
+	for _, in := range []string{s, s + "\n"} {
+		enc := base64.StdEncoding.EncodeToString([]byte(in))
+		for _, w := range wrapWidths {
+			for start := 0; start < len(enc); start += w {
+				end := min(start+w, len(enc))
+				forms = append(forms, enc[start:end])
+				if end == len(enc) && core > start && core < end {
+					forms = append(forms, enc[start:core])
+				}
+			}
+		}
+	}
+	return slices.DeleteFunc(forms, func(f string) bool { return len(f) < encodedMin })
 }
 
 func replaceAll(s string, forms []string) string {
