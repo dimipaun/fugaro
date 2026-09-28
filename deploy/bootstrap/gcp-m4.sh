@@ -48,7 +48,8 @@ done
 case "$STEP" in ""|*[!a-z-]*) usage ;; esac
 case " $STEPS " in *" $STEP "*) ;; *) usage ;; esac
 FUGARO=${FUGARO:-fugaro}
-HEAVY=${HEAVY:-/Users/dimi/git.lattica/Fugaro/.superpowers/heavy.sh}
+# HEAVY optionally wraps Docker-heavy commands (a local lock script); by default they run directly.
+HEAVY=${HEAVY:-env}
 
 die() { echo "gcp-m4.sh: $*" >&2; exit 1; }
 
