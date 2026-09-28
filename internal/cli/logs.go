@@ -68,7 +68,7 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 	if err != nil {
 		return err
 	}
-	red := agent.Redacter(cliSecrets(os.Getenv)) // forms built once per command
+	red := agent.RedactFunc(cliSecrets(os.Getenv)) // forms built once per command
 	out := cmd.OutOrStdout()
 	err = env.be.Logs(ctx, logQuery(l, o.follow), func(e backend.LogEntry) error {
 		return printLogEntry(out, redactEntry(e, red), o.asJSON)
@@ -158,7 +158,7 @@ func cliSecrets(getenv func(string) string) []string {
 }
 
 // redactEntry redacts e's message and the string fields logs prints with
-// red, an agent.Redacter built once per command.
+// red, an agent.RedactFunc built once per command.
 func redactEntry(e backend.LogEntry, red func(string) string) logLine {
 	field := func(k string) string {
 		s, _ := e.Fields[k].(string)

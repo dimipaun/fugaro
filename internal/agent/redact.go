@@ -48,7 +48,15 @@ func NewRedactor(w io.Writer, secrets []string) *Redactor {
 // register replaced by [REDACTED]. Use it for text that is published whole
 // rather than streamed, such as an agent-written PR title and body.
 func Redact(s string, secrets []string) string {
-	return replaceAll(s, redactForms(secrets))
+	return RedactFunc(secrets)(s)
+}
+
+// RedactFunc returns Redact for secrets with the forms built once, for a
+// caller that redacts many strings with the same secrets (fugaro logs, per
+// entry and field).
+func RedactFunc(secrets []string) func(string) string {
+	forms := redactForms(secrets)
+	return func(s string) string { return replaceAll(s, forms) }
 }
 
 // redactForms returns the strings to redact for secrets, longest first so a

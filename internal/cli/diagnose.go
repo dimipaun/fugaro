@@ -100,7 +100,7 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 // launched (no logs then). A failed log read is a warning: the rest of the
 // diagnosis is still worth having.
 func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore.Launch, run string, secrets []string, warn io.Writer) (*Diagnosis, error) {
-	red := agent.Redacter(secrets)
+	red := agent.RedactFunc(secrets)
 	rows, err := loadRows(ctx, env, lsFilter{runRef: run, warn: warn}, time.Now())
 	if err != nil {
 		return nil, err
