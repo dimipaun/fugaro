@@ -16,8 +16,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// acmeSlug is the storage slug of the test repository acme/app.
+var acmeSlug = task.Slug("acme/app")
 
 // childTimeout bounds a fugaro exec child: long enough for any real scenario
 // (the slowest, TestStageTimeout, finishes in well under a minute even under
@@ -108,7 +112,7 @@ func runScenario(t *testing.T, sc scenario) result {
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
-			marker := filepath.Join(bucket, "runs", "acme-app", runID, "cancel")
+			marker := filepath.Join(bucket, "runs", acmeSlug, runID, "cancel")
 			_ = os.WriteFile(marker, []byte("now"), 0o644)
 		}()
 	}
@@ -124,7 +128,7 @@ func runScenario(t *testing.T, sc scenario) result {
 		t.Fatalf("fugaro exec never started: %v", runErr)
 	}
 	res := result{bucket: bucket, exitCode: cmd.ProcessState.ExitCode(), elapsed: elapsed, calls: testutil.FakeClaudeCalls(t, claude)}
-	data, err := os.ReadFile(filepath.Join(bucket, "runs", "acme-app", runID, "result.json"))
+	data, err := os.ReadFile(filepath.Join(bucket, "runs", acmeSlug, runID, "result.json"))
 	if err != nil {
 		t.Fatalf("no result.json: %v\n%s", err, out)
 	}
@@ -155,14 +159,14 @@ func TestReadyRun(t *testing.T) {
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "UNDECLARED_SECRET=") }) {
 		t.Fatal("an undeclared variable reached the agent")
 	}
-	transcript, err := os.ReadFile(filepath.Join(r.bucket, "runs", "acme-app", runID, "transcripts", "implement-1.jsonl"))
+	transcript, err := os.ReadFile(filepath.Join(r.bucket, "runs", acmeSlug, runID, "transcripts", "implement-1.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(transcript), "test-key-1234") || !strings.Contains(string(transcript), "[REDACTED]") {
 		t.Fatalf("transcript not redacted: %s", transcript)
 	}
-	if _, err := os.Stat(filepath.Join(r.bucket, "runs", "acme-app", runID, "report.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(r.bucket, "runs", acmeSlug, runID, "report.md")); err != nil {
 		t.Fatal("report.md missing")
 	}
 }

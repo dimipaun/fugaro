@@ -154,7 +154,7 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 	}
 
 	var rec runstore.Record
-	data, err := os.ReadFile(filepath.Join(bucket, "runs", "acme-app", runID, "result.json"))
+	data, err := os.ReadFile(filepath.Join(bucket, "runs", acmeSlug, runID, "result.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,9 +182,9 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 	}
 	for _, f := range []string{
 		filepath.Join(work, ".git", "config"),
-		filepath.Join(bucket, "runs", "acme-app", runID, "result.json"),
-		filepath.Join(bucket, "runs", "acme-app", runID, "report.md"),
-		filepath.Join(bucket, "runs", "acme-app", runID, "transcripts", "implement-1.jsonl"),
+		filepath.Join(bucket, "runs", acmeSlug, runID, "result.json"),
+		filepath.Join(bucket, "runs", acmeSlug, runID, "report.md"),
+		filepath.Join(bucket, "runs", acmeSlug, runID, "transcripts", "implement-1.jsonl"),
 	} {
 		if data, err := os.ReadFile(f); err != nil || strings.Contains(string(data), token) {
 			t.Errorf("%s: unreadable (%v) or holds the token", f, err)

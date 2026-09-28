@@ -47,7 +47,15 @@ func derive(readable, slug, second string, limit int) string {
 	return readable + suffix
 }
 
-func stem(slug, workflow string) string { return sanitize("fugaro-" + slug + "-" + workflow) }
+// slugHashRE is the hash suffix of task.Slug. The readable part of a name
+// leaves it out; the name's own hash, over the full slug, keeps it unique.
+var slugHashRE = regexp.MustCompile(`-[0-9a-f]{8}$`)
+
+func readableSlug(slug string) string { return slugHashRE.ReplaceAllString(slug, "") }
+
+func stem(slug, workflow string) string {
+	return sanitize("fugaro-" + readableSlug(slug) + "-" + workflow)
+}
 
 // JobName is the Cloud Run job of (slug, workflow) (design §3.2):
 // fugaro-<slug>-<workflow>, sanitized and truncated, plus a hash of the
@@ -66,11 +74,11 @@ func ServiceAccountID(slug, workflow string) string {
 // secret (a workflow secret's name, or one of config.ReservedSecrets),
 // built like JobName.
 func SecretID(slug, logical string) string {
-	return derive(sanitize("fugaro-"+slug+"-"+logical), slug, logical, maxSecretID)
+	return derive(sanitize("fugaro-"+readableSlug(slug)+"-"+logical), slug, logical, maxSecretID)
 }
 
 // ImageName is the derived image of (slug, workflow) in registry, untagged,
 // built like JobName without the fugaro- prefix.
 func ImageName(registry, slug, workflow string) string {
-	return strings.TrimSuffix(registry, "/") + "/" + derive(sanitize(slug+"-"+workflow), slug, workflow, maxImage)
+	return strings.TrimSuffix(registry, "/") + "/" + derive(sanitize(readableSlug(slug)+"-"+workflow), slug, workflow, maxImage)
 }

@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 var (
@@ -131,5 +133,26 @@ func TestNamesFitEachResourcesLimits(t *testing.T) {
 	}
 	if j := JobName(long, "web"); !strings.HasPrefix(j, "fugaro-someorganization-") {
 		t.Errorf("JobName lost its prefix: %q", j)
+	}
+}
+
+// Real slugs end in their own hash; names leave it out of the readable
+// part, stay within limits, and still separate the repositories.
+func TestNamesOfRealSlugs(t *testing.T) {
+	a, b := task.Slug("acme/app-web"), task.Slug("acme-app/web")
+	if j := JobName(a, "x"); !strings.HasPrefix(j, "fugaro-acme-app-web-x-") || len(j) > 49 || !jobNameRE.MatchString(j) {
+		t.Errorf("JobName(%q) = %q", a, j)
+	}
+	for name, f := range namers {
+		if f(a, "x") == f(b, "x") {
+			t.Errorf("%s: acme/app-web and acme-app/web share %q", name, f(a, "x"))
+		}
+	}
+	long := task.Slug(strings.Repeat("organization", 6) + "/" + strings.Repeat("repository", 6))
+	if j := JobName(long, "web"); len(j) > 49 || !jobNameRE.MatchString(j) {
+		t.Errorf("JobName(long slug) = %q (%d)", j, len(j))
+	}
+	if sa := ServiceAccountID(long, "web"); len(sa) > 30 || !saIDRE.MatchString(sa) {
+		t.Errorf("ServiceAccountID(long slug) = %q", sa)
 	}
 }

@@ -3,11 +3,13 @@ package task
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -56,9 +58,50 @@ func NewRunID(now time.Time, r io.Reader) (string, error) {
 	return now.UTC().Format("20060102-150405") + "-" + hex.EncodeToString(b[:]), nil
 }
 
-// Slug turns a repo path such as "Acme/Server" into its storage prefix "acme-server".
+// scpLikeRE matches git's scp-like SSH remote syntax, git@host:owner/repo.
+var scpLikeRE = regexp.MustCompile(`^(?:[^@/:]+@)?([^/:]+):(.+)$`)
+
+// CanonicalRepo is the canonical form of a repository reference: its path,
+// "owner/name" (nested groups kept), lower-cased, without surrounding
+// slashes or a ".git" suffix. It accepts that form and https, ssh and
+// scp-like git remotes, whose host it drops: Fugaro names repositories by
+// path alone, one provider host per deployment.
+func CanonicalRepo(ref string) string {
+	s := strings.TrimSpace(ref)
+	if u, err := url.Parse(s); err == nil && u.Scheme != "" && u.Host != "" && u.Opaque == "" {
+		s = u.Path
+	} else if m := scpLikeRE.FindStringSubmatch(s); m != nil {
+		s = m[2]
+	}
+	s = strings.Trim(strings.ToLower(s), "/")
+	s = strings.TrimSuffix(s, ".git")
+	return strings.Trim(s, "/")
+}
+
+// maxSlugReadable bounds a slug's readable part; the slug is at most 9
+// characters longer.
+const maxSlugReadable = 48
+
+var slugUnsafeRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+// Slug is a repository's storage prefix, the IAM boundary between
+// repositories in the bucket (runs/<slug>/, cache/<slug>/, locks/<slug>/):
+// its canonical path made readable ("acme/app" → "acme-app"), truncated,
+// then "-" and 8 hex of sha256(CanonicalRepo(repo)). The readable part
+// merges distinct repositories ("acme/app-web" and "acme-app/web"); the
+// hash keeps them apart, and is the same for every spelling of one
+// repository (case, ".git", https or SSH remote).
 func Slug(repo string) string {
-	return strings.ReplaceAll(strings.ToLower(repo), "/", "-")
+	c := CanonicalRepo(repo)
+	sum := sha256.Sum256([]byte(c))
+	readable := strings.Trim(slugUnsafeRE.ReplaceAllString(c, "-"), "-")
+	if len(readable) > maxSlugReadable {
+		readable = strings.TrimRight(readable[:maxSlugReadable], "-")
+	}
+	if readable == "" {
+		readable = "repo"
+	}
+	return readable + "-" + hex.EncodeToString(sum[:4])
 }
 
 // Parse decodes and validates a task spec, rejecting unknown fields.
