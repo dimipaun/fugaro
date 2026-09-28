@@ -13,6 +13,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
+// The jobs of acme-app's web and api workflows.
+var webJob, apiJob = JobName("acme-app", "web"), JobName("acme-app", "api")
+
 func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
@@ -27,7 +30,7 @@ func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 func TestLaunchAndInspect(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	var gotEnv map[string]string
 	fr.OnRun = func(c gcpfake.RunCall) { gotEnv = c.Env }
 	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
@@ -37,7 +40,7 @@ func TestLaunchAndInspect(t *testing.T) {
 	if gotEnv["FUGARO_RUN"] != "acme-app/20260927-100000-abcd" {
 		t.Fatalf("env = %v", gotEnv)
 	}
-	if !strings.HasPrefix(ref.Name, "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/") || ref.LogURL == "" {
+	if !strings.HasPrefix(ref.Name, "projects/proj-1234/locations/us-east5/jobs/"+webJob+"/executions/") || ref.LogURL == "" {
 		t.Fatalf("ref = %+v", ref)
 	}
 	e, err := b.Execution(ctx, ref.Name)
@@ -64,7 +67,7 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
 	fr.ProjectNumber = "123456789"
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	if err != nil || !strings.HasPrefix(ref.Name, "projects/proj-1234/") {
 		t.Fatalf("ref = %+v, %v (want the project ID form)", ref, err)
@@ -79,7 +82,7 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 	if e, err := b.Execution(ctx, id.String()); err != nil || e.Name != ref.Name {
 		t.Fatalf("Execution(number form) = %+v, %v", e, err)
 	}
-	if _, err := b.Execution(ctx, "fugaro-acme-app-web-1"); err == nil {
+	if _, err := b.Execution(ctx, webJob+"-1"); err == nil {
 		t.Fatal("a short name was sent to the API")
 	}
 }
@@ -87,14 +90,14 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 func TestLaunchMissingJob(t *testing.T) {
 	b, _, _ := newTestBackend(t)
 	_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
-	if !errors.Is(err, backend.ErrNotFound) || !errors.Is(err, backend.ErrRejected) || !strings.Contains(err.Error(), "fugaro-acme-app-web") {
+	if !errors.Is(err, backend.ErrNotFound) || !errors.Is(err, backend.ErrRejected) || !strings.Contains(err.Error(), webJob) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestLaunchAmbiguousErrorsAreNotRejected(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	for _, code := range []int{429, 500, 503} {
 		fr.FailRunWith = code
 		_, err := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
@@ -111,12 +114,12 @@ func TestLaunchAmbiguousErrorsAreNotRejected(t *testing.T) {
 func TestListIgnoresOtherJobsAndOldExecutions(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
+	fr.AddJob(webJob, "1", "512Mi")
 	fr.AddJob("unrelated-job", "1", "512Mi")
-	fr.Start("fugaro-acme-app-web")
+	fr.Start(webJob)
 	fr.Start("unrelated-job")
 	got, err := b.List(ctx, backend.ListFilter{})
-	if err != nil || len(got) != 1 || got[0].Job != "fugaro-acme-app-web" {
+	if err != nil || len(got) != 1 || got[0].Job != webJob {
 		t.Fatalf("List = %+v, %v", got, err)
 	}
 	if got, _ := b.List(ctx, backend.ListFilter{Since: time.Now().Add(time.Hour)}); len(got) != 0 {
@@ -159,9 +162,9 @@ func TestListFollowsPagesAndStopsAtSince(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
 	b.listPageSize = 2
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
+	fr.AddJob(webJob, "1", "512Mi")
 	for range 5 {
-		fr.Start("fugaro-acme-app-web")
+		fr.Start(webJob)
 	}
 	got, err := b.List(ctx, backend.ListFilter{})
 	if err != nil || len(got) != 5 {
@@ -193,11 +196,11 @@ func TestListPerJob(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
 	fr.Project, fr.Region = "proj-1234", "us-east5"
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
-	fr.AddJob("fugaro-acme-app-api", "2", "1Gi")
-	fr.Start("fugaro-acme-app-web")
-	api := fr.Start("fugaro-acme-app-api")
-	got, err := b.List(ctx, backend.ListFilter{Jobs: []string{"fugaro-acme-app-api"}})
+	fr.AddJob(webJob, "1", "512Mi")
+	fr.AddJob(apiJob, "2", "1Gi")
+	fr.Start(webJob)
+	api := fr.Start(apiJob)
+	got, err := b.List(ctx, backend.ListFilter{Jobs: []string{apiJob}})
 	if err != nil || len(got) != 1 || !backend.SameExecution(got[0].Name, api) || got[0].CPU != 2 || got[0].MemoryGiB != 1 {
 		t.Fatalf("List(api) = %+v, %v", got, err)
 	}
@@ -206,15 +209,15 @@ func TestListPerJob(t *testing.T) {
 func TestExecutionAndCancelNotFound(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
-	missing := "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-99"
+	fr.AddJob(webJob, "1", "512Mi")
+	missing := "projects/proj-1234/locations/us-east5/jobs/" + webJob + "/executions/" + webJob + "-99"
 	if _, err := b.Execution(ctx, missing); !errors.Is(err, backend.ErrNotFound) {
 		t.Fatalf("Execution(missing) = %v", err)
 	}
 	if err := b.Cancel(ctx, missing); !errors.Is(err, backend.ErrNotFound) {
 		t.Fatalf("Cancel(missing) = %v", err)
 	}
-	if err := b.Cancel(ctx, "fugaro-acme-app-web-1"); err == nil {
+	if err := b.Cancel(ctx, webJob+"-1"); err == nil {
 		t.Fatal("Cancel accepted a short name")
 	}
 }
@@ -238,7 +241,7 @@ func launchSpec() backend.LaunchSpec {
 
 func TestLaunchCancelledRequestIsAmbiguous(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	fr.FailRunWith = 499
 	if _, err := b.Launch(context.Background(), launchSpec()); err == nil || errors.Is(err, backend.ErrRejected) {
 		t.Fatalf("HTTP 499: err = %v (must be ambiguous, not rejected)", err)
@@ -249,7 +252,7 @@ func TestLaunchCancelledRequestIsAmbiguous(t *testing.T) {
 // not let the caller release its claim.
 func TestLaunchUnreadableMetadataIsAmbiguous(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	fr.BadRunMetadata = true
 	_, err := b.Launch(context.Background(), launchSpec())
 	if err == nil || errors.Is(err, backend.ErrRejected) || errors.Is(err, backend.ErrNotFound) || len(fr.Executions()) != 1 {
@@ -262,8 +265,8 @@ func TestListKeepsExecutionsWithUnparseableLimits(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
 	var warns []string
 	b.o.Warn = func(m string) { warns = append(warns, m) }
-	fr.AddJob("fugaro-acme-app-web", "four", "8G")
-	fr.Start("fugaro-acme-app-web")
+	fr.AddJob(webJob, "four", "8G")
+	fr.Start(webJob)
 	got, err := b.List(ctx, backend.ListFilter{ActiveOnly: true})
 	if err != nil || len(got) != 1 || got[0].CPU != 0 || got[0].MemoryGiB != 0 || got[0].State != backend.StatePending {
 		t.Fatalf("List = %+v, %v", got, err)
@@ -278,10 +281,10 @@ func TestListSkipsAMissingJob(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
 	var warns []string
 	b.o.Warn = func(m string) { warns = append(warns, m) }
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
-	fr.Start("fugaro-acme-app-web")
-	got, err := b.List(ctx, backend.ListFilter{Jobs: []string{"fugaro-acme-app-gone", "fugaro-acme-app-web"}})
-	if err != nil || len(got) != 1 || got[0].Job != "fugaro-acme-app-web" {
+	fr.AddJob(webJob, "1", "512Mi")
+	fr.Start(webJob)
+	got, err := b.List(ctx, backend.ListFilter{Jobs: []string{"fugaro-acme-app-gone", webJob}})
+	if err != nil || len(got) != 1 || got[0].Job != webJob {
 		t.Fatalf("List = %+v, %v", got, err)
 	}
 	if len(warns) != 1 || !strings.Contains(warns[0], "fugaro-acme-app-gone") {
@@ -292,7 +295,7 @@ func TestListSkipsAMissingJob(t *testing.T) {
 func TestCancelFinishedExecutionFails(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "1", "512Mi")
+	fr.AddJob(webJob, "1", "512Mi")
 	ref, _ := b.Launch(ctx, launchSpec())
 	fr.SetState(ref.Name, backend.StateSucceeded)
 	err := b.Cancel(ctx, ref.Name)

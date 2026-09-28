@@ -9,11 +9,14 @@ import (
 	"strings"
 )
 
-// Name limits: Cloud Run job names are at most 63 characters; service
-// account IDs 6 to 30.
+// Name limits: Cloud Run job names are at most 49 characters (the
+// execution's short name adds a suffix); service account IDs 6 to 30;
+// Secret Manager IDs 255.
 const (
-	maxJobName = 63
-	maxSAID    = 30
+	maxJobName  = 49
+	maxSAID     = 30
+	maxSecretID = 255
+	maxImage    = 128 // one repository path component, well within registry limits
 )
 
 var unsafeNameRE = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -26,29 +29,48 @@ func sanitize(s string) string {
 	return strings.Trim(s, "-")
 }
 
-// fit returns name, or when it is longer than limit, its first characters
-// and a 6-hex hash of the full name, so distinct long names stay distinct.
-func fit(name string, limit int) string {
-	if len(name) <= limit {
-		return name
+// derive is readable, truncated to fit limit, then "-" and 8 hex of
+// sha256(slug NUL second). The readable part is lossy (sanitizing and
+// joining with '-' merge distinct inputs); the hash, over the raw pair, is
+// what keeps distinct (slug, second) pairs apart. It always ends in a hex
+// digit, and starts with readable's first character.
+func derive(readable, slug, second string, limit int) string {
+	sum := sha256.Sum256([]byte(slug + "\x00" + second))
+	suffix := "-" + hex.EncodeToString(sum[:4])
+	if len(readable) > limit-len(suffix) {
+		readable = readable[:limit-len(suffix)]
 	}
-	sum := sha256.Sum256([]byte(name))
-	return strings.TrimRight(name[:limit-7], "-") + "-" + hex.EncodeToString(sum[:3])
+	readable = strings.TrimRight(readable, "-")
+	if readable == "" {
+		return suffix[1:]
+	}
+	return readable + suffix
 }
 
 func stem(slug, workflow string) string { return sanitize("fugaro-" + slug + "-" + workflow) }
 
-// JobName is the Cloud Run job of (slug, workflow) (design §3.2).
-func JobName(slug, workflow string) string { return fit(stem(slug, workflow), maxJobName) }
+// JobName is the Cloud Run job of (slug, workflow) (design §3.2):
+// fugaro-<slug>-<workflow>, sanitized and truncated, plus a hash of the
+// pair, so two repositories never share a job.
+func JobName(slug, workflow string) string {
+	return derive(stem(slug, workflow), slug, workflow, maxJobName)
+}
 
-// ServiceAccountID is the job's dedicated service account ID (design §6.1).
-func ServiceAccountID(slug, workflow string) string { return fit(stem(slug, workflow), maxSAID) }
+// ServiceAccountID is the job's dedicated service account ID (design §6.1),
+// built like JobName within 30 characters.
+func ServiceAccountID(slug, workflow string) string {
+	return derive(stem(slug, workflow), slug, workflow, maxSAID)
+}
 
 // SecretID is the Secret Manager secret holding a repository's logical
-// secret (a workflow secret's name, or one of config.ReservedSecrets).
-func SecretID(slug, logical string) string { return sanitize("fugaro-" + slug + "-" + logical) }
+// secret (a workflow secret's name, or one of config.ReservedSecrets),
+// built like JobName.
+func SecretID(slug, logical string) string {
+	return derive(sanitize("fugaro-"+slug+"-"+logical), slug, logical, maxSecretID)
+}
 
-// ImageName is the derived image of (slug, workflow) in registry, untagged.
+// ImageName is the derived image of (slug, workflow) in registry, untagged,
+// built like JobName without the fugaro- prefix.
 func ImageName(registry, slug, workflow string) string {
-	return strings.TrimSuffix(registry, "/") + "/" + sanitize(slug+"-"+workflow)
+	return strings.TrimSuffix(registry, "/") + "/" + derive(sanitize(slug+"-"+workflow), slug, workflow, maxImage)
 }

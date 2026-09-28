@@ -23,7 +23,7 @@ var testStart = time.Now()
 func TestLogsOnceAndFollow(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(1)+`","severity":"INFO","message":"stage started","stage":"implement","run_id":"20260927-100000-abcd"}
 {"time":"`+at(2)+`","severity":"WARNING","message":"cache miss","stage":"bootstrap"}
@@ -60,7 +60,7 @@ func TestLogsOnceAndFollow(t *testing.T) {
 func TestLogsFollowCatchesLateIngestedEntries(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(5)+`","message":"newer"}`+"\n"))
 	var got []string
@@ -80,7 +80,7 @@ func TestLogsFollowCatchesLateIngestedEntries(t *testing.T) {
 
 func TestLogsFollowStopsOnContext(t *testing.T) {
 	b, fr, _ := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(context.Background(), backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -93,7 +93,7 @@ func TestLogsFollowStopsOnContext(t *testing.T) {
 func TestLogsTextPayloadAndShortNameRefused(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	fl.AddJSONLines(ref.Name, []byte("panic: boom\n"))
 	var got []backend.LogEntry
@@ -103,7 +103,7 @@ func TestLogsTextPayloadAndShortNameRefused(t *testing.T) {
 	if len(got) != 1 || got[0].Message != "panic: boom" || got[0].Fields != nil {
 		t.Fatalf("entries = %+v", got)
 	}
-	if err := b.Logs(ctx, backend.LogQuery{Execution: "fugaro-acme-app-web-1"}, func(backend.LogEntry) error { return nil }); err == nil {
+	if err := b.Logs(ctx, backend.LogQuery{Execution: webJob + "-1"}, func(backend.LogEntry) error { return nil }); err == nil {
 		t.Fatal("a short name was sent to the API")
 	}
 }
@@ -111,7 +111,7 @@ func TestLogsTextPayloadAndShortNameRefused(t *testing.T) {
 func TestLogsWithoutSinceStartAtTheExecutionsCreation(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	e, _ := b.Execution(ctx, ref.Name)
 	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+e.Created.Add(-time.Hour).UTC().Format(time.RFC3339Nano)+`","message":"before"}`+"\n"+
@@ -136,7 +136,7 @@ func TestLogsWithoutSinceStartAtTheExecutionsCreation(t *testing.T) {
 func TestLogsFollowSurvivesAFutureDatedEntry(t *testing.T) {
 	ctx := context.Background()
 	b, fr, fl := newTestBackend(t)
-	fr.AddJob("fugaro-acme-app-web", "4", "8Gi")
+	fr.AddJob(webJob, "4", "8Gi")
 	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+time.Now().Add(24*time.Hour).UTC().Format(time.RFC3339Nano)+`","message":"future"}`+"\n"))
 	var got []string
