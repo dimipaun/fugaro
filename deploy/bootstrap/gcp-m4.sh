@@ -372,6 +372,9 @@ JSON
     need REGION
     need_build_sa
     confirm "creates service account $BUILD_SA and grants it artifactregistry.writer on repository fugaro and logging.logWriter on $PROJECT"
+    if [ "$APPLY" = 1 ] && ! exists gcloud artifacts repositories describe fugaro --location "$REGION" --project "$PROJECT"; then
+      die "Artifact Registry repository fugaro does not exist in $REGION; run the registry step first"
+    fi
     own_registry
     if exists gcloud iam service-accounts describe "$BUILD_SA" --project "$PROJECT"; then
       own_build_sa
