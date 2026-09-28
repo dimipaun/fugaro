@@ -138,6 +138,29 @@ func TestCancelReportsALaunchStillInFlight(t *testing.T) {
 	}
 }
 
+// A launcher that refuses because of the marker releases its claim.
+// Nothing will launch, so cancel reports not-launched, not launching.
+func TestCancelReportsNotLaunchedWhenTheLauncherReleases(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "", false)
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	if ok, _, err := s.Claim(context.Background(), "laptop/1/1", time.Now()); !ok || err != nil {
+		t.Fatal(ok, err)
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = b.Delete(context.Background(), s.ClaimKey()) // the launcher saw the marker and refused
+	}()
+	out, _, err := execute(t, "cancel", "--json", "--poll", "10ms", id)
+	var res cancelResult
+	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != cancelNotLaunched || !res.Marker {
+		t.Fatalf("cancel --json = %s, %v", out, err)
+	}
+}
+
 // finishingBackend lets the runner write its final record and exit just
 // before the CLI reads the execution: the record it read first then
 // says running while the execution has ended.

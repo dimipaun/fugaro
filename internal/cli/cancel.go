@@ -123,8 +123,13 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		// A launch is in flight. Its launcher re-checks the marker
 		// after claiming; if it had already passed that point, wait for its
 		// launch.json and cancel the execution like any launched run.
-		if l, err = awaitLaunch(ctx, env, s, id, o.poll); err != nil {
+		var released bool
+		if l, released, err = awaitLaunch(ctx, env, s, id, o.poll); err != nil {
 			return err
+		}
+		if released {
+			// The launcher saw the marker and refused: nothing will launch.
+			return emit(cancelResult{Run: ref, Status: cancelNotLaunched, Marker: true})
 		}
 		if l == nil {
 			return emit(cancelResult{Run: ref, Status: cancelLaunching, Marker: true})
@@ -228,25 +233,34 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 }
 
 // awaitLaunch polls up to claimWait for the launch of a run whose claim is
-// held: nil when the claim is released (the launcher refused) or the wait
-// runs out.
-func awaitLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string, poll time.Duration) (*runstore.Launch, error) {
+// held. It returns the launch once launch.json names an execution;
+// released when the claim is gone with no launch.json, which means the
+// launcher refused (a claim is never deleted after a launch); and neither
+// when the wait runs out.
+func awaitLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, id string, poll time.Duration) (l *runstore.Launch, released bool, err error) {
 	deadline := time.Now().Add(claimWait)
 	for {
 		l, err := ownerLaunch(ctx, env, s, id)
 		if err != nil || (l != nil && l.Execution != "") {
-			return l, err
+			return l, false, err
 		}
 		held, err := env.bucket.Exists(ctx, s.ClaimKey())
 		if err != nil {
-			return nil, remote(err)
+			return nil, false, remote(err)
 		}
-		if !held || !time.Now().Before(deadline) {
-			return nil, nil
+		if !held {
+			// Read launch.json once more, in case it landed between the reads.
+			if l, err := ownerLaunch(ctx, env, s, id); err != nil || (l != nil && l.Execution != "") {
+				return l, false, err
+			}
+			return nil, true, nil
+		}
+		if !time.Now().Before(deadline) {
+			return nil, false, nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		case <-time.After(poll):
 		}
 	}
