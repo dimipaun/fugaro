@@ -10,13 +10,10 @@ import (
 	"io"
 	"maps"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -148,33 +145,6 @@ func resolveSecretRepo(cmd *cobra.Command, env *cloudEnv, flag string) (*secretR
 	return r, nil
 }
 
-// checkoutConfigProblems is the number of problems with the fugaro.yaml of
-// the checkout in the working directory when that checkout is repo's (see
-// checkoutConfig), or 0 when there is no such checkout or file.
-func checkoutConfigProblems(ctx context.Context, repo string) int {
-	origin, err := originRepo(ctx)
-	if err != nil {
-		return 0
-	}
-	a, err1 := task.CanonicalRepo(origin)
-	b, err2 := task.CanonicalRepo(repo)
-	if err1 != nil || err2 != nil || a != b {
-		return 0
-	}
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		return 0
-	}
-	data, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "fugaro.yaml"))
-	if err != nil {
-		return 0
-	}
-	_, problems := config.Parse(data)
-	return len(problems)
-}
-
 // declares reports whether some workflow of cfg lists secret name.
 func declares(cfg *config.Config, name string) bool {
 	for _, wf := range cfg.Workflows {
@@ -209,8 +179,8 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 		// would end up in the ID. Neither message quotes NAME.
 		cfg := r.checkout()
 		if cfg == nil {
-			if problems := checkoutConfigProblems(ctx, r.repo); problems > 0 {
-				return userErr("this checkout's fugaro.yaml has %d problem(s), so it can't confirm a workflow secret's NAME; see fugaro validate", problems)
+			if _, problems := checkoutParse(ctx, r.repo); len(problems) > 0 {
+				return userErr("this checkout's fugaro.yaml has %d problem(s), so it can't confirm a workflow secret's NAME; see fugaro validate", len(problems))
 			}
 			return userErr("a workflow secret's NAME is checked against the repository's fugaro.yaml; run this from a checkout of %s", r.repo)
 		}
