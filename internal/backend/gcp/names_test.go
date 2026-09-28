@@ -22,12 +22,12 @@ var (
 
 func TestNames(t *testing.T) {
 	for _, c := range []struct{ got, want string }{
-		{JobName("acme-app", "web"), "fugaro-acme-app-web-2dc53d2b"},
+		{JobName("acme-app", "web"), "fugaro-acme-app-web-2dc53d2bf3a6"},
 		{ServiceAccountID("acme-app", "web"), "fugaro-acme-app-web-2dc53d2b"},
-		{SecretID("acme-app", "bitbucket-token"), "fugaro-acme-app-bitbucket-token-0efe1f9a"},
-		{ImageName("us-east5-docker.pkg.dev/p/fugaro", "acme-my.app", "web"), "us-east5-docker.pkg.dev/p/fugaro/acme-my-app-web-1f52a584"},
+		{SecretID("acme-app", "bitbucket-token"), "fugaro-acme-app-bitbucket-token-0efe1f9a3085f9af"},
+		{ImageName("us-east5-docker.pkg.dev/p/fugaro", "acme-my.app", "web"), "us-east5-docker.pkg.dev/p/fugaro/acme-my-app-web-1f52a58402ad0f07"},
 		// Storage slugs may hold '.' and '_'; Cloud Run names may not.
-		{JobName("acme-my.app_x", "web"), "fugaro-acme-my-app-x-web-63dbfb98"},
+		{JobName("acme-my.app_x", "web"), "fugaro-acme-my-app-x-web-63dbfb983390"},
 		{ServiceAccountID("acmecorp-fugarosandbox", "web"), "fugaro-acmecorp-fugar-b8404e39"},
 	} {
 		if c.got != c.want {
@@ -57,6 +57,8 @@ var trickyPairs = [][2][2]string{
 	{{strings.Repeat("a", 80), "web"}, {strings.Repeat("a", 80), "api"}},
 	{{strings.Repeat("a", 60) + "x", "web"}, {strings.Repeat("a", 60) + "y", "web"}},
 	{{"acmecorp-fugarosandbox", "web"}, {"acmecorp-fugarosandbox", "api"}},
+	// readableSlug strips a 16-hex tail, even a genuine one; the hash still differs.
+	{{"acme-0123456789abcdef", "web"}, {"acme", "web"}},
 }
 
 func TestNamesAreInjective(t *testing.T) {
@@ -139,7 +141,19 @@ func TestNamesFitEachResourcesLimits(t *testing.T) {
 // Real slugs end in their own hash; names leave it out of the readable
 // part, stay within limits, and still separate the repositories.
 func TestNamesOfRealSlugs(t *testing.T) {
-	a, b := task.Slug("acme/app-web"), task.Slug("acme-app/web")
+	// Pinned: these name live resources.
+	bb := realSlug(t, "bitbucket", "acme/app")
+	for _, c := range []struct{ got, want string }{
+		{JobName(bb, "web"), "fugaro-acme-app-web-d23e1b1855b7"},
+		{ServiceAccountID(bb, "web"), "fugaro-acme-app-web-d23e1b18"},
+		{SecretID(bb, "bitbucket-token"), "fugaro-acme-app-bitbucket-token-56bdbf4c11445b53"},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+
+	a, b := realSlug(t, "github", "acme/app-web"), realSlug(t, "github", "acme-app/web")
 	if j := JobName(a, "x"); !strings.HasPrefix(j, "fugaro-acme-app-web-x-") || len(j) > 49 || !jobNameRE.MatchString(j) {
 		t.Errorf("JobName(%q) = %q", a, j)
 	}
@@ -148,11 +162,20 @@ func TestNamesOfRealSlugs(t *testing.T) {
 			t.Errorf("%s: acme/app-web and acme-app/web share %q", name, f(a, "x"))
 		}
 	}
-	long := task.Slug(strings.Repeat("organization", 6) + "/" + strings.Repeat("repository", 6))
+	long := realSlug(t, "github", strings.Repeat("organization", 6)+"/"+strings.Repeat("repository", 6))
 	if j := JobName(long, "web"); len(j) > 49 || !jobNameRE.MatchString(j) {
 		t.Errorf("JobName(long slug) = %q (%d)", j, len(j))
 	}
 	if sa := ServiceAccountID(long, "web"); len(sa) > 30 || !saIDRE.MatchString(sa) {
 		t.Errorf("ServiceAccountID(long slug) = %q", sa)
 	}
+}
+
+func realSlug(t *testing.T, provider, repo string) string {
+	t.Helper()
+	s, err := task.Slug(provider, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }

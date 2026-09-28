@@ -20,8 +20,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// acmeSlug is the storage slug of the test repository acme/app.
-var acmeSlug = task.Slug("acme/app")
+// acmeSlug is the storage slug of the test repository acme/app under the
+// fake provider (--provider fake); bitbucketSlug is its slug under
+// --provider bitbucket.
+var acmeSlug, bitbucketSlug = mustSlug("fake", "acme/app"), mustSlug("bitbucket", "acme/app")
+
+func mustSlug(provider, repo string) string {
+	s, err := task.Slug(provider, repo)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
 
 // childTimeout bounds a fugaro exec child: long enough for any real scenario
 // (the slowest, TestStageTimeout, finishes in well under a minute even under
