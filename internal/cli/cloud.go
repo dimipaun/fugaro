@@ -43,6 +43,10 @@ type cloudEnv struct {
 	gcp    gcp.Options
 }
 
+// TODO(M2 merge): add prices() once T7's gcp.ListPrices is on this lane:
+//
+//	func (e *cloudEnv) prices() backend.Prices { return gcp.ListPrices(e.lc.Region) }
+
 // Close releases the bucket.
 func (e *cloudEnv) Close() {
 	if e.bucket != nil {
@@ -106,8 +110,7 @@ func locateRun(ctx context.Context, env *cloudEnv, ref string) (slug, runID stri
 	}
 	slug, runID, err = runstore.Locate(ctx, env.bucket.Bucket, ref)
 	switch {
-	case errors.Is(err, runstore.ErrNotFound),
-		err != nil && strings.Contains(err.Error(), "several repositories"): // Locate's only other non-remote error
+	case errors.Is(err, runstore.ErrNotFound), errors.Is(err, runstore.ErrAmbiguous):
 		return "", "", userErr("%v", err)
 	case err != nil:
 		return "", "", remote(err)
@@ -130,17 +133,25 @@ func (e *cloudEnv) localRepo(repo string) (localcfg.Repo, bool) {
 }
 
 // repoSlug is repo's storage slug. Its git provider kind comes from the
-// local config's entry for repo, else from the checkout's fugaro.yaml
-// (checkout is nil-safe: see checkoutOf). Never from the origin host.
+// local config's entry for repo and from the checkout's fugaro.yaml (only
+// when the checkout's origin is repo; see checkoutOf). Either may be
+// missing, but when both are set they must agree: the slug depends on it.
+// It never comes from the origin host.
 func (e *cloudEnv) repoSlug(repo string, checkout func() *config.Config) (string, error) {
-	provider := ""
+	local := ""
 	if r, ok := e.localRepo(repo); ok {
-		provider = r.Provider
+		local = r.Provider
 	}
-	if provider == "" {
-		if c := checkout(); c != nil {
-			provider = c.Git.Provider
-		}
+	fromCheckout := ""
+	if c := checkout(); c != nil {
+		fromCheckout = c.Git.Provider
+	}
+	provider := local
+	switch {
+	case local != "" && fromCheckout != "" && local != fromCheckout:
+		return "", userErr("the local config says %s is on %s, but this checkout's fugaro.yaml says %s; make them agree", repo, local, fromCheckout)
+	case local == "":
+		provider = fromCheckout
 	}
 	if provider == "" {
 		return "", userErr("cannot tell the git provider of %s: set provider in its repos entry of the local config, or run from its checkout", repo)

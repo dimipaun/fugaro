@@ -32,6 +32,10 @@ func validBranchName(b string) bool {
 // reservedEnvPrefixes are set by Fugaro itself or change git and Claude Code behavior.
 var reservedEnvPrefixes = []string{"FUGARO_", "ANTHROPIC_", "CLAUDE_CODE_", "GIT_"}
 
+// Providers are the git provider kinds a repository may use: fugaro.yaml's
+// git.provider and the local config's repos.<repo>.provider.
+var Providers = []string{"github", "bitbucket"}
+
 // Validate reports every rule a defaulted config breaks.
 func Validate(c *Config) []Problem {
 	var ps []Problem
@@ -41,8 +45,8 @@ func Validate(c *Config) []Problem {
 	if c.Version != 1 {
 		add("version", "must be 1")
 	}
-	if !slices.Contains([]string{"github", "bitbucket"}, c.Git.Provider) {
-		add("git.provider", "must be one of github, bitbucket")
+	if !slices.Contains(Providers, c.Git.Provider) {
+		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
 	if !validBranchName(c.Git.BaseBranch) {
 		add("git.base_branch", "must be a plain git branch name: letters, digits, '.', '_', '-' and '/', not starting with '-', '.' or '/', with no '..', '//', component starting with '.', or trailing '/', '.' or '.lock'")

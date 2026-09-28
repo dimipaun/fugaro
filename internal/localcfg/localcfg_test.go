@@ -45,7 +45,8 @@ func TestParseRejects(t *testing.T) {
 		"bad repo":      {sample + "  nope: { workflows: [web] }\n", "owner/name"},
 		"bad workflow":  {sample + "  acme/api: { workflows: [Web] }\n", "workflow"},
 		"bad parallel":  {sample + "max_parallel: -1\n", "max_parallel"},
-		"bad provider":  {sample + "  acme/api: { provider: GitHub, workflows: [web] }\n", "provider"},
+		"bad provider":  {sample + "  acme/api: { provider: githbu, workflows: [web] }\n", "must be one of github, bitbucket"},
+		"fake provider": {sample + "  acme/api: { provider: fake, workflows: [web] }\n", "must be one of github, bitbucket"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {

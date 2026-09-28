@@ -52,7 +52,7 @@ func TestListAndLocate(t *testing.T) {
 		t.Fatalf("Locate missing = %v", err)
 	}
 	seed(t, Open(b, "acme-web", "20260927-110000-cccc"), "20260927-110000-cccc")
-	if _, _, err := Locate(ctx, b, "20260927-110000-cccc"); err == nil || !strings.Contains(err.Error(), "acme-app/20260927-110000-cccc") {
+	if _, _, err := Locate(ctx, b, "20260927-110000-cccc"); !errors.Is(err, ErrAmbiguous) || !strings.Contains(err.Error(), "acme-app/20260927-110000-cccc") {
 		t.Fatalf("Locate ambiguous = %v", err)
 	}
 	if rt, err := RunTime("20260927-110000-cccc"); err != nil || !rt.Equal(time.Date(2026, 9, 27, 11, 0, 0, 0, time.UTC)) {

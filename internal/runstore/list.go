@@ -114,5 +114,5 @@ func Locate(ctx context.Context, b *blob.Bucket, ref string) (slug, runID string
 	for i, s := range found {
 		refs[i] = s + "/" + ref
 	}
-	return "", "", fmt.Errorf("run ID %s is in several repositories; pass one of %s", ref, strings.Join(refs, ", "))
+	return "", "", fmt.Errorf("run ID %s is in several repositories; pass one of %s: %w", ref, strings.Join(refs, ", "), ErrAmbiguous)
 }

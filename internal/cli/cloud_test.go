@@ -85,6 +85,18 @@ func extra(entries []string) string {
 // launchRun directly and concurrently (fileblob's IfNotExist is not atomic).
 func memEnv(t *testing.T, f *cloudFixture) *cloudEnv {
 	t.Helper()
+	return envOn(t, f, blobx.Wrap(memblob.OpenBucket(nil)))
+}
+
+// gcsEnv builds a cloudEnv on the GCS fake, so conditional writes take
+// blobx's generation-matching path, as in production.
+func gcsEnv(t *testing.T, f *cloudFixture) *cloudEnv {
+	t.Helper()
+	return envOn(t, f, gcpfake.NewGCS(t).Bucket(t, "runs"))
+}
+
+func envOn(t *testing.T, f *cloudFixture, bucket *blobx.Bucket) *cloudEnv {
+	t.Helper()
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +106,7 @@ func memEnv(t *testing.T, f *cloudFixture) *cloudEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &cloudEnv{lc: lc, bucket: blobx.Wrap(memblob.OpenBucket(nil)), be: be}
+	return &cloudEnv{lc: lc, bucket: bucket, be: be}
 }
 
 func TestGitprovSafe(t *testing.T) {

@@ -84,6 +84,9 @@ type Record struct {
 // ErrNotFound means the requested object does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrAmbiguous means a bare run ID names runs in several repositories.
+var ErrAmbiguous = errors.New("ambiguous run ID")
+
 // ErrExists means a create-once object is already there.
 var ErrExists = errors.New("already exists")
 

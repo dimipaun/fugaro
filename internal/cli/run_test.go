@@ -251,6 +251,34 @@ func TestLaunchStaleJudgementRacesAFreshClaim(t *testing.T) {
 	}
 }
 
+// N-1 itself: Claim's own read saw a stale claim, but before our
+// generation-carrying read another CLI replaced it with a fresh one. The
+// staleness judgement must come from that read, so we wait, and nobody
+// launches while the fresh holder is (supposedly) launching.
+func TestLaunchStaleClaimTurnsFreshBeforeTheRead(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	now := time.Now()
+	s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+	if ok, _, _ := s.Claim(context.Background(), "dead-laptop/1/1", now.Add(-2*claimTTL)); !ok {
+		t.Fatal("seed claim")
+	}
+	shortWait(t)
+	launchHooks.beforeRead = func() {
+		fresh, _ := json.Marshal(runstore.Claim{Holder: "other-laptop/2/2", At: now})
+		_ = env.bucket.WriteAll(context.Background(), s.ClaimKey(), fresh, nil)
+	}
+	t.Cleanup(func() { launchHooks.beforeRead = nil })
+	_, err := launchRun(context.Background(), env, appSlug, spec, now)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "in flight") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want 0", n)
+	}
+}
+
 // N-10: a claim released between our Claim and our read counts as absent,
 // and we take it.
 func TestLaunchClaimReleasedBeforeTheRead(t *testing.T) {
@@ -300,7 +328,8 @@ func TestLaunchRejectedReleasesOurClaim(t *testing.T) {
 	env := memEnv(t, f)
 	spec := raceSpec(t, env)
 	spec.Workflow = "missing" // no such job: Launch fails with ErrNotFound + ErrRejected
-	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); ExitCode(err) != ExitUserError {
+	_, err := launchRun(context.Background(), env, appSlug, spec, time.Now())
+	if ExitCode(err) != ExitRemoteError || !errors.Is(err, backend.ErrRejected) || !errors.Is(err, backend.ErrNotFound) || !strings.Contains(err.Error(), "nothing started") {
 		t.Fatalf("err = %v", err)
 	}
 	spec.Workflow = "web"
@@ -551,5 +580,137 @@ func TestRunResolvesFromTheCheckout(t *testing.T) {
 	f.appendConfig(t, "  acme/two: { provider: github, workflows: [a, b] }\n")
 	if _, _, err := execute(t, "run", "--repo", "acme/two", "A task"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--workflow") {
 		t.Fatalf("two workflows: %v", err)
+	}
+}
+
+// A plain repeat of --run-id must not launch a run that was cancelled
+// before it launched, any more than --retry may.
+func TestLaunchRefusesACancelledRun(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	_ = runstore.Open(env.bucket.Bucket, appSlug, spec.RunID).RequestCancel(context.Background())
+	if _, err := launchRun(context.Background(), env, appSlug, spec, time.Now()); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want 0", n)
+	}
+}
+
+func TestRunRefusesACancelledRunID(t *testing.T) {
+	f := newCloudFixture(t)
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	spec := &task.Spec{Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "Add a feature", RequestedBy: "someone@example.com"}
+	s := runstore.Open(b, appSlug, spec.RunID)
+	_ = s.CreateTask(context.Background(), spec)
+	_ = s.RequestCancel(context.Background())
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", spec.RunID, "Add a feature"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cancelled") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want 0", n)
+	}
+}
+
+// A loser waiting on a claim whose holder was refused (and released it)
+// claims at once instead of waiting out claimWait and claimTTL.
+func TestLaunchLoserRetriesAReleasedClaim(t *testing.T) {
+	f := newCloudFixture(t)
+	env := memEnv(t, f)
+	spec := raceSpec(t, env)
+	shortWait(t)
+	claimWait = 5 * time.Second
+	s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+	if ok, _, _ := s.Claim(context.Background(), "refused/1/1", time.Now()); !ok {
+		t.Fatal("seed claim")
+	}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		_ = env.bucket.Delete(context.Background(), s.ClaimKey())
+	}()
+	start := time.Now()
+	res, err := launchRun(context.Background(), env, appSlug, spec, time.Now())
+	if err != nil || res.Status != "launched" || len(f.run.Executions()) != 1 {
+		t.Fatalf("res = %+v, err = %v, executions %v", res, err, f.run.Executions())
+	}
+	if d := time.Since(start); d > 4*time.Second {
+		t.Fatalf("took %s: waited out claimWait", d)
+	}
+}
+
+// On GCS the takeover matches the generation it read, not the content: a
+// stale claim rewritten with the same bytes (a new generation) between our
+// read and our replace is not ours to take (the path production uses).
+func TestLaunchStaleTakeoverOnGCSMatchesGeneration(t *testing.T) {
+	t.Run("takeover", func(t *testing.T) {
+		f := newCloudFixture(t)
+		env := gcsEnv(t, f)
+		spec := raceSpec(t, env)
+		now := time.Now()
+		s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+		if ok, _, err := s.Claim(context.Background(), "dead-laptop/1/1", now.Add(-2*claimTTL)); !ok || err != nil {
+			t.Fatal(ok, err)
+		}
+		if res, err := launchRun(context.Background(), env, appSlug, spec, now); err != nil || res.Status != "launched" || len(f.run.Executions()) != 1 {
+			t.Fatalf("res = %+v, err = %v", res, err)
+		}
+	})
+	t.Run("same bytes, new generation", func(t *testing.T) {
+		f := newCloudFixture(t)
+		env := gcsEnv(t, f)
+		spec := raceSpec(t, env)
+		now := time.Now()
+		s := runstore.Open(env.bucket.Bucket, appSlug, spec.RunID)
+		if ok, _, err := s.Claim(context.Background(), "dead-laptop/1/1", now.Add(-2*claimTTL)); !ok || err != nil {
+			t.Fatal(ok, err)
+		}
+		setHooks(t, nil, func() {
+			data, _, err := env.bucket.Read(context.Background(), s.ClaimKey())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := env.bucket.WriteAll(context.Background(), s.ClaimKey(), data, nil); err != nil {
+				t.Fatal(err)
+			}
+		}, nil)
+		if _, err := launchRun(context.Background(), env, appSlug, spec, now); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "in flight") {
+			t.Fatalf("err = %v", err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Fatalf("%d executions, want 0", n)
+		}
+	})
+}
+
+// --retry of a run that did launch reports it, and says where to go next.
+func TestRunRetryOfALaunchedRunHints(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "Add a feature"); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, err := execute(t, "run", "--retry", "20260927-100000-abcd")
+	if err != nil || !strings.HasPrefix(out, "already launched") || !strings.Contains(errOut, "fugaro diagnose "+appSlug+"/20260927-100000-abcd") {
+		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
+	}
+}
+
+// The local config and the checkout's fugaro.yaml must agree on the
+// provider: the slug, and so the run's whole storage prefix, depends on it.
+func TestRunProviderMismatch(t *testing.T) {
+	newCloudFixture(t)
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/app.git")
+	yaml := "version: 1\ngit: { provider: bitbucket }\nworkflows:\n  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	if _, _, err := execute(t, "run", "--run-id", "20260927-100000-abcd", "A task"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "agree") {
+		t.Fatalf("err = %v", err)
 	}
 }

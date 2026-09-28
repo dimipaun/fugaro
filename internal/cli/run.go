@@ -158,6 +158,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.retry != "" && res.Status == "already-launched" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "%s launched already; --retry only starts a run that never launched. "+
+			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
+	}
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 
@@ -289,13 +293,6 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	if spec.RunID != runID {
 		return "", nil, userErr("run %s/%s holds the task of run %s; it can't be retried", slug, runID, spec.RunID)
 	}
-	cancelled, err := s.CancelRequested(ctx)
-	if err != nil {
-		return "", nil, remote(err)
-	}
-	if cancelled {
-		return "", nil, userErr("run %s/%s was cancelled; start a new one", slug, runID)
-	}
 	if spec.Workflow == "" {
 		if spec.Workflow, err = resolveWorkflow(env, spec.Repo, "", checkoutOf(ctx, spec.Repo)); err != nil {
 			return "", nil, err
@@ -407,7 +404,9 @@ func existingLaunch(ctx context.Context, s *runstore.Store, runID string) (*runs
 //     that vanished before the read counts as absent: claim once more (N-10).
 //   - A fresh claim, or a lost takeover, means someone else is launching:
 //     wait up to claimWait for their launch.json and report it (N-4), else
-//     exit 1, "still in flight".
+//     exit 1, "still in flight". A claim that disappears while we wait was
+//     released after a refused launch: go back for it at once.
+//   - A run with a cancel marker is never launched.
 //   - Having won the claim, re-check launch.json and result.json: an earlier
 //     holder may have launched just before going stale.
 //   - Launch. Only a definitive refusal (backend.ErrRejected) releases our
@@ -423,67 +422,45 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status
 		return res, nil
 	}
-	wait := func(holder runstore.Claim) (launchResult, error) {
-		l, err := waitForLaunch(ctx, s, spec.RunID, res.Run, holder)
-		if err != nil {
-			return res, err
-		}
-		return done(l, "already-launched")
-	}
 	if l, err := existingLaunch(ctx, s, spec.RunID); err != nil || l != nil {
 		if err != nil {
 			return res, err
 		}
 		return done(l, "already-launched")
 	}
+	if cancelled, err := s.CancelRequested(ctx); err != nil {
+		return res, remote(err)
+	} else if cancelled {
+		return res, userErr("run %s was cancelled; start a new one", res.Run)
+	}
 	hook(launchHooks.beforeClaim)
 	holder := claimHolder()
-	key := s.ClaimKey()
-	for attempt := 0; ; attempt++ {
-		ok, _, err := s.Claim(ctx, holder, now) // Claim itself retries once if the claim vanishes mid-call
-		if err != nil {
-			return res, remote(err)
-		}
-		if ok {
-			break
-		}
-		// Someone holds the claim. Staleness and the takeover's precondition
-		// come from ONE read, so nobody can replace a claim that turned fresh
-		// after we judged it stale (N-1).
-		hook(launchHooks.beforeRead)
-		prev, gen, err := env.bucket.Read(ctx, key)
-		if errors.Is(err, blobx.ErrNotExist) {
-			if attempt == 0 {
-				continue // released between our Claim and this read: absent, so claim once more (N-10)
-			}
-			// Released twice in a row: someone else is taking turns with it.
-			// Never loop; report their launch or "in flight".
-			return wait(runstore.Claim{Holder: "another CLI", At: now})
-		}
-		if err != nil {
-			return res, remote(err)
-		}
-		var cur runstore.Claim
-		stale := json.Unmarshal(prev, &cur) != nil || now.Sub(cur.At) >= claimTTL // unreadable counts as stale
-		if !stale {
-			return wait(cur)
-		}
-		hook(launchHooks.beforeTakeover)
-		mine, err := json.Marshal(runstore.Claim{Holder: holder, At: now.UTC()})
+	for round := 0; ; round++ {
+		won, other, err := takeClaim(ctx, env, s, holder, now)
 		if err != nil {
 			return res, err
 		}
-		if _, err := env.bucket.ReplaceIf(ctx, key, mine, gen, prev); errors.Is(err, blobx.ErrConflict) {
-			// Someone else changed the stale claim first: they launch, we report.
-			return wait(runstore.Claim{Holder: "another CLI", At: now})
-		} else if err != nil {
-			return res, remote(err)
+		if won {
+			break
 		}
-		break
+		l, err := waitForLaunch(ctx, env, s, spec.RunID, res.Run, other)
+		if errors.Is(err, errClaimReleased) {
+			// The holder's launch was refused and it released the claim:
+			// nothing started, so try for the claim again at once.
+			if round < claimRounds-1 {
+				continue
+			}
+			return res, userErr("the launch claim of %s keeps being released by other launches that were refused; run the same command again", res.Run)
+		}
+		if err != nil {
+			return res, err
+		}
+		return done(l, "already-launched")
 	}
 	// We hold the claim. Everything from here is bounded well inside
-	// claimTTL, so no other CLI can judge our claim stale while we work.
-	hctx, cancelHold := context.WithTimeout(ctx, holdTimeout)
+	// claimTTL, measured from the claim's own timestamp (now), which is what
+	// other CLIs judge staleness on: none can take it over while we work.
+	hctx, cancelHold := context.WithDeadline(ctx, now.Add(holdTimeout))
 	defer cancelHold()
 	hook(launchHooks.afterClaim)
 	if l, err := existingLaunch(hctx, s, spec.RunID); err != nil || l != nil {
@@ -502,7 +479,9 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseClaim(rctx, env, s, holder)
 			rcancel()
-			return res, userErr("%v", err)
+			// A GCP API error is a remote failure (exit 2); %w keeps
+			// ErrRejected and ErrNotFound visible to errors.Is.
+			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause and run the same command again: %w", res.Run, err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
 		// execution may exist. Keep the claim; the runner's result.json tells
@@ -536,10 +515,67 @@ func releaseClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder 
 	_ = env.bucket.DeleteIf(ctx, s.ClaimKey(), gen, data)
 }
 
+// errClaimReleased means the claim a loser was waiting on disappeared:
+// its holder's launch was refused and released it (N-12).
+var errClaimReleased = errors.New("launch claim released")
+
+// claimRounds bounds how often launchRun goes back for a released claim.
+const claimRounds = 3
+
+// takeClaim tries to take the run's launch claim. won is true when we hold
+// it; otherwise other is the claim someone else holds, to wait on.
+//
+// A held claim is read ONCE: staleness is judged on that content and the
+// takeover's ReplaceIf matches that read's generation, so nobody can
+// replace a claim that turned fresh after we judged it stale (N-1). A
+// claim that vanished before the read counts as absent (N-10).
+func takeClaim(ctx context.Context, env *cloudEnv, s *runstore.Store, holder string, now time.Time) (won bool, other runstore.Claim, err error) {
+	key := s.ClaimKey()
+	someone := runstore.Claim{Holder: "another CLI", At: now}
+	for attempt := 0; ; attempt++ {
+		ok, _, err := s.Claim(ctx, holder, now) // Claim itself retries once if the claim vanishes mid-call
+		if err != nil {
+			return false, other, remote(err)
+		}
+		if ok {
+			return true, other, nil
+		}
+		hook(launchHooks.beforeRead)
+		prev, gen, err := env.bucket.Read(ctx, key)
+		if errors.Is(err, blobx.ErrNotExist) {
+			if attempt == 0 {
+				continue // released between our Claim and this read: absent, so claim once more
+			}
+			return false, someone, nil // released twice in a row: never loop here
+		}
+		if err != nil {
+			return false, other, remote(err)
+		}
+		var cur runstore.Claim
+		if json.Unmarshal(prev, &cur) == nil && now.Sub(cur.At) < claimTTL {
+			return false, cur, nil // fresh: someone is launching
+		}
+		// Stale (or unreadable): its holder presumably died. Take it over.
+		hook(launchHooks.beforeTakeover)
+		mine, err := json.Marshal(runstore.Claim{Holder: holder, At: now.UTC()})
+		if err != nil {
+			return false, other, err
+		}
+		if _, err := env.bucket.ReplaceIf(ctx, key, mine, gen, prev); errors.Is(err, blobx.ErrConflict) {
+			return false, someone, nil // someone else changed the stale claim first: they launch
+		} else if err != nil {
+			return false, other, remote(err)
+		}
+		return true, other, nil
+	}
+}
+
 // waitForLaunch waits up to claimWait for the claim holder's launch.json
 // (N-4): a concurrent "fugaro run --run-id X" then reports the winner's
-// launch with exit 0, as a repeated launch should. Otherwise exit 1.
-func waitForLaunch(ctx context.Context, s *runstore.Store, runID, run string, holder runstore.Claim) (*runstore.Launch, error) {
+// launch with exit 0, as a repeated launch should. Otherwise exit 1. When
+// the claim disappears (its holder was refused and released it), it
+// returns errClaimReleased at once, so the caller can claim again.
+func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, runID, run string, holder runstore.Claim) (*runstore.Launch, error) {
 	deadline := time.Now().Add(claimWait)
 	for {
 		l, err := existingLaunch(ctx, s, runID)
@@ -548,6 +584,13 @@ func waitForLaunch(ctx context.Context, s *runstore.Store, runID, run string, ho
 		}
 		if l != nil {
 			return l, nil
+		}
+		held, err := env.bucket.Exists(ctx, s.ClaimKey())
+		if err != nil {
+			return nil, remote(err)
+		}
+		if !held {
+			return nil, errClaimReleased
 		}
 		if !time.Now().Before(deadline) {
 			return nil, userErr("a launch of %s by %s (claimed %s) is still in flight after %s; run fugaro ls, or fugaro run --retry %s after %s",
