@@ -30,7 +30,7 @@ const childTimeout = 90 * time.Second
 // agentStartTimeout bounds how long cancelOnAgentStart waits for the fake
 // claude to record its first call before giving up and writing the cancel
 // marker anyway.
-const agentStartTimeout = 10 * time.Second
+const agentStartTimeout = 60 * time.Second
 
 const runID = "20260926-221530-abcd"
 
@@ -102,14 +102,26 @@ func runScenario(t *testing.T, sc scenario) result {
 		go func() {
 			defer close(cancelDone)
 			deadline := time.Now().Add(agentStartTimeout)
+			started := false
 			for time.Now().Before(deadline) {
 				if _, err := os.Stat(callsFile); err == nil {
+					started = true
 					break
 				}
 				time.Sleep(20 * time.Millisecond)
 			}
+			if !started {
+				t.Errorf("the agent never started within %s", agentStartTimeout)
+			}
+			// The run's directory may not exist yet on a slow machine; a lost
+			// cancel would let the scenario run on into review.
 			marker := filepath.Join(bucket, "runs", "acme-app", runID, "cancel")
-			_ = os.WriteFile(marker, []byte("now"), 0o644)
+			if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+				t.Errorf("creating the cancel marker's directory: %v", err)
+			}
+			if err := os.WriteFile(marker, []byte("now"), 0o644); err != nil {
+				t.Errorf("writing the cancel marker: %v", err)
+			}
 		}()
 	}
 
