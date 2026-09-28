@@ -57,7 +57,9 @@ var errNotRegular = errors.New("not a regular file")
 func KeyOf(ctx context.Context, root string, e config.CacheEntry, baseImage, toolchain string, warn func(msg string, args ...any)) (string, bool, error) {
 	var files []string
 	for _, pattern := range e.Key {
-		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly())
+		// WithNoFollow: the agent can plant directory links that loop, and
+		// following them makes a "**" walk grow without bound.
+		matches, err := doublestar.Glob(os.DirFS(root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
 		if err != nil {
 			return "", false, fmt.Errorf("cache key %q: %w", pattern, err)
 		}

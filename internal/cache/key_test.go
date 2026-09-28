@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -100,5 +101,35 @@ func TestResolveWarnings(t *testing.T) {
 	got := ResolveWarnings([]string{"~/.config/yarn", "~/.cache/yarn", ".config/x", "~/./.config/gh"})
 	if len(got) != 2 || !strings.Contains(got[0], "~/.config/yarn") || !strings.Contains(got[1], "~/./.config/gh") {
 		t.Fatalf("ResolveWarnings = %q", got)
+	}
+}
+
+// TestKeyOfSurvivesSymlinkLoops: the agent can plant self-referencing
+// directory links before writeback; a "**" key pattern must not follow them,
+// or the walk grows exponentially and never returns.
+func TestKeyOfSurvivesSymlinkLoops(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, map[string]string{"sub/x.lock": "v1"})
+	for _, name := range []string{"a", "b", "c"} {
+		if err := os.Symlink(".", filepath.Join(root, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e := config.CacheEntry{Key: []string{"**/x.lock"}, Paths: []string{"~/.cache/x"}}
+	done := make(chan error, 1)
+	go func() {
+		_, ok, err := KeyOf(context.Background(), root, e, "", "tc", nil)
+		if err == nil && !ok {
+			err = os.ErrNotExist
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("KeyOf with symlink loops: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("KeyOf hung on a tree with symlink loops")
 	}
 }
