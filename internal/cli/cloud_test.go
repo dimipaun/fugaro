@@ -156,3 +156,21 @@ func TestRemoteKeepsAnExistingCode(t *testing.T) {
 		t.Error("remote() did not mark a plain error as exit 2")
 	}
 }
+
+// The cost estimate's prices are the region the jobs run in, after --region.
+func TestCloudPricesFollowTheRegion(t *testing.T) {
+	newCloudFixture(t) // region us-east5
+	if gcp.ListPrices("us-east5") == gcp.ListPrices("europe-west2") {
+		t.Fatal("the two regions price the same, so the test cannot tell them apart")
+	}
+	for flag, region := range map[string]string{"": "us-east5", "europe-west2": "europe-west2"} {
+		env, err := openCloud(context.Background(), cloudOptions{region: flag})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := env.prices(), gcp.ListPrices(region); got != want {
+			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
+		}
+		env.Close()
+	}
+}

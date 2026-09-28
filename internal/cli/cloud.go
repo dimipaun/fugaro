@@ -43,9 +43,9 @@ type cloudEnv struct {
 	gcp    gcp.Options
 }
 
-// TODO(M2 merge): add prices() once T7's gcp.ListPrices is on this lane:
-//
-//	func (e *cloudEnv) prices() backend.Prices { return gcp.ListPrices(e.lc.Region) }
+// prices are the list prices of the region the jobs run in, after
+// --region, for cost estimates of cloud runs (design §10.1).
+func (e *cloudEnv) prices() backend.Prices { return gcp.ListPrices(e.lc.Region) }
 
 // Close releases the bucket.
 func (e *cloudEnv) Close() {

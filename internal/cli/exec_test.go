@@ -52,6 +52,22 @@ func TestExecRejectsTaskFileWithRun(t *testing.T) {
 	}
 }
 
+// The provider kind is part of the slug, so a --task-file run without it is
+// refused before task.json is written anywhere.
+func TestExecTaskFileNeedsProvider(t *testing.T) {
+	t.Setenv("FUGARO_RUN", "")
+	t.Setenv("FUGARO_GIT_PROVIDER", "")
+	dir := t.TempDir()
+	spec := `{"version": 1, "run_id": "20260926-221530-abcd", "repo": "acme/app", "ref": "main", "task": "x"}`
+	_, _, err := executeStdin(t, spec, "exec", "--bucket", "file://"+dir, "--task-file", "-")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--task-file needs --provider") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	if entries, rerr := os.ReadDir(dir); rerr != nil || len(entries) > 0 {
+		t.Fatalf("the refused exec wrote to the bucket: %v, %v", entries, rerr)
+	}
+}
+
 // setCloudRunEnv sets the environment a Cloud Run execution of the
 // acme-app job sees.
 func setCloudRunEnv(t *testing.T, execution string) {
