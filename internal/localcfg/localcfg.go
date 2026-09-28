@@ -53,6 +53,10 @@ type Endpoints struct {
 
 // Repo is an onboarded repository.
 type Repo struct {
+	// Provider is the git provider kind (github, bitbucket), part of the
+	// repository's storage slug. Empty means the checkout's
+	// fugaro.yaml git.provider decides.
+	Provider   string   `yaml:"provider,omitempty"`
 	BaseBranch string   `yaml:"base_branch,omitempty"`
 	Workflows  []string `yaml:"workflows"`
 }
@@ -66,6 +70,7 @@ var (
 	bucketRE   = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
 	repoRE     = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 	workflowRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
+	providerRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 )
 
 // Path is where the config lives: $FUGARO_CONFIG, else
@@ -141,6 +146,9 @@ func (c *Config) validate() error {
 	for repo, r := range c.Repos {
 		if !repoRE.MatchString(repo) {
 			bad("repos: %q must look like owner/name", repo)
+		}
+		if r.Provider != "" && !providerRE.MatchString(r.Provider) {
+			bad("repos.%s: provider %q is not a git provider kind such as github", repo, r.Provider)
 		}
 		for _, w := range r.Workflows {
 			if !workflowRE.MatchString(w) {
