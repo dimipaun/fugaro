@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -71,12 +74,21 @@ func TestGCPJobSpec(t *testing.T) {
 		TaskTimeoutS int               `json:"task_timeout_s"`
 		Env          map[string]string `json:"env"`
 		Secrets      map[string]string `json:"secrets"`
+		SADisplay    string            `json:"service_account_display_name"`
 	}
 	if err := json.Unmarshal([]byte(out), &js); err != nil {
 		t.Fatal(err)
 	}
-	if js.Job != bbJob || js.TaskTimeoutS != 20*60+120 || js.Env["FUGARO_BACKEND"] != "cloud-run" || js.Env["FUGARO_PROJECT"] != "proj-1234" || js.Env["FUGARO_REGION"] != "us-east5" {
+	if js.Job != bbJob || js.TaskTimeoutS != 20*60+int(runner.TaskTimeoutSlack/time.Second) || js.Env["FUGARO_BACKEND"] != "cloud-run" || js.Env["FUGARO_PROJECT"] != "proj-1234" || js.Env["FUGARO_REGION"] != "us-east5" {
 		t.Fatalf("spec = %+v", js)
+	}
+	// The display name is the account's ownership mark (IAM allows 100 characters).
+	if js.SADisplay != "Fugaro M4 job "+bbSlug+" web" || len(js.SADisplay) > 100 {
+		t.Fatalf("service_account_display_name = %q", js.SADisplay)
+	}
+	// Every mounted secret's variable, for the runner to redact from the start.
+	if got := js.Env["FUGARO_SECRET_ENVS"]; got != "CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,NPM_TOKEN" {
+		t.Fatalf("FUGARO_SECRET_ENVS = %q", got)
 	}
 	want := map[string]string{"FUGARO_BITBUCKET_TOKEN": bbGit, "CLAUDE_CODE_OAUTH_TOKEN": bbOAuth, "NPM_TOKEN": bbNPM}
 	if len(js.Secrets) != len(want) {
@@ -157,18 +169,21 @@ func TestGCPJobSpecConditionIsNotAPrefixMatch(t *testing.T) {
 func TestGCPJobSpecFields(t *testing.T) {
 	jobSpecCheckout(t, jobSpecYAML)
 	for field, want := range map[string]string{
-		"slug":             bbSlug,
-		"job":              bbJob,
-		"sa-id":            bbSAID,
-		"sa":               bbSAID + "@proj-1234.iam.gserviceaccount.com",
-		"image":            gcp.ImageName(registry, bbSlug, "web"),
-		"task-timeout":     "1320",
-		"cpu":              "4", // the web-node defaults
-		"memory":           "8Gi",
-		"labels":           "fugaro=managed,fugaro_repo=" + bbLabel + ",fugaro_workflow=web",
-		"repo-label":       bbLabel,
-		"git-secret":       bbGit,
-		"env":              "FUGARO_BACKEND=cloud-run,FUGARO_BUCKET=gs://proj-1234-fugaro-runs,FUGARO_PROJECT=proj-1234,FUGARO_REGION=us-east5",
+		"slug":            bbSlug,
+		"job":             bbJob,
+		"sa-id":           bbSAID,
+		"sa":              bbSAID + "@proj-1234.iam.gserviceaccount.com",
+		"image":           gcp.ImageName(registry, bbSlug, "web"),
+		"task-timeout":    strconv.Itoa(20*60 + int(runner.TaskTimeoutSlack/time.Second)),
+		"sa-display-name": "Fugaro M4 job " + bbSlug + " web",
+		"cpu":             "4", // the web-node defaults
+		"memory":          "8Gi",
+		"labels":          "fugaro=managed,fugaro_repo=" + bbLabel + ",fugaro_workflow=web",
+		"repo-label":      bbLabel,
+		"git-secret":      bbGit,
+		// FUGARO_SECRET_ENVS holds commas, so gcloud's ^;^ delimiter form.
+		"env": "^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://proj-1234-fugaro-runs;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;" +
+			"FUGARO_SECRET_ENVS=CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,NPM_TOKEN",
 		"secret-ids":       strings.Join(sorted(bbGit, bbOAuth, bbNPM), "\n"),
 		"secret-names":     "bitbucket-token=" + bbGit + "\nclaude-oauth-token=" + bbOAuth + "\nnpm-token=" + bbNPM,
 		"build-secret-ids": strings.Join(sorted(bbGit, bbNPM), "\n"),
@@ -266,3 +281,20 @@ func TestRepoLabel(t *testing.T) {
 }
 
 func sorted(s ...string) []string { return slices.Sorted(slices.Values(s)) }
+
+// gcloudDict must keep every pair whole: a value with a comma switches to
+// gcloud's ^DELIM^ form with a delimiter no pair contains.
+func TestGCloudDict(t *testing.T) {
+	for _, c := range []struct {
+		pairs []string
+		want  string
+	}{
+		{[]string{"A=1", "B=2"}, "A=1,B=2"},
+		{[]string{"A=1,2", "B=3"}, "^;^A=1,2;B=3"},
+		{[]string{"A=1,2", "B=x;y"}, "^|^A=1,2|B=x;y"},
+	} {
+		if got := gcloudDict(c.pairs); got != c.want {
+			t.Errorf("gcloudDict(%q) = %q, want %q", c.pairs, got, c.want)
+		}
+	}
+}

@@ -122,15 +122,15 @@ confirm() {
   [ "$answer" = "$PROJECT" ] || die "not confirmed; nothing done"
 }
 
-# The display name the script gives a job's service account. Service
-# accounts carry no labels, so this is how a reused or deleted account is
-# recognized as this repository's and workflow's. It names the repository by
-# its slug (set from `spec slug` by each step that calls this), which, like
-# the fugaro_repo label, includes the provider kind. At most 14+63+1+20 = 98
-# characters, within the 100 IAM allows.
+# The display name a job's service account gets. Service accounts carry no
+# labels, so this is how a reused or deleted account is recognized as this
+# repository's and workflow's. It comes from `spec sa-display-name` (set by
+# each step that calls this), job-spec being its one definition; it names
+# the repository by its slug, which, like the fugaro_repo label, includes
+# the provider kind.
 job_sa_display() {
-  [ -n "${repo_slug:-}" ] || die "internal error: job_sa_display before repo_slug is set"
-  echo "Fugaro M4 job $repo_slug $WORKFLOW"
+  [ -n "${sa_display:-}" ] || die "internal error: job_sa_display before sa_display is set"
+  echo "$sa_display"
 }
 
 # check_sa_owner SA: with --apply, dies unless the existing account SA has
@@ -341,7 +341,7 @@ JSON
     sa_id=$(spec sa-id)
     sa=$(spec sa)
     cond=$(spec bucket-condition)
-    repo_slug=$(spec slug)
+    sa_display=$(spec sa-display-name)
     confirm "creates service account $sa and grants it storage.objectUser on gs://$BUCKET, limited to its runs/, cache/ and locks/ prefixes"
     pin_bucket
     if exists gcloud iam service-accounts describe "$sa" --project "$PROJECT"; then
@@ -433,7 +433,7 @@ JSON
     cond=$(spec bucket-condition)
     ids=$(spec secret-ids)
     repo_label=$(spec repo-label)
-    repo_slug=$(spec slug)
+    sa_display=$(spec sa-display-name)
     job_checked=0
     sa_checked=0
     idlist=$(echo "$ids" | tr '\n' ' ')

@@ -423,7 +423,8 @@ func TestApplyExactCalls(t *testing.T) {
 			"--image", image + ":latest", "--service-account", jobSA,
 			"--cpu", "1", "--memory", "2Gi", "--task-timeout", "1320s", "--max-retries", "0", "--tasks", "1",
 			"--labels", "fugaro=managed," + repoLbl + ",fugaro_workflow=web",
-			"--set-env-vars", "FUGARO_BACKEND=cloud-run,FUGARO_BUCKET=gs://proj-1234-fugaro-runs,FUGARO_PROJECT=proj-1234,FUGARO_REGION=us-east5",
+			"--set-env-vars", "^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://proj-1234-fugaro-runs;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;" +
+				"FUGARO_SECRET_ENVS=CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,SANDBOX_PROBE",
 			"--set-secrets", "CLAUDE_CODE_OAUTH_TOKEN=" + oauthID + ":latest,FUGARO_BITBUCKET_TOKEN=" + gitID + ":latest,SANDBOX_PROBE=" + probeID + ":latest"},
 	})
 
