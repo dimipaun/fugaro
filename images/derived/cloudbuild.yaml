@@ -23,6 +23,14 @@
 # /workspace/base-digest), so a republished tag between the steps cannot
 # give them different bases.
 #
+# The build pushes only candidate-$BUILD_ID. smoke tests that digest
+# offline; gate stops an older build from promoting over a newer record;
+# promote retags latest by the smoked digest; record writes
+# builds/<slug>/<workflow>/image.json in the runs bucket (_BUCKET), only
+# over what gate read; untag removes the candidate tag, best-effort. The
+# steps hand each other files in /workspace/out, which source creates
+# writable for the base image's user.
+#
 # Workflow secrets: _SECRET_ENVS is a space-separated list of variable
 # names. This file declares none of them in availableSecrets or the build
 # step's secretEnv; the request builder (gcp.BuildRequest) adds each one to
@@ -47,6 +55,8 @@ substitutions:
   _GIT_USER: ""       # Bitbucket: the token's https username, x-token-auth
   _GITHUB_APP_ID: ""  # GitHub: the App's ID, which is not a secret
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
+  _BUCKET: ""         # the runs bucket, gs://<name>, which holds the build record
+  _SLUG: ""           # the repository's storage slug: the record is builds/<slug>/<workflow>/image.json
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
@@ -79,20 +89,26 @@ steps:
         case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
         git -c credential.helper='store --file=/creds/git-credentials' \
           clone --quiet --depth 1 --branch "$$BASE_BRANCH" -- "$$REPO_URL" /workspace/src
-        install -d -m 0777 /workspace/context
+        install -d -m 0777 /workspace/context /workspace/out
     volumes: [{name: fugaro-creds, path: /creds}]
   # The base image's own fugaro renders the Dockerfile. It runs as fugaro,
-  # so the root-owned clone needs safe.directory.
+  # so the root-owned clone needs safe.directory. It also writes, into
+  # /workspace/out, what the later steps need: the smoke's selftest spec,
+  # the record's source side (record.json), and the source commit and
+  # build time the image's labels carry.
   - id: render
     name: ${_FUGARO_BASE}
     dir: src
     entrypoint: sh
     env: [GIT_CONFIG_COUNT=1, GIT_CONFIG_KEY_0=safe.directory, "GIT_CONFIG_VALUE_0=*", "WORKFLOW=${_WORKFLOW}"]
-    args: [-c, 'fugaro image render --workflow "$$WORKFLOW" > /workspace/context/Dockerfile']
+    args: [-c, 'fugaro image render --workflow "$$WORKFLOW" --cloud-outputs /workspace/out > /workspace/context/Dockerfile']
   # Reuses the exact base image the render step ran (no second pull), so a
   # republished tag between the steps cannot split render and build. The
   # Dockerfile clones the full base branch itself, with the credential as a
-  # BuildKit secret, and pins nothing but that base digest.
+  # BuildKit secret, and pins nothing but that base digest. It pushes only
+  # the candidate tag, and hands on the pushed digest (in
+  # /workspace/out/image-digest and as its step output), which is what the
+  # smoke tests and promote tags latest.
   - id: build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
@@ -103,6 +119,7 @@ steps:
       - "BASE_BRANCH=${_BASE_BRANCH}"
       - "IMAGE=${_IMAGE}"
       - "SECRET_ENVS=${_SECRET_ENVS}"
+      - "BUILD_ID=$BUILD_ID"
     args:
       - -c
       - |
@@ -114,6 +131,9 @@ steps:
           || { echo "the render step's base image is not on this worker" >&2; exit 1; }
         printf '%s\n' "$$base" > /workspace/base-digest
         echo "base $$base"
+        commit=$$(cat /workspace/out/source-commit)
+        created=$$(cat /workspace/out/built-at)
+        candidate="$$IMAGE:candidate-$$BUILD_ID"
         set --
         for e in $$SECRET_ENVS; do
           case "$$e" in *[!A-Z0-9_]*) echo "bad secret variable name" >&2; exit 1 ;; esac
@@ -125,8 +145,98 @@ steps:
           --build-arg "FUGARO_BASE=$$base" \
           --build-arg "REPO_URL=$$REPO_URL" \
           --build-arg "BASE_BRANCH=$$BASE_BRANCH" \
+          --build-arg "FUGARO_BUILT_AT=$$created" \
+          --label "org.opencontainers.image.revision=$$commit" \
+          --label "org.opencontainers.image.created=$$created" \
+          --label "dev.fugaro.base.digest=$${base#*@}" \
           --secret "id=git-credentials,src=/creds/git-credentials" \
           "$$@" \
-          --tag "$$IMAGE:latest" /workspace/context
+          --tag "$$candidate" /workspace/context
+        docker push "$$candidate"
+        pushed=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate")
+        case "$$pushed" in "$$IMAGE@sha256:"*) ;; *) echo "the pushed candidate has no digest in $$IMAGE" >&2; exit 1 ;; esac
+        printf '%s\n' "$${pushed#*@}" > /workspace/out/image-digest
+        printf '%s' "$${pushed#*@}" > "$$BUILDER_OUTPUT/output"
+        echo "candidate $$pushed"
     volumes: [{name: fugaro-creds, path: /creds}]
-images: ["${_IMAGE}:latest"]
+  # The candidate's own fugaro smoke-tests it, as fugaro image build --local
+  # does: the structural selftest as the image's user, then the filesystem
+  # scans as root. With dockerfile: the repository controls the whole
+  # image, its fugaro included, so this runs repository code: it runs
+  # through docker run with no network, no secrets and no volume, never as
+  # a step of its own (a step would be on the cloudbuild network, next to
+  # the metadata server and the build account's token).
+  - id: smoke
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    env: ["IMAGE=${_IMAGE}"]
+    args:
+      - -c
+      - |
+        set -eu
+        candidate="$$IMAGE@$$(cat /workspace/out/image-digest)"
+        report=$$(docker run --rm -i --network none "$$candidate" fugaro image selftest < /workspace/out/selftest.json) \
+          || { printf '%s\n' "$$report"; echo "the candidate failed its smoke test" >&2; exit 1; }
+        printf '%s\n' "$$report"
+        root=$$(printf '%s' '{"root_checks":true}' | docker run --rm -i --user 0 --network none "$$candidate" fugaro image selftest) \
+          || { printf '%s\n' "$$root"; echo "the candidate failed its root filesystem scan" >&2; exit 1; }
+        printf '%s\n' "$$root"
+        for r in "$$report" "$$root"; do
+          case "$$r" in *'"passed":true'*) ;; *) echo "the smoke test did not report a pass" >&2; exit 1 ;; esac
+        done
+        for c in no-setuid no-setgid no-file-caps; do
+          case "$$root" in *"\"name\":\"$$c\""*) ;; *) echo "the root filesystem scan did not report $$c" >&2; exit 1 ;; esac
+        done
+  # A build that finishes after a newer one must not move latest back:
+  # gate reads the current record and, when it is newer, writes
+  # /workspace/out/superseded, after which promote, record and untag do
+  # nothing and the build still succeeds.
+  - id: gate
+    name: ${_FUGARO_BASE}
+    entrypoint: sh
+    env: ["BUCKET=${_BUCKET}", "SLUG=${_SLUG}"]
+    args: [-c, 'exec fugaro image gate --record /workspace/out/record.json --slug "$$SLUG" --bucket "$$BUCKET"']
+  # A registry-side retag by digest, so the smoked digest is the promoted
+  # one. When superseded, its step output says so, for fugaro image build.
+  - id: promote
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    env: ["IMAGE=${_IMAGE}"]
+    args:
+      - -c
+      - |
+        set -eu
+        if [ -e /workspace/out/superseded ]; then
+          echo "a newer build is recorded: latest stays"
+          printf superseded > "$$BUILDER_OUTPUT/output"
+          exit 0
+        fi
+        digest=$$(cat /workspace/out/image-digest)
+        case "$$digest" in sha256:*) ;; *) echo "no pushed digest" >&2; exit 1 ;; esac
+        gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:latest" --quiet
+  # Writes builds/<slug>/<workflow>/image.json, only if it is still what
+  # gate read.
+  - id: record
+    name: ${_FUGARO_BASE}
+    entrypoint: sh
+    env: ["BUCKET=${_BUCKET}", "SLUG=${_SLUG}", "IMAGE=${_IMAGE}", "FUGARO_BASE=${_FUGARO_BASE}", "BUILD_ID=$BUILD_ID"]
+    args:
+      - -c
+      - |
+        set -eu
+        if [ -e /workspace/out/superseded ]; then exit 0; fi
+        exec fugaro image record --in /workspace/out/record.json --digest-from /workspace/out/image-digest \
+          --base-digest-from /workspace/base-digest --image "$$IMAGE" --base "$$FUGARO_BASE" --build-id "$$BUILD_ID" \
+          --slug "$$SLUG" --bucket "$$BUCKET"
+  # Best-effort: the build account (artifactregistry.writer) normally may
+  # not delete tags, and a leftover candidate tag is harmless, since the
+  # registry's cleanup policy removes it. It always exits 0.
+  - id: untag
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    env: ["IMAGE=${_IMAGE}", "BUILD_ID=$BUILD_ID"]
+    args:
+      - -c
+      - |
+        if [ -e /workspace/out/superseded ]; then exit 0; fi
+        gcloud artifacts docker tags delete "$$IMAGE:candidate-$$BUILD_ID" --quiet || echo "warning: could not remove candidate-$$BUILD_ID (harmless; the cleanup policy clears it)"

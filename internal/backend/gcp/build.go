@@ -3,6 +3,9 @@ package gcp
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,15 +49,36 @@ type BuildSpec struct {
 	MachineType    string
 	// WorkflowSecrets become env BuildKit secrets of the build step.
 	WorkflowSecrets []config.Secret
+	// Bucket is the runs bucket as gs://<name>, where the build's record
+	// step writes builds/<Slug>/<Workflow>/image.json.
+	Bucket string
+	// NoSmoke leaves out the candidate's smoke test (fugaro image build
+	// --no-smoke). The daily check never sets it.
+	NoSmoke bool
 }
 
 // BuildResult is a submitted or finished Cloud Build build.
 type BuildResult struct {
 	ID     string `json:"id"`
 	Status string `json:"status"`
+	// Image is the image's latest tag, or, for a superseded build, the
+	// image without a tag.
 	Image  string `json:"image"`
 	Digest string `json:"digest,omitempty"`
 	LogURL string `json:"log_url,omitempty"`
+	// Superseded means the build found a newer record: it built and
+	// smoke-tested Digest but left latest (and the record) as they were.
+	Superseded bool `json:"superseded,omitempty"`
+}
+
+// TemplateSalt is the hex SHA-256 of the embedded cloudbuild.yaml and the
+// fugaro version: a build record carries it, so a change to either
+// shows as a changed build.
+func TemplateSalt(version string) string {
+	h := sha256.New()
+	h.Write(images.CloudBuild)
+	h.Write([]byte("\x00" + version))
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ErrBadBuildSpec wraps BuildRequest's (and so Submit's) refusal of an
@@ -66,6 +90,10 @@ var (
 	// step re-checks it before using the name in --secret.
 	secretEnvRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	appIDRE     = regexp.MustCompile(`^[0-9]{1,20}$`)
+	// bucketURLRE is a GCS bucket as a gocloud URL, with no path.
+	bucketURLRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,220}[a-z0-9]$`)
+	// digestRE is an image digest.
+	digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	// registryHostRE is <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 )
@@ -124,6 +152,9 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
+	if s.NoSmoke {
+		b.Steps = slices.DeleteFunc(b.Steps, func(st *cloudbuild.BuildStep) bool { return st.Id == "smoke" })
+	}
 
 	version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
 	b.AvailableSecrets.SecretManager[0].Env = credentialSecretEnv[s.GitProvider]
@@ -146,6 +177,8 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
 		"_SECRET_ENVS": strings.Join(envs, " "),
+		"_BUCKET":      s.Bucket,
+		"_SLUG":        s.Slug,
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -207,7 +240,7 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 	for _, f := range []struct{ name, v string }{
 		{"repository slug", s.Slug}, {"repository URL", s.RepoURL}, {"base branch", s.BaseBranch},
 		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image}, {"git credential secret", s.GitSecretID},
-		{"build service account", s.ServiceAccount},
+		{"build service account", s.ServiceAccount}, {"runs bucket", s.Bucket},
 	} {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
@@ -227,6 +260,9 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 	}
 	if err := CheckRepoURL(s.GitProvider, s.RepoURL); err != nil {
 		return err
+	}
+	if !bucketURLRE.MatchString(s.Bucket) {
+		return fmt.Errorf("the runs bucket %q is not gs://<bucket>; the build records its image there", s.Bucket)
 	}
 	// The build account holds the repository's secrets and writes its
 	// registry; any other account (the retired shared one, another
@@ -364,10 +400,40 @@ func retryable(ctx context.Context, err error) bool {
 // terminal are the build statuses Wait stops at.
 var terminal = []string{"SUCCESS", "FAILURE", "INTERNAL_ERROR", "TIMEOUT", "CANCELLED", "EXPIRED"}
 
+// stepOutputs reads a finished build's step outputs: the build step's is
+// the candidate's pushed digest, and promote's says "superseded" when the
+// gate found a newer record, so latest stayed. ok is false without a
+// digest.
+func stepOutputs(bd *cloudbuild.Build) (digest string, superseded, ok bool) {
+	if bd.Results == nil {
+		return "", false, false
+	}
+	outs := bd.Results.BuildStepOutputs
+	for i, st := range bd.Steps {
+		if i >= len(outs) || st == nil {
+			break
+		}
+		data, err := base64.StdEncoding.DecodeString(outs[i])
+		if err != nil {
+			continue
+		}
+		switch v := strings.TrimSpace(string(data)); st.Id {
+		case "build":
+			if digestRE.MatchString(v) {
+				digest = v
+			}
+		case "promote":
+			superseded = v == "superseded"
+		}
+	}
+	return digest, superseded, digest != ""
+}
+
 // Wait polls build id every poll (zero means 10s) until it finishes. A
 // build that finishes other than SUCCESS comes back with an error naming
 // its status and log URL. Image and Digest are set only on SUCCESS, from
-// the build's pushed-image results (a SUCCESS without them leaves Digest
+// the build step's output (the pushed candidate's digest), or else from
+// the build's pushed-image results (a SUCCESS without either leaves Digest
 // empty). A transient failure to read the status is retried (see
 // waitRetries); when Wait gives up, the build may still be running, and
 // the error says so.
@@ -404,7 +470,13 @@ func (b *Builder) Wait(ctx context.Context, id string, poll time.Duration) (Buil
 			if bd.Status != "SUCCESS" {
 				return res, fmt.Errorf("Cloud Build build %s ended %s; its log is at %s", id, bd.Status, bd.LogUrl)
 			}
-			if bd.Results != nil && len(bd.Results.Images) > 0 {
+			if digest, superseded, ok := stepOutputs(bd); ok {
+				res.Digest, res.Superseded = digest, superseded
+				res.Image = bd.Substitutions["_IMAGE"]
+				if !superseded {
+					res.Image += ":latest"
+				}
+			} else if bd.Results != nil && len(bd.Results.Images) > 0 {
 				res.Image, res.Digest = bd.Results.Images[0].Name, bd.Results.Images[0].Digest
 			}
 			return res, nil

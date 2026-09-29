@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/images"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -39,6 +40,30 @@ type SelftestSpec struct {
 	// runs it in a second container with --user 0 and merges the report.
 	// Every other field is ignored.
 	RootChecks bool `json:"root_checks,omitempty"`
+	// SkipVerify leaves out `fugaro verify build`: the Cloud Build smoke
+	// (SpecForCloud) checks the image's structure only, since the build
+	// would run repository code, and it runs without the network.
+	SkipVerify bool `json:"skip_verify,omitempty"`
+}
+
+// SpecForCloud is the selftest the Cloud Build smoke step runs in the
+// candidate image, as `fugaro image render --cloud-outputs` writes it: the
+// structural checks, init and hardening, and the baked checkout at commit
+// with origin, but never the workflow's build. With dockerfile: the
+// repository controls the whole image, its fugaro included, so the smoke
+// runs repository code: it gets no secrets and no network, and nothing in
+// it may need them.
+func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (SelftestSpec, error) {
+	w, ok := cfg.Workflows[workflow]
+	if !ok {
+		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
+	}
+	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: commit, Origin: origin,
+		CheckInit: true, CheckHardening: true, SkipVerify: true}
+	if w.Base == "web-node" {
+		spec.Node = w.Image.Node
+	}
+	return spec, nil
 }
 
 // Check is one smoke-test result.
@@ -160,7 +185,7 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 	checkoutOK := checkCheckout(ctx, spec, add)
 	checkHome(add)
-	if checkoutOK {
+	if checkoutOK && !spec.SkipVerify {
 		if err := verifyBuild(ctx, spec.Verify, log); err != nil {
 			add("verify-build", false, "%v", err)
 		} else {

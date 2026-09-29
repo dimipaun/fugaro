@@ -29,6 +29,7 @@ type cloudBuild struct {
 		ID         string   `yaml:"id"`
 		Name       string   `yaml:"name"`
 		Entrypoint string   `yaml:"entrypoint"`
+		WaitFor    []string `yaml:"waitFor"`
 		Env        []string `yaml:"env"`
 		Args       []string `yaml:"args"`
 		SecretEnv  []string `yaml:"secretEnv"`
@@ -71,7 +72,7 @@ func TestCloudBuildConfig(t *testing.T) {
 	for _, s := range cb.Steps {
 		ids = append(ids, s.ID)
 	}
-	if !slices.Equal(ids, []string{"prep", "credential", "source", "render", "build"}) {
+	if !slices.Equal(ids, []string{"prep", "credential", "source", "render", "build", "smoke", "gate", "promote", "record", "untag"}) {
 		t.Fatalf("steps = %v", ids)
 	}
 	for _, m := range regexp.MustCompile(`\$\{(_[A-Z_]+)\}`).FindAllStringSubmatch(string(data), -1) {
@@ -100,7 +101,7 @@ func TestCloudBuildConfig(t *testing.T) {
 	if !strings.Contains(script("build"), "RepoDigests") {
 		t.Error("the build step does not pin the base image by digest")
 	}
-	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_GITHUB_APP_ID", "_SECRET_ENVS"} {
+	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_GITHUB_APP_ID", "_SECRET_ENVS", "_BUCKET", "_SLUG"} {
 		if _, ok := cb.Substitutions[k]; !ok {
 			t.Errorf("substitution %s is not declared", k)
 		}
@@ -124,8 +125,247 @@ func TestCloudBuildConfig(t *testing.T) {
 	if !bytes.Equal(images.CloudBuild, data) {
 		t.Error("images.CloudBuild is not derived/cloudbuild.yaml")
 	}
-	if !slices.Equal(cb.Images, []string{"${_IMAGE}:latest"}) {
-		t.Errorf("images = %v", cb.Images)
+	if !strings.Contains(script("render"), "--cloud-outputs /workspace/out") {
+		t.Error("the render step does not write the smoke spec and the record's source side")
+	}
+}
+
+// TestPromoteAfterSmoke: latest moves only after the candidate's smoke
+// passed and the gate found no newer record, and the steps run strictly
+// in order (no step starts early with waitFor: ["-"]).
+func TestPromoteAfterSmoke(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	var ids []string
+	for _, s := range cb.Steps {
+		ids = append(ids, s.ID)
+		if slices.Contains(s.WaitFor, "-") {
+			t.Errorf("step %s starts at once (waitFor: [\"-\"])", s.ID)
+		}
+		if len(s.WaitFor) > 0 {
+			t.Errorf("step %s has waitFor %v; the steps run in file order", s.ID, s.WaitFor)
+		}
+	}
+	if want := []string{"prep", "credential", "source", "render", "build", "smoke", "gate", "promote", "record", "untag"}; !slices.Equal(ids, want) {
+		t.Fatalf("steps = %v, want %v", ids, want)
+	}
+	// Only promote tags latest, and nothing before it names latest.
+	for i, s := range cb.Steps {
+		sc := strings.Join(s.Args, " ")
+		if strings.Contains(sc, ":latest") && s.ID != "promote" {
+			t.Errorf("step %s (%d) names :latest", s.ID, i)
+		}
+	}
+	for _, id := range []string{"promote", "record", "untag"} {
+		if sc := strings.Join(cb.Steps[cb.step(t, id)].Args, " "); !strings.Contains(sc, "if [ -e /workspace/out/superseded ]") {
+			t.Errorf("step %s does not stand down when the gate found a newer record", id)
+		}
+	}
+	gate := cb.Steps[cb.step(t, "gate")]
+	if gate.Name != "${_FUGARO_BASE}" || !strings.Contains(strings.Join(gate.Args, " "), "fugaro image gate --record /workspace/out/record.json") {
+		t.Errorf("gate = %s %v", gate.Name, gate.Args)
+	}
+	rec := cb.Steps[cb.step(t, "record")]
+	if rec.Name != "${_FUGARO_BASE}" || !strings.Contains(strings.Join(rec.Args, " "), "fugaro image record --in /workspace/out/record.json --digest-from /workspace/out/image-digest") {
+		t.Errorf("record = %s %v", rec.Name, rec.Args)
+	}
+}
+
+// TestBuildPushesOnlyCandidate: the build step tags and pushes only
+// candidate-$BUILD_ID, with the OCI labels, and Cloud Build pushes
+// nothing itself (no images:), so latest never moves before the smoke.
+func TestBuildPushesOnlyCandidate(t *testing.T) {
+	data, cb := loadCloudBuild(t)
+	if len(cb.Images) != 0 || regexp.MustCompile(`(?m)^images:`).Match(data) {
+		t.Errorf("images = %v; the build pushes the candidate itself", cb.Images)
+	}
+	build := strings.Join(cb.Steps[cb.step(t, "build")].Args, " ")
+	tags := regexp.MustCompile(`--tag\s+(\S+)`).FindAllStringSubmatch(build, -1)
+	if len(tags) != 1 || tags[0][1] != `"$$candidate"` || !strings.Contains(build, `candidate="$$IMAGE:candidate-$$BUILD_ID"`) {
+		t.Errorf("the build step's tags = %v", tags)
+	}
+	for _, want := range []string{
+		`docker push "$$candidate"`,
+		`--label "org.opencontainers.image.revision=$$commit"`,
+		`--label "org.opencontainers.image.created=$$created"`,
+		`--label "dev.fugaro.base.digest=$${base#*@}"`,
+		`--build-arg "FUGARO_BUILT_AT=$$created"`,
+		`docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate"`,
+		`> /workspace/out/image-digest`,
+		`> "$$BUILDER_OUTPUT/output"`,
+	} {
+		if !strings.Contains(build, want) {
+			t.Errorf("the build step lacks %s", want)
+		}
+	}
+	if !strings.Contains(images.DerivedTemplate, `ARG FUGARO_BUILT_AT=""`) {
+		t.Error("the template does not declare FUGARO_BUILT_AT")
+	}
+}
+
+// TestSmokeIsNotAStep: the candidate never runs as a Cloud Build step,
+// which would put repository code on the cloudbuild network next to the
+// metadata server. It runs only through docker run in the smoke step,
+// always with --network none, and no step mounts a volume into it.
+func TestSmokeIsNotAStep(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	for _, s := range cb.Steps {
+		if strings.Contains(s.Name, "$IMAGE") || strings.Contains(s.Name, "_IMAGE") || strings.Contains(s.Name, "candidate") {
+			t.Errorf("step %s runs the image itself: %s", s.ID, s.Name)
+		}
+		for _, line := range strings.Split(strings.Join(s.Args, "\n"), "\n") {
+			if !strings.Contains(line, "docker run") {
+				continue
+			}
+			if s.ID != "smoke" {
+				t.Errorf("step %s runs a container: %s", s.ID, line)
+			}
+			if !strings.Contains(line, "--network none") {
+				t.Errorf("a docker run without --network none: %s", line)
+			}
+			for _, bad := range []string{" -v ", "--volume", "--mount", "--env", " -e ", "--privileged", "--network host", "cloudbuild"} {
+				if strings.Contains(line, bad) {
+					t.Errorf("the smoke's docker run has %s: %s", bad, line)
+				}
+			}
+		}
+	}
+	smoke := cb.Steps[cb.step(t, "smoke")]
+	sc := strings.Join(smoke.Args, " ")
+	if len(smoke.Volumes) != 0 || len(smoke.SecretEnv) != 0 || smoke.Name != "gcr.io/cloud-builders/docker" {
+		t.Errorf("smoke = %+v", smoke)
+	}
+	if strings.Count(sc, "docker run") != 2 || !strings.Contains(sc, "--user 0 --network none") ||
+		!strings.Contains(sc, "fugaro image selftest < /workspace/out/selftest.json") || !strings.Contains(sc, `candidate="$$IMAGE@$$(cat /workspace/out/image-digest)"`) {
+		t.Errorf("the smoke must run the selftest and the root scan in the pushed digest: %s", sc)
+	}
+}
+
+// TestPromoteByDigest: promote retags on the registry by the digest the
+// smoke ran, never by the candidate tag.
+func TestPromoteByDigest(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	p := cb.Steps[cb.step(t, "promote")]
+	sc := strings.Join(p.Args, " ")
+	if p.Name != "gcr.io/google.com/cloudsdktool/cloud-sdk:slim" || !strings.Contains(sc, `digest=$$(cat /workspace/out/image-digest)`) ||
+		!strings.Contains(sc, `gcloud artifacts docker tags add "$$IMAGE@$$digest" "$$IMAGE:latest"`) || !strings.Contains(sc, "sha256:*") {
+		t.Errorf("promote = %s: %s", p.Name, sc)
+	}
+	if strings.Contains(sc, "candidate") || strings.Contains(sc, "tags delete") || strings.Contains(sc, "docker push") {
+		t.Errorf("promote must retag by digest only, and never untag: %s", sc)
+	}
+}
+
+// TestUntagScriptAlwaysExitsZero: the candidate tag's removal ends in
+// || echo, and a refused delete (the build account may not delete tags)
+// only prints the warning.
+func TestUntagScriptAlwaysExitsZero(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	u := cb.Steps[cb.step(t, "untag")]
+	sc := strings.TrimSpace(u.Args[1])
+	if !regexp.MustCompile(`\|\| echo "warning: [^"]*"$`).MatchString(sc) || strings.Contains(sc, "set -e") {
+		t.Fatalf("untag = %s", sc)
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	testutil.WriteFiles(t, bin, map[string]string{"gcloud": "#!/bin/sh\necho 'ERROR: (gcloud.artifacts.docker.tags.delete) PERMISSION_DENIED: 403' >&2\nexit 1\n"})
+	ws := filepath.Join(dir, "workspace")
+	if err := os.MkdirAll(filepath.Join(ws, "out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(bash, "-c", strings.ReplaceAll(strings.ReplaceAll(u.Args[1], "$$", "$"), "/workspace", ws))
+	cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "IMAGE=example.com/img", "BUILD_ID=b1"}
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "warning: could not remove candidate-b1") {
+		t.Fatalf("untag with a refused delete: %v\n%s", err, out)
+	}
+}
+
+// runStep runs step id's script under bash with /workspace at ws, bin
+// first on PATH, and env.
+func runStep(t *testing.T, cb cloudBuild, id, ws, bin string, env ...string) (string, error) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skip("no bash")
+	}
+	st := cb.Steps[cb.step(t, id)]
+	cmd := exec.Command(bash, "-c", strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws))
+	cmd.Env = append([]string{"PATH=" + bin + ":" + os.Getenv("PATH")}, env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestSmokeAndPromoteScripts runs the smoke and promote scripts with
+// docker and gcloud stubbed: a failed or incomplete report fails the
+// smoke; promote tags latest by the digest, and stands down when
+// superseded, saying so in its step output.
+func TestSmokeAndPromoteScripts(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	const digest = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	pass := `{"passed":true,"checks":[{"name":"user","ok":true}]}`
+	rootPass := `{"passed":true,"checks":[{"name":"no-setuid","ok":true},{"name":"no-setgid","ok":true},{"name":"no-file-caps","ok":true}]}`
+	for _, tc := range []struct {
+		name, report, root string
+		code               int
+		ok                 bool
+	}{
+		{"pass", pass, rootPass, 0, true},
+		{"failed selftest", `{"passed":false,"checks":[]}`, rootPass, 1, false},
+		{"lying exit code", `{"passed":false,"checks":[]}`, rootPass, 0, false},
+		{"root scan leaves one out", pass, `{"passed":true,"checks":[{"name":"no-setuid","ok":true},{"name":"no-setgid","ok":true}]}`, 0, false},
+		{"no report", "", "", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			ws, bin := filepath.Join(dir, "workspace"), filepath.Join(dir, "bin")
+			testutil.WriteFiles(t, ws, map[string]string{"out/image-digest": digest + "\n", "out/selftest.json": `{"check_init":true}`})
+			testutil.WriteFiles(t, bin, map[string]string{"docker": fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "docker $*" >> "$ARGV"
+case "$*" in *"--user 0"*) printf '%%s' '%s' ;; *) cat > /dev/null; printf '%%s' '%s' ;; esac
+exit %d
+`, tc.root, tc.report, tc.code)})
+			argv := filepath.Join(dir, "argv")
+			out, err := runStep(t, cb, "smoke", ws, bin, "IMAGE=example.com/img", "ARGV="+argv)
+			if (err == nil) != tc.ok {
+				t.Fatalf("smoke err = %v, want ok %v\n%s", err, tc.ok, out)
+			}
+			logged, _ := os.ReadFile(argv)
+			if !strings.Contains(string(logged), "example.com/img@"+digest) {
+				t.Errorf("the smoke did not run the pushed digest:\n%s", logged)
+			}
+		})
+	}
+
+	for _, superseded := range []bool{false, true} {
+		dir := t.TempDir()
+		ws, bin := filepath.Join(dir, "workspace"), filepath.Join(dir, "bin")
+		files := map[string]string{"out/image-digest": digest + "\n"}
+		if superseded {
+			files["out/superseded"] = ""
+		}
+		testutil.WriteFiles(t, ws, files)
+		argv := filepath.Join(dir, "argv")
+		testutil.WriteFiles(t, bin, map[string]string{"gcloud": "#!/bin/sh\nprintf '%s\\n' \"gcloud $*\" >> \"$ARGV\"\n"})
+		builderOut := filepath.Join(dir, "builder-output")
+		if err := os.MkdirAll(builderOut, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := runStep(t, cb, "promote", ws, bin, "IMAGE=example.com/img", "ARGV="+argv, "BUILDER_OUTPUT="+builderOut); err != nil {
+			t.Fatalf("promote: %v\n%s", err, out)
+		}
+		// The step output tells fugaro image build that latest stayed.
+		if got, _ := os.ReadFile(filepath.Join(builderOut, "output")); superseded != (string(got) == "superseded") {
+			t.Errorf("superseded %v: promote's output = %q", superseded, got)
+		}
+		logged, _ := os.ReadFile(argv)
+		want := "gcloud artifacts docker tags add example.com/img@" + digest + " example.com/img:latest --quiet\n"
+		if superseded && len(logged) != 0 || !superseded && string(logged) != want {
+			t.Errorf("superseded %v: gcloud calls %q", superseded, logged)
+		}
 	}
 }
 
@@ -200,7 +440,9 @@ func TestCloudBuildNoSubstitutionsInScripts(t *testing.T) {
 		if strings.Contains(script, "${_") {
 			t.Errorf("step %s interpolates a substitution into its script; pass it through env: and read it as $$VAR", s.ID)
 		}
-		given := map[string]bool{}
+		// Cloud Build sets BUILDER_OUTPUT in every step: a step's output
+		// goes to $BUILDER_OUTPUT/output.
+		given := map[string]bool{"BUILDER_OUTPUT": true}
 		for _, e := range append(append([]string{}, s.Env...), s.SecretEnv...) {
 			name, _, _ := strings.Cut(e, "=")
 			given[name] = true
@@ -525,7 +767,10 @@ for a in "$@"; do case "$a" in credential.helper=store\ --file=*) cp "${a#creden
 `,
 		"docker": `#!/bin/sh
 printf '%s\n' "docker $*" >> "$ARGV"
-case "$1 $2" in "image inspect") echo "example.com/base@sha256:abc"; exit 0 ;; esac
+case "$1 $2 $5" in
+  "image inspect example.com/img:candidate-b7") echo "example.com/img@sha256:$DIGEST"; exit 0 ;;
+  "image inspect "*) echo "example.com/base@sha256:abc"; exit 0 ;;
+esac
 for a in "$@"; do case "$a" in
   id=git-credentials,src=*) cp "${a#id=git-credentials,src=}" "$CAPTURE/build" ;;
   id=NPM_TOKEN,src=*) f=${a#id=NPM_TOKEN,src=}; cp "$f" "$CAPTURE/npm"; ls -l "$f" | cut -c1-10 > "$CAPTURE/npm-mode" ;;
@@ -544,13 +789,20 @@ esac; done
 			t.Fatal(err)
 		}
 	}
+	const digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	testutil.WriteFiles(t, ws, map[string]string{"out/source-commit": "c0ffee\n", "out/built-at": "2026-09-29T10:00:00Z\n"})
+	builderOut := filepath.Join(dir, "builder-output")
+	if err := os.MkdirAll(builderOut, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	for _, id := range []string{"source", "build"} {
 		st := cb.Steps[cb.step(t, id)]
 		script := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws), "/creds", creds)
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + tmp, "ARGV=" + argv, "CAPTURE=" + capture,
 			"REPO_URL=https://bitbucket.org/acme/app.git", "BASE_BRANCH=main",
-			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=" + npmToken}
+			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=" + npmToken,
+			"BUILD_ID=b7", "BUILDER_OUTPUT=" + builderOut, "DIGEST=" + digest}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("step %s: %v\n%s", st.ID, err, out)
 		}
@@ -567,6 +819,24 @@ esac; done
 	}
 	if strings.Contains(string(logged), "t%2Fo") || !regexp.MustCompile(`--secret id=NPM_TOKEN,src=\S*/NPM_TOKEN `).Match(logged) || strings.Contains(string(logged), "env=") {
 		t.Errorf("argv:\n%s", logged)
+	}
+	for _, want := range []string{
+		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--label org.opencontainers.image.revision=c0ffee",
+		"--label org.opencontainers.image.created=2026-09-29T10:00:00Z", "--label dev.fugaro.base.digest=sha256:abc",
+		"--tag example.com/img:candidate-b7 ", "docker push example.com/img:candidate-b7\n",
+	} {
+		if !strings.Contains(string(logged), want) {
+			t.Errorf("the build lacks %q:\n%s", want, logged)
+		}
+	}
+	if strings.Contains(string(logged), ":latest") {
+		t.Errorf("the build step touched latest:\n%s", logged)
+	}
+	if got, _ := os.ReadFile(filepath.Join(ws, "out", "image-digest")); string(got) != "sha256:"+digest+"\n" {
+		t.Errorf("image-digest = %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(builderOut, "output")); string(got) != "sha256:"+digest {
+		t.Errorf("the build step's output = %q", got)
 	}
 	if !strings.Contains(string(logged), "--secret id=git-credentials,src="+credFile) {
 		t.Errorf("the build does not hand BuildKit the volume's credential file:\n%s", logged)

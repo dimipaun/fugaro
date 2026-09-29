@@ -75,3 +75,7 @@ RUN rm -f /etc/sudoers.d/fugaro-build \
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
+
+# The build time, which Cloud Build passes (empty in a local build). It is
+# declared last, so a new value never invalidates the cached steps above.
+ARG FUGARO_BUILT_AT=""

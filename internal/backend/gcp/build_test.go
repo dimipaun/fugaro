@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -34,6 +36,7 @@ func buildSpec(t *testing.T) BuildSpec {
 		GitSecretID: SecretID(slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
 		WorkflowSecrets: []config.Secret{{Name: "npm-token", Env: "NPM_TOKEN"}},
+		Bucket:          "gs://fugaro-runs-proj-1234",
 	}
 }
 
@@ -76,13 +79,17 @@ func TestBuildRequest(t *testing.T) {
 	if b.ServiceAccount != "projects/proj-1234/serviceAccounts/"+spec.ServiceAccount || b.Options.MachineType != "E2_HIGHCPU_8" || b.Options.Logging != "CLOUD_LOGGING_ONLY" || b.Timeout != "3600s" {
 		t.Fatalf("build = %+v / %+v / %s", b.ServiceAccount, b.Options, b.Timeout)
 	}
-	if len(b.Images) != 1 || b.Images[0] != "${_IMAGE}:latest" {
+	// The build pushes only its candidate; promote moves latest.
+	if len(b.Images) != 0 {
 		t.Fatalf("images = %v", b.Images)
+	}
+	if b.Substitutions["_BUCKET"] != "gs://fugaro-runs-proj-1234" || b.Substitutions["_SLUG"] != spec.Slug {
+		t.Fatalf("substitutions = %v", b.Substitutions)
 	}
 	// The request is built fresh each time: a second call does not see the
 	// first one's workflow secrets.
 	again, err := BuildRequest("proj-1234", BuildSpec{Slug: spec.Slug, GitProvider: spec.GitProvider, RepoURL: spec.RepoURL, BaseBranch: "main", Workflow: "web",
-		Base: spec.Base, Image: spec.Image, GitSecretID: spec.GitSecretID, GitUser: "x-token-auth", ServiceAccount: spec.ServiceAccount})
+		Base: spec.Base, Image: spec.Image, GitSecretID: spec.GitSecretID, GitUser: "x-token-auth", ServiceAccount: spec.ServiceAccount, Bucket: spec.Bucket})
 	if err != nil || len(again.AvailableSecrets.SecretManager) != 1 || len(step(t, again, "build").SecretEnv) != 0 || again.Substitutions["_SECRET_ENVS"] != "" {
 		t.Fatalf("second request = %+v, %v", again, err)
 	}
@@ -118,6 +125,11 @@ func TestBuildRequest(t *testing.T) {
 		func(s *BuildSpec) { s.ServiceAccount = "" },
 		func(s *BuildSpec) { s.Image = "" },
 		func(s *BuildSpec) { s.Base = "" },
+		// The record goes to the runs bucket on GCS, and nowhere else.
+		func(s *BuildSpec) { s.Bucket = "" },
+		func(s *BuildSpec) { s.Bucket = "file:///tmp/runs" },
+		func(s *BuildSpec) { s.Bucket = "gs://runs/prefix" },
+		func(s *BuildSpec) { s.Bucket = "fugaro-runs-proj-1234" },
 	} {
 		s := spec
 		mutate(&s)
@@ -149,7 +161,7 @@ func githubSpec(t *testing.T) BuildSpec {
 		Slug: slug, GitProvider: "github", RepoURL: "https://github.com/acme/webapp.git", BaseBranch: "main", Workflow: "web",
 		Base: "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc", Image: ImageName(repoRegistry(slug), slug, "web"),
 		GitSecretID: SecretID(slug, "github-app-key"), GitHubAppID: "12345",
-		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8",
+		ServiceAccount: BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com", MachineType: "E2_HIGHCPU_8", Bucket: "gs://fugaro-runs-proj-1234",
 	}
 }
 
@@ -397,5 +409,88 @@ func TestRegistryLookupNotThroughRealCloudBuildOverride(t *testing.T) {
 	}
 	if got := registryEndpoint(Endpoints{CloudBuild: "http://127.0.0.1:9/", NoAuth: true}); got != "http://127.0.0.1:9/" {
 		t.Errorf("the fake's endpoint = %q", got)
+	}
+}
+
+// TestBuildRequestNoSmoke: --no-smoke leaves out the smoke step and
+// nothing else.
+func TestBuildRequestNoSmoke(t *testing.T) {
+	spec := buildSpec(t)
+	ids := func(b *cloudbuild.Build) []string {
+		var out []string
+		for _, st := range b.Steps {
+			out = append(out, st.Id)
+		}
+		return out
+	}
+	full, err := BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.NoSmoke = true
+	b, err := BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.DeleteFunc(ids(full), func(id string) bool { return id == "smoke" })
+	if got := ids(b); !slices.Equal(got, want) || slices.Contains(got, "smoke") || len(got) != len(ids(full))-1 {
+		t.Fatalf("steps = %v, want %v", got, want)
+	}
+	checkEverySubstitution(t, spec)
+}
+
+// TestWaitReadsStepOutputDigest: the build pushes the candidate itself, so
+// Cloud Build reports no images; Wait reads the pushed digest from the
+// build step's output, and promote's, which says when a newer record kept
+// latest where it was. Without step outputs it falls back to the pushed
+// images.
+func TestWaitReadsStepOutputDigest(t *testing.T) {
+	spec := buildSpec(t)
+	fb := gcpfake.NewBuild(t)
+	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Submit(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err := b.Wait(context.Background(), res.ID, 0)
+	latest := fb.Tag(spec.Image, "latest")
+	if err != nil || latest == "" || done.Digest != latest || done.Image != spec.Image+":latest" || done.Superseded {
+		t.Fatalf("Wait = %+v, %v; latest is %q", done, err, latest)
+	}
+
+	// A superseded build: its digest, but latest is not it.
+	fb.Steps = map[string]func(dir string) error{"gate": func(dir string) error {
+		return os.WriteFile(filepath.Join(dir, "superseded"), nil, 0o644)
+	}}
+	res, err = b.Submit(context.Background(), spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done, err = b.Wait(context.Background(), res.ID, 0)
+	if err != nil || done.Digest != fb.Tag(spec.Image, "candidate-"+res.ID) || done.Digest == latest || !done.Superseded || done.Image != spec.Image {
+		t.Fatalf("superseded Wait = %+v, %v", done, err)
+	}
+	if fb.Tag(spec.Image, "latest") != latest {
+		t.Errorf("a superseded build moved latest to %s", fb.Tag(spec.Image, "latest"))
+	}
+
+	// An older build form that pushed through images: reports results.images.
+	fb.Steps, fb.NoStepOutputs = nil, true
+	res, _ = b.Submit(context.Background(), spec)
+	done, err = b.Wait(context.Background(), res.ID, 0)
+	if err != nil || done.Digest == "" || done.Image != spec.Image+":latest" {
+		t.Fatalf("Wait from results.images = %+v, %v", done, err)
+	}
+}
+
+// TestTemplateSalt: the salt covers the embedded cloudbuild.yaml and the
+// fugaro version.
+func TestTemplateSalt(t *testing.T) {
+	a, b := TemplateSalt("1.2.3"), TemplateSalt("1.2.4")
+	if len(a) != 64 || a == b || a != TemplateSalt("1.2.3") {
+		t.Fatalf("TemplateSalt = %q, %q", a, b)
 	}
 }
