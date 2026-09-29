@@ -49,7 +49,8 @@ USER fugaro
 WORKDIR /work/repo
 # A push to the branch after the render step must not change what is baked
 # in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch.
+# when it is no longer on the branch. When it can't be fetched either, the
+# build fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
@@ -58,11 +59,12 @@ RUN --mount=type=bind,target=/src \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
  && if [ -n "$FUGARO_COMMIT" ]; then \
-      git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
         || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
              -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; \
-      git reset --quiet --hard "$FUGARO_COMMIT"; \
+             fetch --quiet origin "$FUGARO_COMMIT"; } \
+      && git reset --quiet --hard "$FUGARO_COMMIT" \
+      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
@@ -130,7 +132,8 @@ ARG BASE_BRANCH
 WORKDIR /work/repo
 # A push to the branch after the render step must not change what is baked
 # in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch.
+# when it is no longer on the branch. When it can't be fetched either, the
+# build fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
@@ -139,11 +142,12 @@ RUN --mount=type=bind,target=/src \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
  && if [ -n "$FUGARO_COMMIT" ]; then \
-      git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
         || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
              -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; \
-      git reset --quiet --hard "$FUGARO_COMMIT"; \
+             fetch --quiet origin "$FUGARO_COMMIT"; } \
+      && git reset --quiet --hard "$FUGARO_COMMIT" \
+      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
@@ -575,7 +579,11 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 	head := commit("two")
 	const origin = "https://example.com/acme/app.git"
 
-	for _, c := range []struct{ pin, want string }{{"", head}, {first, first}, {offBranch, offBranch}, {"--upload-pack=touch x", ""}} {
+	// A commit that exists nowhere, as after a force-push that dropped it
+	// and a gc on the host: the build fails, saying why.
+	const nowhere = "0123456789abcdef0123456789abcdef01234567"
+	for _, c := range []struct{ pin, want, msg string }{{"", head, ""}, {first, first, ""}, {offBranch, offBranch, ""},
+		{"--upload-pack=touch x", "", "not a commit ID"}, {nowhere, "", "commit " + nowhere + " is no longer reachable: the branch was force-pushed; re-run the build"}} {
 		dir := t.TempDir()
 		cmd := exec.Command(sh, "-c", strings.ReplaceAll(strings.Join(step, "\n"), "/work/repo", dir))
 		cmd.Dir = dir
@@ -584,6 +592,8 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 		if c.want == "" {
 			if err == nil {
 				t.Errorf("FUGARO_COMMIT=%q was accepted:\n%s", c.pin, out)
+			} else if !strings.Contains(string(out), c.msg) {
+				t.Errorf("FUGARO_COMMIT=%q failed without saying %q:\n%s", c.pin, c.msg, out)
 			}
 			continue
 		}
