@@ -1,0 +1,32 @@
+{
+  "project": "proj-1234",
+  "region": "us-east5",
+  "slug": "acme-sandbox-100024cb41873d4e",
+  "job": "fugaro-acme-sandbox-web-7815dfafb6f5",
+  "service_account_id": "fugaro-acme-sandbox-w-7815dfaf",
+  "service_account": "fugaro-acme-sandbox-w-7815dfaf@proj-1234.iam.gserviceaccount.com",
+  "service_account_display_name": "Fugaro M4 job acme-sandbox-100024cb41873d4e web",
+  "image": "us-east5-docker.pkg.dev/proj-1234/fugaro/acme-sandbox-web-7815dfafb6f5bcbb",
+  "cpu": 1,
+  "memory": "2Gi",
+  "task_timeout_s": 1320,
+  "env": {
+    "FUGARO_BACKEND": "cloud-run",
+    "FUGARO_BUCKET": "gs://fugaro-runs-proj-1234",
+    "FUGARO_PROJECT": "proj-1234",
+    "FUGARO_REGION": "us-east5",
+    "FUGARO_SECRET_ENVS": "CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,SANDBOX_PROBE"
+  },
+  "secrets": {
+    "CLAUDE_CODE_OAUTH_TOKEN": "fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201",
+    "FUGARO_BITBUCKET_TOKEN": "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba",
+    "SANDBOX_PROBE": "fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8"
+  },
+  "git_secret": "fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba",
+  "build_service_account": "fugaro-build@proj-1234.iam.gserviceaccount.com",
+  "labels": {
+    "fugaro": "managed",
+    "fugaro_repo": "acme-sandbox-100024cb41873d4e",
+    "fugaro_workflow": "web"
+  }
+}
