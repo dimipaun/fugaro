@@ -147,5 +147,5 @@ If the same failure survives three different fixes, stop and ask the user.
 Tell the user, briefly:
 - the workflows, their commands and report globs, each with the file it came from
 - the image settings with the evidence for each, and anything you couldn't express
-- the secrets to create, by logical name, and where each is used. The user stores each one with `fugaro secrets set <name> --repo <owner/name>`, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. Granting the job access to them is part of provisioning (the M4 bootstrap now, `fugaro init --repo` from M5).
+- the secrets to create, by logical name, and where each is used. The user stores each one with `fugaro secrets set <name> --repo <owner/name>`, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. When the user creates the provider credential, tell them to name it (for example `Fugaro`): a Bitbucket repository access token's name, or a GitHub App's name, is shown as the author of every pull request and comment, and a token can't be renamed after it is created. Granting the job access to them is part of provisioning (the M4 bootstrap now, `fugaro init --repo` from M5).
 - that they should commit `fugaro.yaml`, and `.fugaro/*.Dockerfile` if you wrote one, in a pull request

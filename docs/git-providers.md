@@ -26,6 +26,8 @@ Create a **repository access token** under *Repository settings → Security →
 
 Git uses it with the username `x-token-auth`. The token is scoped to its repository by design, which makes it the per-repo credential that design §6.1 asks for.
 
+**Name the token when you create it.** Pick a name you want people to see, for example `Fugaro`. Bitbucket shows the token's name as the author of every pull request and comment Fugaro creates, and a token can't be renamed or edited after creation (it can be rotated or revoked, which keeps the name). To change the name, create a new token, store it as a new version of the repository's `bitbucket-token` secret (`fugaro secrets set bitbucket-token --repo <owner/name> < <token file>`), and then revoke the old one. Use the same name for every repository, so pull requests look the same everywhere. Commits are authored as `Fugaro` whatever the token is called.
+
 - **Reviewers** (`git.pr.reviewers`) are account UUIDs (`{…}`) or account IDs, not usernames. If Bitbucket rejects one, the PR is opened without reviewers and the run logs a warning. Bitbucket answers an unknown but well-formed UUID with HTTP 400 `reviewers: Malformed reviewers list`, so the message does not distinguish an unknown reviewer from a malformed one.
 - **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The run logs a warning about this once, to its stderr log.
 - **Repository names** are matched in lowercase when finding an existing pull request, since Bitbucket stores workspace and repository slugs in lowercase.
@@ -49,6 +51,8 @@ Create a **GitHub App** and install it on the repositories Fugaro serves (design
 - **Pull requests: Read & write**
 - **Issues: Read**
 - **Metadata: Read**
+
+Name the App when you create it, for example `Fugaro`: GitHub shows pull requests and comments it makes as authored by `<name>[bot]`.
 
 Store its App ID and private key as the variables above. At bootstrap, the runner mints an **installation token for this repository only**, restricted to the permissions above. It lasts about an hour. Before each stage, the runner replaces it with a fresh one if it would expire within that stage's timeout plus 5 minutes, but it never asks for more than 50 minutes, which is all GitHub can give. So with `timeouts.stage` above about 45 minutes, a stage can outlive its token: the agent's `git` and `gh` calls late in that stage fail, and only the refresh before the next stage (or before finalize's push) restores working credentials.
 
