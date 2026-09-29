@@ -1,6 +1,8 @@
 # GCP bootstrap (M4)
 
-**This bootstrap is throwaway.** `deploy/bootstrap/gcp-m4.sh` creates, by hand and one step at a time, the Google Cloud resources M4 needs to run Fugaro for real. M5's Terraform module (design §8) replaces it: it imports or recreates every resource this script makes, with the same names. Don't build on the script; build on the names, which come from `fugaro gcp job-spec` and so from the same code M5 uses.
+> **Superseded by [gcp-setup.md](gcp-setup.md).** `fugaro init` (M5) sets a project up with Terraform, adopting what this script made. This page and `gcp-m4.sh` are kept only as M5's rollback path (gcp-setup.md, "Rolling back": `fugaro init --forget`, then `gcp-m4.sh --apply job` with the M4 binary), until the bootstrap is retired. Don't use them to set up a new project.
+
+**This bootstrap is throwaway.** `deploy/bootstrap/gcp-m4.sh` creates, by hand and one step at a time, the Google Cloud resources M4 needs to run Fugaro for real. M5's Terraform modules (design §8) replaced it: they adopt every resource this script makes, with the same names. Don't build on the script; build on the names, which come from `fugaro gcp job-spec` and so from the same code M5 uses.
 
 This runbook describes each step: the command, what it creates, whether it costs money, and how to undo it. Design §3.2 covers the names, and §6.1 the IAM.
 
@@ -59,7 +61,7 @@ Then, for each repository and workflow, with `REPO`, `WORKFLOW` and `CHECKOUT` s
 | `job-sa` | the job's service account (its ID from `fugaro gcp job-spec --field sa-id`, its display name naming the repository's slug and the workflow), and `roles/storage.objectUser` on the bucket with the condition that limits it to its own `runs/<slug>/`, `cache/<slug>/` and `locks/<slug>/` prefixes (design §6.1) | no | `teardown` |
 | `secrets` | nothing: it prints the `fugaro secrets set` command for each secret the job mounts (see below) | — | — |
 | `secrets-access` | `roles/secretmanager.secretAccessor` for the job's service account on each secret it mounts, and for `fugaro-build` on the provider token and the workflow secrets, which Cloud Build needs. It first checks that every secret exists and carries the labels `fugaro secrets set` gives it: `fugaro=managed`, this repository's `fugaro_repo`, and its logical name as `fugaro_secret`. | no | `teardown` removes the job account's bindings; `fugaro-build`'s go with the secrets (`teardown --secrets`) |
-| `base` | builds the `web-node` base image from `FUGARO_SRC` with local Docker, runs `gcloud auth configure-docker <region>-docker.pkg.dev` (which edits your `~/.docker/config.json`), and pushes `<region>-docker.pkg.dev/<project>/fugaro/fugaro-web-node:dev-<commit>`. Then set `base_image` (below). | about 1.5 GB of registry storage | delete the image, or `teardown-all --all`; remove the `credHelpers` entry from `~/.docker/config.json` by hand |
+| `base` | builds the `web-node` base image from `FUGARO_SRC` with local Docker, runs `gcloud auth configure-docker <region>-docker.pkg.dev` (which edits your `~/.docker/config.json`), and pushes `<region>-docker.pkg.dev/<project>/fugaro/fugaro-web-node:dev-<commit>`. Then set `base_image` (below). **After M5 bases live in the `fugaro-base` registry** (gcp-setup.md, step 3), and this step still pushes to the legacy `fugaro` repository, which only the rollback reads. | about 1.5 GB of registry storage | delete the image, or `teardown-all --all`; remove the `credHelpers` entry from `~/.docker/config.json` by hand |
 | `image` | runs `fugaro image build --repo REPO --workflow WORKFLOW --json` from `CHECKOUT`: a Cloud Build of the derived image, pushed to the registry as `:latest` | per build-minute, on `E2_HIGHCPU_8` | the registry holds it: delete the image, or `teardown-all --all` |
 | `job` | the Cloud Run job (`gcloud run jobs deploy`) with the derived image's `:latest`, the job's service account, the workflow's CPU and memory, a task timeout of `timeouts.total + 2m`, `--max-retries 0`, one task, the labels `fugaro=managed`, `fugaro_repo`, `fugaro_workflow`, the env `FUGARO_BUCKET`, `FUGARO_BACKEND`, `FUGARO_PROJECT`, `FUGARO_REGION` and `FUGARO_SECRET_ENVS` (the comma list of every mounted secret's variable, which the runner registers for redaction before anything else) (plus `CLOUD_ML_REGION` and `ANTHROPIC_VERTEX_PROJECT_ID` for `agent.auth: vertex`), and the secrets mounted as env vars at their `latest` version. Rerunning it updates the job. | per execution-second; free until it runs | `teardown` |
 
@@ -79,6 +81,8 @@ Secret values never pass through the script, a command line, or a conversation w
 A new version reaches new executions, which mount `latest`; `secrets-access` needs to run only once per secret.
 
 ### Setting the base image
+
+After M5, base images live in `fugaro-base`, pushed by an operator as gcp-setup.md's step 3 says, and `fugaro init --base-image` records the tag. The `base` step above pushes to the legacy `fugaro` repository, and what follows sets a `base_image` that only the rollback (M4's `image build` and `job`) reads.
 
 After `base`, put the printed tag in the local config, so cloud image builds use it:
 
