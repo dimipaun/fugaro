@@ -1,7 +1,8 @@
 // Package tf runs terraform for fugaro init: through os/exec, with an
-// allowlisted environment (Env), applying only a saved plan file that was
-// shown and passed the guard (Guard), which refuses any delete or replace the
-// user didn't name.
+// allowlisted environment and fugaro's own CLI config (plugin cache and direct
+// provider installation only; see Env), applying only a saved plan file that
+// was shown and passed the guard (Guard), which refuses any delete or replace
+// the user didn't name.
 package tf
 
 import (
@@ -23,6 +24,7 @@ import (
 
 // Plan is what the guard and the summary read of `terraform show -json`.
 type Plan struct {
+	FormatVersion   string           `json:"format_version"`
 	ResourceChanges []ResourceChange `json:"resource_changes"`
 }
 
@@ -35,13 +37,17 @@ type ResourceChange struct {
 
 // Change is what a plan will do to one resource instance.
 type Change struct {
-	Actions   []string       `json:"actions"`
-	Before    map[string]any `json:"before"`
-	After     map[string]any `json:"after"`
-	Importing *Importing     `json:"importing"`
+	Actions []string       `json:"actions"`
+	Before  map[string]any `json:"before"`
+	After   map[string]any `json:"after"`
+	// AfterUnknown mirrors After, with true wherever a value is known only
+	// after apply.
+	AfterUnknown any        `json:"after_unknown"`
+	Importing    *Importing `json:"importing"`
 }
 
-// Importing is set when the change imports an existing object.
+// Importing is set when the change imports an existing object. ID is empty
+// for an import by identity.
 type Importing struct {
 	ID string `json:"id"`
 }
@@ -169,6 +175,11 @@ func parsePlan(data []byte) (*Plan, error) {
 	var p Plan
 	if err := json.Unmarshal(data, &p); err != nil {
 		return nil, fmt.Errorf("reading the plan JSON: %w", err)
+	}
+	// Another major version could move the fields the guard reads, and a
+	// delete would then decode as a change with no actions.
+	if major, _, _ := strings.Cut(p.FormatVersion, "."); major != "1" {
+		return nil, fmt.Errorf("the plan JSON has format version %q; fugaro reads only 1.x", p.FormatVersion)
 	}
 	return &p, nil
 }

@@ -99,6 +99,31 @@ func TestGuardRefusesUnknownActionsAndNoPlan(t *testing.T) {
 	if err := Guard(nil, nil); err == nil {
 		t.Error("the guard passed a nil plan")
 	}
+
+	// A change with no actions, as a renamed or moved field would decode,
+	// is refused too.
+	for _, change := range []string{`{"actions":[]}`, `{}`} {
+		p, err := parsePlan([]byte(`{"format_version":"1.2","resource_changes":[{"address":"x.y","type":"x","change":` + change + `}]}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := Guard(p, []string{"x.y"}); err == nil || !strings.Contains(err.Error(), "x.y (no actions)") {
+			t.Errorf("change %s: err = %v, want a refusal", change, err)
+		}
+	}
+}
+
+func TestParsePlanRequiresFormatVersionOne(t *testing.T) {
+	for _, v := range []string{`"format_version":"1.2",`, `"format_version":"1.0",`} {
+		if _, err := parsePlan([]byte(`{` + v + `"resource_changes":[]}`)); err != nil {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+	for _, v := range []string{``, `"format_version":"",`, `"format_version":"2.0",`, `"format_version":"10.1",`, `"format_version":1.2,`} {
+		if _, err := parsePlan([]byte(`{` + v + `"resource_changes":[]}`)); err == nil {
+			t.Errorf("%q: parsed, want a refusal of the plan format", v)
+		}
+	}
 }
 
 func hasAction(p *Plan, action string) bool {

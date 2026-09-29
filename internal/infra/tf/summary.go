@@ -8,12 +8,19 @@ import (
 	"strings"
 )
 
-// sensitive names, per resource type, the attributes whose in-place update
-// the summary lists first: they change who a job runs as or what it runs,
-// or what gets deleted, or whether something billable starts on its own. An
-// attribute matches when it is any segment of a changed path.
+// sensitive names, per resource type, the attribute locations whose in-place
+// update the summary lists first: they change who a job runs as or what it
+// runs, or what gets deleted, or whether something billable starts on its
+// own. A location is a dotted path without list indexes. A changed path
+// matches when it lies under a location, or above one (a whole block that
+// changes, or becomes unknown, holds the location).
 var sensitive = map[string][]string{
-	"google_cloud_run_v2_job":             {"service_account", "image", "env", "max_retries"},
+	"google_cloud_run_v2_job": {
+		"template.template.service_account",
+		"template.template.containers.image",
+		"template.template.containers.env",
+		"template.template.max_retries",
+	},
 	"google_storage_bucket":               {"lifecycle_rule"},
 	"google_artifact_registry_repository": {"cleanup_policies", "cleanup_policy_dry_run"},
 	"google_cloud_scheduler_job":          {"paused"},
@@ -27,15 +34,16 @@ var singleBlocks = map[string][]string{
 }
 
 // Summary describes a plan for the confirmation: the counts; then, marked
-// with ⚠, the sensitive in-place updates and any delete or replace; then one
-// line per other change, imports first. Updates carry their changed paths.
+// with ⚠, the sensitive in-place updates, followed by any delete or replace;
+// then one line per other change, imports first. Updates carry their changed
+// paths.
 func Summary(p *Plan) string {
 	if p == nil {
 		return "No plan.\n"
 	}
 	var (
 		nImport, nCreate, nUpdate, nForget, nReplace, nDelete int
-		marked, imports, others                               []string
+		sensitiveUpdates, destructive, imports, others        []string
 	)
 	for _, rc := range p.ResourceChanges {
 		acts := rc.Change.Actions
@@ -47,11 +55,11 @@ func Summary(p *Plan) string {
 		switch {
 		case replace:
 			nReplace++
-			marked = append(marked, "⚠ replace "+rc.Address)
+			destructive = append(destructive, "⚠ replace "+rc.Address)
 			continue
 		case slices.Equal(acts, []string{"delete"}):
 			nDelete++
-			marked = append(marked, "⚠ delete "+rc.Address)
+			destructive = append(destructive, "⚠ delete "+rc.Address)
 			continue
 		case slices.Equal(acts, []string{"create"}):
 			nCreate++
@@ -64,29 +72,27 @@ func Summary(p *Plan) string {
 		case slices.Equal(acts, []string{"update"}):
 			nUpdate++
 		case importing && slices.Equal(acts, []string{"no-op"}):
-			imports = append(imports, fmt.Sprintf("import %s (id %s)", rc.Address, rc.Change.Importing.ID))
+			imports = append(imports, "import "+rc.Address+importID(rc.Change.Importing))
 			continue
 		case slices.Equal(acts, []string{"no-op"}), slices.Equal(acts, []string{"read"}):
 			continue
 		default:
-			marked = append(marked, fmt.Sprintf("⚠ %s %s", strings.Join(acts, "+"), rc.Address))
+			destructive = append(destructive, fmt.Sprintf("⚠ %s %s", strings.Join(acts, "+"), rc.Address))
 			continue
 		}
 
 		// An in-place update, maybe of an imported object.
-		var paths []string
-		diffPaths(rc.Change.Before, rc.Change.After, "", singleBlocks[rc.Type], &paths)
-		verb := "update "
+		paths := changedPaths(rc.Type, rc.Change)
+		line := "update " + rc.Address
 		if importing {
-			verb = fmt.Sprintf("import (id %s) and update ", rc.Change.Importing.ID)
+			line = "import and update " + rc.Address + importID(rc.Change.Importing)
 		}
-		line := verb + rc.Address
 		if len(paths) > 0 {
 			line += ": " + strings.Join(paths, ", ")
 		}
 		switch {
 		case isSensitive(rc.Type, paths):
-			marked = append(marked, "⚠ "+line)
+			sensitiveUpdates = append(sensitiveUpdates, "⚠ "+line)
 		case importing:
 			imports = append(imports, line)
 		default:
@@ -103,7 +109,7 @@ func Summary(p *Plan) string {
 		fmt.Fprintf(&b, ", %d to delete", nDelete)
 	}
 	b.WriteString(".\n")
-	if len(marked) > 0 {
+	if marked := append(sensitiveUpdates, destructive...); len(marked) > 0 {
 		b.WriteString("\n⚠ Review these first:\n")
 		for _, l := range marked {
 			b.WriteString("  " + l + "\n")
@@ -118,11 +124,38 @@ func Summary(p *Plan) string {
 	return b.String()
 }
 
+func importID(im *Importing) string {
+	if im == nil || im.ID == "" {
+		return "" // an import by identity has no ID
+	}
+	return " (id " + im.ID + ")"
+}
+
+// changedPaths returns the paths an update changes: where before and after
+// differ, plus where after_unknown says a value is known only after apply
+// (a value going from null to unknown is absent from both before and after).
+func changedPaths(typ string, c Change) []string {
+	var paths []string
+	single := singleBlocks[typ]
+	diffPaths(c.Before, c.After, "", single, &paths)
+	var unknown []string
+	unknownPaths(c.AfterUnknown, "", single, &unknown)
+	for _, u := range unknown {
+		if !slices.Contains(paths, u) {
+			paths = append(paths, u)
+		}
+	}
+	slices.Sort(paths)
+	return paths
+}
+
 func isSensitive(typ string, paths []string) bool {
-	attrs := sensitive[typ]
 	for _, p := range paths {
-		for _, seg := range pathSegments(p) {
-			if slices.Contains(attrs, seg) {
+		segs := pathSegments(p)
+		for _, loc := range sensitive[typ] {
+			l := strings.Split(loc, ".")
+			n := min(len(segs), len(l))
+			if slices.Equal(segs[:n], l[:n]) {
 				return true
 			}
 		}
@@ -140,6 +173,28 @@ func pathSegments(p string) []string {
 		segs = append(segs, s)
 	}
 	return segs
+}
+
+func join(prefix, key string) string {
+	if prefix == "" {
+		return key
+	}
+	return prefix + "." + key
+}
+
+// collapse reports whether the list at prefix is a one-element block whose
+// [0] is left out of paths.
+func collapse(prefix string, single []string, lens ...int) bool {
+	for _, n := range lens {
+		if n != 1 {
+			return false
+		}
+	}
+	name := prefix
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		name = name[i+1:]
+	}
+	return slices.Contains(single, name)
 }
 
 // diffPaths appends to out the paths where before and after differ. A value
@@ -162,23 +217,14 @@ func diffPaths(before, after any, prefix string, single []string, out *[]string)
 		}
 		slices.Sort(keys)
 		for _, k := range keys {
-			p := k
-			if prefix != "" {
-				p = prefix + "." + k
-			}
-			diffPaths(bm[k], am[k], p, single, out)
+			diffPaths(bm[k], am[k], join(prefix, k), single, out)
 		}
 		return
 	}
 	bl, bIsList := before.([]any)
 	al, aIsList := after.([]any)
 	if bIsList && aIsList {
-		// A one-element block that is always one element: no index.
-		name := prefix
-		if i := strings.LastIndexByte(name, '.'); i >= 0 {
-			name = name[i+1:]
-		}
-		if len(bl) == 1 && len(al) == 1 && slices.Contains(single, name) {
+		if collapse(prefix, single, len(bl), len(al)) {
 			diffPaths(bl[0], al[0], prefix, single, out)
 			return
 		}
@@ -198,4 +244,34 @@ func diffPaths(before, after any, prefix string, single []string, out *[]string)
 		prefix = "(all)"
 	}
 	*out = append(*out, prefix)
+}
+
+// unknownPaths appends to out the paths that after_unknown marks true.
+func unknownPaths(u any, prefix string, single []string, out *[]string) {
+	switch v := u.(type) {
+	case bool:
+		if v {
+			if prefix == "" {
+				prefix = "(all)"
+			}
+			*out = append(*out, prefix)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		slices.Sort(keys)
+		for _, k := range keys {
+			unknownPaths(v[k], join(prefix, k), single, out)
+		}
+	case []any:
+		if collapse(prefix, single, len(v)) {
+			unknownPaths(v[0], prefix, single, out)
+			return
+		}
+		for i, e := range v {
+			unknownPaths(e, prefix+"["+strconv.Itoa(i)+"]", single, out)
+		}
+	}
 }

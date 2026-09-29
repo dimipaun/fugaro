@@ -53,6 +53,10 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	if _, err := tf.Plan(ctx, out); err != nil {
 		t.Fatal(err)
 	}
+	// The fake writes its marker to the -out file, so this is Plan's output.
+	if data, err := os.ReadFile(out); err != nil || string(data) != "fake-terraform-plan\n" {
+		t.Fatalf("the plan file holds %q (%v), want the fake's marker", data, err)
+	}
 	if err := tf.Apply(ctx, out); err != nil {
 		t.Fatal(err)
 	}

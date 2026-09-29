@@ -8,7 +8,7 @@ import (
 
 func mustPlan(t *testing.T, s string) *Plan {
 	t.Helper()
-	p, err := parsePlan([]byte(s))
+	p, err := parsePlan([]byte(strings.Replace(s, `{`, `{"format_version":"1.2",`, 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,6 +79,57 @@ func TestSummarySensitiveAttributes(t *testing.T) {
 	p := mustPlan(t, `{"resource_changes":[{"address":"x.y","type":"google_storage_bucket","change":{"actions":["update"],"before":{"paused":true},"after":{"paused":false}}}]}`)
 	if s := Summary(p); strings.Contains(s, "⚠") {
 		t.Errorf("a bucket's paused was marked:\n%s", s)
+	}
+	// Nor is a job label that happens to be called image.
+	p = mustPlan(t, `{"resource_changes":[{"address":"x.y","type":"google_cloud_run_v2_job","change":{"actions":["update"],"before":{"labels":{"image":"a"}},"after":{"labels":{"image":"b"}}}}]}`)
+	if s := Summary(p); strings.Contains(s, "⚠") {
+		t.Errorf("a job label named image was marked:\n%s", s)
+	}
+}
+
+func TestSummaryMarksUnknownSensitiveValues(t *testing.T) {
+	for _, tc := range []struct {
+		name, after, unknown, path string
+	}{
+		// A whole block that becomes unknown holds the image.
+		{"ancestor", `{"name":"j","labels":{"a":"1"}}`, `{"template":true}`, "template"},
+		// null to unknown: before and after both lack a value.
+		{"null", strings.Replace(jobBefore, `"service_account":"sa@p",`, ``, 1), `{"template":[{"template":[{"service_account":true}]}]}`, "template.template.service_account"},
+	} {
+		before := jobBefore
+		if tc.name == "null" {
+			before = strings.Replace(jobBefore, `"sa@p"`, `null`, 1)
+		}
+		p := mustPlan(t, `{"resource_changes":[{"address":"x.y","type":"google_cloud_run_v2_job","change":{"actions":["update"],"before":`+before+`,"after":`+tc.after+`,"after_unknown":`+tc.unknown+`}}]}`)
+		s := Summary(p)
+		if !strings.Contains(s, "⚠ update x.y: ") || !strings.Contains(s, tc.path) {
+			t.Errorf("%s: an unknown sensitive value isn't marked with %s:\n%s", tc.name, tc.path, s)
+		}
+	}
+}
+
+func TestSummaryIdentityImportHasNoEmptyID(t *testing.T) {
+	p := mustPlan(t, `{"resource_changes":[
+	  {"address":"a.b","type":"t","change":{"actions":["no-op"],"importing":{"identity":{"name":"n"}}}},
+	  {"address":"c.d","type":"t","change":{"actions":["update"],"before":{"x":1},"after":{"x":2},"importing":{"identity":{"name":"n"}}}}
+	]}`)
+	s := Summary(p)
+	if strings.Contains(s, "(id") || !strings.Contains(s, "import a.b\n") || !strings.Contains(s, "import and update c.d: x") {
+		t.Errorf("identity imports:\n%s", s)
+	}
+}
+
+func TestSummaryMarkedBlockSensitiveUpdatesFirst(t *testing.T) {
+	p := loadPlan(t, "plan_delete.json")
+	var upd ResourceChange
+	if err := json.Unmarshal([]byte(`{"address":"zzz.sched","type":"google_cloud_scheduler_job","change":{"actions":["update"],"before":{"paused":true},"after":{"paused":false}}}`), &upd); err != nil {
+		t.Fatal(err)
+	}
+	p.ResourceChanges = append(p.ResourceChanges, upd)
+	s := Summary(p)
+	iUpd, iDel := strings.Index(s, "⚠ update zzz.sched"), strings.Index(s, "⚠ delete terraform_data.d")
+	if iUpd < 0 || iDel < 0 || iUpd > iDel {
+		t.Errorf("the sensitive update isn't ahead of the delete:\n%s", s)
 	}
 }
 

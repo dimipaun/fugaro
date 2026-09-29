@@ -32,8 +32,10 @@ const impersonate = "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"
 // Env builds terraform's environment from scratch: the allowlisted variables
 // of parent, then TF_IN_AUTOMATION, TF_INPUT, CHECKPOINT_DISABLE, TF_DATA_DIR
 // (<workdir>/.terraform) and TF_CLI_CONFIG_FILE (<workdir>/terraformrc, which
-// it writes with only plugin_cache_dir = cache, so a user's ~/.terraformrc is
-// never read). workdir and cache must be absolute.
+// it writes with only plugin_cache_dir = cache and a provider_installation of
+// direct {} alone). So a user's ~/.terraformrc is never read, and no implicit
+// local mirror under HOME or XDG_DATA_HOME can supply a provider. workdir and
+// cache must be absolute.
 func Env(parent []string, workdir, cache string) ([]string, error) {
 	if !filepath.IsAbs(workdir) || !filepath.IsAbs(cache) {
 		return nil, fmt.Errorf("terraform: the workdir %q and plugin cache %q must be absolute", workdir, cache)
@@ -67,7 +69,7 @@ func Env(parent []string, workdir, cache string) ([]string, error) {
 	if err := os.MkdirAll(cache, 0o700); err != nil {
 		return nil, fmt.Errorf("terraform: the plugin cache: %w", err)
 	}
-	if err := os.WriteFile(rc, []byte("plugin_cache_dir = \""+cache+"\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(rc, []byte(terraformrc(cache)), 0o600); err != nil {
 		return nil, fmt.Errorf("terraform: writing its CLI config: %w", err)
 	}
 
@@ -77,4 +79,10 @@ func Env(parent []string, workdir, cache string) ([]string, error) {
 	}
 	slices.Sort(env)
 	return env, nil
+}
+
+// terraformrc is the whole CLI config terraform reads.
+func terraformrc(cache string) string {
+	return "plugin_cache_dir = \"" + cache + "\"\n" +
+		"provider_installation {\n  direct {}\n}\n"
 }

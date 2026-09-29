@@ -94,9 +94,11 @@ func TestTerraformIgnoresUserRC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "plugin_cache_dir = \"" + r.cache + "\"\n"
+	// Only the plugin cache, and direct installation, so no implicit local
+	// mirror under HOME or XDG_DATA_HOME can supply a provider.
+	want := "plugin_cache_dir = \"" + r.cache + "\"\nprovider_installation {\n  direct {}\n}\n"
 	if string(data) != want {
-		t.Errorf("terraformrc = %q, want only %q", data, want)
+		t.Errorf("terraformrc = %q, want exactly %q", data, want)
 	}
 	if st, err := os.Stat(r.cache); err != nil || !st.IsDir() {
 		t.Errorf("the plugin cache %s wasn't created: %v", r.cache, err)
