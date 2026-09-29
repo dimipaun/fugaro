@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,15 +17,14 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
-	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd())
+	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd())
 	return cmd
 }
 
@@ -71,9 +71,11 @@ func newImageBuildCmd() *cobra.Command {
 		Short: "Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it",
 		Long: "Build the workflow's derived image.\n\n" +
 			"Without --local, Cloud Build builds it from the repository's base branch\n" +
-			"(cloning with the repository's bitbucket-token secret) and pushes it to\n" +
-			"the local config's registry. Run it from the repository's checkout: the\n" +
-			"checkout's fugaro.yaml and origin say what to build.",
+			"as the repository's build account (cloning with its bitbucket-token, or\n" +
+			"a read-only token its GitHub App mints) and pushes it to the repository's\n" +
+			"own registry, which fugaro init --repo creates. Run it from the\n" +
+			"repository's checkout: the checkout's fugaro.yaml and origin say what to\n" +
+			"build.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
 	}
@@ -147,18 +149,12 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	defer env.Close()
 	lc := env.lc
+	for _, w := range lc.Warnings() {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
+	}
 	_, cfg, name, err := loadCheckout(ctx, o.workflow)
 	if err != nil {
 		return err
-	}
-	if cfg.Git.Provider != gitprov.KindBitbucket {
-		return userErr("Cloud Build images for GitHub repositories need a token-minting step that arrives in M5; use --local")
-	}
-	switch {
-	case lc.Registry == "":
-		return userErr("the local config has no registry, the Artifact Registry repository images are pushed to (such as <region>-docker.pkg.dev/<project>/fugaro)")
-	case lc.Build.ServiceAccount == "":
-		return userErr("the local config has no build.service_account, the service account Cloud Build runs as")
 	}
 	origin, err := originRepo(ctx)
 	if err != nil {
@@ -179,16 +175,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	slug, err := env.repoSlug(repo, func() *config.Config { return cfg })
-	if err != nil {
-		return err
-	}
-	branch := "main"
-	if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-		branch = r.BaseBranch
-	} else if cfg.Git.BaseBranch != "" {
-		branch = cfg.Git.BaseBranch
-	}
 	base := o.base
 	if base == "" {
 		base = lc.BaseImage
@@ -198,16 +184,42 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 			return userErr("%v", err)
 		}
 	}
+	// Every name comes from the repository's spec, as fugaro init --repo
+	// creates them: the build account, the registry (refused when its host
+	// names another project than --project's) and the provider
+	// credential. The spec's check job needs a base image, which this
+	// build doesn't use; the one the build uses stands in.
+	specLC := *lc
+	specLC.BaseImage = cmp.Or(specLC.BaseImage, base)
+	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
+	if err != nil {
+		return userErr("%v", err)
+	}
+	ws, ok := rs.Workflows[name]
+	if !ok {
+		return userErr("fugaro.yaml has no workflow %q", name)
+	}
 	spec := gcp.BuildSpec{
-		Slug: slug, GitProvider: cfg.Git.Provider, RepoURL: repoURL, BaseBranch: branch, Workflow: name, Base: base,
-		Image:       gcp.ImageName(lc.Registry, slug, name),
-		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
-		ServiceAccount: lc.Build.ServiceAccount, MachineType: lc.Build.MachineType,
+		Slug: rs.Slug, GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"), Workflow: name, Base: base,
+		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
+		GitSecretID: rs.Secrets[ws.GitSecret], GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
+		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: lc.Build.MachineType,
 		WorkflowSecrets: cfg.Workflows[name].Secrets,
 	}
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
 		return remote(err)
+	}
+	// A push to a missing registry would fail only at the build's end. An
+	// operator who may submit builds need not be able to read the
+	// registry: then the build goes ahead, and a missing registry fails it.
+	switch exists, err := b.RegistryExists(ctx, rs.RegistryPath); {
+	case errors.Is(err, gcp.ErrRegistryUnchecked):
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not check that the image registry %s exists (%s); submitting the build anyway: if the registry is missing, the build fails when it pushes\n", rs.RegistryPath, oneLine(err.Error()))
+	case err != nil:
+		return remote(err)
+	case !exists:
+		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.Project, rs.RegistryPath, repo)
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {

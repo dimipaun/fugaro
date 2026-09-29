@@ -137,12 +137,8 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	if err != nil {
 		return fmt.Errorf("finding the fugaro executable: %w", err)
 	}
-	var prices *backend.Prices
-	if os.Getenv("FUGARO_BACKEND") == backend.CloudRun {
-		p := gcp.ListPrices(os.Getenv("FUGARO_REGION"))
-		prices = &p
-	}
 	log = runner.NewLogger(cmd.ErrOrStderr(), "run_id", runID, "repo", slug)
+	prices := execPrices(os.Getenv, warn)
 	rec, runErr := runner.Run(ctx, runner.Deps{
 		Store: runstore.Open(bucket.Bucket, slug, runID), OpenProvider: openProvider, ProviderKind: providerKind, Agent: agent.Claude{Bin: o.claudeBin},
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
@@ -212,4 +208,22 @@ func readTaskFile(path string, stdin io.Reader) (*task.Spec, error) {
 		return nil, fmt.Errorf("task file: %w", err)
 	}
 	return &s, nil
+}
+
+// execPrices are the prices the runner estimates compute with: on Cloud
+// Run, the job's FUGARO_COMPUTE_PRICES override, else (or when it is
+// malformed, with a warning) the list price of FUGARO_REGION; nil for a
+// local run, whose compute isn't estimated.
+func execPrices(getenv func(string) string, warn func(string)) *backend.Prices {
+	if getenv("FUGARO_BACKEND") != backend.CloudRun {
+		return nil
+	}
+	p, ok, err := runner.PricesFromEnv(getenv)
+	if err != nil {
+		warn(err.Error() + "; using the list price")
+	}
+	if !ok {
+		p = gcp.ListPrices(getenv("FUGARO_REGION"))
+	}
+	return &p
 }

@@ -32,11 +32,16 @@ type cloudBuild struct {
 		Env        []string `yaml:"env"`
 		Args       []string `yaml:"args"`
 		SecretEnv  []string `yaml:"secretEnv"`
+		Volumes    []struct {
+			Name string `yaml:"name"`
+			Path string `yaml:"path"`
+		} `yaml:"volumes"`
 	} `yaml:"steps"`
 	Images []string `yaml:"images"`
 }
 
-func TestCloudBuildConfig(t *testing.T) {
+func loadCloudBuild(t *testing.T) ([]byte, cloudBuild) {
+	t.Helper()
 	data, err := os.ReadFile("derived/cloudbuild.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -45,11 +50,28 @@ func TestCloudBuildConfig(t *testing.T) {
 	if err := yaml.Unmarshal(data, &cb); err != nil {
 		t.Fatal(err)
 	}
+	return data, cb
+}
+
+// step is the index of the step with id, or fails the test.
+func (cb cloudBuild) step(t *testing.T, id string) int {
+	t.Helper()
+	for i, s := range cb.Steps {
+		if s.ID == id {
+			return i
+		}
+	}
+	t.Fatalf("cloudbuild.yaml has no step %s", id)
+	return -1
+}
+
+func TestCloudBuildConfig(t *testing.T) {
+	data, cb := loadCloudBuild(t)
 	var ids []string
 	for _, s := range cb.Steps {
 		ids = append(ids, s.ID)
 	}
-	if !slices.Equal(ids, []string{"source", "render", "build"}) {
+	if !slices.Equal(ids, []string{"prep", "credential", "source", "render", "build"}) {
 		t.Fatalf("steps = %v", ids)
 	}
 	for _, m := range regexp.MustCompile(`\$\{(_[A-Z_]+)\}`).FindAllStringSubmatch(string(data), -1) {
@@ -57,45 +79,43 @@ func TestCloudBuildConfig(t *testing.T) {
 			t.Errorf("%s is used but not declared in substitutions", m[1])
 		}
 	}
-	script := func(i int) string { return strings.Join(cb.Steps[i].Args, " ") }
-	if !strings.Contains(script(1), "fugaro image render") || cb.Steps[1].Name != "${_FUGARO_BASE}" {
+	script := func(id string) string { return strings.Join(cb.Steps[cb.step(t, id)].Args, " ") }
+	if !strings.Contains(script("render"), "fugaro image render") || cb.Steps[cb.step(t, "render")].Name != "${_FUGARO_BASE}" {
 		t.Error("the render step must use the base image's own fugaro image render")
 	}
-	if !strings.Contains(script(2), "--secret \"id=git-credentials,src=$$cred/git-credentials\"") || !strings.Contains(images.DerivedTemplate, "id=git-credentials") {
+	cred := cb.Steps[cb.step(t, "credential")]
+	if cred.Name != "${_FUGARO_BASE}" || !strings.Contains(script("credential"), "fugaro image git-credential") ||
+		!strings.Contains(script("credential"), "--out /creds/git-credentials") {
+		t.Errorf("the credential step must run the base image's fugaro image git-credential into the volume: %s %s", cred.Name, script("credential"))
+	}
+	if !strings.Contains(script("prep"), "install -d -m 0700 -o 1000 -g 1000 /creds") {
+		t.Errorf("the prep step must make /creds private to the base image's user: %s", script("prep"))
+	}
+	if !strings.Contains(script("build"), `--secret "id=git-credentials,src=/creds/git-credentials"`) || !strings.Contains(images.DerivedTemplate, "id=git-credentials") {
 		t.Error("the build step and the template disagree on the git credential secret")
 	}
-	if !strings.Contains(script(2), "RepoDigests") {
+	if !strings.Contains(script("source"), "credential.helper='store --file=/creds/git-credentials'") {
+		t.Error("the source step must clone with the credential file in the volume")
+	}
+	if !strings.Contains(script("build"), "RepoDigests") {
 		t.Error("the build step does not pin the base image by digest")
 	}
-	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_SECRET_ENVS"} {
+	for _, k := range []string{"_REPO_URL", "_BASE_BRANCH", "_WORKFLOW", "_FUGARO_BASE", "_IMAGE", "_GIT_USER", "_GITHUB_APP_ID", "_SECRET_ENVS"} {
 		if _, ok := cb.Substitutions[k]; !ok {
 			t.Errorf("substitution %s is not declared", k)
 		}
 	}
-	build := strings.Join(cb.Steps[2].Args, " ")
+	build := script("build")
 	if strings.Contains(build, "docker pull") || !strings.Contains(build, "docker image inspect") {
 		t.Error("the build step must reuse the render step's base image, not pull it again")
 	}
 	if !strings.Contains(build, "SECRET_ENVS") || !strings.Contains(build, "--secret") {
 		t.Error("the build step does not pass workflow secrets")
 	}
-	if !slices.Equal(cb.Steps[0].SecretEnv, []string{"GIT_TOKEN"}) {
-		t.Errorf("source secretEnv = %v", cb.Steps[0].SecretEnv)
+	if !strings.Contains(build, "mktemp -d") || !strings.Contains(build, "rm -f /creds/git-credentials") {
+		t.Error("the build step must keep workflow secrets in a mktemp directory and remove the git credential on exit")
 	}
-	if len(cb.Steps[1].SecretEnv) != 0 || !slices.Equal(cb.Steps[2].SecretEnv, []string{"GIT_TOKEN"}) {
-		t.Errorf("secretEnv render = %v, build = %v; only source and build may see GIT_TOKEN, and workflow secrets are added per request", cb.Steps[1].SecretEnv, cb.Steps[2].SecretEnv)
-	}
-	for _, st := range cb.Steps {
-		if sc := strings.Join(st.Args, " "); strings.Contains(sc, "/builder/home") {
-			t.Errorf("step %s uses /builder/home, which every later step (render included) can read", st.ID)
-		}
-	}
-	for _, i := range []int{0, 2} {
-		if sc := script(i); !strings.Contains(sc, "mktemp -d") || !strings.Contains(sc, `trap 'rm -rf "$$cred"' EXIT`) {
-			t.Errorf("step %s must keep its credential in a mktemp directory removed on exit", cb.Steps[i].ID)
-		}
-	}
-	if src := strings.Join(cb.Steps[0].Args, " "); !strings.Contains(src, "https://*)") {
+	if src := script("source"); !strings.Contains(src, "https://*)") {
 		t.Error("the source step must refuse a non-https REPO_URL")
 	}
 	if len(cb.AvailableSecrets.SecretManager) != 1 || cb.AvailableSecrets.SecretManager[0].Env != "GIT_TOKEN" {
@@ -106,6 +126,54 @@ func TestCloudBuildConfig(t *testing.T) {
 	}
 	if !slices.Equal(cb.Images, []string{"${_IMAGE}:latest"}) {
 		t.Errorf("images = %v", cb.Images)
+	}
+}
+
+// TestCloudBuildCredentialOnlyInVolume: the git credential lives only in
+// the fugaro-creds volume, which the steps that clone mount and render
+// (which runs the repository's fugaro.yaml through the base image) does
+// not. Only the credential step sees the provider secret itself, and no
+// step writes a credential under /workspace or /builder/home, which every
+// later step can read.
+func TestCloudBuildCredentialOnlyInVolume(t *testing.T) {
+	_, cb := loadCloudBuild(t)
+	mounts := map[string]bool{}
+	for _, s := range cb.Steps {
+		for _, v := range s.Volumes {
+			if v.Name == "fugaro-creds" && v.Path == "/creds" {
+				mounts[s.ID] = true
+			} else {
+				t.Errorf("step %s mounts %s at %s", s.ID, v.Name, v.Path)
+			}
+		}
+		for _, e := range s.SecretEnv {
+			if (e == "GIT_TOKEN" || e == "GITHUB_APP_KEY") && s.ID != "credential" {
+				t.Errorf("step %s sees the provider secret %s", s.ID, e)
+			}
+		}
+		sc := strings.Join(s.Args, " ")
+		if strings.Contains(sc, "/builder/home") {
+			t.Errorf("step %s uses /builder/home, which every later step (render included) can read", s.ID)
+		}
+		if regexp.MustCompile(`/workspace/\S*git-credentials|/workspace/\S*creds`).MatchString(sc) {
+			t.Errorf("step %s puts a credential under /workspace", s.ID)
+		}
+		for _, m := range regexp.MustCompile(`\S*git-credentials`).FindAllString(sc, -1) {
+			if !strings.Contains(m, "/creds/git-credentials") && !strings.HasPrefix(m, `"id=git-credentials`) {
+				t.Errorf("step %s names a credential file outside the volume: %s", s.ID, m)
+			}
+		}
+	}
+	for _, id := range []string{"prep", "credential", "source", "build"} {
+		if !mounts[id] {
+			t.Errorf("step %s does not mount fugaro-creds at /creds", id)
+		}
+	}
+	if mounts["render"] || len(cb.Steps[cb.step(t, "render")].Volumes) != 0 {
+		t.Error("the render step mounts a volume")
+	}
+	if cred := cb.Steps[cb.step(t, "credential")]; !slices.Equal(cred.SecretEnv, []string{"GIT_TOKEN"}) {
+		t.Errorf("credential secretEnv = %v", cred.SecretEnv)
 	}
 }
 
@@ -421,42 +489,35 @@ func TestCIWorkflowCheckoutsDropCredentials(t *testing.T) {
 }
 
 // TestCloudBuildCredentialScripts runs the source and build step scripts
-// under bash, with git and docker stubbed, and checks the credential file
-// each hands on: real git must read the token back byte for byte (it
-// holds characters a credential-store URL has to percent-encode), the token
-// never reaches an argv, and the file is gone when the step exits.
+// under bash, with git and docker stubbed, against a credential file in a
+// stand-in for the volume: both hand git and BuildKit that file (never its
+// contents on an argv), the build hands each workflow secret over as a
+// private file, and the build removes the credential when it exits.
 func TestCloudBuildCredentialScripts(t *testing.T) {
 	testutil.IsolateGit(t)
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("no bash")
 	}
-	git, err := exec.LookPath("git")
-	if err != nil {
-		t.Skip("no git")
-	}
-	data, err := os.ReadFile("derived/cloudbuild.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cb cloudBuild
-	if err := yaml.Unmarshal(data, &cb); err != nil {
-		t.Fatal(err)
-	}
-	const token = "t/o@k:e%n+ 'x\"y"
-	const user = "x-token-auth"
+	_, cb := loadCloudBuild(t)
+	const line = "https://x-token-auth:t%2Fo%40k@bitbucket.org\n"
 	const npmToken = "-n 'p\"m %s\\n"
 	dir := t.TempDir()
 	ws := filepath.Join(dir, "workspace")
 	bin := filepath.Join(dir, "bin")
-	for _, d := range []string{ws, bin} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
+	creds := filepath.Join(dir, "creds")
+	for _, d := range []string{ws, bin, creds} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
+	credFile := filepath.Join(creds, "git-credentials")
+	if err := os.WriteFile(credFile, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	argv := filepath.Join(dir, "argv")
-	// The stubs log their argv and copy the credential file they are
-	// pointed at, the way git's store helper and docker's --secret read it.
+	// The stubs log their argv and copy the files they are pointed at, the
+	// way git's store helper and docker's --secret read them.
 	stubs := map[string]string{
 		"git": `#!/bin/sh
 printf '%s\n' "git $*" >> "$ARGV"
@@ -477,35 +538,38 @@ esac; done
 		}
 	}
 	capture := filepath.Join(dir, "capture")
-	if err := os.MkdirAll(capture, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	tmp := filepath.Join(dir, "tmp")
-	if err := os.MkdirAll(tmp, 0o700); err != nil {
-		t.Fatal(err)
+	for _, d := range []string{capture, tmp} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			t.Fatal(err)
+		}
 	}
-	for _, i := range []int{0, 2} {
-		st := cb.Steps[i]
-		script := strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws)
+	for _, id := range []string{"source", "build"} {
+		st := cb.Steps[cb.step(t, id)]
+		script := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(st.Args[1], "$$", "$"), "/workspace", ws), "/creds", creds)
 		cmd := exec.Command(bash, "-c", script)
 		cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "HOME=" + dir, "TMPDIR=" + tmp, "ARGV=" + argv, "CAPTURE=" + capture,
-			"GIT_TOKEN=" + token, "GIT_USER=" + user, "REPO_URL=https://bitbucket.org/acme/app.git", "BASE_BRANCH=main",
+			"REPO_URL=https://bitbucket.org/acme/app.git", "BASE_BRANCH=main",
 			"FUGARO_BASE=example.com/base:1", "IMAGE=example.com/img", "SECRET_ENVS=NPM_TOKEN", "NPM_TOKEN=" + npmToken}
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("step %s: %v\n%s", st.ID, err, out)
-		} else if strings.Contains(string(out), token) {
-			t.Errorf("step %s printed the token", st.ID)
 		}
 		if left, _ := os.ReadDir(tmp); len(left) != 0 {
 			t.Errorf("step %s left %v in its temp dir", st.ID, left)
 		}
 	}
+	if _, err := os.Stat(credFile); !os.IsNotExist(err) {
+		t.Errorf("the build step left the git credential in the volume (%v)", err)
+	}
 	logged, err := os.ReadFile(argv)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(logged), "k:e") || !regexp.MustCompile(`--secret id=NPM_TOKEN,src=\S*/NPM_TOKEN `).Match(logged) || strings.Contains(string(logged), "env=") {
+	if strings.Contains(string(logged), "t%2Fo") || !regexp.MustCompile(`--secret id=NPM_TOKEN,src=\S*/NPM_TOKEN `).Match(logged) || strings.Contains(string(logged), "env=") {
 		t.Errorf("argv:\n%s", logged)
+	}
+	if !strings.Contains(string(logged), "--secret id=git-credentials,src="+credFile) {
+		t.Errorf("the build does not hand BuildKit the volume's credential file:\n%s", logged)
 	}
 	// The build step hands docker the workflow secret as a file it wrote
 	// with umask 077, holding the value exactly, never on its argv.
@@ -519,15 +583,8 @@ esac; done
 		t.Error("the workflow secret value reached docker's argv")
 	}
 	for _, f := range []string{"source", "build"} {
-		file := filepath.Join(capture, f)
-		get := exec.Command(git, "credential-store", "--file="+file, "get")
-		get.Stdin = strings.NewReader("protocol=https\nhost=bitbucket.org\n\n")
-		out, err := get.Output()
-		if err != nil {
-			t.Fatalf("%s: git credential-store get: %v", f, err)
-		}
-		if !strings.Contains(string(out), "username="+user+"\n") || !strings.Contains(string(out), "password="+token+"\n") {
-			t.Errorf("%s: git read back %q", f, out)
+		if got, err := os.ReadFile(filepath.Join(capture, f)); err != nil || string(got) != line {
+			t.Errorf("%s read the credential file as %q, %v", f, got, err)
 		}
 	}
 }

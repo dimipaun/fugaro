@@ -11,7 +11,9 @@ import (
 
 // Build is a fake of the Cloud Build v1 calls Fugaro makes: builds create
 // (in a location) and builds get. It never runs anything: every build
-// finishes at once with Outcome.
+// finishes at once with Outcome. It also answers Artifact Registry's
+// repositories get, for the registries AddRegistry made, since a build's
+// submitter checks its registry first.
 type Build struct {
 	*Server
 
@@ -23,22 +25,34 @@ type Build struct {
 	FailGets, FailGetCode int
 	// NoResults makes a SUCCESS build report no pushed images.
 	NoResults bool
+	// ForbidRegistries makes every repositories get answer 403, as for a
+	// caller without read access to the registry.
+	ForbidRegistries bool
 
-	mu     sync.Mutex
-	builds map[string]map[string]any // request bodies, by build ID
-	last   map[string]any
-	n      int
+	mu         sync.Mutex
+	builds     map[string]map[string]any // request bodies, by build ID
+	registries map[string]bool           // projects/<p>/locations/<l>/repositories/<r>
+	last       map[string]any
+	n          int
 }
 
 var (
 	buildsPathRE = regexp.MustCompile(`^/v1/projects/([^/]+)/locations/([^/]+)/builds$`)
 	buildPathRE  = regexp.MustCompile(`^/v1/projects/([^/]+)/locations/([^/]+)/builds/([^/:]+)$`)
+	registryRE   = regexp.MustCompile(`^/v1/(projects/[^/]+/locations/[^/]+/repositories/[^/:]+)$`)
 )
+
+// AddRegistry makes the Docker repository id exist in project and location.
+func (f *Build) AddRegistry(project, location, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.registries["projects/"+project+"/locations/"+location+"/repositories/"+id] = true
+}
 
 // NewBuild starts a Cloud Build fake that lives until the test ends.
 func NewBuild(t *testing.T) *Build {
 	t.Helper()
-	f := &Build{builds: map[string]map[string]any{}}
+	f := &Build{builds: map[string]map[string]any{}, registries: map[string]bool{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -105,6 +119,17 @@ func (f *Build) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			}}}
 		}
 		writeJSON(w, http.StatusOK, out)
+	case r.Method == http.MethodGet && registryRE.MatchString(p):
+		name := registryRE.FindStringSubmatch(p)[1]
+		if f.ForbidRegistries {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "Permission 'artifactregistry.repositories.get' denied")
+			return
+		}
+		if !f.registries[name] {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Requested entity was not found.")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"name": name, "format": "DOCKER"})
 	default:
 		f.unhandled(w, r)
 	}

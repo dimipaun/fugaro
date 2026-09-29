@@ -13,7 +13,10 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
+	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -75,17 +78,62 @@ func appAuth(appID string, key *rsa.PrivateKey, now func() time.Time) func(conte
 	}
 }
 
-// tokenPermissions is what an installation token asks for (design §6.1):
-// no more than the run needs, even if the App was granted more.
+// tokenPermissions is what a run's installation token asks for (design
+// §6.1): no more than the run needs, even if the App was granted more.
 var tokenPermissions = map[string]string{
 	"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read",
 }
 
-// tokenSource mints installation tokens scoped to one repository and
-// caches the current one until it gets close to expiring.
+// buildTokenPermissions is what an image build's token asks for: it only
+// clones the repository.
+var buildTokenPermissions = map[string]string{"contents": "read", "metadata": "read"}
+
+// BuildTokenPermissions are the permissions of an image build's token, a
+// copy the caller may keep.
+func BuildTokenPermissions() map[string]string { return maps.Clone(buildTokenPermissions) }
+
+// GitUsername is the HTTPS username git uses with an installation token.
+const GitUsername = gitUsername
+
+// buildTokenMinValid is how long a build's token must still be valid when
+// minted: the build clones again in its last step, well within this.
+const buildTokenMinValid = 30 * time.Minute
+
+// MintInstallationToken mints one installation token for o's repository,
+// scoped to it alone and to perms, and valid for at least half an hour
+// (GitHub gives it about an hour). It returns the token and its expiry.
+func MintInstallationToken(ctx context.Context, o Options, perms map[string]string) (string, time.Time, error) {
+	if o.Owner == "" || o.Repo == "" {
+		return "", time.Time{}, errors.New("github: owner and repository are required")
+	}
+	if o.AppID == "" || o.PrivateKey == nil {
+		return "", time.Time{}, errors.New("github: an App ID and private key are required")
+	}
+	if len(perms) == 0 {
+		return "", time.Time{}, errors.New("github: an installation token needs its permissions")
+	}
+	if o.BaseURL == "" {
+		o.BaseURL = DefaultBaseURL
+	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
+	app := &httpjson.Client{BaseURL: strings.TrimSuffix(o.BaseURL, "/"), HTTP: o.HTTP, Auth: appAuth(o.AppID, o.PrivateKey, o.Now), Header: http.Header{
+		"Accept":               {"application/vnd.github+json"},
+		"X-Github-Api-Version": {"2022-11-28"},
+		"User-Agent":           {"fugaro"},
+	}}
+	src := &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now, permissions: maps.Clone(perms)}
+	return src.Token(ctx, buildTokenMinValid)
+}
+
+// tokenSource mints installation tokens scoped to one repository and to
+// permissions (nil means a run's, tokenPermissions), and caches the
+// current one until it gets close to expiring.
 type tokenSource struct {
 	app          *httpjson.Client // authenticated as the App (JWT)
 	owner, repo  string
+	permissions  map[string]string
 	now          func() time.Time
 	mu           sync.Mutex
 	installation int64
@@ -119,7 +167,11 @@ func (s *tokenSource) Token(ctx context.Context, minValid time.Duration) (string
 		Token     string    `json:"token"`
 		ExpiresAt time.Time `json:"expires_at"`
 	}
-	body := map[string]any{"repositories": []string{s.repo}, "permissions": tokenPermissions}
+	perms := s.permissions
+	if perms == nil {
+		perms = tokenPermissions
+	}
+	body := map[string]any{"repositories": []string{s.repo}, "permissions": perms}
 	if err := s.app.Do(ctx, "POST", fmt.Sprintf("/app/installations/%d/access_tokens", s.installation), body, &tok); err != nil {
 		return "", time.Time{}, fmt.Errorf("minting an installation token for %s/%s: %w", s.owner, s.repo, err)
 	}

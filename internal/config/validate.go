@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
+
+	"github.com/bmatcuk/doublestar/v4"
 )
 
 // WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
@@ -163,6 +166,7 @@ func Validate(c *Config) []Problem {
 		if !memoryRE.MatchString(w.Resources.Memory) {
 			add(p+".resources.memory", "must look like 512Mi or 16Gi")
 		}
+		ps = append(ps, validateRebuild(p+".rebuild", w.Rebuild)...)
 		t := w.Timeouts
 		for _, d := range []struct {
 			name string
@@ -177,6 +181,40 @@ func Validate(c *Config) []Problem {
 		}
 		if t.Stage.Duration > t.Total.Duration {
 			add(p+".timeouts.stage", "must not exceed timeouts.total")
+		}
+	}
+	return ps
+}
+
+// Bounds of rebuild.max_age, other than 0 (the age trigger off).
+const (
+	minRebuildAge = time.Hour
+	maxRebuildAge = 90 * 24 * time.Hour
+)
+
+// validateRebuild reports a workflow's rebuild block problems, each at p.<field>.
+func validateRebuild(p string, r Rebuild) []Problem {
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	if r.Check != "daily" && r.Check != "off" {
+		add(p+".check", "must be daily or off")
+	}
+	if a := r.MaxAge.Duration; a != 0 && (a < minRebuildAge || a > maxRebuildAge) {
+		add(p+".max_age", "must be 0 (no age limit) or between 1h and 90d")
+	}
+	for i, g := range r.Paths {
+		gp := fmt.Sprintf("%s.paths[%d]", p, i)
+		switch {
+		case strings.TrimSpace(g) == "":
+			add(gp, "must not be empty")
+		case strings.HasPrefix(g, "/"):
+			add(gp, "must be relative to the repository, not start with /")
+		case slices.Contains(strings.Split(g, "/"), ".."):
+			add(gp, "must not contain a .. component")
+		case !doublestar.ValidatePattern(g):
+			add(gp, "is not a valid glob pattern")
 		}
 	}
 	return ps

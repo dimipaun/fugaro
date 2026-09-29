@@ -57,6 +57,47 @@ type Workflow struct {
 	Secrets    []Secret     `yaml:"secrets"`
 	Resources  Resources    `yaml:"resources"`
 	Timeouts   Timeouts     `yaml:"timeouts"`
+	Rebuild    Rebuild      `yaml:"rebuild"`
+}
+
+// Rebuild says when the daily image check rebuilds the workflow's image
+// (design §7.2). A change to image:, dockerfile: (or the file it names), base
+// or image.setup always rebuilds, and can't be turned off: it makes the image
+// wrong, not just stale.
+type Rebuild struct {
+	Check     string   `yaml:"check"`     // daily | off (off: rebuilt only by fugaro image build)
+	MaxAge    Duration `yaml:"max_age"`   // rebuild an image older than this; 0 turns the age trigger off
+	Lockfiles *bool    `yaml:"lockfiles"` // rebuild when a cache key file changed on the base branch
+	Base      *bool    `yaml:"base"`      // rebuild when the base image's digest moved
+	Paths     []string `yaml:"paths"`     // globs; a change under one on the base branch forces a rebuild
+}
+
+// DefaultMaxAge bounds how long a base image's security fixes wait until a
+// published base image moves under the base trigger.
+const DefaultMaxAge = 14 * 24 * time.Hour
+
+// Defaults returns r with every field it leaves unset filled in: a daily
+// check, a 14-day age limit, both the lockfile and base triggers on, and no
+// extra paths. An explicit max_age of 0 is kept.
+func (r Rebuild) Defaults() Rebuild {
+	if r.Check == "" {
+		r.Check = "daily"
+	}
+	if !r.MaxAge.Set {
+		r.MaxAge = Duration{Duration: DefaultMaxAge, Set: true}
+	}
+	if r.Lockfiles == nil {
+		t := true
+		r.Lockfiles = &t
+	}
+	if r.Base == nil {
+		t := true
+		r.Base = &t
+	}
+	if r.Paths == nil {
+		r.Paths = []string{}
+	}
+	return r
 }
 
 // Image customizes the workflow's generated derived image (design §7.2). The
@@ -128,16 +169,35 @@ type Timeouts struct {
 	FinalizeReserve Duration `yaml:"finalize_reserve"`
 }
 
-// Duration is a time.Duration written in Go syntax, such as "90m" or "1h30m".
-type Duration struct{ time.Duration }
+// Duration is a time.Duration written in Go syntax, such as "90m" or "1h30m",
+// optionally led by whole days, as in "14d" or "1d12h". Set records that the
+// file gave a value, so an explicit 0 differs from an omitted field.
+type Duration struct {
+	time.Duration
+	Set bool
+}
 
-// UnmarshalYAML parses a Go duration string.
+var daysRE = regexp.MustCompile(`^([0-9]+)d(.*)$`)
+
+// UnmarshalYAML parses a Go duration string, with an optional day count.
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
-	v, err := time.ParseDuration(n.Value)
-	if err != nil {
-		return fmt.Errorf("line %d: invalid duration %q (use Go syntax such as 90m or 1h30m)", n.Line, n.Value)
+	var days time.Duration
+	rest := n.Value
+	if m := daysRE.FindStringSubmatch(rest); m != nil {
+		count, err := strconv.Atoi(m[1])
+		if err != nil || count > 36500 {
+			return fmt.Errorf("line %d: invalid duration %q", n.Line, n.Value)
+		}
+		days, rest = time.Duration(count)*24*time.Hour, m[2]
 	}
-	d.Duration = v
+	var v time.Duration
+	if rest != "" || days == 0 {
+		var err error
+		if v, err = time.ParseDuration(rest); err != nil {
+			return fmt.Errorf("line %d: invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", n.Line, n.Value)
+		}
+	}
+	d.Duration, d.Set = days+v, true
 	return nil
 }
 

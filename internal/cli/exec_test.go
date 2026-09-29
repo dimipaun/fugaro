@@ -10,6 +10,8 @@ import (
 
 	"gocloud.dev/blob/fileblob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -145,5 +147,34 @@ func TestExecRefusesHTTP2Debug(t *testing.T) {
 	_, _, err := execute(t, "exec", "--bucket", "file://"+t.TempDir(), "--run", "acme-app/20260926-221530-abcd")
 	if err == nil || !strings.Contains(err.Error(), "http2debug") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// On Cloud Run the runner prices compute with FUGARO_COMPUTE_PRICES when it
+// is set, so its PR report agrees with ls; a malformed value is a warning
+// and the list price. Local runs estimate no compute.
+func TestExecUsesPriceEnv(t *testing.T) {
+	list := gcp.ListPrices("us-east5")
+	for name, tc := range map[string]struct {
+		env  map[string]string
+		want *backend.Prices
+		warn bool
+	}{
+		"override": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "0.00001,0.000001"},
+			&backend.Prices{VCPUSecondUSD: 0.00001, GiBSecondUSD: 0.000001, Source: "local override"}, false},
+		"unset":     {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5"}, &list, false},
+		"malformed": {map[string]string{"FUGARO_BACKEND": backend.CloudRun, "FUGARO_REGION": "us-east5", "FUGARO_COMPUTE_PRICES": "cheap"}, &list, true},
+		"local":     {map[string]string{"FUGARO_COMPUTE_PRICES": "0.00001,0.000001"}, nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var warned []string
+			got := execPrices(func(k string) string { return tc.env[k] }, func(m string) { warned = append(warned, m) })
+			if (got == nil) != (tc.want == nil) || got != nil && *got != *tc.want {
+				t.Fatalf("prices = %+v, want %+v", got, tc.want)
+			}
+			if tc.warn != (len(warned) == 1) || tc.warn && !strings.Contains(warned[0], "FUGARO_COMPUTE_PRICES") {
+				t.Fatalf("warnings = %q", warned)
+			}
+		})
 	}
 }
