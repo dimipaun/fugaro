@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
@@ -80,12 +81,10 @@ func InstallationStateExists(ctx context.Context, c *Clients, stateBucket string
 	return found, nil
 }
 
-// ForgetRepoState deletes the objects of the repository's state (by then
-// empty: every address was removed from it), so the installation's
-// rollback no longer finds the repository. The state bucket is versioned,
-// so each stays recoverable as a noncurrent version. It returns what it
-// deleted.
-func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) ([]string, error) {
+// RepoStateObjects are the repository's state objects in the state
+// bucket (its *.tfstate objects under RepoStatePrefix; a lock is not
+// state), sorted.
+func RepoStateObjects(ctx context.Context, c *Clients, stateBucket, slug string) ([]string, error) {
 	if !slugRE.MatchString(slug) {
 		return nil, fmt.Errorf("%q is not a repository slug", slug)
 	}
@@ -93,7 +92,9 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 	var names []string
 	err := c.Storage.Objects.List(stateBucket).Prefix(prefix).Pages(ctx, func(o *storage.Objects) error {
 		for _, it := range o.Items {
-			names = append(names, it.Name)
+			if strings.HasSuffix(it.Name, ".tfstate") {
+				names = append(names, it.Name)
+			}
 		}
 		return nil
 	})
@@ -101,6 +102,29 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 		return nil, fmt.Errorf("listing gs://%s/%s: %w", stateBucket, prefix, err)
 	}
 	slices.Sort(names)
+	return names, nil
+}
+
+// StateBucketVersioned reports whether the state bucket keeps noncurrent
+// versions, so a deleted state object can be restored.
+func StateBucketVersioned(ctx context.Context, c *Clients, stateBucket string) (bool, error) {
+	b, err := c.Storage.Buckets.Get(stateBucket).Context(ctx).Do()
+	if err != nil {
+		return false, fmt.Errorf("reading the state bucket gs://%s: %w", stateBucket, err)
+	}
+	return b.Versioning != nil && b.Versioning.Enabled, nil
+}
+
+// ForgetRepoState deletes the repository's state objects (by then empty:
+// every address was removed from them), so the installation's rollback no
+// longer finds the repository. The caller checks that the state bucket is
+// versioned, so each stays recoverable as a noncurrent version. It returns
+// what it deleted.
+func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) ([]string, error) {
+	names, err := RepoStateObjects(ctx, c, stateBucket, slug)
+	if err != nil {
+		return nil, err
+	}
 	var deleted []string
 	for _, n := range names {
 		if err := c.Storage.Objects.Delete(stateBucket, n).Context(ctx).Do(); err != nil && !notFound(err) {

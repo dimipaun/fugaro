@@ -138,6 +138,8 @@ func TestForgetRepoStateDeletesOnlyThatRepository(t *testing.T) {
 		RepoStatePrefix(other) + "/default.tfstate",
 		// A slug that starts with this one's is another repository.
 		RepoStatePrefix(spec.Slug) + "x/default.tfstate",
+		// A lock is someone's running operation, not state.
+		RepoStatePrefix(spec.Slug) + "/default.tflock",
 	}
 	for _, k := range keys {
 		if err := b.WriteAll(ctx, k, []byte("{}"), nil); err != nil {
@@ -155,7 +157,7 @@ func TestForgetRepoStateDeletesOnlyThatRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := slices.Sorted(slices.Values([]string{keys[2], keys[3]})); !slices.Equal(got, want) {
+	if want := slices.Sorted(slices.Values([]string{keys[2], keys[3], keys[4]})); !slices.Equal(got, want) {
 		t.Fatalf("left %q, want %q", got, want)
 	}
 }
@@ -231,5 +233,75 @@ func TestSecretCommands(t *testing.T) {
 	}
 	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %q", got)
+	}
+}
+
+func TestRepoStateObjects(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	b := f.gcs.Bucket(t, testStateBucket)
+	spec := sandboxSpec(t)
+	for _, k := range []string{RepoStatePrefix(spec.Slug) + "/default.tfstate", RepoStatePrefix(spec.Slug) + "/default.tflock", RepoStatePrefix(spec.Slug) + "x/default.tfstate"} {
+		if err := b.WriteAll(ctx, k, []byte("{}"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := RepoStateObjects(ctx, f.c, testStateBucket, spec.Slug)
+	if err != nil || !slices.Equal(got, []string{RepoStatePrefix(spec.Slug) + "/default.tfstate"}) {
+		t.Fatalf("state objects = %q, %v", got, err)
+	}
+	// The lock stays when the state goes.
+	if _, err := ForgetRepoState(ctx, f.c, testStateBucket, spec.Slug); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := b.Exists(ctx, RepoStatePrefix(spec.Slug)+"/default.tflock"); err != nil || !ok {
+		t.Fatalf("the lock went too (%v, %v)", ok, err)
+	}
+}
+
+func TestStateBucketVersioned(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	if ok, err := StateBucketVersioned(ctx, f.c, testStateBucket); err != nil || ok {
+		t.Fatalf("unversioned: %v, %v", ok, err)
+	}
+	f.gcs.SetVersioning(testStateBucket, true)
+	if ok, err := StateBucketVersioned(ctx, f.c, testStateBucket); err != nil || !ok {
+		t.Fatalf("versioned: %v, %v", ok, err)
+	}
+}
+
+// Each gate says what kind of thing is missing, so callers don't read the
+// reason's text.
+func TestMissingKinds(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	f.seedVersions(spec, "bitbucket-token")
+	_, missing, err := Readiness(ctx, f.c, spec, Existing{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[MissingKind]int{}
+	for _, m := range missing {
+		kinds[m.Kind]++
+		switch m.Kind {
+		case MissingSecret:
+			if !strings.HasPrefix(m.Reason, "secret ") {
+				t.Errorf("a secret gate with reason %q", m.Reason)
+			}
+		case MissingImage:
+			if !strings.Contains(m.Reason, "fugaro image build") {
+				t.Errorf("an image gate with reason %q", m.Reason)
+			}
+		default:
+			t.Errorf("unknown kind %q: %+v", m.Kind, m)
+		}
+	}
+	if kinds[MissingSecret] != 2 || kinds[MissingImage] != 1 {
+		t.Fatalf("kinds = %v", kinds)
 	}
 }

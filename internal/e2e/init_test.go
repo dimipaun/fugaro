@@ -455,7 +455,7 @@ func (r *initRepoRig) bootstrap(t *testing.T) {
 	}
 	r.gcs.SetBucketPolicy(initRepoRunsBucket, bucket)
 	for logical, id := range spec.Secrets {
-		r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte("value-"+logical))
+		r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, spec.Label, gcp.LabelSecret, logical), []byte(secretValue(logical)))
 		m := slices.Compact(slices.Sorted(slices.Values(accessors[logical])))
 		r.sm.SetPolicy(id, []gcpfake.Binding{{Role: "roles/secretmanager.secretAccessor", Members: m}})
 	}
@@ -465,7 +465,7 @@ func (r *initRepoRig) bootstrap(t *testing.T) {
 // them, each with a version, and nothing else.
 func (r *initRepoRig) storedSecrets() {
 	for logical, id := range r.spec.Secrets {
-		r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, r.spec.Label, gcp.LabelSecret, logical), []byte("value-"+logical))
+		r.sm.Seed(id, withLabels(managedLabels, gcp.LabelRepo, r.spec.Label, gcp.LabelSecret, logical), []byte(secretValue(logical)))
 	}
 }
 
@@ -477,6 +477,37 @@ func (r *initRepoRig) requests() int {
 	}
 	return n
 }
+
+// noSecretValues checks that no seeded secret value reached the output,
+// the local config, or any plan's tfvars and imports.
+func (r *initRepoRig) noSecretValues(t *testing.T, res cliResult) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(r.dir, "*-*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	files = append(files, r.cfg)
+	texts := map[string]string{"stdout": res.stdout, "stderr": res.stderr}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		texts[f] = string(b)
+	}
+	if len(files) < 3 {
+		t.Fatalf("no tfvars or imports to check: %q", files)
+	}
+	for logical := range r.spec.Secrets {
+		for where, text := range texts {
+			if strings.Contains(text, secretValue(logical)) {
+				t.Errorf("the value of %s reached %s", logical, where)
+			}
+		}
+	}
+}
+
+func secretValue(logical string) string { return "planted-value-" + logical }
 
 func (r *initRepoRig) localConfig(t *testing.T) *localcfg.Config {
 	t.Helper()
@@ -522,6 +553,7 @@ func TestInitRepoAdoptsBootstrapResources(t *testing.T) {
 	if v["allow_job_delete"] != false {
 		t.Errorf("allow_job_delete = %v", v["allow_job_delete"])
 	}
+	r.noSecretValues(t, res)
 	if !strings.Contains(res.stdout, "IAM: 4 bindings match the live ones (adopted), 0 new") {
 		t.Errorf("the summary doesn't count the adopted bindings:\n%s", res)
 	}
@@ -601,6 +633,11 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 	if !strings.Contains(res.stdout, "submits a Cloud Build for acme/sandbox/web") {
 		t.Errorf("the build wasn't confirmed:\n%s", res)
 	}
+	// The first apply, the build and the second apply each asked.
+	if n := strings.Count(res.stdout, "⚠ CONFIRM"); n != 3 || !strings.Contains(res.stdout, "deploying the images just built") {
+		t.Errorf("%d confirmations, want 3 with the second apply's own:\n%s", n, res)
+	}
+	r.noSecretValues(t, res)
 	if sa, _ := r.build.Last()["serviceAccount"].(string); !strings.HasSuffix(sa, "/"+r.spec.BuildServiceAccountEmail) {
 		t.Errorf("the build runs as %q, not the repository's build account", sa)
 	}
@@ -802,16 +839,42 @@ func TestInitRepoAllowJobDeleteHighlighted(t *testing.T) {
 	}
 }
 
-func TestInitRepoForget(t *testing.T) {
+// stateManaged and stateEmpty are terraform show -json of the
+// repository's state before and after state rm (which leaves the outputs).
+const (
+	stateManaged = `{"format_version":"1.0","values":{"outputs":{"registry":{"value":"x"}},"root_module":{"child_modules":[{"address":"module.repo","resources":[{"address":"module.repo.google_service_account.build"}]}]}}}`
+	stateEmpty   = `{"format_version":"1.0","values":{"outputs":{"registry":{"value":"x"}},"root_module":{}}}`
+)
+
+// forgetRig is a sandbox rig whose repository has been applied: its state
+// object exists in the (versioned) state bucket and manages resources.
+func forgetRig(t *testing.T) (*initRepoRig, *blobx.Bucket, string) {
+	t.Helper()
 	r := sandboxRig(t)
+	r.gcs.SetVersioning(initRepoStateBucket, true)
 	state := r.gcs.Bucket(t, initRepoStateBucket)
 	key := infra.RepoStatePrefix(r.spec.Slug) + "/default.tfstate"
 	if err := state.WriteAll(context.Background(), key, []byte("{}"), nil); err != nil {
 		t.Fatal(err)
 	}
+	r.script(t, "repo", -1, map[string]any{"show": map[string]any{"stdout": stateManaged}})
+	return r, state, key
+}
+
+func exists(t *testing.T, b *blobx.Bucket, key string) bool {
+	t.Helper()
+	ok, err := b.Exists(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ok
+}
+
+func TestInitRepoForget(t *testing.T) {
+	r, state, key := forgetRig(t)
 	// Without a confirmation, nothing is forgotten.
 	res := r.fugaroInit(t, "--repo", r.checkout, "--forget")
-	if res.code != 1 || count(r.calls(t), "repo state rm module.repo") != 0 {
+	if res.code != 1 || count(r.calls(t), "repo state rm module.repo") != 0 || !exists(t, state, key) {
 		t.Fatalf("forgot without a confirmation:\n%s\n%q", res, r.calls(t))
 	}
 	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
@@ -822,11 +885,76 @@ func TestInitRepoForget(t *testing.T) {
 	if count(calls, "repo state rm module.repo") != 1 || count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want one state rm and no plan or apply", calls)
 	}
-	if ok, err := state.Exists(context.Background(), key); err != nil || ok {
-		t.Errorf("the repository's state object is still there (%v, %v)", ok, err)
+	if exists(t, state, key) {
+		t.Errorf("the repository's state object is still there")
 	}
-	if ok, err := state.Exists(context.Background(), infra.StatePrefixInstallation+"/default.tfstate"); err != nil || !ok {
-		t.Errorf("the installation's state went too (%v, %v)", ok, err)
+	if !exists(t, state, infra.StatePrefixInstallation+"/default.tfstate") {
+		t.Errorf("the installation's state went too")
+	}
+}
+
+// A run that stops between state rm and the object's delete leaves a state
+// with outputs but no resources; the next run skips state rm (which would
+// fail on an address that is gone) and deletes the object.
+func TestInitRepoForgetResumesAfterPartialFailure(t *testing.T) {
+	r, state, key := forgetRig(t)
+	r.gcs.FailObjectDeletes(1)
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	if res.code != 2 || !strings.Contains(res.stderr, "rerun fugaro init --repo --forget") {
+		t.Fatalf("want exit 2 asking for a rerun:\n%s", res)
+	}
+	if count(r.calls(t), "repo state rm module.repo") != 1 || !exists(t, state, key) {
+		t.Fatalf("after the failed delete: calls %q, object there %v", r.calls(t), exists(t, state, key))
+	}
+	// What state rm left: outputs, no resources.
+	r.script(t, "repo", -1, map[string]any{
+		"show":     map[string]any{"stdout": stateEmpty},
+		"state rm": map[string]any{"exit": 1, "stderr": "Invalid target address: No matching objects found"},
+	})
+	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if !strings.Contains(res.stdout, "manages nothing any more") {
+		t.Errorf("the confirmation doesn't say only the object is left:\n%s", res)
+	}
+	if n := count(r.calls(t), "repo state rm module.repo"); n != 1 {
+		t.Errorf("state rm ran %d times, want only the first run's", n)
+	}
+	if exists(t, state, key) {
+		t.Errorf("the state object is still there")
+	}
+	// And then there is nothing left to forget.
+	res = r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	if res.code != 1 || !strings.Contains(res.stderr, "nothing to forget") {
+		t.Errorf("a third run:\n%s", res)
+	}
+}
+
+func TestInitRepoForgetStateRmFailsKeepsObject(t *testing.T) {
+	r, state, key := forgetRig(t)
+	r.script(t, "repo", -1, map[string]any{
+		"show":     map[string]any{"stdout": stateManaged},
+		"state rm": map[string]any{"exit": 1, "stderr": "Error acquiring the state lock"},
+	})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	if res.code != 2 {
+		t.Fatalf("want exit 2:\n%s", res)
+	}
+	if !exists(t, state, key) {
+		t.Errorf("the state object was deleted though state rm failed")
+	}
+}
+
+func TestInitRepoForgetRefusesUnversionedStateBucket(t *testing.T) {
+	r, state, key := forgetRig(t)
+	r.gcs.SetVersioning(initRepoStateBucket, false)
+	res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes")
+	if res.code != 1 || !strings.Contains(res.stderr, "no object versioning") {
+		t.Fatalf("want exit 1 about versioning:\n%s", res)
+	}
+	if count(r.calls(t), "repo state rm module.repo") != 0 || !exists(t, state, key) {
+		t.Errorf("forgot anyway: %q", r.calls(t))
 	}
 }
 
@@ -869,5 +997,33 @@ func TestInitRepoRefusesInstallationFlags(t *testing.T) {
 	}
 	if calls := r.calls(t); len(calls) != 0 {
 		t.Errorf("terraform ran: %q", calls)
+	}
+}
+
+// With no terminal and no --yes, the billable build is not started: the
+// banner and a warning are shown, and the run still exits 0.
+func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
+	r := sandboxRig(t)
+	r.storedSecrets()
+	// A first run records the repository without building.
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
+		t.Fatal(res)
+	}
+	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
+	res := r.fugaroInit(t, "--repo", r.checkout)
+	if res.code != 0 {
+		t.Fatalf("want exit 0:\n%s", res)
+	}
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
+		t.Errorf("no build banner:\n%s", res)
+	}
+	if !strings.Contains(res.stdout, "warning: the first image build of acme/sandbox/web was not confirmed") {
+		t.Errorf("no warning:\n%s", res)
+	}
+	if n := r.builds.Load(); n != 0 {
+		t.Errorf("builds = %d without a confirmation", n)
+	}
+	if len(r.build.Requests()) != 0 {
+		t.Errorf("Cloud Build was called: %d request(s)", len(r.build.Requests()))
 	}
 }

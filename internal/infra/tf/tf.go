@@ -184,6 +184,50 @@ func parsePlan(data []byte) (*Plan, error) {
 	return &p, nil
 }
 
+// State is what fugaro reads of `terraform show -json` without a plan
+// file: the resources the state still manages.
+type State struct {
+	FormatVersion string `json:"format_version"`
+	Values        *struct {
+		RootModule StateModule `json:"root_module"`
+	} `json:"values"`
+}
+
+// StateModule is a module of a state, with its resources and children.
+type StateModule struct {
+	Resources    []json.RawMessage `json:"resources"`
+	ChildModules []StateModule     `json:"child_modules"`
+}
+
+// Managed reports whether the state holds any resource. Outputs don't
+// count: terraform state rm leaves the root's outputs behind.
+func (s *State) Managed() bool {
+	if s == nil || s.Values == nil {
+		return false
+	}
+	var holds func(m StateModule) bool
+	holds = func(m StateModule) bool {
+		return len(m.Resources) > 0 || slices.ContainsFunc(m.ChildModules, holds)
+	}
+	return holds(s.Values.RootModule)
+}
+
+// ShowState reads the current state.
+func (t *TF) ShowState(ctx context.Context) (*State, error) {
+	data, err := t.capture(ctx, "show", "-json")
+	if err != nil {
+		return nil, err
+	}
+	var s State
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, fmt.Errorf("reading the state JSON: %w", err)
+	}
+	if major, _, _ := strings.Cut(s.FormatVersion, "."); major != "1" {
+		return nil, fmt.Errorf("the state JSON has format version %q; fugaro reads only 1.x", s.FormatVersion)
+	}
+	return &s, nil
+}
+
 // Apply applies a saved plan file, and nothing else: there is no way to apply
 // without one, or to add -auto-approve, -target, -var or -replace.
 func (t *TF) Apply(ctx context.Context, planFile string) error {

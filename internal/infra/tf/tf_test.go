@@ -189,3 +189,41 @@ func TestVersionTooOld(t *testing.T) {
 		}
 	}
 }
+
+// ShowState reads the state (show -json with no plan file) and tells an
+// emptied state (resources removed, outputs possibly left) from one that
+// still manages something.
+func TestShowState(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		stdout  string
+		managed bool
+		fails   bool
+	}{
+		"no state":         {stdout: `{"format_version":"1.0"}`},
+		"outputs only":     {stdout: `{"format_version":"1.0","values":{"outputs":{"registry":{"value":"x"}},"root_module":{}}}`},
+		"root resources":   {stdout: `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"a.b"}]}}}`, managed: true},
+		"module resources": {stdout: `{"format_version":"1.0","values":{"root_module":{"child_modules":[{"address":"module.repo","resources":[{"address":"module.repo.a.b"}]}]}}}`, managed: true},
+		"other major":      {stdout: `{"format_version":"2.0"}`, fails: true},
+	} {
+		r := newRig(t)
+		r.script["show"] = map[string]any{"stdout": tc.stdout}
+		tf := r.tf(t, nil)
+		st, err := tf.ShowState(ctx)
+		if tc.fails {
+			if err == nil {
+				t.Errorf("%s: no error", name)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := st.Managed(); got != tc.managed {
+			t.Errorf("%s: managed = %v, want %v", name, got, tc.managed)
+		}
+		if got := r.call(t, "show").Args; !slices.Equal(got, []string{"show", "-json"}) {
+			t.Errorf("%s: show argv = %q", name, got)
+		}
+	}
+}

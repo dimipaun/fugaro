@@ -13,9 +13,21 @@ import (
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 )
 
+// MissingKind says what a readiness gate is waiting for.
+type MissingKind string
+
+// The kinds of gate.
+const (
+	// MissingSecret is a secret the job mounts that has no version.
+	MissingSecret MissingKind = "secret"
+	// MissingImage is the job's image, not built yet.
+	MissingImage MissingKind = "image"
+)
+
 // Missing is something a workflow's job needs that doesn't exist yet.
 type Missing struct {
 	Workflow string
+	Kind     MissingKind
 	Reason   string
 	// Deployed means the job exists and stays deployed anyway, so this is
 	// a warning; otherwise the job isn't deployed until it is fixed.
@@ -55,7 +67,11 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		if dn, ok := ex.DisplayNames[name]; ok {
 			ws.ServiceAccount.DisplayName = dn
 		}
-		var reasons []string
+		type gate struct {
+			kind   MissingKind
+			reason string
+		}
+		var reasons []gate
 		for _, logical := range uniqueSecrets(ws) {
 			ok, seen := versions[logical]
 			if !seen {
@@ -66,7 +82,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				versions[logical] = ok
 			}
 			if !ok {
-				reasons = append(reasons, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name))
+				reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
 			}
 		}
 		built, err := hasLatest(ctx, c, spec, ws.Image)
@@ -74,7 +90,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			return RepoSpec{}, nil, err
 		}
 		if !built {
-			reasons = append(reasons, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name))
+			reasons = append(reasons, gate{MissingImage, fmt.Sprintf("image not built yet: fugaro image build --repo %s --workflow %s", spec.Name, name)})
 		}
 		current, exists := ex.Jobs[name]
 		switch {
@@ -93,7 +109,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 			ws.DeployJob = len(reasons) == 0
 		}
 		for _, r := range reasons {
-			missing = append(missing, Missing{Workflow: name, Reason: r, Deployed: exists})
+			missing = append(missing, Missing{Workflow: name, Kind: r.kind, Reason: r.reason, Deployed: exists})
 		}
 		out.Workflows[name] = ws
 	}

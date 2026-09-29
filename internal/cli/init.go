@@ -1327,7 +1327,7 @@ func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, mi
 	var other []string
 	for _, m := range missing {
 		// Secrets are listed as commands below.
-		if !strings.HasPrefix(m.Reason, "secret ") {
+		if m.Kind != infra.MissingSecret {
 			other = append(other, m.String())
 		}
 	}
@@ -1376,29 +1376,52 @@ func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg 
 
 // forgetRepo is the repository's rollback: every address leaves
 // Terraform's state, after a confirmation, and nothing is destroyed. The
-// empty state object goes too, so the installation's rollback no longer
-// counts the repository.
+// emptied state object goes too (the state bucket must be versioned, so it
+// can be restored), so the installation's rollback no longer counts the
+// repository. It decides from the state's resources, not its outputs
+// (state rm leaves those), so a run that stopped after state rm finishes
+// on the next one.
 func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, backend map[string]string, repo, stateBucket, slug string) error {
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	raw, err := t.Output(ctx)
+	st, err := t.ShowState(ctx)
 	if err != nil {
 		return remote(err)
 	}
-	if len(raw) == 0 {
-		return userErr("the state in gs://%s/%s holds nothing of %s, so there is nothing to forget", stateBucket, infra.RepoStatePrefix(slug), repo)
+	managed := st.Managed()
+	objects, err := infra.RepoStateObjects(ctx, c, stateBucket, slug)
+	if err != nil {
+		return remote(err)
 	}
-	if err := r.confirm(fmt.Sprintf("removes every address of %s from Terraform's state (terraform state rm module.repo), then its state object under gs://%s/%s/ (kept as a noncurrent version); it destroys nothing",
-		repo, stateBucket, infra.RepoStatePrefix(slug)), "the state still holds the repository"); err != nil {
+	where := "gs://" + stateBucket + "/" + infra.RepoStatePrefix(slug) + "/"
+	if !managed && len(objects) == 0 {
+		return userErr("the state under %s holds nothing of %s, so there is nothing to forget", where, repo)
+	}
+	if len(objects) > 0 {
+		switch versioned, err := infra.StateBucketVersioned(ctx, c, stateBucket); {
+		case err != nil:
+			return remote(err)
+		case !versioned:
+			return userErr("gs://%s has no object versioning, so the state object of %s could not be restored once deleted; turn versioning on (gcloud storage buckets update gs://%s --versioning) and rerun; nothing was forgotten",
+				stateBucket, repo, stateBucket)
+		}
+	}
+	what := fmt.Sprintf("removes every address of %s from Terraform's state (terraform state rm module.repo), then deletes its state object under %s (kept as a noncurrent version); it destroys nothing", repo, where)
+	if !managed {
+		what = fmt.Sprintf("the state of %s manages nothing any more (an earlier --forget stopped after state rm): deletes its state object under %s (kept as a noncurrent version); it destroys nothing", repo, where)
+	}
+	if err := r.confirm(what, "nothing was forgotten"); err != nil {
 		return err
 	}
-	if err := t.StateRm(ctx, "module.repo"); err != nil {
-		return remote(err)
+	if managed {
+		if err := t.StateRm(ctx, "module.repo"); err != nil {
+			return remote(err)
+		}
 	}
 	deleted, err := infra.ForgetRepoState(ctx, c, stateBucket, slug)
 	if err != nil {
-		return remote(err)
+		return remote(fmt.Errorf("%w; Terraform no longer manages %s, so rerun fugaro init --repo --forget to finish", err, repo))
 	}
 	r.res.Forgotten = true
 	r.res.Deleted = deleted

@@ -63,6 +63,8 @@ type GCS struct {
 	nextID  int
 	// projects are the project numbers bucket inserts may name, by ID.
 	projects map[string]uint64
+	// failDeletes makes the next object deletes answer 503.
+	failDeletes int
 }
 
 // bucketMeta is what a bucket's get and getIamPolicy report.
@@ -75,6 +77,8 @@ type bucketMeta struct {
 	// inserted is the body of the insert that made the bucket, nil for
 	// one AddBucket made.
 	inserted map[string]any
+	// versioning is whether the bucket keeps noncurrent versions.
+	versioning bool
 }
 
 func (m *bucketMeta) etag() string { return "etag-" + strconv.Itoa(m.policyGen) }
@@ -110,6 +114,24 @@ func (g *GCS) AddBucket(name string, projectNumber uint64, labels map[string]str
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.meta[name] = &bucketMeta{projectNumber: projectNumber, labels: maps.Clone(labels), policyGen: 1}
+}
+
+// SetVersioning turns bucket name's object versioning on or off, as its
+// get reports it.
+func (g *GCS) SetVersioning(name string, on bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if m := g.meta[name]; m != nil {
+		m.versioning = on
+	}
+}
+
+// FailObjectDeletes makes the next n object deletes answer 503, deleting
+// nothing.
+func (g *GCS) FailObjectDeletes(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failDeletes = n
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -296,6 +318,9 @@ func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, i
 	if len(m.labels) > 0 {
 		out["labels"] = maps.Clone(m.labels)
 	}
+	if m.versioning {
+		out["versioning"] = map[string]any{"enabled": true}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -346,7 +371,11 @@ func (g *GCS) insertBucket(w http.ResponseWriter, project string, body []byte) {
 			labels[k] = s
 		}
 	}
-	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, policy: ConvenienceBindings(project), policyGen: 1, inserted: req}
+	versioning := false
+	if v, ok := req["versioning"].(map[string]any); ok {
+		versioning, _ = v["enabled"].(bool)
+	}
+	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, policy: ConvenienceBindings(project), policyGen: 1, inserted: req, versioning: versioning}
 	out := maps.Clone(req)
 	out["kind"], out["id"], out["projectNumber"] = "storage#bucket", name, strconv.FormatUint(num, 10)
 	writeJSON(w, http.StatusOK, out)
@@ -561,6 +590,11 @@ func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 }
 
 func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string) {
+	if g.failDeletes > 0 {
+		g.failDeletes--
+		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "try again")
+		return
+	}
 	cond, err := ifGenerationMatch(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
