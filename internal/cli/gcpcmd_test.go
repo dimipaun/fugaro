@@ -285,3 +285,53 @@ func TestGCloudDict(t *testing.T) {
 		}
 	}
 }
+
+// job-spec stays the M4 bootstrap's interface, so gcp-m4.sh still works for
+// a rollback: its output for the sandbox fixture is the one the M4 binary
+// printed (testdata/capture-m4-jobspec.sh), the legacy image path included.
+func TestJobSpecCommandUnchanged(t *testing.T) {
+	testutil.IsolateGit(t)
+	golden, err := filepath.Abs("../infra/testdata")
+	if err != nil {
+		t.Fatal(err)
+	}
+	golden += "/"
+	dir := filepath.Join(t.TempDir(), "sandbox")
+	if err := os.CopyFS(dir, os.DirFS("../../deploy/bootstrap/sandbox")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "init", "-q", "-b", "master")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
+	lc := filepath.Join(t.TempDir(), "config.yaml")
+	cfg := "version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
+		"registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n" +
+		"user: test@example.com\nrepos:\n  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }\n"
+	if err := os.WriteFile(lc, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FUGARO_CONFIG", lc)
+	t.Chdir(dir)
+	args := []string{"gcp", "job-spec", "--repo", "acme/sandbox", "--workflow", "web"}
+	out, _, err := execute(t, append(args, "--json")...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.ReadFile(golden + "m4-jobspec-sandbox.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != string(want) {
+		t.Errorf("job-spec --json =\n%s\nwant\n%s", out, want)
+	}
+	rows, err := os.ReadFile(golden + "m4-jobspec-sandbox.fields.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for line := range strings.Lines(string(rows)) {
+		field, value, _ := strings.Cut(strings.TrimSuffix(line, "\n"), "\t")
+		out, _, err := execute(t, append(args, "--field", field)...)
+		if got := strings.ReplaceAll(out, "\n", ";"); err != nil || got != value {
+			t.Errorf("--field %s = %q, %v; want %q", field, got, err, value)
+		}
+	}
+}

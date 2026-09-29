@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"net/url"
 	"os"
 	"os/exec"
 	"slices"
@@ -17,17 +16,17 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 // jobSpec is everything the M4 bootstrap passes to gcloud for one
-// repository's workflow. It is derived here, from the naming contract in
-// internal/backend/gcp, so the script never re-implements it.
+// repository's workflow: a view of internal/infra's WorkflowSpec under the
+// M4 field names, so the script never re-implements a name and still works
+// for a rollback. Its image is the legacy registry's, as in M4.
 type jobSpec struct {
 	Project          string `json:"project"`
 	Region           string `json:"region"`
@@ -35,9 +34,10 @@ type jobSpec struct {
 	Job              string `json:"job"`
 	ServiceAccountID string `json:"service_account_id"`
 	ServiceAccount   string `json:"service_account"`
-	// ServiceAccountDisplayName is the job account's display name, the
-	// ownership mark the bootstrap checks before reusing or deleting it
-	// (service accounts carry no labels). This is its one definition.
+	// ServiceAccountDisplayName is the job account's M4 display name
+	// (gcp.LegacyJobSADisplayName), the ownership mark the bootstrap
+	// checks before reusing or deleting it (service accounts carry no
+	// labels).
 	ServiceAccountDisplayName string            `json:"service_account_display_name"`
 	Image                     string            `json:"image"`
 	CPU                       int               `json:"cpu"`
@@ -120,106 +120,67 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	if lc.Registry == "" {
 		return nil, &ExitError{Code: ExitUserError, Err: errors.New("the local config has no registry")}
 	}
-	bucket, err := bucketName(lc)
-	if err != nil {
-		return nil, &ExitError{Code: ExitUserError, Err: err}
-	}
-	// loadCheckout has already refused resources Cloud Run can't run.
-	w := cfg.Workflows[name]
-
 	// The slug hashes the provider kind, which comes from the checkout's
 	// fugaro.yaml. A local config entry that names another provider would
 	// give `fugaro run` a different slug, so repoSlug refuses it.
-	slug, err := (&cloudEnv{lc: lc}).repoSlug(repo, func() *config.Config { return cfg })
+	if _, err := (&cloudEnv{lc: lc}).repoSlug(repo, func() *config.Config { return cfg }); err != nil {
+		return nil, err
+	}
+	if cfg.Git.Provider != gitprov.KindBitbucket {
+		// The bootstrap's steps know only the Bitbucket credential; GitHub
+		// repositories are set up by fugaro init.
+		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("git.provider %s is not supported by the M4 bootstrap; only bitbucket is (use fugaro init --repo)", cfg.Git.Provider)}
+	}
+	ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg}, name)
+	if err != nil {
+		return nil, infraErr(err)
+	}
+	cpu, err := strconv.Atoi(ws.CPU)
 	if err != nil {
 		return nil, err
 	}
-	label, err := gcp.RepoLabel(slug)
-	if err != nil {
-		return nil, &ExitError{Code: ExitUserError, Err: err}
-	}
-	saID := gcp.ServiceAccountID(slug, name)
 	js := &jobSpec{
 		Project:          lc.Project,
 		Region:           lc.Region,
-		Slug:             slug,
-		Job:              gcp.JobName(slug, name),
-		ServiceAccountID: saID,
-		ServiceAccount:   saID + "@" + lc.Project + ".iam.gserviceaccount.com",
-		// At most 14+63+1+20 = 98 characters, within the 100 IAM allows.
-		ServiceAccountDisplayName: "Fugaro M4 job " + slug + " " + name,
-		Image:                     gcp.ImageName(lc.Registry, slug, name),
-		CPU:                       w.Resources.CPU,
-		Memory:                    w.Resources.Memory,
-		TaskTimeoutS:              int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second),
-		Env: map[string]string{
-			"FUGARO_BUCKET":  "gs://" + bucket,
-			"FUGARO_BACKEND": backend.CloudRun,
-			"FUGARO_PROJECT": lc.Project,
-			"FUGARO_REGION":  lc.Region,
-		},
-		Secrets:             map[string]string{},
-		BuildServiceAccount: lc.Build.ServiceAccount,
-		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelWorkflow: name},
-		secretNames:         map[string]string{},
+		Slug:             ws.Slug,
+		Job:              ws.Job,
+		ServiceAccountID: ws.ServiceAccount.AccountID,
+		ServiceAccount:   ws.ServiceAccountEmail,
+		// The bootstrap's accounts keep the M4 mark, so gcp-m4.sh still
+		// recognizes them during a rollback.
+		ServiceAccountDisplayName: gcp.LegacyJobSADisplayName(ws.Slug, name),
+		Image:                     ws.LegacyImage,
+		CPU:                       cpu,
+		Memory:                    ws.Memory,
+		TaskTimeoutS:              ws.TaskTimeoutS,
+		Env:                       ws.Env,
+		Secrets:                   map[string]string{},
+		GitSecret:                 ws.SecretIDs[ws.GitSecret],
+		BuildServiceAccount:       lc.Build.ServiceAccount,
+		Labels:                    ws.Labels,
+		secretNames:               ws.SecretIDs,
+		bucketCondition:           ws.BucketCondition.Expression,
 	}
-	var collisions []string
-	mount := func(logical, env string) {
-		if _, dup := js.Secrets[env]; dup {
-			collisions = append(collisions, env)
-		}
-		if _, dup := js.Env[env]; dup {
-			collisions = append(collisions, env)
-		}
-		id := gcp.SecretID(slug, logical)
-		js.Secrets[env] = id
-		js.secretNames[logical] = id
+	for env, logical := range ws.SecretEnv {
+		js.Secrets[env] = ws.SecretIDs[logical]
 	}
-
-	switch cfg.Git.Provider {
-	case gitprov.KindBitbucket:
-		mount("bitbucket-token", config.ReservedSecrets["bitbucket-token"])
-		js.GitSecret = gcp.SecretID(slug, "bitbucket-token")
-	default:
-		// A GitHub job also needs the App ID and installation, which come
-		// from Terraform's variables in M5.
-		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("git.provider %s is not supported by the M4 bootstrap; only bitbucket is (GitHub arrives with M5's Terraform)", cfg.Git.Provider)}
-	}
-	switch cfg.Agent.Auth {
-	case "oauth":
-		mount("claude-oauth-token", config.ReservedSecrets["claude-oauth-token"])
-	case "api-key":
-		mount("anthropic-api-key", config.ReservedSecrets["anthropic-api-key"])
-	case "vertex":
-		js.Env["CLOUD_ML_REGION"] = lc.Region
-		js.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.Project
-	}
-	js.buildSecretIDs = []string{js.GitSecret}
-	for _, s := range w.Secrets {
-		mount(s.Name, s.Env)
-		js.buildSecretIDs = append(js.buildSecretIDs, gcp.SecretID(slug, s.Name))
-	}
-	if len(collisions) > 0 {
-		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(collisions, ", "))}
+	for _, l := range ws.BuildSecrets {
+		js.buildSecretIDs = append(js.buildSecretIDs, ws.SecretIDs[l])
 	}
 	slices.Sort(js.buildSecretIDs)
-	js.buildSecretIDs = slices.Compact(js.buildSecretIDs)
-	// Every variable a secret is mounted as, so the runner can register
-	// them all for redaction before bootstrap, declared at the task's ref
-	// or not.
-	js.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(js.Secrets)), ",")
 	if jobSpecField(js, "env") == "" {
 		return nil, &ExitError{Code: ExitUserError, Err: errors.New("the job's env holds every delimiter gcloud's --set-env-vars could use")}
 	}
-
-	// Trailing slashes, so a slug can never reach another slug it is a
-	// string prefix of (design §6.1).
-	var conds []string
-	for _, prefix := range []string{"runs", "cache", "locks"} {
-		conds = append(conds, fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, prefix, slug))
-	}
-	js.bucketCondition = strings.Join(conds, " || ")
 	return js, nil
+}
+
+// infraErr maps an infra error to its exit code: a user error is 1.
+func infraErr(err error) error {
+	var ue *infra.UserError
+	if errors.As(err, &ue) {
+		return &ExitError{Code: ExitUserError, Err: err}
+	}
+	return err
 }
 
 // checkoutRepo returns the checkout's owner/name from its origin, and
@@ -260,17 +221,6 @@ func loadLocalConfig() (*localcfg.Config, error) {
 		return nil, &ExitError{Code: ExitUserError, Err: err}
 	}
 	return lc, nil
-}
-
-// bucketName is the runs bucket's name, which IAM conditions need.
-func bucketName(lc *localcfg.Config) (string, error) {
-	if lc.RunsBucket != "" {
-		return lc.RunsBucket, nil
-	}
-	if u, err := url.Parse(lc.Bucket); err == nil && u.Scheme == "gs" && u.Host != "" {
-		return u.Host, nil
-	}
-	return "", errors.New("the local config's bucket_url is not a gs:// bucket")
 }
 
 func printJobSpec(w io.Writer, js *jobSpec, o jobSpecOptions) error {

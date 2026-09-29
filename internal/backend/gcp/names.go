@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -22,6 +23,9 @@ import (
 //     (secret-manager/docs/reference/rest/v1/projects.secrets/create).
 //   - Image repository component: 128 is our own choice, well within the
 //     Docker distribution's 255 in total; Artifact Registry states none.
+//   - Artifact Registry repository ID: at most 63 lowercase letters,
+//     digits and dashes, starting with a letter and ending with a letter or
+//     digit (cloud.google.com/artifact-registry/docs/repositories/create-repos).
 //
 // Each name carries the widest hash its limit allows while keeping a
 // readable prefix: 12 hex for jobs, 8 for service accounts (only 30
@@ -34,11 +38,13 @@ const (
 	maxSAID     = 30
 	maxSecretID = 255
 	maxImage    = 128
+	maxRegistry = 63
 
-	jobHashHex    = 12
-	saHashHex     = 8
-	secretHashHex = 16
-	imageHashHex  = 16
+	jobHashHex      = 12
+	saHashHex       = 8
+	secretHashHex   = 16
+	imageHashHex    = 16
+	registryHashHex = 12
 )
 
 // Labels on the resources Fugaro manages (design §3.2): every one carries
@@ -51,6 +57,10 @@ const (
 	LabelRepo     = "fugaro_repo"
 	LabelWorkflow = "fugaro_workflow"
 	LabelSecret   = "fugaro_secret"
+	// LabelRole marks a repository's image check job, which carries it
+	// (with RoleCheck) in place of LabelWorkflow.
+	LabelRole = "fugaro_role"
+	RoleCheck = "check"
 )
 
 var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)
@@ -135,3 +145,112 @@ func SecretID(slug, logical string) string {
 func ImageName(registry, slug, workflow string) string {
 	return strings.TrimSuffix(registry, "/") + "/" + derive(sanitize(readableSlug(slug)+"-"+workflow), slug, workflow, maxImage, imageHashHex)
 }
+
+// Each of the names below hashes the slug in its own domain (a prefix and a
+// NUL before the slug), so none can equal a name of another kind: a build
+// account is never a job account, even of a workflow named "build".
+
+// BuildServiceAccountID is the repository's build service account, which
+// its image builds and daily checks run as: fugaro-b-<slug>, within 30
+// characters.
+func BuildServiceAccountID(slug string) string {
+	return derive(sanitize("fugaro-b-"+readableSlug(slug)), "build\x00"+slug, "", maxSAID, saHashHex)
+}
+
+// RegistryRepoID is the repository's own Artifact Registry repository,
+// which holds its derived images: fugaro-<slug>-<12 hex>. It is never the
+// legacy fugaro or the base registry, since it always ends in a hash.
+func RegistryRepoID(slug string) string {
+	return derive(sanitize("fugaro-"+readableSlug(slug)), "registry\x00"+slug, "", maxRegistry, registryHashHex)
+}
+
+// CheckJobName is the repository's daily image check job. Its fugarochk-
+// prefix keeps it out of the fugaro- job listings (ls, max_parallel).
+func CheckJobName(slug string) string {
+	return derive(sanitize("fugarochk-"+readableSlug(slug)), "check\x00"+slug, "", maxJobName, jobHashHex)
+}
+
+// SchedulerJobName is the Cloud Scheduler job that starts CheckJobName
+// daily, built the same way.
+func SchedulerJobName(slug string) string {
+	return derive(sanitize("fugarochk-"+readableSlug(slug)), "scheduler\x00"+slug, "", maxJobName, jobHashHex)
+}
+
+// SchedulerRegions are Cloud Scheduler's locations, from
+// https://cloud.google.com/scheduler/docs/locations (checked 2026-09-29).
+// Scheduler isn't offered in every Cloud Run region.
+var SchedulerRegions = []string{
+	"asia-east1", "asia-east2", "asia-northeast1", "asia-northeast2", "asia-northeast3",
+	"asia-south1", "asia-south2", "asia-southeast1", "asia-southeast2", "asia-southeast3",
+	"australia-southeast1", "europe-central2", "europe-west1", "europe-west12", "europe-west2",
+	"europe-west3", "europe-west4", "europe-west6", "europe-west8", "europe-west9",
+	"me-central1", "me-central2", "me-west1", "northamerica-northeast1", "northamerica-northeast2",
+	"southamerica-east1", "us-central1", "us-east1", "us-east4", "us-south1",
+	"us-west1", "us-west2", "us-west3", "us-west4",
+}
+
+// nearestSchedulerRegion is a fixed nearby Scheduler location for Cloud
+// Run regions Scheduler doesn't offer. A Scheduler job can start a job in
+// another region, since its URI names the job's location.
+var nearestSchedulerRegion = map[string]string{
+	"us-east5":             "us-east4",
+	"us-west8":             "us-west4",
+	"northamerica-south1":  "us-south1",
+	"europe-north1":        "europe-central2",
+	"europe-north2":        "europe-central2",
+	"europe-southwest1":    "europe-west9",
+	"australia-southeast2": "australia-southeast1",
+}
+
+// SchedulerRegion is where the daily check's Scheduler job lives for jobs in
+// region: region itself when Scheduler offers it, else a fixed nearby one.
+func SchedulerRegion(region string) (string, error) {
+	if slices.Contains(SchedulerRegions, region) {
+		return region, nil
+	}
+	if r, ok := nearestSchedulerRegion[region]; ok {
+		return r, nil
+	}
+	return "", fmt.Errorf("region %s has no Cloud Scheduler location fugaro knows of; pass --scheduler-region with one of %s", region, strings.Join(SchedulerRegions, ", "))
+}
+
+// JobSADisplayName is a job service account's display name, its ownership
+// mark (service accounts carry no labels). At most 11+63+1+20 = 95
+// characters, within the 100 IAM allows.
+func JobSADisplayName(slug, workflow string) string {
+	return "Fugaro job " + slug + " " + workflow
+}
+
+// LegacyJobSADisplayName is the display name the M4 bootstrap gave job
+// accounts. It is accepted as a mark, and kept on adoption, so the M4
+// bootstrap still recognizes the account during a rollback.
+func LegacyJobSADisplayName(slug, workflow string) string {
+	return "Fugaro M4 job " + slug + " " + workflow
+}
+
+// BuildSADisplayName is a build service account's display name.
+func BuildSADisplayName(slug string) string { return "Fugaro build " + slug }
+
+// JobBucketPrefixes are the runs bucket areas a job account may use, and
+// BuildBucketPrefixes the build account's (its build records).
+var (
+	JobBucketPrefixes   = []string{"runs", "cache", "locks"}
+	BuildBucketPrefixes = []string{"builds"}
+)
+
+// BucketCondition is the IAM condition that limits an objectUser grant on
+// bucket to the slug's objects under each prefix. The trailing slashes keep
+// a slug from reaching another slug it is a string prefix of (design
+// §6.1). A condition that differs in one byte is another binding, so this
+// is its one definition.
+func BucketCondition(bucket string, prefixes []string, slug string) string {
+	conds := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		conds[i] = fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/%s/%s/")`, bucket, p, slug)
+	}
+	return strings.Join(conds, " || ")
+}
+
+// BucketConditionTitle is the title of the bucket condition of the account
+// saID, as the bootstrap set it.
+func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
