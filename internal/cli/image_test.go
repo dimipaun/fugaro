@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -266,5 +267,26 @@ func TestImageBuildCloudDigestUnknown(t *testing.T) {
 	var res gcp.BuildResult
 	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != "SUCCESS" || res.Digest != "" || strings.Contains(out, `"digest"`) {
 		t.Errorf("json output = %s, %v", out, err)
+	}
+}
+
+// The build writes its record where ls and image status read it (the
+// local config's bucket_url) whenever a build can: a plain GCS bucket.
+// Otherwise it writes to the runs bucket, and says the readers differ.
+func TestBuildRecordBucketAgreesWithReaders(t *testing.T) {
+	for _, c := range []struct {
+		bucketURL, want string
+		agree           bool
+	}{
+		{"", "gs://fugaro-runs-x", true},
+		{"gs://other-bucket", "gs://other-bucket", true},
+		{"gs://other-bucket/prefix", "gs://fugaro-runs-x", false},
+		{"file:///tmp/runs", "gs://fugaro-runs-x", false},
+	} {
+		lc := &localcfg.Config{RunsBucket: "fugaro-runs-x", Bucket: c.bucketURL}
+		got, agree := buildRecordBucket(lc)
+		if got != c.want || agree != c.agree {
+			t.Errorf("bucket_url %q: %s %v, want %s %v", c.bucketURL, got, agree, c.want, c.agree)
+		}
 	}
 }

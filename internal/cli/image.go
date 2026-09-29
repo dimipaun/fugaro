@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -199,9 +201,11 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	// The record always goes to the runs bucket on GCS, whatever
-	// bucket_url says for local runs.
-	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, "gs://"+lc.RunsBucket)
+	bucket, agree := buildRecordBucket(lc)
+	if !agree {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: the build records its image in %s, but ls and image status read %s (bucket_url)\n", bucket, lc.BucketURL())
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, bucket)
 	if err != nil {
 		return err
 	}
@@ -272,6 +276,20 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 // cloudBuildSpec is the Cloud Build build of workflow name of the
 // repository rs, from base, recording to bucket (gs://…): the one spec
 // fugaro image build and the daily image check both submit.
+// buildRecordBucket is where a build writes its record: the bucket ls and
+// image status read (bucket_url) when it is a plain GCS bucket, which a
+// build can write, else the runs bucket. agree says whether the readers
+// then find it.
+func buildRecordBucket(lc *localcfg.Config) (url string, agree bool) {
+	if read := lc.BucketURL(); gsBucketRE.MatchString(read) {
+		return read, true
+	}
+	return "gs://" + lc.RunsBucket, false
+}
+
+// gsBucketRE is a plain gs://<bucket>, with no path or query.
+var gsBucketRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
+
 func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket string) (gcp.BuildSpec, error) {
 	ws, ok := rs.Workflows[name]
 	if !ok {
