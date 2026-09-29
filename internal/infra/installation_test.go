@@ -58,19 +58,26 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 	spec.Budget = &Budget{BillingAccount: "000000-000000-000000", Amount: 50, CurrencyCode: "USD"}
 	email := "ops@example.com"
 	spec.AlertEmail = &email
-	data, err := InstallationVars(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keys := jsonKeys(t, data)
-	for _, k := range keys {
-		if _, ok := vars[k]; !ok {
-			t.Errorf("the tfvars key %s is not a variable of the installation root", k)
+	// The default leaves log_isolation out; the rollback's ForgetSpec
+	// writes log_isolation=false, which must be a root variable too.
+	for name, s := range map[string]InstallationSpec{"default": spec, "forget": ForgetSpec(spec)} {
+		data, err := InstallationVars(s)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	for v, required := range vars {
-		if required && !slices.Contains(keys, v) {
-			t.Errorf("the installation root's required variable %s has no tfvars key", v)
+		keys := jsonKeys(t, data)
+		if name == "forget" && !slices.Contains(keys, "log_isolation") {
+			t.Errorf("forget: the tfvars have no log_isolation key")
+		}
+		for _, k := range keys {
+			if _, ok := vars[k]; !ok {
+				t.Errorf("%s: the tfvars key %s is not a variable of the installation root", name, k)
+			}
+		}
+		for v, required := range vars {
+			if required && !slices.Contains(keys, v) {
+				t.Errorf("%s: the installation root's required variable %s has no tfvars key", name, v)
+			}
 		}
 	}
 

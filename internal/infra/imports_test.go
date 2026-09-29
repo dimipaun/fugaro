@@ -99,72 +99,82 @@ func readDir(t *testing.T, dir string) string {
 }
 
 // TestImportAddressesExistInModule checks each import address against the
-// embedded Terraform: every module call exists with for_each where the
-// address has a key, and the resource exists in the module it names, with
-// count where the address has an index and for_each where it has a key.
+// embedded Terraform with checkModuleAddress.
 func TestImportAddressesExistInModule(t *testing.T) {
-	roots := map[string]string{"installation": "gcp/roots/installation", "repo": "gcp/roots/repo"}
 	for kind := range importTable {
-		a := struct{ to string }{newImport(kind, "proj-1234", "us-east5", "web", "x").To}
-		steps := joinSteps(splitAddress(a.to))
-		if len(steps) < 2 {
-			t.Errorf("%v: address %s names no module", kind, a.to)
+		checkModuleAddress(t, newImport(kind, "proj-1234", "us-east5", "web", "x").To)
+	}
+}
+
+// checkModuleAddress checks an address against the embedded Terraform:
+// every module call exists with for_each where the address has a key, and
+// the resource exists in the module it names, with count where the address
+// has an index and for_each where it has a key.
+func checkModuleAddress(t *testing.T, to string) {
+	t.Helper()
+	roots := map[string]string{"installation": "gcp/roots/installation", "repo": "gcp/roots/repo"}
+	steps := joinSteps(splitAddress(to))
+	if len(steps) < 2 {
+		t.Errorf("address %s names no module", to)
+		return
+	}
+	first := addressStepRE.FindStringSubmatch(steps[0])
+	if first == nil {
+		t.Errorf("%s: step %q is not a Terraform address", to, steps[0])
+		return
+	}
+	root, ok := roots[strings.TrimPrefix(first[1], "module.")]
+	if !ok {
+		t.Errorf("%s: no root calls %s", to, first[1])
+		return
+	}
+	dir := root
+	for _, step := range steps {
+		m := addressStepRE.FindStringSubmatch(step)
+		if m == nil {
+			t.Errorf("%s: step %q is not a Terraform address", to, step)
+			return
+		}
+		src := readDir(t, dir)
+		name, key := m[1], m[3]
+		if mod, ok := strings.CutPrefix(name, "module."); ok {
+			var found bool
+			for _, call := range moduleCallRE.FindAllStringSubmatch(src, -1) {
+				if call[1] != mod {
+					continue
+				}
+				found = true
+				if hasEach := strings.Contains(call[3], "for_each"); hasEach != strings.HasPrefix(key, `"`) {
+					t.Errorf("%s: module %s for_each is %v, but the address key is %q", to, mod, hasEach, key)
+				}
+				dir = path.Clean(path.Join(dir, call[2]))
+			}
+			if !found {
+				t.Errorf("%s: %s has no module %q", to, dir, mod)
+				return
+			}
 			continue
 		}
-		first := addressStepRE.FindStringSubmatch(steps[0])
-		root, ok := roots[strings.TrimPrefix(first[1], "module.")]
-		if !ok {
-			t.Errorf("%s: no root calls %s", a.to, first[1])
-			continue
+		typ, rname, _ := strings.Cut(name, ".")
+		re := regexp.MustCompile(`(?s)resource "` + typ + `" "` + rname + `" \{(.*?)\n\}`)
+		res := re.FindStringSubmatch(src)
+		if res == nil {
+			t.Errorf("%s: %s has no resource %s.%s", to, dir, typ, rname)
+			return
 		}
-		dir := root
-		for _, step := range steps {
-			m := addressStepRE.FindStringSubmatch(step)
-			if m == nil {
-				t.Errorf("%s: step %q is not a Terraform address", a.to, step)
-				break
+		head := res[1]
+		switch {
+		case key == "":
+			if regexp.MustCompile(`\n  (count|for_each) `).MatchString(head) {
+				t.Errorf("%s: %s.%s has count or for_each, but the address has no index", to, typ, rname)
 			}
-			src := readDir(t, dir)
-			name, key := m[1], m[3]
-			if mod, ok := strings.CutPrefix(name, "module."); ok {
-				var found bool
-				for _, call := range moduleCallRE.FindAllStringSubmatch(src, -1) {
-					if call[1] != mod {
-						continue
-					}
-					found = true
-					if hasEach := strings.Contains(call[3], "for_each"); hasEach != strings.HasPrefix(key, `"`) {
-						t.Errorf("%s: module %s for_each is %v, but the address key is %q", a.to, mod, hasEach, key)
-					}
-					dir = path.Clean(path.Join(dir, call[2]))
-				}
-				if !found {
-					t.Errorf("%s: %s has no module %q", a.to, dir, mod)
-					break
-				}
-				continue
+		case strings.HasPrefix(key, `"`):
+			if !regexp.MustCompile(`\n  for_each `).MatchString(head) {
+				t.Errorf("%s: %s.%s has no for_each for key %s", to, typ, rname, key)
 			}
-			typ, rname, _ := strings.Cut(name, ".")
-			re := regexp.MustCompile(`(?s)resource "` + typ + `" "` + rname + `" \{(.*?)\n\}`)
-			res := re.FindStringSubmatch(src)
-			if res == nil {
-				t.Errorf("%s: %s has no resource %s.%s", a.to, dir, typ, rname)
-				break
-			}
-			head := res[1]
-			switch {
-			case key == "":
-				if regexp.MustCompile(`\n  (count|for_each) `).MatchString(head) {
-					t.Errorf("%s: %s.%s has count or for_each, but the address has no index", a.to, typ, rname)
-				}
-			case strings.HasPrefix(key, `"`):
-				if !regexp.MustCompile(`\n  for_each `).MatchString(head) {
-					t.Errorf("%s: %s.%s has no for_each for key %s", a.to, typ, rname, key)
-				}
-			default:
-				if !regexp.MustCompile(`\n  count `).MatchString(head) {
-					t.Errorf("%s: %s.%s has no count for index %s", a.to, typ, rname, key)
-				}
+		default:
+			if !regexp.MustCompile(`\n  count `).MatchString(head) {
+				t.Errorf("%s: %s.%s has no count for index %s", to, typ, rname, key)
 			}
 		}
 	}

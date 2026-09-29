@@ -20,18 +20,22 @@ func TestInstallationVarsPlan(t *testing.T) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
 	}
-	for _, adopt := range []bool{false, true} {
-		name := "fresh"
-		if adopt {
-			name = "adopt_legacy_registry"
-		}
-		t.Run(name, func(t *testing.T) {
+	// forget is the rollback's tfvars (log_isolation=false); the others
+	// leave log isolation to the root's default (on).
+	for _, c := range []struct {
+		name          string
+		adopt, forget bool
+	}{{"fresh", false, false}, {"adopt_legacy_registry", true, false}, {"forget", false, true}} {
+		t.Run(c.name, func(t *testing.T) {
 			spec := installationSpec(t)
-			spec.AdoptLegacyRegistry = adopt
+			spec.AdoptLegacyRegistry = c.adopt
 			spec.Launchers = []string{"user:launcher@example.com"}
 			spec.Operators = []string{"user:operator@example.com"}
 			email := "ops@example.com"
 			spec.AlertEmail = &email
+			if c.forget {
+				spec = ForgetSpec(spec)
+			}
 			data, err := InstallationVars(spec)
 			if err != nil {
 				t.Fatal(err)
@@ -46,7 +50,7 @@ func TestInstallationVarsPlan(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, "tests"), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "tests", "vars.tftest.hcl"), []byte(varsTest(t, data, adopt)), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(root, "tests", "vars.tftest.hcl"), []byte(varsTest(t, data, c.adopt, !c.forget)), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			tfdata := filepath.Join(t.TempDir(), "tfdata")
@@ -63,7 +67,7 @@ func TestInstallationVarsPlan(t *testing.T) {
 
 // varsTest is a test file that sets every variable from the tfvars (a JSON
 // value is an HCL expression) and plans the root with a mock provider.
-func varsTest(t *testing.T, data []byte, adopt bool) string {
+func varsTest(t *testing.T, data []byte, adopt, logIsolation bool) string {
 	t.Helper()
 	var vars map[string]json.RawMessage
 	if err := json.Unmarshal(data, &vars); err != nil {
@@ -82,6 +86,12 @@ func varsTest(t *testing.T, data []byte, adopt bool) string {
 		legacy = "\"" + LegacyRegistry + "\""
 	}
 	b.WriteString("  assert {\n    condition     = output.legacy_registry == " + legacy + "\n")
-	b.WriteString("    error_message = \"adopt_legacy_registry did not reach the module\"\n  }\n}\n")
+	b.WriteString("    error_message = \"adopt_legacy_registry did not reach the module\"\n  }\n")
+	view := "output.log_view == null"
+	if logIsolation {
+		view = "output.log_view != null"
+	}
+	b.WriteString("  assert {\n    condition     = " + view + "\n")
+	b.WriteString("    error_message = \"log_isolation did not reach the module\"\n  }\n}\n")
 	return b.String()
 }
