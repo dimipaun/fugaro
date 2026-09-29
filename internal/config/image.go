@@ -43,6 +43,9 @@ func validateImage(p string, w Workflow) []Problem {
 			add(p+".image.jdk", "must be a major version such as 21")
 		}
 	}
+	if img.SkipBuildScripts && w.Base != "web-node" {
+		add(p+".image.skip_build_scripts", "only applies to base web-node")
+	}
 	for i, pkg := range img.Apt {
 		if !aptPackageRE.MatchString(pkg) {
 			add(fmt.Sprintf("%s.image.apt[%d]", p, i), "must be a package name, optionally pinned as name=version")

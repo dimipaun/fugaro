@@ -254,6 +254,101 @@ func TestRenderMinimal(t *testing.T) {
 	}
 }
 
+// warmUpBlock is the warm-up section of a derived Dockerfile rendered with
+// the NPM_TOKEN secret: the comment and the RUN line.
+func warmUpBlock(comment, lockfile, install string) string {
+	return "\n# Dependency warm-up for " + lockfile + "." + comment + "\n" +
+		`RUN --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; ` + install + "\n"
+}
+
+const skipComment = "\n# image.skip_build_scripts: package build scripts do not run here, so\n# the workflow's build command builds what the repository needs."
+
+// renderPMs are the package managers the warm-up renders for, with their
+// plain install and the one that skips build scripts.
+var renderPMs = []struct {
+	pm          config.NodePM
+	plain, skip string
+}{
+	{config.NodePM{Name: "yarn", Berry: true, Lockfile: "yarn.lock", Install: "yarn install --immutable"},
+		"yarn install --immutable", "yarn install --immutable --mode=skip-build"},
+	{config.NodePM{Name: "yarn", Lockfile: "yarn.lock", Install: "yarn install --frozen-lockfile"},
+		"yarn install --frozen-lockfile", "yarn install --frozen-lockfile --ignore-scripts"},
+	{config.NodePM{Name: "npm", Lockfile: "package-lock.json", Install: "npm ci"},
+		"npm ci", "npm ci --ignore-scripts"},
+	{config.NodePM{Name: "pnpm", Lockfile: "pnpm-lock.yaml", Install: "pnpm fetch && pnpm install --offline --frozen-lockfile"},
+		"pnpm fetch && pnpm install --offline --frozen-lockfile", "pnpm fetch && pnpm install --offline --frozen-lockfile --ignore-scripts"},
+}
+
+// fullInput is TestRenderFull's input with pm as the package manager.
+func fullInput(pm config.NodePM, skip bool) RenderInput {
+	return RenderInput{
+		Workflow: "web", Base: "web-node", Version: "1.2.3",
+		Image: config.Image{
+			Node:             "24.19.0",
+			Apt:              []string{"libvips-dev", "fonts-liberation"},
+			Setup:            []string{"npx playwright install --with-deps chromium", "mkdir -p build"},
+			SkipBuildScripts: skip,
+		},
+		PM:      &pm,
+		Secrets: []string{"NPM_TOKEN"},
+	}
+}
+
+// With image.skip_build_scripts, each package manager's warm-up installs
+// without lifecycle or build scripts, and the rest of the Dockerfile is
+// TestRenderFull's, byte for byte.
+func TestRenderSkipBuildScripts(t *testing.T) {
+	yarnBlock := warmUpBlock("", "yarn.lock", "yarn install --immutable")
+	if !strings.Contains(wantFull, yarnBlock) {
+		t.Fatalf("wantFull lacks %q", yarnBlock)
+	}
+	for _, tc := range renderPMs {
+		t.Run(tc.pm.Lockfile+" "+tc.plain, func(t *testing.T) {
+			got, err := Render(fullInput(tc.pm, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Replace(wantFull, yarnBlock, warmUpBlock(skipComment, tc.pm.Lockfile, tc.skip), 1)
+			if string(got) != want {
+				t.Errorf("Render =\n%s\nwant\n%s", got, want)
+			}
+			if msgs := config.LintDockerfile(got, "web-node"); len(msgs) > 0 {
+				t.Errorf("the rendered Dockerfile breaks the repository-Dockerfile contract: %v", msgs)
+			}
+		})
+	}
+}
+
+// Leaving image.skip_build_scripts off renders exactly what fugaro rendered
+// before the setting existed, for every package manager.
+func TestRenderDefaultWarmUpUnchanged(t *testing.T) {
+	for _, tc := range renderPMs {
+		t.Run(tc.pm.Lockfile+" "+tc.plain, func(t *testing.T) {
+			got, err := Render(fullInput(tc.pm, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := strings.Replace(wantFull, warmUpBlock("", "yarn.lock", "yarn install --immutable"), warmUpBlock("", tc.pm.Lockfile, tc.plain), 1)
+			if string(got) != want {
+				t.Errorf("Render =\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+}
+
+func TestDockerfileSkipBuildScripts(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{"package.json": `{"packageManager":"yarn@4.16.0"}`, "yarn.lock": ""})
+	cfg := parseConfig(t, strings.Replace(renderYAML, "    base: web-node\n", "    base: web-node\n    image: { skip_build_scripts: true }\n", 1))
+	data, _, err := Dockerfile(root, cfg, "web", "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := warmUpBlock(skipComment, "yarn.lock", "yarn install --immutable --mode=skip-build"); !strings.Contains(string(data), want) {
+		t.Fatalf("Dockerfile lacks %q:\n%s", want, data)
+	}
+}
+
 func TestRenderRefusesUnpublishedBase(t *testing.T) {
 	if _, err := Render(RenderInput{Workflow: "server", Base: "server-jvm"}); err == nil || !strings.Contains(err.Error(), "server-jvm has no published image yet") {
 		t.Fatalf("err = %v", err)

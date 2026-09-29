@@ -47,6 +47,10 @@ RUN --mount=type=bind,target=/src \
 {{- if .WarmUp}}
 
 # Dependency warm-up for {{.WarmUpFor}}.
+{{- if .Image.SkipBuildScripts}}
+# image.skip_build_scripts: package build scripts do not run here, so
+# the workflow's build command builds what the repository needs.
+{{- end}}
 RUN{{.SecretMounts}} {{.SecretEnv}}{{.WarmUp}}
 {{- end}}
 {{- if .Image.Setup}}

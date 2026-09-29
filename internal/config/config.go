@@ -66,11 +66,15 @@ type Image struct {
 	JDK   string   `yaml:"jdk"`   // server-jvm: JDK major version
 	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
 	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up
+	// SkipBuildScripts makes web-node's dependency warm-up install without
+	// running package lifecycle or build scripts, leaving those builds to
+	// the workflow's build command (design §7.2).
+	SkipBuildScripts bool `yaml:"skip_build_scripts"`
 }
 
 // IsZero reports whether the image block sets nothing.
 func (i Image) IsZero() bool {
-	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0
+	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts
 }
 
 // Commands are the repository's build and test commands, run through `sh -c`.

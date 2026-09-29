@@ -1,0 +1,12 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image:
+      skip_build_scripts: true
+    commands: { build: yarn build, test: yarn test }
+  server:
+    base: server-jvm
+    image: { jdk: 21, skip_build_scripts: false }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }

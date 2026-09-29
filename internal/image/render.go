@@ -48,7 +48,7 @@ func Render(in RenderInput) ([]byte, error) {
 		WarmUp, WarmUpFor, SecretMounts, SecretEnv string
 	}{RenderInput: in}
 	if in.PM != nil {
-		data.WarmUp, data.WarmUpFor = in.PM.Install, in.PM.Lockfile
+		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(in.Image.SkipBuildScripts), in.PM.Lockfile
 	}
 	data.SecretMounts, data.SecretEnv = secretMounts(in.Secrets)
 	var buf bytes.Buffer

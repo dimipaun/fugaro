@@ -63,7 +63,11 @@
         },
         {
           "if": { "required": ["base"], "properties": { "base": { "const": "server-jvm" } } },
-          "then": { "properties": { "image": { "not": { "required": ["node"] } } } }
+          "then": {
+            "properties": {
+              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
+            }
+          }
         }
       ],
       "properties": {
@@ -74,6 +78,7 @@
           "properties": {
             "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
             "jdk": { "type": ["string", "integer"], "pattern": "^[0-9]+$" },
+            "skip_build_scripts": { "type": "boolean" },
             "apt": {
               "type": "array",
               "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" }

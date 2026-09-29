@@ -67,7 +67,7 @@ Fugaro detects the package manager itself, from `packageManager` in `package.jso
 - `pnpm fetch` followed by an offline `pnpm install --frozen-lockfile`
 - `npm ci`
 
-You don't configure that. If `fugaro validate` says `packageManager` and the lockfile disagree, tell the user; don't delete either.
+You don't configure the command, with one exception: `image.skip_build_scripts: true` makes that install skip package lifecycle and build scripts (`--mode=skip-build` for Yarn 2 and later, `--ignore-scripts` for the others). Nothing is built during the install then, so `commands.build` must build whatever the tests need. If `fugaro validate` says `packageManager` and the lockfile disagree, tell the user; don't delete either.
 
 Map what you find to `image:`:
 
@@ -76,6 +76,7 @@ Map what you find to `image:`:
 | `.nvmrc`, `.node-version`, `nodejs` in `.tool-versions`, `node-version:` of `actions/setup-node`, a CI image such as `node:24.19.0`, or `engines.node` | `image.node`: the exact version when the repository pins one (`"24.19.0"`), otherwise the major (`"24"`). Quote it. Leave it out if nothing pins a version. |
 | `apt-get install` lines in CI | `image.apt`: the package names, dropping those the base already has (`ca-certificates curl dirmngr git gnupg libcap2-bin procps sudo tini xz-utils zstd`). |
 | `playwright install --with-deps`, or CI running in a `mcr.microsoft.com/playwright` image | `image.setup`: install the browsers the tests use through the repository's own Playwright, so the version matches the lockfile. Use `npx playwright install --with-deps chromium`, `pnpm exec playwright install --with-deps chromium`, or `yarn playwright install --with-deps chromium`; in a Yarn workspace, use `yarn workspace <workspace> playwright install --with-deps chromium`. |
+| CI installs with `yarn install --mode=skip-build`, `--ignore-scripts` (`npm ci`, `pnpm install`, Yarn 1), or comments that the install's build scripts oversubscribe the container or never finish | `image.skip_build_scripts: true`. Check that `commands.build` then builds what the tests need, the way CI does after its install (for example serially with `-j 1`). Leave it off when dependencies need their install scripts, such as native modules. |
 | Other steps CI runs after installing dependencies and before building, such as code generation | `image.setup`, one step each, only if the build can't run without them. |
 
 How `setup` steps run:
@@ -128,6 +129,7 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 |---|---|
 | apt: "Unable to locate package" | Fix the name in `image.apt`. The base is Ubuntu 24.04. |
 | The dependency install fails with 401 or 403 | A registry token is missing. Declare it in `secrets` and ask the user to export the variable before rerunning. `fugaro` passes declared secrets to the build without storing them. |
+| The dependency install hangs, runs out of memory, or ends in an internal error while many packages build at once | Set `image.skip_build_scripts: true` and have `commands.build` build the packages, as above. |
 | `--immutable` or `--frozen-lockfile` refuses a lockfile change | The lockfile is out of date in the repository. Tell the user. |
 | A `setup` step fails | Fix the step. To debug, run it by hand in the image: `docker run --rm -it <image> bash`. |
 | The origin is missing or not https | The clone needs an `origin` remote on the provider host. Tell the user. |

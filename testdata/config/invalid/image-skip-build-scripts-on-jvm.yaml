@@ -1,0 +1,7 @@
+version: 1
+git: { provider: github }
+workflows:
+  server:
+    base: server-jvm
+    image: { skip_build_scripts: true }
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
