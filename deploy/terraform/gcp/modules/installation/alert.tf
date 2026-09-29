@@ -26,13 +26,14 @@ resource "google_monitoring_alert_policy" "image" {
     }
   }
 
-  # A check job execution that failed before it could log its decision.
+  # A check job execution that failed before it could log its decision,
+  # read from the Cloud Run system log (the exclusion keeps it in _Default).
   # The query language has no prefix function; an anchored regex is its
   # prefix match.
   conditions {
     display_name = "An image check job failed"
     condition_matched_log {
-      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND severity>=ERROR"
+      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
     }
   }
 

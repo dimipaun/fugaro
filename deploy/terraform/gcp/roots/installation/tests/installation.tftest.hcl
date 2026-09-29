@@ -62,8 +62,8 @@ run "root_passes_inputs" {
     error_message = "the root must pass registry_cleanup to the module"
   }
   assert {
-    condition     = output.log_view == null
-    error_message = "log_view is null until log isolation exists"
+    condition     = output.log_view != null
+    error_message = "the root must pass log_isolation (default on) to the module and output the view"
   }
 }
 
@@ -469,7 +469,7 @@ run "alert_set" {
   }
   assert {
     condition = anytrue([for c in google_monitoring_alert_policy.image[0].conditions :
-    one(c.condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND severity>=ERROR"])
+    one(c.condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"])
     error_message = "the alert must match a failed check-job execution"
   }
 }
@@ -500,4 +500,76 @@ run "bad_member" {
   }
 
   expect_failures = [var.launchers]
+}
+
+run "log_isolation_on" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = google_logging_project_bucket_config.fugaro[0].bucket_id == "fugaro" && google_logging_project_bucket_config.fugaro[0].location == "global" && google_logging_project_bucket_config.fugaro[0].retention_days == 30
+    error_message = "the log bucket must be the named one, global, with 30 days of retention"
+  }
+  assert {
+    condition     = google_logging_project_sink.fugaro[0].name == "fugaro-jobs" && google_logging_project_sink.fugaro[0].unique_writer_identity == true
+    error_message = "the sink must carry its name and a unique writer identity"
+  }
+  assert {
+    condition     = google_logging_project_sink.fugaro[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\""
+    error_message = "the sink must route every Fugaro-managed job's logs"
+  }
+  assert {
+    condition     = google_logging_project_sink.fugaro[0].destination == "logging.googleapis.com/projects/proj-1234/locations/global/buckets/fugaro"
+    error_message = "the sink must write to the project's own log bucket"
+  }
+  assert {
+    condition     = google_logging_project_exclusion.fugaro_from_default[0].name == "fugaro-jobs-from-default"
+    error_message = "the exclusion must carry its name"
+  }
+  # Log-based alerts must keep seeing the check's own decision lines and
+  # the Cloud Run system log, so the exclusion leaves both in _Default.
+  assert {
+    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" AND NOT jsonPayload.event=\"image-check\" AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
+    error_message = "the exclusion must leave the alerts' log lines in _Default"
+  }
+  assert {
+    condition     = google_logging_log_view.runs[0].name == "fugaro-runs" && google_logging_log_view.runs[0].bucket == "projects/proj-1234/locations/global/buckets/fugaro"
+    error_message = "the view must be the named one, on the log bucket"
+  }
+  assert {
+    condition     = sort(keys(google_logging_log_view_iam_member.runs)) == tolist(["user:launcher@example.com", "user:operator@example.com"])
+    error_message = "launchers and operators must be able to read through the view"
+  }
+  assert {
+    condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.role == "roles/logging.viewAccessor"])
+    error_message = "the view is read with roles/logging.viewAccessor"
+  }
+  assert {
+    condition     = output.log_view == "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
+    error_message = "log_view must be the view's full resource name"
+  }
+}
+
+run "log_isolation_off" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    log_isolation = false
+  }
+
+  assert {
+    condition     = length(google_logging_project_bucket_config.fugaro) == 0 && length(google_logging_project_sink.fugaro) == 0 && length(google_logging_project_exclusion.fugaro_from_default) == 0 && length(google_logging_log_view.runs) == 0 && length(google_logging_log_view_iam_member.runs) == 0
+    error_message = "no logging resource without log isolation"
+  }
+  assert {
+    condition     = output.log_view == null
+    error_message = "log_view is null without log isolation"
+  }
 }

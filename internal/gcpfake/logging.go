@@ -27,9 +27,13 @@ import (
 // short name has no region and matches a query in any.
 type Logging struct {
 	*Server
-	mu      sync.Mutex
-	entries map[logExec][]LogEntry
-	nextID  int
+	// Resource, when set, is the one resource name (such as a log view)
+	// requests must read; any other resourceNames fails the test. Unset,
+	// the fake accepts a single projects/<p>.
+	Resource string
+	mu       sync.Mutex
+	entries  map[logExec][]LogEntry
+	nextID   int
 }
 
 // LogEntry is one fake log entry. JSON, when set, is the jsonPayload;
@@ -145,7 +149,16 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		since = t
 	}
-	if m == nil || len(req.ResourceNames) != 1 || !strings.HasPrefix(req.ResourceNames[0], "projects/") ||
+	wantRes := func() bool {
+		if len(req.ResourceNames) != 1 {
+			return false
+		}
+		if l.Resource != "" {
+			return req.ResourceNames[0] == l.Resource
+		}
+		return strings.HasPrefix(req.ResourceNames[0], "projects/") && !strings.Contains(req.ResourceNames[0], "/views/")
+	}
+	if m == nil || !wantRes() ||
 		(req.OrderBy != "" && req.OrderBy != "timestamp asc") {
 		l.failf("gcpfake: entries.list request the fake cannot answer: resourceNames=%q filter=%q orderBy=%q", req.ResourceNames, req.Filter, req.OrderBy)
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported request")

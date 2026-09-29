@@ -195,3 +195,10 @@ variable "adopt_legacy_registry" {
   default     = false
   nullable    = false
 }
+
+variable "log_isolation" {
+  description = "Whether Fugaro jobs' logs go to their own log bucket, readable only through its view, and stay out of _Default."
+  type        = bool
+  default     = true
+  nullable    = false
+}

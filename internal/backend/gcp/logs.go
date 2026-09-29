@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -131,14 +132,16 @@ func minTime(a, b time.Time) time.Time {
 // readLogs reads every entry of the execution at or after from (all of them
 // when from is zero), following page tokens.
 func (b *Backend) readLogs(ctx context.Context, id backend.ExecID, from time.Time, fn func(backend.LogEntry) error) error {
-	filter := `resource.type="cloud_run_job" AND resource.labels.location=` + strconv.Quote(id.Region) +
-		` AND resource.labels.job_name=` + strconv.Quote(id.Job) +
-		` AND labels."run.googleapis.com/execution_name"=` + strconv.Quote(id.Name)
+	filter := executionFilter(id)
 	if !from.IsZero() {
 		filter += ` AND timestamp>=` + strconv.Quote(from.UTC().Format(time.RFC3339Nano))
 	}
+	resource := "projects/" + b.o.Project
+	if b.o.LogView != "" {
+		resource = b.o.LogView
+	}
 	req := &logging.ListLogEntriesRequest{
-		ResourceNames: []string{"projects/" + b.o.Project},
+		ResourceNames: []string{resource},
 		Filter:        filter,
 		OrderBy:       "timestamp asc",
 		PageSize:      logPageSize,
@@ -182,4 +185,24 @@ func toLogEntry(e *logging.LogEntry) (backend.LogEntry, error) {
 		}
 	}
 	return le, nil
+}
+
+// executionFilter selects one execution's log entries.
+func executionFilter(id backend.ExecID) string {
+	return `resource.type="cloud_run_job" AND resource.labels.location=` + strconv.Quote(id.Region) +
+		` AND resource.labels.job_name=` + strconv.Quote(id.Job) +
+		` AND labels."run.googleapis.com/execution_name"=` + strconv.Quote(id.Name)
+}
+
+// logURL is where to read an execution's logs in the console. Cloud Run's
+// own link (given) opens a page that reads the project's default logs,
+// which hold nothing of a run's under log isolation; with a log view it is
+// a Logs Explorer query scoped to the view's storage.
+func (b *Backend) logURL(id backend.ExecID, given string) string {
+	if b.o.LogView == "" {
+		return given
+	}
+	return "https://console.cloud.google.com/logs/query;query=" + url.PathEscape(executionFilter(id)) +
+		";storageScope=storage," + url.PathEscape(b.o.LogView) +
+		"?project=" + url.QueryEscape(b.o.Project)
 }

@@ -40,4 +40,5 @@ module "installation" {
   alert_email           = var.alert_email
   registry_cleanup      = var.registry_cleanup
   adopt_legacy_registry = var.adopt_legacy_registry
+  log_isolation         = var.log_isolation
 }

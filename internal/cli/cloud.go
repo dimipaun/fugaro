@@ -101,7 +101,7 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	if err := lc.Override(o.project, o.region); err != nil {
 		return nil, userErr("--project/--region: %v", err)
 	}
-	opts := gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
+	opts := gcp.Options{Project: lc.Project, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
 	be, err := gcp.New(ctx, opts)
