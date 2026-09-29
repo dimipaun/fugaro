@@ -9,7 +9,6 @@
 package imagecheck
 
 import (
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,10 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"time"
-
-	"github.com/bmatcuk/doublestar/v4"
 
 	"github.com/dimipaun/fugaro/internal/config"
 )
@@ -90,9 +86,10 @@ func ParseRecord(data []byte) (*Record, error) {
 	return &r, nil
 }
 
-// Tree is a repository tree at one commit: a checkout directory (Dir) in
-// the build, a git tree in the check. Paths are slash-separated and
-// relative to the tree's root. A missing path is fs.ErrNotExist.
+// Tree is a repository tree at one commit. Production uses GitTree for
+// both sides, the build's checkout (Open) and the check's clone (Clone),
+// so both read git's own blob IDs. Paths are slash-separated and relative
+// to the tree's root. A missing path is fs.ErrNotExist.
 type Tree interface {
 	// BlobID is git's object ID of the file at path.
 	BlobID(path string) (string, error)
@@ -100,54 +97,6 @@ type Tree interface {
 	// globs match them.
 	Glob(pattern string) ([]string, error)
 	ReadFile(path string) ([]byte, error)
-}
-
-// Dir is a Tree over a checkout directory. Its blob IDs are computed the
-// way git computes them for a SHA-1 repository (a repository in SHA-256
-// object format would never match its git tree).
-type Dir struct{ Root string }
-
-func (d Dir) file(path string) (string, error) {
-	if !fs.ValidPath(path) {
-		return "", fmt.Errorf("%s: %w", path, fs.ErrNotExist)
-	}
-	full := filepath.Join(d.Root, filepath.FromSlash(path))
-	// A symlink or anything but a regular file is not a key file, as the
-	// cache's own key leaves it out.
-	fi, err := os.Lstat(full)
-	if err != nil {
-		return "", err
-	}
-	if !fi.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a regular file: %w", path, fs.ErrNotExist)
-	}
-	return full, nil
-}
-
-// BlobID is git's blob ID of the file's content.
-func (d Dir) BlobID(path string) (string, error) {
-	data, err := d.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	h := sha1.New()
-	h.Write([]byte("blob " + strconv.Itoa(len(data)) + "\x00"))
-	h.Write(data)
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
-// Glob matches files only, and doesn't follow symlinks.
-func (d Dir) Glob(pattern string) ([]string, error) {
-	return doublestar.Glob(os.DirFS(d.Root), pattern, doublestar.WithFilesOnly(), doublestar.WithNoFollow())
-}
-
-// ReadFile reads a regular file of the tree.
-func (d Dir) ReadFile(path string) ([]byte, error) {
-	full, err := d.file(path)
-	if err != nil {
-		return nil, err
-	}
-	return os.ReadFile(full)
 }
 
 // KeyFiles are the workflow's cache key files in tree, with their blob

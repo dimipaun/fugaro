@@ -411,7 +411,12 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 	if !ok {
 		return userErr("origin %s does not name owner/name", gcp.RedactURL(origin))
 	}
-	tree := imagecheck.Dir{Root: root}
+	// Git's own view of HEAD, as the check reads the branch: blob IDs of
+	// what git stores, not of the checkout's bytes.
+	tree, err := imagecheck.Open(ctx, root, "HEAD", nil)
+	if err != nil {
+		return err
+	}
 	keys, err := imagecheck.KeyFiles(cfg, name, tree)
 	if err != nil {
 		return userErr("%v", err)
