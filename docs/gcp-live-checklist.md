@@ -249,3 +249,14 @@ These are the first live run's findings. Record every later run in the same way,
   - The first `jobs.run` of this project rejected an unused Cloud Build substitution.
   - The live cache test used `Attributes.As` with the wrong pointer type.
   - The impersonation check failed until the new Token Creator grant had propagated (a few minutes); rerun it if it fails right after the grant.
+
+## Results of the second live run (2026-09-29)
+
+- **Listing order (check 1b):** with two jobs in the region, `executions.list` on `jobs/-` returns executions newest first across jobs. The early stop in the listing code is sound.
+- **First EdgeWeb run:** a task to add two unit-test files ended in a ready PR into `master`, with the default reviewer, no labels and only the two new files changed.
+  - It took 22 minutes. The container started about two minutes after launch, the first pull of the 5.5 GB image included.
+  - Compute cost was $0.11, with $0.53 of notional model usage on the subscription.
+  - Both verify passes succeeded: `build` (lint and typecheck) and `test` (7,886 tests, 0 failures).
+  - The lock was released. The bucket holds the run's records and redacted transcripts, plus a 434 MB dependency cache archive.
+- **EdgeWeb image build:** with `image.skip_build_scripts`, `yarn install` finished in 1 minute 4 seconds. A plain `yarn install --immutable` in the same builder hung for 57 minutes and ended `INTERNAL_ERROR`. The whole Cloud Build took about 12 minutes.
+- **Claude Code in the base image:** `claude install` fetches the current release, not the binary it is run from, so the base image now installs the sha256-verified binary directly and fails unless `claude --version` is the pinned version.
