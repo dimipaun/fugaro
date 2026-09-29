@@ -1,33 +1,38 @@
 # Cloud Build config for one (repo, workflow) derived image (design §7.2).
-# M4's `fugaro image build` submits it and M5's nightly trigger runs it;
-# both set the substitutions.
+# `fugaro image build` and the daily image check submit it, through
+# gcp.BuildRequest, which sets the substitutions.
 #
-# The git credential is the provider token the job already uses
-# (fugaro-<slug>-bitbucket-token): fugaro writes its Secret Manager version
-# into availableSecrets directly, and _GIT_USER names its https username.
-# Only the two steps that clone see it, as GIT_TOKEN: source (the shallow clone render reads) and build
-# (for the Dockerfile's own clone). Each checks REPO_URL is https://, writes
-# a credential-store line (https://<user>:<token>@<host>, user and token
-# percent-encoded) into a mktemp directory inside its own container, and
-# removes it on exit. Nothing is written to /workspace or /builder/home, so
-# the render step never sees a credential. The build passes its file as the
-# git-credentials BuildKit secret, which no layer keeps.
+# The git credential lives only in the fugaro-creds volume, mounted at
+# /creds by the steps that need it: prep makes /creds private to the base
+# image's user (uid 1000); credential writes one git credential-store line
+# into it; source clones with it; build hands it to BuildKit and removes it
+# on exit. render never mounts it, and nothing is written to /workspace or
+# /builder/home, which every later step can read.
+#
+# Only the credential step sees the provider secret. As written here it is
+# the Bitbucket form: GIT_TOKEN, the repository's bitbucket-token secret,
+# with _GIT_USER as its https username. For GitHub, gcp.BuildRequest swaps
+# the step's secretEnv for GITHUB_APP_KEY (the github-app-key secret) and
+# its env for GITHUB_APP_ID (_GITHUB_APP_ID), and fugaro mints an
+# installation token that can only read this one repository. fugaro
+# formats and percent-encodes the line itself, and prints nothing.
 #
 # Render and build use one base image. Cloud Build pulls _FUGARO_BASE once,
-# to run the render step; the build step does not pull again but pins the
-# digest of that same local image (written to /workspace/base-digest), so a
-# republished tag between the steps cannot give them different bases.
+# for the credential and render steps; the build step does not pull again
+# but pins the digest of that same local image (written to
+# /workspace/base-digest), so a republished tag between the steps cannot
+# give them different bases.
 #
 # Workflow secrets: _SECRET_ENVS is a space-separated list of variable
 # names. This file declares none of them in availableSecrets or the build
 # step's secretEnv; the request builder (gcp.BuildRequest) adds each one to
 # both, so a trigger must build its request the same way rather than run
-# this file as is. The build step writes each into its credential
-# directory (umask 077, printf, removed on exit) and passes it as a file
-# BuildKit secret (src=), which the template mounts as a file with
-# required=false and exports inside the RUN. Neither side uses env=
-# secrets: Cloud Build's docker daemon refuses env= mounts ("exec.secretenv
-# is not supported by build server").
+# this file as is. The build step writes each into a mktemp directory
+# (umask 077, printf, removed on exit) and passes it as a file BuildKit
+# secret (src=), which the template mounts as a file with required=false
+# and exports inside the RUN. Neither side uses env= secrets: Cloud Build's
+# docker daemon refuses env= mounts ("exec.secretenv is not supported by
+# build server").
 #
 # Substitution is textual, so no ${_…} ever appears in a step's shell
 # script: a crafted value (a branch named x$(…) is a valid git ref) would
@@ -37,50 +42,45 @@ substitutions:
   _REPO_URL: ""       # https clone URL without credentials; also the checkout's origin
   _BASE_BRANCH: main
   _WORKFLOW: ""
-  _FUGARO_BASE: ""    # ghcr.io/dimipaun/fugaro-<base>:<version>; build pins the render step's image by digest
-  _IMAGE: ""          # the Artifact Registry image name, without a tag
-  _GIT_USER: ""       # the token's https username, such as x-token-auth for Bitbucket
+  _FUGARO_BASE: ""    # the base image; build pins the render step's image by digest
+  _IMAGE: ""          # the image in the repository's own registry, without a tag
+  _GIT_USER: ""       # Bitbucket: the token's https username, x-token-auth
+  _GITHUB_APP_ID: ""  # GitHub: the App's ID, which is not a secret
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
   secretManager:
-    - versionName: "set by fugaro image build: the provider token's Secret Manager version"
+    - versionName: "set by gcp.BuildRequest: the provider credential's Secret Manager version"
       env: GIT_TOKEN
 steps:
+  # The base image runs as fugaro (uid 1000), which must own the volume.
+  - id: prep
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    args: [-c, install -d -m 0700 -o 1000 -g 1000 /creds]
+    volumes: [{name: fugaro-creds, path: /creds}]
+  - id: credential
+    name: ${_FUGARO_BASE}
+    entrypoint: sh
+    secretEnv: [GIT_TOKEN]
+    env: [PROVIDER=bitbucket, "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"]
+    args: [-c, 'exec fugaro image git-credential --provider "$$PROVIDER" --repo-url "$$REPO_URL" --out /creds/git-credentials']
+    volumes: [{name: fugaro-creds, path: /creds}]
   # A shallow clone, so render can read fugaro.yaml and the lockfiles.
   - id: source
     name: gcr.io/cloud-builders/git
     entrypoint: bash
-    secretEnv: [GIT_TOKEN]
-    env: ["BASE_BRANCH=${_BASE_BRANCH}", "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"]
+    env: ["BASE_BRANCH=${_BASE_BRANCH}", "REPO_URL=${_REPO_URL}"]
     args:
       - -c
       - |
         set -eu
-        export LC_ALL=C
-        # urlenc percent-encodes $$1 byte by byte (bash builtins only, so the
-        # value never reaches an argv), as git's credential-store expects.
-        urlenc() {
-          local s=$$1 out= c i
-          for ((i = 0; i < $${#s}; i++)); do
-            c=$${s:i:1}
-            case "$$c" in
-              [A-Za-z0-9._~-]) out+=$$c ;;
-              *) printf -v c '%%%02X' "'$$c"; out+=$$c ;;
-            esac
-          done
-          printf '%s' "$$out"
-        }
         case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
-        host=$${REPO_URL#https://}; host=$${host%%/*}
-        case "$$host" in ""|*@*) echo "REPO_URL must name a host and no credentials" >&2; exit 1 ;; esac
-        cred=$$(mktemp -d)
-        trap 'rm -rf "$$cred"' EXIT
-        (umask 077 && printf 'https://%s:%s@%s\n' "$$(urlenc "$$GIT_USER")" "$$(urlenc "$$GIT_TOKEN")" "$$host" > "$$cred/git-credentials")
-        git -c credential.helper="store --file=$$cred/git-credentials" \
+        git -c credential.helper='store --file=/creds/git-credentials' \
           clone --quiet --depth 1 --branch "$$BASE_BRANCH" -- "$$REPO_URL" /workspace/src
         install -d -m 0777 /workspace/context
+    volumes: [{name: fugaro-creds, path: /creds}]
   # The base image's own fugaro renders the Dockerfile. It runs as fugaro,
   # so the root-owned clone needs safe.directory.
   - id: render
@@ -96,7 +96,6 @@ steps:
   - id: build
     name: gcr.io/cloud-builders/docker
     entrypoint: bash
-    secretEnv: [GIT_TOKEN]
     env:
       - DOCKER_BUILDKIT=1
       - "FUGARO_BASE=${_FUGARO_BASE}"
@@ -104,31 +103,13 @@ steps:
       - "BASE_BRANCH=${_BASE_BRANCH}"
       - "IMAGE=${_IMAGE}"
       - "SECRET_ENVS=${_SECRET_ENVS}"
-      - "GIT_USER=${_GIT_USER}"
     args:
       - -c
       - |
         set -eu
         export LC_ALL=C
-        # urlenc percent-encodes $$1 byte by byte (bash builtins only, so the
-        # value never reaches an argv), as git's credential-store expects.
-        urlenc() {
-          local s=$$1 out= c i
-          for ((i = 0; i < $${#s}; i++)); do
-            c=$${s:i:1}
-            case "$$c" in
-              [A-Za-z0-9._~-]) out+=$$c ;;
-              *) printf -v c '%%%02X' "'$$c"; out+=$$c ;;
-            esac
-          done
-          printf '%s' "$$out"
-        }
-        case "$$REPO_URL" in https://*) ;; *) echo "REPO_URL must be an https URL" >&2; exit 1 ;; esac
-        host=$${REPO_URL#https://}; host=$${host%%/*}
-        case "$$host" in ""|*@*) echo "REPO_URL must name a host and no credentials" >&2; exit 1 ;; esac
-        cred=$$(mktemp -d)
-        trap 'rm -rf "$$cred"' EXIT
-        (umask 077 && printf 'https://%s:%s@%s\n' "$$(urlenc "$$GIT_USER")" "$$(urlenc "$$GIT_TOKEN")" "$$host" > "$$cred/git-credentials")
+        sec=$$(mktemp -d)
+        trap 'rm -rf "$$sec"; rm -f /creds/git-credentials' EXIT
         base=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$FUGARO_BASE") \
           || { echo "the render step's base image is not on this worker" >&2; exit 1; }
         printf '%s\n' "$$base" > /workspace/base-digest
@@ -137,14 +118,15 @@ steps:
         for e in $$SECRET_ENVS; do
           case "$$e" in *[!A-Z0-9_]*) echo "bad secret variable name" >&2; exit 1 ;; esac
           [ -n "$${!e+set}" ] || { echo "secret variable $$e is not set" >&2; exit 1; }
-          (umask 077 && printf '%s' "$${!e}" > "$$cred/$$e")
-          set -- "$$@" --secret "id=$$e,src=$$cred/$$e"
+          (umask 077 && printf '%s' "$${!e}" > "$$sec/$$e")
+          set -- "$$@" --secret "id=$$e,src=$$sec/$$e"
         done
         docker build --progress plain \
           --build-arg "FUGARO_BASE=$$base" \
           --build-arg "REPO_URL=$$REPO_URL" \
           --build-arg "BASE_BRANCH=$$BASE_BRANCH" \
-          --secret "id=git-credentials,src=$$cred/git-credentials" \
+          --secret "id=git-credentials,src=/creds/git-credentials" \
           "$$@" \
           --tag "$$IMAGE:latest" /workspace/context
+    volumes: [{name: fugaro-creds, path: /creds}]
 images: ["${_IMAGE}:latest"]

@@ -1,0 +1,8 @@
+[
+  {"method": "GET", "path": "/repos/acme/webapp/installation", "status": 200,
+   "response": {"id": 777, "app_id": 12345, "target_type": "Organization"}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens",
+   "request": {"repositories": ["webapp"], "permissions": {"contents": "read", "metadata": "read"}},
+   "status": 201,
+   "response": {"token": "ghs_fixture/build+token", "expires_at": "2099-01-01T00:00:00Z", "repository_selection": "selected"}}
+]

@@ -191,3 +191,28 @@ func TestTokenConcurrentCallsMintOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestMintInstallationTokenBuildPermissions: an image build's token can
+// only read the one repository it builds; the fixture fails the test on
+// any other request body.
+func TestMintInstallationTokenBuildPermissions(t *testing.T) {
+	now := time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
+	srv := httpfixture.Serve(t, filepath.Join("testdata", "build_token.json"))
+	tok, exp, err := MintInstallationToken(context.Background(), Options{
+		Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		HTTP: &http.Client{Transport: jwtCheck{t, &key(t).PublicKey}}, Now: func() time.Time { return now },
+	}, BuildTokenPermissions())
+	if err != nil || tok != "ghs_fixture_build_token" || !exp.Equal(now.Add(time.Hour)) {
+		t.Fatalf("MintInstallationToken = %q %s %v", tok, exp, err)
+	}
+	perms := BuildTokenPermissions()
+	if len(perms) != 2 || perms["contents"] != "read" || perms["metadata"] != "read" {
+		t.Fatalf("build permissions = %v", perms)
+	}
+	if _, _, err := MintInstallationToken(context.Background(), Options{Owner: "acme", Repo: "web", AppID: "1234"}, perms); err == nil {
+		t.Error("minted without a private key")
+	}
+	if _, _, err := MintInstallationToken(context.Background(), Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t)}, nil); err == nil {
+		t.Error("minted without permissions")
+	}
+}

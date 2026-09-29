@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 	"google.golang.org/api/googleapi"
 	"gopkg.in/yaml.v3"
@@ -25,15 +27,21 @@ import (
 // BuildSpec is one derived-image build of (repository, workflow).
 type BuildSpec struct {
 	Slug        string // the repository's storage slug, for its workflow secrets' IDs
-	GitProvider string // gitprov.KindBitbucket (or KindGitHub); RepoURL must be on its host
+	GitProvider string // gitprov.KindBitbucket or KindGitHub; RepoURL must be on its host
 	RepoURL     string // https clone URL without credentials, on GitProvider's host
 	BaseBranch  string
 	Workflow    string
 	Base        string // the fugaro base image, by tag or digest
-	Image       string // the Artifact Registry image, untagged (ImageName)
-	GitSecretID string // the provider token's secret ID (SecretID(slug, "bitbucket-token"))
-	GitUser     string // the token's https username, such as x-token-auth
-	// ServiceAccount is the email of the service account the build runs as.
+	// Image is the untagged image in the repository's own registry:
+	// ImageName(<region>-docker.pkg.dev/<project>/RegistryRepoID(Slug), Slug, Workflow).
+	Image string
+	// GitSecretID is the provider credential's secret ID: SecretID(slug,
+	// "bitbucket-token"), or SecretID(slug, "github-app-key") for GitHub.
+	GitSecretID string
+	GitUser     string // Bitbucket: the token's https username, such as x-token-auth
+	GitHubAppID string // GitHub: the App's ID, which is not a secret
+	// ServiceAccount is the email of the repository's build account
+	// (BuildServiceAccountID), which the build runs as.
 	ServiceAccount string
 	MachineType    string
 	// WorkflowSecrets become env BuildKit secrets of the build step.
@@ -53,18 +61,38 @@ type BuildResult struct {
 // incomplete or unsafe BuildSpec, before any call is made.
 var ErrBadBuildSpec = errors.New("invalid Cloud Build request")
 
-// secretEnvRE is what a workflow secret's variable may be; the build step
-// re-checks it before using the name in --secret.
-var secretEnvRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+var (
+	// secretEnvRE is what a workflow secret's variable may be; the build
+	// step re-checks it before using the name in --secret.
+	secretEnvRE = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	appIDRE     = regexp.MustCompile(`^[0-9]{1,20}$`)
+	// registryHostRE is <region>-docker.pkg.dev/<project>.
+	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
+)
 
-// gitTokenEnv is the variable the source and build steps read the provider
-// token from.
-const gitTokenEnv = "GIT_TOKEN"
+// The credential step's provider secret, as the variable it reads, and the
+// env it gets besides: as cloudbuild.yaml writes it (Bitbucket), and as
+// BuildRequest rewrites it for GitHub.
+const (
+	gitTokenEnv     = "GIT_TOKEN"
+	githubAppKeyEnv = "GITHUB_APP_KEY"
+	credentialStep  = "credential"
+)
+
+var credentialEnv = map[string][]string{
+	gitprov.KindBitbucket: {"PROVIDER=" + gitprov.KindBitbucket, "REPO_URL=${_REPO_URL}", "GIT_USER=${_GIT_USER}"},
+	gitprov.KindGitHub:    {"PROVIDER=" + gitprov.KindGitHub, "REPO_URL=${_REPO_URL}", "GITHUB_APP_ID=${_GITHUB_APP_ID}"},
+}
+
+var credentialSecretEnv = map[string]string{gitprov.KindBitbucket: gitTokenEnv, gitprov.KindGitHub: githubAppKeyEnv}
 
 // BuildRequest is the Cloud Build request for s in project: images.CloudBuild
-// with its substitutions set, the provider token's version in
-// availableSecrets, and each workflow secret added to availableSecrets and
-// to the build step's secretEnv (and nowhere else). It makes no calls.
+// with its substitutions set, the credential step's secret and env chosen
+// by provider, the provider credential's version in availableSecrets, and
+// each workflow secret added to availableSecrets and to the build step's
+// secretEnv (and nowhere else). It always names the repository's build
+// account: a request without one would run as the project's default build
+// identity. It makes no calls.
 func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	var raw map[string]any
 	if err := yaml.Unmarshal(images.CloudBuild, &raw); err != nil {
@@ -81,22 +109,27 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	if b.AvailableSecrets == nil || len(b.AvailableSecrets.SecretManager) != 1 || b.AvailableSecrets.SecretManager[0].Env != gitTokenEnv {
 		return nil, errors.New("the embedded cloudbuild.yaml does not declare exactly the git token secret")
 	}
-	var build *cloudbuild.BuildStep
+	var build, cred *cloudbuild.BuildStep
 	for _, st := range b.Steps {
-		if st.Id == "build" {
+		switch st.Id {
+		case "build":
 			build = st
+		case credentialStep:
+			cred = st
 		}
 	}
-	if build == nil {
-		return nil, errors.New("the embedded cloudbuild.yaml has no build step")
+	if build == nil || cred == nil || !slices.Equal(cred.SecretEnv, []string{gitTokenEnv}) || !slices.Equal(cred.Env, credentialEnv[gitprov.KindBitbucket]) {
+		return nil, errors.New("the embedded cloudbuild.yaml has no build step, or no credential step in its Bitbucket form")
 	}
-	if err := s.check(buildStepEnv(build)); err != nil {
+	if err := s.check(project, reservedEnv(build)); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrBadBuildSpec, err)
 	}
 
 	version := func(id string) string { return "projects/" + project + "/secrets/" + id + "/versions/latest" }
-	gitVersion := version(s.GitSecretID)
-	b.AvailableSecrets.SecretManager[0].VersionName = gitVersion
+	b.AvailableSecrets.SecretManager[0].Env = credentialSecretEnv[s.GitProvider]
+	b.AvailableSecrets.SecretManager[0].VersionName = version(s.GitSecretID)
+	cred.SecretEnv = []string{credentialSecretEnv[s.GitProvider]}
+	cred.Env = slices.Clone(credentialEnv[s.GitProvider])
 	envs := make([]string, 0, len(s.WorkflowSecrets))
 	for _, ws := range s.WorkflowSecrets {
 		b.AvailableSecrets.SecretManager = append(b.AvailableSecrets.SecretManager,
@@ -104,14 +137,21 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 		build.SecretEnv = append(build.SecretEnv, ws.Env)
 		envs = append(envs, ws.Env)
 	}
+	// Cloud Build refuses a substitution the request doesn't reference, so
+	// each provider sends only its own.
 	b.Substitutions = map[string]string{
 		"_REPO_URL":    s.RepoURL,
 		"_BASE_BRANCH": s.BaseBranch,
 		"_WORKFLOW":    s.Workflow,
 		"_FUGARO_BASE": s.Base,
 		"_IMAGE":       s.Image,
-		"_GIT_USER":    s.GitUser,
 		"_SECRET_ENVS": strings.Join(envs, " "),
+	}
+	switch s.GitProvider {
+	case gitprov.KindBitbucket:
+		b.Substitutions["_GIT_USER"] = s.GitUser
+	case gitprov.KindGitHub:
+		b.Substitutions["_GITHUB_APP_ID"] = s.GitHubAppID
 	}
 	b.ServiceAccount = "projects/" + project + "/serviceAccounts/" + s.ServiceAccount
 	if b.Options == nil {
@@ -123,42 +163,84 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	return &b, nil
 }
 
-// buildStepEnv is every variable the build step sets itself: its env: and
-// secretEnv: from cloudbuild.yaml. The variables bash, the docker CLI and
-// the step image read are in config.ReservedEnv, which check applies too.
-func buildStepEnv(step *cloudbuild.BuildStep) map[string]bool {
+// reservedEnv is every variable a workflow secret may not reuse: the build
+// step's own env: and secretEnv:, and the credential step's in either
+// provider's form, whose secret shares availableSecrets with the workflow
+// secrets. The variables bash, the docker CLI and the step image read are
+// in config.ReservedEnv, which check applies too.
+func reservedEnv(build *cloudbuild.BuildStep) map[string]bool {
 	used := map[string]bool{}
-	for _, e := range step.Env {
-		name, _, _ := strings.Cut(e, "=")
-		used[name] = true
+	for _, envs := range append([][]string{build.Env, build.SecretEnv}, slices.Collect(maps.Values(credentialEnv))...) {
+		for _, e := range envs {
+			name, _, _ := strings.Cut(e, "=")
+			used[name] = true
+		}
 	}
-	for _, e := range step.SecretEnv {
+	for _, e := range credentialSecretEnv {
 		used[e] = true
 	}
 	return used
 }
 
+// CheckRepoURL refuses a clone URL the provider's credential must not be
+// sent to: anything but an https URL without credentials or a port on the
+// provider's own host. The build's clone and the credential step both
+// apply it.
+func CheckRepoURL(provider, repoURL string) error {
+	u, err := url.Parse(repoURL)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("the repository URL %s is not an https URL without credentials", RedactURL(repoURL))
+	}
+	// The clone sends the provider credential to the URL's host, and the
+	// credential is scoped to the provider's: any other host (or port) is
+	// refused.
+	if provider == "" || u.Port() != "" || gitprov.KindForURL(repoURL) != provider {
+		return fmt.Errorf("the repository URL %s is not on %s's host; the build would send its credential there", RedactURL(repoURL), cmp.Or(provider, "the git provider"))
+	}
+	return nil
+}
+
 // check refuses a spec that is incomplete or would put an unsafe value in
-// the build. reserved are the build step's own variables, which a workflow
-// secret may not reuse.
-func (s BuildSpec) check(reserved map[string]bool) error {
+// the build of project. reserved are the variables a workflow secret may
+// not reuse.
+func (s BuildSpec) check(project string, reserved map[string]bool) error {
 	for _, f := range []struct{ name, v string }{
 		{"repository slug", s.Slug}, {"repository URL", s.RepoURL}, {"base branch", s.BaseBranch},
-		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image}, {"git token secret", s.GitSecretID},
-		{"git user", s.GitUser}, {"build service account", s.ServiceAccount},
+		{"workflow", s.Workflow}, {"base image", s.Base}, {"image", s.Image}, {"git credential secret", s.GitSecretID},
+		{"build service account", s.ServiceAccount},
 	} {
 		if f.v == "" {
 			return fmt.Errorf("the Cloud Build request has no %s", f.name)
 		}
 	}
-	u, err := url.Parse(s.RepoURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-		return fmt.Errorf("the repository URL %s is not an https URL without credentials", RedactURL(s.RepoURL))
+	switch s.GitProvider {
+	case gitprov.KindBitbucket:
+		if s.GitUser == "" {
+			return errors.New("the Cloud Build request has no git user")
+		}
+	case gitprov.KindGitHub:
+		if !appIDRE.MatchString(s.GitHubAppID) {
+			return fmt.Errorf("the GitHub App ID %q is not 1 to 20 digits", s.GitHubAppID)
+		}
+	default:
+		return fmt.Errorf("the git provider %q is not %s or %s", s.GitProvider, gitprov.KindBitbucket, gitprov.KindGitHub)
 	}
-	// The clone sends the provider token to the URL's host, and the token
-	// is scoped to the provider's: any other host (or port) is refused.
-	if s.GitProvider == "" || u.Port() != "" || gitprov.KindForURL(s.RepoURL) != s.GitProvider {
-		return fmt.Errorf("the repository URL %s is not on %s's host; the build would send its token there", RedactURL(s.RepoURL), cmp.Or(s.GitProvider, "the git provider"))
+	if err := CheckRepoURL(s.GitProvider, s.RepoURL); err != nil {
+		return err
+	}
+	// The build account holds the repository's secrets and writes its
+	// registry; any other account (the retired shared one, another
+	// repository's, a job's) is refused.
+	if want := BuildServiceAccountID(s.Slug) + "@" + project + ".iam.gserviceaccount.com"; s.ServiceAccount != want {
+		return fmt.Errorf("the build service account %s is not the repository's build account %s", s.ServiceAccount, want)
+	}
+	// Only the repository's own registry, in this project, which only its
+	// build account writes.
+	regID := "/" + RegistryRepoID(s.Slug) + "/"
+	host, _, ok := strings.Cut(s.Image, regID)
+	if m := registryHostRE.FindStringSubmatch(host); !ok || m == nil || m[2] != project ||
+		s.Image != ImageName(host+strings.TrimSuffix(regID, "/"), s.Slug, s.Workflow) {
+		return fmt.Errorf("the image %s is not the workflow's image in the repository's own registry of project %s", s.Image, project)
 	}
 	seen := map[string]bool{}
 	for _, ws := range s.WorkflowSecrets {
@@ -166,7 +248,7 @@ func (s BuildSpec) check(reserved map[string]bool) error {
 			return fmt.Errorf("workflow secret %s: variable %q is not [A-Z_][A-Z0-9_]*", ws.Name, ws.Env)
 		}
 		if reserved[ws.Env] || config.ReservedEnv(ws.Env) {
-			return fmt.Errorf("workflow secret %s: variable %s is one the image build step sets or uses itself; rename it", ws.Name, ws.Env)
+			return fmt.Errorf("workflow secret %s: variable %s is one the image build sets or uses itself; rename it", ws.Name, ws.Env)
 		}
 		if seen[ws.Env] {
 			return fmt.Errorf("workflow secret %s: variable %s is already used in the build", ws.Name, ws.Env)
@@ -176,22 +258,52 @@ func (s BuildSpec) check(reserved map[string]bool) error {
 	return nil
 }
 
-// Builder submits derived-image builds to Cloud Build in one region.
+// Builder submits derived-image builds to Cloud Build in one region, and
+// checks the registries they push to.
 type Builder struct {
 	svc             *cloudbuild.Service
+	registries      *artifactregistry.Service
 	project, region string
 }
 
-// NewBuilder connects to Cloud Build for builds in region.
+// NewBuilder connects to Cloud Build for builds in region, and to Artifact
+// Registry. An overridden Cloud Build endpoint (a fake) serves Artifact
+// Registry's repositories get too: its paths don't overlap Cloud Build's.
 func NewBuilder(ctx context.Context, o Options, region string) (*Builder, error) {
 	svc, err := cloudbuild.NewService(ctx, o.client(o.Endpoints.CloudBuild)...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Build: %w", err)
 	}
-	return &Builder{svc: svc, project: o.Project, region: region}, nil
+	ar, err := artifactregistry.NewService(ctx, o.client(o.Endpoints.CloudBuild)...)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to Artifact Registry: %w", err)
+	}
+	return &Builder{svc: svc, registries: ar, project: o.Project, region: region}, nil
 }
 
 func (b *Builder) parent() string { return "projects/" + b.project + "/locations/" + b.region }
+
+// RegistryExists reports whether the Docker registry registry
+// (<region>-docker.pkg.dev/<project>/<repository ID>, of the builder's
+// project) exists, with one repositories get. A build pushing to a missing
+// one would only fail at its end.
+func (b *Builder) RegistryExists(ctx context.Context, registry string) (bool, error) {
+	host, id, _ := strings.Cut(registry, "/"+b.project+"/")
+	m := registryHostRE.FindStringSubmatch(host + "/" + b.project)
+	if m == nil || id == "" || strings.Contains(id, "/") {
+		return false, fmt.Errorf("the registry %s is not <region>-docker.pkg.dev/%s/<repository>", registry, b.project)
+	}
+	name := "projects/" + b.project + "/locations/" + m[1] + "/repositories/" + id
+	_, err := b.registries.Projects.Locations.Repositories.Get(name).Context(ctx).Do()
+	var ae *googleapi.Error
+	switch {
+	case errors.As(err, &ae) && ae.Code == http.StatusNotFound:
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("reading the Artifact Registry repository %s: %w", name, err)
+	}
+	return true, nil
+}
 
 // Submit starts the build of s and returns it as queued.
 func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) {

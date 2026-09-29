@@ -160,8 +160,8 @@ var bitbucketYAML = strings.Replace(strings.Replace(cliMinimalYAML, "provider: g
 
 // cloudBuildCheckout is a Bitbucket checkout of acme/app whose origin is
 // https, with a local config pointing at a Cloud Build fake. The local
-// config's repos entry is switched to Bitbucket to match; registry and
-// build.service_account are added unless bare.
+// config's repos entry is switched to Bitbucket to match. The repository's
+// image registry exists unless bare.
 func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture) {
 	t.Helper()
 	files := npmFiles()
@@ -179,7 +179,7 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 		t.Fatal(err)
 	}
 	if !bare {
-		f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
+		fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 	}
 	return fb, f
 }
@@ -196,7 +196,7 @@ func TestImageBuildCloud(t *testing.T) {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	slug := mustSlug("bitbucket", "acme/app")
-	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/fugaro", slug, "app")+":latest" {
+	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")+":latest" {
 		t.Fatalf("result = %+v", res)
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
@@ -204,7 +204,7 @@ func TestImageBuildCloud(t *testing.T) {
 		subs["_GIT_USER"] != "x-token-auth" || subs["_SECRET_ENVS"] != "NPM_TOKEN" || subs["_BASE_BRANCH"] != "main" {
 		t.Fatalf("substitutions = %v", subs)
 	}
-	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/fugaro-build@proj-1234.iam.gserviceaccount.com" {
+	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/"+gcp.BuildServiceAccountID(slug)+"@proj-1234.iam.gserviceaccount.com" {
 		t.Fatalf("serviceAccount = %q", sa)
 	}
 }
@@ -216,42 +216,12 @@ func TestImageBuildCloudNoWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range fb.Requests() {
-		if r.Method == "GET" {
+		if r.Method == "GET" && strings.Contains(r.Path, "/builds/") {
 			t.Errorf("--no-wait polled the build: %s", r.Path)
 		}
 	}
 	if !strings.Contains(out, "submitted") {
 		t.Errorf("output = %q", out)
-	}
-}
-
-func TestImageBuildCloudGitHubNeedsM5(t *testing.T) {
-	checkoutWith(t, npmFiles())
-	fb := gcpfake.NewBuild(t)
-	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
-	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M5") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	if len(fb.Requests()) != 0 {
-		t.Error("a GitHub build reached Cloud Build")
-	}
-}
-
-func TestImageBuildCloudNeedsRegistry(t *testing.T) {
-	fb, f := cloudBuildCheckout(t, true)
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "registry") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\n")
-	_, _, err = execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "build.service_account") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	if len(fb.Requests()) != 0 {
-		t.Error("an incomplete config reached Cloud Build")
 	}
 }
 
