@@ -379,6 +379,10 @@ func TestDiscoverRefusesUnlabelledRegistry(t *testing.T) {
 	if im.AdoptLegacyRegistry || len(im.List) != 0 || len(im.Notes) != 1 {
 		t.Errorf("an unmarked legacy registry: %+v", im)
 	}
+	if want := "registry us-east5-docker.pkg.dev/proj-1234/" + LegacyRegistry + " has no fugaro=managed label"; len(im.Notes) == 1 &&
+		(!strings.HasPrefix(im.Notes[0], want) || !strings.HasSuffix(im.Notes[0], "left alone, not managed by Terraform")) {
+		t.Errorf("note = %q", im.Notes[0])
+	}
 }
 
 func TestDiscoverRefusesMismatchedBinding(t *testing.T) {

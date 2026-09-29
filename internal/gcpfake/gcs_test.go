@@ -3,9 +3,12 @@ package gcpfake
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -140,5 +143,57 @@ func TestGCSFakeRefusesUnimplementedPreconditions(t *testing.T) {
 		if reported() == 0 {
 			t.Errorf("%s with an unimplemented precondition was not reported", name)
 		}
+	}
+}
+
+// A bucket insert gives the bucket the project's convenience bindings, and
+// a policy set must carry the etag of the policy it replaces.
+func TestGCSBucketInsertAndSetPolicy(t *testing.T) {
+	g := NewGCS(t)
+	g.AddProject("proj-1234", 42)
+	c := &http.Client{}
+	do := func(method, path, body string) (int, map[string]any) {
+		t.Helper()
+		req, err := http.NewRequest(method, g.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&out)
+		return resp.StatusCode, out
+	}
+	if code, _ := do("POST", "/storage/v1/b?project=other-project", `{"name":"b1"}`); code != 403 {
+		t.Fatalf("insert into an unknown project: %d", code)
+	}
+	code, out := do("POST", "/storage/v1/b?project=proj-1234", `{"name":"b1","labels":{"fugaro":"tfstate"}}`)
+	if code != 200 || out["projectNumber"] != "42" {
+		t.Fatalf("insert: %d %v", code, out)
+	}
+	if code, _ := do("POST", "/storage/v1/b?project=proj-1234", `{"name":"b1"}`); code != 409 {
+		t.Fatalf("second insert: %d", code)
+	}
+	if got := g.Inserted("b1")["labels"]; !reflect.DeepEqual(got, map[string]any{"fugaro": "tfstate"}) {
+		t.Fatalf("inserted labels = %v", got)
+	}
+	if !reflect.DeepEqual(g.BucketPolicy("b1"), ConvenienceBindings("proj-1234")) {
+		t.Fatalf("policy = %v", g.BucketPolicy("b1"))
+	}
+	etag := g.BucketPolicyEtag("b1")
+	if code, _ := do("PUT", "/storage/v1/b/b1/iam", `{"etag":"stale","bindings":[]}`); code != 412 {
+		t.Fatalf("stale set: %d", code)
+	}
+	if code, _ := do("PUT", "/storage/v1/b/b1/iam", `{"etag":"`+etag+`","bindings":[{"role":"r","members":["user:a@example.com"]}]}`); code != 200 {
+		t.Fatalf("set: %d", code)
+	}
+	if got := g.BucketPolicy("b1"); len(got) != 1 || got[0].Role != "r" || g.BucketPolicyEtag("b1") == etag {
+		t.Fatalf("after set: %v, etag %s", got, g.BucketPolicyEtag("b1"))
+	}
+	if code, _ := do("PUT", "/storage/v1/b/b1/iam", `{"etag":"`+etag+`","bindings":[]}`); code != 412 {
+		t.Fatalf("set with the old etag: %d", code)
 	}
 }

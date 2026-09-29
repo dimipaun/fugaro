@@ -273,8 +273,8 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 		d.im.AdoptLegacyRegistry = true
 		d.add(importLegacyRegistry, spec.Region, "", spec.Names.LegacyRegistry)
 	case legacy != nil:
-		d.im.Notes = append(d.im.Notes, fmt.Sprintf("Artifact Registry repository %s carries %s, not %s, so it is not adopted as the legacy registry",
-			spec.Names.LegacyRegistry, marks(legacy.Labels, managed), marks(managed, managed)))
+		d.im.Notes = append(d.im.Notes, fmt.Sprintf("registry %s-docker.pkg.dev/%s/%s has no %s label (it carries %s); left alone, not managed by Terraform",
+			spec.Region, spec.Project, spec.Names.LegacyRegistry, marks(managed, managed), marks(legacy.Labels, managed)))
 	}
 	base, err := d.registry(spec.Region, spec.Names.BaseRegistry)
 	if err != nil {
