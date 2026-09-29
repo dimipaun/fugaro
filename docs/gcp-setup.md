@@ -31,7 +31,7 @@ These are read-only checks, and yours to run and fix.
 4. **Billing** is linked: `gcloud billing projects describe <project>` shows `billingEnabled: true`. Terraform doesn't link billing.
 5. **`serviceusage.googleapis.com`** is enabled: `gcloud services list --enabled --project <project>`. Terraform needs it to enable the other APIs, and can't enable it itself.
 6. **Terraform** 1.7 or newer (before 2.0) is on `PATH`: `terraform version`.
-7. **Your role.** For the installation step you must be an Owner, or hold `roles/resourcemanager.projectIamAdmin`, `roles/iam.serviceAccountAdmin` and `roles/iam.roleAdmin`: creating service accounts, custom roles and project-level bindings needs them. `fugaro init --repo` creates service accounts and project-level bindings as well, so run it with the same rights. The operator role that the installation step grants (design §6.1) lets people work with what exists (store secrets, act as the accounts, push base images); it doesn't let them create it.
+7. **Your role.** For the installation step you must be an Owner. The three IAM administration roles (`roles/resourcemanager.projectIamAdmin`, `roles/iam.serviceAccountAdmin` and `roles/iam.roleAdmin`) are needed on top of the rights to create buckets, registries, secrets, jobs, log buckets and Scheduler jobs and to enable APIs (for example Editor, plus the Run, Secret Manager and Artifact Registry admin roles for their IAM), and are not enough alone. `fugaro init --repo` creates service accounts and project-level bindings as well, so run it as an Owner too. The operator role that the installation step grants (design §6.1) lets people work with what exists (store secrets, act as the accounts, push base images); it doesn't let them create it.
 8. **Who else needs access.** Both member lists are empty by default. Decide whether anyone besides you launches runs (`--launcher user:a@example.com`) or onboards repositories (`--operator …`). Members are `user:`, `group:`, `serviceAccount:` or `domain:` IAM members.
 9. **The project's default build identity.** A build request that names no service account runs as it, and a leaked build token could submit one (design §6.1). Read it, and what it holds, before you onboard anything:
 
@@ -56,7 +56,7 @@ fugaro init --project <project> --region <region> --plan-only
 Add `--launcher`, `--operator`, `--alert-email`, `--budget`, `--budget-currency` and `--billing-account` as you need them (see "Optional pieces").
 
 - **It creates, after its own confirmation:** the Terraform state bucket `gs://fugaro-tfstate-<project>` (`--state-bucket` overrides the name), in `<region>`, with versioning, uniform bucket-level access, public access prevention, the label `fugaro=tfstate`, and no project-Viewer read access.
-- **It offers to remove project Viewers' read access to the runs bucket,** if that bucket exists, after another confirmation. Declining is allowed and leaves a warning; `--plan-only` never removes it.
+- **It offers to remove project Viewers' read access to the runs bucket,** if that bucket already exists (on a fresh project it does this after the apply, step 2), after another confirmation. Declining is allowed and leaves a warning; `--plan-only` never removes it.
 - **Cost:** the state bucket is cents a month.
 - **Undo:** delete the bucket (`gcloud storage rm -r gs://<bucket>`), once nothing is in it you need. The Viewer removal is undone by granting the bucket's `roles/storage.legacyBucketReader` and `roles/storage.legacyObjectReader` back to `projectViewer:<project>`.
 - **The plan shows:** the APIs, the runs bucket (an import if it exists), `fugaro-base` with its cleanup policies in **dry run**, the custom roles, `fugaro-scheduler`, the log bucket, sink, exclusion and view, and the member bindings. Read it. On a fresh project it is all creates and no deletes.
@@ -78,6 +78,7 @@ Give it the same flags as step 1. It asks for the project ID once more, applies 
   - The runs bucket is storage.
   - A budget and its alert policy add nothing.
 - **Undo:** `fugaro init --forget` stops Terraform managing all of it and turns log isolation and cleanup off first (see "Rolling back"). It destroys nothing else. Deleting the resources is a manual `gcloud` job, since the runs bucket and every registry are protected on purpose.
+- **The runs bucket's Viewer access.** On a fresh project the apply creates the runs bucket, so `init` then makes the confirmed removal of project Viewers' read access after the apply. If you declined it or it was interrupted, rerun `fugaro init`: a rerun is harmless.
 - **Check:** `fugaro ls` works, and the local config has `runs_bucket`, `registry_host`, `log_view`, `scheduler_region` and a `terraform:` block. **Rerun it whenever you change `--launcher`, `--operator` or `--alert-email`** (or the flags in "Flags to pass again").
 
 ### 3. The base image, in `fugaro-base`
@@ -89,7 +90,7 @@ gcloud auth configure-docker <region>-docker.pkg.dev            # edits ~/.docke
 commit=$(git -C <fugaro checkout> rev-parse --short HEAD)
 tag=<region>-docker.pkg.dev/<project>/fugaro-base/fugaro-web-node:dev-$commit
 sh <fugaro checkout>/images/build-base.sh web-node "$tag"
-docker push "$tag"
+docker push "$tag"                                   # ⚠ CONFIRM: about 1.5 GB of billable registry storage
 fugaro init --base-image "$tag"
 ```
 
@@ -171,9 +172,9 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 
 At any point before `fugaro-build` is retired:
 
-0. **First,** pause every Fugaro Scheduler job so no check submits a billable build during the rollback: `gcloud scheduler jobs pause <name> --location <scheduler region> --project <project>` (the names are in each repository root's outputs).
+0. **First,** pause every Fugaro Scheduler job so no check submits a billable build during the rollback: `gcloud scheduler jobs pause <name> --location <scheduler region> --project <project>` (the names are in `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`).
 1. `fugaro init --repo --forget` in each onboarded repository. It removes the repository from Terraform's state and deletes its now-empty state object (the state bucket is versioned, so it stays recoverable); it destroys nothing.
-2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and every cleanup policy, and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed), and `fugaro init` then imports it. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
+2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and `fugaro-base`'s cleanup policies (the repositories' registries keep theirs, which M4 never reads), and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed), and `fugaro init` then imports it. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
 3. **Restore** the backed-up `~/.config/fugaro/config.yaml`.
 4. **Always,** redeploy each job with the M4 binary's `gcp-m4.sh --apply job`. It puts back the M4 image path, env and order, and drops `FUGARO_COMPUTE_PRICES`. The legacy display names were kept, so its ownership checks pass.
 5. Check `fugaro logs` on a new run, and `gcloud run jobs describe` for `maxRetries: 0`.
@@ -194,13 +195,13 @@ Then the bootstrap script has no job left: it can be deleted from the code, with
 
 ## Offboarding a repository
 
-There is no one-command offboarding yet. It is three guarded steps, each behind the guard, so nothing is deleted by accident and the secret values survive unless you delete them yourself. Every resource that could lose data is protected: jobs by `deletion_protection`, and secrets, the runs bucket and every registry by `prevent_destroy`.
+There is no offboarding command. **Only step 1 is implemented.** Steps 2 and 3 are an unsupported outline: no fugaro command produces a removal or destroy plan (`init --repo` always plans the whole `fugaro.yaml`), so they mean running `terraform` by hand in the workdir, outside fugaro's guard and environment allowlist, and `PrepareWorkdir` overwrites hand edits the next time `init --repo` runs. Every resource that could lose data is protected on purpose: jobs by `deletion_protection`, and secrets, the runs bucket and every registry by `prevent_destroy`, which makes a destroy plan fail at plan time until you edit the module.
 
 1. **Lower the jobs' protection:** `fugaro init --repo --allow-job-delete`, an apply whose only change is `deletion_protection = false` on the repository's jobs (workflow jobs and the check job). The flag is a variable of that apply, and the next run without it puts the protection back.
 2. **Keep the secrets.** They hold values Terraform never saw, and `prevent_destroy` would refuse to delete them. Take them out of the repository's state first, with a `removed { from = … lifecycle { destroy = false } }` block for each secret in the repository's working directory (`$XDG_STATE_HOME/fugaro/terraform/<project>/repos/<slug>`), so that Terraform forgets them and leaves them in Secret Manager. Delete them yourself later with `gcloud secrets delete` if you want them gone.
-3. **A guarded destroy:** apply the removal of the rest, naming every address in the plan with `--allow-delete`. The guard refuses any address you didn't name, so read the plan first. The registry, its images, the job accounts, the build account and the check job and schedule go with it, and the runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
+3. **Destroy the rest, by hand.** The repository's registry has `prevent_destroy`, so this needs the module edited first, and nothing checks the plan for you: read it line by line. The registry, its images, the job accounts, the build account and the check job and schedule go with it, and the runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
 
-Finish with `fugaro init --repo --forget` if any state remains, and remove the repository from the local config's `repos`. Steps 2 and 3 edit Terraform by hand and haven't been exercised live: read every plan, and don't use `--yes`.
+Finish with `fugaro init --repo --forget` if any state remains, and remove the repository from the local config's `repos`. Steps 2 and 3 haven't been exercised live.
 
 ## What it costs, and what it never does
 
