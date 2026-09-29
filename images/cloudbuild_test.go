@@ -486,6 +486,11 @@ func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
 	if strings.Contains(string(data), "|| continue") {
 		t.Error("ci.yml skips a missing Terraform root")
 	}
+	// deploy/terraform embeds all of gcp/, so a root's in-tree .terraform
+	// (the provider binaries) would end up in the Go test binary.
+	if !strings.Contains(string(data), `TF_DATA_DIR="$RUNNER_TEMP/tf-$r"`) {
+		t.Error("ci.yml runs terraform with its data directory inside the embedded tree")
+	}
 	roots, err := os.ReadDir("../deploy/terraform/gcp/roots")
 	if err != nil {
 		t.Fatal(err)
