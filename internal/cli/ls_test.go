@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,6 +203,39 @@ func TestLsWatchStopsWhenSettled(t *testing.T) {
 	last := docs[len(docs)-1]
 	if len(docs) < 2 || last.Runs[1].Status != "infra_error" || !last.Runs[1].Settled {
 		t.Fatalf("%d docs, last %+v", len(docs), last.Runs)
+	}
+}
+
+// --watch reads the image status once per invocation, not on every redraw.
+func TestLsWatchReadsImageStatusOnce(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	e := seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", true)
+	f.run.SetState(e, backend.StateRunning)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		f.run.SetState(e, backend.StateFailed)
+	}()
+	var reads atomic.Int32
+	prev := readImageStatus
+	readImageStatus = func(ctx context.Context, b *blobx.Bucket, slug, workflow string, now time.Time) (imagecheck.Status, error) {
+		reads.Add(1)
+		return prev(ctx, b, slug, workflow, now)
+	}
+	t.Cleanup(func() { readImageStatus = prev })
+	out, _, err := execute(t, "ls", "--watch", "--json", "--interval", "10ms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := 0
+	for dec := json.NewDecoder(strings.NewReader(out)); dec.More(); docs++ {
+		var d lsOut
+		if err := dec.Decode(&d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if docs < 3 || reads.Load() != 1 {
+		t.Fatalf("%d redraws read the image status %d times, want once", docs, reads.Load())
 	}
 }
 

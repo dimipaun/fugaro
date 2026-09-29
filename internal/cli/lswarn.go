@@ -15,6 +15,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
+// readImageStatus reads a workflow's image status. Tests count its calls.
+var readImageStatus = imagecheck.ReadStatus
+
 // checkStaleAfter is how long the daily check may go without writing
 // check.json before ls says it isn't running.
 const checkStaleAfter = 48 * time.Hour
@@ -48,7 +51,7 @@ func imageWarnings(ctx context.Context, env *cloudEnv, slugs []string, now time.
 		}
 		daily := dailyChecks(ctx, env, slug, checkout)
 		for _, w := range workflows {
-			st, err := imagecheck.ReadStatus(ctx, records, slug, w, now)
+			st, err := readImageStatus(ctx, records, slug, w, now)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("warning: %s %s: the image status can't be read: %s", repo, w, oneLine(err.Error())))
 				continue
