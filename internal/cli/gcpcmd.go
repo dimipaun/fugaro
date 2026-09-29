@@ -129,7 +129,7 @@ func buildJobSpec(ctx context.Context, o jobSpecOptions) (*jobSpec, error) {
 	if cfg.Git.Provider != gitprov.KindBitbucket {
 		// The bootstrap's steps know only the Bitbucket credential; GitHub
 		// repositories are set up by fugaro init.
-		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("git.provider %s is not supported by the M4 bootstrap; only bitbucket is (use fugaro init --repo)", cfg.Git.Provider)}
+		return nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("git.provider %s is not supported by the M4 bootstrap; only bitbucket is. Set up GitHub repositories with the Terraform modules under deploy/terraform instead", cfg.Git.Provider)}
 	}
 	ws, err := infra.Workflow(infra.Inputs{LC: lc, Repo: repo, Cfg: cfg}, name)
 	if err != nil {

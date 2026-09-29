@@ -253,6 +253,14 @@ func resolve(in Inputs) (*repoCtx, error) {
 		return nil, err
 	}
 	c.inst.RegistryHost = c.registryHost
+	// Role IDs from a stale output of another project's state would grant
+	// that project's roles, so they must be this project's.
+	prefix := "projects/" + lc.Project + "/roles/"
+	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter} {
+		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
+			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.Project)
+		}
+	}
 
 	c.baseBranch = in.Cfg.Git.BaseBranch
 	if hasLocal && local.BaseBranch != "" {
@@ -351,6 +359,15 @@ func repoURL(provider, repo, given string) (string, error) {
 	}
 	if gitprov.KindForURL(given) != provider {
 		return "", userErr("the repository URL %s is not on %s's host", given, provider)
+	}
+	// The URL is where the build and the check clone from, so it must be
+	// this repository, not only this provider.
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return "", userErr("%v", err)
+	}
+	if got, err := task.CanonicalRepo(strings.Trim(u.Path, "/")); err != nil || got != want {
+		return "", userErr("the repository URL %s is not %s", given, repo)
 	}
 	return given, nil
 }
@@ -571,7 +588,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	lc := c.lc
 	if lc.BaseImage == "" {
-		return nil, userErr("the local config has no base_image, which the daily image check of %s runs (fugaro init --base-image)", rs.Name)
+		return nil, userErr("the local config has no base_image, which the daily image check of %s runs: set base_image in the local config to the base image in the installation's base registry", rs.Name)
 	}
 	region := lc.SchedulerRegion
 	if region == "" {

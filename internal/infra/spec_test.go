@@ -509,7 +509,12 @@ func TestSpecRefuses(t *testing.T) {
 		"provider disagrees":               func(in *Inputs) { in.LC.Repos["acme/sandbox"] = localcfg.Repo{Provider: "github"} },
 		"url on another host":              func(in *Inputs) { in.RepoURL = "https://example.com/acme/sandbox.git" },
 		"url with credentials":             func(in *Inputs) { in.RepoURL = "https://x:y@bitbucket.org/acme/sandbox.git" },
-		"no base image":                    func(in *Inputs) { in.LC.BaseImage = "" },
+		"url of another repository":        func(in *Inputs) { in.RepoURL = "https://bitbucket.org/other/repo.git" },
+		"role of another project": func(in *Inputs) {
+			in.Installation.RoleIDs.JobRunner = "projects/other-proj/roles/" + RoleJobRunner
+		},
+		"role that isn't a custom role": func(in *Inputs) { in.Installation.RoleIDs.Launcher = "roles/owner" },
+		"no base image":                 func(in *Inputs) { in.LC.BaseImage = "" },
 		"secret env collides": func(in *Inputs) {
 			w := in.Cfg.Workflows["web"]
 			w.Secrets = []config.Secret{{Name: "x", Env: "FUGARO_BUCKET"}}
@@ -525,6 +530,12 @@ func TestSpecRefuses(t *testing.T) {
 		})
 	}
 	in := sandboxInputs(t, m5Additions)
+	for _, u := range []string{"https://bitbucket.org/acme/sandbox.git", "https://bitbucket.org/Acme/Sandbox", "https://bitbucket.org/acme/sandbox/"} {
+		in.RepoURL = u
+		if _, err := Repo(in); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
 	if _, err := Workflow(in, "nope"); !errors.As(err, &ue) {
 		t.Fatalf("unknown workflow: err = %v", err)
 	}
