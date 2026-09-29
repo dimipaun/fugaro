@@ -16,7 +16,7 @@ Design §8 says how `init` works and why (the state layout, the guard, the envir
 - **It applies the plan it showed, and only that.** It saves the plan to a file and applies the file.
 - **It never deletes.** A plan that would delete or replace anything is refused (exit 1) unless `--allow-delete <address>` names that resource.
 - **`--plan-only`** stops after the plan. It can still create the state bucket, behind its own confirmation, because the plan needs it.
-- **`--print-vars`** prints the Terraform variables and exits, with no cloud calls, so you can read what would be sent. With `--repo` the values are **ungated**: no discovery or readiness check ran, so every workflow has `deploy_job = true`, its job uses the new image path (which may not be built yet), and its account gets the new display name (an adopted bootstrap account would be renamed). It says so on stderr. Adopt a repository through `fugaro init --repo`, not by applying these values.
+- **`--print-vars`** prints the Terraform variables and exits, with no cloud calls, so you can read what would be sent. With `--repo` the values are **ungated**: no discovery or readiness check ran, so every workflow has `deploy_job = true` (and so does the check), its job uses the new image path (which may not be built yet), and its account gets the new display name (an adopted bootstrap account would be renamed). It says so on stderr. Adopt a repository through `fugaro init --repo`, not by applying these values.
 - **It never touches a secret value.** Secret containers are Terraform's; their values are `fugaro secrets set`'s.
 - **Exit codes:** 0 ok, 1 a user error or refusal, 2 a remote failure.
 - **Reruns are safe.** Running a step again with the same inputs plans no change. Flags are not remembered, except the ones the local config stores (see "Flags to pass again").
@@ -152,7 +152,7 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 - **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config; rerun `fugaro init` and `fugaro init --repo` to change who has what. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones.
 - **The Scheduler region:** Cloud Scheduler isn't offered in every Cloud Run region, so the daily check's Scheduler job may run elsewhere (`us-east5` uses `us-east4`). `--scheduler-region` overrides it; the check job stays in `<region>`.
 - **Log isolation off:** `--no-log-isolation` leaves job logs in `_Default`.
-- **Running Terraform yourself:** use `deploy/terraform/gcp/roots/*` as examples, and `github.com/dimipaun/fugaro//deploy/terraform/gcp/modules/repo?ref=vX.Y.Z` as the module source, with the inputs from `fugaro init --print-vars` (for a repository these are ungated, see above: set `deploy_job` and the image yourself until the image exists). Then `fugaro init --config-only` writes the local config from the installation's outputs.
+- **Running Terraform yourself:** use `deploy/terraform/gcp/roots/*` as examples, and `github.com/dimipaun/fugaro//deploy/terraform/gcp/modules/repo?ref=vX.Y.Z` as the module source, with the inputs from `fugaro init --print-vars` (for a repository these are ungated, see above: set `deploy_job` and the image yourself until the image exists, and the check's `deploy_job` until the provider credential has a version). Then `fugaro init --config-only` writes the local config from the installation's outputs.
 
 ## Turning checks off, or removing a workflow
 

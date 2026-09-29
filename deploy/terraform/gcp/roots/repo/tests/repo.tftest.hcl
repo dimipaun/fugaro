@@ -800,6 +800,58 @@ run "scheduler_region_and_paused" {
   }
 }
 
+# Cloud Run checks a job's secrets when it creates it, and the check job
+# mounts the provider credential at latest, so until fugaro init --repo
+# finds a version (or the job already exists) it plans no check job, and
+# so no invoker grant or Scheduler job either.
+run "check_not_deployed" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project      = var.bitbucket.project
+    region       = var.bitbucket.region
+    installation = var.bitbucket.installation
+    repo         = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = false }) })
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_job.check) == 0 && length(google_cloud_scheduler_job.check) == 0 && length(google_cloud_run_v2_job_iam_member.check_invoker) == 0
+    error_message = "an undeployed check must have no check job, schedule or invoker grant"
+  }
+  assert {
+    condition     = output.check_job == null
+    error_message = "check_job is null while the check job isn't deployed"
+  }
+}
+
+run "check_deployed" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project      = var.bitbucket.project
+    region       = var.bitbucket.region
+    installation = var.bitbucket.installation
+    repo         = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = true, paused = true }) })
+  }
+
+  assert {
+    condition     = length(google_cloud_run_v2_job.check) == 1 && length(google_cloud_scheduler_job.check) == 1 && length(google_cloud_run_v2_job_iam_member.check_invoker) == 1
+    error_message = "a deployed check must have its check job, schedule and invoker grant"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.check[0].paused == true
+    error_message = "a deployed check's schedule stays paused until a build record exists"
+  }
+}
+
 run "no_check" {
   command = plan
 

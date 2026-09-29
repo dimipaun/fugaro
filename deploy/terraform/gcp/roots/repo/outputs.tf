@@ -21,7 +21,7 @@ output "registry" {
 }
 
 output "check_job" {
-  description = "The check job's name, or null when every workflow's check is off."
+  description = "The check job's name, or null when every workflow's check is off or the check job isn't deployed yet."
   value       = module.repo.check_job
 }
 

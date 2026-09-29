@@ -51,6 +51,7 @@ variable "repo" {
       scheduler_region = string
       schedule         = string
       paused           = bool
+      deploy_job       = bool
       env              = map(string)
       secret_env       = map(string)
     })

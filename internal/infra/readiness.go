@@ -32,9 +32,17 @@ type Missing struct {
 	// Deployed means the job exists and stays deployed anyway, so this is
 	// a warning; otherwise the job isn't deployed until it is fixed.
 	Deployed bool
+	// Check means the job is the daily image check's, not Workflow's.
+	Check bool
 }
 
 func (m Missing) String() string {
+	if m.Check {
+		if m.Deployed {
+			return "the daily image check (its job exists and stays deployed): " + m.Reason
+		}
+		return "the daily image check (its job, invoker grant and schedule are not deployed yet): " + m.Reason
+	}
 	if m.Deployed {
 		return fmt.Sprintf("workflow %s (its job exists and stays deployed): %s", m.Workflow, m.Reason)
 	}
@@ -55,6 +63,10 @@ var errFound = errors.New("found")
 //     a latest tag, so no apply points a job at a missing image. A job
 //     with no image and an unbuilt spec image is refused (a user error).
 //   - A job account keeps the display name discovery found (ex).
+//   - The daily check's job, its invoker grant and its Scheduler job are
+//     deployed when the check job already exists, or when every secret it
+//     mounts (the provider credential) has an enabled version: Cloud Run
+//     checks a job's secrets when it creates it.
 //   - The daily check's schedule stays paused until every workflow it
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
@@ -62,6 +74,17 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 	out := cloneRepoSpec(spec)
 	versions := map[string]bool{} // logical secret → has an enabled version
 	var missing []Missing
+	hasVersion := func(logical string) (bool, error) {
+		ok, seen := versions[logical]
+		if !seen {
+			var err error
+			if ok, err = hasEnabledVersion(ctx, c, spec.Project, spec.Secrets[logical]); err != nil {
+				return false, err
+			}
+			versions[logical] = ok
+		}
+		return ok, nil
+	}
 	for _, name := range slices.Sorted(maps.Keys(out.Workflows)) {
 		ws := out.Workflows[name]
 		if dn, ok := ex.DisplayNames[name]; ok {
@@ -73,13 +96,9 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		}
 		var reasons []gate
 		for _, logical := range uniqueSecrets(ws) {
-			ok, seen := versions[logical]
-			if !seen {
-				var err error
-				if ok, err = hasEnabledVersion(ctx, c, spec.Project, spec.Secrets[logical]); err != nil {
-					return RepoSpec{}, nil, err
-				}
-				versions[logical] = ok
+			ok, err := hasVersion(logical)
+			if err != nil {
+				return RepoSpec{}, nil, err
 			}
 			if !ok {
 				reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
@@ -114,6 +133,19 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		out.Workflows[name] = ws
 	}
 	if spec.Check != nil {
+		ready := true
+		for _, logical := range slices.Compact(slices.Sorted(maps.Values(out.Check.SecretEnv))) {
+			ok, err := hasVersion(logical)
+			if err != nil {
+				return RepoSpec{}, nil, err
+			}
+			if !ok {
+				ready = false
+				missing = append(missing, Missing{Check: true, Kind: MissingSecret, Deployed: ex.CheckJob,
+					Reason: fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
+			}
+		}
+		out.Check.DeployJob = ready || ex.CheckJob
 		// Paused unless there is at least one workflow and each has a
 		// record, so an empty list fails safe.
 		records := 0

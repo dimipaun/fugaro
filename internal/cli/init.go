@@ -1171,7 +1171,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 
 // printVarsUngated is init --repo --print-vars's warning: the values it
 // prints skip discovery and the readiness gates.
-const printVarsUngated = "these values are ungated: no discovery or readiness check ran, so every workflow has deploy_job = true, " +
+const printVarsUngated = "these values are ungated: no discovery or readiness check ran, so every workflow has deploy_job = true (and so does the check), " +
 	"its job uses the new image path (which may not be built yet), and its account gets the new display name " +
 	"(an adopted bootstrap account would be renamed); adopt a repository through fugaro init --repo, not by applying these"
 

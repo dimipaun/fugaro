@@ -408,6 +408,8 @@ type Existing struct {
 	// bootstrap's, by workflow. The spec keeps it, so the plan doesn't
 	// rename the account and the bootstrap still recognizes it.
 	DisplayNames map[string]string
+	// CheckJob says the repository's check job exists (and is ours).
+	CheckJob bool
 }
 
 // uniqueSecrets are the logical secrets ws mounts, sorted.
@@ -491,6 +493,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 		} else if j != nil {
 			if hasMarks(j.Labels, want) {
 				d.add(importCheckJob, spec.Region, "", spec.Check.Job)
+				ex.CheckJob = true
 			} else {
 				d.foreign("Cloud Run job "+spec.Check.Job, j.Labels, want)
 			}

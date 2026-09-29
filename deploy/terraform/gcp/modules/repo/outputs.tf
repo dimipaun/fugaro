@@ -19,6 +19,6 @@ output "registry" {
 }
 
 output "check_job" {
-  description = "The check job's name, or null when every workflow's check is off."
-  value       = var.repo.check == null ? null : google_cloud_run_v2_job.check[0].name
+  description = "The check job's name, or null when every workflow's check is off or the check job isn't deployed yet."
+  value       = local.deploy_check ? google_cloud_run_v2_job.check[0].name : null
 }
