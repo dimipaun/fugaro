@@ -46,6 +46,9 @@ type InstallOptions struct {
 	// RegistryCleanup is dry-run (the default), on or off.
 	RegistryCleanup     string
 	AdoptLegacyRegistry bool
+	// NoLogIsolation turns log isolation off; it is on (the module's
+	// default) otherwise.
+	NoLogIsolation bool
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -72,6 +75,9 @@ type InstallationSpec struct {
 	AlertEmail          *string           `json:"alert_email"`
 	RegistryCleanup     RegistryCleanup   `json:"registry_cleanup"`
 	AdoptLegacyRegistry bool              `json:"adopt_legacy_registry"`
+	// LogIsolation is nil for the module's default, which is on; only
+	// --no-log-isolation and the rollback turn it off.
+	LogIsolation *bool `json:"log_isolation,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
@@ -140,6 +146,9 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		Operators:           members(o.Operators, lc.Terraform.Operators),
 		Budget:              o.Budget,
 		AdoptLegacyRegistry: o.AdoptLegacyRegistry,
+	}
+	if o.NoLogIsolation {
+		s.LogIsolation = new(false)
 	}
 	if e := firstOf(o.AlertEmail, lc.Terraform.AlertEmail); e != "" {
 		s.AlertEmail = &e

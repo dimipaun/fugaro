@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,6 +35,11 @@ import (
 // ifMetagenerationNotMatch) is refused with a failed test, so a caller that
 // starts sending one is noticed instead of passing unchecked.
 //
+// Buckets can also be created (insert, which gives the new bucket the
+// project convenience bindings real GCS gives it), and a bucket's IAM
+// policy replaced (setIamPolicy), matched on the etag its getIamPolicy
+// served: a stale etag is refused with 412, as GCS does.
+//
 // Known differences from real GCS, none of which a current caller depends on:
 //   - A resumable upload checks its precondition when it is finalized, not
 //     when the session starts.
@@ -42,14 +49,35 @@ import (
 //   - Error bodies carry code, status and message, but no errors[].reason
 //     (real GCS answers a failed precondition with reason "conditionNotMet").
 //   - Listings are a single page: pageToken and maxResults are ignored.
+//   - A bucket's get and getIamPolicy answer only for a bucket AddBucket
+//     or an insert made; objects can be stored in any bucket without it.
+//   - A bucket insert needs the project to have been added (AddProject),
+//     and otherwise answers 403.
 type GCS struct {
 	*Server
 	mu      sync.Mutex
 	gen     int64
 	buckets map[string]map[string]*object
+	meta    map[string]*bucketMeta
 	uploads map[string]*upload
 	nextID  int
+	// projects are the project numbers bucket inserts may name, by ID.
+	projects map[string]uint64
 }
+
+// bucketMeta is what a bucket's get and getIamPolicy report.
+type bucketMeta struct {
+	projectNumber uint64
+	labels        map[string]string
+	policy        []Binding
+	// policyGen counts the policy's changes; the etag derives from it.
+	policyGen int
+	// inserted is the body of the insert that made the bucket, nil for
+	// one AddBucket made.
+	inserted map[string]any
+}
+
+func (m *bucketMeta) etag() string { return "etag-" + strconv.Itoa(m.policyGen) }
 
 type object struct {
 	data       []byte
@@ -70,9 +98,82 @@ type upload struct {
 // NewGCS starts a GCS fake that lives until the test ends.
 func NewGCS(t *testing.T) *GCS {
 	t.Helper()
-	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, uploads: map[string]*upload{}}
+	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
+		uploads: map[string]*upload{}, projects: map[string]uint64{}}
 	g.Server = newServer(t, g.handle)
 	return g
+}
+
+// AddBucket makes bucket name exist, in the project numbered
+// projectNumber, carrying labels.
+func (g *GCS) AddBucket(name string, projectNumber uint64, labels map[string]string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.meta[name] = &bucketMeta{projectNumber: projectNumber, labels: maps.Clone(labels), policyGen: 1}
+}
+
+// AddProject lets bucket inserts name project id, whose number new buckets
+// then carry.
+func (g *GCS) AddProject(id string, number uint64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.projects[id] = number
+}
+
+// ConvenienceBindings are the project convenience bindings GCS gives a new
+// bucket of project: owners and editors own it, viewers read it.
+func ConvenienceBindings(project string) []Binding {
+	return []Binding{
+		{Role: "roles/storage.legacyBucketOwner", Members: []string{"projectEditor:" + project, "projectOwner:" + project}},
+		{Role: "roles/storage.legacyBucketReader", Members: []string{"projectViewer:" + project}},
+		{Role: "roles/storage.legacyObjectOwner", Members: []string{"projectEditor:" + project, "projectOwner:" + project}},
+		{Role: "roles/storage.legacyObjectReader", Members: []string{"projectViewer:" + project}},
+	}
+}
+
+// BucketPolicy is the current IAM policy of bucket name.
+func (g *GCS) BucketPolicy(name string) []Binding {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: BucketPolicy(%q): no such bucket", name)
+	}
+	return cloneBindings(m.policy)
+}
+
+// BucketPolicyEtag is the etag getIamPolicy serves for bucket name now.
+func (g *GCS) BucketPolicyEtag(name string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: BucketPolicyEtag(%q): no such bucket", name)
+	}
+	return m.etag()
+}
+
+// Inserted is the request body of the insert that created bucket name, or
+// nil when no insert did.
+func (g *GCS) Inserted(name string) map[string]any {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if m := g.meta[name]; m != nil {
+		return maps.Clone(m.inserted)
+	}
+	return nil
+}
+
+// SetBucketPolicy replaces the IAM policy of a bucket AddBucket made.
+func (g *GCS) SetBucketPolicy(name string, bindings []Binding) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: SetBucketPolicy(%q): no such bucket", name)
+	}
+	m.policy = cloneBindings(bindings)
+	m.policyGen++
 }
 
 // Client returns a storage client pointed at the fake. It reads through the
@@ -141,8 +242,19 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			g.startResumable(w, r, bucket, body)
 			return
 		}
+	case r.URL.Path == "/storage/v1/b" && r.Method == http.MethodPost:
+		g.insertBucket(w, q.Get("project"), body)
+		return
 	case strings.HasPrefix(r.URL.Path, objPrefix):
 		bucket, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, objPrefix), "/")
+		if (rest == "" || rest == "iam") && r.Method == http.MethodGet {
+			g.bucketGet(w, r, bucket, rest == "iam")
+			return
+		}
+		if rest == "iam" && r.Method == http.MethodPut {
+			g.setBucketPolicy(w, bucket, body)
+			return
+		}
 		if rest == "o" && r.Method == http.MethodGet {
 			g.list(w, bucket, q.Get("prefix"), q.Get("delimiter"))
 			return
@@ -164,6 +276,105 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	}
 	g.unhandled(w, r)
+}
+
+// bucketGet answers a bucket's get, or with iam its getIamPolicy.
+func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, iam bool) {
+	m := g.meta[bucket]
+	if m == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "The specified bucket does not exist.")
+		return
+	}
+	if iam {
+		serveBucketPolicy(w, r.URL.Query(), m)
+		return
+	}
+	out := map[string]any{
+		"kind": "storage#bucket", "name": bucket, "id": bucket,
+		"projectNumber": strconv.FormatUint(m.projectNumber, 10),
+	}
+	if len(m.labels) > 0 {
+		out["labels"] = maps.Clone(m.labels)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serveBucketPolicy is servePolicy with the bucket's own etag: it refuses
+// a policy holding a condition unless version 3 was asked for.
+func serveBucketPolicy(w http.ResponseWriter, q url.Values, m *bucketMeta) {
+	version := 1
+	for _, b := range m.policy {
+		if b.Condition != nil {
+			version = 3
+		}
+	}
+	requested, _ := strconv.Atoi(q.Get("optionsRequestedPolicyVersion"))
+	if version == 3 && requested < 3 {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "the policy has conditions; request policy version 3")
+		return
+	}
+	bindings := cloneBindings(m.policy)
+	writeJSON(w, http.StatusOK, map[string]any{"kind": "storage#policy", "version": version, "etag": m.etag(), "bindings": bindings})
+}
+
+// insertBucket creates a bucket in project, with the convenience bindings
+// GCS gives every new bucket.
+func (g *GCS) insertBucket(w http.ResponseWriter, project string, body []byte) {
+	num, ok := g.projects[project]
+	if !ok {
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+		return
+	}
+	var req map[string]any
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	name, _ := req["name"].(string)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "a bucket needs a name")
+		return
+	}
+	if g.meta[name] != nil {
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", "Your previous request to create the named bucket succeeded and you already own it.")
+		return
+	}
+	labels := map[string]string{}
+	if l, ok := req["labels"].(map[string]any); ok {
+		for k, v := range l {
+			s, _ := v.(string)
+			labels[k] = s
+		}
+	}
+	g.meta[name] = &bucketMeta{projectNumber: num, labels: labels, policy: ConvenienceBindings(project), policyGen: 1, inserted: req}
+	out := maps.Clone(req)
+	out["kind"], out["id"], out["projectNumber"] = "storage#bucket", name, strconv.FormatUint(num, 10)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// setBucketPolicy replaces a bucket's policy when the request carries the
+// etag of the current one, else answers 412 as GCS does.
+func (g *GCS) setBucketPolicy(w http.ResponseWriter, bucket string, body []byte) {
+	m := g.meta[bucket]
+	if m == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "The specified bucket does not exist.")
+		return
+	}
+	var req struct {
+		Bindings []Binding `json:"bindings"`
+		Etag     string    `json:"etag"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
+	if req.Etag != m.etag() {
+		writeError(w, http.StatusPreconditionFailed, "FAILED_PRECONDITION", "At least one of the pre-conditions you specified did not hold.")
+		return
+	}
+	m.policy = cloneBindings(req.Bindings)
+	m.policyGen++
+	serveBucketPolicy(w, url.Values{"optionsRequestedPolicyVersion": {"3"}}, m)
 }
 
 // ifGenerationMatch parses the precondition, nil when absent.

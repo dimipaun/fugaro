@@ -95,7 +95,13 @@ type Endpoints struct {
 	Logging       string `yaml:"logging,omitempty"`
 	SecretManager string `yaml:"secret_manager,omitempty"`
 	CloudBuild    string `yaml:"cloud_build,omitempty"`
-	NoAuth        bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
+	// The APIs only fugaro init calls: bucket and IAM policy reads and
+	// writes, service accounts, registries and the project's number.
+	Storage          string `yaml:"storage,omitempty"`
+	IAM              string `yaml:"iam,omitempty"`
+	ArtifactRegistry string `yaml:"artifact_registry,omitempty"`
+	ResourceManager  string `yaml:"resource_manager,omitempty"`
+	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
 // Repo is an onboarded repository.
@@ -256,6 +262,8 @@ func (c *Config) validate() error {
 	for _, ep := range []struct{ name, url string }{
 		{"run", c.Endpoints.Run}, {"logging", c.Endpoints.Logging},
 		{"secret_manager", c.Endpoints.SecretManager}, {"cloud_build", c.Endpoints.CloudBuild},
+		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
+		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
 	} {
 		if ep.url == "" {
 			continue

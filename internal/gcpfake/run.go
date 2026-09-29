@@ -3,6 +3,7 @@ package gcpfake
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"sort"
@@ -16,7 +17,8 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, and executions get, list (including across jobs/-) and cancel.
+// jobs.run, jobs get and list, and executions get, list (including across
+// jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -65,6 +67,8 @@ type RunCall struct {
 type runJob struct {
 	cpu, memory string
 	timeout     time.Duration // the task template's timeout; zero is unset
+	labels      map[string]string
+	image       string
 	n           int
 }
 
@@ -91,6 +95,19 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// SetJob creates job name, or updates it, with labels and its container's
+// image, as jobs get reports them.
+func (f *Run) SetJob(name string, labels map[string]string, image string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[name]
+	if j == nil {
+		j = &runJob{cpu: "1", memory: "512Mi"}
+		f.jobs[name] = j
+	}
+	j.labels, j.image = maps.Clone(labels), image
 }
 
 // SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
@@ -355,6 +372,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.listJobs(w, r, strings.TrimSuffix(p, "/jobs"))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/executions"):
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
+	case r.Method == http.MethodGet && isJobPath(p):
+		f.getJob(w, p)
 	case r.Method == http.MethodGet:
 		id, ok := backend.ParseExecution(p)
 		if !ok {
@@ -370,6 +389,35 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	default:
 		f.unhandled(w, r)
 	}
+}
+
+func isJobPath(p string) bool {
+	_, _, job, ok := jobPath(p)
+	return ok && job != "-"
+}
+
+// getJob answers jobs get with the job's labels and its template: the
+// container's image and limits, and the task timeout when set.
+func (f *Run) getJob(w http.ResponseWriter, p string) {
+	project, region, name, _ := jobPath(p)
+	j := f.jobs[name]
+	if j == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+name+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
+		return
+	}
+	task := map[string]any{"containers": []any{map[string]any{
+		"image":     j.image,
+		"resources": map[string]any{"limits": map[string]any{"cpu": j.cpu, "memory": j.memory}},
+	}}, "maxRetries": 0}
+	if j.timeout > 0 {
+		task["timeout"] = fmt.Sprintf("%ds", int(j.timeout/time.Second))
+	}
+	out := map[string]any{"name": "projects/" + f.project(project) + "/locations/" + region + "/jobs/" + name,
+		"template": map[string]any{"taskCount": 1, "template": task}}
+	if len(j.labels) > 0 {
+		out["labels"] = maps.Clone(j.labels)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (f *Run) withType(e map[string]any) map[string]any {

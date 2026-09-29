@@ -318,6 +318,11 @@ func bucketName(lc *localcfg.Config) (string, error) {
 
 var registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 
+// RegistryHost is the installation's registry host for lc: its
+// registry_host, else the one a new installation creates, checked to be
+// lc's project.
+func RegistryHost(lc *localcfg.Config) (string, error) { return registryHost(lc, "") }
+
 // registryHost is <region>-docker.pkg.dev/<project>, the prefix of every
 // image registry: the local config's, else the installation's output,
 // else the one the installation creates. Images are pushed there with the
