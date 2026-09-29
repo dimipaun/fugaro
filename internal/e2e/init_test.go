@@ -82,6 +82,8 @@ type initRepoRig struct {
 	run   *gcpfake.Run
 	sm    *gcpfake.Secrets
 	build *gcpfake.Build
+	logs  *gcpfake.Logging
+	sched *gcpfake.Scheduler
 
 	builds atomic.Int32
 	runs   *blobx.Bucket // the runs bucket, on the GCS fake
@@ -100,6 +102,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		fugaro: testutil.BuildFugaro(t), dir: t.TempDir(), repo: repo,
 		gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t), crm: gcpfake.NewCRM(t),
 		run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t), build: gcpfake.NewBuild(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
 	}
 	r.crm.AddProject(initRepoProject, initRepoProjectNumber)
 	r.gcs.AddProject(initRepoProject, initRepoProjectNumber)
@@ -129,7 +132,8 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		"terraform: { state_bucket: " + initRepoStateBucket + " }\n" +
 		"user: test@example.com\n" +
 		"endpoints: { run: " + r.run.URL + "/, secret_manager: " + r.sm.URL + "/, cloud_build: " + r.build.URL + "/, storage: " + r.gcs.URL +
-		"/storage/v1/, iam: " + r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL + "/, no_auth: true }\n"
+		"/storage/v1/, iam: " + r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL +
+		"/, logging: " + r.logs.URL + "/, cloud_scheduler: " + r.sched.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +476,7 @@ func (r *initRepoRig) storedSecrets() {
 // requests counts the requests every fake has had.
 func (r *initRepoRig) requests() int {
 	n := 0
-	for _, s := range []*gcpfake.Server{r.gcs.Server, r.crm.Server, r.ar.Server, r.iam.Server, r.run.Server, r.sm.Server, r.build.Server} {
+	for _, s := range []*gcpfake.Server{r.gcs.Server, r.crm.Server, r.ar.Server, r.iam.Server, r.run.Server, r.sm.Server, r.build.Server, r.logs.Server, r.sched.Server} {
 		n += len(s.Requests())
 	}
 	return n
@@ -1001,6 +1005,97 @@ func TestInitRepoForget(t *testing.T) {
 	}
 	if !exists(t, state, infra.StatePrefixInstallation+"/default.tfstate") {
 		t.Errorf("the installation's state went too")
+	}
+}
+
+// The rollback is recoverable: after init --repo --forget and init
+// --forget (state rm, which destroys nothing), a retried fugaro init and
+// init --repo import what state rm left behind instead of planning creates
+// that fail with 409: the custom roles, the scheduler account, the log
+// bucket (once undeleted) and the repository's Scheduler job, next to
+// what they imported before.
+func TestInitForgetThenReinitImports(t *testing.T) {
+	r, _, _ := forgetRig(t)
+	r.bootstrap(t)
+	spec := r.spec
+	if spec.Check == nil {
+		t.Fatal("the fixture has no daily check")
+	}
+	// What the M5 applies made, besides the bootstrap's.
+	r.ar.AddRepository(initRepoProject, initRepoRegion, infra.BaseRegistry, managedLabels)
+	r.ar.AddRepository(initRepoProject, initRepoRegion, spec.Registry.RepositoryID, withLabels(managedLabels, gcp.LabelRepo, spec.Label))
+	r.iam.AddServiceAccount(initRepoProject, spec.BuildServiceAccountEmail, spec.BuildServiceAccount.DisplayName)
+	r.run.SetJob(spec.Check.Job, withLabels(managedLabels, gcp.LabelRepo, spec.Label, gcp.LabelRole, gcp.RoleCheck), spec.Check.Image)
+	checkURI := "https://run.googleapis.com/v2/projects/" + initRepoProject + "/locations/" + initRepoRegion + "/jobs/" + spec.Check.Job + ":run"
+	r.sched.SetJob(initRepoProject, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkURI, spec.Installation.SchedulerServiceAccount)
+	r.iam.AddRole(initRepoProject, infra.RoleLauncher, "Fugaro launcher", false)
+	r.iam.AddRole(initRepoProject, infra.RoleJobRunner, "Fugaro job runner", false)
+	r.iam.AddRole(initRepoProject, infra.RoleBuildSubmitter, "Fugaro build submitter", false)
+	scheduler := infra.SchedulerServiceAccountID + "@" + initRepoProject + ".iam.gserviceaccount.com"
+	r.iam.AddServiceAccount(initRepoProject, scheduler, "Fugaro scheduler")
+	// The rollback's apply deleted the log bucket: it is pending deletion.
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED")
+
+	// The rollback: the repository, then the installation.
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	if res := r.fugaroInit(t, "--forget", "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	if calls := r.calls(t); count(calls, "repo state rm module.repo") != 1 || count(calls, "installation state rm module.installation") != 1 {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	// A retry before the undelete is refused, naming the undelete, and
+	// plans nothing.
+	plans := count(r.calls(t), "installation plan")
+	res := r.fugaroInit(t, "--yes")
+	if res.code != 1 || !strings.Contains(res.stderr, infra.LogBucketUndelete(initRepoProject)) {
+		t.Fatalf("a retry with the log bucket pending deletion:\n%s", res)
+	}
+	if count(r.calls(t), "installation plan") != plans {
+		t.Fatalf("planned with the log bucket pending deletion: %q", r.calls(t))
+	}
+
+	// Once undeleted, the retry imports every installation resource.
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE")
+	if res := r.fugaroInit(t, "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	p := "projects/" + initRepoProject + "/"
+	want := map[string]string{
+		"module.installation.google_storage_bucket.runs":                     initRepoProject + "/" + initRepoRunsBucket,
+		"module.installation.google_artifact_registry_repository.base":       p + "locations/" + initRepoRegion + "/repositories/" + infra.BaseRegistry,
+		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + infra.RoleLauncher,
+		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + infra.RoleJobRunner,
+		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + infra.RoleBuildSubmitter,
+		"module.installation.google_service_account.scheduler":               p + "serviceAccounts/" + scheduler,
+		"module.installation.google_logging_project_bucket_config.fugaro[0]": p + "locations/global/buckets/" + infra.LogBucket,
+	}
+	if got := r.imports(t, 0); !maps.Equal(got, want) {
+		t.Errorf("installation imports:\n%v\nwant:\n%v", got, want)
+	}
+
+	// And init --repo imports the Scheduler job, in the scheduler region,
+	// with the rest of the repository.
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
+		t.Fatal(res)
+	}
+	web := spec.Workflows["web"]
+	want = map[string]string{
+		`module.repo.google_cloud_scheduler_job.check[0]`:                     p + "locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob,
+		`module.repo.google_cloud_run_v2_job.check[0]`:                        p + "locations/" + initRepoRegion + "/jobs/" + spec.Check.Job,
+		`module.repo.google_artifact_registry_repository.images`:              p + "locations/" + initRepoRegion + "/repositories/" + spec.Registry.RepositoryID,
+		`module.repo.google_service_account.build`:                            p + "serviceAccounts/" + spec.BuildServiceAccountEmail,
+		`module.repo.module.workflow["web"].google_cloud_run_v2_job.this[0]`:  p + "locations/" + initRepoRegion + "/jobs/" + web.Job,
+		`module.repo.module.workflow["web"].google_service_account.job`:       p + "serviceAccounts/" + web.ServiceAccountEmail,
+		`module.repo.google_secret_manager_secret.this["bitbucket-token"]`:    p + "secrets/" + spec.Secrets["bitbucket-token"],
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`: p + "secrets/" + spec.Secrets["claude-oauth-token"],
+		`module.repo.google_secret_manager_secret.this["sandbox-probe"]`:      p + "secrets/" + spec.Secrets["sandbox-probe"],
+	}
+	if got := r.imports(t, 0); !maps.Equal(got, want) {
+		t.Errorf("repository imports:\n%v\nwant:\n%v", got, want)
 	}
 }
 

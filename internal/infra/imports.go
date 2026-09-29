@@ -58,6 +58,14 @@ const (
 	importJob            importKind = "job"
 	importBuildSA        importKind = "build account"
 	importCheckJob       importKind = "check job"
+	importSchedulerJob   importKind = "Scheduler job"
+	// The installation's singletons, which the rollback's state rm leaves
+	// in place, and whose create fails once they exist.
+	importLauncherRole       importKind = "launcher role"
+	importJobRunnerRole      importKind = "job runner role"
+	importBuildSubmitterRole importKind = "build submitter role"
+	importSchedulerSA        importKind = "scheduler account"
+	importLogBucket          importKind = "log bucket"
 )
 
 // importTable is each kind's address and import ID, with {project},
@@ -73,6 +81,13 @@ var importTable = map[importKind]struct{ to, id string }{
 	importJob:            {"module.repo.module.workflow[{key}].google_cloud_run_v2_job.this[0]", "projects/{project}/locations/{region}/jobs/{name}"},
 	importBuildSA:        {"module.repo.google_service_account.build", "projects/{project}/serviceAccounts/{name}"},
 	importCheckJob:       {"module.repo.google_cloud_run_v2_job.check[0]", "projects/{project}/locations/{region}/jobs/{name}"},
+	// {region} is the scheduler region here, not the repository's.
+	importSchedulerJob:       {"module.repo.google_cloud_scheduler_job.check[0]", "projects/{project}/locations/{region}/jobs/{name}"},
+	importLauncherRole:       {"module.installation.google_project_iam_custom_role.launcher", "projects/{project}/roles/{name}"},
+	importJobRunnerRole:      {"module.installation.google_project_iam_custom_role.job_runner", "projects/{project}/roles/{name}"},
+	importBuildSubmitterRole: {"module.installation.google_project_iam_custom_role.build_submitter", "projects/{project}/roles/{name}"},
+	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
+	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
 }
 
 // newImport is the import of a resource of kind k.

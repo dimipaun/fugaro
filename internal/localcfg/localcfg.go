@@ -101,6 +101,7 @@ type Endpoints struct {
 	IAM              string `yaml:"iam,omitempty"`
 	ArtifactRegistry string `yaml:"artifact_registry,omitempty"`
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
+	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
@@ -279,6 +280,7 @@ func (c *Config) validate() error {
 		{"secret_manager", c.Endpoints.SecretManager}, {"cloud_build", c.Endpoints.CloudBuild},
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
+		{"cloud_scheduler", c.Endpoints.CloudScheduler},
 	} {
 		if ep.url == "" {
 			continue

@@ -290,13 +290,14 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 // gcpOptions are the Google API options of lc's project and endpoints.
 func gcpOptions(lc *localcfg.Config) gcp.Options {
 	return gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
-		Run: lc.Endpoints.Run, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
+		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild,
+		NoAuth: lc.Endpoints.NoAuth}}
 }
 
 func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
 	c, err := infra.NewClients(ctx, gcpOptions(lc),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
-			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager})
+			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler})
 	if err != nil {
 		return nil, remote(err)
 	}

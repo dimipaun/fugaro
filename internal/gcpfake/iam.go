@@ -61,22 +61,36 @@ func cloneBindings(bs []Binding) []Binding {
 	return out
 }
 
-// IAM is a fake of the IAM v1 call Fugaro makes: serviceAccounts get.
+// IAM is a fake of the IAM v1 calls Fugaro makes: serviceAccounts get
+// and a project custom role's get.
 type IAM struct {
 	*Server
 
 	mu       sync.Mutex
 	accounts map[string]map[string]string // projects/<p>/serviceAccounts/<email> → fields
+	roles    map[string]map[string]any    // projects/<p>/roles/<id> → fields
 }
 
-var serviceAccountRE = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
+var (
+	serviceAccountRE = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
+	customRoleRE     = regexp.MustCompile(`^/v1/(projects/[^/]+/roles/[^/:]+)$`)
+)
 
 // NewIAM starts an IAM fake that lives until the test ends.
 func NewIAM(t *testing.T) *IAM {
 	t.Helper()
-	f := &IAM{accounts: map[string]map[string]string{}}
+	f := &IAM{accounts: map[string]map[string]string{}, roles: map[string]map[string]any{}}
 	f.Server = newServer(t, f.handle)
 	return f
+}
+
+// AddRole makes the project custom role id exist in project with title;
+// deleted makes it a soft-deleted role, which the API still serves.
+func (f *IAM) AddRole(project, id, title string, deleted bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	name := "projects/" + project + "/roles/" + id
+	f.roles[name] = map[string]any{"name": name, "title": title, "deleted": deleted, "stage": "GA", "etag": "BwX0"}
 }
 
 // AddServiceAccount makes the account email exist in project with
@@ -96,6 +110,15 @@ func (f *IAM) AddServiceAccount(project, email, displayName string) {
 func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if m := customRoleRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		role := f.roles[m[1]]
+		if role == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "The role named "+m[1]+" was not found.")
+			return
+		}
+		writeJSON(w, http.StatusOK, maps.Clone(role))
+		return
+	}
 	m := serviceAccountRE.FindStringSubmatch(r.URL.Path)
 	if r.Method != http.MethodGet || m == nil {
 		f.unhandled(w, r)

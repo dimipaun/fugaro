@@ -73,7 +73,7 @@ func TestGeneratedRootValidates(t *testing.T) {
 	}
 	inst := installationSpec(t)
 	f.ar.AddRepository("proj-1234", "us-east5", LegacyRegistry, managed)
-	f.ar.AddRepository("proj-1234", "us-east5", BaseRegistry, managed)
+	f.m5Installation(inst)
 	instIm, err := DiscoverInstallation(ctx, f.c, inst)
 	if err != nil {
 		t.Fatal(err)
