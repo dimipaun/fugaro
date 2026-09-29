@@ -748,3 +748,39 @@ func TestBaseImageWarning(t *testing.T) {
 		}
 	}
 }
+
+// The Vertex AI API is enabled when a repository the local config records
+// authenticates its agent through Vertex (init --repo records it), and
+// only then: the installation root can't read the workflows itself.
+func TestInstallationEnablesVertexFromRepos(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{})
+	if err != nil || s.EnableVertex {
+		t.Fatalf("no vertex repository: enable_vertex %v, %v", s.EnableVertex, err)
+	}
+	lc = parseLC(t, m4LocalConfig+"  acme/webapp: { provider: github, github_app_id: \"123456\", vertex: true, workflows: [web] }\n"+m5Additions)
+	s, err = Installation(lc, InstallOptions{})
+	if err != nil || !s.EnableVertex {
+		t.Fatalf("a vertex repository: enable_vertex %v, %v", s.EnableVertex, err)
+	}
+	vars, err := InstallationVars(s)
+	if err != nil || !strings.Contains(string(vars), `"enable_vertex": true`) {
+		t.Fatalf("tfvars:\n%s, %v", vars, err)
+	}
+}
+
+// A repository's spec says whether any of its workflows uses Vertex, which
+// init --repo records in the local config.
+func TestRepoUsesVertex(t *testing.T) {
+	sandbox, err := Repo(sandboxInputs(t, m5Additions))
+	if err != nil {
+		t.Fatal(err)
+	}
+	webapp, err := Repo(webappInputs(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sandbox.UsesVertex() || !webapp.UsesVertex() {
+		t.Fatalf("uses vertex: sandbox %v, webapp %v", sandbox.UsesVertex(), webapp.UsesVertex())
+	}
+}

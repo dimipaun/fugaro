@@ -662,6 +662,35 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 	}
 }
 
+// A repository whose agent authenticates through Vertex AI is recorded as
+// such, so fugaro init enables the Vertex AI API; the first one says to
+// rerun fugaro init.
+func TestInitRepoRecordsVertex(t *testing.T) {
+	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
+		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
+	})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if got := r.localConfig(t).Repos["acme/sandbox"]; !got.Vertex {
+		t.Errorf("local config repo = %+v, want vertex", got)
+	}
+	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro init") {
+		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
+	}
+	// Recorded, it isn't repeated.
+	res = r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 || strings.Contains(res.stdout, "Vertex AI API") {
+		t.Errorf("the second run:\n%s", res)
+	}
+	// An oauth repository records nothing.
+	r = sandboxRig(t)
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || r.localConfig(t).Repos["acme/sandbox"].Vertex || strings.Contains(res.stdout, "Vertex AI API") {
+		t.Errorf("an oauth repository:\n%s", res)
+	}
+}
+
 // A base image outside the installation's base registry is a warning, not
 // a refusal: the build account reads only that registry, so its builds
 // would fail at the pull.

@@ -898,6 +898,35 @@ func TestInitForgetRefusesWithRepoStates(t *testing.T) {
 	}
 }
 
+// A repository the local config records as using Vertex AI enables the
+// Vertex AI API in the installation.
+func TestInitEnablesVertexForVertexRepo(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := r.runInitTfvars(t); v["enable_vertex"] != false {
+		t.Fatalf("no vertex repository: enable_vertex = %v", v["enable_vertex"])
+	}
+	vertex := strings.Replace(string(cfg), "workflows: [web] }", "vertex: true, workflows: [web] }", 1)
+	if err := os.WriteFile(r.cfg, []byte(vertex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.runInitTfvars(t); v["enable_vertex"] != true {
+		t.Fatalf("a vertex repository: enable_vertex = %v", v["enable_vertex"])
+	}
+}
+
+func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
+	t.Helper()
+	if _, _, err := executeStdin(t, "", "init", "--plan-only"); err != nil {
+		t.Fatal(err)
+	}
+	return r.tfvars(t)
+}
+
 // A stale lock under the repositories' prefix is not state: init --repo
 // --forget deletes only *.tfstate objects, so the installation's rollback
 // counts only those too, and a leftover lock doesn't block it.

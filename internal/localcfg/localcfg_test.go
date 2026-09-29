@@ -207,6 +207,22 @@ func TestBuildServiceAccountDeprecated(t *testing.T) {
 	}
 }
 
+// vertex records that a repository's agent authenticates through Vertex
+// AI, so fugaro init enables the API.
+func TestRepoVertex(t *testing.T) {
+	c, err := Parse([]byte(sample + "  acme/api: { provider: github, vertex: true, workflows: [web] }\n"))
+	if err != nil || !c.Repos["acme/api"].Vertex {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	if !c.UsesVertex() {
+		t.Error("a vertex repository: UsesVertex is false")
+	}
+	c, err = Parse([]byte(sample))
+	if err != nil || c.UsesVertex() {
+		t.Fatalf("no vertex repository: %v, %v", c.UsesVertex(), err)
+	}
+}
+
 func TestGitHubAppIDValidation(t *testing.T) {
 	for _, id := range []string{"1", "123456", "12345678901234567890"} {
 		c, err := Parse([]byte(sample + "  acme/api: { provider: github, github_app_id: \"" + id + "\", workflows: [web] }\n"))
@@ -295,7 +311,7 @@ func TestM4ConfigMarshalsWithoutM5Fields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"terraform", "compute_prices", "log_view", "scheduler_region", "registry_host", "github_app_id"} {
+	for _, field := range []string{"terraform", "compute_prices", "log_view", "scheduler_region", "registry_host", "github_app_id", "vertex"} {
 		if strings.Contains(string(data), field) {
 			t.Errorf("marshalled M4 config has %s:\n%s", field, data)
 		}

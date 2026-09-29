@@ -35,7 +35,9 @@ const (
 // InstallOptions are the installation's inputs that come from flags.
 type InstallOptions struct {
 	// StateBucket defaults to the local config's, else fugaro-tfstate-<project>.
-	StateBucket  string
+	StateBucket string
+	// EnableVertex enables the Vertex AI API; so does any repository the
+	// local config records as using it.
 	EnableVertex bool
 	// SkipAPIs leaves the project's APIs to be managed elsewhere.
 	SkipAPIs bool
@@ -141,7 +143,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
 		BucketLifecycle:     BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
-		EnableVertex:        o.EnableVertex,
+		EnableVertex:        o.EnableVertex || lc.UsesVertex(),
 		ManageAPIs:          !o.SkipAPIs,
 		Launchers:           members(o.Launchers, lc.Terraform.Launchers),
 		Operators:           members(o.Operators, lc.Terraform.Operators),

@@ -117,6 +117,21 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
+	// Vertex records that one of the repository's workflows authenticates
+	// its agent through Vertex AI (agent.auth: vertex), so fugaro init
+	// enables the Vertex AI API. fugaro init --repo sets it.
+	Vertex bool `yaml:"vertex,omitempty"`
+}
+
+// UsesVertex reports whether any repository the config records uses
+// Vertex AI.
+func (c *Config) UsesVertex() bool {
+	for _, r := range c.Repos {
+		if r.Vertex {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrMissing means there is no local config yet.

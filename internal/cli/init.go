@@ -1417,6 +1417,12 @@ func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg 
 		BaseBranch:  spec.BaseBranch,
 		Workflows:   slices.Sorted(maps.Keys(cfg.Workflows)),
 		GitHubAppID: spec.GitHubAppID,
+		Vertex:      spec.UsesVertex(),
+	}
+	if spec.UsesVertex() && !lc.UsesVertex() {
+		// The installation enables the API from the recorded repositories,
+		// and this is the first.
+		r.warn(spec.Name + " authenticates its agent through Vertex AI, which the installation has not enabled: rerun fugaro init once the local config records it, which enables the Vertex AI API")
 	}
 	return r.writeLocalConfig(&next, path, old, r.res.Applied)
 }

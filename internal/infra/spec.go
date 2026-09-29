@@ -587,6 +587,17 @@ func Repo(in Inputs) (RepoSpec, error) {
 	return rs, nil
 }
 
+// UsesVertex reports whether any of the repository's workflows
+// authenticates its agent through Vertex AI.
+func (rs RepoSpec) UsesVertex() bool {
+	for _, ws := range rs.Workflows {
+		if ws.Vertex {
+			return true
+		}
+	}
+	return false
+}
+
 // BaseImageWarning is a warning when the local config's base image (base)
 // isn't in the installation's base registry, else "". The build accounts
 // can read only that registry, so every build would fail at its pull; the
