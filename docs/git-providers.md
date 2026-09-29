@@ -76,10 +76,10 @@ The token is never written to `.git/config`, to a remote URL, or to a command li
 
 Hermetic tests cover the adapters with recorded HTTP fixtures (`internal/gitprov/*/testdata`; `internal/gitprov/bitbucket/testdata/recorded` holds real Bitbucket exchanges). Before a release, and once for each provider as soon as credentials exist, run against a throwaway repository.
 
-For Bitbucket, most of the API checks below (steps 6, 7 and 9, the labels warning, comments, and the reviewer fallback) are automated in `internal/gitprov/bitbucket/live_test.go`, behind the `live` build tag. Its sandbox repository is fixed in the file; change it there, deliberately, for another sandbox. It pushes its own `fugaro/live-*` branches, declines every PR it opened and deletes those branches at the end, and records fixtures when `FUGARO_LIVE_RECORD_DIR` is set:
+For Bitbucket, most of the API checks below (steps 6, 7 and 9, the labels warning, comments, and the reviewer fallback) are automated in `internal/gitprov/bitbucket/live_test.go`, behind the `live` build tag. It runs against the one repository named in `FUGARO_LIVE_REPO` (`owner/name`, required: unset, or not of that form, every live test is skipped with a message, and nothing is defaulted), and touches no other. It pushes its own `fugaro/live-*` branches, declines every PR it opened and deletes those branches at the end, and records fixtures when `FUGARO_LIVE_RECORD_DIR` is set:
 
 ```bash
-FUGARO_BITBUCKET_TOKEN="$(cat <token-file>)" FUGARO_LIVE_RECORD_DIR=/tmp/bb-fixtures \
+FUGARO_LIVE_REPO=<owner>/<sandbox> FUGARO_BITBUCKET_TOKEN="$(cat <token-file>)" FUGARO_LIVE_RECORD_DIR=/tmp/bb-fixtures \
   go test -tags live -timeout 600s -run 'TestLive(Bitbucket|Cleanup)' -v ./internal/gitprov/bitbucket/
 ```
 

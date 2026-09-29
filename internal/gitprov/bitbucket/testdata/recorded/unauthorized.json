@@ -1,7 +1,7 @@
 [
   {
     "method": "GET",
-    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-draft%22+AND+source.repository.full_name%3D%22edgeappinc%2Ffugarosandbox%22+AND+state%3D%22OPEN%22",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-draft%22+AND+source.repository.full_name%3D%22acme%2Fsandbox%22+AND+state%3D%22OPEN%22",
     "status": 401,
     "response": {
       "type": "error",

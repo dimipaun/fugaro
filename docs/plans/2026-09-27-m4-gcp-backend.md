@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Tasks run in Cloud Run. `fugaro run` launches a task and can be repeated safely, `ls`, `logs`, `diagnose` and `cancel` rebuild the local view from cloud state alone, and runs restore and write back dependency caches under a branch lock. Every run reports what it cost, model plus compute, in `result.json`, the PR report and `ls`. `fugaro image build` submits the derived-image build to Cloud Build, and `auth: oauth` works end to end with a subscription token that never appears in argv, logs or chat. A throwaway bootstrap stands up just enough of `edge-devel-dimi` to prove all of this live against the Bitbucket sandbox, and then against `edgeappinc/edgeweb`.
+**Goal:** Tasks run in Cloud Run. `fugaro run` launches a task and can be repeated safely, `ls`, `logs`, `diagnose` and `cancel` rebuild the local view from cloud state alone, and runs restore and write back dependency caches under a branch lock. Every run reports what it cost, model plus compute, in `result.json`, the PR report and `ls`. `fugaro image build` submits the derived-image build to Cloud Build, and `auth: oauth` works end to end with a subscription token that never appears in argv, logs or chat. A throwaway bootstrap stands up just enough of `<project>` to prove all of this live against the Bitbucket sandbox, and then against `acme/webapp`.
 
 **Architecture:**
 
@@ -53,14 +53,14 @@ gcpfake: httptest fakes of GCS (JSON API), Run v2, Logging v2, Secret Manager v1
 The earlier plans explain the code this one changes: [M1](2026-09-26-m1-runner-core.md) (runner, runstore, agent), [M2](2026-09-27-m2-git-providers.md) (providers, PartialError), and [M3](2026-09-27-m3-images.md) (images, `cloudbuild.yaml`).
 
 **Decisions already made (user):**
-- **GCP:** project `edge-devel-dimi`, region `us-east5`. Billing is linked, with a 70 CAD/month budget alert.
+- **GCP:** project `<project>`, region `us-east5`. Billing is linked, with a 70 CAD/month budget alert.
 - **Model auth:** `auth: oauth` with a Claude subscription token from `claude setup-token`, passed as `CLAUDE_CODE_OAUTH_TOKEN` and stored in Secret Manager through `fugaro secrets set`. Cost reports use `model_basis: subscription`.
 - **Targets:**
-  - The first real target is Bitbucket `edgeappinc/edgeweb`, base branch `master`, with no labels and one default reviewer, `{46e89d3a-40c4-4575-b922-d6727bd8ace6}`. That UUID goes only into EdgeWeb's own `fugaro.yaml`, never into engine code, tests or fixtures.
-  - The EdgeWeb repository access token is at `~/.config/fugaro-edgeweb-token` (mode 600). It is scoped to that repository with Repositories: Write and Pull requests: Write, and has been checked against the API.
-  - The live sandbox is `edgeappinc/fugarosandbox`, base branch `master`. Its repository access token is at `~/.config/fugaro-bb-token` (mode 600).
+  - The first real target is Bitbucket `acme/webapp`, base branch `master`, with no labels and one default reviewer, `{reviewer-uuid}`. That UUID goes only into the web repo's own `fugaro.yaml`, never into engine code, tests or fixtures.
+  - The web repo's repository access token is at `~/.config/<token file>` (mode 600). It is scoped to that repository with Repositories: Write and Pull requests: Write, and has been checked against the API.
+  - The live sandbox is `acme/sandbox`, base branch `master`. Its repository access token is at `~/.config/<token file>` (mode 600).
 - **Infrastructure:** Terraform is M5. M4 gets a minimal, throwaway bootstrap. Any step that enables a billable API or creates a resource is run by the controller only after the user explicitly confirms it (**⚠ CONFIRM** in this plan).
-- **Tests:** hermetic by default, with fakes. Live tests use the `live` build tag, touch only `edge-devel-dimi` and the sandbox repository, and clean up after themselves.
+- **Tests:** hermetic by default, with fakes. Live tests use the `live` build tag, touch only `<project>` and the sandbox repository, and clean up after themselves.
 
 **Out of scope for M4:**
 - **M5:** the Terraform module, `fugaro init`, the nightly Cloud Build trigger, the budget resource, and lifecycle rules on the bucket. The bootstrap sets lifecycle rules only as a stand-in.
@@ -83,14 +83,14 @@ The earlier plans explain the code this one changes: [M1](2026-09-26-m1-runner-c
   - The agent can call `gh pr ready` on GitHub, or the REST API on either provider, during a stage. Finalize's `EnsurePR` re-asserts the draft state on the existing PR anyway. Task 6 pins this with a test.
   - Nothing in M4 lets the agent's view of the PR decide the outcome.
 - **Subprocesses** started by new code use `exec.CommandContext` with `cmd.WaitDelay = 5 * time.Second`, the same as `image.ExecRunner` and gitops. `procgroup` is for agent and verify commands only.
-- **Docker-heavy work** runs through `.superpowers/heavy.sh <command…>`, which serializes it across parallel streams. That covers base-image builds and pushes, `go test -tags docker`, and `images/*.sh`. The script lives outside git (`.git/info/exclude`), in the main checkout. Call it by absolute path from worktrees: `/Users/dimi/git.lattica/Fugaro/.superpowers/heavy.sh`.
+- **Docker-heavy work** runs through `.superpowers/heavy.sh <command…>`, which serializes it across parallel streams. That covers base-image builds and pushes, `go test -tags docker`, and `images/*.sh`. The script lives outside git (`.git/info/exclude`), in the main checkout. Call it by absolute path from worktrees: `<repo root>/.superpowers/heavy.sh`.
 - **TDD:** each task writes the failing test first and runs it to see it fail. `go test ./...` never needs Docker, network or credentials.
   - Docker tests carry `//go:build docker`.
-  - Live tests carry `//go:build live`. They name `edge-devel-dimi`, `us-east5` and `edgeappinc/fugarosandbox` as constants in the test file, and refuse to run against anything else.
+  - Live tests carry `//go:build live`. They name `<project>`, `us-east5` and `acme/sandbox` as constants in the test file, and refuse to run against anything else.
 - **Every test that runs git calls `testutil.IsolateGit(t)` first** (M1).
 - **Every command supports `--json`. Exit codes:** 0 for ok, 1 for a user error, 2 for a remote failure (design §9.1). A GCP API error is exit 2, and so is a missing bucket object that should exist. A bad flag, an unknown run or a missing local config is exit 1.
 - **No company-, repo- or resource-specific values in engine code, defaults or examples** (design §2).
-  - `edge-devel-dimi`, `us-east5`, `edgeappinc/*` and the reviewer UUID appear only in the bootstrap runbook, the live-test constants and this plan.
+  - `<project>`, `us-east5`, `acme/*` and the reviewer UUID appear only in the bootstrap runbook, the live-test constants and this plan.
   - Engine defaults are generic: the published price table, `max_parallel: 20`, `E2_HIGHCPU_8`.
 - CI runs `gofmt -l`, `go vet ./...` and `go test -race ./...`. All three pass after every task.
 - Code style follows M1–M3: exported identifiers have doc comments, and errors are wrapped with `%w` and context.
@@ -172,7 +172,7 @@ Also pinned, because the M4 brief calls it out: the agent marks the PR ready its
 | `deploy/bootstrap/gcp-m4.sh`, `deploy/bootstrap/bootstrap_test.go`, `internal/cli/gcpcmd.go` | the throwaway bootstrap; hidden `fugaro gcp job-spec` | 17 |
 | `internal/backend/gcp/live_test.go`, `internal/e2e/live_gcp_test.go` (`live` tag) | live checks and the live end-to-end | 18 |
 | `docs/design/v1.md`, `docs/git-providers.md`, `docs/gcp-bootstrap.md` | design and docs edits | 19 |
-| — (runbook, controller-run) | live bring-up in `edge-devel-dimi`, the sandbox, then EdgeWeb | 20 |
+| — (runbook, controller-run) | live bring-up in `<project>`, the sandbox, then the web repo | 20 |
 
 ## Task dependency graph and parallelism
 
@@ -6503,7 +6503,7 @@ git commit -m "cli: add fugaro cancel with a finalize grace period"
 
 `golang.org/x/term` is justified because a hidden prompt is the only safe way to type a subscription token. It is maintained by the Go team.
 
-**Where the user runs it.** `claude setup-token` prints the token in the user's own terminal. The user then runs `fugaro secrets set claude-oauth-token --repo <R>` in that same terminal and pastes at the hidden prompt. The controller never asks for the token, and never runs a command that has it in argv. For file-held tokens such as the EdgeWeb repository access token, the controller may run `fugaro secrets set bitbucket-token --repo edgeappinc/edgeweb < ~/.config/fugaro-edgeweb-token`, because a redirect keeps the value out of argv and out of the transcript.
+**Where the user runs it.** `claude setup-token` prints the token in the user's own terminal. The user then runs `fugaro secrets set claude-oauth-token --repo <R>` in that same terminal and pastes at the hidden prompt. The controller never asks for the token, and never runs a command that has it in argv. For file-held tokens such as the web repo's repository access token, the controller may run `fugaro secrets set bitbucket-token --repo acme/webapp < ~/.config/<token file>`, because a redirect keeps the value out of argv and out of the transcript.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -7344,7 +7344,7 @@ git commit -m "e2e: prove run, exec, ls, logs, diagnose and cancel agree on the 
 - The spec also runs `gcp.CheckResources`, and refuses when it reports anything.
 
 **The script** (bash, `set -euo pipefail`):
-- **Usage:** `gcp-m4.sh [--apply] STEP`. It reads `PROJECT`, `REGION`, `BUCKET`, `REPO`, `WORKFLOW`, `CHECKOUT` (the target repository's checkout, for `job-spec`), `FUGARO` (default `fugaro`), `HEAVY` (default `/Users/dimi/git.lattica/Fugaro/.superpowers/heavy.sh`) and `FUGARO_SRC` (this checkout) from the environment.
+- **Usage:** `gcp-m4.sh [--apply] STEP`. It reads `PROJECT`, `REGION`, `BUCKET`, `REPO`, `WORKFLOW`, `CHECKOUT` (the target repository's checkout, for `job-spec`), `FUGARO` (default `fugaro`), `HEAVY` (default `<repo root>/.superpowers/heavy.sh`) and `FUGARO_SRC` (this checkout) from the environment.
 - **Dry run by default.** Without `--apply` it prints every command, prefixed `+ `, and runs nothing but read-only `fugaro gcp job-spec` calls.
 - **Warnings.** Every step that enables a billable API, creates a resource, or grants IAM prints `⚠ CONFIRM: <what, and what it costs>` first. It runs only with `--apply`, and the controller passes `--apply` only after the user confirms that step.
 - **Steps:**
@@ -7381,7 +7381,7 @@ git commit -m "e2e: prove run, exec, ls, logs, diagnose and cancel agree on the 
   - `teardown-all` ⚠ (installation): requires `--all` as well as `--apply`, and refuses while any `fugaro-*` Cloud Run job still exists. It deletes exactly the bucket `gs://$BUCKET` with every run and cache, the repository `fugaro`, and `fugaro-build`, all named in the banner. Neither teardown disables APIs, and neither is needed if M5 takes the resources over.
 - **Project guard** (every step): when a local config exists, the script reads its `project:` line and exits 1 if it differs from `PROJECT`. Every ⚠ banner names the project.
 
-**The sandbox fixture** (`deploy/bootstrap/sandbox/`) is committed to `edgeappinc/fugarosandbox` `master` in Task 20. It is a tiny npm project:
+**The sandbox fixture** (`deploy/bootstrap/sandbox/`) is committed to `acme/sandbox` `master` in Task 20. It is a tiny npm project:
 - `package.json` has `"test": "node --test --test-reporter=junit --test-reporter-destination=junit.xml"` and no dependencies, with a matching minimal `package-lock.json`.
 - `test.js` holds two passing tests.
 - `fugaro.yaml`:
@@ -7634,7 +7634,7 @@ APPLY=0
 if [ "${1:-}" = "--apply" ]; then APPLY=1; shift; fi
 STEP=${1:-}
 FUGARO=${FUGARO:-fugaro}
-HEAVY=${HEAVY:-/Users/dimi/git.lattica/Fugaro/.superpowers/heavy.sh}
+HEAVY=${HEAVY:-<repo root>/.superpowers/heavy.sh}
 
 run() {
   printf '+ %s\n' "$*"
@@ -7824,20 +7824,20 @@ git commit -m "deploy: add the throwaway M4 GCP bootstrap and the sandbox fixtur
 - Create: `internal/e2e/live_gcp_test.go` (`//go:build live`)
 
 **Interfaces:**
-- Consumes: the real `edge-devel-dimi` resources from Task 20's bootstrap steps; `FUGARO_CONFIG` (the real local config); `FUGARO_BITBUCKET_TOKEN` (the sandbox token), for cleanup only
+- Consumes: the real `<project>` resources from Task 20's bootstrap steps; `FUGARO_CONFIG` (the real local config); `FUGARO_BITBUCKET_TOKEN` (the sandbox token), for cleanup only
 - Produces: live evidence for the M4 checklist. It produces no fixtures: the fakes are specified from the API documentation and these runs, not from recordings.
 
 **The rules both files enforce:**
-- The constants are `liveProject = "edge-devel-dimi"`, `liveRegion = "us-east5"` and `liveRepo = "edgeappinc/fugarosandbox"`.
+- The constants are `liveProject = "<project>"`, `liveRegion = "us-east5"` and `liveRepo = "acme/sandbox"`.
 - The local config's project, region and bucket must match, and the bucket must start with `fugaro-runs-`. Otherwise the test calls `t.Fatal` before any call.
-- Every object, secret or PR a test creates is removed in `t.Cleanup`. A `TestLiveGCPCleanup` sweeps everything named `fugaro-live-*` and the `runs/edgeappinc-fugarosandbox/*` runs whose task carries `batch: live-*`, for after a `-timeout` abort.
+- Every object, secret or PR a test creates is removed in `t.Cleanup`. A `TestLiveGCPCleanup` sweeps everything named `fugaro-live-*` and the `runs/acme-sandbox/*` runs whose task carries `batch: live-*`, for after a `-timeout` abort.
 - Nothing is logged that could hold a secret. The Bitbucket token is read from the environment and never printed.
 
 **`internal/backend/gcp/live_test.go`:**
 - `TestLiveListAndLogs` lists executions (read-only). It logs the raw name form the API returned (project ID or number: I-9, recorded in the M4 PR) and checks that `backend.ParseExecution` parses it and that the backend's returned name is canonical. When there is an execution, it reads its first 10 log entries and **requires at least one**, which proves the `labels."run.googleapis.com/execution_name"` filter works on real Cloud Run.
 - `TestLiveJobSADeniedOutsideItsPrefixes` (I-5) runs only when `FUGARO_LIVE_JOB_SA` names the sandbox job's service account and the user has granted themselves `roles/iam.serviceAccountTokenCreator` on it (Task 20, ⚠ CONFIRM). It builds a storage client that impersonates that account (`google.golang.org/api/impersonate`, `CredentialsTokenSource` with `TargetPrincipal`), then:
-  - writes and deletes `runs/edgeappinc-fugarosandbox/fugaro-live-<stamp>/probe`: allowed
-  - writes `runs/edgeappinc-fugarosandbox-x/fugaro-live-<stamp>/probe` (a slug that shares the prefix without the trailing slash) and `runs/other/…`: both 403
+  - writes and deletes `runs/acme-sandbox/fugaro-live-<stamp>/probe`: allowed
+  - writes `runs/acme-sandbox-x/fugaro-live-<stamp>/probe` (a slug that shares the prefix without the trailing slash) and `runs/other/…`: both 403
   - reads `task.json` of any run outside its prefix: 403
   - lists `runs/`: 403
   - Anything allowed that should be denied fails the test, and its `t.Cleanup` removes whatever the probe managed to write, with the user's own credentials.
@@ -7847,7 +7847,7 @@ git commit -m "deploy: add the throwaway M4 GCP bootstrap and the sandbox fixtur
 
 **`internal/e2e/live_gcp_test.go`** runs the built CLI with the real config:
 1. `TestLiveSandboxRun`:
-   - It launches `fugaro run --repo edgeappinc/fugarosandbox --run-id <new> --batch live-<stamp> --json` with the task: "Add a test to test.js checking that 2 + 2 is 4. Commit it, run fugaro verify test, and write pr.md."
+   - It launches `fugaro run --repo acme/sandbox --run-id <new> --batch live-<stamp> --json` with the task: "Add a test to test.js checking that 2 + 2 is 4. Commit it, run fugaro verify test, and write pr.md."
    - It polls `ls --batch live-<stamp> --json` every 20s for up to 30m.
    - It asserts:
      - the status is `succeeded` or `failed`, with a PR URL
@@ -7855,7 +7855,7 @@ git commit -m "deploy: add the throwaway M4 GCP bootstrap and the sandbox fixtur
      - `totals.total_usd` is within 0.01 of the sum of the listed rows' `cost.total_usd`
      - `logs` holds `stage started` and an `"event":"tool"` entry
      - `diagnose --json` gives the same PR URL
-     - `result.json` has `stage: writeback`, the lock object is gone, and a `cache/edgeappinc-fugarosandbox/web/` archive exists after the first run. The npm default cache is keyed by `package-lock.json`.
+     - `result.json` has `stage: writeback`, the lock object is gone, and a `cache/acme-sandbox/web/` archive exists after the first run. The npm default cache is keyed by `package-lock.json`.
 2. **Cleanup:** it declines each PR it opened and deletes its branch through the Bitbucket API, using `FUGARO_BITBUCKET_TOKEN`, and deletes the `runs/…/<id>/` objects.
 
 The live cancel check is a manual runbook step (Task 20 step 12): the hermetic `TestCloudCancel` covers the logic, and a live one would hold a 15-minute sleep on the subscription.
@@ -7865,7 +7865,7 @@ The Cloud Build `--secret id=…,env=…` path is exercised by Task 20's first s
 Run them, only after Task 20's bootstrap steps are applied and confirmed:
 
 ```bash
-FUGARO_BITBUCKET_TOKEN="$(cat ~/.config/fugaro-bb-token)" FUGARO_LIVE_JOB_SA=<sandbox job SA email, from gcp job-spec --field sa> \
+FUGARO_BITBUCKET_TOKEN="$(cat ~/.config/<token file>)" FUGARO_LIVE_JOB_SA=<sandbox job SA email, from gcp job-spec --field sa> \
   go test -tags live -timeout 45m -run 'TestLive' -v ./internal/backend/gcp/ ./internal/e2e/
 ```
 
@@ -7960,7 +7960,7 @@ git commit -m "test: add live GCP backend checks and the sandbox end-to-end behi
 **`docs/git-providers.md`:** add "Finding a Bitbucket reviewer's UUID". It uses the repository access token without putting it in argv (`curl --config` reads the header from a process substitution, and `printf` is a shell builtin):
 
 ```bash
-curl -sS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/fugaro-<repo>-token)") \
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/<token file>)") \
   'https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests?state=MERGED&pagelen=30&fields=values.participants.user.uuid,values.participants.user.display_name' \
   | python3 -m json.tool
 ```
@@ -7990,27 +7990,27 @@ This task writes no code. The controller runs it step by step, and asks the user
 
 **Preconditions (read-only, no confirmation needed):**
 - `gcloud auth list` shows the user's account, and `gcloud auth application-default login` has been done. The user runs both.
-- `gcloud auth application-default set-quota-project edge-devel-dimi` has been run, so user ADC carries a quota project (the backend also sends `WithQuotaProject`).
-- `gcloud config get project` gives `edge-devel-dimi`.
-- `gcloud billing projects describe edge-devel-dimi` shows `billingEnabled: true`.
+- `gcloud auth application-default set-quota-project <project>` has been run, so user ADC carries a quota project (the backend also sends `WithQuotaProject`).
+- `gcloud config get project` gives `<project>`.
+- `gcloud billing projects describe <project>` shows `billingEnabled: true`.
 - `gcloud billing budgets list --billing-account=<account>` shows the 70 CAD alert.
-- The sandbox repository access token is at `~/.config/fugaro-bb-token` (mode 600), and the EdgeWeb one at `~/.config/fugaro-edgeweb-token`.
+- The sandbox repository access token is at `~/.config/<token file>` (mode 600), and the web repo one at `~/.config/<token file>`.
 
-The environment for every step: `PROJECT=edge-devel-dimi REGION=us-east5 BUCKET=fugaro-runs-edge-devel-dimi`, with `FUGARO` set to a binary built from the M4 branch.
+The environment for every step: `PROJECT=<project> REGION=us-east5 BUCKET=fugaro-runs-<project>`, with `FUGARO` set to a binary built from the M4 branch.
 
 1. **⚠ CONFIRM** `gcp-m4.sh --apply apis`. This enables seven APIs. Using them is billable, and enabling them is free.
-2. **⚠ CONFIRM** `gcp-m4.sh --apply bucket`: the `gs://fugaro-runs-edge-devel-dimi` bucket in `us-east5` with its lifecycle rules. Storage costs cents.
+2. **⚠ CONFIRM** `gcp-m4.sh --apply bucket`: the `gs://fugaro-runs-<project>` bucket in `us-east5` with its lifecycle rules. Storage costs cents.
 3. **⚠ CONFIRM** `gcp-m4.sh --apply registry`: the Artifact Registry repository `fugaro`. Storage is about $0.10/GB-month.
 4. **⚠ CONFIRM** `gcp-m4.sh --apply build-sa`: the `fugaro-build` service account and two role bindings.
 5. `gcp-m4.sh config`. Show the file first, then write it with `--apply`. This is local only.
-6. **⚠ CONFIRM** that the sandbox fixture may go to shared state: commit `deploy/bootstrap/sandbox/` to `edgeappinc/fugarosandbox` `master`. Use a direct push only if the user says so; otherwise open a PR that the user merges. It has no reviewers.
-7. With `REPO=edgeappinc/fugarosandbox WORKFLOW=web CHECKOUT=<sandbox clone>`:
+6. **⚠ CONFIRM** that the sandbox fixture may go to shared state: commit `deploy/bootstrap/sandbox/` to `acme/sandbox` `master`. Use a direct push only if the user says so; otherwise open a PR that the user merges. It has no reviewers.
+7. With `REPO=acme/sandbox WORKFLOW=web CHECKOUT=<sandbox clone>`:
    - **⚠ CONFIRM** `gcp-m4.sh --apply job-sa`
    - `gcp-m4.sh secrets`, which prints the commands. Then:
-     - The controller may run `fugaro secrets set bitbucket-token --repo edgeappinc/fugarosandbox < ~/.config/fugaro-bb-token`, **⚠ CONFIRM**. It creates a secret, at $0.06 per version-month.
-     - The controller may run `openssl rand -hex 16 | fugaro secrets set sandbox-probe --repo edgeappinc/fugarosandbox`, **⚠ CONFIRM**. The value is random and not sensitive; it exists only to prove Cloud Build passes workflow secrets.
-     - The **user** runs `claude setup-token` in their own terminal, then `fugaro secrets set claude-oauth-token --repo edgeappinc/fugarosandbox` there, and pastes at the hidden prompt. The token must never be typed or pasted into the Claude conversation.
-     - The controller checks with `fugaro secrets ls --repo edgeappinc/fugarosandbox`, which lists IDs only.
+     - The controller may run `fugaro secrets set bitbucket-token --repo acme/sandbox < ~/.config/<token file>`, **⚠ CONFIRM**. It creates a secret, at $0.06 per version-month.
+     - The controller may run `openssl rand -hex 16 | fugaro secrets set sandbox-probe --repo acme/sandbox`, **⚠ CONFIRM**. The value is random and not sensitive; it exists only to prove Cloud Build passes workflow secrets.
+     - The **user** runs `claude setup-token` in their own terminal, then `fugaro secrets set claude-oauth-token --repo acme/sandbox` there, and pastes at the hidden prompt. The token must never be typed or pasted into the Claude conversation.
+     - The controller checks with `fugaro secrets ls --repo acme/sandbox`, which lists IDs only.
    - **⚠ CONFIRM** `gcp-m4.sh --apply secrets-access`
 8. **⚠ CONFIRM** `gcp-m4.sh --apply base`, which uses `heavy.sh` for the Docker build and pushes about 1.5 GB to Artifact Registry. Then put the printed `base_image` into the config.
 9. **⚠ CONFIRM** `gcp-m4.sh --apply image`: the first Cloud Build, on E2_HIGHCPU_8 at about $0.016 per build-minute, so under $0.50.
@@ -8018,26 +8018,26 @@ The environment for every step: `PROJECT=edge-devel-dimi REGION=us-east5 BUCKET=
    - Check the log for the `base …@sha256:` line, which is the render and build consistency deferral.
    - Check that the digest matches `docker buildx imagetools inspect <base_image>`.
 10. **⚠ CONFIRM** `gcp-m4.sh --apply job`: the Cloud Run job, which is free until executed.
-11. **⚠ CONFIRM** granting the user `roles/iam.serviceAccountTokenCreator` on the sandbox job's service account, for the prefix-denial check (I-5): `gcloud iam service-accounts add-iam-policy-binding <sa> --member user:<you> --role roles/iam.serviceAccountTokenCreator --project edge-devel-dimi`. It is removed again in step 13.
+11. **⚠ CONFIRM** granting the user `roles/iam.serviceAccountTokenCreator` on the sandbox job's service account, for the prefix-denial check (I-5): `gcloud iam service-accounts add-iam-policy-binding <sa> --member user:<you> --role roles/iam.serviceAccountTokenCreator --project <project>`. It is removed again in step 13.
 12. **⚠ CONFIRM** the live tests (Task 18). The model spend counts against the Claude subscription, and compute costs cents. `go test -tags live …` as in Task 18, with `FUGARO_LIVE_JOB_SA` set, including `TestLiveGCPCleanup` at the end.
 13. **⚠ CONFIRM** removing the step-11 grant (`remove-iam-policy-binding`, same arguments).
 14. **⚠ CONFIRM** the manual spot checks. Each launches one fresh sandbox run (subscription spend, cents of compute) and opens a sandbox PR. Record the results in the M4 PR:
-    - `fugaro run --repo edgeappinc/fugarosandbox --batch spot-<stamp> "…trivial task…"`, then `fugaro logs -f <id>` streams agent `tool` events live.
+    - `fugaro run --repo acme/sandbox --batch spot-<stamp> "…trivial task…"`, then `fugaro logs -f <id>` streams agent `tool` events live.
     - `fugaro run --run-id <same id> …` prints `already-launched`.
     - `fugaro ls --mine --since 1d` shows the runs, with the totals line and the subscription notional figure.
     - The PR report comment carries the `**Cost:** ≈ $… compute (estimate); model $… notional…` line.
     - **Live cancel** (the manual form of the dropped live test): launch a second run whose task begins with a 15-minute `sleep` through Bash; once `ls` shows it `running` at stage `implement`, run `fugaro cancel <id>`. Expect `finalized`, status `cancelled`, and a draft PR.
-    - **Cleanup:** decline each spot-check PR and delete its `fugaro/<id>` branch through the Bitbucket API with the sandbox token (`curl --config` reading the header from `~/.config/fugaro-bb-token`, as in `docs/git-providers.md`), then `gcloud storage rm -r gs://fugaro-runs-edge-devel-dimi/runs/edgeappinc-fugarosandbox/<id>/` for each.
-15. **EdgeWeb (the first real target), approved by the user 2026-09-27:**
-    1. In an EdgeWeb checkout, on a new branch, run `/fugaro:onboard`. It writes `fugaro.yaml`, iterating on `fugaro validate` and `fugaro image build --local` through `heavy.sh`, with:
-       - `git: {provider: bitbucket, base_branch: master, pr: {labels: [], reviewers: ["{46e89d3a-40c4-4575-b922-d6727bd8ace6}"]}}`
+    - **Cleanup:** decline each spot-check PR and delete its `fugaro/<id>` branch through the Bitbucket API with the sandbox token (`curl --config` reading the header from `~/.config/<token file>`, as in `docs/git-providers.md`), then `gcloud storage rm -r gs://fugaro-runs-<project>/runs/acme-sandbox/<id>/` for each.
+15. **The web repo (the first real target), approved by the user 2026-09-27:**
+    1. In a checkout of the web repo, on a new branch, run `/fugaro:onboard`. It writes `fugaro.yaml`, iterating on `fugaro validate` and `fugaro image build --local` through `heavy.sh`, with:
+       - `git: {provider: bitbucket, base_branch: master, pr: {labels: [], reviewers: ["{reviewer-uuid}"]}}`
        - `agent: {auth: oauth}`
-       - no `resources:` override: the web-node default of 4 vCPU / 8Gi matches EdgeWeb's Bitbucket Pipelines `size: 2x` (8 GB), where its 6 GB-heap Jest runs already pass (user decision, M3). Raise it only if a live run shows memory pressure.
-    2. **⚠ CONFIRM** opening the onboarding PR on `edgeappinc/edgeweb`. The user reviews and merges it: Fugaro never merges.
-    3. After the merge, with `REPO=edgeappinc/edgeweb`:
+       - no `resources:` override: the web-node default of 4 vCPU / 8Gi matches the web repo's Bitbucket Pipelines `size: 2x` (8 GB), where its 6 GB-heap Jest runs already pass (user decision, M3). Raise it only if a live run shows memory pressure.
+    2. **⚠ CONFIRM** opening the onboarding PR on `acme/webapp`. The user reviews and merges it: Fugaro never merges.
+    3. After the merge, with `REPO=acme/webapp`:
        - **⚠ CONFIRM** `job-sa`
-       - `fugaro secrets set bitbucket-token --repo edgeappinc/edgeweb < ~/.config/fugaro-edgeweb-token`, **⚠ CONFIRM**
-       - the user sets `claude-oauth-token` for EdgeWeb at the hidden prompt
+       - `fugaro secrets set bitbucket-token --repo acme/webapp < ~/.config/<token file>`, **⚠ CONFIRM**
+       - the user sets `claude-oauth-token` for the web repo at the hidden prompt
        - **⚠ CONFIRM** `secrets-access`, `image` and `job`
     4. **⚠ CONFIRM** the first real run, with a small, self-contained task the user chooses. That PR requests the default reviewer, which notifies a real person. `fugaro ls`, `logs` and `diagnose` on it, and the PR report, go into the M4 PR description.
 16. **Leave everything running for M5**, which imports or recreates it. `gcp-m4.sh teardown` (one repository and workflow) and `gcp-m4.sh teardown-all --all` (the shared bucket, registry and `fugaro-build`, only once no `fugaro-*` job is left) exist, but they are run only if the user asks, **⚠ CONFIRM** each.
@@ -8049,8 +8049,8 @@ The environment for every step: `PROJECT=edge-devel-dimi REGION=us-east5 BUCKET=
 I ruled on everything else. The rulings, with what each costs if it's wrong, follow the questions.
 
 None. **Answered (2026-09-27):**
-- The user approved Task 20 opening the `fugaro.yaml` onboarding PR on `edgeappinc/edgeweb`. The user reviews and merges it; Fugaro never merges.
-- The sandbox token is `~/.config/fugaro-bb-token`.
+- The user approved Task 20 opening the `fugaro.yaml` onboarding PR on `acme/webapp`. The user reviews and merges it; Fugaro never merges.
+- The sandbox token is `~/.config/<token file>`.
 
 **Scope rulings from the plan review (2026-09-27):**
 - Deferred to M5: the per-execution timeout override (`LaunchSpec.Timeout`, a `run --total-timeout` flag) and the local-config price overrides.
