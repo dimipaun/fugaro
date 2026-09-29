@@ -26,6 +26,7 @@ workflows:
       apt: [fonts-liberation] # extra system packages
       # setup:                # extra RUN steps, run as fugaro in /work/repo after the dependency install
       #   - npx playwright install --with-deps chromium   # sudo works in setup steps, during the build only
+      # skip_build_scripts: true   # install without package build scripts; commands.build must build what the tests need
     # dockerfile: .fugaro/web.Dockerfile   # escape hatch replacing the generated image; excludes image:
     commands:
       build: npm run build

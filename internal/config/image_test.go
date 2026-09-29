@@ -35,6 +35,24 @@ func TestParseImage(t *testing.T) {
 	}
 }
 
+func TestParseImageSkipBuildScripts(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    image: { skip_build_scripts: true }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	img := cfg.Workflows["web"].Image
+	if !img.SkipBuildScripts || img.IsZero() {
+		t.Fatalf("image = %+v, IsZero %v", img, img.IsZero())
+	}
+	if cfg, _ := Parse([]byte(webYAML)); cfg.Workflows["web"].Image.SkipBuildScripts {
+		t.Fatal("skip_build_scripts defaults to true")
+	}
+	jvm := strings.Replace(webYAML, "web-node", "server-jvm", 1)
+	if _, problems := Parse([]byte(jvm + "    image: { skip_build_scripts: false }\n")); len(problems) > 0 {
+		t.Fatalf("an explicit false on server-jvm: %v", problems)
+	}
+}
+
 func TestImageProblems(t *testing.T) {
 	jvm := strings.Replace(webYAML, "web-node", "server-jvm", 1)
 	cases := []struct{ name, yaml, path, msg string }{
@@ -53,6 +71,8 @@ func TestImageProblems(t *testing.T) {
 		{"setup flag-like (RUN mount)", webYAML + "    image: { setup: [\"--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup exec form", webYAML + "    image: { setup: [\"[\\\"sh\\\", \\\"-c\\\", \\\"echo hi\\\"]\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup leading whitespace then flag", webYAML + "    image: { setup: [\"  --mount=type=bind,target=/x\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
+		{"skip_build_scripts on server-jvm", jvm + "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts", "only applies to base web-node"},
+		{"skip_build_scripts and dockerfile", webYAML + "    image: { skip_build_scripts: true }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"dockerfile absolute", webYAML + "    dockerfile: /etc/Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 		{"dockerfile parent", webYAML + "    dockerfile: .fugaro/../../x.Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 	}

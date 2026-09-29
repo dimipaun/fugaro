@@ -24,6 +24,21 @@ type NodePM struct {
 	Cache    []string // dependency cache directories: the default cache entry's paths
 }
 
+// WarmUp returns the dependency warm-up command: Install, or, when
+// skipBuildScripts is set, Install without package lifecycle and build
+// scripts (Yarn Berry's --mode=skip-build, the others' --ignore-scripts).
+// pnpm fetch runs no scripts, so only its install takes the flag.
+func (pm *NodePM) WarmUp(skipBuildScripts bool) string {
+	switch {
+	case !skipBuildScripts:
+		return pm.Install
+	case pm.Name == "yarn" && pm.Berry:
+		return pm.Install + " --mode=skip-build"
+	default:
+		return pm.Install + " --ignore-scripts"
+	}
+}
+
 // lockfiles lists each package manager's lockfile, in detection order.
 var lockfiles = []struct{ pm, file string }{
 	{"pnpm", "pnpm-lock.yaml"},

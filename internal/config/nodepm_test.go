@@ -109,3 +109,37 @@ func TestCheckReportsPackageManagerMismatch(t *testing.T) {
 		t.Fatalf("problems = %v", ps)
 	}
 }
+
+// With image.skip_build_scripts, the warm-up installs without running
+// package lifecycle or build scripts; without it the command is unchanged.
+func TestNodePMWarmUp(t *testing.T) {
+	cases := []struct {
+		name, lockfile, pkg, rc string
+		plain, skip             string
+	}{
+		{"npm", "package-lock.json", `{}`, "", "npm ci", "npm ci --ignore-scripts"},
+		{"pnpm", "pnpm-lock.yaml", `{}`, "", "pnpm fetch && pnpm install --offline --frozen-lockfile", "pnpm fetch && pnpm install --offline --frozen-lockfile --ignore-scripts"},
+		{"yarn classic", "yarn.lock", `{}`, "", "yarn install --frozen-lockfile", "yarn install --frozen-lockfile --ignore-scripts"},
+		{"yarn berry", "yarn.lock", `{"packageManager":"yarn@4.16.0"}`, "", "yarn install --immutable", "yarn install --immutable --mode=skip-build"},
+		{"yarn berry, local cache", "yarn.lock", `{"packageManager":"yarn@3.8.7"}`, "", "yarn install --immutable", "yarn install --immutable --mode=skip-build"},
+		{"yarn berry from yarnrc", "yarn.lock", `{}`, "nodeLinker: node-modules\n", "yarn install --immutable", "yarn install --immutable --mode=skip-build"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			files := map[string]string{"package.json": tc.pkg, tc.lockfile: ""}
+			if tc.rc != "" {
+				files[".yarnrc.yml"] = tc.rc
+			}
+			pm, err := DetectNodePM(writeTree(t, files))
+			if err != nil || pm == nil {
+				t.Fatalf("pm %+v, err %v", pm, err)
+			}
+			if got := pm.WarmUp(false); got != tc.plain || got != pm.Install {
+				t.Errorf("WarmUp(false) = %q, want %q (Install %q)", got, tc.plain, pm.Install)
+			}
+			if got := pm.WarmUp(true); got != tc.skip {
+				t.Errorf("WarmUp(true) = %q, want %q", got, tc.skip)
+			}
+		})
+	}
+}

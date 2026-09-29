@@ -177,6 +177,35 @@ func TestDerivedYarnBerryWithNodePin(t *testing.T) {
 	}
 }
 
+// TestDerivedSkipBuildScripts: with image.skip_build_scripts, the warm-up
+// installs the dependencies but runs neither the repository's nor a
+// dependency's postinstall script. The same package.json run through a plain
+// npm install shows both scripts do run otherwise.
+func TestDerivedSkipBuildScripts(t *testing.T) {
+	base := testutil.BaseImage(t)
+	testutil.IsolateGit(t)
+	pkg := `{"name":"fugaro-fixture","version":"0.0.0","private":true,"dependencies":{"dep":"file:dep"},"scripts":{"postinstall":"touch \"$HOME/root-postinstall-ran\""}}` + "\n"
+	dep := `{"name":"dep","version":"1.0.0","scripts":{"postinstall":"touch \"$HOME/dep-postinstall-ran\""}}` + "\n"
+	// Let npm write the lockfile, and check the scripts run without the setting.
+	lock := testutil.Docker(t, "run", "--rm", "-e", "PKG="+pkg, "-e", "DEP="+dep, base, "sh", "-c",
+		`set -e; mkdir -p /tmp/p/dep && cd /tmp/p && printf '%s' "$PKG" > package.json && printf '%s' "$DEP" > dep/package.json && npm install --no-audit --no-fund >&2 && test -e ~/root-postinstall-ran && test -e ~/dep-postinstall-ran && cat package-lock.json`) + "\n"
+	files := testutil.FixtureFiles(t)
+	files["package.json"], files["dep/package.json"], files["package-lock.json"] = pkg, dep, lock
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "    base: web-node\n", "    base: web-node\n    image: { skip_build_scripts: true }\n", 1)
+	dir := checkout(t, files)
+	render := exec.Command(testutil.BuildFugaro(t), "image", "render")
+	render.Dir = dir
+	if out, err := render.Output(); err != nil || !strings.Contains(string(out), "; npm ci --ignore-scripts\n") {
+		t.Fatalf("fugaro image render: %v\n%s", err, out)
+	}
+	const tag = "fugaro-test-skip-build:local"
+	buildImage(t, dir, base, tag)
+	if out := testutil.Docker(t, "run", "--rm", tag, "sh", "-c",
+		`test -f node_modules/dep/package.json && echo installed; ls ~/root-postinstall-ran ~/dep-postinstall-ran 2>/dev/null; true`); out != "installed" {
+		t.Fatalf("want dep installed and no postinstall marker, got %q", out)
+	}
+}
+
 // TestDerivedNodePinSignedByARetiredKey pins image.node to a release whose
 // SHASUMS256.txt was signed by a key from nodejs/node's "previous releases"
 // list (v18.17.0, Danielle Adams's 74F12602B6F1C4E913FAA37AD3A89613643B6201),

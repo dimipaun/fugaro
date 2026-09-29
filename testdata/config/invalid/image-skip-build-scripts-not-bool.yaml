@@ -1,0 +1,7 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    image: { skip_build_scripts: sometimes }
+    commands: { build: npm run build, test: npm test }
