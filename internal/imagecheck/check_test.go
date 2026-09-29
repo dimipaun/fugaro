@@ -212,16 +212,35 @@ func TestCheckBacksOffAfterFailure(t *testing.T) {
 			}
 		})
 	}
-	// A build that succeeded, or was cancelled, is no reason to back off.
-	for _, status := range []string{"SUCCESS", "CANCELLED", ""} {
+	// A build that ended without failing, yet left the trigger firing
+	// (a gate that kept a newer record, say), would do the same again: it
+	// backs off too, saying why. An unknown status does not.
+	for _, status := range []string{"SUCCESS", "CANCELLED", "EXPIRED", ""} {
 		in := baseline(t, now)
 		in.BaseDigest = digestB
 		fp := Decide(context.Background(), in).Inputs
 		in.LastCheck = &CheckState{Decision: Rebuild, BuildID: "b2", BuildInputs: &fp}
 		in.LastBuildStatus = status
-		if d := Decide(context.Background(), in); d.Decision != Rebuild {
-			t.Errorf("after %q: %+v", status, d)
+		d := Decide(context.Background(), in)
+		switch {
+		case status == "" && d.Decision != Rebuild:
+			t.Errorf("after an unknown status: %+v", d)
+		case status != "" && (d.Decision != RebuildFailedLast || !slices.Equal(d.Reasons, []string{ReasonBase, ReasonLastBuildIneffective})):
+			t.Errorf("after %s: %+v", status, d)
 		}
+	}
+
+	// A base digest that couldn't be read tonight doesn't make the failed
+	// build's inputs look new.
+	in := baseline(t, now)
+	in.Record.BuiltAt = now.Add(-15 * 24 * time.Hour) // max-age fires
+	in.BaseDigest = digestB
+	fp := Decide(context.Background(), in).Inputs
+	in.LastCheck = &CheckState{Decision: Rebuild, BuildID: "b2", BuildInputs: &fp}
+	in.LastBuildStatus = "FAILURE"
+	in.BaseDigest = ""
+	if d := Decide(context.Background(), in); d.Decision != RebuildFailedLast {
+		t.Fatalf("unknown base digest after a failure: %+v", d)
 	}
 }
 

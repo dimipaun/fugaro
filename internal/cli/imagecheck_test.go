@@ -547,3 +547,112 @@ func TestImageStatusJSON(t *testing.T) {
 		t.Fatalf("unknown repo: %v", err)
 	}
 }
+
+// TestCheckJobBacksOffAfterForcePushToOlderCommit: the branch is reset to
+// an older commit. The rebuild succeeds but the gate keeps the newer
+// record, so built-commit-gone still fires: the next night doesn't pay for
+// the same build again, and says so at ERROR, until the inputs change or
+// the check is forced.
+func TestCheckJobBacksOffAfterForcePushToOlderCommit(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	testutil.WriteFiles(t, f.work, map[string]string{"src/a.ts": "export {}\n"})
+	testutil.Git(t, f.work, "add", "-A")
+	testutil.Git(t, f.work, "commit", "--quiet", "-m", "newer")
+	testutil.Git(t, f.work, "push", "--quiet", "origin", "HEAD:main")
+	f.seedRecord(t)
+	testutil.Git(t, f.work, "reset", "--quiet", "--hard", "HEAD~1")
+	testutil.Git(t, f.work, "push", "--quiet", "--force", "origin", "HEAD:main")
+
+	// The fake build succeeds without touching the record, as a build the
+	// gate superseded does.
+	lines, err := runCheckJob(t)
+	if err != nil || buildPosts(f.fb) != 1 || lines[0].Decision != imagecheck.Rebuild || !slices.Contains(lines[0].Reasons, imagecheck.ReasonBuiltCommitGone) {
+		t.Fatalf("first night: %+v, %v, %d builds", lines, err, buildPosts(f.fb))
+	}
+	for night := 2; night <= 3; night++ {
+		lines, err = runCheckJob(t)
+		if err != nil || buildPosts(f.fb) != 1 || lines[0].Decision != imagecheck.RebuildFailedLast || lines[0].Severity != "ERROR" ||
+			!slices.Contains(lines[0].Reasons, imagecheck.ReasonLastBuildIneffective) || lines[0].LastBuildStatus != "SUCCESS" {
+			t.Fatalf("night %d: %+v, %v, %d builds", night, lines, err, buildPosts(f.fb))
+		}
+	}
+	if lines, err = runCheckJob(t, "--force"); err != nil || buildPosts(f.fb) != 2 || lines[0].Decision != imagecheck.Rebuild {
+		t.Fatalf("forced: %+v, %v, %d builds", lines, err, buildPosts(f.fb))
+	}
+	testutil.WriteFiles(t, f.work, map[string]string{"src/b.ts": "export {}\n"})
+	testutil.Git(t, f.work, "add", "-A")
+	testutil.Git(t, f.work, "commit", "--quiet", "-m", "new commit")
+	testutil.Git(t, f.work, "push", "--quiet", "origin", "HEAD:main")
+	if lines, err = runCheckJob(t); err != nil || buildPosts(f.fb) != 3 || lines[0].Decision != imagecheck.Rebuild {
+		t.Fatalf("new commit: %+v, %v, %d builds", lines, err, buildPosts(f.fb))
+	}
+}
+
+// TestCheckFailedRebuildClearsAfterManualFix: once a manual build records
+// an image that clears the triggers, the old failure no longer alerts.
+func TestCheckFailedRebuildClearsAfterManualFix(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	f.fb.FailStep = "smoke"
+	if _, err := runCheckJob(t); err != nil {
+		t.Fatal(err)
+	}
+	f.seedRecord(t) // fugaro image build, run by hand, fixed it
+	for night := 2; night <= 3; night++ {
+		lines, err := runCheckJob(t)
+		if err != nil || len(lines) != 1 || lines[0].Decision != imagecheck.Skip || lines[0].Severity != "INFO" {
+			t.Fatalf("night %d: %+v, %v", night, lines, err)
+		}
+	}
+}
+
+// TestCheckJobRecordWriteFailureAfterSubmit: a build was submitted but
+// check.json couldn't record it: the check fails, at ERROR, naming the
+// build, so it isn't lost.
+func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	key := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), imagecheck.CheckKey(f.slug, "app"))
+	// Another writer creates check.json while the build is submitted.
+	f.fb.Steps = map[string]func(string) error{"prep": func(string) error {
+		if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(key, []byte(`{"version":1,"decision":"skip"}`), 0o644)
+	}}
+	out, stderr, err := execute(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Severity != "ERROR" || lines[0].Decision != imagecheck.CheckFailed || *lines[0].BuildID != "b0001" ||
+		!strings.Contains(lines[0].Error, "submitted Cloud Build build b0001") || buildPosts(f.fb) != 1 {
+		t.Fatalf("lines = %+v, %d builds", lines, buildPosts(f.fb))
+	}
+}
+
+// TestCheckJobUnreadableStateFailsSafe: check.json holds the back-off
+// state, so an unreadable one stops the check (no build, ERROR, exit 2)
+// and is left for a human, instead of being replaced.
+func TestCheckJobUnreadableStateFailsSafe(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	key := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), imagecheck.CheckKey(f.slug, "app"))
+	if err := os.MkdirAll(filepath.Dir(key), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(key, []byte("{"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, %v", ExitCode(err), err)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Severity != "ERROR" || lines[0].Decision != imagecheck.CheckFailed || !strings.Contains(lines[0].Error, "unreadable") {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if buildPosts(f.fb) != 0 {
+		t.Fatal("a build was submitted without the back-off state")
+	}
+	if data, _ := os.ReadFile(key); string(data) != "{" {
+		t.Fatalf("check.json was replaced: %q", data)
+	}
+}

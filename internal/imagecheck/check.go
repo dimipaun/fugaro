@@ -17,7 +17,8 @@ const (
 	Rebuild = "rebuild" // a trigger fired: a build is submitted
 	Skip    = "skip"    // nothing changed that a build would pick up
 	// RebuildFailedLast: a trigger fired, but the last build of these very
-	// inputs failed, so it isn't paid for again until something changes.
+	// inputs failed, or ended without clearing the trigger, so it isn't
+	// paid for again until something changes.
 	RebuildFailedLast = "rebuild-failed-last"
 	// CheckFailed: the check itself could not decide.
 	CheckFailed = "check-failed"
@@ -27,7 +28,7 @@ const (
 )
 
 // The reasons a decision records. The triggers come first, in the order
-// they are evaluated; the last four are notes that never rebuild alone.
+// they are evaluated; the rest are notes that never rebuild alone.
 const (
 	ReasonForce           = "force"
 	ReasonNoRecord        = "no-record"
@@ -47,6 +48,9 @@ const (
 	ReasonLatestUnknown = "latest-unknown"
 	// ReasonBuildRunning: the last build of these inputs hasn't finished.
 	ReasonBuildRunning = "build-running"
+	// ReasonLastBuildIneffective: the last build of these inputs ended
+	// without failing, but didn't clear the trigger.
+	ReasonLastBuildIneffective = "last-build-ineffective"
 )
 
 // FailedBuild reports whether a Cloud Build status is a failure the check
@@ -128,9 +132,10 @@ type Decision struct {
 }
 
 // Decide evaluates the workflow's rebuild triggers, in order, recording
-// every one that fires, and then the back-off: a rebuild whose inputs are
-// those the last, failed, build ran with is RebuildFailedLast, unless
-// forced. It makes no calls: the caller reads everything first.
+// every one that fires, and then the back-off, unless forced: a rebuild
+// whose inputs are those the last build ran with is RebuildFailedLast when
+// that build ended (failed, or finished without clearing the trigger), and
+// Skip while it is still running. It makes no calls: the caller reads everything first.
 func Decide(_ context.Context, in Inputs) Decision {
 	d := Decision{Workflow: in.Workflow, Decision: Skip}
 	failed := func(err error) Decision {
@@ -159,16 +164,33 @@ func Decide(_ context.Context, in Inputs) Decision {
 		return d
 	}
 	d.Decision = Rebuild
-	if in.Force || in.LastCheck == nil || in.LastCheck.BuildID == "" || in.LastCheck.BuildInputs == nil ||
-		!in.LastCheck.BuildInputs.Equal(d.Inputs) {
+	if in.Force || in.LastCheck == nil || in.LastCheck.BuildID == "" || in.LastCheck.BuildInputs == nil {
 		return d
 	}
+	last := *in.LastCheck.BuildInputs
+	cur := d.Inputs
+	// A base digest that couldn't be read tonight is no change: otherwise
+	// a registry hiccup would resubmit a build known to fail.
+	if cur.BaseDigest == "" {
+		cur.BaseDigest = last.BaseDigest
+	}
+	if !last.Equal(cur) {
+		return d
+	}
+	// The last build ran on these very inputs.
 	switch {
-	case FailedBuild(in.LastBuildStatus):
-		d.Decision = RebuildFailedLast
 	case RunningBuild(in.LastBuildStatus):
 		d.Decision = Skip
 		d.Reasons = append(d.Reasons, ReasonBuildRunning)
+	case FailedBuild(in.LastBuildStatus):
+		d.Decision = RebuildFailedLast
+	case FinalBuild(in.LastBuildStatus):
+		// It ended without failing, yet a trigger still fires: it didn't
+		// clear it (a gate that kept a newer record after a force-push to
+		// an older commit, say). Another build of the same inputs would do
+		// the same, every night: a human is needed.
+		d.Decision = RebuildFailedLast
+		d.Reasons = append(d.Reasons, ReasonLastBuildIneffective)
 	}
 	return d
 }

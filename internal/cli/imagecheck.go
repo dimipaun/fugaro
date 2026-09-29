@@ -118,6 +118,9 @@ type evaluation struct {
 	prevRaw    []byte
 	prevGen    int64
 	prevExists bool
+	// prevUnreadable: check.json exists but doesn't parse. It is left as
+	// it is, for a human to look at.
+	prevUnreadable bool
 	// lastStatus is the status of prev's build as read now, "" if none.
 	lastStatus string
 }
@@ -149,8 +152,10 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 	default:
 		ev.prevExists = true
 		if ev.prev, err = imagecheck.ParseCheckState(ev.prevRaw); err != nil {
-			c.warn(fmt.Sprintf("%s is unreadable (%v); replacing it", checkKey, err))
-			ev.prev = nil
+			// It holds the back-off state: without it a build known to fail
+			// could be submitted again. Fail safe, and leave it for a human.
+			ev.prevUnreadable = true
+			return ev, fmt.Errorf("%s is unreadable (%v), and holds the last rebuild's state: nothing is submitted until it is fixed or deleted", checkKey, err)
 		}
 	}
 	if p := ev.prev; p != nil && p.BuildID != "" {
@@ -246,7 +251,10 @@ type checkLogger struct {
 func (l *checkLogger) log(workflow, decision string, reasons []string, buildID, lastStatus, errMsg string) {
 	sev := "INFO"
 	switch {
-	case decision == imagecheck.RebuildFailedLast || decision == imagecheck.CheckFailed || imagecheck.FailedBuild(lastStatus):
+	case decision == imagecheck.RebuildFailedLast || decision == imagecheck.CheckFailed,
+		// A failed last rebuild matters while a rebuild is still due;
+		// once a later build cleared the triggers (skip), it is history.
+		decision == imagecheck.Rebuild && imagecheck.FailedBuild(lastStatus):
 		sev = "ERROR"
 	case decision == imagecheck.NotInstalled:
 		sev = "WARNING"
@@ -261,7 +269,7 @@ func (l *checkLogger) log(workflow, decision string, reasons []string, buildID, 
 	case decision == imagecheck.Rebuild && buildID != "" && !l.dryRun:
 		msg += "; submitted Cloud Build build " + buildID
 	case decision == imagecheck.RebuildFailedLast:
-		msg += "; the last rebuild " + buildID + " ended " + lastStatus + " with these same inputs, so it is not submitted again until something changes"
+		msg += "; the last rebuild " + buildID + " ended " + lastStatus + " on these same inputs without clearing the triggers, so it is not submitted again until something changes (fugaro image check --force overrides)"
 	}
 	line := checkLogLine{
 		Severity: sev, Event: "image-check", Repo: l.repo, Workflow: workflow, Decision: decision,
@@ -417,7 +425,9 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 			ev.prevRaw, ev.prevGen, err = bucket.Read(ctx, key)
 			ev.prevExists = err == nil
 			if ev.prevExists {
-				ev.prev, _ = imagecheck.ParseCheckState(ev.prevRaw)
+				if ev.prev, err = imagecheck.ParseCheckState(ev.prevRaw); err != nil {
+					continue // left for a human, as evaluate leaves it
+				}
 			}
 			state := nextState(ev.prev, imagecheck.Decision{Workflow: w, Decision: imagecheck.CheckFailed, Error: msg}, "", now)
 			if err := writeState(ctx, bucket, key, state, ev); err != nil {
@@ -510,9 +520,15 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 				state.BuildID, state.BuildInputs, state.LastBuildStatus, state.LastBuildAt = id, &inputs, status, &now
 			}
 		}
-		if !o.dryRun {
+		if !o.dryRun && !ev.prevUnreadable {
 			if err := writeState(ctx, bucket, imagecheck.CheckKey(slug, name), state, ev); err != nil {
-				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, cmp.Or(ev.d.Error, oneLine(err.Error()))
+				msg := oneLine(err.Error())
+				if ev.d.Decision == imagecheck.Rebuild && state.BuildID != "" {
+					// The build runs, but the next check can't back off from
+					// it or wait for it: say which build it is.
+					msg = "submitted Cloud Build build " + state.BuildID + ", but could not record it in check.json: " + msg
+				}
+				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, cmp.Or(ev.d.Error, msg)
 			}
 		}
 		lg.log(name, ev.d.Decision, ev.d.Reasons, state.BuildID, ev.lastStatus, ev.d.Error)
@@ -667,7 +683,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 			case imagecheck.Rebuild:
 				line += "; the daily check would submit a rebuild. This command never builds: fugaro image build --workflow " + r.Workflow + " starts one (billable)"
 			case imagecheck.RebuildFailedLast:
-				line += "; the last rebuild " + r.LastBuildID + " ended " + r.LastBuildStatus + " with these same inputs, so the daily check won't submit it again until something changes"
+				line += "; the last rebuild " + r.LastBuildID + " ended " + r.LastBuildStatus + " on these same inputs without clearing the triggers, so the daily check won't submit it again until something changes"
 			}
 			fmt.Fprintln(w, "  "+oneLine(line))
 		}
