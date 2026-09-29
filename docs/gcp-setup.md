@@ -127,6 +127,7 @@ fugaro init --base-image "$tag"
   - A check is about $0.004 a run, about $0.12 a month.
   - Cloud Scheduler is $0.10 a month per job beyond its free ones.
   - A repository's registry is storage. An active repository costs about $1 to $3 a month all told (design §7.2).
+- **Vertex AI:** when any workflow has `agent.auth: vertex`, `init --repo` records `vertex: true` for the repository in the local config. `fugaro init` enables the Vertex AI API whenever a recorded repository has it. So for the first such repository, `init --repo` warns that the installation hasn't enabled Vertex AI yet: **rerun `fugaro init`** afterwards. The API stays enabled while any recorded repository has the flag.
 - **Undo:** `fugaro init --repo --forget` (state only), or offboarding, below.
 - **Check:**
   - `fugaro image status --repo acme/webapp` shows the record.
@@ -169,7 +170,7 @@ So do it in this order:
 
 ## Flags to pass again
 
-`init` doesn't remember every flag. The local config keeps the state bucket, launchers, operators, alert email, base image and scheduler region. The budget flags (`--budget`, `--budget-currency`, `--billing-account`), `--registry-cleanup` and `--no-log-isolation` are not kept: leave one out and the plan removes or resets what it set. The guard refuses a plan that deletes the budget, alert channel or member grants, with a hint naming the flags that keep them. `fugaro init --repo` needs `--github-app-id` only the first time (it is stored). Read the plan every time.
+`init` doesn't remember every flag. The local config keeps the state bucket, launchers, operators, alert email, base image and scheduler region. The budget flags (`--budget`, `--budget-currency`, `--billing-account`), `--registry-cleanup` and `--no-log-isolation` are not kept: leave one out and the plan removes or resets what it set. The guard refuses a plan that deletes the budget, alert channel or member grants, with a hint naming the flags that keep them. `fugaro init --repo` needs `--github-app-id` only the first time (it is stored), and records whether the repository uses Vertex AI, which `fugaro init` reads. Read the plan every time.
 
 ## Adopting an M4 installation
 
@@ -188,12 +189,19 @@ At any point before `fugaro-build` is retired:
 
 0. **First,** pause every Fugaro Scheduler job so no check submits a billable build during the rollback: `gcloud scheduler jobs pause <name> --location <scheduler region> --project <project>` (the names are in `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`).
 1. `fugaro init --repo --forget` in each onboarded repository. It removes the repository from Terraform's state and deletes its now-empty state object (the state bucket is versioned, so it stays recoverable); it destroys nothing.
-2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and `fugaro-base`'s cleanup policies (the repositories' registries keep theirs, which M4 never reads), and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed); `fugaro init` then imports it. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
+2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and `fugaro-base`'s cleanup policies (the repositories' registries keep theirs, which M4 never reads), and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed); `fugaro init` then imports it, and refuses to plan while it is still pending deletion. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
 3. **Restore** the backed-up `~/.config/fugaro/config.yaml`.
 4. **Always,** redeploy each job with the M4 binary's `gcp-m4.sh --apply job`. It puts back the M4 image path, env and order, and drops `FUGARO_COMPUTE_PRICES`. The legacy display names were kept, so its ownership checks pass.
 5. Check `fugaro logs` on a new run, and `gcloud run jobs describe` for `maxRetries: 0`.
 6. What `--forget` leaves is additive and doesn't affect M4: the build accounts, the new registries, `fugaro-base`, the scheduler account and its (paused) Scheduler jobs, the custom roles and the state bucket. Remove them with `gcloud` from the snapshot's diff, each confirmed.
-7. **Retrying the migration later:** `fugaro init` and `fugaro init --repo` import again what `--forget` left behind and still carries our mark: the runs bucket, the registries, the log bucket (after the undelete above), the custom roles, the scheduler account, and each repository's accounts, secrets, jobs and Scheduler job. **Not** the alert's notification channel and policy, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying (`gcloud alpha monitoring policies delete`, `gcloud alpha monitoring channels delete`, `gcloud billing budgets delete`, each confirmed), or accept the duplicates.
+7. **Retrying the migration later:** `fugaro init` and `fugaro init --repo` import again what `--forget` left behind and still carries our mark:
+   - the runs bucket and the registries
+   - the three custom roles, matched by title (a role with another title is refused; a deleted one is not imported, and the plan's create restores it)
+   - `fugaro-scheduler`, matched by its display name
+   - the log bucket, while log isolation is on. Log buckets carry no labels, so it is adopted by its name alone, and the summary notes that. A bucket still pending deletion is refused (exit 1) with the `gcloud logging buckets undelete` command to run first.
+   - each repository's accounts, secrets and jobs, and its Scheduler check job, which must target that repository's check job and run as `fugaro-scheduler` (anything else is refused)
+
+   The `_Default` exclusion and the sink aren't imported: the rollback's apply deleted them, so the plan creates them again. **Not** the alert's notification channel and policy, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying (`gcloud alpha monitoring policies delete`, `gcloud alpha monitoring channels delete`, `gcloud billing budgets delete`, each confirmed), or accept the duplicates.
 8. If you removed the runs bucket's project-Viewer bindings, M4 doesn't need them; restore them from the snapshot if you want them back.
 
 After `fugaro-build` is retired, a rollback also needs it re-enabled (`gcloud iam service-accounts enable`) and its bindings restored from the snapshot.
