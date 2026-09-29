@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -120,6 +121,18 @@ func newInitRig(t *testing.T) *initRig {
 	return r
 }
 
+func (r *initRig) appendConfig(t *testing.T, yaml string) {
+	t.Helper()
+	f, err := os.OpenFile(r.cfg, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(yaml); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (r *initRig) save(t *testing.T) {
 	t.Helper()
 	b, err := json.Marshal(r.script)
@@ -158,6 +171,12 @@ const initLogView = "projects/proj-1234/locations/global/buckets/fugaro/views/fu
 
 func outputsJSON(t *testing.T) string {
 	t.Helper()
+	return outputsJSONWith(t, nil)
+}
+
+// outputsJSONWith is outputsJSON with some outputs' values replaced.
+func outputsJSONWith(t *testing.T, over map[string]any) string {
+	t.Helper()
 	vals := map[string]any{
 		"runs_bucket":               initRunsBucket,
 		"registry_host":             "us-east5-docker.pkg.dev/proj-1234",
@@ -173,6 +192,7 @@ func outputsJSON(t *testing.T) string {
 		"log_view":                 initLogView,
 		"registry_cleanup_dry_run": true,
 	}
+	maps.Copy(vals, over)
 	out := map[string]any{}
 	for k, v := range vals {
 		out[k] = map[string]any{"value": v, "type": "string", "sensitive": false}
@@ -335,6 +355,14 @@ func TestInitRefusesDeletePlan(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Fatal("a plan the guard refused was applied")
 	}
+	// A budget exists only through its flags: the refusal says to pass
+	// them again.
+	r.setPlan(t, change("module.installation.google_billing_budget.this[0]", "delete"))
+	_, _, err = executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget, --budget-currency and --billing-account") {
+		t.Fatalf("budget delete: exit %d, err %v", ExitCode(err), err)
+	}
+	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "delete", "create"))
 	// Naming the address lets it through.
 	if _, _, err := executeStdin(t, "", "init", "--yes", "--allow-delete", "module.installation.google_storage_bucket.runs"); err != nil {
 		t.Fatal(err)
@@ -624,6 +652,66 @@ func TestInitPlanOnly(t *testing.T) {
 	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
 		t.Error("--plan-only changed the local config")
 	}
+
+	// It changes no IAM either, even with --yes: the viewers' removal is
+	// only listed.
+	r = newInitRig(t)
+	r.stateBucket()
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
+	out, _, err = executeStdin(t, "", "init", "--plan-only", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(policySets(r.gcs, initRunsBucket)) != 0 || !strings.Contains(out, "project Viewers' read access to gs://"+initRunsBucket) {
+		t.Fatalf("--plan-only and the runs bucket's viewers:\n%s", out)
+	}
+}
+
+// A state bucket whose viewers' removal failed after it was created gets
+// the removal again, after a confirmation.
+func TestInitRetriesStateBucketViewers(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.gcs.SetBucketPolicy(initStateBucket, gcpfake.ConvenienceBindings(initProject))
+	out, _, err := executeStdin(t, "", "init")
+	if ExitCode(err) != ExitUserError || len(policySets(r.gcs, initStateBucket)) != 0 || len(r.ran(t, "init")) != 0 {
+		t.Fatalf("unconfirmed: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
+		t.Errorf("no banner:\n%s", out)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if hasViewer(r.gcs.BucketPolicy(initStateBucket)) || len(r.gcs.BucketPolicy(initStateBucket)) == 0 {
+		t.Fatalf("state bucket policy = %+v", r.gcs.BucketPolicy(initStateBucket))
+	}
+}
+
+// A symlinked local config is written through the link, which stays.
+func TestInitWritesThroughSymlink(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	target := filepath.Join(r.dir, "dotfiles", "fugaro.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(r.cfg, target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, r.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Lstat(r.cfg); err != nil || st.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v, %v", st, err)
+	}
+	if lc, err := localcfg.Load(target); err != nil || lc.LogView != initLogView {
+		t.Fatalf("the link's target = %+v, %v", lc, err)
+	}
 }
 
 func TestInitPrintVarsNoCalls(t *testing.T) {
@@ -674,6 +762,27 @@ func TestInitConfigOnly(t *testing.T) {
 	}
 	if lc, err := localcfg.Load(r.cfg); err != nil || lc.RegistryHost != "us-east5-docker.pkg.dev/proj-1234" || lc.SchedulerRegion != "us-central1" || lc.LogView != "" {
 		t.Fatalf("local config = %+v, %v", lc, err)
+	}
+	// The registry host is the local config's when it has one.
+	r = newInitRig(t)
+	r.appendConfig(t, "registry_host: us-central1-docker.pkg.dev/proj-1234\n")
+	if _, _, err := executeStdin(t, "", "init", "--config-only", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if lc, err := localcfg.Load(r.cfg); err != nil || lc.RegistryHost != "us-central1-docker.pkg.dev/proj-1234" {
+		t.Fatalf("local config = %+v, %v", lc, err)
+	}
+	// A state that exists but can't be read is a failure, not a fallback.
+	r = newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"exit": 1, "stderr": "Error: 403 Forbidden"}
+	r.save(t)
+	before, _ := os.ReadFile(r.cfg)
+	if _, _, err := executeStdin(t, "", "init", "--config-only", "--yes"); ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("an unreadable state: exit %d, err %v", ExitCode(err), err)
+	}
+	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
+		t.Error("the local config was written from the flags although the state exists")
 	}
 	// A foreign state bucket is refused.
 	r = newInitRig(t)
@@ -745,6 +854,31 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	r.setPlan(t, change("module.installation.google_storage_bucket.runs", "create"))
 	if _, _, err := executeStdin(t, "", "init", "--forget", "--yes"); ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a create: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// An installation that adopted the legacy registry keeps it declared in
+// the rollback's plan, which would otherwise delete it.
+func TestInitForgetKeepsAdoptedLegacyRegistry(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"legacy_registry": infra.LegacyRegistry})}
+	r.save(t)
+	if _, _, err := executeStdin(t, "", "init", "--forget", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.tfvars(t); v["adopt_legacy_registry"] != true {
+		t.Fatalf("the rollback's tfvars = %v", v)
+	}
+	// With no outputs, the state holds no installation: refused.
+	r = newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	r.script["output"] = map[string]any{"stdout": "{}"}
+	r.save(t)
+	if _, _, err := executeStdin(t, "", "init", "--forget", "--yes"); ExitCode(err) != ExitUserError || len(r.ran(t, "plan")) != 0 {
+		t.Fatalf("an empty state: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
 }
 

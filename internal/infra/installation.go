@@ -12,6 +12,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
+// ErrNoOutputs means the installation's state has no outputs: nothing has
+// been applied to it yet.
+var ErrNoOutputs = errors.New("the installation's state has no outputs; run fugaro init to apply it first")
+
 // DecodeOutputs reads the installation root's `terraform output -json`
 // values. A null output (the legacy registry when none is adopted, the log
 // view without log isolation) leaves its field empty. No outputs at all
@@ -19,7 +23,7 @@ import (
 func DecodeOutputs(raw map[string]json.RawMessage) (InstallationOutputs, error) {
 	var o InstallationOutputs
 	if len(raw) == 0 {
-		return o, errors.New("the installation's state has no outputs; run fugaro init to apply it first")
+		return o, ErrNoOutputs
 	}
 	typ := reflect.TypeFor[InstallationOutputs]()
 	v := reflect.ValueOf(&o).Elem()
@@ -83,4 +87,43 @@ func (c PlanCounts) String() string {
 func (im Imports) AdoptsRunsBucket() bool {
 	to := importTable[importRunsBucket].to
 	return slices.ContainsFunc(im.List, func(i Import) bool { return i.To == to })
+}
+
+// flagHints are the resources of the installation only flags declare, by
+// address prefix, and the flags that keep them. A run without those flags
+// plans their deletion, which the guard refuses.
+var flagHints = []struct {
+	prefixes []string
+	hint     string
+}{
+	{[]string{"module.installation.google_billing_budget."},
+		"the budget is declared only by --budget, --budget-currency and --billing-account, which nothing records: pass them again with the values it was created with"},
+	{[]string{"module.installation.google_monitoring_notification_channel.", "module.installation.google_monitoring_alert_policy."},
+		"the alert is declared by --alert-email (or terraform.alert_email in the local config): pass it again"},
+	{[]string{"module.installation.google_project_iam_member.", "module.installation.google_storage_bucket_iam_member.",
+		"module.installation.google_artifact_registry_repository_iam_member.", "module.installation.google_service_account_iam_member."},
+		"launchers' and operators' grants are declared by --launcher and --operator (or terraform.launchers and terraform.operators in the local config): pass every member again"},
+}
+
+// DeleteHints says, for the deletes in p that allowDelete doesn't name,
+// which flags would keep the resources a run left out.
+func DeleteHints(p *tf.Plan, allowDelete []string) []string {
+	seen := make([]bool, len(flagHints))
+	for _, rc := range p.ResourceChanges {
+		if !slices.Contains(rc.Change.Actions, "delete") || slices.Contains(allowDelete, rc.Address) {
+			continue
+		}
+		for i, h := range flagHints {
+			if slices.ContainsFunc(h.prefixes, func(pre string) bool { return strings.HasPrefix(rc.Address, pre) }) {
+				seen[i] = true
+			}
+		}
+	}
+	var out []string
+	for i, h := range flagHints {
+		if seen[i] {
+			out = append(out, h.hint)
+		}
+	}
+	return out
 }

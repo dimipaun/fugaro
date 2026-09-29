@@ -373,6 +373,20 @@ func (r *initRun) ask(what string) (bool, error) {
 	return strings.TrimSpace(line) == r.project, nil
 }
 
+// guard is tf.Guard, a refusal being exit 1 with a hint for each refused
+// delete that flags left out of this run would keep.
+func guard(plan *tf.Plan, allowDelete []string) error {
+	err := tf.Guard(plan, allowDelete)
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	for _, h := range infra.DeleteHints(plan, allowDelete) {
+		msg += "\nhint: " + h
+	}
+	return userErr("%s", msg)
+}
+
 // prepare writes the root's tfvars, imports and backend configuration.
 func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (map[string]string, error) {
 	vars, err := infra.InstallationVars(spec)
@@ -423,6 +437,27 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 			return initErr(err)
 		}
 		fmt.Fprintf(r.w, "created gs://%s; project Viewers can't read it\n", spec.StateBucket)
+	} else {
+		// A removal that failed after the bucket was created is retried,
+		// since the state holds every name, account and condition.
+		p, err := infra.BucketPolicy(ctx, c, spec.StateBucket)
+		if err != nil {
+			return initErr(err)
+		}
+		if grants := infra.ProjectViewerGrants(p); len(grants) > 0 {
+			what := fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds the Terraform state (%s)", spec.StateBucket, strings.Join(grants, ", "))
+			if r.o.planOnly {
+				r.warn("--plan-only changes no IAM; without it, fugaro init " + what)
+			} else {
+				if err := r.confirm(what, "nothing was applied"); err != nil {
+					return err
+				}
+				if err := infra.RemoveProjectViewers(ctx, c, spec.StateBucket, p); err != nil {
+					return initErr(err)
+				}
+				fmt.Fprintf(r.w, "removed project Viewers' read access to gs://%s\n", spec.StateBucket)
+			}
+		}
 	}
 
 	// 4. The runs bucket's viewers.
@@ -431,7 +466,9 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		if err != nil {
 			return initErr(err)
 		}
-		if grants := infra.ProjectViewerGrants(p); len(grants) > 0 {
+		if grants := infra.ProjectViewerGrants(p); len(grants) > 0 && r.o.planOnly {
+			r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, fugaro init asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
+		} else if len(grants) > 0 {
 			ok, err := r.ask(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
 			if err != nil {
 				return err
@@ -468,8 +505,8 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 			return remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
-		if err := tf.Guard(plan, r.o.allowDelete); err != nil {
-			return userErr("%v", err)
+		if err := guard(plan, r.o.allowDelete); err != nil {
+			return err
 		}
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
@@ -508,16 +545,25 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 // outputs when its state is reachable, else from the flags.
 func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
 	outs, err := r.readOutputs(ctx, c, t, wd, spec)
-	var ue *infra.UserError
-	if errors.As(err, &ue) {
-		return initErr(err) // a state bucket that isn't ours is refused, not worked around
-	}
-	if err != nil {
-		r.warn(fmt.Sprintf("the installation's outputs are not readable (%v); the local config is written from the flags", err))
-		outs = infra.InstallationOutputs{RunsBucket: spec.RunsBucket, RegistryHost: spec.Region + "-docker.pkg.dev/" + spec.Project, LogView: lc.LogView}
+	switch {
+	case errors.Is(err, errNoState), errors.Is(err, infra.ErrNoOutputs):
+		// Nothing applied yet: only then do the flags stand in.
+		host, herr := infra.RegistryHost(lc)
+		if herr != nil {
+			return initErr(herr)
+		}
+		r.warn(fmt.Sprintf("the installation has no state yet (%v); the local config is written from the flags", err))
+		outs = infra.InstallationOutputs{RunsBucket: spec.RunsBucket, RegistryHost: host, LogView: lc.LogView}
+	case err != nil:
+		// A state bucket that isn't ours, or a state that can't be read, is
+		// a failure, not something to work around.
+		return initErr(err)
 	}
 	return r.writeConfig(lc, spec, outs, path, old, false)
 }
+
+// errNoState is a state bucket that doesn't exist yet.
+var errNoState = errors.New("no state bucket")
 
 func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.InstallationSpec) (infra.InstallationOutputs, error) {
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
@@ -525,18 +571,18 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return infra.InstallationOutputs{}, err
 	}
 	if !exists {
-		return infra.InstallationOutputs{}, fmt.Errorf("there is no state bucket gs://%s", spec.StateBucket)
+		return infra.InstallationOutputs{}, fmt.Errorf("%w gs://%s", errNoState, spec.StateBucket)
 	}
 	backend, err := prepare(wd, spec, infra.Imports{})
 	if err != nil {
 		return infra.InstallationOutputs{}, err
 	}
 	if err := t.Init(ctx, backend); err != nil {
-		return infra.InstallationOutputs{}, err
+		return infra.InstallationOutputs{}, remote(err)
 	}
 	raw, err := t.Output(ctx)
 	if err != nil {
-		return infra.InstallationOutputs{}, err
+		return infra.InstallationOutputs{}, remote(err)
 	}
 	return infra.DecodeOutputs(raw)
 }
@@ -639,8 +685,14 @@ func backupFile(path string, old []byte, now time.Time) (string, error) {
 }
 
 // writeFileAtomic replaces path with data (mode 0600) through a rename, so
-// a failed write never leaves half a config.
+// a failed write never leaves half a config. A symlinked path is written
+// through: its target is replaced and the link stays.
 func writeFileAtomic(path string, data []byte) error {
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.yaml")
 	if err != nil {
 		return err
@@ -720,12 +772,31 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 	if len(repos) > 0 {
 		return userErr("the state bucket still holds repository state (%s): run fugaro init --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
-	backend, err := prepare(wd, infra.ForgetSpec(spec), infra.Imports{})
+	fs := infra.ForgetSpec(spec)
+	backend, err := prepare(wd, fs, infra.Imports{})
 	if err != nil {
 		return err
 	}
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
+	}
+	// The rollback keeps everything but the log isolation declared, the
+	// adopted legacy registry included (it can't be deleted, and mustn't
+	// be), so it takes adopt_legacy_registry from the state's outputs.
+	raw, err := t.Output(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	outs, err := infra.DecodeOutputs(raw)
+	switch {
+	case errors.Is(err, infra.ErrNoOutputs):
+		return userErr("the state in gs://%s holds no installation, so there is nothing to forget", spec.StateBucket)
+	case err != nil:
+		return remote(err)
+	}
+	fs.AdoptLegacyRegistry = outs.LegacyRegistry != ""
+	if _, err := prepare(wd, fs, infra.Imports{}); err != nil {
+		return err
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
@@ -740,8 +811,8 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		if err := infra.CheckForgetPlan(plan); err != nil {
 			return initErr(err)
 		}
-		if err := tf.Guard(plan, infra.ForgetAllowDelete(plan)); err != nil {
-			return userErr("%v", err)
+		if err := guard(plan, infra.ForgetAllowDelete(plan)); err != nil {
+			return err
 		}
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts

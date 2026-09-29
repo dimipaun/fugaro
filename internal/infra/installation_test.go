@@ -179,3 +179,23 @@ func TestAdoptsRunsBucket(t *testing.T) {
 		t.Fatal("the runs bucket's import is not seen")
 	}
 }
+
+// A refused delete of something only flags declare says which flags keep it.
+func TestDeleteHints(t *testing.T) {
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		{Address: "module.installation.google_billing_budget.this[0]", Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: "module.installation.data.google_project.this[0]", Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: "module.installation.google_monitoring_alert_policy.image[0]", Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: "module.installation.google_monitoring_notification_channel.email[0]", Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: `module.installation.google_project_iam_member.launcher["user:a@example.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: "module.installation.google_storage_bucket.runs", Change: tf.Change{Actions: []string{"update"}}},
+	}}
+	hints := DeleteHints(p, nil)
+	if len(hints) != 3 || !strings.Contains(hints[0], "--budget, --budget-currency and --billing-account") ||
+		!strings.Contains(hints[1], "--alert-email") || !strings.Contains(hints[2], "--launcher") {
+		t.Fatalf("hints = %q", hints)
+	}
+	if hints := DeleteHints(p, []string{"module.installation.google_billing_budget.this[0]"}); len(hints) != 2 {
+		t.Fatalf("an allowed delete still hinted: %q", hints)
+	}
+}
