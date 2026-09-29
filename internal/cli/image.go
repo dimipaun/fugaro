@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -201,11 +200,10 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	bucket, agree := buildRecordBucket(lc)
-	if !agree {
-		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: the build records its image in %s, but ls and image status read %s (bucket_url)\n", bucket, lc.BucketURL())
+	if note := buildRecordNote(lc); note != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
 	}
-	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, bucket)
+	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
 	if err != nil {
 		return err
 	}
@@ -273,23 +271,24 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	return nil
 }
 
-// cloudBuildSpec is the Cloud Build build of workflow name of the
-// repository rs, from base, recording to bucket (gs://…): the one spec
-// fugaro image build and the daily image check both submit.
-// buildRecordBucket is where a build writes its record: the bucket ls and
-// image status read (bucket_url) when it is a plain GCS bucket, which a
-// build can write, else the runs bucket. agree says whether the readers
-// then find it.
-func buildRecordBucket(lc *localcfg.Config) (url string, agree bool) {
-	if read := lc.BucketURL(); gsBucketRE.MatchString(read) {
-		return read, true
+// buildRecordNote is a warning when bucket_url names a bucket other than
+// the runs bucket, where a build always records its image (the only one
+// its account may write), or "".
+func buildRecordNote(lc *localcfg.Config) string {
+	rec := lc.RecordBucketURL()
+	switch {
+	case lc.Bucket == "" || lc.Bucket == rec:
+		return ""
+	case recordReadURL(lc) == rec:
+		return fmt.Sprintf("the build records its image in the runs bucket %s (the only bucket its account may write), not in bucket_url %s; ls and image status read it there", rec, lc.Bucket)
 	}
-	return "gs://" + lc.RunsBucket, false
+	return fmt.Sprintf("the build records its image in the runs bucket %s (the only bucket its account may write), but ls and image status read bucket_url %s, so they won't see it", rec, lc.Bucket)
 }
 
-// gsBucketRE is a plain gs://<bucket>, with no path or query.
-var gsBucketRE = regexp.MustCompile(`^gs://[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
-
+// cloudBuildSpec is the Cloud Build build of workflow name of the
+// repository rs, from base, recording to bucket (gs://…, the local
+// config's RecordBucketURL): the one spec fugaro image build, fugaro
+// init's first build and the daily image check submit.
 func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket string) (gcp.BuildSpec, error) {
 	ws, ok := rs.Workflows[name]
 	if !ok {

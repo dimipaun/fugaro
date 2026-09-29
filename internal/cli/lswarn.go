@@ -26,6 +26,10 @@ const checkStaleAfter = 48 * time.Hour
 // warning of its own: these lines are advice, and never fail the listing.
 func imageWarnings(ctx context.Context, env *cloudEnv, slugs []string, now time.Time) []string {
 	warnings := []string{}
+	records, err := env.recordBucket(ctx)
+	if err != nil {
+		return append(warnings, "warning: the image status can't be read: "+oneLine(err.Error()))
+	}
 	listed := map[string]bool{}
 	for _, s := range slugs {
 		listed[s] = true
@@ -44,7 +48,7 @@ func imageWarnings(ctx context.Context, env *cloudEnv, slugs []string, now time.
 		}
 		daily := dailyChecks(ctx, env, slug, checkout)
 		for _, w := range workflows {
-			st, err := imagecheck.ReadStatus(ctx, env.bucket, slug, w, now)
+			st, err := imagecheck.ReadStatus(ctx, records, slug, w, now)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("warning: %s %s: the image status can't be read: %s", repo, w, oneLine(err.Error())))
 				continue

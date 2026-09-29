@@ -43,6 +43,44 @@ type cloudEnv struct {
 	bucket *blobx.Bucket
 	be     backend.Backend
 	gcp    gcp.Options
+	// records is the bucket build records are read from, once opened,
+	// when it isn't bucket (see recordBucket).
+	records *blobx.Bucket
+}
+
+// openRecordBucket opens the bucket build records are read from. Tests
+// replace it.
+var openRecordBucket = blobx.Open
+
+// recordBucket is the bucket ls, image status and the local image check
+// read build records from (recordReadURL): the runs bucket, opened on
+// first use when a bucket_url names another.
+func (e *cloudEnv) recordBucket(ctx context.Context) (*blobx.Bucket, error) {
+	u := recordReadURL(e.lc)
+	if u == "" || u == e.lc.BucketURL() {
+		return e.bucket, nil
+	}
+	if e.records == nil {
+		b, err := openRecordBucket(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		e.records = b
+	}
+	return e.records, nil
+}
+
+// recordReadURL is where build records are read: where builds write them,
+// the runs bucket (lc.RecordBucketURL). A bucket_url off GCS (file://,
+// mem://) is a local stand-in for the runs bucket, which no build can
+// write, and is read in its place.
+func recordReadURL(lc *localcfg.Config) string {
+	if lc.Bucket != "" {
+		if u, err := url.Parse(lc.Bucket); err != nil || u.Scheme != "gs" {
+			return lc.Bucket
+		}
+	}
+	return lc.RecordBucketURL()
 }
 
 // prices are the compute prices of a region, for cost estimates of cloud
@@ -64,6 +102,9 @@ func (e *cloudEnv) prices() runview.PriceBook {
 func (e *cloudEnv) Close() {
 	if e.bucket != nil {
 		_ = e.bucket.Close()
+	}
+	if e.records != nil {
+		_ = e.records.Close()
 	}
 }
 
