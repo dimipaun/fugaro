@@ -67,18 +67,23 @@ func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time
 	var out []string
 	prefix := fmt.Sprintf("warning: %s %s: ", repo, w)
 	img, cs := st.Image, st.Check
+	// An object that couldn't be read or parsed is said so, never dropped.
+	// With one, a missing check.json below proves nothing.
+	for _, e := range st.Errors {
+		out = append(out, prefix+oneLine(e))
+	}
 	if cs != nil {
 		if line := rebuildWarning(img, cs); line != "" {
 			out = append(out, prefix+line)
 		}
 		if daily && now.Sub(cs.CheckedAt) > checkStaleAfter {
-			out = append(out, prefix+"the daily image check hasn't run since "+day(cs.CheckedAt)+".")
+			out = append(out, prefix+"the daily image check hasn't run since "+isoDay(cs.CheckedAt)+".")
 		}
-	} else if daily && img != nil && now.Sub(img.BuiltAt) > checkStaleAfter {
+	} else if daily && img != nil && len(st.Errors) == 0 && now.Sub(img.BuiltAt) > checkStaleAfter {
 		// A missing check.json is normal while the schedule is paused, and
 		// ls can't tell: it speaks only once the image is old enough that a
 		// running check would have written one.
-		out = append(out, prefix+"the daily image check has never run (the image was built "+day(img.BuiltAt)+").")
+		out = append(out, prefix+"the daily image check has never run (the image was built "+isoDay(img.BuiltAt)+").")
 	}
 	return out
 }
@@ -93,7 +98,7 @@ func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time
 // still use. A record newer than the failed build is a fix.
 func rebuildWarning(img *imagecheck.ImageStatus, cs *imagecheck.CheckState) string {
 	if cs.Decision == imagecheck.CheckFailed {
-		msg := "the daily image check failed on " + day(cs.CheckedAt)
+		msg := "the daily image check failed on " + isoDay(cs.CheckedAt)
 		if cs.Error != "" {
 			msg += ": " + oneLine(cs.Error)
 		}
@@ -109,18 +114,20 @@ func rebuildWarning(img *imagecheck.ImageStatus, cs *imagecheck.CheckState) stri
 	var what string
 	switch {
 	case failed && !superseded && (due || cs.LastBuildAt != nil):
-		what = fmt.Sprintf("the image rebuild of %s failed (%s)", day(at), oneLine(cs.LastBuildStatus))
+		what = fmt.Sprintf("the image rebuild of %s failed (%s)", isoDay(at), oneLine(cs.LastBuildStatus))
 	case cs.Decision == imagecheck.RebuildFailedLast && !failed:
+		// Not superseded-aware: after a manual fix this keeps warning until
+		// the next check rewrites check.json, up to a day later.
 		// The last build of these inputs ended without clearing what
 		// triggered it, and the check won't pay for another.
-		what = fmt.Sprintf("the image rebuild of %s ended (%s) without fixing the image", day(at), oneLine(cmp.Or(cs.LastBuildStatus, "status unknown")))
+		what = fmt.Sprintf("the image rebuild of %s ended (%s) without fixing the image", isoDay(at), oneLine(cmp.Or(cs.LastBuildStatus, "status unknown")))
 	default:
 		return ""
 	}
 	if img == nil {
 		return what + "; the image has no record yet. See fugaro image status."
 	}
-	return what + "; runs still use the image built " + day(img.BuiltAt) + ". See fugaro image status."
+	return what + "; runs still use the image built " + isoDay(img.BuiltAt) + ". See fugaro image status."
 }
 
-func day(t time.Time) string { return t.UTC().Format("2006-01-02") }
+func isoDay(t time.Time) string { return t.UTC().Format("2006-01-02") }

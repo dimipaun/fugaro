@@ -457,6 +457,10 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 		t.Fatalf("the image.json step = %q", step)
 	}
 
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
 	testutil.IsolateGit(t)
 	repo := t.TempDir()
 	testutil.Git(t, repo, "init", "--quiet", "-b", "main", repo)
@@ -468,7 +472,7 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 	for _, builtAt := range []string{"2026-09-28T10:00:00Z", ""} {
 		etc := filepath.Join(t.TempDir(), "etc", "fugaro")
 		script := strings.NewReplacer("/etc/fugaro", etc, "/work/repo", repo).Replace(strings.Join(step, " "))
-		cmd := exec.Command("sh", "-c", script)
+		cmd := exec.Command(sh, "-c", script)
 		cmd.Env = append(os.Environ(), "FUGARO_BUILT_AT="+builtAt)
 		if b, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%v\n%s", err, b)

@@ -14,10 +14,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 type lsOut struct {
@@ -330,7 +332,6 @@ func TestLsImageAgeJSON(t *testing.T) {
 func TestLsWarnsRebuildFailed(t *testing.T) {
 	f := newCloudFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
-	day := func(d time.Time) string { return d.Format("2006-01-02") }
 	built := now.Add(-96 * time.Hour)
 	failedAt := now.Add(-20 * time.Hour)
 	failed := imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.RebuildFailedLast, Reasons: []string{imagecheck.ReasonBase},
@@ -338,7 +339,7 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	putImageRecord(t, f, built)
 	putCheckState(t, f, failed)
 
-	want := "warning: acme/app web: the image rebuild of " + day(failedAt) + " failed (FAILURE); runs still use the image built " + day(built) + ". See fugaro image status.\n"
+	want := "warning: acme/app web: the image rebuild of " + isoDay(failedAt) + " failed (FAILURE); runs still use the image built " + isoDay(built) + ". See fugaro image status.\n"
 	out, _, err := execute(t, "ls")
 	if err != nil || !strings.HasPrefix(out, want) {
 		t.Fatalf("ls = %q, %v\nwant a first line %q", out, err, want)
@@ -350,8 +351,8 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	if len(got.Warnings) != 1 || got.Warnings[0]+"\n" != want {
 		t.Fatalf("warnings = %q", got.Warnings)
 	}
-	if out, _, _ := execute(t, "ls", "--json"); strings.Contains(out, "warning: acme") && !strings.Contains(out, `"warnings": [`) {
-		t.Fatalf("json output: %s", out)
+	if out, _, _ := execute(t, "ls", "--json"); strings.Contains(out, "\nwarning:") || !strings.Contains(out, `"warnings": [`) {
+		t.Fatalf("json output has a human warning line, or no array: %s", out)
 	}
 
 	// The check itself failing is a warning, whatever the last build did.
@@ -420,5 +421,87 @@ func TestLsWarnsCheckStale(t *testing.T) {
 	}
 	if got, _ = lsJSON(t); len(got.Warnings) != 0 {
 		t.Fatalf("no objects warned: %q", got.Warnings)
+	}
+}
+
+func TestLsWarnsInOtherCases(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	built := now.Add(-96 * time.Hour)
+	failedAt := now.Add(-20 * time.Hour)
+	warnings := func() []string {
+		t.Helper()
+		got, _ := lsJSON(t)
+		return got.Warnings
+	}
+	one := func(ws []string, wants ...string) {
+		t.Helper()
+		if len(ws) != 1 {
+			t.Fatalf("warnings = %q", ws)
+		}
+		for _, w := range wants {
+			if !strings.Contains(ws[0], w) {
+				t.Fatalf("warning %q lacks %q", ws[0], w)
+			}
+		}
+	}
+
+	// A failure newer than the record warns even when the decision is skip
+	// (a rebuild is not due, but runs still use the older image).
+	putImageRecord(t, f, built)
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.Skip,
+		BuildID: "b1", LastBuildStatus: "FAILURE", LastBuildAt: &failedAt})
+	one(warnings(), "the image rebuild of "+isoDay(failedAt)+" failed (FAILURE)", "built "+isoDay(built))
+
+	// No record at all.
+	if err := os.Remove(filepath.Join(strings.TrimPrefix(f.bucket, "file://"), imagecheck.RecordKey(appSlug, "web"))); err != nil {
+		t.Fatal(err)
+	}
+	one(warnings(), "failed (FAILURE); the image has no record yet")
+	putImageRecord(t, f, built)
+
+	// The last build of these inputs ended without fixing the image.
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.RebuildFailedLast,
+		Reasons: []string{imagecheck.ReasonLastBuildIneffective}, BuildID: "b2", LastBuildStatus: "SUCCESS", LastBuildAt: &failedAt})
+	one(warnings(), "the image rebuild of "+isoDay(failedAt)+" ended (SUCCESS) without fixing the image")
+
+	// A stale check on a workflow that is not on the daily check is fine.
+	stale := imagecheck.CheckState{CheckedAt: now.Add(-72 * time.Hour), Decision: imagecheck.Skip}
+	putCheckState(t, f, stale)
+	one(warnings(), "hasn't run since")
+	dir := t.TempDir()
+	testutil.IsolateGit(t)
+	testutil.Git(t, dir, "init", "--quiet", "-b", "main", dir)
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n" +
+		"    commands: { build: make, test: make test }\n    rebuild: { check: \"off\" }\n"})
+	t.Chdir(dir)
+	if ws := warnings(); len(ws) != 0 {
+		t.Fatalf("check: off warned: %q", ws)
+	}
+}
+
+// An object of the runs bucket that can't be read is a warning of its own,
+// and a missing check.json is then no proof that the check never ran.
+func TestLsWarnsUnreadableStatus(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	putImageRecord(t, f, now.Add(-100*time.Hour))
+	for name, data := range map[string][]byte{
+		"unparsable": []byte("{not json"),
+		"oversized":  make([]byte, blobx.MaxReadBytes+1),
+	} {
+		putBuildObject(t, f, imagecheck.CheckKey(appSlug, "web"), data)
+		got, _ := lsJSON(t)
+		if len(got.Warnings) != 1 || !strings.HasPrefix(got.Warnings[0], "warning: acme/app web: ") || strings.Contains(got.Warnings[0], "never run") {
+			t.Fatalf("%s check.json: warnings = %q", name, got.Warnings)
+		}
+		if name == "unparsable" && !strings.Contains(got.Warnings[0], imagecheck.CheckKey(appSlug, "web")) {
+			t.Fatalf("the warning doesn't name the object: %q", got.Warnings)
+		}
+		human, _, _ := execute(t, "ls")
+		if !strings.HasPrefix(human, got.Warnings[0]+"\n") {
+			t.Fatalf("%s: human ls = %q", name, human)
+		}
 	}
 }
