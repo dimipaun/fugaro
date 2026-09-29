@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,9 +20,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // projectEnvVars name a project to the Google tools. One naming another
@@ -53,13 +57,17 @@ type initOptions struct {
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
+
+	// --repo: onboard the repository of a checkout.
+	repo, noBuild, allowJobDelete bool
+	githubAppID                   string
 }
 
 func newInitCmd() *cobra.Command {
 	o := &initOptions{}
 	cmd := &cobra.Command{
-		Use:   "init",
-		Short: "Stand up or adopt the installation's cloud resources through Terraform",
+		Use:   "init [--repo [PATH]]",
+		Short: "Stand up or adopt the installation's, or a repository's, cloud resources through Terraform",
 		Long: `init plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, adopting what the bootstrap already made, and applies the plan it
@@ -73,12 +81,29 @@ refused unless --allow-delete names the address.
 
 --forget is the rollback: it turns log isolation and registry cleanup off
 with a guarded apply, then removes every address from Terraform's state,
-destroying nothing else.`,
-		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+destroying nothing else.
+
+init --repo [PATH] onboards the repository of the checkout at PATH (default:
+the current directory), whose fugaro.yaml says what it needs, into the
+installation fugaro init applied. It adopts what the bootstrap made for it
+(checking each resource's marks and live grants first), creates the rest,
+and deploys each workflow's job once its secrets are stored and its image is
+built. It offers each workflow's first image build (billable, confirmed
+separately), then deploys the built image and unpauses the daily check. It
+prints the fugaro secrets set commands still needed, and adds the
+repository to the local config. --forget removes the repository from
+Terraform's state, destroying nothing.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
+			if o.repo {
+				return runInitRepo(cmd, o, args)
+			}
+			if len(args) > 0 {
+				return userErr("a checkout path is for --repo; fugaro init for the installation takes no argument")
+			}
 			return runInit(cmd, o)
 		},
 	}
@@ -103,6 +128,10 @@ destroying nothing else.`,
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
+	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
+	f.StringVar(&o.githubAppID, "github-app-id", "", "with --repo: the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config)")
+	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
+	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
 	return cmd
 }
 
@@ -119,6 +148,7 @@ type initRun struct {
 // initResult is what --json prints.
 type initResult struct {
 	Project   string                     `json:"project"`
+	Repo      string                     `json:"repo,omitempty"`
 	Workdir   string                     `json:"workdir,omitempty"`
 	Changes   *infra.PlanCounts          `json:"changes,omitempty"`
 	Applied   bool                       `json:"applied"`
@@ -128,14 +158,21 @@ type initResult struct {
 	Forgotten bool                       `json:"forgotten,omitempty"`
 	Deleted   []string                   `json:"deleted,omitempty"`
 	Undelete  string                     `json:"undelete,omitempty"`
+	Builds    []string                   `json:"builds,omitempty"`
+	Missing   []string                   `json:"missing,omitempty"`
 	Warnings  []string                   `json:"warnings,omitempty"`
 }
 
-func runInit(cmd *cobra.Command, o *initOptions) error {
+func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	r := &initRun{cmd: cmd, o: o, w: cmd.OutOrStdout(), in: bufio.NewReader(cmd.InOrStdin())}
 	if o.asJSON {
 		r.w = cmd.ErrOrStderr()
 	}
+	return r
+}
+
+func runInit(cmd *cobra.Command, o *initOptions) error {
+	r := newInitRun(cmd, o)
 	if err := o.check(); err != nil {
 		return err
 	}
@@ -165,20 +202,9 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	}
 
 	// 1. The environment.
-	for _, k := range projectEnvVars {
-		if v := os.Getenv(k); v != "" && v != lc.Project {
-			return userErr("%s is set to %s, not the installation's project %s; unset it (or set it to %s) and rerun", k, v, lc.Project, lc.Project)
-		}
-	}
-	if _, set := os.LookupEnv(impersonateEnv); set {
-		return userErr("%s is set; fugaro init runs Terraform as your own credentials only, so unset it and rerun", impersonateEnv)
-	}
-	bin, err := exec.LookPath("terraform")
+	bin, err := r.checkEnv(lc)
 	if err != nil {
-		return userErr("fugaro init needs terraform (>= 1.7, < 2) on PATH: %v", err)
-	}
-	for _, w := range lc.Warnings() {
-		r.warn(w)
+		return err
 	}
 
 	// 2. The workdir, and terraform in it.
@@ -186,36 +212,16 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	wd, err := infra.PrepareWorkdir(dir, "installation")
+	wd, t, err := r.terraform(bin, dir, "installation")
 	if err != nil {
-		return userErr("the Terraform workdir: %v", err)
+		return err
 	}
 	r.res.Workdir = wd.Dir
-	cache, err := infra.PluginCache(os.Getenv)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	env, err := tf.Env(os.Environ(), wd.Dir, cache)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	t, err := tf.New(bin, wd.Root, env)
-	if err != nil {
-		var ee *tf.ExitError
-		if errors.As(err, &ee) {
-			return remote(err)
-		}
-		return userErr("%v", err)
-	}
-	t.Out = cmd.ErrOrStderr()
 
 	ctx := cmd.Context()
-	c, err := infra.NewClients(ctx, gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
-		Run: lc.Endpoints.Run, SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}},
-		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
-			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager})
+	c, err := newInitClients(ctx, lc)
 	if err != nil {
-		return remote(err)
+		return err
 	}
 
 	switch {
@@ -232,8 +238,76 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	return r.printResult()
 }
 
+// checkEnv refuses an environment that would point Terraform or the
+// Google tools elsewhere, and finds terraform. It prints the local
+// config's warnings once it passes.
+func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
+	for _, k := range projectEnvVars {
+		if v := os.Getenv(k); v != "" && v != lc.Project {
+			return "", userErr("%s is set to %s, not the installation's project %s; unset it (or set it to %s) and rerun", k, v, lc.Project, lc.Project)
+		}
+	}
+	if _, set := os.LookupEnv(impersonateEnv); set {
+		return "", userErr("%s is set; fugaro init runs Terraform as your own credentials only, so unset it and rerun", impersonateEnv)
+	}
+	bin, err := exec.LookPath("terraform")
+	if err != nil {
+		return "", userErr("fugaro init needs terraform (>= 1.7, < 2) on PATH: %v", err)
+	}
+	for _, w := range lc.Warnings() {
+		r.warn(w)
+	}
+	return bin, nil
+}
+
+// terraform prepares the workdir dir for root and a terraform that runs
+// there, with the allowlisted environment.
+func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, error) {
+	wd, err := infra.PrepareWorkdir(dir, root)
+	if err != nil {
+		return nil, nil, userErr("the Terraform workdir: %v", err)
+	}
+	cache, err := infra.PluginCache(os.Getenv)
+	if err != nil {
+		return nil, nil, userErr("%v", err)
+	}
+	env, err := tf.Env(os.Environ(), wd.Dir, cache)
+	if err != nil {
+		return nil, nil, userErr("%v", err)
+	}
+	t, err := tf.New(bin, wd.Root, env)
+	if err != nil {
+		var ee *tf.ExitError
+		if errors.As(err, &ee) {
+			return nil, nil, remote(err)
+		}
+		return nil, nil, userErr("%v", err)
+	}
+	t.Out = r.cmd.ErrOrStderr()
+	return wd, t, nil
+}
+
+// gcpOptions are the Google API options of lc's project and endpoints.
+func gcpOptions(lc *localcfg.Config) gcp.Options {
+	return gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
+		Run: lc.Endpoints.Run, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
+}
+
+func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
+	c, err := infra.NewClients(ctx, gcpOptions(lc),
+		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
+			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager})
+	if err != nil {
+		return nil, remote(err)
+	}
+	return c, nil
+}
+
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
+	if o.githubAppID != "" || o.noBuild || o.allowJobDelete {
+		return userErr("--github-app-id, --no-build and --allow-job-delete are for fugaro init --repo")
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget} {
 		if b {
@@ -624,6 +698,13 @@ func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, 
 		}
 		next.SchedulerRegion = sr
 	}
+	return r.writeLocalConfig(&next, path, old, confirmed)
+}
+
+// writeLocalConfig writes next to path, showing the diff first and backing
+// up the file it replaces. A diff is confirmed by an apply's confirmation
+// (confirmed), else it asks on its own. An unchanged file isn't written.
+func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byte, confirmed bool) error {
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -856,4 +937,471 @@ func (r *initRun) printResult() error {
 	enc := json.NewEncoder(r.cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
 	return enc.Encode(r.res)
+}
+
+// checkRepo refuses flag combinations that mean nothing for --repo.
+func (o *initOptions) checkRepo() error {
+	n := 0
+	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
+		if b {
+			n++
+		}
+	}
+	if n > 1 {
+		return userErr("--plan-only, --print-vars and --forget exclude one another")
+	}
+	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild) {
+		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
+	}
+	installationOnly := map[string]bool{
+		"--config-only": o.configOnly, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
+		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
+		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--no-log-isolation": o.noLogIsolation,
+		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
+	}
+	var set []string
+	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
+		if installationOnly[f] {
+			set = append(set, f)
+		}
+	}
+	if len(set) > 0 {
+		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// runInitRepo onboards the repository of a checkout: its resources are
+// adopted or created, its first images built and its jobs deployed, each
+// step confirmed; then the local config records it.
+func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
+	r := newInitRun(cmd, o)
+	if err := o.checkRepo(); err != nil {
+		return err
+	}
+	if !o.printVars {
+		if err := refuseHTTP2Debug(os.Getenv); err != nil {
+			return err
+		}
+	}
+	ctx := cmd.Context()
+
+	// 1. The checkout, its fugaro.yaml, and the local config.
+	dir := "."
+	if len(args) > 0 {
+		dir = args[0]
+	}
+	root, cfg, err := loadCheckoutConfigAt(ctx, dir)
+	if err != nil {
+		return err
+	}
+	repo, err := checkoutRepo(ctx, root, "")
+	if err != nil {
+		return err
+	}
+	repoURL, err := checkoutURL(ctx, root)
+	if err != nil {
+		return err
+	}
+	lc, path, old, err := loadRepoConfig(o)
+	if err != nil {
+		return err
+	}
+	r.project, r.res.Project, r.res.Repo = lc.Project, lc.Project, repo
+	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL, GitHubAppID: o.githubAppID}
+	var spec infra.RepoSpec
+	if !o.forget {
+		// Every name, before any cloud call: a spec that can't be
+		// computed (a GitHub repository without its App ID) stops here.
+		if spec, err = infra.Repo(in); err != nil {
+			return initErr(err)
+		}
+	}
+	rootOpts := infra.RepoRootOptions{AllowJobDelete: o.allowJobDelete}
+	if o.printVars {
+		data, err := infra.RepoRootVars(spec, rootOpts)
+		if err != nil {
+			return err
+		}
+		_, err = cmd.OutOrStdout().Write(data)
+		return err
+	}
+
+	bin, err := r.checkEnv(lc)
+	if err != nil {
+		return err
+	}
+	inst, err := installOptions(o, lc)
+	if err != nil {
+		return err
+	}
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		return err
+	}
+	switch exists, err := infra.CheckStateBucket(ctx, c, lc.Project, inst.StateBucket); {
+	case err != nil:
+		return initErr(err)
+	case !exists:
+		return userErr("there is no Terraform state bucket gs://%s, so no installation: run fugaro init first", inst.StateBucket)
+	}
+	slug, err := task.Slug(cfg.Git.Provider, repo)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	rdir, err := infra.RepoWorkdir(os.Getenv, lc.Project, slug)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	wd, t, err := r.terraform(bin, rdir, "repo")
+	if err != nil {
+		return err
+	}
+	r.res.Workdir = wd.Dir
+	backend, err := wd.WriteBackend(inst.StateBucket, infra.RepoStatePrefix(slug))
+	if err != nil {
+		return userErr("%v", err)
+	}
+	if o.forget {
+		if err := r.forgetRepo(ctx, c, t, backend, repo, inst.StateBucket, slug); err != nil {
+			return err
+		}
+		return r.printResult()
+	}
+
+	// 2. The installation, and its outputs.
+	switch ok, err := infra.InstallationStateExists(ctx, c, inst.StateBucket); {
+	case err != nil:
+		return initErr(err)
+	case !ok:
+		return userErr("gs://%s holds no installation state (%s/): run fugaro init first", inst.StateBucket, infra.StatePrefixInstallation)
+	}
+	outs, err := r.installationOutputs(ctx, lc, bin, inst.StateBucket)
+	if err != nil {
+		return err
+	}
+	r.res.Outputs = &outs
+	in.Installation = outs
+	if spec, err = infra.Repo(in); err != nil {
+		return initErr(err)
+	}
+	if err := t.Init(ctx, backend); err != nil {
+		return remote(err)
+	}
+
+	// 3–5. Discover, gate, plan, guard, confirm, apply.
+	missing, err := r.planRepo(ctx, c, t, wd, spec, rootOpts, true)
+	if err != nil {
+		return err
+	}
+	versions, err := infra.SecretVersions(ctx, c, spec)
+	if err != nil {
+		return initErr(err)
+	}
+	if !o.planOnly && !o.noBuild {
+		// 6. The first image builds, then the plan that deploys them.
+		names, err := infra.NeedsBuild(ctx, c, spec, versions)
+		if err != nil {
+			return initErr(err)
+		}
+		built, err := r.buildImages(ctx, lc, cfg, spec, names)
+		if err != nil {
+			return err
+		}
+		if built > 0 {
+			if missing, err = r.planRepo(ctx, c, t, wd, spec, rootOpts, false); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 7. What is still missing.
+	r.printMissing(spec, versions, missing)
+	if o.planOnly {
+		return r.printResult()
+	}
+
+	// 8. The local config.
+	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
+		return err
+	}
+	return r.printResult()
+}
+
+// loadRepoConfig loads the local config fugaro init wrote, with --project
+// and --region applied.
+func loadRepoConfig(o *initOptions) (lc *localcfg.Config, path string, old []byte, err error) {
+	path = o.cloud.config
+	if path == "" {
+		if path, err = localcfg.Path(os.Getenv); err != nil {
+			return nil, "", nil, userErr("%v", err)
+		}
+	}
+	old, err = os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		return nil, "", nil, userErr("there is no local config at %s: run fugaro init first, which sets up the installation and writes it", path)
+	case err != nil:
+		return nil, "", nil, userErr("reading the local config: %v", err)
+	}
+	if lc, err = localcfg.Load(path); err != nil {
+		return nil, "", nil, userErr("%v", err)
+	}
+	if err := lc.Override(o.cloud.project, o.cloud.region); err != nil {
+		return nil, "", nil, userErr("--project/--region: %v", err)
+	}
+	return lc, path, old, nil
+}
+
+// checkoutURL is the checkout's origin as an https URL without
+// credentials, which the builds and the daily check clone.
+func checkoutURL(ctx context.Context, root string) (string, error) {
+	c := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
+	c.WaitDelay = 5 * time.Second
+	out, err := c.Output()
+	if err != nil {
+		return "", userErr("no origin remote in the checkout %s", root)
+	}
+	u := image.HTTPSOrigin(strings.TrimSpace(string(out)))
+	if !strings.HasPrefix(u, "https://") {
+		return "", userErr("origin %s has no https form to clone from", gcp.RedactURL(u))
+	}
+	return u, nil
+}
+
+// installationOutputs reads the installation root's outputs from its
+// state, which is the repository root's input.
+func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, bin, stateBucket string) (infra.InstallationOutputs, error) {
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.Project)
+	if err != nil {
+		return infra.InstallationOutputs{}, userErr("%v", err)
+	}
+	wd, t, err := r.terraform(bin, dir, "installation")
+	if err != nil {
+		return infra.InstallationOutputs{}, err
+	}
+	backend, err := wd.WriteBackend(stateBucket, infra.StatePrefixInstallation)
+	if err != nil {
+		return infra.InstallationOutputs{}, userErr("%v", err)
+	}
+	if err := t.Init(ctx, backend); err != nil {
+		return infra.InstallationOutputs{}, remote(err)
+	}
+	raw, err := t.Output(ctx)
+	if err != nil {
+		return infra.InstallationOutputs{}, remote(err)
+	}
+	outs, err := infra.DecodeOutputs(raw)
+	switch {
+	case errors.Is(err, infra.ErrNoOutputs):
+		return infra.InstallationOutputs{}, userErr("the installation's state in gs://%s has no outputs: run fugaro init first", stateBucket)
+	case err != nil:
+		return infra.InstallationOutputs{}, remote(err)
+	}
+	return outs, nil
+}
+
+// planRepo is one discover, gate, plan, guard, confirm and apply of the
+// repository root. It returns what the readiness gates found missing.
+// first says whether this is the run's first plan, whose notes are shown.
+func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, spec infra.RepoSpec, opts infra.RepoRootOptions, first bool) ([]infra.Missing, error) {
+	im, ex, err := infra.DiscoverRepo(ctx, c, spec)
+	if err != nil {
+		return nil, initErr(err)
+	}
+	if first {
+		for _, n := range im.Notes {
+			r.warn(n)
+		}
+	}
+	ready, missing, err := infra.Readiness(ctx, c, spec, ex)
+	if err != nil {
+		return nil, initErr(err)
+	}
+	vars, err := infra.RepoRootVars(ready, opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := wd.WriteVars(vars); err != nil {
+		return nil, userErr("writing the tfvars: %v", err)
+	}
+	if err := infra.WriteImports(wd.Root, im); err != nil {
+		return nil, userErr("writing the imports: %v", err)
+	}
+	changed, err := t.Plan(ctx, infra.PlanFile)
+	if err != nil {
+		return nil, remote(err)
+	}
+	if !changed {
+		r.res.Changes = &infra.PlanCounts{}
+		fmt.Fprintf(r.w, "No changes: %s matches the plan.\n", spec.Name)
+		return missing, nil
+	}
+	plan, err := t.Show(ctx, infra.PlanFile)
+	if err != nil {
+		return nil, remote(err)
+	}
+	if opts.AllowJobDelete {
+		fmt.Fprintln(r.w, "⚠ --allow-job-delete: this plan lowers the deletion protection of "+spec.Name+"'s jobs, for offboarding")
+	}
+	fmt.Fprint(r.w, tf.Summary(plan))
+	fmt.Fprintln(r.w, im.Bindings.String())
+	if err := guard(plan, r.o.allowDelete); err != nil {
+		return nil, err
+	}
+	counts := infra.CountPlan(plan)
+	r.res.Changes = &counts
+	if r.o.planOnly {
+		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
+		return missing, nil
+	}
+	what := "applies " + counts.String() + " to " + spec.Name
+	if !first {
+		what += ", deploying the images just built"
+	}
+	if err := r.confirm(what, "nothing was applied"); err != nil {
+		return nil, err
+	}
+	if err := t.Apply(ctx, infra.PlanFile); err != nil {
+		return nil, remote(err)
+	}
+	r.res.Applied = true
+	return missing, nil
+}
+
+// buildImages offers the first image build of each workflow in names, and
+// submits and waits for each one confirmed. It returns how many were built.
+func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, names []string) (int, error) {
+	if len(names) == 0 {
+		return 0, nil
+	}
+	b, err := gcp.NewBuilder(ctx, gcpOptions(lc), lc.BuildRegion())
+	if err != nil {
+		return 0, remote(err)
+	}
+	built := 0
+	for _, name := range names {
+		base := lc.BaseImage
+		if base == "" {
+			if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
+				return built, userErr("%v", err)
+			}
+		}
+		ok, err := r.ask(fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
+			spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
+		if err != nil {
+			return built, err
+		}
+		if !ok {
+			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed, so its job waits for it: build it with fugaro image build --repo %s --workflow %s, then rerun fugaro init --repo", spec.Name, name, spec.Name, name))
+			continue
+		}
+		bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, "gs://"+spec.Installation.RunsBucket)
+		if err != nil {
+			return built, err
+		}
+		res, err := b.Submit(ctx, bs)
+		switch {
+		case errors.Is(err, gcp.ErrBadBuildSpec):
+			return built, userErr("%v", err)
+		case err != nil:
+			return built, remote(err)
+		}
+		fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+		done, err := b.Wait(ctx, res.ID, 0)
+		if err != nil {
+			return built, remote(err)
+		}
+		fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
+		r.res.Builds = append(r.res.Builds, done.ID)
+		built++
+	}
+	return built, nil
+}
+
+// printMissing prints what the repository still needs: each secret's fugaro
+// secrets set command, as the bootstrap printed them, and each workflow's
+// other gates.
+func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing) {
+	cmds := infra.SecretCommands(spec, versions)
+	var other []string
+	for _, m := range missing {
+		// Secrets are listed as commands below.
+		if !strings.HasPrefix(m.Reason, "secret ") {
+			other = append(other, m.String())
+		}
+	}
+	if len(cmds) == 0 && len(other) == 0 {
+		return
+	}
+	fmt.Fprintf(r.w, "Still missing for %s:\n", spec.Name)
+	for _, o := range other {
+		fmt.Fprintln(r.w, "  "+o)
+	}
+	if len(cmds) > 0 {
+		fmt.Fprintln(r.w, "  Store each secret with fugaro secrets set; the value comes from stdin or a hidden prompt, never argv:")
+		for _, c := range cmds {
+			fmt.Fprintln(r.w, "    "+c)
+		}
+		fmt.Fprintln(r.w, "  Then rerun fugaro init --repo when they are stored.")
+	}
+	r.res.Missing = append(other, cmds...)
+}
+
+// writeRepoConfig adds the repository to the local config's repos, or
+// updates its entry, keeping everything else.
+func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
+	next := *lc
+	next.Repos = maps.Clone(lc.Repos)
+	if next.Repos == nil {
+		next.Repos = map[string]localcfg.Repo{}
+	}
+	key := spec.Name
+	if want, err := task.CanonicalRepo(spec.Name); err == nil {
+		for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
+			if c, err := task.CanonicalRepo(k); err == nil && c == want {
+				key = k
+				break
+			}
+		}
+	}
+	next.Repos[key] = localcfg.Repo{
+		Provider:    spec.Provider,
+		BaseBranch:  spec.BaseBranch,
+		Workflows:   slices.Sorted(maps.Keys(cfg.Workflows)),
+		GitHubAppID: spec.GitHubAppID,
+	}
+	return r.writeLocalConfig(&next, path, old, r.res.Applied)
+}
+
+// forgetRepo is the repository's rollback: every address leaves
+// Terraform's state, after a confirmation, and nothing is destroyed. The
+// empty state object goes too, so the installation's rollback no longer
+// counts the repository.
+func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, backend map[string]string, repo, stateBucket, slug string) error {
+	if err := t.Init(ctx, backend); err != nil {
+		return remote(err)
+	}
+	raw, err := t.Output(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	if len(raw) == 0 {
+		return userErr("the state in gs://%s/%s holds nothing of %s, so there is nothing to forget", stateBucket, infra.RepoStatePrefix(slug), repo)
+	}
+	if err := r.confirm(fmt.Sprintf("removes every address of %s from Terraform's state (terraform state rm module.repo), then its state object under gs://%s/%s/ (kept as a noncurrent version); it destroys nothing",
+		repo, stateBucket, infra.RepoStatePrefix(slug)), "the state still holds the repository"); err != nil {
+		return err
+	}
+	if err := t.StateRm(ctx, "module.repo"); err != nil {
+		return remote(err)
+	}
+	deleted, err := infra.ForgetRepoState(ctx, c, stateBucket, slug)
+	if err != nil {
+		return remote(err)
+	}
+	r.res.Forgotten = true
+	r.res.Deleted = deleted
+	fmt.Fprintf(r.w, "Terraform no longer manages %s; nothing was destroyed. Its jobs, accounts, secrets and grants stay as they are.\n", repo)
+	return nil
 }

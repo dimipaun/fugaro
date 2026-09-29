@@ -463,8 +463,21 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 
 // loadCheckoutConfig is loadCheckout without selecting a workflow.
 func loadCheckoutConfig(ctx context.Context) (root string, cfg *config.Config, err error) {
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	return loadCheckoutConfigAt(ctx, "")
+}
+
+// loadCheckoutConfigAt is loadCheckoutConfig for the checkout holding dir
+// (empty: the current directory).
+func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *config.Config, err error) {
+	args := []string{"rev-parse", "--show-toplevel"}
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
+		if dir != "" {
+			return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+		}
 		return "", nil, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
 	root = strings.TrimSpace(string(out))
