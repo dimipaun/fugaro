@@ -38,7 +38,7 @@ These are read-only, and yours to run:
 - `gcloud auth list` shows your account, and `gcloud auth application-default login` has been done: `fugaro` uses Application Default Credentials.
 - `gcloud auth application-default set-quota-project <project>` has been run, so your ADC carries a quota project.
 - `gcloud billing projects describe <project>` shows `billingEnabled: true`, and a billing budget with an alert exists for the project.
-- Each repository's Bitbucket repository access token (git-providers.md) is in a file of mode 600 outside any checkout.
+- Each repository's Bitbucket repository access token (git-providers.md) is in a file of mode 600 outside any checkout. Name it when you create it, for example `Fugaro`: that name is shown as the author of the pull requests and comments Fugaro creates, and it can't be changed later.
 
 ## The steps
 
