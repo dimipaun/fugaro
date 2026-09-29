@@ -122,7 +122,7 @@ Terraform's state, destroying nothing.`,
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")
-	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (with --repo: ungated, no discovery or readiness gates)")
+	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
@@ -197,6 +197,9 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 		if err != nil {
 			return err
 		}
+		// Printed without a cloud call, so without discovery: stdout stays
+		// the tfvars alone.
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
 	}
@@ -1174,6 +1177,11 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 const printVarsUngated = "these values are ungated: no discovery or readiness check ran, so every workflow has deploy_job = true (and so does the check), " +
 	"its job uses the new image path (which may not be built yet), and its account gets the new display name " +
 	"(an adopted bootstrap account would be renamed); adopt a repository through fugaro init --repo, not by applying these"
+
+// printVarsUngatedInstallation is init --print-vars's warning: the values
+// it prints skip discovery.
+const printVarsUngatedInstallation = "these values are ungated: no discovery ran, so adopt_legacy_registry is false even when the bootstrap's legacy registry exists and is ours " +
+	"(a plan from these values would try to create it, and nothing imports what exists); set up the installation through fugaro init, not by applying these"
 
 // loadRepoConfig loads the local config fugaro init wrote, with --project
 // and --region applied.
