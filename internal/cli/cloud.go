@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,7 +27,11 @@ import (
 )
 
 // cloudOptions are the flags every command that talks to the cloud shares.
-type cloudOptions struct{ config, project, region string }
+type cloudOptions struct {
+	config, project, region string
+	// stderr is the command's stderr, for notes; nil is os.Stderr.
+	stderr func() io.Writer
+}
 
 // addCloudFlags registers --config, --project and --region on cmd.
 func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
@@ -34,6 +39,7 @@ func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
 	f.StringVar(&o.config, "config", "", "local config file (default $FUGARO_CONFIG, else $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml)")
 	f.StringVar(&o.project, "project", "", "GCP project (overrides the local config)")
 	f.StringVar(&o.region, "region", "", "GCP region (overrides the local config)")
+	o.stderr = cmd.ErrOrStderr
 }
 
 // cloudEnv is what a cloud command works against: the local config, the
@@ -141,6 +147,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	}
 	if err := lc.Override(o.project, o.region); err != nil {
 		return nil, userErr("--project/--region: %v", err)
+	}
+	// The log view lives in the config's project: with --project naming
+	// another one, reading it would show that project's logs (or be
+	// refused), so the project's own logs are read instead.
+	if view := lc.LogView; view != "" && !strings.HasPrefix(view, "projects/"+lc.Project+"/") {
+		errw := io.Writer(os.Stderr)
+		if o.stderr != nil {
+			errw = o.stderr()
+		}
+		fmt.Fprintf(errw, "fugaro: note: the local config's log_view %s is not in project %s, so logs and diagnose read %s's project-level logs\n", view, lc.Project, lc.Project)
+		lc.LogView = ""
 	}
 	opts := gcp.Options{Project: lc.Project, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
