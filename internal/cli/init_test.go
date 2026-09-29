@@ -890,10 +890,29 @@ func TestInitForgetRefusesWithRepoStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --repo --forget") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --repo --forget") || !strings.Contains(err.Error(), "*.tfstate") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "plan"))+len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
+		t.Fatalf("calls = %q", r.calls(t))
+	}
+}
+
+// A stale lock under the repositories' prefix is not state: init --repo
+// --forget deletes only *.tfstate objects, so the installation's rollback
+// counts only those too, and a leftover lock doesn't block it.
+func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	b := r.gcs.Bucket(t, initStateBucket)
+	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tflock", []byte("{}"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--forget", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ran(t, "state rm")) != 1 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
 }

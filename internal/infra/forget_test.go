@@ -61,6 +61,11 @@ func TestForgetSpec(t *testing.T) {
 	if s.LogIsolation == nil || *s.LogIsolation || s.RegistryCleanup.Enabled {
 		t.Fatalf("forget spec = %+v", s)
 	}
+	// The installation outputs dry_run, which every repository registry
+	// copies: the rollback must not turn deletion on there.
+	if !s.RegistryCleanup.DryRun {
+		t.Errorf("forget spec's registry cleanup %+v is not a dry run", s.RegistryCleanup)
+	}
 	if got := LogBucketUndelete("proj-1234"); got != "gcloud logging buckets undelete "+LogBucket+" --location=global --project proj-1234" {
 		t.Errorf("undelete = %q", got)
 	}

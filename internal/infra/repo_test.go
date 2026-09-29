@@ -157,7 +157,8 @@ func TestForgetRepoStateDeletesOnlyThatRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := slices.Sorted(slices.Values([]string{keys[2], keys[3], keys[4]})); !slices.Equal(got, want) {
+	// The lock left behind is not state, so it doesn't count.
+	if want := slices.Sorted(slices.Values([]string{keys[2], keys[3]})); !slices.Equal(got, want) {
 		t.Fatalf("left %q, want %q", got, want)
 	}
 }

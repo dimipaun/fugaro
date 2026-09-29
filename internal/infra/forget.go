@@ -29,7 +29,9 @@ const forgetViewGrants = "module.installation.google_logging_log_view_iam_member
 // isolation and no registry cleanup.
 func ForgetSpec(spec InstallationSpec) InstallationSpec {
 	spec.LogIsolation = new(false)
-	spec.RegistryCleanup = RegistryCleanup{}
+	// Off, and a dry run, as --registry-cleanup=off is: the installation
+	// outputs dry_run, which every repository registry copies.
+	spec.RegistryCleanup = RegistryCleanup{DryRun: true}
 	return spec
 }
 

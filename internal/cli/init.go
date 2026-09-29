@@ -878,7 +878,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return initErr(err)
 	}
 	if len(repos) > 0 {
-		return userErr("the state bucket still holds repository state (%s): run fugaro init --repo --forget for each repository first", strings.Join(repos, ", "))
+		return userErr("the state bucket still holds repository state (%s; only *.tfstate objects count, not locks): run fugaro init --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
 	fs := infra.ForgetSpec(spec)
 	backend, err := prepare(wd, fs, infra.Imports{})
