@@ -10,7 +10,8 @@ import (
 
 // sensitive names, per resource type, the attribute locations whose in-place
 // update the summary lists first: they change who a job runs as or what it
-// runs, or what gets deleted, or whether something billable starts on its
+// runs, or what gets deleted (a lifecycle, a cleanup policy, a log
+// bucket's retention), or whether something billable starts on its
 // own. A location is a dotted path without list indexes. A changed path
 // matches when it lies under a location, or above one (a whole block that
 // changes, or becomes unknown, holds the location).
@@ -24,6 +25,8 @@ var sensitive = map[string][]string{
 	"google_storage_bucket":               {"lifecycle_rule"},
 	"google_artifact_registry_repository": {"cleanup_policies", "cleanup_policy_dry_run"},
 	"google_cloud_scheduler_job":          {"paused"},
+	// Lowering a log bucket's retention purges the older entries.
+	"google_logging_project_bucket_config": {"retention_days"},
 }
 
 // singleBlocks names, per resource type, the nested blocks that hold at most

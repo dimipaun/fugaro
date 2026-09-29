@@ -143,7 +143,7 @@ func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
 	f.iam.AddServiceAccount(inst.Project, SchedulerServiceAccountID+"@"+inst.Project+".iam.gserviceaccount.com", "Fugaro scheduler")
-	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE")
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
 }
 
 func sandboxSpec(t *testing.T) RepoSpec {
@@ -420,10 +420,6 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 	if got := importMap(im); !maps.Equal(got, want) {
 		t.Errorf("imports:\n got %v\nwant %v", got, want)
 	}
-	// The log bucket has no labels: it is ours by its name, which says so.
-	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, "log bucket "+LogBucket) }) {
-		t.Errorf("notes = %q", im.Notes)
-	}
 
 	// With log isolation off nothing plans the log bucket, so it isn't read.
 	off := inst
@@ -467,14 +463,40 @@ func TestDiscoverRefusesForeignSingletons(t *testing.T) {
 	_, err = DiscoverInstallation(ctx, f.c, inst)
 	foreign(t, err, "service account fugaro-scheduler@proj-1234.iam.gserviceaccount.com", `"Cron"`, `"Fugaro scheduler"`)
 
-	// A log bucket pending deletion can't be imported or created: the
+	// Our log bucket pending deletion can't be imported or created: the
 	// retry needs the undelete first, which the refusal names.
 	f = newCloud(t)
-	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED")
+	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
 	_, err = DiscoverInstallation(ctx, f.c, inst)
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), LogBucketUndelete("proj-1234")) {
 		t.Fatalf("a log bucket pending deletion: %v", err)
+	}
+
+	// A log bucket carries no labels, so its description is the mark: one
+	// without it is someone else's, whose retention the plan would cut and
+	// a rollback would delete. Pending deletion or not, it is refused, and
+	// the refusal says how to mark it or keep out of its way, never to
+	// undelete it.
+	for _, state := range []string{"ACTIVE", "DELETE_REQUESTED"} {
+		for _, desc := range []string{"", "Team logs, kept a year"} {
+			f = newCloud(t)
+			f.logs.AddBucket("proj-1234", "global", LogBucket, state, desc)
+			im, err := DiscoverInstallation(ctx, f.c, inst)
+			if !errors.As(err, &ue) || len(im.List) != 0 {
+				t.Fatalf("%s log bucket with description %q: imports %v, err %v", state, desc, im.List, err)
+			}
+			msg := err.Error()
+			for _, want := range []string{"log bucket projects/proj-1234/locations/global/buckets/" + LogBucket, strconv.Quote(desc), strconv.Quote(LogBucketDescription),
+				"gcloud logging buckets update " + LogBucket + " --location=global --project proj-1234 --description=", "--no-log-isolation"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("%s log bucket with description %q: the refusal lacks %q:\n%s", state, desc, want, msg)
+				}
+			}
+			if strings.Contains(msg, "undelete") {
+				t.Errorf("%s log bucket with description %q: the refusal suggests an undelete:\n%s", state, desc, msg)
+			}
+		}
 	}
 }
 

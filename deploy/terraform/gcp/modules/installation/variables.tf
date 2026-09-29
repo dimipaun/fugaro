@@ -84,6 +84,16 @@ variable "names" {
   }
 }
 
+variable "log_bucket_description" {
+  description = "The log bucket's description, which is its ownership mark: a log bucket carries no labels, so fugaro init adopts an existing one only when it carries this description."
+  type        = string
+
+  validation {
+    condition     = length(trimspace(var.log_bucket_description)) > 0
+    error_message = "log_bucket_description must not be empty: it is the log bucket's ownership mark."
+  }
+}
+
 variable "bucket_lifecycle" {
   description = "The runs bucket's lifecycle, in days: the same three rules the bootstrap set."
   type = object({

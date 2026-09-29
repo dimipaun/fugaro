@@ -102,6 +102,20 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 	}
 }
 
+// The installation root passes each of its variables to the module
+// unchanged, so a value the tfvars carry is never dropped on the way.
+func TestInstallationRootPassesEveryVariable(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/roots/installation/main.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for v := range rootVariables(t) {
+		if !regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b) {
+			t.Errorf("the installation root doesn't pass var.%s to the module", v)
+		}
+	}
+}
+
 // log_isolation is left to the module's default (on) unless it is turned
 // off, which only --no-log-isolation and the rollback do.
 func TestInstallationLogIsolation(t *testing.T) {

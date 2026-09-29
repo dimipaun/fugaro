@@ -19,6 +19,8 @@ resource "google_logging_project_bucket_config" "fugaro" {
   location       = "global"
   bucket_id      = var.names.log.bucket
   retention_days = 30
+  # The ownership mark discovery checks before adopting the bucket.
+  description = var.log_bucket_description
 
   depends_on = [google_project_service.this]
 }

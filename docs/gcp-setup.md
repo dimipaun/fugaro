@@ -198,7 +198,7 @@ At any point before `fugaro-build` is retired:
    - the runs bucket and the registries
    - the three custom roles, matched by title (a role with another title is refused; a deleted one is not imported, and the plan's create restores it)
    - `fugaro-scheduler`, matched by its display name
-   - the log bucket, while log isolation is on. Log buckets carry no labels, so it is adopted by its name alone, and the summary notes that. A bucket still pending deletion is refused (exit 1) with the `gcloud logging buckets undelete` command to run first.
+   - the log bucket, while log isolation is on. Log buckets carry no labels, so its description is the mark: a `fugaro` log bucket whose description isn't Fugaro's is refused (exit 1), with the `gcloud logging buckets update` command that marks it if it is Fugaro's, or `--no-log-isolation` if it isn't (a log bucket can't be renamed). Ours still pending deletion is refused (exit 1) with the `gcloud logging buckets undelete` command to run first. A change of its retention is listed under "⚠ Review these first".
    - each repository's accounts, secrets and jobs, and its Scheduler check job, which must target that repository's check job and run as `fugaro-scheduler` (anything else is refused)
 
    The `_Default` exclusion and the sink aren't imported: the rollback's apply deleted them, so the plan creates them again. **Not** the alert's notification channel and policy, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying (`gcloud alpha monitoring policies delete`, `gcloud alpha monitoring channels delete`, `gcloud billing budgets delete`, each confirmed), or accept the duplicates.

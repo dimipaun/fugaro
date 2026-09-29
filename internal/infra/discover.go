@@ -381,15 +381,20 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	case err != nil:
 		return fmt.Errorf("reading log bucket %s: %w", name, err)
 	}
+	// A log bucket carries no labels, so its description is the mark. One
+	// without it is someone else's: the plan would cut its retention, and a
+	// rollback would delete it. It is never undeleted on our behalf either.
+	if b.Description != spec.LogBucketDescription {
+		d.refuse(fmt.Errorf("log bucket %s exists but is not this installation's: its description is %s, not %s. fugaro refuses to adopt it, since the plan would set its retention and a rollback would delete it. If it is Fugaro's, mark it (gcloud logging buckets update %s --location=global --project %s --description=%s) and rerun fugaro init; if it isn't, a log bucket can't be renamed, so leave it and run fugaro init --no-log-isolation, which keeps Fugaro's job logs in _Default",
+			name, strconv.Quote(b.Description), strconv.Quote(spec.LogBucketDescription), spec.Names.Log.Bucket, d.project, shellQuote(spec.LogBucketDescription)))
+		return nil
+	}
 	if b.LifecycleState != "ACTIVE" {
 		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro init",
 			name, b.LifecycleState, LogBucketUndelete(d.project)))
 		return nil
 	}
-	// A log bucket carries no labels: its name in this project is the only
-	// mark.
 	d.add(importLogBucket, spec.Region, "", spec.Names.Log.Bucket)
-	d.im.Notes = append(d.im.Notes, fmt.Sprintf("log bucket %s exists and is adopted by its name alone (log buckets carry no labels)", spec.Names.Log.Bucket))
 	return nil
 }
 
@@ -725,3 +730,6 @@ func (d *discovery) noteExtraAccessors(spec RepoSpec, secretPolicies map[string]
 		}
 	}
 }
+
+// shellQuote quotes s for a POSIX shell, for a command a message prints.
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

@@ -36,6 +36,10 @@ variable "names" {
   })
 }
 
+variable "log_bucket_description" {
+  type = string
+}
+
 variable "bucket_lifecycle" {
   type = object({
     runs_days              = optional(number, 90)

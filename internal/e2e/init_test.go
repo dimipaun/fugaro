@@ -1034,7 +1034,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 	scheduler := infra.SchedulerServiceAccountID + "@" + initRepoProject + ".iam.gserviceaccount.com"
 	r.iam.AddServiceAccount(initRepoProject, scheduler, "Fugaro scheduler")
 	// The rollback's apply deleted the log bucket: it is pending deletion.
-	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED")
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED", infra.LogBucketDescription)
 
 	// The rollback: the repository, then the installation.
 	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes"); res.code != 0 {
@@ -1059,7 +1059,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 	}
 
 	// Once undeleted, the retry imports every installation resource.
-	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE")
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
 	if res := r.fugaroInit(t, "--yes"); res.code != 0 {
 		t.Fatal(res)
 	}

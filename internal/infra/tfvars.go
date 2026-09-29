@@ -22,6 +22,10 @@ const (
 	LogView                   = "fugaro-runs"
 	LogSink                   = "fugaro-jobs"
 	LogExclusion              = "fugaro-jobs-from-default"
+	// LogBucketDescription is the log bucket's ownership mark: a log
+	// bucket carries no labels, so discovery adopts a bucket of that name
+	// only when it carries this description.
+	LogBucketDescription = "Fugaro job logs (managed by fugaro)"
 )
 
 // The runs bucket's lifecycle, in days: the rules the bootstrap set, so an
@@ -78,6 +82,8 @@ type InstallationSpec struct {
 	AlertEmail          *string           `json:"alert_email"`
 	RegistryCleanup     RegistryCleanup   `json:"registry_cleanup"`
 	AdoptLegacyRegistry bool              `json:"adopt_legacy_registry"`
+	// LogBucketDescription is the log bucket's ownership mark.
+	LogBucketDescription string `json:"log_bucket_description"`
 	// LogIsolation is nil for the module's default, which is on; only
 	// --no-log-isolation and the rollback turn it off.
 	LogIsolation *bool `json:"log_isolation,omitempty"`
@@ -142,13 +148,14 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
-		BucketLifecycle:     BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
-		EnableVertex:        o.EnableVertex || lc.UsesVertex(),
-		ManageAPIs:          !o.SkipAPIs,
-		Launchers:           members(o.Launchers, lc.Terraform.Launchers),
-		Operators:           members(o.Operators, lc.Terraform.Operators),
-		Budget:              o.Budget,
-		AdoptLegacyRegistry: o.AdoptLegacyRegistry,
+		BucketLifecycle:      BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
+		EnableVertex:         o.EnableVertex || lc.UsesVertex(),
+		ManageAPIs:           !o.SkipAPIs,
+		Launchers:            members(o.Launchers, lc.Terraform.Launchers),
+		Operators:            members(o.Operators, lc.Terraform.Operators),
+		Budget:               o.Budget,
+		AdoptLegacyRegistry:  o.AdoptLegacyRegistry,
+		LogBucketDescription: LogBucketDescription,
 	}
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
