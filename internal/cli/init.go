@@ -74,9 +74,11 @@ Terraform, adopting what the bootstrap already made, and applies the plan it
 showed once you confirm by typing the project ID (or pass --yes). It then
 writes the local config from the installation's outputs.
 
-It creates the Terraform state bucket first when it doesn't exist, and
-offers to remove project Viewers' read access to the runs bucket, each after
-its own confirmation. A plan that would delete or replace anything is
+It enables the Cloud Resource Manager API when it is disabled (init reads
+the project's number through it before Terraform can enable it), creates
+the Terraform state bucket first when it doesn't exist, and offers to remove
+project Viewers' read access to the runs bucket, each after its own
+confirmation. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
 --forget is the rollback: it turns log isolation and registry cleanup off
@@ -157,6 +159,7 @@ type initResult struct {
 	Backup    string                     `json:"backup,omitempty"`
 	Forgotten bool                       `json:"forgotten,omitempty"`
 	Deleted   []string                   `json:"deleted,omitempty"`
+	Enabled   []string                   `json:"enabled,omitempty"`
 	Undelete  string                     `json:"undelete,omitempty"`
 	Builds    []string                   `json:"builds,omitempty"`
 	Missing   []string                   `json:"missing,omitempty"`
@@ -224,6 +227,9 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	ctx := cmd.Context()
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
+		return err
+	}
+	if err := r.resourceManager(ctx, c); err != nil {
 		return err
 	}
 
@@ -300,7 +306,8 @@ func gcpOptions(lc *localcfg.Config) gcp.Options {
 func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
 	c, err := infra.NewClients(ctx, gcpOptions(lc),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
-			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler})
+			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler,
+			ServiceUsage: lc.Endpoints.ServiceUsage})
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -449,6 +456,63 @@ func (r *initRun) ask(what string) (bool, error) {
 		return false, userErr("reading the confirmation: %v", err)
 	}
 	return strings.TrimSpace(line) == r.project, nil
+}
+
+// resourceManagerRetries are the waits between reads of the project's
+// number after Cloud Resource Manager was enabled, while the enable
+// propagates: a few minutes in all. Tests replace them.
+var resourceManagerRetries = []time.Duration{5 * time.Second, 10 * time.Second, 15 * time.Second, 30 * time.Second,
+	30 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second}
+
+// resourceManager makes sure the project's number can be read, which
+// discovery and the state bucket check need before any apply. When the
+// Cloud Resource Manager API is disabled (a fresh project: Terraform would
+// enable it only in the apply), it offers to enable it through Service
+// Usage, after its own confirmation, even under --plan-only. Without a
+// terminal and without --yes it refuses with the gcloud command that does
+// it. Once enabled, it rereads the number until the enable propagates.
+func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
+	_, err := infra.ProjectNumber(ctx, c, r.project)
+	var sd *infra.ServiceDisabledError
+	if !errors.As(err, &sd) {
+		return initErr(err)
+	}
+	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + r.project
+	ok, err := r.ask("enables the Cloud Resource Manager API (" + infra.ServiceResourceManager + "), which is disabled: fugaro init reads the project's number through it before Terraform enables it (free, and nothing fugaro does disables it again)")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		why := "this step needs a confirmation: rerun at a terminal and type the project ID, or pass --yes once you have read what it does, or"
+		if stdinIsTerminal(r.cmd.InOrStdin()) {
+			why = "not confirmed (the project ID was not typed):"
+		}
+		return userErr("%s enable the Cloud Resource Manager API yourself with %s and rerun; fugaro init needs it to read the project's number. Nothing was enabled or applied",
+			why, command)
+	}
+	stderr := r.cmd.ErrOrStderr()
+	fmt.Fprintf(stderr, "enabling %s in %s...\n", infra.ServiceResourceManager, r.project)
+	if err := infra.EnableService(ctx, c, r.project, infra.ServiceResourceManager); err != nil {
+		return remote(fmt.Errorf("%w; enable it with %s and rerun", err, command))
+	}
+	r.res.Enabled = append(r.res.Enabled, infra.ServiceResourceManager)
+	fmt.Fprintf(r.w, "enabled %s in %s\n", infra.ServiceResourceManager, r.project)
+	for i, wait := range resourceManagerRetries {
+		_, err := infra.ProjectNumber(ctx, c, r.project)
+		if !errors.As(err, &sd) {
+			return initErr(err)
+		}
+		fmt.Fprintf(stderr, "waiting for the Cloud Resource Manager API to answer while the enable propagates (%d of %d, next try in %s)\n", i+1, len(resourceManagerRetries), wait)
+		select {
+		case <-ctx.Done():
+			return remote(ctx.Err())
+		case <-time.After(wait):
+		}
+	}
+	if _, err := infra.ProjectNumber(ctx, c, r.project); !errors.As(err, &sd) {
+		return initErr(err)
+	}
+	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.project))
 }
 
 // guard is tf.Guard, a refusal being exit 1 with a hint for each refused
@@ -1071,6 +1135,9 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	c, err := newInitClients(ctx, lc)
 	if err != nil {
+		return err
+	}
+	if err := r.resourceManager(ctx, c); err != nil {
 		return err
 	}
 	switch exists, err := infra.CheckStateBucket(ctx, c, lc.Project, inst.StateBucket); {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"os"
 	"os/exec"
 	"path"
@@ -84,6 +85,7 @@ type initRepoRig struct {
 	build *gcpfake.Build
 	logs  *gcpfake.Logging
 	sched *gcpfake.Scheduler
+	su    *gcpfake.ServiceUsage
 
 	builds atomic.Int32
 	runs   *blobx.Bucket // the runs bucket, on the GCS fake
@@ -102,7 +104,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		fugaro: testutil.BuildFugaro(t), dir: t.TempDir(), repo: repo,
 		gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t), crm: gcpfake.NewCRM(t),
 		run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t), build: gcpfake.NewBuild(t),
-		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t), su: gcpfake.NewServiceUsage(t),
 	}
 	r.crm.AddProject(initRepoProject, initRepoProjectNumber)
 	r.gcs.AddProject(initRepoProject, initRepoProjectNumber)
@@ -133,7 +135,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		"user: test@example.com\n" +
 		"endpoints: { run: " + r.run.URL + "/, secret_manager: " + r.sm.URL + "/, cloud_build: " + r.build.URL + "/, storage: " + r.gcs.URL +
 		"/storage/v1/, iam: " + r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL +
-		"/, logging: " + r.logs.URL + "/, cloud_scheduler: " + r.sched.URL + "/, no_auth: true }\n"
+		"/, logging: " + r.logs.URL + "/, cloud_scheduler: " + r.sched.URL + "/, service_usage: " + r.su.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -1249,5 +1251,49 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	}
 	if len(r.build.Requests()) != 0 {
 		t.Errorf("Cloud Build was called: %d request(s)", len(r.build.Requests()))
+	}
+}
+
+// init --repo on a project where Cloud Resource Manager is disabled
+// enables it once confirmed, and a disabled Cloud Scheduler hides nothing
+// to adopt: the check's Scheduler job is planned as a create.
+func TestInitRepoEnablesResourceManager(t *testing.T) {
+	r := sandboxRig(t)
+	r.bootstrap(t)
+	if r.spec.Check == nil {
+		t.Fatal("the fixture needs a check")
+	}
+	r.sched.SetJob(initRepoProject, r.spec.Check.SchedulerRegion, r.spec.Check.SchedulerJob,
+		"https://example.com/not-ours", r.spec.Installation.SchedulerServiceAccount)
+	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
+	r.su.Disable("cloudscheduler.googleapis.com", r.sched.Server)
+
+	// No terminal, no --yes: exit 1 with the command, nothing enabled.
+	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only")
+	if res.code != 1 || !strings.Contains(res.stderr, "gcloud services enable cloudresourcemanager.googleapis.com --project "+initRepoProject) {
+		t.Fatalf("want exit 1 with the gcloud command:\n%s", res)
+	}
+	if len(r.su.Enables()) != 0 || len(r.calls(t)) != 0 {
+		t.Fatalf("enables %q, terraform calls %q", r.su.Enables(), r.calls(t))
+	}
+
+	res = r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if got := r.su.Enables(); !slices.Equal(got, []string{infra.ServiceResourceManager}) {
+		t.Fatalf("enables = %q, want only Resource Manager", got)
+	}
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): enables the Cloud Resource Manager API") {
+		t.Errorf("no confirmation:\n%s", res)
+	}
+	if _, ok := r.imports(t, 0)["module.repo.google_cloud_scheduler_job.check[0]"]; ok {
+		t.Errorf("a Scheduler job was imported from a disabled API")
+	}
+
+	// A Scheduler API that refuses for want of permission still fails closed.
+	r.sched.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission denied")
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only"); res.code != 2 || !strings.Contains(res.stderr, "Cloud Scheduler job") {
+		t.Fatalf("want exit 2 on a permission 403:\n%s", res)
 	}
 }
