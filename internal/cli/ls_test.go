@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -204,4 +205,48 @@ func TestLsFlagErrors(t *testing.T) {
 			t.Errorf("%v: %v", args, err)
 		}
 	}
+}
+
+// priceOverride prices us-east5, the fixture's region, far above list.
+const priceOverride = "compute_prices:\n  us-east5: { vcpu_second_usd: 0.001, gib_second_usd: 0.0005 }\n"
+
+// seedFinishedRun seeds a launched run whose execution ran for a fixed,
+// nonzero time, so two estimates of it differ only by price.
+func seedFinishedRun(t *testing.T, f *cloudFixture, id string) {
+	t.Helper()
+	e := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(e, backend.StateRunning)
+	time.Sleep(2 * time.Millisecond)
+	f.run.SetState(e, backend.StateSucceeded)
+}
+
+// wantOverrideRatio checks that an estimate at the override price is the
+// list-price estimate scaled by the ratio of the two per-second rates of
+// the fixture job (4 vCPU, 8 GiB).
+func wantOverrideRatio(t *testing.T, list, override float64) {
+	t.Helper()
+	lp := gcp.ListPrices("us-east5")
+	want := (4*0.001 + 8*0.0005) / (4*lp.VCPUSecondUSD + 8*lp.GiBSecondUSD)
+	if list <= 0 || math.Abs(override/list-want) > 1e-6*want {
+		t.Fatalf("compute: list %g, override %g (ratio %g), want ratio %g", list, override, override/list, want)
+	}
+}
+
+func TestLsUsesPriceOverride(t *testing.T) {
+	f := newCloudFixture(t)
+	seedFinishedRun(t, f, time.Now().UTC().Format("20060102")+"-090000-aaaa")
+	compute := func() float64 {
+		out, _, err := execute(t, "ls", "--json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got lsOut
+		if err := json.Unmarshal([]byte(out), &got); err != nil || len(got.Runs) != 1 {
+			t.Fatalf("ls = %s, %v", out, err)
+		}
+		return got.Runs[0].Cost.ComputeUSD
+	}
+	list := compute()
+	f.appendConfig(t, priceOverride)
+	wantOverrideRatio(t, list, compute())
 }

@@ -45,12 +45,16 @@ type cloudEnv struct {
 	gcp    gcp.Options
 }
 
-// prices are the list prices of a region, for cost estimates of cloud runs
-// (design §10.1); "" is the region the jobs run in, after --region.
+// prices are the compute prices of a region, for cost estimates of cloud
+// runs (design §10.1): the local config's override, else the list price;
+// "" is the region the jobs run in, after --region.
 func (e *cloudEnv) prices() runview.PriceBook {
 	return func(region string) backend.Prices {
 		if region == "" {
 			region = e.lc.Region
+		}
+		if p, ok := e.lc.PriceOverride(region); ok {
+			return p
 		}
 		return gcp.ListPrices(region)
 	}

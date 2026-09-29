@@ -74,7 +74,7 @@ func TestPathAndLoad(t *testing.T) {
 	if p, _ = Path(get); p != env["FUGARO_CONFIG"] {
 		t.Fatalf("FUGARO_CONFIG Path = %q", p)
 	}
-	if _, err := Load(p); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "bootstrap") {
+	if _, err := Load(p); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "run fugaro init") {
 		t.Fatalf("missing file: %v", err)
 	}
 	if err := os.WriteFile(p, []byte(sample), 0o600); err != nil {
@@ -135,6 +135,157 @@ func TestOverrideValidates(t *testing.T) {
 		c, _ := Parse([]byte(sample))
 		if err := c.Override(tc[0], tc[1]); err == nil {
 			t.Errorf("Override(%q, %q) accepted", tc[0], tc[1])
+		}
+	}
+}
+
+// A price override for a region replaces the list price there, and says so;
+// other regions keep the list price.
+func TestPricesOverride(t *testing.T) {
+	c, err := Parse([]byte(sample + "compute_prices:\n  us-east5: { vcpu_second_usd: 0.00001, gib_second_usd: 0.000001 }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := c.PriceOverride("us-east5")
+	if !ok || got.VCPUSecondUSD != 0.00001 || got.GiBSecondUSD != 0.000001 || got.Source != "local override" {
+		t.Fatalf("us-east5 = %+v, %v", got, ok)
+	}
+	if got, ok := c.PriceOverride("us-central1"); ok {
+		t.Fatalf("us-central1 = %+v, want no override (the list price)", got)
+	}
+}
+
+func TestPricesValidation(t *testing.T) {
+	ok := "0.00001"
+	for name, tc := range map[string]struct{ vcpu, gib, region, path string }{
+		"zero":     {"0", ok, "us-east5", "compute_prices.us-east5.vcpu_second_usd"},
+		"negative": {ok, "-0.00001", "us-east5", "compute_prices.us-east5.gib_second_usd"},
+		"nan":      {".nan", ok, "us-east5", "compute_prices.us-east5.vcpu_second_usd"},
+		"infinite": {ok, ".inf", "us-east5", "compute_prices.us-east5.gib_second_usd"},
+		"too high": {"1.0", ok, "us-east5", "compute_prices.us-east5.vcpu_second_usd"},
+		"unset":    {ok, "", "us-east5", "compute_prices.us-east5.gib_second_usd"},
+		"region":   {ok, ok, "Mars", "compute_prices: \"Mars\""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			entry := "vcpu_second_usd: " + tc.vcpu
+			if tc.gib != "" {
+				entry += ", gib_second_usd: " + tc.gib
+			}
+			_, err := Parse([]byte(sample + "compute_prices:\n  " + tc.region + ": { " + entry + " }\n"))
+			if err == nil || !strings.Contains(err.Error(), tc.path) {
+				t.Fatalf("err = %v, want one naming %s", err, tc.path)
+			}
+		})
+	}
+}
+
+// build.service_account is no longer how builds run: it still parses, so
+// an older config keeps working, but it is reported.
+func TestBuildServiceAccountDeprecated(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil || len(c.Warnings()) != 0 {
+		t.Fatalf("plain config: warnings %v, err %v", c.Warnings(), err)
+	}
+	c, err = Parse([]byte(sample + "build: { service_account: fugaro-build@my-project.iam.gserviceaccount.com }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := c.Warnings(); len(w) != 1 || !strings.Contains(w[0], "build.service_account") || !strings.Contains(w[0], "deprecated") {
+		t.Fatalf("warnings = %v", w)
+	}
+}
+
+func TestGitHubAppIDValidation(t *testing.T) {
+	for _, id := range []string{"1", "123456", "12345678901234567890"} {
+		c, err := Parse([]byte(sample + "  acme/api: { provider: github, github_app_id: \"" + id + "\", workflows: [web] }\n"))
+		if err != nil || c.Repos["acme/api"].GitHubAppID != id {
+			t.Errorf("%s: %+v, %v", id, c, err)
+		}
+	}
+	for _, id := range []string{"", "abc", "12 3", "-1", "123456789012345678901", "0x1f"} {
+		_, err := Parse([]byte(sample + "  acme/api: { provider: github, github_app_id: \"" + id + "\", workflows: [web] }\n"))
+		if id == "" {
+			if err != nil {
+				t.Errorf("empty (unset) refused: %v", err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), "repos.acme/api: github_app_id") {
+			t.Errorf("%q: err = %v", id, err)
+		}
+	}
+}
+
+func TestRegistryHostValidation(t *testing.T) {
+	c, err := Parse([]byte(sample + "registry_host: us-central1-docker.pkg.dev/my-project\n"))
+	if err != nil || c.RegistryHost != "us-central1-docker.pkg.dev/my-project" {
+		t.Fatalf("good host: %+v, %v", c, err)
+	}
+	for name, host := range map[string]string{
+		"other project": "us-central1-docker.pkg.dev/other-project",
+		"with registry": "us-central1-docker.pkg.dev/my-project/fugaro",
+		"not docker":    "us-central1-pkg.dev/my-project",
+		"no region":     "docker.pkg.dev/my-project",
+		"scheme":        "https://us-central1-docker.pkg.dev/my-project",
+	} {
+		if _, err := Parse([]byte(sample + "registry_host: " + host + "\n")); err == nil || !strings.Contains(err.Error(), "registry_host") {
+			t.Errorf("%s (%s): err = %v", name, host, err)
+		}
+	}
+}
+
+// The other fields fugaro init records: each is checked for shape.
+func TestM5FieldsValidation(t *testing.T) {
+	const good = "terraform:\n  state_bucket: fugaro-tfstate-my-project\n  alert_email: ops@example.com\n" +
+		"  launchers: [\"user:a@example.com\", \"group:devs@example.com\"]\n  operators: [\"serviceAccount:ci@my-project.iam.gserviceaccount.com\", \"domain:example.com\"]\n" +
+		"log_view: projects/my-project/locations/global/buckets/fugaro/views/runs\nscheduler_region: us-east4\n"
+	c, err := Parse([]byte(sample + good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Terraform.StateBucket != "fugaro-tfstate-my-project" || c.Terraform.AlertEmail != "ops@example.com" ||
+		len(c.Terraform.Launchers) != 2 || len(c.Terraform.Operators) != 2 ||
+		c.LogView != "projects/my-project/locations/global/buckets/fugaro/views/runs" || c.SchedulerRegion != "us-east4" {
+		t.Fatalf("parsed = %+v", c)
+	}
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again, err := Parse(data); err != nil || again.Terraform.StateBucket != c.Terraform.StateBucket || again.LogView != c.LogView {
+		t.Fatalf("round trip = %+v, %v", again, err)
+	}
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"state bucket":     {"terraform: { state_bucket: Bad_Bucket }\n", "terraform.state_bucket"},
+		"alert email":      {"terraform: { alert_email: nobody }\n", "terraform.alert_email"},
+		"launcher":         {"terraform: { launchers: [\"a@example.com\"] }\n", "terraform.launchers"},
+		"operator":         {"terraform: { operators: [\"owner:a@example.com\"] }\n", "terraform.operators"},
+		"log view":         {"log_view: projects/my-project/buckets/fugaro/views/runs\n", "log_view"},
+		"log view project": {"log_view: projects/My_Project/locations/global/buckets/fugaro/views/runs\n", "log_view"},
+		"scheduler region": {"scheduler_region: us_east4\n", "scheduler_region"},
+		"unknown field":    {"terraform: { bucket: x }\n", "bucket"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(sample + tc.yaml)); err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want ~%q", err, tc.msg)
+			}
+		})
+	}
+}
+
+// An M4 config, without any of the new fields, marshals without them.
+func TestM4ConfigMarshalsWithoutM5Fields(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, field := range []string{"terraform", "compute_prices", "log_view", "scheduler_region", "registry_host", "github_app_id"} {
+		if strings.Contains(string(data), field) {
+			t.Errorf("marshalled M4 config has %s:\n%s", field, data)
 		}
 	}
 }

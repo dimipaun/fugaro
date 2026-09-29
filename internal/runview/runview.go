@@ -70,8 +70,8 @@ type Row struct {
 	Settled bool `json:"settled"`
 }
 
-// PriceBook is the compute list prices of a region; "" means the
-// caller's default region.
+// PriceBook is the compute prices of a region (a local override, else the
+// list price); "" means the caller's default region.
 type PriceBook func(region string) backend.Prices
 
 // Join builds the row for in, pricing compute with prices.
