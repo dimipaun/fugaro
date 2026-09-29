@@ -1,12 +1,21 @@
 package cli
 
 import (
+	"encoding/json"
+	"fmt"
+	"maps"
 	"os"
+	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -164,5 +173,360 @@ func TestImageBuildCloudRegistryForbidden(t *testing.T) {
 	}
 	if buildPosts(fb) != 1 {
 		t.Errorf("builds submitted = %d", buildPosts(fb))
+	}
+}
+
+// recordFlow wires the build fake's gate and record steps (and the render
+// step's cloud outputs) to the real fugaro image render, gate and record,
+// against a file bucket at the returned directory, so a simulated build
+// writes and reads records as a real one does. The build step's hook
+// stands in for the base digest the real build step writes.
+func recordFlow(t *testing.T, fb *gcpfake.Build) (bucket string) {
+	t.Helper()
+	dir := t.TempDir()
+	bucket = "file://" + dir
+	slug := mustSlug("bitbucket", "acme/app")
+	run := func(args ...string) error {
+		_, stderr, err := execute(t, args...)
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, stderr)
+		}
+		return nil
+	}
+	fb.Steps = map[string]func(string) error{
+		"render": func(ws string) error {
+			return run("image", "render", "--workflow", "app", "--cloud-outputs", ws)
+		},
+		"build": func(ws string) error {
+			return os.WriteFile(filepath.Join(ws, "base-digest"), []byte("example.com/base@sha256:"+strings.Repeat("b", 64)+"\n"), 0o644)
+		},
+		"gate": func(ws string) error {
+			return run("image", "gate", "--record", filepath.Join(ws, "record.json"), "--slug", slug, "--bucket", bucket)
+		},
+		"record": func(ws string) error {
+			return run("image", "record", "--in", filepath.Join(ws, "record.json"), "--digest-from", filepath.Join(ws, "image-digest"),
+				"--base-digest-from", filepath.Join(ws, "base-digest"), "--image", appImage(), "--base", "b:1", "--build-id", "b0001",
+				"--slug", slug, "--bucket", bucket)
+		},
+	}
+	return bucket
+}
+
+// appImage is acme/app's image in its own registry.
+func appImage() string {
+	slug := mustSlug("bitbucket", "acme/app")
+	return gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")
+}
+
+// readImageRecord reads acme/app's app record from the file bucket, or nil.
+func readImageRecord(t *testing.T, bucket string) *imagecheck.Record {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(strings.TrimPrefix(bucket, "file://"), imagecheck.RecordKey(mustSlug("bitbucket", "acme/app"), "app")))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
+// writeImageRecord puts r in the file bucket as acme/app's app record.
+func writeImageRecord(t *testing.T, bucket string, r imagecheck.Record) {
+	t.Helper()
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(strings.TrimPrefix(bucket, "file://"), imagecheck.RecordKey(mustSlug("bitbucket", "acme/app"), "app"))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// headCommit is the checkout's HEAD and its committer time.
+func headCommit(t *testing.T) (string, time.Time) {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339, testutil.Git(t, ".", "show", "-s", "--format=%cI", "HEAD"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return testutil.Git(t, ".", "rev-parse", "HEAD"), at
+}
+
+// TestUntagFailureIsOnlyAWarning: the build account may not delete tags,
+// so the candidate tag's removal fails; the build still succeeds, latest
+// is the candidate's digest, the record is written, and the log warns.
+func TestUntagFailureIsOnlyAWarning(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	fb.UntagDenied = true
+	out, stderr, err := execute(t, "image", "build", "--json", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	var res gcp.BuildResult
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(err)
+	}
+	latest := fb.Tag(appImage(), "latest")
+	if res.Status != "SUCCESS" || latest == "" || res.Digest != latest || res.Superseded {
+		t.Fatalf("result = %+v, latest %q", res, latest)
+	}
+	if fb.Tag(appImage(), "candidate-"+res.ID) != latest {
+		t.Error("the candidate tag was removed although the delete was refused")
+	}
+	rec := readImageRecord(t, bucket)
+	commit, _ := headCommit(t)
+	if rec == nil || rec.ImageDigest != latest || rec.Image != appImage() || rec.SourceCommit != commit || rec.BuildID != "b0001" ||
+		rec.BaseDigest != "sha256:"+strings.Repeat("b", 64) || rec.BaseRef != "b:1" || rec.Adopted {
+		t.Fatalf("record = %+v", rec)
+	}
+	if !slices.ContainsFunc(fb.Log(res.ID), func(l string) bool { return strings.Contains(l, "warning: could not remove candidate-"+res.ID) }) {
+		t.Errorf("log = %v", fb.Log(res.ID))
+	}
+}
+
+// TestFailedSmokeLeavesLatest: a candidate that fails its smoke test is
+// never promoted or recorded.
+func TestFailedSmokeLeavesLatest(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	old := "sha256:" + strings.Repeat("0", 63) + "a"
+	fb.SetTag(appImage(), "latest", old)
+	fb.FailStep = "smoke"
+	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if got := fb.Tag(appImage(), "latest"); got != old {
+		t.Errorf("latest = %q, want the old %q", got, old)
+	}
+	if rec := readImageRecord(t, bucket); rec != nil {
+		t.Errorf("a failed smoke wrote a record: %+v", rec)
+	}
+}
+
+// TestGateSkipsWhenRecordNewer: a record of a later commit means a newer
+// build already promoted, so this one neither retags latest nor records.
+func TestGateSkipsWhenRecordNewer(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	_, at := headCommit(t)
+	newer := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "app", SourceCommit: "f00d", SourceCommitTime: at.Add(time.Hour),
+		BuiltAt: at.Add(2 * time.Hour), ImageDigest: "sha256:" + strings.Repeat("c", 64)}
+	writeImageRecord(t, bucket, newer)
+	fb.SetTag(appImage(), "latest", newer.ImageDigest)
+	out, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if got := fb.Tag(appImage(), "latest"); got != newer.ImageDigest {
+		t.Errorf("latest = %q, want the newer build's", got)
+	}
+	for _, l := range fb.Log("b0001") {
+		if strings.Contains(l, "tags add") {
+			t.Errorf("a superseded build retagged: %s", l)
+		}
+	}
+	if rec := readImageRecord(t, bucket); rec == nil || rec.SourceCommit != "f00d" {
+		t.Errorf("record = %+v", rec)
+	}
+	if !strings.Contains(out, "newer") || !strings.Contains(out, "latest") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+// TestGateSameCommitLaterBuiltAt: for one commit, the later build wins.
+func TestGateSameCommitLaterBuiltAt(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	commit, at := headCommit(t)
+	later := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "app", SourceCommit: commit, SourceCommitTime: at,
+		BuiltAt: time.Now().Add(time.Hour).UTC(), ImageDigest: "sha256:" + strings.Repeat("d", 64)}
+	writeImageRecord(t, bucket, later)
+	if _, stderr, err := execute(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if fb.Tag(appImage(), "latest") != "" || readImageRecord(t, bucket).ImageDigest != later.ImageDigest {
+		t.Errorf("latest = %q, record = %+v", fb.Tag(appImage(), "latest"), readImageRecord(t, bucket))
+	}
+
+	// The same commit built earlier is replaced.
+	earlier := later
+	earlier.BuiltAt = at.Add(-time.Hour)
+	writeImageRecord(t, bucket, earlier)
+	if _, stderr, err := execute(t, "image", "build", "--base", "b:1"); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if rec := readImageRecord(t, bucket); rec.ImageDigest == earlier.ImageDigest || rec.ImageDigest != fb.Tag(appImage(), "latest") {
+		t.Errorf("record = %+v, latest %q", rec, fb.Tag(appImage(), "latest"))
+	}
+}
+
+// TestGatePromotesWhenRecordOlder: a record of an earlier commit is
+// replaced, and latest moves to this build's digest.
+func TestGatePromotesWhenRecordOlder(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	_, at := headCommit(t)
+	older := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "app", SourceCommit: "0ld", SourceCommitTime: at.Add(-time.Hour),
+		BuiltAt: time.Now().Add(time.Hour).UTC(), ImageDigest: "sha256:" + strings.Repeat("e", 64)}
+	writeImageRecord(t, bucket, older)
+	fb.SetTag(appImage(), "latest", older.ImageDigest)
+	out, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	latest := fb.Tag(appImage(), "latest")
+	commit, _ := headCommit(t)
+	if rec := readImageRecord(t, bucket); latest == older.ImageDigest || rec.ImageDigest != latest || rec.SourceCommit != commit {
+		t.Fatalf("latest %q, record %+v", latest, rec)
+	}
+	if !strings.Contains(out, "built "+appImage()+"@"+latest) {
+		t.Errorf("output = %q", out)
+	}
+}
+
+// TestRecordGenerationMatched: a record written between the gate's read
+// and the record step's write is never overwritten; the build fails.
+func TestRecordGenerationMatched(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	bucket := recordFlow(t, fb)
+	_, at := headCommit(t)
+	older := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "app", SourceCommit: "0ld", SourceCommitTime: at.Add(-time.Hour), BuiltAt: at}
+	writeImageRecord(t, bucket, older)
+	concurrent := older
+	concurrent.SourceCommit, concurrent.SourceCommitTime = "c0ncurrent", at.Add(time.Hour)
+	fb.Steps["promote"] = func(string) error { writeImageRecord(t, bucket, concurrent); return nil }
+	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if rec := readImageRecord(t, bucket); rec.SourceCommit != "c0ncurrent" {
+		t.Errorf("the concurrent record was overwritten: %+v", rec)
+	}
+	if !slices.ContainsFunc(fb.Log("b0001"), func(l string) bool { return strings.HasPrefix(l, "record:") && strings.Contains(l, "changed") }) {
+		t.Errorf("log = %v", fb.Log("b0001"))
+	}
+
+	// With no record at gate time, a record created meanwhile is not
+	// overwritten either.
+	fb2, _ := cloudBuildCheckout(t, false)
+	bucket = recordFlow(t, fb2)
+	fb2.Steps["promote"] = func(string) error { writeImageRecord(t, bucket, concurrent); return nil }
+	if _, _, err := execute(t, "image", "build", "--base", "b:1"); ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if rec := readImageRecord(t, bucket); rec.SourceCommit != "c0ncurrent" {
+		t.Errorf("the concurrent record was overwritten: %+v", rec)
+	}
+}
+
+// TestImageRecordNeedsGate: record refuses to write without the gate's
+// read, and does nothing when the gate found a newer record.
+func TestImageRecordNeedsGate(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	ws, bucket := t.TempDir(), "file://"+t.TempDir()
+	if _, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"image-digest": "sha256:" + strings.Repeat("1", 64) + "\n", "base-digest": "b@sha256:" + strings.Repeat("2", 64) + "\n"})
+	args := []string{"image", "record", "--in", filepath.Join(ws, "record.json"), "--digest-from", filepath.Join(ws, "image-digest"),
+		"--base-digest-from", filepath.Join(ws, "base-digest"), "--image", "img", "--base", "b:1", "--build-id", "b1", "--slug", "acme-app-0123456789abcdef", "--bucket", bucket}
+	if _, _, err := execute(t, args...); err == nil || !strings.Contains(err.Error(), "gate") {
+		t.Fatalf("record without the gate: %v", err)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"superseded": ""})
+	if _, _, err := execute(t, args...); err != nil {
+		t.Fatalf("record when superseded: %v", err)
+	}
+	if entries, _ := os.ReadDir(strings.TrimPrefix(bucket, "file://")); len(entries) != 0 {
+		t.Errorf("a superseded record step wrote %v", entries)
+	}
+	// A digest that isn't one is refused.
+	if err := os.Remove(filepath.Join(ws, "superseded")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "image", "gate", "--record", filepath.Join(ws, "record.json"), "--slug", "acme-app-0123456789abcdef", "--bucket", bucket); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, ws, map[string]string{"image-digest": "latest\n"})
+	if _, _, err := execute(t, args...); err == nil || !strings.Contains(err.Error(), "digest") {
+		t.Fatalf("record with a bad digest: %v", err)
+	}
+}
+
+// TestImageRenderCloudOutputs: the render step writes the smoke's
+// selftest spec and the record's source side next to the Dockerfile.
+func TestImageRenderCloudOutputs(t *testing.T) {
+	checkoutWith(t, npmFiles())
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	ws := t.TempDir()
+	out, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	if !strings.Contains(out, "FROM ${FUGARO_BASE}") {
+		t.Errorf("the Dockerfile is not on stdout: %q", out)
+	}
+	commit, at := headCommit(t)
+	var spec image.SelftestSpec
+	data, err := os.ReadFile(filepath.Join(ws, "selftest.json"))
+	if err != nil || json.Unmarshal(data, &spec) != nil {
+		t.Fatalf("selftest.json = %s, %v", data, err)
+	}
+	if want := (image.SelftestSpec{Base: "web-node", RepoDir: "/work/repo", Commit: commit, Origin: "https://github.com/acme/app.git",
+		CheckInit: true, CheckHardening: true, SkipVerify: true}); !reflect.DeepEqual(spec, want) {
+		t.Errorf("selftest.json = %+v\nwant %+v", spec, want)
+	}
+	data, err = os.ReadFile(filepath.Join(ws, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockID := testutil.Git(t, ".", "rev-parse", "HEAD:package-lock.json")
+	if rec.Repo != "acme/app" || rec.Workflow != "app" || rec.SourceCommit != commit || !rec.SourceCommitTime.Equal(at) || rec.BaseBranch != "main" ||
+		!maps.Equal(rec.KeyFiles, map[string]string{"package-lock.json": lockID}) || len(rec.ImageConfigHash) != 64 ||
+		rec.FugaroVersion != Version || rec.TemplateSalt != gcp.TemplateSalt(Version) || time.Since(rec.BuiltAt) > time.Minute || rec.Version != 1 ||
+		rec.Image != "" || rec.ImageDigest != "" || rec.Adopted {
+		t.Errorf("record.json = %+v", rec)
+	}
+	for name, want := range map[string]string{"source-commit": commit + "\n", "built-at": rec.BuiltAt.Format(time.RFC3339) + "\n"} {
+		if got, _ := os.ReadFile(filepath.Join(ws, name)); string(got) != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// TestImageBuildCloudNoSmoke: --no-smoke leaves out the smoke step.
+func TestImageBuildCloudNoSmoke(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	if _, _, err := execute(t, "image", "build", "--no-smoke", "--no-wait", "--base", "b:1"); err != nil {
+		t.Fatal(err)
+	}
+	steps, _ := fb.Last()["steps"].([]any)
+	for _, s := range steps {
+		if st, _ := s.(map[string]any); st["id"] == "smoke" {
+			t.Error("--no-smoke sent the smoke step")
+		}
+	}
+	if len(steps) != 9 {
+		t.Errorf("%d steps", len(steps))
+	}
+	subs, _ := fb.Last()["substitutions"].(map[string]any)
+	if subs["_BUCKET"] != "gs://unused-bucket" || subs["_SLUG"] != mustSlug("bitbucket", "acme/app") {
+		t.Errorf("substitutions = %v", subs)
 	}
 }

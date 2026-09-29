@@ -70,6 +70,10 @@ RUN rm -f /etc/sudoers.d/fugaro-build \
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
+
+# The build time, which Cloud Build passes (empty in a local build). It is
+# declared last, so a new value never invalidates the cached steps above.
+ARG FUGARO_BUILT_AT=""
 `
 
 const wantMinimal = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1d5e1c465db5f998dca4e439981029b3b81fb39ed5
@@ -110,6 +114,10 @@ RUN rm -f /etc/sudoers.d/fugaro-build \
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
+
+# The build time, which Cloud Build passes (empty in a local build). It is
+# declared last, so a new value never invalidates the cached steps above.
+ARG FUGARO_BUILT_AT=""
 `
 
 func TestRenderFull(t *testing.T) {
