@@ -817,6 +817,13 @@ func TestInitRepoPrintVarsNoCalls(t *testing.T) {
 	if dig(v, "repo", "slug") != r.spec.Slug || v["allow_job_delete"] != true {
 		t.Errorf("vars = %v", v)
 	}
+	// The values skip discovery and the readiness gates, which need cloud
+	// calls, so a team applying them itself is told what that means.
+	for _, want := range []string{"warning:", "ungated", "deploy_job", "image", "display name", "fugaro init --repo"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, res.stderr)
+		}
+	}
 	if after := r.requests(); after != before {
 		t.Errorf("--print-vars made %d cloud request(s)", after-before)
 	}
