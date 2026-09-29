@@ -174,17 +174,16 @@ variable "alert_email" {
 variable "registry_cleanup" {
   description = "Artifact Registry cleanup. dry_run only logs what would be deleted; turn it off once the audit logs show no latest or dev- version would go. It drives every repository's registry too."
   type = object({
-    enabled        = optional(bool, true)
-    dry_run        = optional(bool, true)
-    untagged_days  = optional(number, 14)
-    candidate_days = optional(number, 2)
-    keep_versions  = optional(number, 3)
+    enabled       = optional(bool, true)
+    dry_run       = optional(bool, true)
+    untagged_days = optional(number, 14)
+    keep_versions = optional(number, 3)
   })
   default  = {}
   nullable = false
 
   validation {
-    condition = alltrue([for n in [var.registry_cleanup.untagged_days, var.registry_cleanup.candidate_days, var.registry_cleanup.keep_versions] :
+    condition = alltrue([for n in [var.registry_cleanup.untagged_days, var.registry_cleanup.keep_versions] :
     n >= 1 && floor(n) == n])
     error_message = "registry_cleanup's days and keep_versions must be whole numbers of at least 1."
   }

@@ -21,6 +21,26 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/installation/outputs.tf",
 		"gcp/roots/installation/.terraform.lock.hcl",
 		"gcp/roots/installation/tests/installation.tftest.hcl",
+		"gcp/modules/repo/versions.tf",
+		"gcp/modules/repo/variables.tf",
+		"gcp/modules/repo/secrets.tf",
+		"gcp/modules/repo/registry.tf",
+		"gcp/modules/repo/build.tf",
+		"gcp/modules/repo/check.tf",
+		"gcp/modules/repo/workflows.tf",
+		"gcp/modules/repo/outputs.tf",
+		"gcp/modules/workflow/versions.tf",
+		"gcp/modules/workflow/variables.tf",
+		"gcp/modules/workflow/sa.tf",
+		"gcp/modules/workflow/job.tf",
+		"gcp/modules/workflow/outputs.tf",
+		"gcp/roots/repo/main.tf",
+		"gcp/roots/repo/variables.tf",
+		"gcp/roots/repo/outputs.tf",
+		"gcp/roots/repo/.terraform.lock.hcl",
+		"gcp/roots/repo/tests/repo.tftest.hcl",
+		"gcp/roots/repo/tests/testdata/bitbucket-oauth.tfvars.json",
+		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -38,7 +58,7 @@ func TestEmbeddedTree(t *testing.T) {
 // containers only, and values are added with fugaro secrets set.
 func TestNoSecretVersionsInTerraform(t *testing.T) {
 	walk(t, func(path string, b []byte) {
-		for _, bad := range []string{"google_secret_manager_secret_version", "secret_data"} {
+		for _, bad := range []string{"google_secret_manager_secret_version", "google_secret_manager_regional_secret_version", "secret_data"} {
 			if strings.Contains(string(b), bad) {
 				t.Errorf("%s mentions %s", path, bad)
 			}
@@ -94,7 +114,10 @@ func TestProjectServicesKeepOnDestroy(t *testing.T) {
 func TestPreventDestroy(t *testing.T) {
 	counts := map[string]int{}
 	walk(t, func(path string, b []byte) {
-		for _, typ := range []string{"google_secret_manager_secret", "google_storage_bucket", "google_artifact_registry_repository"} {
+		for _, typ := range []string{
+			"google_secret_manager_secret", "google_secret_manager_regional_secret",
+			"google_storage_bucket", "google_artifact_registry_repository",
+		} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				counts[typ]++
 				if !hasAttr(blk.body, "prevent_destroy", "true") {
@@ -103,7 +126,7 @@ func TestPreventDestroy(t *testing.T) {
 			}
 		}
 	})
-	for _, typ := range []string{"google_storage_bucket", "google_artifact_registry_repository"} {
+	for _, typ := range []string{"google_secret_manager_secret", "google_storage_bucket", "google_artifact_registry_repository"} {
 		if counts[typ] == 0 {
 			t.Errorf("no %s block found", typ)
 		}
