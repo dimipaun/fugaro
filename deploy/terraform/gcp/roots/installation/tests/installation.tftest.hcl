@@ -281,8 +281,9 @@ run "roles" {
   assert {
     condition = google_project_iam_custom_role.launcher.permissions == toset([
       "run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
+      "secretmanager.secrets.list", "secretmanager.versions.list",
     ])
-    error_message = "fugaroLauncher's permissions are wrong"
+    error_message = "fugaroLauncher's permissions are wrong: fugaro secrets ls needs the project's secret list and each secret's version list (metadata only, never a value)"
   }
   assert {
     condition     = google_project_iam_custom_role.build_submitter.permissions == toset(["cloudbuild.builds.create", "cloudbuild.builds.get"])
@@ -464,8 +465,8 @@ run "alert_set" {
   }
   assert {
     condition = anytrue([for c in google_monitoring_alert_policy.image[0].conditions :
-    one(c.condition_matched_log).filter == "jsonPayload.event=\"image-check\" AND jsonPayload.decision=(\"rebuild-failed\" OR \"check-failed\")"])
-    error_message = "the alert must match failed rebuilds and failed checks"
+    one(c.condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"])
+    error_message = "the alert must match every check-job decision line logged at ERROR: a failed check, a backed-off failed rebuild, and a rebuild after a failed one"
   }
   assert {
     condition = anytrue([for c in google_monitoring_alert_policy.image[0].conditions :

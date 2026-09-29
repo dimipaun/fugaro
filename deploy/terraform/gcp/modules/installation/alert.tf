@@ -19,10 +19,13 @@ resource "google_monitoring_alert_policy" "image" {
   combiner     = "OR"
 
   # The check's own line for each workflow whose rebuild or check failed.
+  # The check logs exactly those at ERROR: a failed check, a failed rebuild
+  # it backs off from, and a rebuild it submits after a failed one. Cloud
+  # Run takes the line's severity field as the entry's severity.
   conditions {
     display_name = "An image rebuild or check failed"
     condition_matched_log {
-      filter = "jsonPayload.event=\"image-check\" AND jsonPayload.decision=(\"rebuild-failed\" OR \"check-failed\")"
+      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"
     }
   }
 
