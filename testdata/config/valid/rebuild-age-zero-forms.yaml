@@ -1,0 +1,11 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    commands: { build: npm run build, test: npm test }
+    rebuild: { max_age: "0" }
+  api:
+    base: web-node
+    commands: { build: npm run build, test: npm test }
+    rebuild: { max_age: 0s }

@@ -262,3 +262,23 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 		t.Errorf("schema providers %v, config.Providers %v", providers, want)
 	}
 }
+
+// The schema judges max_age as fugaro does for 0 in its every form (the
+// string "0" included, which turns the age trigger off) and for malformed
+// values. Other Go durations fugaro reads, such as 90m or 1.5h, are left
+// out: the schema asks for days or hours first, and the 1h to 90d bounds
+// are fugaro's to check.
+func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const base = "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
+	for _, v := range []string{`0`, `"0"`, `0d`, `0s`, `0m`, `0h`, `0h0m`, `"00"`, `1h`, `14d`, `1d12h`, `90d`,
+		`soon`, `""`, `-1h`, `2d-5h`, `"0x"`, `1`, `0d-0h`} {
+		doc := []byte(base + v + " }\n")
+		_, problems := config.Parse(doc)
+		goOK := len(problems) == 0
+		schemaOK := sch.Validate(yamlInstance(t, doc)) == nil
+		if goOK != schemaOK {
+			t.Errorf("max_age: %s: fugaro accepts it: %v, the schema: %v (%v)", v, goOK, schemaOK, problems)
+		}
+	}
+}
