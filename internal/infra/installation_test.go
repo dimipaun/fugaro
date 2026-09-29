@@ -220,3 +220,21 @@ func TestDeleteHints(t *testing.T) {
 		t.Fatalf("an allowed delete still hinted: %q", hints)
 	}
 }
+
+// An API only the local config or the budget flags declare, planned away,
+// says where each comes from.
+func TestDeleteHintsAPIs(t *testing.T) {
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		{Address: `module.installation.google_project_service.this["aiplatform.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: `module.installation.google_project_service.this["billingbudgets.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
+	}}
+	hints := DeleteHints(p, nil)
+	if len(hints) != 1 {
+		t.Fatalf("hints = %q, want one about the APIs", hints)
+	}
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro init --repo", "--budget"} {
+		if !strings.Contains(hints[0], want) {
+			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
+		}
+	}
+}
