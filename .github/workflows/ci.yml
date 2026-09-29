@@ -49,7 +49,7 @@ jobs:
       - name: validate and test the roots
         run: |
           for r in installation repo; do
-            [ -d "deploy/terraform/gcp/roots/$r" ] || continue
+            [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
             terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
             terraform -chdir=deploy/terraform/gcp/roots/$r validate
             terraform -chdir=deploy/terraform/gcp/roots/$r test

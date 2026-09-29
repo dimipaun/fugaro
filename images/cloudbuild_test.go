@@ -475,6 +475,28 @@ func TestCIWorkflowUsesScripts(t *testing.T) {
 	}
 }
 
+// TestCIWorkflowTestsEveryTerraformRoot: CI validates and tests each
+// Terraform root, and a missing or renamed root fails the job instead of
+// being skipped.
+func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
+	data, err := os.ReadFile("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "|| continue") {
+		t.Error("ci.yml skips a missing Terraform root")
+	}
+	roots, err := os.ReadDir("../deploy/terraform/gcp/roots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range roots {
+		if r.IsDir() && !regexp.MustCompile(`for r in [a-z ]*\b`+r.Name()+`\b`).Match(data) {
+			t.Errorf("ci.yml does not test the %s root", r.Name())
+		}
+	}
+}
+
 // TestCIWorkflowPermissionsScoped holds every workflow file to a read-only
 // GITHUB_TOKEN by default: the workflow-level permissions must be exactly
 // contents: read, and only a job whose `if:` gates on the resolved publish
