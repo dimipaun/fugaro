@@ -1,7 +1,7 @@
 [
   {
     "method": "GET",
-    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-draft%22+AND+source.repository.full_name%3D%22edgeappinc%2Ffugarosandbox%22+AND+state%3D%22OPEN%22",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests?q=source.branch.name%3D%22fugaro%2Flive-20260927-183406-draft%22+AND+source.repository.full_name%3D%22acme%2Fsandbox%22+AND+state%3D%22OPEN%22",
     "status": 200,
     "response": {
       "values": [
@@ -42,30 +42,30 @@
               "hash": "6e705671e70b",
               "links": {
                 "self": {
-                  "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/6e705671e70b"
+                  "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/6e705671e70b"
                 },
                 "html": {
-                  "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/6e705671e70b"
+                  "href": "https://bitbucket.org/acme/sandbox/commits/6e705671e70b"
                 }
               },
               "type": "commit"
             },
             "repository": {
               "type": "repository",
-              "full_name": "edgeappinc/fugarosandbox",
+              "full_name": "acme/sandbox",
               "links": {
                 "self": {
-                  "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+                  "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
                 },
                 "html": {
-                  "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+                  "href": "https://bitbucket.org/acme/sandbox"
                 },
                 "avatar": {
-                  "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+                  "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
                 }
               },
-              "name": "FugaroSandbox",
-              "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+              "name": "Sandbox",
+              "uuid": "{00000000-0000-4000-8000-000000000001}"
             }
           },
           "source": {
@@ -77,71 +77,71 @@
               "hash": "2528dec90605",
               "links": {
                 "self": {
-                  "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/2528dec90605"
+                  "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/2528dec90605"
                 },
                 "html": {
-                  "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/2528dec90605"
+                  "href": "https://bitbucket.org/acme/sandbox/commits/2528dec90605"
                 }
               },
               "type": "commit"
             },
             "repository": {
               "type": "repository",
-              "full_name": "edgeappinc/fugarosandbox",
+              "full_name": "acme/sandbox",
               "links": {
                 "self": {
-                  "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+                  "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
                 },
                 "html": {
-                  "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+                  "href": "https://bitbucket.org/acme/sandbox"
                 },
                 "avatar": {
-                  "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+                  "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
                 }
               },
-              "name": "FugaroSandbox",
-              "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+              "name": "Sandbox",
+              "uuid": "{00000000-0000-4000-8000-000000000001}"
             }
           },
           "links": {
             "self": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1"
             },
             "html": {
-              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1"
+              "href": "https://bitbucket.org/acme/sandbox/pull-requests/1"
             },
             "commits": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/commits"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/commits"
             },
             "approve": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/approve"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/approve"
             },
             "request-changes": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/request-changes"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/request-changes"
             },
             "diff": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diff/edgeappinc/fugarosandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diff/acme/sandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
             },
             "diffstat": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diffstat/edgeappinc/fugarosandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diffstat/acme/sandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
             },
             "comments": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/comments"
             },
             "activity": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/activity"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/activity"
             },
             "merge": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/merge"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/merge"
             },
             "decline": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/decline"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/decline"
             },
             "statuses": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/statuses"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/statuses"
             },
             "mergeability_checks": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/mergeability/checks"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/mergeability/checks"
             }
           },
           "summary": {
@@ -160,7 +160,7 @@
   },
   {
     "method": "PUT",
-    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests/1",
     "request": {
       "draft": true,
       "title": "Fugaro live check 20260927-183406"
@@ -178,7 +178,7 @@
           "type": "rendered",
           "raw": "Fugaro live check 20260927-183406",
           "markup": "markdown",
-          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/edgeappinc/fugarosandbox/commits/20260927\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260927\u003c/a\u003e-183406\u003c/p\u003e"
+          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/acme/sandbox/commits/20260927\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260927\u003c/a\u003e-183406\u003c/p\u003e"
         },
         "description": {
           "type": "rendered",
@@ -217,30 +217,30 @@
           "hash": "6e705671e70b",
           "links": {
             "self": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/6e705671e70b"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/6e705671e70b"
             },
             "html": {
-              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/6e705671e70b"
+              "href": "https://bitbucket.org/acme/sandbox/commits/6e705671e70b"
             }
           },
           "type": "commit"
         },
         "repository": {
           "type": "repository",
-          "full_name": "edgeappinc/fugarosandbox",
+          "full_name": "acme/sandbox",
           "links": {
             "self": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
             },
             "html": {
-              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+              "href": "https://bitbucket.org/acme/sandbox"
             },
             "avatar": {
-              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
             }
           },
-          "name": "FugaroSandbox",
-          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
         }
       },
       "source": {
@@ -256,30 +256,30 @@
           "hash": "2528dec90605",
           "links": {
             "self": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/commit/2528dec90605"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/2528dec90605"
             },
             "html": {
-              "href": "https://bitbucket.org/edgeappinc/fugarosandbox/commits/2528dec90605"
+              "href": "https://bitbucket.org/acme/sandbox/commits/2528dec90605"
             }
           },
           "type": "commit"
         },
         "repository": {
           "type": "repository",
-          "full_name": "edgeappinc/fugarosandbox",
+          "full_name": "acme/sandbox",
           "links": {
             "self": {
-              "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox"
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
             },
             "html": {
-              "href": "https://bitbucket.org/edgeappinc/fugarosandbox"
+              "href": "https://bitbucket.org/acme/sandbox"
             },
             "avatar": {
-              "href": "https://bytebucket.org/ravatar/%7B58b4b346-2355-4cc5-aa9c-b7e596301343%7D?ts=default"
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
             }
           },
-          "name": "FugaroSandbox",
-          "uuid": "{58b4b346-2355-4cc5-aa9c-b7e596301343}"
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
         }
       },
       "reviewers": [
@@ -331,43 +331,43 @@
       ],
       "links": {
         "self": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1"
         },
         "html": {
-          "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1"
+          "href": "https://bitbucket.org/acme/sandbox/pull-requests/1"
         },
         "commits": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/commits"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/commits"
         },
         "approve": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/approve"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/approve"
         },
         "request-changes": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/request-changes"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/request-changes"
         },
         "diff": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diff/edgeappinc/fugarosandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diff/acme/sandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
         },
         "diffstat": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/diffstat/edgeappinc/fugarosandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diffstat/acme/sandbox:2528dec90605%0D6e705671e70b?from_pullrequest_id=1\u0026topic=true"
         },
         "comments": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/comments"
         },
         "activity": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/activity"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/activity"
         },
         "merge": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/merge"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/merge"
         },
         "decline": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/decline"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/decline"
         },
         "statuses": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/statuses"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/statuses"
         },
         "mergeability_checks": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/mergeability/checks"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/mergeability/checks"
         }
       },
       "summary": {

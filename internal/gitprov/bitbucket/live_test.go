@@ -4,7 +4,7 @@
 // (docs/git-providers.md, "Live check against a sandbox repository").
 // They never run in CI: they need the `live` build tag and a token.
 //
-//	FUGARO_BITBUCKET_TOKEN="$(cat <token-file>)" \
+//	FUGARO_LIVE_REPO=<owner>/<name> FUGARO_BITBUCKET_TOKEN="$(cat <token-file>)" \
 //	  go test -tags live -timeout 600s -run 'TestLive' -v ./internal/gitprov/bitbucket/
 //
 // A -timeout abort kills the test binary without running t.Cleanup (or the
@@ -12,7 +12,10 @@
 // again to decline and delete what was left behind.
 //
 // Environment:
-//   - FUGARO_BITBUCKET_TOKEN: a repository access token for liveWorkspace/liveSlug (required)
+//   - FUGARO_LIVE_REPO: the sandbox repository, as owner/name (required).
+//     Unset, every live test is skipped. It is never defaulted: these tests
+//     open pull requests and push branches on that one repository.
+//   - FUGARO_BITBUCKET_TOKEN: a repository access token for that repository (required)
 //   - FUGARO_LIVE_REVIEWER: the account UUID of a dedicated sandbox account
 //     to add as a reviewer (optional). Bitbucket notifies that account, so
 //     never use a real person's. Unset, the checks that reviewers survive
@@ -21,7 +24,8 @@
 //   - FUGARO_LIVE_RECORD_DIR: when set, each adapter-level check saves its
 //     exchanges there as a fixture file (httpfixture.Recorder)
 //
-// The repository is fixed on purpose: these tests open pull requests and
+// The repository comes only from FUGARO_LIVE_REPO, and every request and
+// clone goes to that one repository: these tests open pull requests and
 // push branches, and must never be pointed anywhere but the sandbox. Every
 // branch they push is named fugaro/live-*; every pull request they open is
 // declined, and every branch deleted, when the test ends (TestLiveCleanup
@@ -49,14 +53,13 @@ import (
 )
 
 const (
-	liveWorkspace = "edgeappinc"
-	liveSlug      = "fugarosandbox"
 	liveBase      = "master"
 	liveBranchPfx = "fugaro/live-"
 )
 
 type live struct {
 	t        *testing.T
+	ws, slug string // the sandbox, from FUGARO_LIVE_REPO
 	token    string
 	raw      *httpjson.Client // not recorded: for checking what the adapter did
 	stamp    string
@@ -68,17 +71,37 @@ type live struct {
 
 func openLive(t *testing.T) *live {
 	t.Helper()
+	repo := os.Getenv("FUGARO_LIVE_REPO")
+	if repo == "" {
+		t.Skip("FUGARO_LIVE_REPO (owner/name of the sandbox repository) is not set: refusing to run live tests without an explicit target")
+	}
+	ws, slug, ok := strings.Cut(repo, "/")
+	if !ok || ws == "" || slug == "" || strings.Contains(slug, "/") {
+		t.Skipf("FUGARO_LIVE_REPO=%q is not owner/name: refusing to run", repo)
+	}
 	token := os.Getenv("FUGARO_BITBUCKET_TOKEN")
 	if token == "" {
 		t.Skip("FUGARO_BITBUCKET_TOKEN is not set")
 	}
-	return &live{t: t, token: token, stamp: time.Now().UTC().Format("20060102-150405"),
+	return &live{t: t, ws: ws, slug: slug, token: token, stamp: time.Now().UTC().Format("20060102-150405"),
 		raw: &httpjson.Client{BaseURL: DefaultBaseURL, Header: http.Header{"Accept": {"application/json"}},
 			Auth: func(context.Context) (string, error) { return "Bearer " + token, nil }}}
 }
 
+// flipFirst changes the case of s's first letter, for a mixed-case spelling
+// of the sandbox's name.
+func flipFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	if f := strings.ToUpper(s[:1]); f != s[:1] {
+		return f + s[1:]
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
 func (l *live) repoPath(suffix string) string {
-	return "/repositories/" + liveWorkspace + "/" + liveSlug + suffix
+	return "/repositories/" + l.ws + "/" + l.slug + suffix
 }
 
 // scrub removes the token from s, for anything the test logs.
@@ -125,7 +148,7 @@ func (l *live) clone(ctx context.Context) {
 	}
 	env := gitops.WithVars(gitops.IdentityEnv(), vars)
 	dir := filepath.Join(t.TempDir(), "sandbox")
-	repo, err := gitops.OpenOrClone(ctx, dir, "https://bitbucket.org/"+liveWorkspace+"/"+liveSlug+".git", env)
+	repo, err := gitops.OpenOrClone(ctx, dir, "https://bitbucket.org/"+l.ws+"/"+l.slug+".git", env)
 	if err != nil {
 		t.Fatal(l.scrub(err.Error()))
 	}
@@ -272,7 +295,7 @@ func TestLiveBitbucket(t *testing.T) {
 	// Draft on create, with a description (and a reviewer, when named).
 	var id int
 	t.Run("create_draft", func(t *testing.T) {
-		p := l.provider(t, "live_create_draft", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_create_draft", l.ws, l.slug, l.token, nil)
 		pr, err := p.EnsurePR(ctx, mkSpec(draftBranch, true))
 		if pr.Number != 0 {
 			l.track(pr.Number)
@@ -333,7 +356,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// Draft -> ready on update: PUT {title, draft:false}.
 	t.Run("existing_to_ready", func(t *testing.T) {
-		p := l.provider(t, "live_existing_to_ready", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_existing_to_ready", l.ws, l.slug, l.token, nil)
 		pr, err := p.EnsurePR(ctx, mkSpec(draftBranch, false))
 		if err != nil || pr.Number != id || pr.Draft {
 			t.Fatalf("pr = %+v, err = %v", pr, l.scrub(fmt.Sprint(err)))
@@ -349,7 +372,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// Ready -> draft on update: PUT {title, draft:true}.
 	t.Run("existing_to_draft", func(t *testing.T) {
-		p := l.provider(t, "live_existing_to_draft", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_existing_to_draft", l.ws, l.slug, l.token, nil)
 		pr, err := p.EnsurePR(ctx, mkSpec(draftBranch, true))
 		if err != nil || pr.Number != id || !pr.Draft {
 			t.Fatalf("pr = %+v, err = %v", pr, l.scrub(fmt.Sprint(err)))
@@ -362,7 +385,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// Already a draft, draft wanted: no PUT at all.
 	t.Run("existing_no_op", func(t *testing.T) {
-		p := l.provider(t, "live_existing_no_op", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_existing_no_op", l.ws, l.slug, l.token, nil)
 		pr, err := p.EnsurePR(ctx, mkSpec(draftBranch, true))
 		if err != nil || pr.Number != id || !pr.Draft {
 			t.Fatalf("pr = %+v, err = %v", pr, l.scrub(fmt.Sprint(err)))
@@ -371,7 +394,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// Mixed-case workspace and slug find the same PR; no duplicate.
 	t.Run("mixed_case", func(t *testing.T) {
-		p := l.provider(t, "live_mixed_case", "EdgeAppInc", "FugaroSandbox", l.token, nil)
+		p := l.provider(t, "live_mixed_case", flipFirst(l.ws), flipFirst(l.slug), l.token, nil)
 		pr, err := p.EnsurePR(ctx, mkSpec(draftBranch, false))
 		if pr.Number != 0 {
 			l.track(pr.Number)
@@ -380,8 +403,8 @@ func TestLiveBitbucket(t *testing.T) {
 			t.Fatal(l.scrub(err.Error()))
 		}
 		n := l.openFor(ctx, t, draftBranch)
-		l.fact("mixed-case EdgeAppInc/FugaroSandbox: found PR #%d (want #%d), open PRs for the branch = %d, draft=%v",
-			pr.Number, id, n, pr.Draft)
+		l.fact("mixed-case %s/%s: found PR #%d (want #%d), open PRs for the branch = %d, draft=%v",
+			flipFirst(l.ws), flipFirst(l.slug), pr.Number, id, n, pr.Draft)
 		if pr.Number != id || n != 1 {
 			t.Errorf("mixed case opened a second PR or missed the first")
 		}
@@ -389,7 +412,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// Comment posting.
 	t.Run("comment", func(t *testing.T) {
-		p := l.provider(t, "live_comment", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_comment", l.ws, l.slug, l.token, nil)
 		const text = "### Fugaro live check\n\nA **markdown** comment."
 		if err := p.Comment(ctx, gitprov.PR{Number: id}, text); err != nil {
 			t.Fatal(l.scrub(err.Error()))
@@ -419,7 +442,7 @@ func TestLiveBitbucket(t *testing.T) {
 		a, b := l.push(ctx, t, "labels-a"), l.push(ctx, t, "labels-b")
 		var mu sync.Mutex
 		var warnings []string
-		p := l.provider(t, "live_labels_warning", liveWorkspace, liveSlug, l.token, func(m string) {
+		p := l.provider(t, "live_labels_warning", l.ws, l.slug, l.token, func(m string) {
 			mu.Lock()
 			defer mu.Unlock()
 			warnings = append(warnings, m)
@@ -445,7 +468,7 @@ func TestLiveBitbucket(t *testing.T) {
 	// An unknown reviewer: the PR is still opened, without reviewers.
 	t.Run("reviewer_rejected", func(t *testing.T) {
 		br := l.push(ctx, t, "reviewer-rejected")
-		p := l.provider(t, "live_reviewer_rejected", liveWorkspace, liveSlug, l.token, nil)
+		p := l.provider(t, "live_reviewer_rejected", l.ws, l.slug, l.token, nil)
 		pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: br, Base: liveBase, Title: "Fugaro live check " + l.stamp + " reviewer",
 			Body: "Reviewer check.", Reviewers: []string{"{00000000-0000-4000-8000-000000000000}"}})
 		if pr.Number != 0 {
@@ -460,7 +483,7 @@ func TestLiveBitbucket(t *testing.T) {
 
 	// A bad token: HTTP 401, and the token never appears in the error.
 	t.Run("unauthorized", func(t *testing.T) {
-		p := l.provider(t, "live_unauthorized", liveWorkspace, liveSlug, "not-a-real-token-0000", nil)
+		p := l.provider(t, "live_unauthorized", l.ws, l.slug, "not-a-real-token-0000", nil)
 		_, err := p.EnsurePR(ctx, mkSpec(draftBranch, false))
 		l.fact("bad token -> %v", errText(l, err))
 		if err == nil || !strings.Contains(err.Error(), "HTTP 401") {

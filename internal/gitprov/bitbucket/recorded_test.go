@@ -29,7 +29,7 @@ const (
 	recTitle    = "Fugaro live check " + recStamp
 	recBody     = "Live check description.\n\nSecond paragraph, which must survive every update."
 	recReviewer = "{5a4d0b0e-0000-4000-8000-00000000a11c}"
-	recPRURL    = "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/"
+	recPRURL    = "https://bitbucket.org/acme/sandbox/pull-requests/"
 )
 
 func openRecorded(t *testing.T, fixture, ws, slug string, warn func(string)) *Provider {
@@ -62,7 +62,7 @@ func TestRecordedDraftLifecycle(t *testing.T) {
 	}
 	for _, s := range steps {
 		t.Run(strings.TrimSuffix(s.fixture, ".json"), func(t *testing.T) {
-			p := openRecorded(t, s.fixture, "edgeappinc", "fugarosandbox", nil)
+			p := openRecorded(t, s.fixture, "acme", "sandbox", nil)
 			pr, err := p.EnsurePR(ctx, recSpec(s.draft))
 			if err != nil || pr != (gitprov.PR{Number: 1, URL: recPRURL + "1", Draft: s.draft}) {
 				t.Fatalf("pr = %+v, err = %v", pr, err)
@@ -75,7 +75,7 @@ func TestRecordedDraftLifecycle(t *testing.T) {
 // and slug in mixed case: Bitbucket accepts them in the URL path, and the
 // lowercased full_name in the query finds the existing pull request.
 func TestRecordedMixedCaseFindsExisting(t *testing.T) {
-	p := openRecorded(t, "mixed_case.json", "EdgeAppInc", "FugaroSandbox", nil)
+	p := openRecorded(t, "mixed_case.json", "Acme", "Sandbox", nil)
 	pr, err := p.EnsurePR(ctx, recSpec(false))
 	if err != nil || pr != (gitprov.PR{Number: 1, URL: recPRURL + "1"}) {
 		t.Fatalf("pr = %+v, err = %v", pr, err)
@@ -83,7 +83,7 @@ func TestRecordedMixedCaseFindsExisting(t *testing.T) {
 }
 
 func TestRecordedComment(t *testing.T) {
-	p := openRecorded(t, "comment.json", "edgeappinc", "fugarosandbox", nil)
+	p := openRecorded(t, "comment.json", "acme", "sandbox", nil)
 	if err := p.Comment(ctx, gitprov.PR{Number: 1}, "### Fugaro live check\n\nA **markdown** comment."); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestRecordedComment(t *testing.T) {
 
 func TestRecordedLabelsWarnOnce(t *testing.T) {
 	var warnings []string
-	p := openRecorded(t, "labels_warning.json", "edgeappinc", "fugarosandbox", func(m string) { warnings = append(warnings, m) })
+	p := openRecorded(t, "labels_warning.json", "acme", "sandbox", func(m string) { warnings = append(warnings, m) })
 	for i, name := range []string{"labels-a", "labels-b"} {
 		pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/live-" + recStamp + "-" + name, Base: "master",
 			Title: recTitle + " labels", Body: "Labels check.", Labels: []string{"fugaro"}})
@@ -108,7 +108,7 @@ func TestRecordedLabelsWarnOnce(t *testing.T) {
 // unknown reviewer UUID (HTTP 400, "Malformed reviewers list"): the pull
 // request is opened again without reviewers.
 func TestRecordedReviewerRejected(t *testing.T) {
-	p := openRecorded(t, "reviewer_rejected.json", "edgeappinc", "fugarosandbox", nil)
+	p := openRecorded(t, "reviewer_rejected.json", "acme", "sandbox", nil)
 	pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/live-" + recStamp + "-reviewer-rejected", Base: "master",
 		Title: recTitle + " reviewer", Body: "Reviewer check.", Reviewers: []string{"{00000000-0000-4000-8000-000000000000}"}})
 	var partial *gitprov.PartialError
@@ -118,7 +118,7 @@ func TestRecordedReviewerRejected(t *testing.T) {
 }
 
 func TestRecordedUnauthorized(t *testing.T) {
-	p := openRecorded(t, "unauthorized.json", "edgeappinc", "fugarosandbox", nil)
+	p := openRecorded(t, "unauthorized.json", "acme", "sandbox", nil)
 	if _, err := p.EnsurePR(ctx, recSpec(false)); err == nil || !strings.Contains(err.Error(), "HTTP 401") {
 		t.Fatalf("err = %v", err)
 	}
@@ -134,6 +134,17 @@ var (
 	recGravatar          = regexp.MustCompile(`gravatar\.com/avatar/([0-9a-fA-F]+)`)
 	recAvatarID          = "00000000-0000-4000-8000-000000000000" // the avatar image ID placeholder
 	recAtlAvatar         = regexp.MustCompile(`atl-paas\.net/([^/"]+)/([^/"]+)/`)
+	// The fixtures name only the generic acme/sandbox repository. The
+	// pattern below is assembled from pieces so this file does not itself
+	// hold the strings it forbids: the workspace and repository names of
+	// the real sandbox the fixtures were recorded against, the reviewer's
+	// and the repository's real UUIDs, and machine paths.
+	recForbidden = regexp.MustCompile(`(?i:` + strings.Join([]string{
+		"edge" + "appinc", "fugaro" + "sandbox", "edge" + "web", "edge-" + "devel", "46e89d" + "3a", "58b4b3" + "46",
+	}, "|") + `)|/Users` + `/`)
+	// Any repository named in an API path or a Bitbucket link must be the
+	// generic one (case-insensitively: mixed_case.json spells it Acme/Sandbox).
+	recRepoRef = regexp.MustCompile(`(?:/2\.0/repositories|://bitbucket\.org)/([^/"%?]+)/([^/"%?]+)`)
 )
 
 // TestRecordedFixturesHoldNoIdentities keeps real account identities out
@@ -168,9 +179,10 @@ func TestIdentityGuardCatchesRealIdentities(t *testing.T) {
 	    "uuid": "{11111111-2222-4333-8444-555555555555}", "account_id": "557058:11111111-2222-4333-8444-555555555555",
 	    "links": {"avatar": {"href": "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?d=x"}}},
 	  "summary": {"raw": "ping jane.doe@example.com"},
+	  "links": {"self": {"href": "https://api.bitbucket.org/2.0/repositories/` + "edge" + `appinc/other/pullrequests/1"}},
 	  "bot": {"type": "app_user", "links": {"avatar": {"href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:11111111-2222-4333-8444-555555555555/22222222-3333-4444-8555-666666666666/128"}}}}}]`)
 	problems := strings.Join(identityProblems(bad), "\n")
-	for _, want := range []string{"email", "real uuid", "real account_id", "real display_name", "real nickname", "gravatar", "avatar URL"} {
+	for _, want := range []string{"email", "real uuid", "real account_id", "real display_name", "real nickname", "gravatar", "avatar URL", "real sandbox", "other than acme/sandbox"} {
 		if !strings.Contains(problems, want) {
 			t.Errorf("the guard missed %q; it reported:\n%s", want, problems)
 		}
@@ -188,6 +200,14 @@ func TestIdentityGuardCatchesRealIdentities(t *testing.T) {
 func identityProblems(data []byte) []string {
 	var out []string
 	text := string(data)
+	if m := recForbidden.FindString(text); m != "" {
+		out = append(out, fmt.Sprintf("holds the real sandbox's name or a real identifier %q", m))
+	}
+	for _, m := range recRepoRef.FindAllStringSubmatch(text, -1) {
+		if !strings.EqualFold(m[1], "acme") || !strings.EqualFold(m[2], "sandbox") {
+			out = append(out, "names a repository other than acme/sandbox: "+m[0])
+		}
+	}
 	if m := recEmail.FindString(text); m != "" {
 		out = append(out, fmt.Sprintf("holds an email address %q", m))
 	}

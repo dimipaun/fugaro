@@ -1,7 +1,7 @@
 [
   {
     "method": "POST",
-    "path": "/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests/1/comments",
     "request": {
       "content": {
         "raw": "### Fugaro live check\n\nA **markdown** comment."
@@ -37,10 +37,10 @@
       "type": "pullrequest_comment",
       "links": {
         "self": {
-          "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1/comments/871703663"
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1/comments/871703663"
         },
         "html": {
-          "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1/_/diff#comment-871703663"
+          "href": "https://bitbucket.org/acme/sandbox/pull-requests/1/_/diff#comment-871703663"
         }
       },
       "pullrequest": {
@@ -50,10 +50,10 @@
         "draft": false,
         "links": {
           "self": {
-            "href": "https://api.bitbucket.org/2.0/repositories/edgeappinc/fugarosandbox/pullrequests/1"
+            "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/1"
           },
           "html": {
-            "href": "https://bitbucket.org/edgeappinc/fugarosandbox/pull-requests/1"
+            "href": "https://bitbucket.org/acme/sandbox/pull-requests/1"
           }
         },
         "queued": false
