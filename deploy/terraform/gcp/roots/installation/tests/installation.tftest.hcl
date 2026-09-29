@@ -532,8 +532,8 @@ run "log_isolation_on" {
   # Log-based alerts must keep seeing the check's own decision lines and
   # the Cloud Run system log, so the exclusion leaves both in _Default.
   assert {
-    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" AND NOT jsonPayload.event=\"image-check\" AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
-    error_message = "the exclusion must leave the alerts' log lines in _Default"
+    condition     = google_logging_project_exclusion.fugaro_from_default[0].filter == "resource.type=\"cloud_run_job\" AND labels.\"fugaro\"=\"managed\" AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
+    error_message = "the exclusion must leave the alerts' log lines in _Default, and only the check jobs' decision lines"
   }
   assert {
     condition     = google_logging_log_view.runs[0].name == "fugaro-runs" && google_logging_log_view.runs[0].bucket == "projects/proj-1234/locations/global/buckets/fugaro"
@@ -542,6 +542,10 @@ run "log_isolation_on" {
   assert {
     condition     = sort(keys(google_logging_log_view_iam_member.runs)) == tolist(["user:launcher@example.com", "user:operator@example.com"])
     error_message = "launchers and operators must be able to read through the view"
+  }
+  assert {
+    condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.parent == "projects/proj-1234" && m.location == "global" && m.bucket == "fugaro" && m.name == "fugaro-runs"])
+    error_message = "the view grant must name the view by its project path, not the bare project ID"
   }
   assert {
     condition     = alltrue([for m in google_logging_log_view_iam_member.runs : m.role == "roles/logging.viewAccessor"])

@@ -43,6 +43,8 @@ type Backend struct {
 	logs *logging.Service
 	// listPageSize is List's page size; tests shrink it to exercise paging.
 	listPageSize int64
+	// now is the clock, which tests fix.
+	now func() time.Time
 }
 
 // RedactURL is u without userinfo, for error messages: the one helper for
@@ -98,5 +100,5 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
 	}
-	return &Backend{o: o, run: rs, logs: ls, listPageSize: 100}, nil
+	return &Backend{o: o, run: rs, logs: ls, listPageSize: 100, now: time.Now}, nil
 }

@@ -194,15 +194,25 @@ func executionFilter(id backend.ExecID) string {
 		` AND labels."run.googleapis.com/execution_name"=` + strconv.Quote(id.Name)
 }
 
+// logMaxSpan is how long after its start a log URL's time range runs: a
+// task's longest timeout is 24 hours.
+const logMaxSpan = 24 * time.Hour
+
 // logURL is where to read an execution's logs in the console. Cloud Run's
 // own link (given) opens a page that reads the project's default logs,
 // which hold nothing of a run's under log isolation; with a log view it is
-// a Logs Explorer query scoped to the view's storage.
-func (b *Backend) logURL(id backend.ExecID, given string) string {
+// a Logs Explorer query scoped to the view's storage. A known start
+// (created) bounds the time range, shortly before it for clock skew;
+// without one Logs Explorer's default range applies.
+func (b *Backend) logURL(id backend.ExecID, given string, created time.Time) string {
 	if b.o.LogView == "" {
 		return given
 	}
-	return "https://console.cloud.google.com/logs/query;query=" + url.PathEscape(executionFilter(id)) +
-		";storageScope=storage," + url.PathEscape(b.o.LogView) +
-		"?project=" + url.QueryEscape(b.o.Project)
+	u := "https://console.cloud.google.com/logs/query;query=" + url.PathEscape(executionFilter(id)) +
+		";storageScope=storage," + url.PathEscape(b.o.LogView)
+	if !created.IsZero() {
+		from := created.Add(-createdMargin).UTC()
+		u += ";timeRange=" + from.Format(time.RFC3339) + "/" + from.Add(logMaxSpan).Format(time.RFC3339)
+	}
+	return u + "?project=" + url.QueryEscape(b.o.Project)
 }

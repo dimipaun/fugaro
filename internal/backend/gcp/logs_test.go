@@ -208,6 +208,7 @@ func TestReadLogsThroughView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	b.now = func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }
 	fr.AddJob(webJob, "4", "8Gi")
 	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
 	if err != nil {
@@ -215,11 +216,17 @@ func TestReadLogsThroughView(t *testing.T) {
 	}
 	// The Cloud Run page reads _Default, which holds nothing under
 	// isolation, so the URL opens the view in Logs Explorer instead.
-	if !strings.HasPrefix(ref.LogURL, "https://console.cloud.google.com/logs/query;query=") ||
-		!strings.Contains(ref.LogURL, ";storageScope=storage,"+url.PathEscape(testLogView)) ||
-		!strings.HasSuffix(ref.LogURL, "?project=proj-1234") ||
-		!strings.Contains(ref.LogURL, ref.Name[strings.LastIndex(ref.Name, "/")+1:]) {
-		t.Fatalf("LogURL = %q", ref.LogURL)
+	name := ref.Name[strings.LastIndex(ref.Name, "/")+1:]
+	wantURL := "https://console.cloud.google.com/logs/query;query=" +
+		url.PathEscape(`resource.type="cloud_run_job" AND resource.labels.location="us-east5" AND resource.labels.job_name="`+webJob+`" AND labels."run.googleapis.com/execution_name"="`+name+`"`) +
+		";storageScope=storage," + url.PathEscape(testLogView) +
+		";timeRange=2026-09-27T09:59:00Z/2026-09-28T09:59:00Z?project=proj-1234"
+	if ref.LogURL != wantURL {
+		t.Fatalf("LogURL = %q\nwant     %q", ref.LogURL, wantURL)
+	}
+	if x, err := b.Execution(ctx, ref.Name); err != nil || x.LogURL == "" || x.LogURL == wantURL {
+		// Listed executions carry their own createTime, not the launch's clock.
+		t.Fatalf("Execution LogURL = %q, err %v", x.LogURL, err)
 	}
 	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(1)+`","severity":"INFO","message":"hello"}`+"\n"))
 	var got []backend.LogEntry

@@ -40,14 +40,14 @@ resource "google_logging_project_sink" "fugaro" {
 # The exclusion applies to the _Default sink, which Terraform never manages;
 # the dedicated sink above is unaffected by it. Log-based alerts don't
 # operate on excluded logs, so the two kinds of line the alerts match stay
-# in _Default as well: the check's own decision lines and the Cloud Run
+# in _Default as well: the check jobs' own decision lines and the Cloud Run
 # system log. Neither carries agent output.
 resource "google_logging_project_exclusion" "fugaro_from_default" {
   count = var.log_isolation ? 1 : 0
 
   project = var.project
   name    = var.names.log.exclusion
-  filter  = "${local.fugaro_logs} AND NOT jsonPayload.event=\"image-check\" AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
+  filter  = "${local.fugaro_logs} AND NOT (resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\") AND NOT logName:\"run.googleapis.com%2Fvarlog%2Fsystem\""
 
   depends_on = [google_logging_project_sink.fugaro]
 }
@@ -65,7 +65,7 @@ resource "google_logging_log_view" "runs" {
 resource "google_logging_log_view_iam_member" "runs" {
   for_each = var.log_isolation ? toset(concat(var.launchers, var.operators)) : toset([])
 
-  parent   = var.project
+  parent   = "projects/${var.project}"
   location = "global"
   bucket   = var.names.log.bucket
   name     = google_logging_log_view.runs[0].name

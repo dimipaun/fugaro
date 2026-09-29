@@ -15,6 +15,13 @@ resource "google_cloud_run_v2_job" "this" {
   deletion_protection = !var.allow_job_delete
 
   template {
+    # Only the template's labels reach the job's log entries, which the log
+    # sink and exclusion select on; they are the same marks.
+    labels = {
+      fugaro          = "managed"
+      fugaro_repo     = var.repo_label
+      fugaro_workflow = var.name
+    }
     task_count = 1
 
     template {
