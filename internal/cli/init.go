@@ -1243,6 +1243,15 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 	if err := t.Init(ctx, backend); err != nil {
 		return infra.InstallationOutputs{}, remote(err)
 	}
+	// The rollback's state rm leaves the root's outputs behind, so outputs
+	// alone don't say the installation is managed: its resources do.
+	st, err := t.ShowState(ctx)
+	if err != nil {
+		return infra.InstallationOutputs{}, remote(err)
+	}
+	if !st.Managed() {
+		return infra.InstallationOutputs{}, userErr("the installation's state in gs://%s manages nothing (the installation was forgotten, by fugaro init --forget): run fugaro init first", stateBucket)
+	}
 	raw, err := t.Output(ctx)
 	if err != nil {
 		return infra.InstallationOutputs{}, remote(err)
