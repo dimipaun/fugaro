@@ -511,7 +511,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 		}
 		state := nextState(ev.prev, ev.d, ev.lastStatus, now)
 		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun {
-			id, status, err := submitRebuild(ctx, builder, e.project, rs, cfg, name, s)
+			id, status, err := submitRebuild(ctx, builder, e.project, rs, cfg, name, s, lc.RecordBucketURL())
 			if err != nil {
 				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(err.Error())
 				state = nextState(ev.prev, ev.d, ev.lastStatus, now)
@@ -545,8 +545,8 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 // submitRebuild submits workflow name's rebuild, the request fugaro image
 // build sends, generated now by this fugaro. The check never skips the
 // smoke test: a request without it is refused before it is sent.
-func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra.RepoSpec, cfg *config.Config, name string, s infra.CheckJobSpec) (id, status string, err error) {
-	spec, err := cloudBuildSpec(rs, cfg, name, s.BaseImage, s.MachineType, "gs://"+rs.Installation.RunsBucket)
+func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra.RepoSpec, cfg *config.Config, name string, s infra.CheckJobSpec, recordBucket string) (id, status string, err error) {
+	spec, err := cloudBuildSpec(rs, cfg, name, s.BaseImage, s.MachineType, recordBucket)
 	if err != nil {
 		return "", "", err
 	}
@@ -630,8 +630,12 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return remote(err)
 	}
+	records, err := env.recordBucket(ctx)
+	if err != nil {
+		return remote(err)
+	}
 	t := &checkTarget{
-		slug: rs.Slug, bucket: env.bucket, builder: builder, registry: checkRegistry(), tree: tree, cfg: cfg, rs: rs,
+		slug: rs.Slug, bucket: records, builder: builder, registry: checkRegistry(), tree: tree, cfg: cfg, rs: rs,
 		// The job's template salt is its base image's fugaro's, which
 		// this fugaro can't know; the salt is left out here.
 		baseRef: lc.BaseImage, force: o.force, now: time.Now().UTC(),
@@ -762,6 +766,10 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 		}
 		repos = []string{only}
 	}
+	records, err := env.recordBucket(ctx)
+	if err != nil {
+		return remote(err)
+	}
 	now := time.Now().UTC()
 	out := imageStatusOut{Workflows: []imageStatusRow{}}
 	for _, repo := range repos {
@@ -777,7 +785,7 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 			}
 		}
 		for _, w := range workflows {
-			st, err := imagecheck.ReadStatus(ctx, env.bucket, slug, w, now)
+			st, err := imagecheck.ReadStatus(ctx, records, slug, w, now)
 			if err != nil {
 				return remote(err)
 			}

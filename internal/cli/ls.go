@@ -108,6 +108,9 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	out := cmd.OutOrStdout()
 	clear := o.watch && !o.asJSON && isTTY(out)
+	// The image warnings are read once: they change about daily, and
+	// --watch would otherwise read them again on every redraw.
+	warnings := imageWarnings(ctx, env, f.slugs, time.Now().UTC())
 	for {
 		now := time.Now()
 		if since > 0 {
@@ -120,7 +123,6 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		warnings := imageWarnings(ctx, env, f.slugs, now.UTC())
 		if err := printRows(out, rows, warnings, now, o.asJSON); err != nil {
 			return err
 		}

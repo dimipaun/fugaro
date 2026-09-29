@@ -317,3 +317,21 @@ func TestM4ConfigMarshalsWithoutM5Fields(t *testing.T) {
 		}
 	}
 }
+
+// Image builds record in the runs bucket, the only bucket a build account
+// may write, whatever bucket_url says; with no runs_bucket, a gs://
+// bucket_url names it, as fugaro init reads it.
+func TestRecordBucketURL(t *testing.T) {
+	for _, c := range []struct{ runs, bucketURL, want string }{
+		{"fugaro-runs-x", "", "gs://fugaro-runs-x"},
+		{"fugaro-runs-x", "gs://other-bucket", "gs://fugaro-runs-x"},
+		{"fugaro-runs-x", "file:///tmp/runs", "gs://fugaro-runs-x"},
+		{"", "gs://fugaro-runs-y", "gs://fugaro-runs-y"},
+		{"", "file:///tmp/runs", ""},
+	} {
+		lc := &Config{RunsBucket: c.runs, Bucket: c.bucketURL}
+		if got := lc.RecordBucketURL(); got != c.want {
+			t.Errorf("runs_bucket %q, bucket_url %q: %q, want %q", c.runs, c.bucketURL, got, c.want)
+		}
+	}
+}

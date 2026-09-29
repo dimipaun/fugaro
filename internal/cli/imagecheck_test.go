@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob/memblob"
+
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -657,5 +659,66 @@ func TestCheckJobUnreadableStateFailsSafe(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(key); string(data) != "{" {
 		t.Fatalf("check.json was replaced: %q", data)
+	}
+}
+
+// fakeRecordBucket makes the record bucket an in-memory one holding a
+// record and a failed rebuild for acme/app web, and returns the URLs asked
+// to open.
+func fakeRecordBucket(t *testing.T) *[]string {
+	t.Helper()
+	now := time.Now().UTC().Truncate(time.Second)
+	rec, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", BuiltAt: now.Add(-96 * time.Hour), BuildID: "b0007",
+		SourceCommit: "abc123", BaseRef: checkBase, BaseDigest: checkBaseDigest, Image: "img", ImageDigest: checkLatestDigest})
+	failedAt := now.Add(-20 * time.Hour)
+	state := imagecheck.CheckState{Version: 1, CheckedAt: now.Add(-time.Hour), Decision: imagecheck.RebuildFailedLast, Reasons: []string{imagecheck.ReasonBase},
+		BuildID: "b0008", LastBuildStatus: "FAILURE", LastBuildAt: &failedAt}
+	cs, _ := state.Marshal()
+	var opened []string
+	prev := openRecordBucket
+	openRecordBucket = func(ctx context.Context, u string) (*blobx.Bucket, error) {
+		opened = append(opened, u)
+		mem := blobx.Wrap(memblob.OpenBucket(nil))
+		for key, data := range map[string][]byte{imagecheck.RecordKey(appSlug, "web"): rec, imagecheck.CheckKey(appSlug, "web"): cs} {
+			if err := mem.WriteAll(ctx, key, data, nil); err != nil {
+				return nil, err
+			}
+		}
+		return mem, nil
+	}
+	t.Cleanup(func() { openRecordBucket = prev })
+	return &opened
+}
+
+// With a bucket_url other than the runs bucket, image status and ls read
+// the build record where builds write it: the runs bucket.
+func TestImageStatusReadsTheRunsBucket(t *testing.T) {
+	f := newCloudFixture(t)
+	setBucketURL(t, f, "gs://other-bucket")
+	opened := fakeRecordBucket(t)
+	out, stderr, err := execute(t, "image", "status", "--json")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	var got imageStatusOut
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if len(got.Workflows) != 1 || got.Workflows[0].Image == nil || got.Workflows[0].Image.SourceCommit != "abc123" {
+		t.Fatalf("status = %s", out)
+	}
+	if !slices.Equal(*opened, []string{"gs://unused-bucket"}) {
+		t.Fatalf("opened %q, want the runs bucket", *opened)
+	}
+
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := &cloudEnv{lc: lc, bucket: blobx.Wrap(memblob.OpenBucket(nil))}
+	defer env.Close()
+	w := imageWarnings(context.Background(), env, []string{appSlug}, time.Now().UTC())
+	if len(w) != 1 || !strings.Contains(w[0], "the image rebuild of") {
+		t.Fatalf("ls warnings = %q", w)
 	}
 }

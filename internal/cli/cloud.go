@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -26,7 +27,11 @@ import (
 )
 
 // cloudOptions are the flags every command that talks to the cloud shares.
-type cloudOptions struct{ config, project, region string }
+type cloudOptions struct {
+	config, project, region string
+	// stderr is the command's stderr, for notes; nil is os.Stderr.
+	stderr func() io.Writer
+}
 
 // addCloudFlags registers --config, --project and --region on cmd.
 func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
@@ -34,6 +39,7 @@ func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
 	f.StringVar(&o.config, "config", "", "local config file (default $FUGARO_CONFIG, else $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml)")
 	f.StringVar(&o.project, "project", "", "GCP project (overrides the local config)")
 	f.StringVar(&o.region, "region", "", "GCP region (overrides the local config)")
+	o.stderr = cmd.ErrOrStderr
 }
 
 // cloudEnv is what a cloud command works against: the local config, the
@@ -43,6 +49,44 @@ type cloudEnv struct {
 	bucket *blobx.Bucket
 	be     backend.Backend
 	gcp    gcp.Options
+	// records is the bucket build records are read from, once opened,
+	// when it isn't bucket (see recordBucket).
+	records *blobx.Bucket
+}
+
+// openRecordBucket opens the bucket build records are read from. Tests
+// replace it.
+var openRecordBucket = blobx.Open
+
+// recordBucket is the bucket ls, image status and the local image check
+// read build records from (recordReadURL): the runs bucket, opened on
+// first use when a bucket_url names another.
+func (e *cloudEnv) recordBucket(ctx context.Context) (*blobx.Bucket, error) {
+	u := recordReadURL(e.lc)
+	if u == "" || u == e.lc.BucketURL() {
+		return e.bucket, nil
+	}
+	if e.records == nil {
+		b, err := openRecordBucket(ctx, u)
+		if err != nil {
+			return nil, err
+		}
+		e.records = b
+	}
+	return e.records, nil
+}
+
+// recordReadURL is where build records are read: where builds write them,
+// the runs bucket (lc.RecordBucketURL). A bucket_url off GCS (file://,
+// mem://) is a local stand-in for the runs bucket, which no build can
+// write, and is read in its place.
+func recordReadURL(lc *localcfg.Config) string {
+	if lc.Bucket != "" {
+		if u, err := url.Parse(lc.Bucket); err != nil || u.Scheme != "gs" {
+			return lc.Bucket
+		}
+	}
+	return lc.RecordBucketURL()
 }
 
 // prices are the compute prices of a region, for cost estimates of cloud
@@ -64,6 +108,9 @@ func (e *cloudEnv) prices() runview.PriceBook {
 func (e *cloudEnv) Close() {
 	if e.bucket != nil {
 		_ = e.bucket.Close()
+	}
+	if e.records != nil {
+		_ = e.records.Close()
 	}
 }
 
@@ -100,6 +147,17 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	}
 	if err := lc.Override(o.project, o.region); err != nil {
 		return nil, userErr("--project/--region: %v", err)
+	}
+	// The log view lives in the config's project: with --project naming
+	// another one, reading it would show that project's logs (or be
+	// refused), so the project's own logs are read instead.
+	if view := lc.LogView; view != "" && !strings.HasPrefix(view, "projects/"+lc.Project+"/") {
+		errw := io.Writer(os.Stderr)
+		if o.stderr != nil {
+			errw = o.stderr()
+		}
+		fmt.Fprintf(errw, "fugaro: note: the local config's log_view %s is not in project %s, so logs and diagnose read %s's project-level logs\n", view, lc.Project, lc.Project)
+		lc.LogView = ""
 	}
 	opts := gcp.Options{Project: lc.Project, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,

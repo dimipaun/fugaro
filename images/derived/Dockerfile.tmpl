@@ -42,7 +42,8 @@ USER fugaro
 WORKDIR /work/repo
 # A push to the branch after the render step must not change what is baked
 # in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
-# when it is no longer on the branch.
+# when it is no longer on the branch. When it can't be fetched either, the
+# build fails, saying so.
 ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
@@ -51,11 +52,12 @@ RUN --mount=type=bind,target=/src \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
  && if [ -n "$FUGARO_COMMIT" ]; then \
-      git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
         || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
              -c credential.helper='store --file=/run/secrets/git-credentials' \
-             fetch --quiet origin "$FUGARO_COMMIT"; \
-      git reset --quiet --hard "$FUGARO_COMMIT"; \
+             fetch --quiet origin "$FUGARO_COMMIT"; } \
+      && git reset --quiet --hard "$FUGARO_COMMIT" \
+      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
     fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 {{- if .WarmUp}}

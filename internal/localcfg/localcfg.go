@@ -374,6 +374,31 @@ func (c *Config) BucketURL() string {
 	return "gs://" + c.RunsBucket
 }
 
+// RunsBucketName is the runs bucket's name: runs_bucket, else the bucket
+// of a gs:// bucket_url, else "".
+func (c *Config) RunsBucketName() string {
+	if c.RunsBucket != "" {
+		return c.RunsBucket
+	}
+	if u, err := url.Parse(c.Bucket); err == nil && u.Scheme == "gs" && u.Host != "" {
+		return u.Host
+	}
+	return ""
+}
+
+// RecordBucketURL is the bucket image builds record in
+// (builds/<slug>/<workflow>/image.json), as gs://<name>: always the runs
+// bucket, the only bucket a build account may write (under
+// builds/<slug>/), never another bucket_url. fugaro image build, fugaro
+// init's first build and the daily check send it; readiness, ls and
+// image status read it. "" when there is no runs bucket name.
+func (c *Config) RecordBucketURL() string {
+	if name := c.RunsBucketName(); name != "" {
+		return "gs://" + name
+	}
+	return ""
+}
+
 // BuildRegion is where Cloud Build runs.
 func (c *Config) BuildRegion() string {
 	if c.Build.Region != "" {
