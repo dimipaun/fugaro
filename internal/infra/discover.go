@@ -20,6 +20,7 @@ import (
 	"google.golang.org/api/option"
 	run "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
+	serviceusage "google.golang.org/api/serviceusage/v1"
 	storage "google.golang.org/api/storage/v1"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -32,7 +33,8 @@ const (
 )
 
 // Clients are the Google API clients discovery and the readiness gates
-// read through. They only ever read.
+// read through. They only ever read, except ServiceUsage, which enables
+// Cloud Resource Manager when fugaro init is confirmed to.
 type Clients struct {
 	IAM     *iam.Service
 	AR      *artifactregistry.Service
@@ -44,12 +46,18 @@ type Clients struct {
 	// repository's Scheduler job.
 	Logging   *logging.Service
 	Scheduler *scheduler.Service
+	// ServiceUsage is nil without credentials and without its endpoint.
+	ServiceUsage *serviceusage.Service
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
 // so fakes can stand in. Empty means Google's own endpoint.
 type Endpoints struct {
 	IAM, ArtifactRegistry, Storage, ResourceManager, Scheduler string
+	// ServiceUsage is the Service Usage API's, through which fugaro init
+	// enables Cloud Resource Manager. Without credentials and without it,
+	// there is no Service Usage client.
+	ServiceUsage string
 }
 
 // discardLogger keeps the clients from logging requests (and their
@@ -111,6 +119,12 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	}
 	if c.Scheduler, err = scheduler.NewService(ctx, opts(e.Scheduler)...); err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Scheduler: %w", err)
+	}
+	// Only an enable calls it, so fakes without it are fine until then.
+	if !o.Endpoints.NoAuth || e.ServiceUsage != "" {
+		if c.ServiceUsage, err = serviceusage.NewService(ctx, opts(e.ServiceUsage)...); err != nil {
+			return nil, fmt.Errorf("connecting to Service Usage: %w", err)
+		}
 	}
 	return &c, nil
 }
@@ -218,26 +232,17 @@ func (d *discovery) add(k importKind, region, key, name string) {
 	d.im.List = append(d.im.List, newImport(k, d.project, region, key, name))
 }
 
-// projectNumber is the project's number, which a bucket's must equal.
-func (d *discovery) projectNumber() (uint64, error) {
-	p, err := d.c.CRM.Projects.Get(d.project).Context(d.ctx).Do()
-	if err != nil {
-		return 0, fmt.Errorf("reading project %s: %w", d.project, err)
-	}
-	return uint64(p.ProjectNumber), nil
-}
-
 // bucket reads the runs bucket and checks that it is in the project and
 // carries fugaro=managed. It is nil when the bucket doesn't exist or is
 // refused.
 func (d *discovery) bucket(name string) (*storage.Bucket, error) {
-	num, err := d.projectNumber()
+	num, err := ProjectNumber(d.ctx, d.c, d.project)
 	if err != nil {
 		return nil, err
 	}
 	b, err := d.c.Storage.Buckets.Get(name).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceStorage):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading bucket gs://%s: %w", name, err)
@@ -262,7 +267,7 @@ func (d *discovery) registry(region, id string) (*artifactregistry.Repository, e
 	name := "projects/" + d.project + "/locations/" + region + "/repositories/" + id
 	r, err := d.c.AR.Projects.Locations.Repositories.Get(name).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceArtifactRegistry):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading Artifact Registry repository %s: %w", name, err)
@@ -344,7 +349,7 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 		name := "projects/" + d.project + "/roles/" + r.id
 		role, err := d.c.IAM.Projects.Roles.Get(name).Context(d.ctx).Do()
 		switch {
-		case notFound(err):
+		case absent(err, serviceIAM):
 			continue
 		case err != nil:
 			return fmt.Errorf("reading custom role %s: %w", name, err)
@@ -376,7 +381,7 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	name := "projects/" + d.project + "/locations/global/buckets/" + spec.Names.Log.Bucket
 	b, err := d.c.Logging.Projects.Locations.Buckets.Get(name).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceLogging):
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading log bucket %s: %w", name, err)
@@ -442,7 +447,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 		name := "projects/" + spec.Project + "/secrets/" + id
 		s, err := c.Secrets.Projects.Secrets.Get(name).Context(ctx).Do()
 		switch {
-		case notFound(err):
+		case absent(err, serviceSecretManager):
 			continue
 		case err != nil:
 			return Imports{}, Existing{}, fmt.Errorf("reading secret %s: %w", id, err)
@@ -572,7 +577,7 @@ func (d *discovery) schedulerJob(spec RepoSpec) error {
 	name := "projects/" + d.project + "/locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob
 	j, err := d.c.Scheduler.Projects.Locations.Jobs.Get(name).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceScheduler):
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading Cloud Scheduler job %s: %w", name, err)
@@ -600,7 +605,7 @@ func (d *discovery) schedulerJob(spec RepoSpec) error {
 func (d *discovery) accountName(email string) (string, bool, error) {
 	a, err := d.c.IAM.Projects.ServiceAccounts.Get("projects/" + d.project + "/serviceAccounts/" + email).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceIAM):
 		return "", false, nil
 	case err != nil:
 		return "", false, fmt.Errorf("reading service account %s: %w", email, err)
@@ -613,7 +618,7 @@ func (d *discovery) job(region, name string) (*run.GoogleCloudRunV2Job, error) {
 	full := "projects/" + d.project + "/locations/" + region + "/jobs/" + name
 	j, err := d.c.Run.Projects.Locations.Jobs.Get(full).Context(d.ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceRun):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading Cloud Run job %s: %w", name, err)

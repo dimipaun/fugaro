@@ -30,6 +30,7 @@ type cloud struct {
 	crm   *gcpfake.CRM
 	logs  *gcpfake.Logging
 	sched *gcpfake.Scheduler
+	su    *gcpfake.ServiceUsage
 	c     *Clients
 }
 
@@ -38,7 +39,7 @@ func newCloud(t *testing.T) *cloud {
 	f := &cloud{
 		iam: gcpfake.NewIAM(t), ar: gcpfake.NewArtifactRegistry(t), run: gcpfake.NewRun(t),
 		sm: gcpfake.NewSecrets(t), gcs: gcpfake.NewGCS(t), crm: gcpfake.NewCRM(t),
-		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t), su: gcpfake.NewServiceUsage(t),
 	}
 	c, err := NewClients(context.Background(), f.options(nil), f.endpoints())
 	if err != nil {
@@ -74,7 +75,7 @@ func (f *cloud) options(hc *http.Client) gcp.Options {
 
 func (f *cloud) endpoints() Endpoints {
 	return Endpoints{IAM: f.iam.URL + "/", ArtifactRegistry: f.ar.URL + "/", Storage: f.gcs.URL + "/storage/v1/",
-		ResourceManager: f.crm.URL + "/", Scheduler: f.sched.URL + "/"}
+		ResourceManager: f.crm.URL + "/", Scheduler: f.sched.URL + "/", ServiceUsage: f.su.URL + "/"}
 }
 
 var managed = map[string]string{gcp.LabelManaged: gcp.ManagedValue}

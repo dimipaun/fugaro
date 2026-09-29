@@ -205,7 +205,7 @@ func hasEnabledVersion(ctx context.Context, c *Clients, project, id string) (boo
 	switch {
 	case errors.Is(err, errFound):
 		return true, nil
-	case notFound(err):
+	case absent(err, serviceSecretManager):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("listing the versions of secret %s: %w", id, err)
@@ -227,7 +227,7 @@ func hasLatest(ctx context.Context, c *Clients, spec RepoSpec, image string) (bo
 		"/packages/" + pkg + "/tags/latest"
 	_, err := c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceArtifactRegistry):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("reading tag %s: %w", name, err)
@@ -239,7 +239,7 @@ func hasLatest(ctx context.Context, c *Clients, spec RepoSpec, image string) (bo
 func hasRecord(ctx context.Context, c *Clients, bucket, key string) (bool, error) {
 	_, err := c.Storage.Objects.Get(bucket, key).Context(ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceStorage):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("reading gs://%s/%s: %w", bucket, key, err)

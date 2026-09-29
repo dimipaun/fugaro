@@ -96,12 +96,14 @@ type Endpoints struct {
 	SecretManager string `yaml:"secret_manager,omitempty"`
 	CloudBuild    string `yaml:"cloud_build,omitempty"`
 	// The APIs only fugaro init calls: bucket and IAM policy reads and
-	// writes, service accounts, registries and the project's number.
+	// writes, service accounts, registries, the project's number, and the
+	// enable of Cloud Resource Manager.
 	Storage          string `yaml:"storage,omitempty"`
 	IAM              string `yaml:"iam,omitempty"`
 	ArtifactRegistry string `yaml:"artifact_registry,omitempty"`
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
+	ServiceUsage     string `yaml:"service_usage,omitempty"`
 	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
@@ -280,7 +282,7 @@ func (c *Config) validate() error {
 		{"secret_manager", c.Endpoints.SecretManager}, {"cloud_build", c.Endpoints.CloudBuild},
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
-		{"cloud_scheduler", c.Endpoints.CloudScheduler},
+		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
 	} {
 		if ep.url == "" {
 			continue

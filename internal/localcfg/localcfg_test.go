@@ -127,11 +127,11 @@ func TestParseEndpoints(t *testing.T) {
 		}
 	}
 	// The endpoints only fugaro init uses are checked the same way.
-	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler"} {
+	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler", "service_usage"} {
 		c, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9/\" }\n"))
 		if err != nil {
 			t.Errorf("%s: %v", field, err)
-		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler != "http://127.0.0.1:9/" {
+		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler+e.ServiceUsage != "http://127.0.0.1:9/" {
 			t.Errorf("%s: endpoints = %+v", field, e)
 		}
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://example.com/\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
