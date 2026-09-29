@@ -50,7 +50,7 @@
     }
   },
   "$defs": {
-    "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
+    "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$", "description": "Whole days, hours, minutes and seconds, such as 90m, 1h30m or 1d12h. fugaro also accepts any Go duration, such as 1.5h." },
     "workflow": {
       "type": "object",
       "additionalProperties": false,
@@ -181,7 +181,7 @@
             "max_age": {
               "oneOf": [
                 { "const": 0 },
-                { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" }
+                { "type": "string", "minLength": 2, "pattern": "^([0-9]+d|([0-9]+d)?[0-9]+h)([0-9]+m)?([0-9]+s)?$", "description": "At least 1h and at most 90d, which fugaro checks: days or hours, then optional minutes and seconds, such as 14d or 1d12h." }
               ]
             },
             "lockfiles": { "type": "boolean" },

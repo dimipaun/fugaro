@@ -182,16 +182,17 @@ var daysRE = regexp.MustCompile(`^([0-9]+)d(.*)$`)
 // UnmarshalYAML parses a Go duration string, with an optional day count.
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	var days time.Duration
-	rest := n.Value
+	rest, hasDays := n.Value, false
 	if m := daysRE.FindStringSubmatch(rest); m != nil {
 		count, err := strconv.Atoi(m[1])
-		if err != nil || count > 36500 {
-			return fmt.Errorf("line %d: invalid duration %q", n.Line, n.Value)
+		// The rest must be unsigned: 1d-5h is not 19h.
+		if err != nil || count > 36500 || strings.HasPrefix(m[2], "-") || strings.HasPrefix(m[2], "+") {
+			return fmt.Errorf("line %d: invalid duration %q (days lead an unsigned duration, as in 14d or 1d12h)", n.Line, n.Value)
 		}
-		days, rest = time.Duration(count)*24*time.Hour, m[2]
+		days, rest, hasDays = time.Duration(count)*24*time.Hour, m[2], true
 	}
 	var v time.Duration
-	if rest != "" || days == 0 {
+	if rest != "" || !hasDays {
 		var err error
 		if v, err = time.ParseDuration(rest); err != nil {
 			return fmt.Errorf("line %d: invalid duration %q (use Go syntax such as 90m or 1h30m, or days such as 14d)", n.Line, n.Value)

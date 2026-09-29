@@ -105,7 +105,9 @@ steps:
   # Reuses the exact base image the render step ran (no second pull), so a
   # republished tag between the steps cannot split render and build. The
   # Dockerfile clones the full base branch itself, with the credential as a
-  # BuildKit secret, and pins nothing but that base digest. It pushes only
+  # BuildKit secret, and resets it to the commit render read
+  # (FUGARO_COMMIT), so a push to the branch meanwhile changes neither the
+  # image nor what its smoke and record expect. It pushes only
   # the candidate tag, and hands on the pushed digest (in
   # /workspace/out/image-digest and as its step output), which is what the
   # smoke tests and promote tags latest.
@@ -146,6 +148,7 @@ steps:
           --build-arg "REPO_URL=$$REPO_URL" \
           --build-arg "BASE_BRANCH=$$BASE_BRANCH" \
           --build-arg "FUGARO_BUILT_AT=$$created" \
+          --build-arg "FUGARO_COMMIT=$$commit" \
           --label "org.opencontainers.image.revision=$$commit" \
           --label "org.opencontainers.image.created=$$created" \
           --label "dev.fugaro.base.digest=$${base#*@}" \

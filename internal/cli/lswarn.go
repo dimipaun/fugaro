@@ -3,13 +3,16 @@ package cli
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 )
 
 // checkStaleAfter is how long the daily check may go without writing
@@ -39,31 +42,72 @@ func imageWarnings(ctx context.Context, env *cloudEnv, slugs []string, now time.
 				workflows = slices.Sorted(maps.Keys(cfg.Workflows))
 			}
 		}
+		daily := dailyChecks(ctx, env, slug, checkout)
 		for _, w := range workflows {
 			st, err := imagecheck.ReadStatus(ctx, env.bucket, slug, w, now)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("warning: %s %s: the image status can't be read: %s", repo, w, oneLine(err.Error())))
 				continue
 			}
-			warnings = append(warnings, workflowWarnings(repo, w, st, dailyCheck(checkout(), w), now)...)
+			warnings = append(warnings, workflowWarnings(repo, w, st, func() bool { return daily(w) }, now)...)
 		}
 	}
 	return warnings
 }
 
-// dailyCheck reports whether workflow w is on the daily check. Without the
-// checkout's fugaro.yaml there is nothing saying otherwise, and daily is
-// the default.
-func dailyCheck(cfg *config.Config, w string) bool {
-	if cfg == nil {
-		return true
+// dailyChecks reports whether a workflow of the repository slug is on the
+// daily check: per the checkout's fugaro.yaml when there is one, else per
+// the installed check job, which lists the workflows it checks (no check
+// job: none). The job is read at most once, and only when asked. When it
+// can't be read, daily is the default.
+func dailyChecks(ctx context.Context, env *cloudEnv, slug string, checkout func() *config.Config) func(string) bool {
+	var (
+		read    bool
+		checked map[string]bool // nil: unknown
+	)
+	return func(w string) bool {
+		if cfg := checkout(); cfg != nil {
+			wf, ok := cfg.Workflows[w]
+			return !ok || wf.Rebuild.Defaults().Check == "daily"
+		}
+		if !read {
+			read, checked = true, installedChecks(ctx, env, slug)
+		}
+		return checked == nil || checked[w]
 	}
-	wf, ok := cfg.Workflows[w]
-	return !ok || wf.Rebuild.Defaults().Check == "daily"
+}
+
+// installedChecks are the workflows the repository's check job checks, from
+// the spec fugaro init --repo gave it; an empty set when there is no check
+// job, and nil when that can't be told.
+func installedChecks(ctx context.Context, env *cloudEnv, slug string) map[string]bool {
+	be, ok := env.be.(interface {
+		JobEnv(ctx context.Context, job, name string) (string, bool, error)
+	})
+	if !ok {
+		return nil
+	}
+	raw, exists, err := be.JobEnv(ctx, gcp.CheckJobName(slug), infra.CheckSpecEnv)
+	switch {
+	case err != nil:
+		return nil
+	case !exists:
+		return map[string]bool{}
+	}
+	var spec infra.CheckJobSpec
+	if raw == "" || json.Unmarshal([]byte(raw), &spec) != nil {
+		return nil
+	}
+	checked := map[string]bool{}
+	for _, w := range spec.Workflows {
+		checked[w] = true
+	}
+	return checked
 }
 
 // workflowWarnings are the warnings for one workflow's image and check.
-func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time.Time) []string {
+// daily is asked only when a stale check would be worth a warning.
+func workflowWarnings(repo, w string, st imagecheck.Status, daily func() bool, now time.Time) []string {
 	var out []string
 	prefix := fmt.Sprintf("warning: %s %s: ", repo, w)
 	img, cs := st.Image, st.Check
@@ -76,10 +120,10 @@ func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time
 		if line := rebuildWarning(img, cs); line != "" {
 			out = append(out, prefix+line)
 		}
-		if daily && now.Sub(cs.CheckedAt) > checkStaleAfter {
+		if now.Sub(cs.CheckedAt) > checkStaleAfter && daily() {
 			out = append(out, prefix+"the daily image check hasn't run since "+isoDay(cs.CheckedAt)+".")
 		}
-	} else if daily && img != nil && len(st.Errors) == 0 && now.Sub(img.BuiltAt) > checkStaleAfter {
+	} else if img != nil && len(st.Errors) == 0 && now.Sub(img.BuiltAt) > checkStaleAfter && daily() {
 		// A missing check.json is normal while the schedule is paused, and
 		// ls can't tell: it speaks only once the image is old enough that a
 		// running check would have written one.

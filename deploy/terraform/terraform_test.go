@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // The embedded tree is what fugaro init writes into its workdir, so every
@@ -322,4 +324,24 @@ func skipString(code string, i int) int {
 		}
 	}
 	return -1
+}
+
+// The alert and the log exclusion pick out the check jobs by a name
+// prefix, which must be the one gcp.CheckJobName gives them.
+func TestCheckJobPrefixMatchesGo(t *testing.T) {
+	re := regexp.MustCompile(`job_name=~\\"\^([a-z0-9-]+)\\"`)
+	seen := 0
+	walk(t, func(path string, b []byte) {
+		for _, m := range re.FindAllSubmatch(b, -1) {
+			seen++
+			for _, slug := range []string{"bitbucket-acme-sandbox", strings.Repeat("a", 80)} {
+				if name := gcp.CheckJobName(slug); !strings.HasPrefix(name, string(m[1])) {
+					t.Errorf("%s matches check jobs by %q, but the check job of %s is %s", path, m[1], slug, name)
+				}
+			}
+		}
+	})
+	if seen < 3 {
+		t.Errorf("found %d check-job name filters, want the alert's two and the exclusion's", seen)
+	}
 }

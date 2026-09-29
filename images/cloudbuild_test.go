@@ -189,6 +189,7 @@ func TestBuildPushesOnlyCandidate(t *testing.T) {
 		`--label "org.opencontainers.image.created=$$created"`,
 		`--label "dev.fugaro.base.digest=$${base#*@}"`,
 		`--build-arg "FUGARO_BUILT_AT=$$created"`,
+		`--build-arg "FUGARO_COMMIT=$$commit"`,
 		`docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate"`,
 		`> /workspace/out/image-digest`,
 		`> "$$BUILDER_OUTPUT/output"`,
@@ -197,8 +198,10 @@ func TestBuildPushesOnlyCandidate(t *testing.T) {
 			t.Errorf("the build step lacks %s", want)
 		}
 	}
-	if !strings.Contains(images.DerivedTemplate, `ARG FUGARO_BUILT_AT=""`) {
-		t.Error("the template does not declare FUGARO_BUILT_AT")
+	for _, arg := range []string{`ARG FUGARO_BUILT_AT=""`, `ARG FUGARO_COMMIT=""`} {
+		if !strings.Contains(images.DerivedTemplate, arg) {
+			t.Errorf("the template does not declare %s", arg)
+		}
 	}
 }
 
@@ -469,6 +472,28 @@ func TestCIWorkflowUsesScripts(t *testing.T) {
 	}
 	if strings.Contains(string(data), "docker build ") {
 		t.Error("images.yml calls docker build directly; use images/build-base.sh")
+	}
+}
+
+// TestCIWorkflowTestsEveryTerraformRoot: CI validates and tests each
+// Terraform root, and a missing or renamed root fails the job instead of
+// being skipped.
+func TestCIWorkflowTestsEveryTerraformRoot(t *testing.T) {
+	data, err := os.ReadFile("../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "|| continue") {
+		t.Error("ci.yml skips a missing Terraform root")
+	}
+	roots, err := os.ReadDir("../deploy/terraform/gcp/roots")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range roots {
+		if r.IsDir() && !regexp.MustCompile(`for r in [a-z ]*\b`+r.Name()+`\b`).Match(data) {
+			t.Errorf("ci.yml does not test the %s root", r.Name())
+		}
 	}
 }
 
@@ -821,7 +846,8 @@ esac; done
 		t.Errorf("argv:\n%s", logged)
 	}
 	for _, want := range []string{
-		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--label org.opencontainers.image.revision=c0ffee",
+		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--build-arg FUGARO_COMMIT=c0ffee",
+		"--label org.opencontainers.image.revision=c0ffee",
 		"--label org.opencontainers.image.created=2026-09-29T10:00:00Z", "--label dev.fugaro.base.digest=sha256:abc",
 		"--tag example.com/img:candidate-b7 ", "docker push example.com/img:candidate-b7\n",
 	} {

@@ -270,6 +270,33 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	}
 }
 
+// JobEnv reads job (a job name in the backend's region) and returns the
+// value of its container's env variable name, and whether the job exists.
+// A job without the variable gives "", true.
+func (b *Backend) JobEnv(ctx context.Context, job, name string) (string, bool, error) {
+	if !nameRE.MatchString(job) {
+		return "", false, fmt.Errorf("bad job name %q", job)
+	}
+	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	if err != nil {
+		err = apiError("reading job "+job, err)
+		if errors.Is(err, backend.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if j.Template != nil && j.Template.Template != nil {
+		for _, c := range j.Template.Template.Containers {
+			for _, e := range c.Env {
+				if e.Name == name {
+					return e.Value, true, nil
+				}
+			}
+		}
+	}
+	return "", true, nil
+}
+
 // Cancel asks Cloud Run to stop the execution. It does not wait.
 func (b *Backend) Cancel(ctx context.Context, name string) error {
 	id, err := b.canonical(name)

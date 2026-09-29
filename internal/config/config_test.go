@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 const minimalYAML = `
@@ -187,6 +189,7 @@ func TestRebuildValidation(t *testing.T) {
 		"rebuild-bad-check": "workflows.web.rebuild.check",
 		"rebuild-bad-age":   "workflows.web.rebuild.max_age",
 		"rebuild-bad-glob":  "workflows.web.rebuild.paths[0]",
+		"rebuild-short-age": "workflows.web.rebuild.max_age",
 	} {
 		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
 		if err != nil {
@@ -210,6 +213,7 @@ func TestRebuildPathAndAgeRules(t *testing.T) {
 	}{
 		{"{ max_age: 1h }", true}, {"{ max_age: 90d }", true}, {"{ max_age: 91d }", false}, {"{ max_age: -1h }", false},
 		{"{ max_age: 0 }", true}, {"{ max_age: 1d12h }", true}, {"{ max_age: soon }", false},
+		{"{ max_age: 0d }", true}, {"{ max_age: 2d-5h }", false}, {"{ max_age: 2d+5h }", false}, {"{ max_age: 1d-0s }", false},
 		{`{ paths: ["a/**/b"] }`, true}, {`{ paths: ["/abs"] }`, false}, {`{ paths: [""] }`, false},
 		{`{ paths: ["a/../b"] }`, false}, {`{ paths: ["[a"] }`, false}, {`{ paths: [".."] }`, false},
 	} {
@@ -217,5 +221,44 @@ func TestRebuildPathAndAgeRules(t *testing.T) {
 		if (len(ps) == 0) != tc.ok {
 			t.Errorf("%s: ok=%v, problems %v", tc.block, tc.ok, ps)
 		}
+	}
+}
+
+// Days lead a Go duration, whole and unsigned: 0d is zero, and a signed
+// remainder after the days is refused rather than subtracted or added.
+func TestDurationDays(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		{"0d", 0, true}, {"14d", 14 * 24 * time.Hour, true}, {"1d12h", 36 * time.Hour, true}, {"90m", 90 * time.Minute, true},
+		{"1d-5h", 0, false}, {"1d+5h", 0, false}, {"-1d", 0, false}, {"d", 0, false}, {"1dx", 0, false},
+	} {
+		var d Duration
+		err := yaml.Unmarshal([]byte(tc.in), &d)
+		if (err == nil) != tc.ok || (tc.ok && (d.Duration != tc.want || !d.Set)) {
+			t.Errorf("%q = %v (set %v), %v; want %v, ok %v", tc.in, d.Duration, d.Set, err, tc.want, tc.ok)
+		}
+	}
+}
+
+// Days are accepted wherever a duration is, as the schema's duration and
+// max_age patterns allow them; a signed remainder is refused.
+func TestDurationFixtures(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/valid/timeouts-days.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if len(ps) != 0 || cfg.Workflows["web"].Timeouts.Total.Duration != 24*time.Hour || !cfg.Workflows["web"].Rebuild.MaxAge.Set {
+		t.Fatalf("timeouts-days: %v", ps)
+	}
+	data, err = os.ReadFile("../../testdata/config/invalid/rebuild-mixed-sign-age.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := Parse(data); len(ps) == 0 || !strings.Contains(ps[0].Message, "invalid duration") {
+		t.Fatalf("rebuild-mixed-sign-age: %v", ps)
 	}
 }

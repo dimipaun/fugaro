@@ -144,7 +144,10 @@ func (f *checkFixture) seedRecord(t *testing.T) *imagecheck.Record {
 	t.Helper()
 	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
 	cfg, _ := config.Parse([]byte(bitbucketYAML))
-	tree := imagecheck.Dir{Root: f.work}
+	tree, err := imagecheck.Open(context.Background(), f.work, "HEAD", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	keys, err := imagecheck.KeyFiles(cfg, "app", tree)
 	if err != nil {
 		t.Fatal(err)

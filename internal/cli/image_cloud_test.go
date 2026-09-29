@@ -530,3 +530,32 @@ func TestImageBuildCloudNoSmoke(t *testing.T) {
 		t.Errorf("substitutions = %v", subs)
 	}
 }
+
+// TestImageRenderCloudOutputsUseGitBlobIDs: the record's key-file IDs are
+// git's own, which the check reads from the branch's tree, even when the
+// checkout's bytes differ from the blob's (an eol=crlf attribute here).
+func TestImageRenderCloudOutputsUseGitBlobIDs(t *testing.T) {
+	files := npmFiles()
+	files[".gitattributes"] = "package-lock.json text eol=crlf\n"
+	files["package-lock.json"] = "{\n  \"name\": \"app\",\n  \"lockfileVersion\": 3,\n  \"requires\": true,\n  \"packages\": {\"\": {\"name\": \"app\"}}\n}\n"
+	checkoutWith(t, files)
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	if data, _ := os.ReadFile("package-lock.json"); !strings.Contains(string(data), "\r\n") {
+		t.Fatalf("the checkout did not apply the attribute: %q", data)
+	}
+	ws := t.TempDir()
+	if _, stderr, err := execute(t, "image", "render", "--workflow", "app", "--cloud-outputs", ws); err != nil {
+		t.Fatalf("%v\n%s", err, stderr)
+	}
+	data, err := os.ReadFile(filepath.Join(ws, "record.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := imagecheck.ParseRecord(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := testutil.Git(t, ".", "rev-parse", "HEAD:package-lock.json"); rec.KeyFiles["package-lock.json"] != want {
+		t.Errorf("key file ID = %s, want git's %s", rec.KeyFiles["package-lock.json"], want)
+	}
+}

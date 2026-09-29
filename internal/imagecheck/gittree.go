@@ -15,10 +15,11 @@ import (
 	"github.com/bmatcuk/doublestar/v4"
 )
 
-// GitTree is a Tree over one commit of a blobless, no-checkout clone: it
-// holds every commit and tree of the branch, and fetches a blob from the
-// remote only when ReadFile asks for it. The working tree is never
-// checked out.
+// GitTree is a Tree over one commit of a git repository: the check's
+// blobless, no-checkout clone (Clone), which holds every commit and tree of
+// the branch and fetches a blob from the remote only when ReadFile asks for
+// it, or the build's checkout (Open). Either way its blob IDs and contents
+// are git's own, never a working tree's.
 type GitTree struct {
 	ctx  context.Context
 	dir  string
@@ -57,15 +58,40 @@ func Clone(ctx context.Context, o CloneOptions) (*GitTree, error) {
 		return nil, fmt.Errorf("cloning the %s branch: %w", o.Branch, err)
 	}
 	g.dir = o.Dir
-	head, err := g.git(g.dir, "rev-parse", "--verify", "HEAD^{commit}")
-	if err != nil {
+	if err := g.readTree("HEAD"); err != nil {
 		return nil, fmt.Errorf("reading the %s branch's head: %w", o.Branch, err)
+	}
+	return g, nil
+}
+
+// Open is a Tree over commit rev of the repository at dir, with git's
+// environment env (nil inherits fugaro's). It reads what git stores, so
+// its blob IDs equal the check's even where the working tree's bytes
+// differ (an eol attribute, a smudge filter), and files git doesn't track
+// are not in it.
+func Open(ctx context.Context, dir, rev string, env []string) (*GitTree, error) {
+	g := &GitTree{ctx: ctx, dir: dir, env: env, reads: map[string][]byte{}}
+	if err := g.readTree(rev); err != nil {
+		return nil, fmt.Errorf("reading %s in %s: %w", rev, dir, err)
+	}
+	return g, nil
+}
+
+// readTree resolves rev to the tree's head commit and lists its regular
+// files.
+func (g *GitTree) readTree(rev string) error {
+	if rev == "" || strings.HasPrefix(rev, "-") {
+		return fmt.Errorf("bad revision %q", rev)
+	}
+	head, err := g.git(g.dir, "rev-parse", "--verify", "--end-of-options", rev+"^{commit}")
+	if err != nil {
+		return err
 	}
 	g.head = strings.TrimSpace(string(head))
 	// ls-tree needs trees only, which the blobless clone has.
 	out, err := g.git(g.dir, "ls-tree", "-r", "-z", "--full-tree", g.head)
 	if err != nil {
-		return nil, fmt.Errorf("listing the head's tree: %w", err)
+		return fmt.Errorf("listing the head's tree: %w", err)
 	}
 	g.files = map[string]string{}
 	for _, entry := range bytes.Split(out, []byte{0}) {
@@ -83,7 +109,7 @@ func Clone(ctx context.Context, o CloneOptions) (*GitTree, error) {
 		g.paths = append(g.paths, path)
 	}
 	slices.Sort(g.paths)
-	return g, nil
+	return nil
 }
 
 // git runs git in dir (none when "") with the tree's environment.

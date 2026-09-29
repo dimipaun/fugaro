@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -90,13 +91,16 @@ func inputsFor(t *testing.T, tree *GitTree, rec *Record) Inputs {
 	return in
 }
 
-func TestGitTreeMatchesDir(t *testing.T) {
+func TestCloneMatchesOpen(t *testing.T) {
 	url, work := filterRemote(t, nodeFiles)
 	tree := clone(t, url)
 	if tree.Head() != testutil.Git(t, work, "rev-parse", "HEAD") {
 		t.Fatalf("head = %s", tree.Head())
 	}
-	dir := Dir{Root: work}
+	dir, err := Open(context.Background(), work, "HEAD", os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for path := range nodeFiles {
 		a, err1 := tree.BlobID(path)
 		b, err2 := dir.BlobID(path)
@@ -128,6 +132,48 @@ func TestGitTreeMatchesDir(t *testing.T) {
 		if e.Name() != ".git" {
 			t.Errorf("the clone checked out %s", e.Name())
 		}
+	}
+}
+
+// TestOpenReadsGitNotTheWorkingTree: the build's tree (Open over its
+// checkout) gives the same key-file IDs and contents as the check's clone,
+// even when an eol attribute makes the checkout's bytes differ from the
+// blob's, and an untracked file is not in it.
+func TestOpenReadsGitNotTheWorkingTree(t *testing.T) {
+	files := map[string]string{}
+	for k, v := range nodeFiles {
+		files[k] = v
+	}
+	files[".gitattributes"] = "package-lock.json text eol=crlf\n"
+	files["package-lock.json"] = "{\n  \"lockfileVersion\": 3\n}\n"
+	url, _ := filterRemote(t, files)
+	work := filepath.Join(t.TempDir(), "checkout")
+	testutil.Git(t, filepath.Dir(work), "clone", "--quiet", strings.TrimPrefix(url, "file://"), work)
+	if data, _ := os.ReadFile(filepath.Join(work, "package-lock.json")); !strings.Contains(string(data), "\r\n") {
+		t.Fatalf("the checkout did not apply the attribute: %q", data)
+	}
+	testutil.WriteFiles(t, work, map[string]string{"untracked.lock": "x\n"})
+	built, err := Open(context.Background(), work, "HEAD", os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := clone(t, url)
+	cfg := parse(t, webYAML)
+	a, err1 := KeyFiles(cfg, "web", built)
+	b, err2 := KeyFiles(cfg, "web", checked)
+	if err1 != nil || err2 != nil || !maps.Equal(a, b) || a["package-lock.json"] == "" {
+		t.Errorf("key files: build %v %v, check %v %v", a, err1, b, err2)
+	}
+	h1, err1 := ImageConfigHash(cfg, "web", built)
+	h2, err2 := ImageConfigHash(cfg, "web", checked)
+	if err1 != nil || err2 != nil || h1 != h2 {
+		t.Errorf("image config hash: build %s %v, check %s %v", h1, err1, h2, err2)
+	}
+	if got, _ := built.Glob("*.lock"); len(got) != 0 {
+		t.Errorf("the build's tree has untracked files: %v", got)
+	}
+	if _, err := Open(context.Background(), work, "--output=x", os.Environ()); err == nil {
+		t.Error("Open took an option as a revision")
 	}
 }
 

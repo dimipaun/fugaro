@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -381,8 +382,45 @@ func TestLsWarnsRebuildFailed(t *testing.T) {
 	}
 }
 
+// addCheckJob installs the repository's check job, checking workflows, as
+// fugaro init --repo does: ls reads which workflows it checks when there is
+// no checkout to read fugaro.yaml from.
+func (f *cloudFixture) addCheckJob(t *testing.T, workflows ...string) {
+	t.Helper()
+	spec, err := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", Provider: "github", Workflows: workflows})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := gcp.CheckJobName(appSlug)
+	f.run.SetJob(job, map[string]string{"fugaro": "managed"}, "base:1")
+	f.run.SetJobEnv(job, map[string]string{infra.CheckSpecEnv: string(spec)})
+}
+
+// TestLsCheckOffWithoutCheckout: without a checkout, ls takes the
+// workflows on the daily check from the installed check job, so a
+// workflow whose check is off, or a repository with no check job, gets no
+// "hasn't run" warning from an old check.json.
+func TestLsCheckOffWithoutCheckout(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	putImageRecord(t, f, now.Add(-100*time.Hour))
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-72 * time.Hour), Decision: imagecheck.Skip})
+	if got, _ := lsJSON(t); len(got.Warnings) != 0 {
+		t.Fatalf("no check job, yet warnings = %q", got.Warnings)
+	}
+	f.addCheckJob(t, "other")
+	if got, _ := lsJSON(t); len(got.Warnings) != 0 {
+		t.Fatalf("web is not checked, yet warnings = %q", got.Warnings)
+	}
+	f.addCheckJob(t, "other", "web")
+	if got, _ := lsJSON(t); len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "hasn't run since") {
+		t.Fatalf("web is checked: warnings = %q", got.Warnings)
+	}
+}
+
 func TestLsWarnsCheckStale(t *testing.T) {
 	f := newCloudFixture(t)
+	f.addCheckJob(t, "web")
 	now := time.Now().UTC().Truncate(time.Second)
 	checkedAt := now.Add(-72 * time.Hour)
 	putImageRecord(t, f, now.Add(-100*time.Hour))
@@ -426,6 +464,7 @@ func TestLsWarnsCheckStale(t *testing.T) {
 
 func TestLsWarnsInOtherCases(t *testing.T) {
 	f := newCloudFixture(t)
+	f.addCheckJob(t, "web")
 	now := time.Now().UTC().Truncate(time.Second)
 	built := now.Add(-96 * time.Hour)
 	failedAt := now.Add(-20 * time.Hour)

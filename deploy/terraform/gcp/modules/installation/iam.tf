@@ -12,6 +12,11 @@ resource "google_project_iam_custom_role" "launcher" {
     "run.executions.list",
     "run.executions.cancel",
     "run.operations.get",
+    # fugaro secrets ls: the project's secret list and each secret's
+    # versions. Metadata only: reading a value needs secretAccessor, which
+    # only the jobs and build accounts hold, per secret.
+    "secretmanager.secrets.list",
+    "secretmanager.versions.list",
   ]
 
   depends_on = [google_project_service.this]

@@ -23,8 +23,9 @@ import (
 // A created build runs at once, as a simulation of cloudbuild.yaml's
 // steps by their IDs, in the request's order, each in the build's
 // workspace directory (Workspace), which stands for /workspace/out:
-//   - build pushes candidate-<id> with a new digest, writes image-digest
-//     and reports the digest as its step output
+//   - build fails unless its script passes FUGARO_COMMIT, logs the
+//     commit render wrote (source-commit), pushes candidate-<id> with a new
+//     digest, writes image-digest and reports the digest as its step output
 //   - promote tags latest with image-digest's digest (the registry-side
 //     retag by digest), or, when the gate's hook left a superseded file,
 //     reports "superseded" as its output
@@ -171,6 +172,15 @@ func (f *Build) run(id string, req map[string]any) *buildRun {
 		}
 		switch sid {
 		case "build":
+			// The template bakes in the commit render read (FUGARO_COMMIT);
+			// a build step that does not pass it could bake in a newer one.
+			args, _ := json.Marshal(st["args"])
+			if !strings.Contains(string(args), "FUGARO_COMMIT=") {
+				return fail("the build does not pass the rendered commit as FUGARO_COMMIT")
+			}
+			if c, err := os.ReadFile(filepath.Join(dir, "source-commit")); err == nil {
+				r.log = append(r.log, "build: commit "+strings.TrimSpace(string(c)))
+			}
 			r.digest = fmt.Sprintf("sha256:%064x", f.n)
 			f.tags[image+":candidate-"+id] = r.digest
 			if err := os.WriteFile(filepath.Join(dir, "image-digest"), []byte(r.digest+"\n"), 0o644); err != nil {

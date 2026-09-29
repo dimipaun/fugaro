@@ -172,7 +172,7 @@ variable "alert_email" {
 }
 
 variable "registry_cleanup" {
-  description = "Artifact Registry cleanup. dry_run only logs what would be deleted; turn it off once the audit logs show no latest or dev- version would go. It drives every repository's registry too."
+  description = "Artifact Registry cleanup. dry_run only logs what would be deleted; turn it off once the audit logs show no latest or dev- version would go. untagged_days and keep_versions apply to fugaro-base only; dry_run (exported as registry_cleanup_dry_run) is the only setting every repository's registry shares, and those keep 3 versions and delete untagged ones after 14 days."
   type = object({
     enabled       = optional(bool, true)
     dry_run       = optional(bool, true)
