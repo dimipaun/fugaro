@@ -33,20 +33,21 @@ func (m Missing) String() string {
 var errFound = errors.New("found")
 
 // Readiness decides, from what exists, what the plan may deploy. It
-// returns spec with the gates applied (spec itself is not changed) and
-// what is still missing:
+// returns a deep copy of spec with the gates applied (spec itself is not
+// changed, and shares no map or slice with the result) and what is still
+// missing:
 //   - A workflow's job is deployed when it already exists (a job is never
 //     removed), or when its image's latest tag exists in the repository's
 //     registry and every secret it mounts has an enabled version.
 //   - An existing job keeps its current image until the spec's image has
-//     a latest tag, so no apply points a job at a missing image.
+//     a latest tag, so no apply points a job at a missing image. A job
+//     with no image and an unbuilt spec image is refused (a user error).
 //   - A job account keeps the display name discovery found (ex).
 //   - The daily check's schedule stays paused until every workflow it
 //     covers has a build record, so no unattended build starts for an
 //     image nobody has built on purpose.
 func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
-	out := spec
-	out.Workflows = maps.Clone(spec.Workflows)
+	out := cloneRepoSpec(spec)
 	versions := map[string]bool{} // logical secret → has an enabled version
 	var missing []Missing
 	for _, name := range slices.Sorted(maps.Keys(out.Workflows)) {
@@ -79,7 +80,13 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		switch {
 		case exists:
 			ws.DeployJob = true
-			if !built && current != "" {
+			if !built {
+				if current == "" {
+					// Nothing live to keep, and the spec's image doesn't
+					// exist: either would leave the job without an image.
+					return RepoSpec{}, nil, userErr("Cloud Run job %s exists but has no container image, and %s is not built yet; build it (fugaro image build --repo %s --workflow %s) or fix the job, then run fugaro init --repo again",
+						ws.Job, ws.Image, spec.Name, name)
+				}
 				ws.Image = current
 			}
 		default:
@@ -91,20 +98,48 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		out.Workflows[name] = ws
 	}
 	if spec.Check != nil {
-		check := *spec.Check
-		check.Paused = false
-		for _, name := range check.Workflows {
+		// Paused unless there is at least one workflow and each has a
+		// record, so an empty list fails safe.
+		records := 0
+		for _, name := range out.Check.Workflows {
 			ok, err := hasRecord(ctx, c, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
-			if !ok {
-				check.Paused = true
+			if ok {
+				records++
 			}
 		}
-		out.Check = &check
+		out.Check.Paused = records == 0 || records < len(out.Check.Workflows)
 	}
 	return out, missing, nil
+}
+
+// cloneRepoSpec is a deep copy of spec's maps, slices and check, so
+// Readiness's output shares nothing a caller could edit with its input.
+func cloneRepoSpec(spec RepoSpec) RepoSpec {
+	out := spec
+	out.Secrets = maps.Clone(spec.Secrets)
+	out.BuildSecrets = slices.Clone(spec.BuildSecrets)
+	out.Installation.Launchers = slices.Clone(spec.Installation.Launchers)
+	out.Installation.Operators = slices.Clone(spec.Installation.Operators)
+	out.Workflows = make(map[string]WorkflowSpec, len(spec.Workflows))
+	for name, ws := range spec.Workflows {
+		ws.Env = maps.Clone(ws.Env)
+		ws.SecretEnv = maps.Clone(ws.SecretEnv)
+		ws.Labels = maps.Clone(ws.Labels)
+		ws.SecretIDs = maps.Clone(ws.SecretIDs)
+		ws.BuildSecrets = slices.Clone(ws.BuildSecrets)
+		out.Workflows[name] = ws
+	}
+	if spec.Check != nil {
+		check := *spec.Check
+		check.Env = maps.Clone(check.Env)
+		check.SecretEnv = maps.Clone(check.SecretEnv)
+		check.Workflows = slices.Clone(check.Workflows)
+		out.Check = &check
+	}
+	return out
 }
 
 // hasEnabledVersion reports whether secret id has an enabled version; a

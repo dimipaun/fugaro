@@ -3,7 +3,10 @@ package infra
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"maps"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -625,5 +628,163 @@ func TestScheduleOnlyWithRecord(t *testing.T) {
 	}
 	if !spec.Check.Paused {
 		t.Error("Readiness changed its input spec's check")
+	}
+}
+
+// failingTransport answers every request whose path contains match with
+// code, in Google's error shape, and passes the rest through.
+type failingTransport struct {
+	match string
+	code  int
+}
+
+func (f *failingTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.match != "" && strings.Contains(r.URL.Path, f.match) {
+		body := fmt.Sprintf(`{"error":{"code":%d,"message":"injected","status":"X"}}`, f.code)
+		return &http.Response{StatusCode: f.code, Header: http.Header{"Content-Type": {"application/json"}},
+			Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
+	}
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// TestLookupsFailClosed makes each lookup answer 403 and 500. Neither may
+// read as "doesn't exist": each must fail as a remote error (not a user
+// error, whose refusal would be exit 1) with no imports, and never lead to
+// a create or an import.
+func TestLookupsFailClosed(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	web := spec.Workflows["web"]
+	for _, tc := range []struct {
+		name, match string
+		readiness   bool
+	}{
+		{"project", "/v1/projects/proj-1234", false},
+		{"bucket", "/b/" + spec.Installation.RunsBucket, false},
+		{"bucket policy", "/b/" + spec.Installation.RunsBucket + "/iam", false},
+		{"secret", "/secrets/" + spec.Secrets["sandbox-probe"], false},
+		{"secret policy", ":getIamPolicy", false},
+		{"registry", "/repositories/" + spec.Registry.RepositoryID, false},
+		{"account", "/serviceAccounts/" + web.ServiceAccountEmail, false},
+		{"job", "/jobs/" + web.Job, false},
+		{"tag", "/tags/latest", true},
+		{"versions", "/versions", true},
+		{"record", "/o/", true},
+	} {
+		for _, code := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+			t.Run(fmt.Sprintf("%s %d", tc.name, code), func(t *testing.T) {
+				f := newCloud(t)
+				ft := &failingTransport{}
+				o := gcp.Options{Project: "proj-1234", Region: "us-east5", HTTPClient: &http.Client{Transport: ft},
+					Endpoints: gcp.Endpoints{Run: f.run.URL + "/", SecretManager: f.sm.URL + "/", NoAuth: true}}
+				c, err := NewClients(ctx, o, Endpoints{IAM: f.iam.URL + "/", ArtifactRegistry: f.ar.URL + "/",
+					Storage: f.gcs.URL + "/storage/v1/", ResourceManager: f.crm.URL + "/"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.bootstrap(t, spec, legacyDisplay)
+				check := func(err error) {
+					t.Helper()
+					var ue *UserError
+					if err == nil || errors.As(err, &ue) {
+						t.Errorf("err = %v; want a remote error", err)
+					}
+				}
+				if !tc.readiness {
+					ft.match, ft.code = tc.match, code
+					im, _, err := DiscoverRepo(ctx, c, spec)
+					check(err)
+					if len(im.List) != 0 {
+						t.Errorf("imports on a failed lookup: %v", im.List)
+					}
+					if tc.name == "project" || tc.name == "bucket" {
+						im, err := DiscoverInstallation(ctx, c, installationSpec(t))
+						check(err)
+						if len(im.List) != 0 {
+							t.Errorf("installation imports on a failed lookup: %v", im.List)
+						}
+					}
+					return
+				}
+				_, ex, err := DiscoverRepo(ctx, c, spec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ft.match, ft.code = tc.match, code
+				_, _, err = Readiness(ctx, c, spec, ex)
+				check(err)
+			})
+		}
+	}
+}
+
+func TestReadinessRefusesJobWithoutImage(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.bootstrap(t, spec, legacyDisplay)
+	f.run.SetJob(spec.Workflows["web"].Job, spec.Workflows["web"].Labels, "")
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The spec's image isn't built, and the job has none to keep: switching
+	// to the spec's would point the job at a missing image.
+	got, _, err := Readiness(ctx, f.c, spec, ex)
+	if err == nil {
+		t.Fatalf("readiness pointed a job with no image at %q", got.Workflows["web"].Image)
+	}
+	var ue *UserError
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), spec.Workflows["web"].Job) {
+		t.Errorf("err = %v; want a user error naming the job", err)
+	}
+}
+
+func TestReadinessOutputSharesNoMaps(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.bootstrap(t, spec, legacyDisplay)
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := mustJSON(t, spec)
+	got, _, err := Readiness(ctx, f.c, spec, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := got.Workflows["web"]
+	w.Env["X"], w.SecretEnv["X"], w.Labels["x"], w.SecretIDs["x"] = "1", "1", "1", "1"
+	w.BuildSecrets[0] = "changed"
+	got.Secrets["x"] = "1"
+	got.BuildSecrets[0] = "changed"
+	got.Check.Env["X"], got.Check.SecretEnv["X"] = "1", "1"
+	got.Check.Workflows[0] = "changed"
+	if after := mustJSON(t, spec); string(after) != string(before) ||
+		spec.Workflows["web"].Labels["x"] != "" || spec.Workflows["web"].SecretIDs["x"] != "" ||
+		spec.Workflows["web"].BuildSecrets[0] == "changed" || spec.Check.Workflows[0] == "changed" {
+		t.Error("editing Readiness's output changed its input spec")
+	}
+}
+
+func TestScheduleStaysPausedWithoutWorkflows(t *testing.T) {
+	ctx := context.Background()
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.bootstrap(t, spec, legacyDisplay)
+	_, ex, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := *spec.Check
+	check.Workflows = nil
+	spec.Check = &check
+	got, _, err := Readiness(ctx, f.c, spec, ex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Check.Paused {
+		t.Error("a check covering no workflow must stay paused")
 	}
 }
