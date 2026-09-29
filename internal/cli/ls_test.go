@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -12,14 +14,16 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 type lsOut struct {
-	Runs   []runview.Row  `json:"runs"`
-	Totals runview.Totals `json:"totals"`
+	Runs     []runview.Row  `json:"runs"`
+	Totals   runview.Totals `json:"totals"`
+	Warnings []string       `json:"warnings"`
 }
 
 func seedRun(t *testing.T, f *cloudFixture, id, batch, who string, launched bool) string {
@@ -249,4 +253,172 @@ func TestLsUsesPriceOverride(t *testing.T) {
 	list := compute()
 	f.appendConfig(t, priceOverride)
 	wantOverrideRatio(t, list, compute())
+}
+
+// putBuildObject writes an object of the runs bucket, such as a workflow's
+// image.json or check.json.
+func putBuildObject(t *testing.T, f *cloudFixture, key string, data []byte) {
+	t.Helper()
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func putImageRecord(t *testing.T, f *cloudFixture, builtAt time.Time) {
+	t.Helper()
+	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", BuiltAt: builtAt, SourceCommit: "abc123"})
+	putBuildObject(t, f, imagecheck.RecordKey(appSlug, "web"), data)
+}
+
+func putCheckState(t *testing.T, f *cloudFixture, cs imagecheck.CheckState) {
+	t.Helper()
+	cs.Version = 1
+	data, err := cs.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	putBuildObject(t, f, imagecheck.CheckKey(appSlug, "web"), data)
+}
+
+func TestLsImageAgeJSON(t *testing.T) {
+	f := newCloudFixture(t)
+	today := time.Now().UTC().Format("20060102")
+	started := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
+	builtAt := started.Add(-30 * time.Hour)
+	withImage, plain, skewed := today+"-090000-aaaa", today+"-091000-bbbb", today+"-092000-cccc"
+	for _, id := range []string{withImage, plain, skewed} {
+		seedRun(t, f, id, "", "someone@example.com", false)
+	}
+	writeRecord(t, f, withImage, &runstore.Record{Version: 1, RunID: withImage, Status: runstore.StatusSucceeded, Stage: "writeback",
+		StartedAt: started, Image: &runstore.ImageInfo{BuiltAt: &builtAt, BakedCommit: "abc123"}})
+	writeRecord(t, f, plain, &runstore.Record{Version: 1, RunID: plain, Status: runstore.StatusSucceeded, Stage: "writeback",
+		StartedAt: started, Image: &runstore.ImageInfo{BakedCommit: "abc123"}})
+	future := started.Add(time.Hour)
+	writeRecord(t, f, skewed, &runstore.Record{Version: 1, RunID: skewed, Status: runstore.StatusSucceeded, Stage: "writeback",
+		StartedAt: started, Image: &runstore.ImageInfo{BuiltAt: &future, BakedCommit: "abc123"}})
+
+	out, _, err := execute(t, "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raw struct {
+		Runs []map[string]json.RawMessage `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	ages := map[string]string{}
+	for _, r := range raw.Runs {
+		var id string
+		_ = json.Unmarshal(r["run_id"], &id)
+		ages[id] = string(r["image_age_s"])
+	}
+	if ages[withImage] != "108000" || ages[plain] != "" || ages[skewed] != "" {
+		t.Fatalf("image_age_s by run = %v", ages)
+	}
+	// The human table is unchanged.
+	human, _, err := execute(t, "ls")
+	if err != nil || strings.Contains(human, "image") {
+		t.Fatalf("human ls = %s, %v", human, err)
+	}
+}
+
+func TestLsWarnsRebuildFailed(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	day := func(d time.Time) string { return d.Format("2006-01-02") }
+	built := now.Add(-96 * time.Hour)
+	failedAt := now.Add(-20 * time.Hour)
+	failed := imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.RebuildFailedLast, Reasons: []string{imagecheck.ReasonBase},
+		BuildID: "b0008", LastBuildStatus: "FAILURE", LastBuildAt: &failedAt}
+	putImageRecord(t, f, built)
+	putCheckState(t, f, failed)
+
+	want := "warning: acme/app web: the image rebuild of " + day(failedAt) + " failed (FAILURE); runs still use the image built " + day(built) + ". See fugaro image status.\n"
+	out, _, err := execute(t, "ls")
+	if err != nil || !strings.HasPrefix(out, want) {
+		t.Fatalf("ls = %q, %v\nwant a first line %q", out, err, want)
+	}
+	if !strings.Contains(out, "RUN") || strings.Index(out, "RUN") < len(want) {
+		t.Fatalf("the warning does not come before the table: %q", out)
+	}
+	got, _ := lsJSON(t)
+	if len(got.Warnings) != 1 || got.Warnings[0]+"\n" != want {
+		t.Fatalf("warnings = %q", got.Warnings)
+	}
+	if out, _, _ := execute(t, "ls", "--json"); strings.Contains(out, "warning: acme") && !strings.Contains(out, `"warnings": [`) {
+		t.Fatalf("json output: %s", out)
+	}
+
+	// The check itself failing is a warning, whatever the last build did.
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.CheckFailed, Error: "reading the base branch: boom"})
+	got, _ = lsJSON(t)
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "acme/app web: the daily image check failed") || !strings.Contains(got.Warnings[0], "boom") {
+		t.Fatalf("check-failed warnings = %q", got.Warnings)
+	}
+
+	// After a manual fix the record is newer than the failed build, and the
+	// stale check.json keeps saying FAILURE until the next check: no warning.
+	putImageRecord(t, f, failedAt.Add(time.Hour))
+	putCheckState(t, f, failed)
+	got, _ = lsJSON(t)
+	if len(got.Warnings) != 0 {
+		t.Fatalf("a superseded failure warned: %q", got.Warnings)
+	}
+	// A healthy check warns about nothing, and the array is still there.
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-time.Hour), Decision: imagecheck.Skip})
+	out, _, _ = execute(t, "ls", "--json")
+	if !strings.Contains(out, `"warnings": []`) {
+		t.Fatalf("json = %s", out)
+	}
+	if human, _, _ := execute(t, "ls"); strings.Contains(human, "warning:") {
+		t.Fatalf("human ls warned: %s", human)
+	}
+}
+
+func TestLsWarnsCheckStale(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	checkedAt := now.Add(-72 * time.Hour)
+	putImageRecord(t, f, now.Add(-100*time.Hour))
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: checkedAt, Decision: imagecheck.Skip})
+	got, _ := lsJSON(t)
+	want := "warning: acme/app web: the daily image check hasn't run since " + checkedAt.Format("2006-01-02") + "."
+	if len(got.Warnings) != 1 || got.Warnings[0] != want {
+		t.Fatalf("warnings = %q, want %q", got.Warnings, want)
+	}
+
+	// Inside 48 hours it is on time.
+	putCheckState(t, f, imagecheck.CheckState{CheckedAt: now.Add(-47 * time.Hour), Decision: imagecheck.Skip})
+	if got, _ = lsJSON(t); len(got.Warnings) != 0 {
+		t.Fatalf("a check 47h old warned: %q", got.Warnings)
+	}
+
+	// No check.json: silent while the image is younger than 48 hours (the
+	// schedule may be paused), a warning once it is older.
+	if err := os.Remove(filepath.Join(strings.TrimPrefix(f.bucket, "file://"), imagecheck.CheckKey(appSlug, "web"))); err != nil {
+		t.Fatal(err)
+	}
+	putImageRecord(t, f, now.Add(-47*time.Hour))
+	if got, _ = lsJSON(t); len(got.Warnings) != 0 {
+		t.Fatalf("a young image without a check warned: %q", got.Warnings)
+	}
+	built := now.Add(-60 * time.Hour)
+	putImageRecord(t, f, built)
+	got, _ = lsJSON(t)
+	if len(got.Warnings) != 1 || !strings.Contains(got.Warnings[0], "acme/app web: the daily image check has never run") || !strings.Contains(got.Warnings[0], built.Format("2006-01-02")) {
+		t.Fatalf("warnings = %q", got.Warnings)
+	}
+
+	// Neither object: nothing to say (no image yet, or nothing built).
+	if err := os.Remove(filepath.Join(strings.TrimPrefix(f.bucket, "file://"), imagecheck.RecordKey(appSlug, "web"))); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = lsJSON(t); len(got.Warnings) != 0 {
+		t.Fatalf("no objects warned: %q", got.Warnings)
+	}
 }

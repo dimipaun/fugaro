@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -151,6 +152,47 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal(`schema accepts "status": "done"`)
+	}
+}
+
+func TestResultSchemaImageBlock(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`
+	check := func(image string, ok bool) {
+		t.Helper()
+		doc := base
+		if image != "" {
+			doc += `,"image":` + image
+		}
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(doc + "}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); (err == nil) != ok {
+			t.Errorf("image %s: valid = %v, want %v (%v)", image, err == nil, ok, err)
+		}
+	}
+	check(``, true)
+	check(`{"baked_commit":"abc123"}`, true)
+	check(`{"baked_commit":"abc123","built_at":"2026-09-28T10:00:00Z"}`, true)
+	check(`{"built_at":"2026-09-28T10:00:00Z"}`, false)
+	check(`{"baked_commit":""}`, false)
+	check(`{"baked_commit":"abc123","built_at":5}`, false)
+	check(`{"baked_commit":"abc123","commits_behind":3}`, false)
+
+	// What the runner writes validates.
+	at := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(runstore.Record{Version: 1, RunID: "20260927-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap",
+		Outcome: runstore.OutcomeNone, StartedAt: at, Image: &runstore.ImageInfo{BuiltAt: &at, BakedCommit: "abc123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a runner record with an image block: %v\n%s", err, data)
 	}
 }
 

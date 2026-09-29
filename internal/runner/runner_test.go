@@ -752,3 +752,72 @@ func TestCostWithoutPricesIsNotEstimated(t *testing.T) {
 		t.Fatalf("report = %s", report)
 	}
 }
+
+// A run reports what its image was built from: the baked checkout's HEAD
+// as the run found it, before the sync, and the build time from the image's
+// own record.
+func TestRunnerRecordsImageAge(t *testing.T) {
+	h := newHarness(t, "", nil)
+	testutil.Git(t, filepath.Dir(h.deps.WorkDir), "clone", "--quiet", h.remote, h.deps.WorkDir)
+	baked := testutil.Git(t, h.deps.WorkDir, "rev-parse", "HEAD")
+	// The remote moves on after the image was built; the run syncs to it.
+	pusher := filepath.Join(t.TempDir(), "pusher")
+	testutil.Git(t, filepath.Dir(pusher), "clone", "--quiet", h.remote, pusher)
+	testutil.Git(t, pusher, "commit", "--quiet", "--allow-empty", "-m", "later")
+	testutil.Git(t, pusher, "push", "--quiet", "origin", "HEAD:main")
+	builtAt := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	h.deps.ImageInfoPath = filepath.Join(t.TempDir(), "image.json")
+	if err := os.WriteFile(h.deps.ImageInfoPath, []byte(`{"built_at":"`+builtAt.Format(time.RFC3339)+`","commit":"ffffffff"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("record = %+v", rec)
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil || stored.Image == nil || stored.Image.BakedCommit != baked || stored.Image.BuiltAt == nil || !stored.Image.BuiltAt.Equal(builtAt) {
+		t.Fatalf("stored image = %+v, %v (baked %s)", stored.Image, err, baked)
+	}
+	if stored.Image.BakedCommit == rec.HeadSHA {
+		t.Fatalf("the baked commit is the run's own head %s", rec.HeadSHA)
+	}
+}
+
+// Neither the image's record nor a baked checkout is needed: the run
+// succeeds and reports no image block.
+func TestRunnerImageAgeOptional(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.ImageInfoPath = filepath.Join(t.TempDir(), "missing.json")
+	var logs bytes.Buffer
+	h.deps.Log = runner.NewLogger(&logs)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := h.store.ReadRecord(context.Background())
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Image != nil || stored.Image != nil {
+		t.Fatalf("record = %+v, stored image = %+v, %v", rec, stored.Image, err)
+	}
+	if strings.Contains(logs.String(), "build record") {
+		t.Fatalf("a missing record was logged as a problem: %s", logs.String())
+	}
+
+	// A record that can't be used is a warning, not a failure.
+	h = newHarness(t, "", nil)
+	h.deps.ImageInfoPath = filepath.Join(t.TempDir(), "image.json")
+	if err := os.WriteFile(h.deps.ImageInfoPath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logs.Reset()
+	h.deps.Log = runner.NewLogger(&logs)
+	rec, err = h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded || rec.Image != nil {
+		t.Fatalf("record = %+v, %v", rec, err)
+	}
+	if !strings.Contains(logs.String(), "the image's build record is not valid") {
+		t.Fatalf("no warning: %s", logs.String())
+	}
+}
