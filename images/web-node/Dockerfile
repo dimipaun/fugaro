@@ -91,11 +91,14 @@ USER fugaro
 #   https://downloads.claude.ai/claude-code-releases/2.1.283/manifest.json
 #     linux-x64:   1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2
 #     linux-arm64: 346d294f0103d6fc0de11ac953579b5c62dfa90698a4cfc486b6f927c615e697
-# `claude install` sets up the launcher under ~/.local/bin; the installer's
-# own state and identity files (~/.claude, ~/.claude.json, which holds a
+# The verified binary itself is installed at ~/.local/bin/claude. `claude
+# install` is deliberately not used: it downloads the current release rather
+# than installing the binary it was run from, so the pinned version silently
+# floated (2.1.284 replaced the pinned 2.1.283). Any state or identity files
+# a run of the binary leaves behind (~/.claude, ~/.claude.json, which holds a
 # fixed machineID/userID, ~/.npm, ~/.cache/claude) are removed straight
 # after so the image carries no shared per-build identity, and `claude
-# --version` is checked again afterwards to confirm the launcher survives.
+# --version` must report exactly the pinned version or the build fails.
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) carch=x64; csum=1859583ce32920595c61ef868bee52e1b1594f7486db209935e01f1e5e804ae2 ;; \
@@ -105,11 +108,12 @@ RUN set -eu; \
     tmp=$(mktemp -d); \
     curl -fsSL "https://downloads.claude.ai/claude-code-releases/${CLAUDE_CODE_VERSION}/linux-${carch}/claude" -o "$tmp/claude"; \
     echo "$csum  $tmp/claude" | sha256sum -c -; \
-    chmod +x "$tmp/claude"; \
-    "$tmp/claude" install; \
+    mkdir -p "$HOME/.local/bin"; \
+    install -m 0755 "$tmp/claude" "$HOME/.local/bin/claude"; \
     rm -rf "$tmp"; \
+    v=$(claude --version); echo "$v"; \
     rm -rf "$HOME/.claude" "$HOME/.claude.json" "$HOME/.npm" "$HOME/.cache/claude"; \
-    claude --version
+    case "$v" in "${CLAUDE_CODE_VERSION} "*) ;; *) echo "web-node: claude --version reports '$v', not the pinned ${CLAUDE_CODE_VERSION}" >&2; exit 1 ;; esac
 # Copied last so a fugaro change doesn't re-download Node or Claude Code.
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro
 WORKDIR /work/repo
