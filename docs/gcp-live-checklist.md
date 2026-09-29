@@ -277,6 +277,7 @@ These are the first live run's findings. Record every later run in the same way,
 To be filled in by the live bring-up and migration (gcp-setup.md, "Adopting an M4 installation"). Record every `FACT` and each plan summary in the same way as the runs above. Each item names the check that produces it.
 
 - **The project's default build identity** (gcp-setup.md, precondition 9): the account `gcloud builds get-default-service-account` names, its roles, and whether the leaked-build-token path of design §6.1 is real in this project.
+- **Cloud Resource Manager disabled:** on a project where it was disabled, `fugaro init --plan-only` asked to enable it, enabled it, and carried on once the enable propagated (how many retries it took).
 - **The installation plan (adoption):** the imports, creates and in-place updates the plan showed, and that it had zero deletes; that `plan -detailed-exitcode` exits 2 for an import-only plan.
 - **Log isolation:** a new Fugaro job line lands in the `fugaro` log bucket and not in `_Default`; the project exclusion applies to `_Default`; `fugaro logs` reads through the view; adopted M4 jobs already carry template labels, so the sink's filter matches them; and the failure alert fires for a line the exclusion routed away (check 16b).
 - **Sandbox adoption:** the job, account and secrets imported; the live bucket condition still one binding, not two; the job's in-place diffs (container name, CPU form, annotations); the legacy image and display name kept until the first build.

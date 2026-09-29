@@ -67,6 +67,7 @@ type initRig struct {
 	sm                        *gcpfake.Secrets
 	logs                      *gcpfake.Logging
 	sched                     *gcpfake.Scheduler
+	su                        *gcpfake.ServiceUsage
 }
 
 const initConfig = `version: 1
@@ -83,7 +84,7 @@ func newInitRig(t *testing.T) *initRig {
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),
 		crm: gcpfake.NewCRM(t), run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t),
-		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t), su: gcpfake.NewServiceUsage(t),
 		script: map[string]any{},
 	}
 	r.crm.AddProject(initProject, initProjectNumber)
@@ -98,7 +99,7 @@ func newInitRig(t *testing.T) *initRig {
 	r.cfg = filepath.Join(r.dir, "config.yaml")
 	cfg := initConfig + "endpoints: { run: " + r.run.URL + "/, secret_manager: " + r.sm.URL + "/, storage: " + r.gcs.URL + "/storage/v1/, iam: " +
 		r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL + "/, logging: " + r.logs.URL +
-		"/, cloud_scheduler: " + r.sched.URL + "/, no_auth: true }\n" +
+		"/, cloud_scheduler: " + r.sched.URL + "/, service_usage: " + r.su.URL + "/, no_auth: true }\n" +
 		"repos:\n  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }\n"
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)

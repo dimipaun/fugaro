@@ -27,9 +27,14 @@ var viewerReaderRoles = []string{"roles/storage.legacyBucketReader", "roles/stor
 
 const projectViewerPrefix = "projectViewer:"
 
-// ProjectNumber is project's number, which its buckets carry.
+// ProjectNumber is project's number, which its buckets carry. It is a
+// *ServiceDisabledError while the Cloud Resource Manager API is disabled
+// in the project, which fugaro init offers to fix.
 func ProjectNumber(ctx context.Context, c *Clients, project string) (uint64, error) {
 	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
+	if serviceDisabled(err, ServiceResourceManager, target{project: project}) {
+		return 0, &ServiceDisabledError{Service: ServiceResourceManager, Project: project, Err: err}
+	}
 	if err != nil {
 		return 0, fmt.Errorf("reading project %s: %w", project, err)
 	}
@@ -46,6 +51,8 @@ func CheckStateBucket(ctx context.Context, c *Clients, project, name string) (bo
 	}
 	b, err := c.Storage.Buckets.Get(name).Context(ctx).Do()
 	switch {
+	// Only a 404: the state bucket is Terraform's backend, so a disabled
+	// Storage API is an environment error here, not "no bucket yet".
 	case notFound(err):
 		return false, nil
 	case err != nil:

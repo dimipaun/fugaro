@@ -72,13 +72,14 @@ var errFound = errors.New("found")
 //     image nobody has built on purpose.
 func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
+	tg := target{project: spec.Project, number: ex.ProjectNumber}
 	versions := map[string]bool{} // logical secret → has an enabled version
 	var missing []Missing
 	hasVersion := func(logical string) (bool, error) {
 		ok, seen := versions[logical]
 		if !seen {
 			var err error
-			if ok, err = hasEnabledVersion(ctx, c, spec.Project, spec.Secrets[logical]); err != nil {
+			if ok, err = hasEnabledVersion(ctx, c, tg, spec.Secrets[logical]); err != nil {
 				return false, err
 			}
 			versions[logical] = ok
@@ -104,7 +105,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 				reasons = append(reasons, gate{MissingSecret, fmt.Sprintf("secret %s has no version: fugaro secrets set %s --repo %s", logical, logical, spec.Name)})
 			}
 		}
-		built, err := hasLatest(ctx, c, spec, ws.Image)
+		built, err := hasLatest(ctx, c, tg, spec, ws.Image)
 		if err != nil {
 			return RepoSpec{}, nil, err
 		}
@@ -151,7 +152,7 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		// bucketName(lc), the bucket builds record in (lc.RecordBucketURL).
 		records := 0
 		for _, name := range out.Check.Workflows {
-			ok, err := hasRecord(ctx, c, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
+			ok, err := hasRecord(ctx, c, tg, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
 			if err != nil {
 				return RepoSpec{}, nil, err
 			}
@@ -193,8 +194,8 @@ func cloneRepoSpec(spec RepoSpec) RepoSpec {
 
 // hasEnabledVersion reports whether secret id has an enabled version; a
 // missing secret has none.
-func hasEnabledVersion(ctx context.Context, c *Clients, project, id string) (bool, error) {
-	err := c.Secrets.Projects.Secrets.Versions.List("projects/"+project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
+func hasEnabledVersion(ctx context.Context, c *Clients, tg target, id string) (bool, error) {
+	err := c.Secrets.Projects.Secrets.Versions.List("projects/"+tg.project+"/secrets/"+id).Pages(ctx, func(p *secretmanager.ListSecretVersionsResponse) error {
 		for _, v := range p.Versions {
 			if v.State == "ENABLED" {
 				return errFound
@@ -205,7 +206,7 @@ func hasEnabledVersion(ctx context.Context, c *Clients, project, id string) (boo
 	switch {
 	case errors.Is(err, errFound):
 		return true, nil
-	case notFound(err):
+	case absent(err, serviceSecretManager, tg):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("listing the versions of secret %s: %w", id, err)
@@ -216,7 +217,7 @@ func hasEnabledVersion(ctx context.Context, c *Clients, project, id string) (boo
 // hasLatest reports whether image (<registry path>/<package>:latest, in
 // the repository's registry) has its latest tag. gcp.ImageName's package
 // is one path component, so it needs no escaping in the tag's name.
-func hasLatest(ctx context.Context, c *Clients, spec RepoSpec, image string) (bool, error) {
+func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image string) (bool, error) {
 	rest, ok := strings.CutPrefix(image, spec.RegistryPath+"/")
 	pkg, tagged := strings.CutSuffix(rest, ":latest")
 	m := registryHostRE.FindStringSubmatch(spec.Installation.RegistryHost)
@@ -227,7 +228,7 @@ func hasLatest(ctx context.Context, c *Clients, spec RepoSpec, image string) (bo
 		"/packages/" + pkg + "/tags/latest"
 	_, err := c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
 	switch {
-	case notFound(err):
+	case absent(err, serviceArtifactRegistry, tg):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("reading tag %s: %w", name, err)
@@ -236,10 +237,13 @@ func hasLatest(ctx context.Context, c *Clients, spec RepoSpec, image string) (bo
 }
 
 // hasRecord reports whether the runs bucket holds object key.
-func hasRecord(ctx context.Context, c *Clients, bucket, key string) (bool, error) {
+func hasRecord(ctx context.Context, c *Clients, tg target, bucket, key string) (bool, error) {
 	_, err := c.Storage.Objects.Get(bucket, key).Context(ctx).Do()
 	switch {
-	case notFound(err):
+	// A disabled Storage API can't get here in practice (the state bucket
+	// check and Terraform's backend need Storage first); if it did, the
+	// record would read as missing and the schedule would stay paused.
+	case absent(err, serviceStorage, tg):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("reading gs://%s/%s: %w", bucket, key, err)
