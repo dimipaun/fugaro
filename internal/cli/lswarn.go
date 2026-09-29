@@ -49,7 +49,7 @@ func imageWarnings(ctx context.Context, env *cloudEnv, slugs []string, now time.
 				warnings = append(warnings, fmt.Sprintf("warning: %s %s: the image status can't be read: %s", repo, w, oneLine(err.Error())))
 				continue
 			}
-			warnings = append(warnings, workflowWarnings(repo, w, st, daily(w), now)...)
+			warnings = append(warnings, workflowWarnings(repo, w, st, func() bool { return daily(w) }, now)...)
 		}
 	}
 	return warnings
@@ -106,7 +106,8 @@ func installedChecks(ctx context.Context, env *cloudEnv, slug string) map[string
 }
 
 // workflowWarnings are the warnings for one workflow's image and check.
-func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time.Time) []string {
+// daily is asked only when a stale check would be worth a warning.
+func workflowWarnings(repo, w string, st imagecheck.Status, daily func() bool, now time.Time) []string {
 	var out []string
 	prefix := fmt.Sprintf("warning: %s %s: ", repo, w)
 	img, cs := st.Image, st.Check
@@ -119,10 +120,10 @@ func workflowWarnings(repo, w string, st imagecheck.Status, daily bool, now time
 		if line := rebuildWarning(img, cs); line != "" {
 			out = append(out, prefix+line)
 		}
-		if daily && now.Sub(cs.CheckedAt) > checkStaleAfter {
+		if now.Sub(cs.CheckedAt) > checkStaleAfter && daily() {
 			out = append(out, prefix+"the daily image check hasn't run since "+isoDay(cs.CheckedAt)+".")
 		}
-	} else if daily && img != nil && len(st.Errors) == 0 && now.Sub(img.BuiltAt) > checkStaleAfter {
+	} else if img != nil && len(st.Errors) == 0 && now.Sub(img.BuiltAt) > checkStaleAfter && daily() {
 		// A missing check.json is normal while the schedule is paused, and
 		// ls can't tell: it speaks only once the image is old enough that a
 		// running check would have written one.
