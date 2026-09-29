@@ -3,6 +3,7 @@ package infra
 import (
 	"bytes"
 	"encoding/json"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -159,7 +160,10 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	case "on":
 		s.RegistryCleanup = RegistryCleanup{Enabled: true}
 	case "off":
-		s.RegistryCleanup = RegistryCleanup{}
+		// No policy, and a dry run: the installation outputs dry_run, which
+		// every repository registry copies, so off must not turn deletion
+		// on there.
+		s.RegistryCleanup = RegistryCleanup{DryRun: true}
 	default:
 		return InstallationSpec{}, userErr("--registry-cleanup %q must be dry-run, on or off", o.RegistryCleanup)
 	}
@@ -185,6 +189,16 @@ func members(flag, local []string) []string {
 	return append([]string{}, m...)
 }
 
+// launchersWithOperators is what the roots grant launchers' access to:
+// the launchers and the operators, each once, sorted. Operators get
+// everything launchers get (they run, watch and cancel runs too), and the
+// specs and the local config keep the two lists as given.
+func launchersWithOperators(launchers, operators []string) []string {
+	out := append(members(launchers, nil), operators...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // repoVars is the repository root's tfvars.
 type repoVars struct {
 	Project      string           `json:"project"`
@@ -201,14 +215,14 @@ func RepoVars(spec RepoSpec) ([]byte, error) {
 		id := spec.GitHubAppID
 		v.GitHubAppID = &id
 	}
-	v.Installation.Launchers = members(v.Installation.Launchers, nil)
+	v.Installation.Launchers = launchersWithOperators(v.Installation.Launchers, v.Installation.Operators)
 	v.Installation.Operators = members(v.Installation.Operators, nil)
 	return sortedJSON(v)
 }
 
 // InstallationVars is the installation root's terraform.tfvars.json.
 func InstallationVars(spec InstallationSpec) ([]byte, error) {
-	spec.Launchers = members(spec.Launchers, nil)
+	spec.Launchers = launchersWithOperators(spec.Launchers, spec.Operators)
 	spec.Operators = members(spec.Operators, nil)
 	return sortedJSON(spec)
 }

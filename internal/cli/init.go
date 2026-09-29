@@ -536,25 +536,8 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 
 	// 4. The runs bucket's viewers.
 	if im.AdoptsRunsBucket() {
-		p, err := infra.BucketPolicy(ctx, c, spec.RunsBucket)
-		if err != nil {
-			return initErr(err)
-		}
-		if grants := infra.ProjectViewerGrants(p); len(grants) > 0 && r.o.planOnly {
-			r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, fugaro init asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
-		} else if len(grants) > 0 {
-			ok, err := r.ask(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
-			if err != nil {
-				return err
-			}
-			if ok {
-				if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
-					return initErr(err)
-				}
-				fmt.Fprintf(r.w, "removed project Viewers' read access to gs://%s\n", spec.RunsBucket)
-			} else {
-				r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was declined; rerun fugaro init to remove it", spec.RunsBucket))
-			}
+		if err := r.runsBucketViewers(ctx, c, spec); err != nil {
+			return err
 		}
 	}
 
@@ -596,6 +579,19 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 			return remote(err)
 		}
 		r.res.Applied = true
+		if !im.AdoptsRunsBucket() {
+			// The apply may just have created the runs bucket, with GCS's
+			// project Viewer access; it is ours only if discovery says so.
+			after, err := infra.DiscoverInstallation(ctx, c, spec)
+			if err != nil {
+				return initErr(err)
+			}
+			if after.AdoptsRunsBucket() {
+				if err := r.runsBucketViewers(ctx, c, spec); err != nil {
+					return err
+				}
+			}
+		}
 	} else {
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
@@ -613,6 +609,37 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	}
 	// 8. The local config.
 	return r.writeConfig(lc, spec, outs, path, old, r.res.Applied)
+}
+
+// runsBucketViewers offers to remove project Viewers' read access to the
+// runs bucket, which discovery found ours (in the project, marked). Under
+// --plan-only it only says so; declining is allowed and noted.
+func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec infra.InstallationSpec) error {
+	p, err := infra.BucketPolicy(ctx, c, spec.RunsBucket)
+	if err != nil {
+		return initErr(err)
+	}
+	grants := infra.ProjectViewerGrants(p)
+	switch {
+	case len(grants) == 0:
+		return nil
+	case r.o.planOnly:
+		r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, fugaro init asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
+		return nil
+	}
+	ok, err := r.ask(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		r.warn(fmt.Sprintf("project Viewers can still read gs://%s, transcripts and caches included: the removal was declined; rerun fugaro init to remove it", spec.RunsBucket))
+		return nil
+	}
+	if err := infra.RemoveProjectViewers(ctx, c, spec.RunsBucket, p); err != nil {
+		return initErr(err)
+	}
+	fmt.Fprintf(r.w, "removed project Viewers' read access to gs://%s\n", spec.RunsBucket)
+	return nil
 }
 
 // configOnly writes the local config alone, from the installation's

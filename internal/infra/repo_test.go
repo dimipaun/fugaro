@@ -305,3 +305,85 @@ func TestMissingKinds(t *testing.T) {
 		t.Fatalf("kinds = %v", kinds)
 	}
 }
+
+// --registry-cleanup off deletes nothing anywhere: the base registry's
+// cleanup is disabled and stays a dry run, and the dry run the
+// installation outputs, which every repository registry copies, stays on.
+func TestRegistryCleanupOffDeletesNothing(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	for mode, want := range map[string]RegistryCleanup{
+		"":        {Enabled: true, DryRun: true},
+		"dry-run": {Enabled: true, DryRun: true},
+		"on":      {Enabled: true, DryRun: false},
+		"off":     {Enabled: false, DryRun: true},
+	} {
+		s, err := Installation(lc, InstallOptions{RegistryCleanup: mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.RegistryCleanup != want {
+			t.Errorf("%q: registry_cleanup = %+v, want %+v", mode, s.RegistryCleanup, want)
+		}
+		// The installation root outputs registry_cleanup.dry_run as
+		// registry_cleanup_dry_run; the repository's registry copies it.
+		in := sandboxInputs(t, m5Additions)
+		dry := s.RegistryCleanup.DryRun
+		in.Installation.RegistryCleanupDryRun = &dry
+		rs, err := Repo(in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deletes := !rs.Registry.CleanupDryRun; deletes != (mode == "on") {
+			t.Errorf("%q: the repository registry's cleanup deletes = %v", mode, deletes)
+		}
+	}
+}
+
+// Operators get everything launchers get: the tfvars' launchers are the
+// launchers and the operators, each once, in both roots. The specs keep
+// the lists as given, so the local config does too.
+func TestOperatorsAreLaunchers(t *testing.T) {
+	lc := parseLC(t, m4LocalConfig+m5Additions)
+	s, err := Installation(lc, InstallOptions{Launchers: []string{"user:l@example.com", "user:both@example.com"}, Operators: []string{"user:both@example.com", "user:o@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(s.Launchers, []string{"user:l@example.com", "user:both@example.com"}) {
+		t.Errorf("the spec's launchers changed: %q", s.Launchers)
+	}
+	want := []string{"user:both@example.com", "user:l@example.com", "user:o@example.com"}
+	var doc struct {
+		Launchers, Operators []string
+	}
+	data, err := InstallationVars(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(doc.Launchers, want) || !slices.Equal(doc.Operators, []string{"user:both@example.com", "user:o@example.com"}) {
+		t.Errorf("installation tfvars launchers %q operators %q", doc.Launchers, doc.Operators)
+	}
+
+	in := webappInputs(t)
+	in.Installation.Launchers = []string{"user:l@example.com", "user:both@example.com"}
+	in.Installation.Operators = []string{"user:both@example.com", "user:o@example.com"}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = RepoRootVars(rs, RepoRootOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rdoc struct {
+		Installation struct{ Launchers, Operators []string }
+	}
+	if err := json.Unmarshal(data, &rdoc); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(rdoc.Installation.Launchers, want) || !slices.Equal(rdoc.Installation.Operators, []string{"user:both@example.com", "user:o@example.com"}) {
+		t.Errorf("repository tfvars launchers %q operators %q", rdoc.Installation.Launchers, rdoc.Installation.Operators)
+	}
+}

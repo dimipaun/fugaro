@@ -680,10 +680,13 @@ run "people_job" {
   }
 
   assert {
+    # fugaro init puts the operators among the launchers too (they get
+    # everything launchers get), so the fixture's operator runs jobs.
     condition = tomap({ for k, m in google_cloud_run_v2_job_iam_member.launcher : k => m.role }) == tomap({
       "user:launcher@example.com" = "projects/proj-1234/roles/fugaroJobRunner"
+      "user:operator@example.com" = "projects/proj-1234/roles/fugaroJobRunner"
     })
-    error_message = "launchers must get fugaroJobRunner on the job"
+    error_message = "launchers (operators included) must get fugaroJobRunner on the job"
   }
   assert {
     condition     = google_cloud_run_v2_job_iam_member.launcher["user:launcher@example.com"].name == "fugaro-acme-webapp-web-76331eb3d601"

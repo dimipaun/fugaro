@@ -933,3 +933,65 @@ func TestInitJSON(t *testing.T) {
 		t.Fatalf("result = %+v", res)
 	}
 }
+
+// createOnApply makes the fake terraform's apply create the runs bucket
+// in the GCS fake, as the real apply does on a fresh project: with GCS's
+// convenience bindings, the project Viewers' included.
+func (r *initRig) createOnApply(t *testing.T) {
+	t.Helper()
+	curl, err := exec.LookPath("curl")
+	if err != nil {
+		t.Skip("needs curl to play the apply's bucket create")
+	}
+	path := filepath.Join(r.dir, "bin", "terraform")
+	old, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := `{"name":"` + initRunsBucket + `","labels":{"fugaro":"managed"}}`
+	create := `if [ "$1" = apply ]; then '` + curl + `' -sf -o /dev/null -X POST -H 'Content-Type: application/json' -d '` + body + `' '` +
+		r.gcs.URL + `/storage/v1/b?project=` + initProject + `' || exit 9; fi` + "\n"
+	lines := strings.SplitN(string(old), "\n", 2)
+	if err := os.WriteFile(path, []byte(lines[0]+"\n"+create+lines[1]), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// On a fresh project the apply creates the runs bucket, with project
+// Viewers' read access; init offers to remove it right after the apply.
+func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.createOnApply(t)
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if len(r.ran(t, "apply")) != 1 {
+		t.Fatal("no apply")
+	}
+	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
+		t.Errorf("no viewers banner after the apply:\n%s", out)
+	}
+	if hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {
+		t.Errorf("project Viewers can still read the new runs bucket: %+v", r.gcs.BucketPolicy(initRunsBucket))
+	}
+	if len(policySets(r.gcs, initRunsBucket)) != 1 {
+		t.Errorf("policy sets = %d, want 1", len(policySets(r.gcs, initRunsBucket)))
+	}
+}
+
+// Without a terminal and without --yes nothing is applied, so there is no
+// new bucket to offer; with --plan-only, likewise.
+func TestInitPlanOnlyLeavesCreatedBucketAlone(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.createOnApply(t)
+	out, _, err := executeStdin(t, "", "init", "--plan-only", "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "gs://"+initRunsBucket+", which holds") || len(policySets(r.gcs, initRunsBucket)) != 0 {
+		t.Errorf("--plan-only offered or changed the runs bucket's IAM:\n%s", out)
+	}
+}
