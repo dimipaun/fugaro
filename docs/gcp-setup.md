@@ -77,7 +77,7 @@ Give it the same flags as step 1. It asks for the project ID once more, applies 
   - The base registry is storage, about $0.10 per GB-month.
   - The log bucket is Cloud Logging's usual ingestion and retention charge beyond its free allotment (30-day retention).
   - The runs bucket is storage.
-  - A budget and its alert policy add nothing.
+  - A budget and the alert's notification channel and policies add nothing.
 - **Undo:** `fugaro init --forget` stops Terraform managing all of it and turns log isolation and cleanup off first (see "Rolling back"). It destroys nothing else. Deleting the resources is a manual `gcloud` job, since the runs bucket and every registry are protected on purpose.
 - **The runs bucket's Viewer access.** On a fresh project the apply creates the runs bucket, so `init` then makes the confirmed removal of project Viewers' read access after the apply. If you declined it or it was interrupted, rerun `fugaro init`: a rerun is harmless.
 - **Check:** `fugaro ls` works, and the local config has `runs_bucket`, `registry_host`, `log_view`, `scheduler_region` and a `terraform:` block. **Rerun it whenever you change `--launcher`, `--operator` or `--alert-email`** (or the flags in "Flags to pass again").
@@ -149,7 +149,7 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 ## Optional pieces
 
 - **A budget:** `--budget 100 --budget-currency USD --billing-account <id>` creates one with 50%, 90% and 100% alerts. It needs billing-account permissions. **Pass the same three flags on every later `fugaro init`**: the budget isn't stored, and a plan without them would delete it (the guard refuses that and names the flags). A budget made by hand stays unmanaged.
-- **An alert:** `--alert-email <address>` emails a failed image check or rebuild (and stores the address in the local config). Without it, failures still show in `fugaro ls`, `fugaro image status` and the check job's `ERROR` log line.
+- **An alert:** `--alert-email <address>` emails a failed image check or rebuild (and stores the address in the local config). It is one notification channel, "Fugaro alerts", and two alert policies, since Cloud Monitoring allows a log-match condition only alone in its policy: "Fugaro image check failed" (the check logged a failed check or rebuild) and "Fugaro image check job failed" (a check job failed before it could log). Without it, failures still show in `fugaro ls`, `fugaro image status` and the check job's `ERROR` log line.
 - **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config; rerun `fugaro init` and `fugaro init --repo` to change who has what. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones.
 - **The Scheduler region:** Cloud Scheduler isn't offered in every Cloud Run region, so the daily check's Scheduler job may run elsewhere (`us-east5` uses `us-east4`). `--scheduler-region` overrides it; the check job stays in `<region>`.
 - **Log isolation off:** `--no-log-isolation` leaves job logs in `_Default`.
@@ -202,7 +202,10 @@ At any point before `fugaro-build` is retired:
    - the log bucket, while log isolation is on. Log buckets carry no labels, so its description is the mark: a `fugaro` log bucket whose description isn't Fugaro's is refused (exit 1), with the `gcloud logging buckets update` command that marks it if it is Fugaro's, or `--no-log-isolation` if it isn't (a log bucket can't be renamed). Ours still pending deletion is refused (exit 1) with the `gcloud logging buckets undelete` command to run first. A change of its retention is listed under "⚠ Review these first".
    - each repository's accounts, secrets and jobs, and its Scheduler check job, which must target that repository's check job and run as `fugaro-scheduler` (anything else is refused)
 
-   The `_Default` exclusion and the sink aren't imported: the rollback's apply deleted them, so the plan creates them again. **Not** the alert's notification channel and policy, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying (`gcloud alpha monitoring policies delete`, `gcloud alpha monitoring channels delete`, `gcloud billing budgets delete`, each confirmed), or accept the duplicates.
+   The `_Default` exclusion and the sink aren't imported: the rollback's apply deleted them, so the plan creates them again. **Not** the alert's notification channel and two policies, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying, each confirmed, or accept the duplicates:
+   - both policies, "Fugaro image check failed" and "Fugaro image check job failed": `gcloud alpha monitoring policies list --project <project> --filter='displayName:"Fugaro image check"' --format='value(name,displayName)'`, then `gcloud alpha monitoring policies delete <name>` for each;
+   - the channel, "Fugaro alerts": `gcloud alpha monitoring channels list --project <project> --filter='displayName="Fugaro alerts"' --format='value(name)'`, then `gcloud alpha monitoring channels delete <name>`;
+   - the budget, "Fugaro": `gcloud billing budgets list --billing-account <id>`, then `gcloud billing budgets delete <name>`.
 8. If you removed the runs bucket's project-Viewer bindings, M4 doesn't need them; restore them from the snapshot if you want them back.
 
 After `fugaro-build` is retired, a rollback also needs it re-enabled (`gcloud iam service-accounts enable`) and its bindings restored from the snapshot.

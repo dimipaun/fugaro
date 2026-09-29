@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"fmt"
 	"io/fs"
 	"regexp"
 	"strings"
@@ -344,4 +345,93 @@ func TestCheckJobPrefixMatchesGo(t *testing.T) {
 	if seen < 3 {
 		t.Errorf("found %d check-job name filters, want the alert's two and the exclusion's", seen)
 	}
+}
+
+// Cloud Monitoring refuses an alert policy with a log-match condition and
+// any other condition ("Alert policies with a log matching condition can
+// only have a single condition"), and a mock-provider plan can't see that.
+// So each policy with a condition_matched_log has exactly one, static,
+// conditions block.
+func TestLogMatchAlertPolicySingleCondition(t *testing.T) {
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_monitoring_alert_policy") {
+			n++
+			for _, v := range logMatchViolations(blk) {
+				t.Errorf("%s: %s", path, v)
+			}
+		}
+	})
+	if n == 0 {
+		t.Error("no google_monitoring_alert_policy block found")
+	}
+}
+
+func TestLogMatchViolations(t *testing.T) {
+	for _, c := range []struct {
+		src  string
+		want int
+	}{
+		{`conditions {
+    condition_matched_log { filter = "a" }
+  }
+  conditions {
+    condition_threshold { filter = "b" }
+  }`, 1},
+		{`conditions {
+    condition_matched_log { filter = "a" }
+  }
+  conditions {
+    condition_matched_log { filter = "b" }
+  }`, 2},
+		{`dynamic "conditions" {
+    for_each = local.x
+    content {
+      condition_matched_log { filter = conditions.value }
+    }
+  }`, 1},
+		{`conditions {
+    condition_matched_log { filter = "a" }
+  }`, 0},
+		{`conditions {
+    condition_threshold { filter = "a" }
+  }
+  conditions {
+    condition_absent { filter = "b" }
+  }`, 0},
+	} {
+		src := "resource \"google_monitoring_alert_policy\" \"p\" {\n  " + c.src + "\n}\n"
+		blks := resourceBlocks(t, "src.tf", []byte(src), "google_monitoring_alert_policy")
+		if len(blks) != 1 {
+			t.Fatalf("blocks = %+v", blks)
+		}
+		if got := logMatchViolations(blks[0]); len(got) != c.want {
+			t.Errorf("violations of\n%s\n= %q, want %d", c.src, got, c.want)
+		}
+	}
+}
+
+var (
+	conditionsBlock = regexp.MustCompile(`(?m)^\s*(conditions|dynamic\s+"conditions")\s*\{`)
+	dynamicCond     = regexp.MustCompile(`(?m)^\s*dynamic\s+"conditions"\s*\{`)
+	logMatchBlock   = regexp.MustCompile(`(?m)^\s*condition_matched_log\s*\{`)
+)
+
+// logMatchViolations says how an alert policy breaks the log-match rule:
+// at most one condition_matched_log, and none beside any other condition
+// (a dynamic conditions block counts as several).
+func logMatchViolations(blk block) []string {
+	logs := len(logMatchBlock.FindAllString(blk.body, -1))
+	if logs == 0 {
+		return nil
+	}
+	var out []string
+	if logs > 1 {
+		out = append(out, fmt.Sprintf("%s has %d log-match conditions, want at most 1", blk.name, logs))
+	}
+	if n := len(conditionsBlock.FindAllString(blk.body, -1)); n != 1 || dynamicCond.MatchString(blk.body) {
+		out = append(out, fmt.Sprintf("%s has a log-match condition beside other conditions (%d conditions blocks, dynamic: %v); the API allows it only alone",
+			blk.name, n, dynamicCond.MatchString(blk.body)))
+	}
+	return out
 }

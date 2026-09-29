@@ -11,32 +11,43 @@ resource "google_monitoring_notification_channel" "email" {
   depends_on = [google_project_service.this]
 }
 
-resource "google_monitoring_alert_policy" "image" {
-  count = var.alert_email == null ? 0 : 1
-
-  project      = var.project
-  display_name = "Fugaro image check failed"
-  combiner     = "OR"
-
-  # The check's own line for each workflow whose rebuild or check failed.
-  # The check logs exactly those at ERROR: a failed check, a failed rebuild
-  # it backs off from, and a rebuild it submits after a failed one. Cloud
-  # Run takes the line's severity field as the entry's severity.
-  conditions {
-    display_name = "An image rebuild or check failed"
-    condition_matched_log {
-      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"
+# Cloud Monitoring allows a log-match condition only alone in its policy,
+# so each kind of failure has its own policy, emailing the same channel.
+locals {
+  image_alerts = {
+    # The check's own line for each workflow whose rebuild or check failed.
+    # The check logs exactly those at ERROR: a failed check, a failed
+    # rebuild it backs off from, and a rebuild it submits after a failed
+    # one. Cloud Run takes the line's severity field as the entry's
+    # severity.
+    check = {
+      display_name = "Fugaro image check failed"
+      condition    = "An image rebuild or check failed"
+      filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"
+    }
+    # A check job execution that failed before it could log its decision,
+    # read from the Cloud Run system log (the exclusion keeps it in
+    # _Default). The query language has no prefix function; an anchored
+    # regex is its prefix match.
+    job = {
+      display_name = "Fugaro image check job failed"
+      condition    = "An image check job failed"
+      filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
     }
   }
+}
 
-  # A check job execution that failed before it could log its decision,
-  # read from the Cloud Run system log (the exclusion keeps it in _Default).
-  # The query language has no prefix function; an anchored regex is its
-  # prefix match.
+resource "google_monitoring_alert_policy" "image" {
+  for_each = var.alert_email == null ? {} : local.image_alerts
+
+  project      = var.project
+  display_name = each.value.display_name
+  combiner     = "OR"
+
   conditions {
-    display_name = "An image check job failed"
+    display_name = each.value.condition
     condition_matched_log {
-      filter = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
+      filter = each.value.filter
     }
   }
 

@@ -206,7 +206,7 @@ func TestDeleteHints(t *testing.T) {
 	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
 		{Address: "module.installation.google_billing_budget.this[0]", Change: tf.Change{Actions: []string{"delete"}}},
 		{Address: "module.installation.data.google_project.this[0]", Change: tf.Change{Actions: []string{"delete"}}},
-		{Address: "module.installation.google_monitoring_alert_policy.image[0]", Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: "module.installation.google_monitoring_alert_policy.image[\"check\"]", Change: tf.Change{Actions: []string{"delete"}}},
 		{Address: "module.installation.google_monitoring_notification_channel.email[0]", Change: tf.Change{Actions: []string{"delete"}}},
 		{Address: `module.installation.google_project_iam_member.launcher["user:a@example.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
 		{Address: "module.installation.google_storage_bucket.runs", Change: tf.Change{Actions: []string{"update"}}},

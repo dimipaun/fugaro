@@ -461,18 +461,30 @@ run "alert_set" {
     error_message = "the notification channel must email the input"
   }
   assert {
-    condition     = length(google_monitoring_alert_policy.image[0].conditions) == 2
-    error_message = "the alert must have its two conditions"
+    condition     = toset(keys(google_monitoring_alert_policy.image)) == toset(["check", "job"])
+    error_message = "the alert must be two policies, one per log-match condition: a log-match policy can have only one condition"
   }
   assert {
-    condition = anytrue([for c in google_monitoring_alert_policy.image[0].conditions :
-    one(c.condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"])
+    condition     = alltrue([for p in google_monitoring_alert_policy.image : length(p.conditions) == 1])
+    error_message = "a policy with a log-match condition can have only that one condition"
+  }
+  assert {
+    condition     = one(google_monitoring_alert_policy.image["check"].conditions[0].condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"
     error_message = "the alert must match every check-job decision line logged at ERROR: a failed check, a backed-off failed rebuild, and a rebuild after a failed one"
   }
   assert {
-    condition = anytrue([for c in google_monitoring_alert_policy.image[0].conditions :
-    one(c.condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"])
+    condition     = one(google_monitoring_alert_policy.image["job"].conditions[0].condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
     error_message = "the alert must match a failed check-job execution"
+  }
+  assert {
+    condition = alltrue([for p in google_monitoring_alert_policy.image :
+      one(p.alert_strategy).notification_rate_limit[0].period == "3600s" && one(p.alert_strategy).auto_close == "604800s"
+    ])
+    error_message = "a log-match policy needs a notification rate limit, and each closes after a week"
+  }
+  assert {
+    condition     = alltrue([for p in google_monitoring_alert_policy.image : length(p.notification_channels) == 1])
+    error_message = "each policy must email the notification channel"
   }
 }
 
