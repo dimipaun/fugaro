@@ -35,7 +35,14 @@ func newServer(t *testing.T, h func(w http.ResponseWriter, r *http.Request, body
 	t.Helper()
 	s := &Server{t: t, failf: t.Errorf}
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			// The client went away mid-request (a cancelled context, say), so
+			// the body is truncated: there is nothing to answer, and running
+			// the handler on half a document would report a failure of the
+			// fake's own making.
+			return
+		}
 		s.mu.Lock()
 		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body})
 		s.mu.Unlock()
