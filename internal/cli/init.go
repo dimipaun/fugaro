@@ -1361,7 +1361,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed, so its job waits for it: build it with fugaro image build --repo %s --workflow %s, then rerun fugaro init --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, "gs://"+spec.Installation.RunsBucket)
+		bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
 		if err != nil {
 			return built, err
 		}

@@ -147,7 +147,8 @@ func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (Rep
 		}
 		out.Check.DeployJob = ready || ex.CheckJob
 		// Paused unless there is at least one workflow and each has a
-		// record, so an empty list fails safe.
+		// record, so an empty list fails safe. The spec's runs bucket is
+		// bucketName(lc), the bucket builds record in (lc.RecordBucketURL).
 		records := 0
 		for _, name := range out.Check.Workflows {
 			ok, err := hasRecord(ctx, c, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))

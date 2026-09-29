@@ -789,3 +789,33 @@ func TestRepoUsesVertex(t *testing.T) {
 		t.Fatalf("uses vertex: sandbox %v, webapp %v", sandbox.UsesVertex(), webapp.UsesVertex())
 	}
 }
+
+// The runs bucket the specs name is the one image builds record in
+// (localcfg's RunsBucketName), so the first build fugaro init submits,
+// readiness and the daily check all agree; with none, it is an error.
+func TestBucketNameIsRunsBucketName(t *testing.T) {
+	for _, c := range []struct{ runs, bucketURL string }{
+		{"fugaro-runs-x", ""},
+		{"fugaro-runs-x", "gs://other-bucket"},
+		{"fugaro-runs-x", "file:///tmp/runs"},
+		{"", "gs://fugaro-runs-y"},
+		{"", "file:///tmp/runs"},
+		{"", ""},
+	} {
+		lc := &localcfg.Config{RunsBucket: c.runs, Bucket: c.bucketURL}
+		got, err := bucketName(lc)
+		want := lc.RunsBucketName()
+		if want == "" {
+			if err == nil {
+				t.Errorf("runs_bucket %q, bucket_url %q: %q, want an error", c.runs, c.bucketURL, got)
+			}
+			continue
+		}
+		if err != nil || got != want {
+			t.Errorf("runs_bucket %q, bucket_url %q: %q, %v; want %q", c.runs, c.bucketURL, got, err, want)
+		}
+		if url := lc.RecordBucketURL(); url != "gs://"+got {
+			t.Errorf("runs_bucket %q, bucket_url %q: records in %q, but the spec's bucket is %q", c.runs, c.bucketURL, url, got)
+		}
+	}
+}

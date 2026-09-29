@@ -308,13 +308,12 @@ func localRepo(lc *localcfg.Config, repo string) (localcfg.Repo, bool) {
 	return localcfg.Repo{}, false
 }
 
-// bucketName is the runs bucket's name, which IAM conditions need.
+// bucketName is the runs bucket's name, which IAM conditions need: the
+// one image builds record in (lc.RecordBucketURL), so the specs, the
+// first build and readiness name the same bucket.
 func bucketName(lc *localcfg.Config) (string, error) {
-	if lc.RunsBucket != "" {
-		return lc.RunsBucket, nil
-	}
-	if u, err := url.Parse(lc.Bucket); err == nil && u.Scheme == "gs" && u.Host != "" {
-		return u.Host, nil
+	if name := lc.RunsBucketName(); name != "" {
+		return name, nil
 	}
 	return "", errors.New("the local config's bucket_url is not a gs:// bucket")
 }
