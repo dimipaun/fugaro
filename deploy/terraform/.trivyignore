@@ -1,0 +1,2 @@
+# Trivy findings this Terraform accepts on purpose, one ID per line, each
+# with a comment saying why. None at HIGH or CRITICAL so far.
