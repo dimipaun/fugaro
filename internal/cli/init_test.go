@@ -720,7 +720,7 @@ func TestInitWritesThroughSymlink(t *testing.T) {
 
 func TestInitPrintVarsNoCalls(t *testing.T) {
 	r := newInitRig(t)
-	out, _, err := executeStdin(t, "", "init", "--print-vars", "--no-log-isolation")
+	out, stderr, err := executeStdin(t, "", "init", "--print-vars", "--no-log-isolation")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -730,6 +730,13 @@ func TestInitPrintVarsNoCalls(t *testing.T) {
 	}
 	if v["project"] != initProject || v["runs_bucket"] != initRunsBucket || v["log_isolation"] != false {
 		t.Fatalf("vars = %v", v)
+	}
+	// Discovery didn't run, so adopt_legacy_registry is only a default: the
+	// warning, on stderr, says so, and stdout stays the tfvars alone.
+	for _, want := range []string{"warning:", "ungated", "adopt_legacy_registry", "fugaro init"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, stderr)
+		}
 	}
 	for _, s := range []*gcpfake.Server{r.gcs.Server, r.crm.Server, r.ar.Server, r.iam.Server, r.run.Server, r.sm.Server} {
 		if n := len(s.Requests()); n != 0 {

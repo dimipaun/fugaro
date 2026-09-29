@@ -143,7 +143,7 @@ func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
 	f.iam.AddServiceAccount(inst.Project, SchedulerServiceAccountID+"@"+inst.Project+".iam.gserviceaccount.com", "Fugaro scheduler")
-	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE")
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
 }
 
 func sandboxSpec(t *testing.T) RepoSpec {
@@ -420,10 +420,6 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 	if got := importMap(im); !maps.Equal(got, want) {
 		t.Errorf("imports:\n got %v\nwant %v", got, want)
 	}
-	// The log bucket has no labels: it is ours by its name, which says so.
-	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, "log bucket "+LogBucket) }) {
-		t.Errorf("notes = %q", im.Notes)
-	}
 
 	// With log isolation off nothing plans the log bucket, so it isn't read.
 	off := inst
@@ -467,14 +463,40 @@ func TestDiscoverRefusesForeignSingletons(t *testing.T) {
 	_, err = DiscoverInstallation(ctx, f.c, inst)
 	foreign(t, err, "service account fugaro-scheduler@proj-1234.iam.gserviceaccount.com", `"Cron"`, `"Fugaro scheduler"`)
 
-	// A log bucket pending deletion can't be imported or created: the
+	// Our log bucket pending deletion can't be imported or created: the
 	// retry needs the undelete first, which the refusal names.
 	f = newCloud(t)
-	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED")
+	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED", LogBucketDescription)
 	_, err = DiscoverInstallation(ctx, f.c, inst)
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), LogBucketUndelete("proj-1234")) {
 		t.Fatalf("a log bucket pending deletion: %v", err)
+	}
+
+	// A log bucket carries no labels, so its description is the mark: one
+	// without it is someone else's, whose retention the plan would cut and
+	// a rollback would delete. Pending deletion or not, it is refused, and
+	// the refusal says how to mark it or keep out of its way, never to
+	// undelete it.
+	for _, state := range []string{"ACTIVE", "DELETE_REQUESTED"} {
+		for _, desc := range []string{"", "Team logs, kept a year"} {
+			f = newCloud(t)
+			f.logs.AddBucket("proj-1234", "global", LogBucket, state, desc)
+			im, err := DiscoverInstallation(ctx, f.c, inst)
+			if !errors.As(err, &ue) || len(im.List) != 0 {
+				t.Fatalf("%s log bucket with description %q: imports %v, err %v", state, desc, im.List, err)
+			}
+			msg := err.Error()
+			for _, want := range []string{"log bucket projects/proj-1234/locations/global/buckets/" + LogBucket, strconv.Quote(desc), strconv.Quote(LogBucketDescription),
+				"gcloud logging buckets update " + LogBucket + " --location=global --project proj-1234 --description=", "--no-log-isolation"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("%s log bucket with description %q: the refusal lacks %q:\n%s", state, desc, want, msg)
+				}
+			}
+			if strings.Contains(msg, "undelete") {
+				t.Errorf("%s log bucket with description %q: the refusal suggests an undelete:\n%s", state, desc, msg)
+			}
+		}
 	}
 }
 
@@ -786,8 +808,8 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 		return got.Workflows["web"].DeployJob, out
 	}
 	ok, missing := ready()
-	if ok || len(missing) != 4 {
-		t.Errorf("deploy %v, missing %q; want no job, three secrets and the image", ok, missing)
+	if ok || len(missing) != 5 {
+		t.Errorf("deploy %v, missing %q; want no job, three secrets, the image and the check's credential", ok, missing)
 	}
 	if !slices.ContainsFunc(missing, func(s string) bool { return strings.Contains(s, "image not built yet") }) {
 		t.Errorf("missing = %q", missing)
@@ -795,7 +817,7 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	web := spec.Workflows["web"]
 	f.ar.AddRepository("proj-1234", "us-east5", spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
 	f.ar.SetTag("proj-1234", "us-east5", spec.Registry.RepositoryID, strings.TrimSuffix(strings.TrimPrefix(web.Image, spec.RegistryPath+"/"), ":latest"), "latest")
-	if ok, missing := ready(); ok || len(missing) != 3 {
+	if ok, missing := ready(); ok || len(missing) != 4 {
 		t.Errorf("with the image: deploy %v, missing %q", ok, missing)
 	}
 	for logical, id := range spec.Secrets {
@@ -803,6 +825,74 @@ func TestReadinessWaitsForImageAndSecrets(t *testing.T) {
 	}
 	if ok, missing := ready(); !ok || len(missing) != 0 {
 		t.Errorf("with the image and secrets: deploy %v, missing %q", ok, missing)
+	}
+}
+
+// The check job mounts the provider credential at latest, which Cloud Run
+// checks when it creates the job, so like a workflow job it waits until
+// the credential has a version; the invoker grant and the Scheduler job
+// wait with it. A check job that exists stays, whatever its secrets.
+func TestReadinessGatesCheckJob(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	if !spec.Check.DeployJob {
+		t.Fatal("the ungated spec must deploy the check job")
+	}
+	creds := slices.Sorted(maps.Values(spec.Check.SecretEnv))
+	if len(creds) != 1 {
+		t.Fatalf("check secrets = %v, want the provider credential alone", creds)
+	}
+	gate := func(f *cloud) (RepoSpec, []Missing) {
+		t.Helper()
+		_, ex, err := DiscoverRepo(ctx, f.c, spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, missing, err := Readiness(ctx, f.c, spec, ex)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var check []Missing
+		for _, m := range missing {
+			if m.Check {
+				check = append(check, m)
+			}
+		}
+		return got, check
+	}
+
+	// A fresh repository: init --repo has just made the secrets, empty.
+	f := newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	f.seedVersions(spec)
+	got, missing := gate(f)
+	if got.Check.DeployJob || len(missing) != 1 || missing[0].Kind != MissingSecret || missing[0].Deployed {
+		t.Fatalf("an empty credential: deploy %v, missing %+v; want no check job, and the credential missing", got.Check.DeployJob, missing)
+	}
+	want := "secret " + creds[0] + " has no version: fugaro secrets set " + creds[0] + " --repo acme/sandbox"
+	if s := missing[0].String(); !strings.Contains(s, "daily image check") || !strings.Contains(s, "not deployed yet") || !strings.Contains(s, want) {
+		t.Errorf("missing = %q", s)
+	}
+	if !got.Check.Paused {
+		t.Error("the schedule must stay paused")
+	}
+
+	// Once the credential has a version, the check job is deployed; the
+	// other secrets don't matter to it.
+	f.seedVersions(spec, creds[0])
+	if got, missing := gate(f); !got.Check.DeployJob || len(missing) != 0 {
+		t.Errorf("with the credential: deploy %v, missing %+v", got.Check.DeployJob, missing)
+	}
+
+	// An existing check job is never removed by the gate: a missing
+	// credential version is only a warning.
+	f = newCloud(t)
+	f.gcs.AddBucket(spec.Installation.RunsBucket, testProjectNumber, managed)
+	f.seedVersions(spec)
+	f.m5(t, spec)
+	got, missing = gate(f)
+	if !got.Check.DeployJob || len(missing) != 1 || !missing[0].Deployed || !strings.Contains(missing[0].String(), "stays deployed") {
+		t.Errorf("an existing check job: deploy %v, missing %+v", got.Check.DeployJob, missing)
 	}
 }
 

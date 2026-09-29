@@ -136,14 +136,17 @@ type Registry struct {
 
 // CheckSpec is the repository's daily image check job and its schedule.
 type CheckSpec struct {
-	Job             string            `json:"job"`
-	Image           string            `json:"image"`
-	SchedulerJob    string            `json:"scheduler_job"`
-	SchedulerRegion string            `json:"scheduler_region"`
-	Schedule        string            `json:"schedule"`
-	Paused          bool              `json:"paused"`
-	Env             map[string]string `json:"env"`
-	SecretEnv       map[string]string `json:"secret_env"`
+	Job             string `json:"job"`
+	Image           string `json:"image"`
+	SchedulerJob    string `json:"scheduler_job"`
+	SchedulerRegion string `json:"scheduler_region"`
+	Schedule        string `json:"schedule"`
+	Paused          bool   `json:"paused"`
+	// DeployJob is the readiness gate of the check job, its invoker grant
+	// and its Scheduler job.
+	DeployJob bool              `json:"deploy_job"`
+	Env       map[string]string `json:"env"`
+	SecretEnv map[string]string `json:"secret_env"`
 
 	// Workflows are the ones the check covers (rebuild.check: daily).
 	Workflows []string `json:"-"`
@@ -649,6 +652,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),
 		Paused:          true,
+		DeployJob:       true,
 		Env:             env,
 		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
 		Workflows:       checked,

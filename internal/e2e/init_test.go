@@ -224,7 +224,7 @@ FAKE_TERRAFORM_LOG="$d/calls.jsonl" FAKE_TERRAFORM_SCRIPT="$(cat "$s" 2>/dev/nul
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}})
+	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": installationStateManaged}})
 	r.script(t, "repo", -1, map[string]any{
 		"plan":   map[string]any{"exit": 2},
 		"show":   map[string]any{"stdout": planJSON(t, planChange("module.repo.google_artifact_registry_repository.images", "create"))},
@@ -959,6 +959,9 @@ func TestInitRepoAllowJobDeleteHighlighted(t *testing.T) {
 const (
 	stateManaged = `{"format_version":"1.0","values":{"outputs":{"registry":{"value":"x"}},"root_module":{"child_modules":[{"address":"module.repo","resources":[{"address":"module.repo.google_service_account.build"}]}]}}}`
 	stateEmpty   = `{"format_version":"1.0","values":{"outputs":{"registry":{"value":"x"}},"root_module":{}}}`
+	// installationStateManaged is the installation's state while
+	// Terraform manages it.
+	installationStateManaged = `{"format_version":"1.0","values":{"outputs":{"runs_bucket":{"value":"x"}},"root_module":{"child_modules":[{"address":"module.installation","resources":[{"address":"module.installation.google_storage_bucket.runs"}]}]}}}`
 )
 
 // forgetRig is a sandbox rig whose repository has been applied: its state
@@ -983,6 +986,21 @@ func exists(t *testing.T, b *blobx.Bucket, key string) bool {
 		t.Fatal(err)
 	}
 	return ok
+}
+
+// After the installation's --forget (state rm), its state keeps its
+// outputs but manages nothing: init --repo refuses to plan against it,
+// and says to run fugaro init first.
+func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
+	r := sandboxRig(t)
+	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": installationOutputs(t)}, "show": map[string]any{"stdout": stateEmpty}})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "forgotten") {
+		t.Fatalf("init --repo on a forgotten installation:\n%s", res)
+	}
+	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
+		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
+	}
 }
 
 func TestInitRepoForget(t *testing.T) {
@@ -1034,7 +1052,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 	scheduler := infra.SchedulerServiceAccountID + "@" + initRepoProject + ".iam.gserviceaccount.com"
 	r.iam.AddServiceAccount(initRepoProject, scheduler, "Fugaro scheduler")
 	// The rollback's apply deleted the log bucket: it is pending deletion.
-	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED")
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED", infra.LogBucketDescription)
 
 	// The rollback: the repository, then the installation.
 	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes"); res.code != 0 {
@@ -1059,7 +1077,7 @@ func TestInitForgetThenReinitImports(t *testing.T) {
 	}
 
 	// Once undeleted, the retry imports every installation resource.
-	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE")
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE", infra.LogBucketDescription)
 	if res := r.fugaroInit(t, "--yes"); res.code != 0 {
 		t.Fatal(res)
 	}

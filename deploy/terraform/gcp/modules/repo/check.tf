@@ -3,9 +3,18 @@
 # starts it. Its name starts with fugarochk-, so fugaro ls and max_parallel,
 # which count the fugaro- jobs, ignore it. There is none when every
 # workflow has rebuild.check: off.
+#
+# The job mounts the provider credential at latest, which Cloud Run checks
+# when it creates the job, so fugaro init --repo deploys it (with its
+# invoker grant and Scheduler job) only once the credential has a version,
+# or when the job already exists: check.deploy_job is that gate.
+
+locals {
+  deploy_check = var.repo.check == null ? false : var.repo.check.deploy_job
+}
 
 resource "google_cloud_run_v2_job" "check" {
-  count = var.repo.check == null ? 0 : 1
+  count = local.deploy_check ? 1 : 0
 
   project  = var.project
   location = var.region
@@ -79,7 +88,7 @@ resource "google_cloud_run_v2_job" "check" {
 # roles/run.invoker holds run.jobs.run, which Scheduler's call needs, on
 # this job only.
 resource "google_cloud_run_v2_job_iam_member" "check_invoker" {
-  count = var.repo.check == null ? 0 : 1
+  count = local.deploy_check ? 1 : 0
 
   project  = var.project
   location = google_cloud_run_v2_job.check[0].location
@@ -93,7 +102,7 @@ resource "google_cloud_run_v2_job_iam_member" "check_invoker" {
 # until every checked workflow has a build record, so a first check can't
 # start a billable build that moves a live image unasked.
 resource "google_cloud_scheduler_job" "check" {
-  count = var.repo.check == null ? 0 : 1
+  count = local.deploy_check ? 1 : 0
 
   project   = var.project
   region    = var.repo.check.scheduler_region

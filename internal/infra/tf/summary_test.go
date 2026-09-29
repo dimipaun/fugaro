@@ -56,6 +56,7 @@ func TestSummarySensitiveAttributes(t *testing.T) {
 		typ, before, after, path string
 	}{
 		{"google_cloud_run_v2_job", jobBefore, strings.Replace(jobBefore, `"sa@p"`, `"sa2@p"`, 1), "template.template.service_account"},
+		{"google_logging_project_bucket_config", `{"bucket_id":"fugaro","retention_days":365}`, `{"bucket_id":"fugaro","retention_days":30}`, "retention_days"},
 		{"google_cloud_run_v2_job", jobBefore, strings.Replace(jobBefore, `"max_retries":0`, `"max_retries":3`, 1), "template.template.max_retries"},
 		{"google_cloud_run_v2_job", jobBefore, strings.Replace(jobBefore, `"value":"1"`, `"value":"2"`, 1), "template.template.containers[0].env[0].value"},
 		{"google_storage_bucket", `{"lifecycle_rule":[]}`, `{"lifecycle_rule":[{"action":[{"type":"Delete"}]}]}`, "lifecycle_rule[0]"},

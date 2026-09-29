@@ -46,10 +46,14 @@ jobs:
         with:
           tflint_version: v0.64.0
       - run: terraform fmt -check -recursive deploy/terraform
+      # Terraform's data directory stays outside the tree: deploy/terraform
+      # embeds all of gcp/, so provider binaries under a root's .terraform
+      # would end up in the Go test binary of the last step.
       - name: validate and test the roots
         run: |
           for r in installation repo; do
             [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+            export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
             terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
             terraform -chdir=deploy/terraform/gcp/roots/$r validate
             terraform -chdir=deploy/terraform/gcp/roots/$r test

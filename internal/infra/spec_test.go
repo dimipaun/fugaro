@@ -686,10 +686,15 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "launchers", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "launchers", "log_bucket_description", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
+	}
+	// The log bucket's description is its ownership mark, since it can
+	// carry no labels.
+	if doc["log_bucket_description"] != LogBucketDescription || !strings.Contains(LogBucketDescription, "fugaro") {
+		t.Errorf("log_bucket_description = %v", doc["log_bucket_description"])
 	}
 	if doc["budget"] != nil {
 		t.Errorf("budget = %v", doc["budget"])

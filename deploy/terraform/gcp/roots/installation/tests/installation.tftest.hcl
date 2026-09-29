@@ -29,8 +29,9 @@ variables {
       exclusion = "fugaro-jobs-from-default"
     }
   }
-  launchers = ["user:launcher@example.com"]
-  operators = ["user:operator@example.com"]
+  log_bucket_description = "Fugaro job logs (managed by fugaro)"
+  launchers              = ["user:launcher@example.com"]
+  operators              = ["user:operator@example.com"]
 }
 
 run "root_passes_inputs" {
@@ -515,6 +516,10 @@ run "log_isolation_on" {
     error_message = "the log bucket must be the named one, global, with 30 days of retention"
   }
   assert {
+    condition     = google_logging_project_bucket_config.fugaro[0].description == "Fugaro job logs (managed by fugaro)"
+    error_message = "the log bucket must carry the description it is given: it is the bucket's ownership mark, since a log bucket has no labels"
+  }
+  assert {
     condition     = google_logging_project_sink.fugaro[0].name == "fugaro-jobs" && google_logging_project_sink.fugaro[0].unique_writer_identity == true
     error_message = "the sink must carry its name and a unique writer identity"
   }
@@ -556,6 +561,20 @@ run "log_isolation_on" {
     condition     = output.log_view == "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
     error_message = "log_view must be the view's full resource name"
   }
+}
+
+run "bad_log_bucket_description" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    log_bucket_description = ""
+  }
+
+  expect_failures = [var.log_bucket_description]
 }
 
 run "log_isolation_off" {

@@ -102,6 +102,20 @@ func TestInstallationVarsMatchModule(t *testing.T) {
 	}
 }
 
+// The installation root passes each of its variables to the module
+// unchanged, so a value the tfvars carry is never dropped on the way.
+func TestInstallationRootPassesEveryVariable(t *testing.T) {
+	b, err := fs.ReadFile(terraform.FS, "gcp/roots/installation/main.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for v := range rootVariables(t) {
+		if !regexp.MustCompile(`(?m)^\s*` + v + `\s*=\s*var\.` + v + `\s*$`).Match(b) {
+			t.Errorf("the installation root doesn't pass var.%s to the module", v)
+		}
+	}
+}
+
 // log_isolation is left to the module's default (on) unless it is turned
 // off, which only --no-log-isolation and the rollback do.
 func TestInstallationLogIsolation(t *testing.T) {
@@ -204,5 +218,23 @@ func TestDeleteHints(t *testing.T) {
 	}
 	if hints := DeleteHints(p, []string{"module.installation.google_billing_budget.this[0]"}); len(hints) != 2 {
 		t.Fatalf("an allowed delete still hinted: %q", hints)
+	}
+}
+
+// An API only the local config or the budget flags declare, planned away,
+// says where each comes from.
+func TestDeleteHintsAPIs(t *testing.T) {
+	p := &tf.Plan{ResourceChanges: []tf.ResourceChange{
+		{Address: `module.installation.google_project_service.this["aiplatform.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
+		{Address: `module.installation.google_project_service.this["billingbudgets.googleapis.com"]`, Change: tf.Change{Actions: []string{"delete"}}},
+	}}
+	hints := DeleteHints(p, nil)
+	if len(hints) != 1 {
+		t.Fatalf("hints = %q, want one about the APIs", hints)
+	}
+	for _, want := range []string{"Vertex AI", "repos.<repo>.vertex", "fugaro init --repo", "--budget"} {
+		if !strings.Contains(hints[0], want) {
+			t.Errorf("the APIs' hint lacks %q: %q", want, hints[0])
+		}
 	}
 }
