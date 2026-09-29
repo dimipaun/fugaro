@@ -366,19 +366,23 @@ func retrySpec(ctx context.Context, env *cloudEnv, ref string) (string, *task.Sp
 	return slug, spec, nil
 }
 
-// activeHorizon filters checkMaxParallel's listing: Cloud Run's longest
-// task timeout plus a day for queueing. An older execution can't be active.
-const activeHorizon = gcp.MaxTaskTimeout + 24*time.Hour
+// horizonMargin is added to the longest job timeout for the max_parallel
+// listing: the task timeout slack is added separately, and an hour more
+// covers queueing.
+const horizonMargin = time.Hour
 
 // checkMaxParallel refuses a new launch when max_parallel runs are active.
-// It counts executions created within activeHorizon, but lists
-// exhaustively: whether the jobs/- listing is sorted across jobs or only
-// per job is unconfirmed, and an early stop could cut off active
-// executions of other jobs and undercount. The cost is paging through
-// every execution the region still holds on each launch, so a --batch of
-// N launches does it N times.
+// No run can be active for longer than the longest job timeout (or the
+// override cap, whichever is more) plus the timeout slack and queueing, and
+// the execution listing is newest first across every job, so it stops
+// paging at that horizon. One jobs.list finds the longest timeout.
 func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
-	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-activeHorizon), Exhaustive: true})
+	longest, err := env.be.LongestTaskTimeout(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	horizon := max(longest, OverrideCap) + backend.TaskTimeoutSlack + horizonMargin
+	active, err := env.be.List(ctx, backend.ListFilter{ActiveOnly: true, Since: time.Now().Add(-horizon)})
 	if err != nil {
 		return remote(err)
 	}

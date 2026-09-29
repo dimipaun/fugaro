@@ -137,11 +137,6 @@ type ListFilter struct {
 	Jobs       []string  // job names; empty means every Fugaro job
 	Since      time.Time // executions created at or after this
 	ActiveOnly bool      // only pending and running executions
-	// Exhaustive makes Since a filter only: the listing never ends early on
-	// the assumption that it is sorted newest first across every job. It
-	// pages through every execution the region still holds, so it is for a
-	// count that must be exact (max_parallel), not for a view.
-	Exhaustive bool
 }
 
 // LogQuery selects one execution's log entries.
@@ -168,6 +163,10 @@ type Backend interface {
 	List(ctx context.Context, f ListFilter) ([]Execution, error)
 	Logs(ctx context.Context, q LogQuery, fn func(LogEntry) error) error
 	Cancel(ctx context.Context, name string) error
+	// LongestTaskTimeout is the longest task timeout among the Fugaro
+	// workflow jobs, zero when there are none. No run of them can be active
+	// for longer, so it bounds how far back an active-only List must look.
+	LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 }
 
 // ErrNotFound means the execution (or job) does not exist.

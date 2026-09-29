@@ -193,24 +193,20 @@ func TestListFollowsPagesAndStopsAtSince(t *testing.T) {
 	}
 }
 
-// If the jobs/- listing is sorted per job rather than across jobs, an
-// execution older than Since can come before a newer one. An exhaustive
-// listing reads past it; the default listing stops there.
-func TestListExhaustiveReadsPastAnOlderExecution(t *testing.T) {
+// The jobs/- listing is sorted across jobs, so it ends at the first
+// execution older than Since, whichever job it belongs to.
+func TestListStopsAtTheFirstExecutionOlderThanSince(t *testing.T) {
 	ctx := context.Background()
 	b, fr, _ := newTestBackend(t)
 	b.listPageSize = 1
 	fr.AddJob(webJob, "1", "512Mi")
 	fr.AddJob(apiJob, "1", "512Mi")
-	fr.Start(webJob)
 	old := fr.Start(apiJob)
 	fr.SetCreated(old, time.Now().Add(-365*24*time.Hour))
+	fr.Start(webJob)
 	since := time.Now().Add(-time.Hour)
-	if got, err := b.List(ctx, backend.ListFilter{Since: since, Exhaustive: true}); err != nil || len(got) != 1 || got[0].Job != webJob {
-		t.Fatalf("exhaustive List = %+v, %v; want the newer execution only", got, err)
-	}
-	if got, err := b.List(ctx, backend.ListFilter{Since: since}); err != nil || len(got) != 0 {
-		t.Fatalf("List = %+v, %v; want the early stop at the older execution", got, err)
+	if got, err := b.List(ctx, backend.ListFilter{Since: since}); err != nil || len(got) != 1 || got[0].Job != webJob {
+		t.Fatalf("List = %+v, %v; want the newer execution only", got, err)
 	}
 }
 
@@ -412,5 +408,35 @@ func TestLaunchNoTimeoutByDefault(t *testing.T) {
 	}
 	if got := fr.RunRequests(); len(got) != 1 || got[0].Timeout != "" {
 		t.Fatalf("requests = %+v, want no timeout override", got)
+	}
+}
+
+func TestLongestTaskTimeout(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	b.listPageSize = 1
+	if got, err := b.LongestTaskTimeout(ctx); err != nil || got != 0 {
+		t.Fatalf("no jobs: %v, %v", got, err)
+	}
+	fr.AddJob(webJob, "1", "512Mi")
+	fr.AddJob(apiJob, "1", "512Mi")
+	fr.SetJobTimeout(webJob, 45*time.Minute)
+	fr.SetJobTimeout(apiJob, 30*time.Hour)
+	if got, err := b.LongestTaskTimeout(ctx); err != nil || got != 30*time.Hour {
+		t.Fatalf("LongestTaskTimeout = %v, %v; want 30h across pages", got, err)
+	}
+}
+
+// The repository's check job is not a workflow job: its timeout does not
+// widen the window in which a run can still be active.
+func TestLongestTaskTimeoutIgnoresCheckJobs(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "1", "512Mi")
+	fr.AddJob("fugarochk-acme-app", "1", "512Mi")
+	fr.SetJobTimeout(webJob, time.Hour)
+	fr.SetJobTimeout("fugarochk-acme-app", 100*time.Hour)
+	if got, err := b.LongestTaskTimeout(ctx); err != nil || got != time.Hour {
+		t.Fatalf("LongestTaskTimeout = %v, %v; want 1h", got, err)
 	}
 }

@@ -64,6 +64,7 @@ type RunCall struct {
 
 type runJob struct {
 	cpu, memory string
+	timeout     time.Duration // the task template's timeout; zero is unset
 	n           int
 }
 
@@ -90,6 +91,17 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
+func (f *Run) SetJobTimeout(job string, d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobTimeout(%q): no such job", job)
+	}
+	j.timeout = d
 }
 
 // RunRequests returns every :run request the fake has answered, refused ones
@@ -339,6 +351,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			"name":     fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(id.Project), id.Region, f.ops),
 			"metadata": f.withType(f.render(id.Project, id.Region, x)),
 		})
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/jobs"):
+		f.listJobs(w, r, strings.TrimSuffix(p, "/jobs"))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/executions"):
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
 	case r.Method == http.MethodGet:
@@ -413,6 +427,42 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		meta = "unreadable"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": fmt.Sprintf("%s/operations/%d", jp, f.ops), "metadata": meta})
+}
+
+// listJobs answers jobs.list of a location, sorted by name, paged like
+// executions.list. Each job carries its task template's timeout when set.
+func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
+	f0 := strings.Split(parent, "/")
+	if len(f0) != 4 || f0[0] != "projects" || f0[2] != "locations" {
+		f.unhandled(w, r)
+		return
+	}
+	names := make([]string, 0, len(f.jobs))
+	for n := range f.jobs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	q := r.URL.Query()
+	size, _ := strconv.Atoi(q.Get("pageSize"))
+	if size <= 0 {
+		size = 100
+	}
+	start, _ := strconv.Atoi(q.Get("pageToken"))
+	start = min(max(start, 0), len(names))
+	end := min(start+size, len(names))
+	var out []any
+	for _, n := range names[start:end] {
+		job := map[string]any{"name": parent + "/jobs/" + n}
+		if d := f.jobs[n].timeout; d > 0 {
+			job["template"] = map[string]any{"template": map[string]any{"timeout": fmt.Sprintf("%ds", int(d/time.Second))}}
+		}
+		out = append(out, job)
+	}
+	resp := map[string]any{"jobs": out}
+	if end < len(names) {
+		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (f *Run) list(w http.ResponseWriter, r *http.Request, parent string) {

@@ -210,18 +210,12 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 			return nil, apiError("listing executions of "+parent, err)
 		}
 		for _, e := range resp.Executions {
-			// The API sorts by creation time, newest first: everything after
-			// the first execution older than Since is older too. For the
-			// jobs/- wildcard this assumes one ordering across every job,
-			// not per job; the live checklist's run must confirm it. If it is
-			// per job, executions of other jobs are cut off here, and ls
-			// falls back to one Get per run (slower, still correct). An
-			// Exhaustive listing skips the old execution and reads on.
+			// The API sorts by creation time, newest first, across every job
+			// for the jobs/- wildcard too (confirmed by the live check):
+			// everything after the first execution older than Since is
+			// older too.
 			if !f.Since.IsZero() {
 				if c, err := parseTime(e.CreateTime); err == nil && !c.IsZero() && c.Before(f.Since) {
-					if f.Exhaustive {
-						continue
-					}
 					return out, nil
 				}
 			}
@@ -239,6 +233,38 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 		}
 		if resp.NextPageToken == "" {
 			return out, nil
+		}
+		token = resp.NextPageToken
+	}
+}
+
+// LongestTaskTimeout is the longest task timeout among the Fugaro workflow
+// jobs of the region: one paged jobs.list. A job whose name doesn't start
+// with "fugaro-" is skipped, which excludes the repositories' check jobs
+// ("fugarochk-"). It is zero when there are no such jobs.
+func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error) {
+	var longest time.Duration
+	token := ""
+	for {
+		resp, err := b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		if err != nil {
+			return 0, apiError("listing jobs", err)
+		}
+		for _, j := range resp.Jobs {
+			if i := strings.LastIndex(j.Name, "/"); !strings.HasPrefix(j.Name[i+1:], "fugaro-") {
+				continue
+			}
+			if j.Template == nil || j.Template.Template == nil || j.Template.Template.Timeout == "" {
+				continue
+			}
+			d, err := time.ParseDuration(j.Template.Template.Timeout)
+			if err != nil {
+				return 0, fmt.Errorf("job %s: task timeout %q: %w", j.Name, j.Template.Template.Timeout, err)
+			}
+			longest = max(longest, d)
+		}
+		if resp.NextPageToken == "" {
+			return longest, nil
 		}
 		token = resp.NextPageToken
 	}
