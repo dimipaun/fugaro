@@ -245,7 +245,7 @@ func (t *TF) Apply(ctx context.Context, planFile string) error {
 	if !st.Mode().IsRegular() {
 		return fmt.Errorf("terraform apply: %s is not a saved plan file", planFile)
 	}
-	_, err = t.run(ctx, []string{"apply", "-input=false", "-no-color", planFile}, t.Out)
+	_, err = t.run(ctx, []string{"apply", "-input=false", "-no-color", lockTimeout, planFile}, t.Out)
 	return err
 }
 

@@ -127,11 +127,11 @@ func TestParseEndpoints(t *testing.T) {
 		}
 	}
 	// The endpoints only fugaro init uses are checked the same way.
-	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager"} {
+	for _, field := range []string{"storage", "iam", "artifact_registry", "resource_manager", "cloud_scheduler"} {
 		c, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9/\" }\n"))
 		if err != nil {
 			t.Errorf("%s: %v", field, err)
-		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager != "http://127.0.0.1:9/" {
+		} else if e := c.Endpoints; e.Storage+e.IAM+e.ArtifactRegistry+e.ResourceManager+e.CloudScheduler != "http://127.0.0.1:9/" {
 			t.Errorf("%s: endpoints = %+v", field, e)
 		}
 		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://example.com/\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
@@ -204,6 +204,22 @@ func TestBuildServiceAccountDeprecated(t *testing.T) {
 	}
 	if w := c.Warnings(); len(w) != 1 || !strings.Contains(w[0], "build.service_account") || !strings.Contains(w[0], "deprecated") {
 		t.Fatalf("warnings = %v", w)
+	}
+}
+
+// vertex records that a repository's agent authenticates through Vertex
+// AI, so fugaro init enables the API.
+func TestRepoVertex(t *testing.T) {
+	c, err := Parse([]byte(sample + "  acme/api: { provider: github, vertex: true, workflows: [web] }\n"))
+	if err != nil || !c.Repos["acme/api"].Vertex {
+		t.Fatalf("%+v, %v", c, err)
+	}
+	if !c.UsesVertex() {
+		t.Error("a vertex repository: UsesVertex is false")
+	}
+	c, err = Parse([]byte(sample))
+	if err != nil || c.UsesVertex() {
+		t.Fatalf("no vertex repository: %v, %v", c.UsesVertex(), err)
 	}
 }
 
@@ -295,7 +311,7 @@ func TestM4ConfigMarshalsWithoutM5Fields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, field := range []string{"terraform", "compute_prices", "log_view", "scheduler_region", "registry_host", "github_app_id"} {
+	for _, field := range []string{"terraform", "compute_prices", "log_view", "scheduler_region", "registry_host", "github_app_id", "vertex"} {
 		if strings.Contains(string(data), field) {
 			t.Errorf("marshalled M4 config has %s:\n%s", field, data)
 		}

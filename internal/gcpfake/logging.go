@@ -17,7 +17,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
-// Logging is a stateful fake of Cloud Logging's entries.list, for the one
+// Logging is a stateful fake of Cloud Logging's entries.list, and of a log
+// bucket's get (for fugaro init's discovery). entries.list takes the one
 // filter shape Fugaro sends: a Cloud Run job execution's entries, optionally
 // from a timestamp on. Any other filter fails the test.
 //
@@ -34,6 +35,32 @@ type Logging struct {
 	mu       sync.Mutex
 	entries  map[logExec][]LogEntry
 	nextID   int
+	buckets  map[string]string // projects/<p>/locations/<l>/buckets/<id> → lifecycle state
+}
+
+// AddBucket makes the log bucket id exist in project at location, in
+// state (ACTIVE, or DELETE_REQUESTED while it is pending deletion).
+func (l *Logging) AddBucket(project, location, id, state string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.buckets == nil {
+		l.buckets = map[string]string{}
+	}
+	l.buckets["projects/"+project+"/locations/"+location+"/buckets/"+id] = state
+}
+
+var logBucketRE = regexp.MustCompile(`^/v2/(projects/[^/]+/locations/[^/]+/buckets/[^/:]+)$`)
+
+// getBucket answers a log bucket's get.
+func (l *Logging) getBucket(w http.ResponseWriter, name string) {
+	l.mu.Lock()
+	state, ok := l.buckets[name]
+	l.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Bucket "+name+" does not exist")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": name, "lifecycleState": state, "retentionDays": 30})
 }
 
 // LogEntry is one fake log entry. JSON, when set, is the jsonPayload;
@@ -124,6 +151,10 @@ func (l *Logging) AddJSONLines(execution string, data []byte) {
 var logFilterRE = regexp.MustCompile(`^resource\.type="cloud_run_job" AND resource\.labels\.location="([^"]+)" AND resource\.labels\.job_name="([^"]+)" AND labels\."run\.googleapis\.com/execution_name"="([^"]+)"(?: AND timestamp>="([^"]+)")?$`)
 
 func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if m := logBucketRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		l.getBucket(w, m[1])
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {
 		l.unhandled(w, r)
 		return

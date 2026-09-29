@@ -65,6 +65,8 @@ type initRig struct {
 	crm                       *gcpfake.CRM
 	run                       *gcpfake.Run
 	sm                        *gcpfake.Secrets
+	logs                      *gcpfake.Logging
+	sched                     *gcpfake.Scheduler
 }
 
 const initConfig = `version: 1
@@ -81,6 +83,7 @@ func newInitRig(t *testing.T) *initRig {
 	r := &initRig{
 		dir: t.TempDir(), gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t),
 		crm: gcpfake.NewCRM(t), run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
 		script: map[string]any{},
 	}
 	r.crm.AddProject(initProject, initProjectNumber)
@@ -94,7 +97,8 @@ func newInitRig(t *testing.T) *initRig {
 	}
 	r.cfg = filepath.Join(r.dir, "config.yaml")
 	cfg := initConfig + "endpoints: { run: " + r.run.URL + "/, secret_manager: " + r.sm.URL + "/, storage: " + r.gcs.URL + "/storage/v1/, iam: " +
-		r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL + "/, no_auth: true }\n" +
+		r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL + "/, logging: " + r.logs.URL +
+		"/, cloud_scheduler: " + r.sched.URL + "/, no_auth: true }\n" +
 		"repos:\n  acme/sandbox: { provider: bitbucket, base_branch: master, workflows: [web] }\n"
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -890,10 +894,58 @@ func TestInitForgetRefusesWithRepoStates(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _, err := executeStdin(t, "", "init", "--forget", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --repo --forget") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "init --repo --forget") || !strings.Contains(err.Error(), "*.tfstate") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "plan"))+len(r.ran(t, "apply"))+len(r.ran(t, "state rm")) != 0 {
+		t.Fatalf("calls = %q", r.calls(t))
+	}
+}
+
+// A repository the local config records as using Vertex AI enables the
+// Vertex AI API in the installation.
+func TestInitEnablesVertexForVertexRepo(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	cfg, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := r.runInitTfvars(t); v["enable_vertex"] != false {
+		t.Fatalf("no vertex repository: enable_vertex = %v", v["enable_vertex"])
+	}
+	vertex := strings.Replace(string(cfg), "workflows: [web] }", "vertex: true, workflows: [web] }", 1)
+	if err := os.WriteFile(r.cfg, []byte(vertex), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v := r.runInitTfvars(t); v["enable_vertex"] != true {
+		t.Fatalf("a vertex repository: enable_vertex = %v", v["enable_vertex"])
+	}
+}
+
+func (r *initRig) runInitTfvars(t *testing.T) map[string]any {
+	t.Helper()
+	if _, _, err := executeStdin(t, "", "init", "--plan-only"); err != nil {
+		t.Fatal(err)
+	}
+	return r.tfvars(t)
+}
+
+// A stale lock under the repositories' prefix is not state: init --repo
+// --forget deletes only *.tfstate objects, so the installation's rollback
+// counts only those too, and a leftover lock doesn't block it.
+func TestInitForgetIgnoresStaleRepoLock(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.setPlan(t, forgetPlan()...)
+	b := r.gcs.Bucket(t, initStateBucket)
+	if err := b.WriteAll(t.Context(), infra.StatePrefixRepos+"bitbucket-acme-sandbox/default.tflock", []byte("{}"), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--forget", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ran(t, "state rm")) != 1 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
 }

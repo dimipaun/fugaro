@@ -101,6 +101,7 @@ type Endpoints struct {
 	IAM              string `yaml:"iam,omitempty"`
 	ArtifactRegistry string `yaml:"artifact_registry,omitempty"`
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
+	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
@@ -117,6 +118,21 @@ type Repo struct {
 	// GitHubAppID is the repository's GitHub App, for GitHub
 	// repositories. It is not a secret.
 	GitHubAppID string `yaml:"github_app_id,omitempty"`
+	// Vertex records that one of the repository's workflows authenticates
+	// its agent through Vertex AI (agent.auth: vertex), so fugaro init
+	// enables the Vertex AI API. fugaro init --repo sets it.
+	Vertex bool `yaml:"vertex,omitempty"`
+}
+
+// UsesVertex reports whether any repository the config records uses
+// Vertex AI.
+func (c *Config) UsesVertex() bool {
+	for _, r := range c.Repos {
+		if r.Vertex {
+			return true
+		}
+	}
+	return false
 }
 
 // ErrMissing means there is no local config yet.
@@ -264,6 +280,7 @@ func (c *Config) validate() error {
 		{"secret_manager", c.Endpoints.SecretManager}, {"cloud_build", c.Endpoints.CloudBuild},
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
+		{"cloud_scheduler", c.Endpoints.CloudScheduler},
 	} {
 		if ep.url == "" {
 			continue

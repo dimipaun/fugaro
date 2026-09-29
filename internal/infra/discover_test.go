@@ -22,13 +22,15 @@ const testProjectNumber = 123456789012
 
 // cloud is every fake discovery reads, and clients pointed at them.
 type cloud struct {
-	iam *gcpfake.IAM
-	ar  *gcpfake.ArtifactRegistry
-	run *gcpfake.Run
-	sm  *gcpfake.Secrets
-	gcs *gcpfake.GCS
-	crm *gcpfake.CRM
-	c   *Clients
+	iam   *gcpfake.IAM
+	ar    *gcpfake.ArtifactRegistry
+	run   *gcpfake.Run
+	sm    *gcpfake.Secrets
+	gcs   *gcpfake.GCS
+	crm   *gcpfake.CRM
+	logs  *gcpfake.Logging
+	sched *gcpfake.Scheduler
+	c     *Clients
 }
 
 func newCloud(t *testing.T) *cloud {
@@ -36,17 +38,43 @@ func newCloud(t *testing.T) *cloud {
 	f := &cloud{
 		iam: gcpfake.NewIAM(t), ar: gcpfake.NewArtifactRegistry(t), run: gcpfake.NewRun(t),
 		sm: gcpfake.NewSecrets(t), gcs: gcpfake.NewGCS(t), crm: gcpfake.NewCRM(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
 	}
-	o := gcp.Options{Project: "proj-1234", Region: "us-east5", Endpoints: gcp.Endpoints{
-		Run: f.run.URL + "/", SecretManager: f.sm.URL + "/", NoAuth: true}}
-	c, err := NewClients(context.Background(), o, Endpoints{
-		IAM: f.iam.URL + "/", ArtifactRegistry: f.ar.URL + "/", Storage: f.gcs.URL + "/storage/v1/", ResourceManager: f.crm.URL + "/"})
+	c, err := NewClients(context.Background(), f.options(nil), f.endpoints())
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.c = c
 	f.crm.AddProject("proj-1234", testProjectNumber)
 	return f
+}
+
+// Without credentials every endpoint must be a fake's: one left empty
+// would reach Google itself.
+func TestNewClientsNoAuthNeedsEveryEndpoint(t *testing.T) {
+	f := newCloud(t)
+	e := f.endpoints()
+	e.Scheduler = ""
+	if _, err := NewClients(context.Background(), f.options(nil), e); err == nil || !strings.Contains(err.Error(), "cloud_scheduler") {
+		t.Fatalf("err = %v", err)
+	}
+	o := f.options(nil)
+	o.Endpoints.Logging = ""
+	if _, err := NewClients(context.Background(), o, f.endpoints()); err == nil || !strings.Contains(err.Error(), "logging") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// options are the Google API options of the fakes, with hc (when set) as
+// the HTTP client.
+func (f *cloud) options(hc *http.Client) gcp.Options {
+	return gcp.Options{Project: "proj-1234", Region: "us-east5", HTTPClient: hc, Endpoints: gcp.Endpoints{
+		Run: f.run.URL + "/", SecretManager: f.sm.URL + "/", Logging: f.logs.URL + "/", NoAuth: true}}
+}
+
+func (f *cloud) endpoints() Endpoints {
+	return Endpoints{IAM: f.iam.URL + "/", ArtifactRegistry: f.ar.URL + "/", Storage: f.gcs.URL + "/storage/v1/",
+		ResourceManager: f.crm.URL + "/", Scheduler: f.sched.URL + "/"}
 }
 
 var managed = map[string]string{gcp.LabelManaged: gcp.ManagedValue}
@@ -101,7 +129,21 @@ func (f *cloud) m5(t *testing.T, spec RepoSpec) {
 	f.iam.AddServiceAccount(spec.Project, spec.BuildServiceAccountEmail, spec.BuildServiceAccount.DisplayName)
 	if spec.Check != nil {
 		f.run.SetJob(spec.Check.Job, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelRole, gcp.RoleCheck), spec.Check.Image)
+		f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), spec.Installation.SchedulerServiceAccount)
 	}
+}
+
+// m5Installation adds what an earlier M5 installation apply made, which
+// the rollback's state rm leaves in place: the runs bucket, the base
+// registry, the custom roles, the scheduler account and the log bucket.
+func (f *cloud) m5Installation(inst InstallationSpec) {
+	f.gcs.AddBucket(inst.RunsBucket, testProjectNumber, managed)
+	f.ar.AddRepository(inst.Project, inst.Region, BaseRegistry, managed)
+	f.iam.AddRole(inst.Project, RoleLauncher, "Fugaro launcher", false)
+	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
+	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
+	f.iam.AddServiceAccount(inst.Project, SchedulerServiceAccountID+"@"+inst.Project+".iam.gserviceaccount.com", "Fugaro scheduler")
+	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE")
 }
 
 func sandboxSpec(t *testing.T) RepoSpec {
@@ -139,6 +181,7 @@ func TestDiscoverImportsOwned(t *testing.T) {
 		`module.repo.google_artifact_registry_repository.images`:              p + "locations/us-east5/repositories/" + spec.Registry.RepositoryID,
 		`module.repo.google_service_account.build`:                            p + "serviceAccounts/" + spec.BuildServiceAccountEmail,
 		`module.repo.google_cloud_run_v2_job.check[0]`:                        p + "locations/us-east5/jobs/" + spec.Check.Job,
+		`module.repo.google_cloud_scheduler_job.check[0]`:                     p + "locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob,
 		`module.repo.module.workflow["web"].google_service_account.job`:       p + "serviceAccounts/" + web.ServiceAccountEmail,
 		`module.repo.module.workflow["web"].google_cloud_run_v2_job.this[0]`:  p + "locations/us-east5/jobs/" + web.Job,
 	}
@@ -350,6 +393,166 @@ func TestDiscoverInstallation(t *testing.T) {
 	}
 	if !im.AdoptLegacyRegistry {
 		t.Error("a marked legacy registry must set adopt_legacy_registry")
+	}
+}
+
+// After a rollback (state rm), every installation resource is still
+// there; a retried fugaro init imports the custom roles, the scheduler
+// account and the log bucket too, since a create of any of them fails.
+func TestDiscoverInstallationAfterForget(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	f.m5Installation(inst)
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := "projects/proj-1234/"
+	want := map[string]string{
+		"module.installation.google_storage_bucket.runs":                     "proj-1234/" + inst.RunsBucket,
+		"module.installation.google_artifact_registry_repository.base":       p + "locations/us-east5/repositories/fugaro-base",
+		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + RoleLauncher,
+		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + RoleJobRunner,
+		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + RoleBuildSubmitter,
+		"module.installation.google_service_account.scheduler":               p + "serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com",
+		"module.installation.google_logging_project_bucket_config.fugaro[0]": p + "locations/global/buckets/" + LogBucket,
+	}
+	if got := importMap(im); !maps.Equal(got, want) {
+		t.Errorf("imports:\n got %v\nwant %v", got, want)
+	}
+	// The log bucket has no labels: it is ours by its name, which says so.
+	if !slices.ContainsFunc(im.Notes, func(n string) bool { return strings.Contains(n, "log bucket "+LogBucket) }) {
+		t.Errorf("notes = %q", im.Notes)
+	}
+
+	// With log isolation off nothing plans the log bucket, so it isn't read.
+	off := inst
+	off.LogIsolation = new(false)
+	before := len(f.logs.Requests())
+	im, err = DiscoverInstallation(context.Background(), f.c, off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := importMap(im)[LogBucketAddress]; ok || len(f.logs.Requests()) != before {
+		t.Errorf("log isolation off: imports %v, %d log requests", im.List, len(f.logs.Requests())-before)
+	}
+}
+
+// A soft-deleted custom role is left to the plan's create, which the
+// provider turns into an undelete; an import of a deleted role would fail.
+func TestDiscoverLeavesDeletedRole(t *testing.T) {
+	f := newCloud(t)
+	inst := installationSpec(t)
+	f.iam.AddRole("proj-1234", RoleLauncher, "Fugaro launcher", true)
+	im, err := DiscoverInstallation(context.Background(), f.c, inst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(im.List) != 0 {
+		t.Errorf("imports = %v", im.List)
+	}
+}
+
+func TestDiscoverRefusesForeignSingletons(t *testing.T) {
+	ctx := context.Background()
+	inst := installationSpec(t)
+
+	f := newCloud(t)
+	f.iam.AddRole("proj-1234", RoleJobRunner, "Someone's runner", false)
+	_, err := DiscoverInstallation(ctx, f.c, inst)
+	foreign(t, err, "custom role projects/proj-1234/roles/"+RoleJobRunner, `"Someone's runner"`, `"Fugaro job runner"`)
+
+	f = newCloud(t)
+	f.iam.AddServiceAccount("proj-1234", "fugaro-scheduler@proj-1234.iam.gserviceaccount.com", "Cron")
+	_, err = DiscoverInstallation(ctx, f.c, inst)
+	foreign(t, err, "service account fugaro-scheduler@proj-1234.iam.gserviceaccount.com", `"Cron"`, `"Fugaro scheduler"`)
+
+	// A log bucket pending deletion can't be imported or created: the
+	// retry needs the undelete first, which the refusal names.
+	f = newCloud(t)
+	f.logs.AddBucket("proj-1234", "global", LogBucket, "DELETE_REQUESTED")
+	_, err = DiscoverInstallation(ctx, f.c, inst)
+	var ue *UserError
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), LogBucketUndelete("proj-1234")) {
+		t.Fatalf("a log bucket pending deletion: %v", err)
+	}
+}
+
+// After init --repo --forget, the repository's Scheduler job is still
+// there, in the scheduler region, and is imported by its name and target.
+func TestDiscoverImportsSchedulerJob(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	if spec.Check == nil || spec.Check.SchedulerRegion == spec.Region {
+		t.Fatalf("the fixture needs a check in another region than the job's: %+v", spec.Check)
+	}
+	f := newCloud(t)
+	f.bootstrap(t, spec, newDisplay)
+	f.m5(t, spec)
+	im, _, err := DiscoverRepo(ctx, f.c, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "projects/proj-1234/locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob
+	if got := importMap(im)["module.repo.google_cloud_scheduler_job.check[0]"]; got != want {
+		t.Errorf("scheduler job import = %q, want %q", got, want)
+	}
+
+	// One under our name that starts another job, or as another account,
+	// isn't ours.
+	for name, set := range map[string]func(*cloud){
+		"target": func(f *cloud) {
+			f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, "https://example.com/", spec.Installation.SchedulerServiceAccount)
+		},
+		"account": func(f *cloud) {
+			f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), "x@proj-1234.iam.gserviceaccount.com")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloud(t)
+			f.bootstrap(t, spec, newDisplay)
+			set(f)
+			_, _, err := DiscoverRepo(ctx, f.c, spec)
+			foreign(t, err, "Cloud Scheduler job "+spec.Check.SchedulerJob)
+		})
+	}
+}
+
+// The singletons' lookups fail closed too: a 403 or a 500 is a remote
+// error, never "doesn't exist".
+func TestSingletonLookupsFailClosed(t *testing.T) {
+	ctx := context.Background()
+	spec := sandboxSpec(t)
+	inst := installationSpec(t)
+	for _, tc := range []struct{ name, match string }{
+		{"role", "/roles/" + RoleBuildSubmitter},
+		{"scheduler account", "/serviceAccounts/fugaro-scheduler@"},
+		{"log bucket", "/buckets/" + LogBucket},
+		{"scheduler job", "/jobs/" + spec.Check.SchedulerJob},
+	} {
+		for _, code := range []int{http.StatusForbidden, http.StatusInternalServerError} {
+			t.Run(fmt.Sprintf("%s %d", tc.name, code), func(t *testing.T) {
+				f := newCloud(t)
+				ft := &failingTransport{match: tc.match, code: code}
+				c, err := NewClients(ctx, f.options(&http.Client{Transport: ft}), f.endpoints())
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.bootstrap(t, spec, newDisplay)
+				f.m5(t, spec)
+				f.m5Installation(inst)
+				var im Imports
+				if tc.name == "scheduler job" {
+					im, _, err = DiscoverRepo(ctx, c, spec)
+				} else {
+					im, err = DiscoverInstallation(ctx, c, inst)
+				}
+				var ue *UserError
+				if err == nil || errors.As(err, &ue) || len(im.List) != 0 {
+					t.Errorf("err = %v, imports %v; want a remote error and no imports", err, im.List)
+				}
+			})
+		}
 	}
 }
 
@@ -679,10 +882,7 @@ func TestLookupsFailClosed(t *testing.T) {
 			t.Run(fmt.Sprintf("%s %d", tc.name, code), func(t *testing.T) {
 				f := newCloud(t)
 				ft := &failingTransport{}
-				o := gcp.Options{Project: "proj-1234", Region: "us-east5", HTTPClient: &http.Client{Transport: ft},
-					Endpoints: gcp.Endpoints{Run: f.run.URL + "/", SecretManager: f.sm.URL + "/", NoAuth: true}}
-				c, err := NewClients(ctx, o, Endpoints{IAM: f.iam.URL + "/", ArtifactRegistry: f.ar.URL + "/",
-					Storage: f.gcs.URL + "/storage/v1/", ResourceManager: f.crm.URL + "/"})
+				c, err := NewClients(ctx, f.options(&http.Client{Transport: ft}), f.endpoints())
 				if err != nil {
 					t.Fatal(err)
 				}

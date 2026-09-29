@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
-	"strings"
 
 	storage "google.golang.org/api/storage/v1"
 
@@ -92,7 +91,7 @@ func RepoStateObjects(ctx context.Context, c *Clients, stateBucket, slug string)
 	var names []string
 	err := c.Storage.Objects.List(stateBucket).Prefix(prefix).Pages(ctx, func(o *storage.Objects) error {
 		for _, it := range o.Items {
-			if strings.HasSuffix(it.Name, ".tfstate") {
+			if isState(it.Name) {
 				names = append(names, it.Name)
 			}
 		}

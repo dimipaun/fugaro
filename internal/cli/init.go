@@ -122,7 +122,7 @@ Terraform's state, destroying nothing.`,
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")
-	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform")
+	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (with --repo: ungated, no discovery or readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
@@ -290,13 +290,14 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 // gcpOptions are the Google API options of lc's project and endpoints.
 func gcpOptions(lc *localcfg.Config) gcp.Options {
 	return gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
-		Run: lc.Endpoints.Run, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
+		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild,
+		NoAuth: lc.Endpoints.NoAuth}}
 }
 
 func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
 	c, err := infra.NewClients(ctx, gcpOptions(lc),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
-			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager})
+			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler})
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -878,7 +879,7 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 		return initErr(err)
 	}
 	if len(repos) > 0 {
-		return userErr("the state bucket still holds repository state (%s): run fugaro init --repo --forget for each repository first", strings.Join(repos, ", "))
+		return userErr("the state bucket still holds repository state (%s; only *.tfstate objects count, not locks): run fugaro init --repo --forget for each repository first", strings.Join(repos, ", "))
 	}
 	fs := infra.ForgetSpec(spec)
 	backend, err := prepare(wd, fs, infra.Imports{})
@@ -1050,6 +1051,9 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		if err != nil {
 			return err
 		}
+		// Printed without a cloud call, so without discovery or the
+		// readiness gates: stdout stays the tfvars alone.
+		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngated)
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
 	}
@@ -1109,6 +1113,9 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	r.res.Outputs = &outs
 	in.Installation = outs
+	if w := infra.BaseImageWarning(lc.BaseImage, outs); w != "" {
+		r.warn(w)
+	}
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
@@ -1133,6 +1140,13 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		}
 		built, err := r.buildImages(ctx, lc, cfg, spec, names)
 		if err != nil {
+			// The first apply already made the repository's resources, so
+			// it joins the local config (and says what it still needs)
+			// before the build's failure ends the run.
+			r.printMissing(spec, versions, missing)
+			if cerr := r.writeRepoConfig(lc, spec, cfg, path, old); cerr != nil {
+				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
+			}
 			return err
 		}
 		if built > 0 {
@@ -1154,6 +1168,12 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	return r.printResult()
 }
+
+// printVarsUngated is init --repo --print-vars's warning: the values it
+// prints skip discovery and the readiness gates.
+const printVarsUngated = "these values are ungated: no discovery or readiness check ran, so every workflow has deploy_job = true, " +
+	"its job uses the new image path (which may not be built yet), and its account gets the new display name " +
+	"(an adopted bootstrap account would be renamed); adopt a repository through fugaro init --repo, not by applying these"
 
 // loadRepoConfig loads the local config fugaro init wrote, with --project
 // and --region applied.
@@ -1197,9 +1217,10 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 }
 
 // installationOutputs reads the installation root's outputs from its
-// state, which is the repository root's input.
+// state, which is the repository root's input. It runs in a workdir of its
+// own, leaving the installation's workdir as it is.
 func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, bin, stateBucket string) (infra.InstallationOutputs, error) {
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.Project)
+	dir, err := infra.InstallationOutputsWorkdir(os.Getenv, lc.Project)
 	if err != nil {
 		return infra.InstallationOutputs{}, userErr("%v", err)
 	}
@@ -1397,6 +1418,12 @@ func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg 
 		BaseBranch:  spec.BaseBranch,
 		Workflows:   slices.Sorted(maps.Keys(cfg.Workflows)),
 		GitHubAppID: spec.GitHubAppID,
+		Vertex:      spec.UsesVertex(),
+	}
+	if spec.UsesVertex() && !lc.UsesVertex() {
+		// The installation enables the API from the recorded repositories,
+		// and this is the first.
+		r.warn(spec.Name + " authenticates its agent through Vertex AI, which the installation has not enabled: rerun fugaro init once the local config records it, which enables the Vertex AI API")
 	}
 	return r.writeLocalConfig(&next, path, old, r.res.Applied)
 }

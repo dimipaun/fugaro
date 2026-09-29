@@ -82,6 +82,8 @@ type initRepoRig struct {
 	run   *gcpfake.Run
 	sm    *gcpfake.Secrets
 	build *gcpfake.Build
+	logs  *gcpfake.Logging
+	sched *gcpfake.Scheduler
 
 	builds atomic.Int32
 	runs   *blobx.Bucket // the runs bucket, on the GCS fake
@@ -100,6 +102,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		fugaro: testutil.BuildFugaro(t), dir: t.TempDir(), repo: repo,
 		gcs: gcpfake.NewGCS(t), ar: gcpfake.NewArtifactRegistry(t), iam: gcpfake.NewIAM(t), crm: gcpfake.NewCRM(t),
 		run: gcpfake.NewRun(t), sm: gcpfake.NewSecrets(t), build: gcpfake.NewBuild(t),
+		logs: gcpfake.NewLogging(t), sched: gcpfake.NewScheduler(t),
 	}
 	r.crm.AddProject(initRepoProject, initRepoProjectNumber)
 	r.gcs.AddProject(initRepoProject, initRepoProjectNumber)
@@ -129,7 +132,8 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		"terraform: { state_bucket: " + initRepoStateBucket + " }\n" +
 		"user: test@example.com\n" +
 		"endpoints: { run: " + r.run.URL + "/, secret_manager: " + r.sm.URL + "/, cloud_build: " + r.build.URL + "/, storage: " + r.gcs.URL +
-		"/storage/v1/, iam: " + r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL + "/, no_auth: true }\n"
+		"/storage/v1/, iam: " + r.iam.URL + "/, artifact_registry: " + r.ar.URL + "/, resource_manager: " + r.crm.URL +
+		"/, logging: " + r.logs.URL + "/, cloud_scheduler: " + r.sched.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +476,7 @@ func (r *initRepoRig) storedSecrets() {
 // requests counts the requests every fake has had.
 func (r *initRepoRig) requests() int {
 	n := 0
-	for _, s := range []*gcpfake.Server{r.gcs.Server, r.crm.Server, r.ar.Server, r.iam.Server, r.run.Server, r.sm.Server, r.build.Server} {
+	for _, s := range []*gcpfake.Server{r.gcs.Server, r.crm.Server, r.ar.Server, r.iam.Server, r.run.Server, r.sm.Server, r.build.Server, r.logs.Server, r.sched.Server} {
 		n += len(s.Requests())
 	}
 	return n
@@ -662,6 +666,110 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 	}
 }
 
+// A repository whose agent authenticates through Vertex AI is recorded as
+// such, so fugaro init enables the Vertex AI API; the first one says to
+// rerun fugaro init.
+func TestInitRepoRecordsVertex(t *testing.T) {
+	r := newInitRepoRig(t, "acme/sandbox", "https://bitbucket.org/acme/sandbox.git", func(y string) string {
+		return strings.Replace(y, "auth: oauth", "auth: vertex", 1)
+	})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if got := r.localConfig(t).Repos["acme/sandbox"]; !got.Vertex {
+		t.Errorf("local config repo = %+v, want vertex", got)
+	}
+	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, "Vertex AI API") || !strings.Contains(res.stdout, "rerun fugaro init") {
+		t.Errorf("no warning to enable the Vertex AI API:\n%s", res)
+	}
+	// Recorded, it isn't repeated.
+	res = r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 || strings.Contains(res.stdout, "Vertex AI API") {
+		t.Errorf("the second run:\n%s", res)
+	}
+	// An oauth repository records nothing.
+	r = sandboxRig(t)
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || r.localConfig(t).Repos["acme/sandbox"].Vertex || strings.Contains(res.stdout, "Vertex AI API") {
+		t.Errorf("an oauth repository:\n%s", res)
+	}
+}
+
+// A base image outside the installation's base registry is a warning, not
+// a refusal: the build account reads only that registry, so its builds
+// would fail at the pull.
+func TestInitRepoWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
+	r := sandboxRig(t)
+	legacy := strings.Replace(initRepoBaseImage, "/fugaro-base/", "/fugaro/", 1)
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(r.cfgText, initRepoBaseImage, legacy, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
+		t.Errorf("no warning about the base image:\n%s", res)
+	}
+	// The one in the base registry passes silently.
+	r = sandboxRig(t)
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || strings.Contains(res.stdout, "base registry") {
+		t.Errorf("a base image in the base registry:\n%s", res)
+	}
+}
+
+// init --repo reads the installation's outputs in a directory of its own,
+// so the installation's workdir (a fugaro init running meanwhile, or
+// terraform run there by hand) keeps its tfvars, imports and saved plan.
+func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
+	r := sandboxRig(t)
+	dir, err := infra.InstallationWorkdir(os.Getenv, initRepoProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "gcp", "roots", "installation")
+	files := map[string]string{infra.VarsFile: `{"project":"` + initRepoProject + `"}`, infra.ImportsFile: "{}", infra.PlanFile: "a plan"}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, root, files)
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	for name, want := range files {
+		if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(got) != want {
+			t.Errorf("the installation workdir's %s = %q, %v; want it untouched", name, got, err)
+		}
+	}
+	if count(r.calls(t), "installation output") != 1 {
+		t.Errorf("calls = %q", r.calls(t))
+	}
+}
+
+// A first build that fails comes after the first apply, which already
+// made the repository's resources: the repository still joins the local
+// config, and what it still needs is still printed, before the exit 2.
+func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
+	r := sandboxRig(t)
+	r.storedSecrets()
+	r.build.Steps["build"] = func(string) error { return errors.New("the build broke") }
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	if res.code != 2 {
+		t.Fatalf("want exit 2:\n%s", res)
+	}
+	if n := count(r.calls(t), "repo apply"); n != 1 {
+		t.Fatalf("applies = %d, want the first one only: %q", n, r.calls(t))
+	}
+	if !strings.Contains(res.stdout, "Still missing for acme/sandbox") || !strings.Contains(res.stdout, "fugaro image build --repo acme/sandbox --workflow web") {
+		t.Errorf("what is missing isn't printed:\n%s", res)
+	}
+	lc := r.localConfig(t)
+	if got, ok := lc.Repos["acme/sandbox"]; !ok || !slices.Equal(got.Workflows, []string{"web"}) {
+		t.Errorf("local config repos = %+v", lc.Repos)
+	}
+}
+
 func TestInitRepoAdoptedSwitchesImageAfterBuild(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
@@ -817,6 +925,13 @@ func TestInitRepoPrintVarsNoCalls(t *testing.T) {
 	if dig(v, "repo", "slug") != r.spec.Slug || v["allow_job_delete"] != true {
 		t.Errorf("vars = %v", v)
 	}
+	// The values skip discovery and the readiness gates, which need cloud
+	// calls, so a team applying them itself is told what that means.
+	for _, want := range []string{"warning:", "ungated", "deploy_job", "image", "display name", "fugaro init --repo"} {
+		if !strings.Contains(res.stderr, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, res.stderr)
+		}
+	}
 	if after := r.requests(); after != before {
 		t.Errorf("--print-vars made %d cloud request(s)", after-before)
 	}
@@ -890,6 +1005,97 @@ func TestInitRepoForget(t *testing.T) {
 	}
 	if !exists(t, state, infra.StatePrefixInstallation+"/default.tfstate") {
 		t.Errorf("the installation's state went too")
+	}
+}
+
+// The rollback is recoverable: after init --repo --forget and init
+// --forget (state rm, which destroys nothing), a retried fugaro init and
+// init --repo import what state rm left behind instead of planning creates
+// that fail with 409: the custom roles, the scheduler account, the log
+// bucket (once undeleted) and the repository's Scheduler job, next to
+// what they imported before.
+func TestInitForgetThenReinitImports(t *testing.T) {
+	r, _, _ := forgetRig(t)
+	r.bootstrap(t)
+	spec := r.spec
+	if spec.Check == nil {
+		t.Fatal("the fixture has no daily check")
+	}
+	// What the M5 applies made, besides the bootstrap's.
+	r.ar.AddRepository(initRepoProject, initRepoRegion, infra.BaseRegistry, managedLabels)
+	r.ar.AddRepository(initRepoProject, initRepoRegion, spec.Registry.RepositoryID, withLabels(managedLabels, gcp.LabelRepo, spec.Label))
+	r.iam.AddServiceAccount(initRepoProject, spec.BuildServiceAccountEmail, spec.BuildServiceAccount.DisplayName)
+	r.run.SetJob(spec.Check.Job, withLabels(managedLabels, gcp.LabelRepo, spec.Label, gcp.LabelRole, gcp.RoleCheck), spec.Check.Image)
+	checkURI := "https://run.googleapis.com/v2/projects/" + initRepoProject + "/locations/" + initRepoRegion + "/jobs/" + spec.Check.Job + ":run"
+	r.sched.SetJob(initRepoProject, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkURI, spec.Installation.SchedulerServiceAccount)
+	r.iam.AddRole(initRepoProject, infra.RoleLauncher, "Fugaro launcher", false)
+	r.iam.AddRole(initRepoProject, infra.RoleJobRunner, "Fugaro job runner", false)
+	r.iam.AddRole(initRepoProject, infra.RoleBuildSubmitter, "Fugaro build submitter", false)
+	scheduler := infra.SchedulerServiceAccountID + "@" + initRepoProject + ".iam.gserviceaccount.com"
+	r.iam.AddServiceAccount(initRepoProject, scheduler, "Fugaro scheduler")
+	// The rollback's apply deleted the log bucket: it is pending deletion.
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "DELETE_REQUESTED")
+
+	// The rollback: the repository, then the installation.
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--forget", "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	if res := r.fugaroInit(t, "--forget", "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	if calls := r.calls(t); count(calls, "repo state rm module.repo") != 1 || count(calls, "installation state rm module.installation") != 1 {
+		t.Fatalf("calls = %q", calls)
+	}
+
+	// A retry before the undelete is refused, naming the undelete, and
+	// plans nothing.
+	plans := count(r.calls(t), "installation plan")
+	res := r.fugaroInit(t, "--yes")
+	if res.code != 1 || !strings.Contains(res.stderr, infra.LogBucketUndelete(initRepoProject)) {
+		t.Fatalf("a retry with the log bucket pending deletion:\n%s", res)
+	}
+	if count(r.calls(t), "installation plan") != plans {
+		t.Fatalf("planned with the log bucket pending deletion: %q", r.calls(t))
+	}
+
+	// Once undeleted, the retry imports every installation resource.
+	r.logs.AddBucket(initRepoProject, "global", infra.LogBucket, "ACTIVE")
+	if res := r.fugaroInit(t, "--yes"); res.code != 0 {
+		t.Fatal(res)
+	}
+	p := "projects/" + initRepoProject + "/"
+	want := map[string]string{
+		"module.installation.google_storage_bucket.runs":                     initRepoProject + "/" + initRepoRunsBucket,
+		"module.installation.google_artifact_registry_repository.base":       p + "locations/" + initRepoRegion + "/repositories/" + infra.BaseRegistry,
+		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + infra.RoleLauncher,
+		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + infra.RoleJobRunner,
+		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + infra.RoleBuildSubmitter,
+		"module.installation.google_service_account.scheduler":               p + "serviceAccounts/" + scheduler,
+		"module.installation.google_logging_project_bucket_config.fugaro[0]": p + "locations/global/buckets/" + infra.LogBucket,
+	}
+	if got := r.imports(t, 0); !maps.Equal(got, want) {
+		t.Errorf("installation imports:\n%v\nwant:\n%v", got, want)
+	}
+
+	// And init --repo imports the Scheduler job, in the scheduler region,
+	// with the rest of the repository.
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 {
+		t.Fatal(res)
+	}
+	web := spec.Workflows["web"]
+	want = map[string]string{
+		`module.repo.google_cloud_scheduler_job.check[0]`:                     p + "locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob,
+		`module.repo.google_cloud_run_v2_job.check[0]`:                        p + "locations/" + initRepoRegion + "/jobs/" + spec.Check.Job,
+		`module.repo.google_artifact_registry_repository.images`:              p + "locations/" + initRepoRegion + "/repositories/" + spec.Registry.RepositoryID,
+		`module.repo.google_service_account.build`:                            p + "serviceAccounts/" + spec.BuildServiceAccountEmail,
+		`module.repo.module.workflow["web"].google_cloud_run_v2_job.this[0]`:  p + "locations/" + initRepoRegion + "/jobs/" + web.Job,
+		`module.repo.module.workflow["web"].google_service_account.job`:       p + "serviceAccounts/" + web.ServiceAccountEmail,
+		`module.repo.google_secret_manager_secret.this["bitbucket-token"]`:    p + "secrets/" + spec.Secrets["bitbucket-token"],
+		`module.repo.google_secret_manager_secret.this["claude-oauth-token"]`: p + "secrets/" + spec.Secrets["claude-oauth-token"],
+		`module.repo.google_secret_manager_secret.this["sandbox-probe"]`:      p + "secrets/" + spec.Secrets["sandbox-probe"],
+	}
+	if got := r.imports(t, 0); !maps.Equal(got, want) {
+		t.Errorf("repository imports:\n%v\nwant:\n%v", got, want)
 	}
 }
 

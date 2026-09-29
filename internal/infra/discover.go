@@ -13,8 +13,10 @@ import (
 
 	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
+	scheduler "google.golang.org/api/cloudscheduler/v1"
 	"google.golang.org/api/googleapi"
 	iam "google.golang.org/api/iam/v1"
+	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
 	run "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
@@ -38,12 +40,16 @@ type Clients struct {
 	Secrets *secretmanager.Service
 	Storage *storage.Service
 	CRM     *crm.Service
+	// Logging and Scheduler read the installation's log bucket and a
+	// repository's Scheduler job.
+	Logging   *logging.Service
+	Scheduler *scheduler.Service
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
 // so fakes can stand in. Empty means Google's own endpoint.
 type Endpoints struct {
-	IAM, ArtifactRegistry, Storage, ResourceManager string
+	IAM, ArtifactRegistry, Storage, ResourceManager, Scheduler string
 }
 
 // discardLogger keeps the clients from logging requests (and their
@@ -53,6 +59,16 @@ var discardLogger = slog.New(slog.DiscardHandler)
 // NewClients connects to every API discovery reads, with o's credentials,
 // HTTP client and endpoints (Run and Secret Manager), and e's for the rest.
 func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, error) {
+	if o.Endpoints.NoAuth {
+		// No credentials means fakes: an endpoint left empty would send the
+		// call to Google itself.
+		for name, v := range map[string]string{"run": o.Endpoints.Run, "secret_manager": o.Endpoints.SecretManager, "logging": o.Endpoints.Logging,
+			"iam": e.IAM, "artifact_registry": e.ArtifactRegistry, "storage": e.Storage, "resource_manager": e.ResourceManager, "cloud_scheduler": e.Scheduler} {
+			if v == "" {
+				return nil, fmt.Errorf("endpoints: no_auth is set but the %s endpoint is not", name)
+			}
+		}
+	}
 	opts := func(endpoint string) []option.ClientOption {
 		out := []option.ClientOption{option.WithLogger(discardLogger)}
 		if endpoint != "" {
@@ -89,6 +105,12 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	}
 	if c.CRM, err = crm.NewService(ctx, opts(e.ResourceManager)...); err != nil {
 		return nil, fmt.Errorf("connecting to Resource Manager: %w", err)
+	}
+	if c.Logging, err = logging.NewService(ctx, opts(o.Endpoints.Logging)...); err != nil {
+		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
+	}
+	if c.Scheduler, err = scheduler.NewService(ctx, opts(e.Scheduler)...); err != nil {
+		return nil, fmt.Errorf("connecting to Cloud Scheduler: %w", err)
 	}
 	return &c, nil
 }
@@ -248,12 +270,27 @@ func (d *discovery) registry(region, id string) (*artifactregistry.Repository, e
 	return r, nil
 }
 
+// The marks of the installation's resources that carry no labels, exactly
+// as the installation module sets them: the custom roles' titles and the
+// scheduler account's display name.
+const (
+	launcherRoleTitle       = "Fugaro launcher"
+	jobRunnerRoleTitle      = "Fugaro job runner"
+	buildSubmitterRoleTitle = "Fugaro build submitter"
+	schedulerDisplayName    = "Fugaro scheduler"
+)
+
 // DiscoverInstallation finds the installation's resources that exist: the
 // runs bucket, the legacy registry and the base registry. Each that
 // carries fugaro=managed (and, for the bucket, is in the project) is
 // imported; one under our name without our mark is refused. A marked
 // legacy registry sets AdoptLegacyRegistry; an unmarked one isn't ours and
 // is left alone, since nothing plans it then.
+//
+// It also finds the singletons an earlier apply made, which a rollback's
+// state rm leaves in place and whose create would then fail: the custom
+// roles (by title), the scheduler account (by display name) and, with log
+// isolation on, the log bucket (by name, since it carries no labels).
 func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec) (Imports, error) {
 	d := &discovery{ctx: ctx, c: c, project: spec.Project}
 	b, err := d.bucket(spec.RunsBucket)
@@ -286,7 +323,74 @@ func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec
 	case base != nil:
 		d.foreign("Artifact Registry repository "+spec.Names.BaseRegistry, base.Labels, managed)
 	}
+	if err := d.installationSingletons(spec); err != nil {
+		return Imports{}, err
+	}
 	return d.result()
+}
+
+// installationSingletons adopts the custom roles, the scheduler account
+// and the log bucket that exist and are ours.
+func (d *discovery) installationSingletons(spec InstallationSpec) error {
+	ids := spec.Names.RoleIDs
+	for _, r := range []struct {
+		kind      importKind
+		id, title string
+	}{
+		{importLauncherRole, ids.Launcher, launcherRoleTitle},
+		{importJobRunnerRole, ids.JobRunner, jobRunnerRoleTitle},
+		{importBuildSubmitterRole, ids.BuildSubmitter, buildSubmitterRoleTitle},
+	} {
+		name := "projects/" + d.project + "/roles/" + r.id
+		role, err := d.c.IAM.Projects.Roles.Get(name).Context(d.ctx).Do()
+		switch {
+		case notFound(err):
+			continue
+		case err != nil:
+			return fmt.Errorf("reading custom role %s: %w", name, err)
+		case role.Title != r.title:
+			d.refuse(&ForeignError{Resource: "custom role " + name, Found: "title " + strconv.Quote(role.Title), Want: "title " + strconv.Quote(r.title)})
+		case role.Deleted:
+			// The plan's create undeletes it; a deleted role can't be
+			// imported.
+			d.im.Notes = append(d.im.Notes, fmt.Sprintf("custom role %s is deleted; the plan's create restores it", name))
+		default:
+			d.add(r.kind, spec.Region, "", r.id)
+		}
+	}
+
+	email := serviceAccountEmail(spec.Names.SchedulerServiceAccountID, d.project)
+	switch dn, ok, err := d.accountName(email); {
+	case err != nil:
+		return err
+	case !ok:
+	case dn == schedulerDisplayName:
+		d.add(importSchedulerSA, spec.Region, "", email)
+	default:
+		d.refuse(&ForeignError{Resource: "service account " + email, Found: "display name " + strconv.Quote(dn), Want: "display name " + strconv.Quote(schedulerDisplayName)})
+	}
+
+	if spec.LogIsolation != nil && !*spec.LogIsolation {
+		return nil // nothing plans the log bucket
+	}
+	name := "projects/" + d.project + "/locations/global/buckets/" + spec.Names.Log.Bucket
+	b, err := d.c.Logging.Projects.Locations.Buckets.Get(name).Context(d.ctx).Do()
+	switch {
+	case notFound(err):
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading log bucket %s: %w", name, err)
+	}
+	if b.LifecycleState != "ACTIVE" {
+		d.refuse(fmt.Errorf("log bucket %s is %s (a rollback deletes it, and it stays pending deletion for 7 days), so it can be neither imported nor created: restore it first with %s, then rerun fugaro init",
+			name, b.LifecycleState, LogBucketUndelete(d.project)))
+		return nil
+	}
+	// A log bucket carries no labels: its name in this project is the only
+	// mark.
+	d.add(importLogBucket, spec.Region, "", spec.Names.Log.Bucket)
+	d.im.Notes = append(d.im.Notes, fmt.Sprintf("log bucket %s exists and is adopted by its name alone (log buckets carry no labels)", spec.Names.Log.Bucket))
+	return nil
 }
 
 // Existing is what discovery found of a repository's live jobs and
@@ -388,6 +492,15 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 		}
 	}
 
+	// The check's Scheduler job, in the scheduler region: it carries no
+	// labels, so it is ours when it starts this repository's check job as
+	// the scheduler account.
+	if spec.Check != nil {
+		if err := d.schedulerJob(spec); err != nil {
+			return Imports{}, Existing{}, err
+		}
+	}
+
 	// Each workflow's job account and job, and the account's live grants.
 	for _, name := range slices.Sorted(maps.Keys(spec.Workflows)) {
 		ws := spec.Workflows[name]
@@ -437,6 +550,41 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 		return Imports{}, Existing{}, err
 	}
 	return im, ex, nil
+}
+
+// checkRunURI is the URL the check's Scheduler job posts to: the check
+// job's run, in the repository's region.
+func checkRunURI(spec RepoSpec) string {
+	return "https://run.googleapis.com/v2/projects/" + spec.Project + "/locations/" + spec.Region + "/jobs/" + spec.Check.Job + ":run"
+}
+
+// schedulerJob adopts the check's Scheduler job when it exists and is
+// ours.
+func (d *discovery) schedulerJob(spec RepoSpec) error {
+	name := "projects/" + d.project + "/locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob
+	j, err := d.c.Scheduler.Projects.Locations.Jobs.Get(name).Context(d.ctx).Do()
+	switch {
+	case notFound(err):
+		return nil
+	case err != nil:
+		return fmt.Errorf("reading Cloud Scheduler job %s: %w", name, err)
+	}
+	var uri, email string
+	if j.HttpTarget != nil {
+		uri = j.HttpTarget.Uri
+		if j.HttpTarget.OauthToken != nil {
+			email = j.HttpTarget.OauthToken.ServiceAccountEmail
+		}
+	}
+	wantURI, wantEmail := checkRunURI(spec), spec.Installation.SchedulerServiceAccount
+	if uri != wantURI || email != wantEmail {
+		d.refuse(&ForeignError{Resource: "Cloud Scheduler job " + spec.Check.SchedulerJob,
+			Found: "target " + strconv.Quote(uri) + " as " + strconv.Quote(email),
+			Want:  "target " + strconv.Quote(wantURI) + " as " + strconv.Quote(wantEmail)})
+		return nil
+	}
+	d.add(importSchedulerJob, spec.Check.SchedulerRegion, "", spec.Check.SchedulerJob)
+	return nil
 }
 
 // accountName is the display name of the service account email, and

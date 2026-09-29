@@ -149,12 +149,21 @@ func RemoveProjectViewers(ctx context.Context, c *Clients, bucket string, p *sto
 	return nil
 }
 
-// RepoStates lists the repository roots' state objects in the state bucket.
+// isState reports whether a state bucket object is a root's state: a
+// *.tfstate object. A lock (*.tflock) is someone's running operation, or
+// one that died, not state.
+func isState(name string) bool { return strings.HasSuffix(name, ".tfstate") }
+
+// RepoStates lists the repository roots' state objects (*.tfstate) in the
+// state bucket: what init --repo --forget deletes, so a leftover lock
+// doesn't count.
 func RepoStates(ctx context.Context, c *Clients, stateBucket string) ([]string, error) {
 	var out []string
 	err := c.Storage.Objects.List(stateBucket).Prefix(StatePrefixRepos).Pages(ctx, func(o *storage.Objects) error {
 		for _, it := range o.Items {
-			out = append(out, it.Name)
+			if isState(it.Name) {
+				out = append(out, it.Name)
+			}
 		}
 		return nil
 	})

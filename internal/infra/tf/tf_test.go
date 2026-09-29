@@ -71,7 +71,9 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 			}
 		}
 	}
-	want := []string{"apply", "-input=false", "-no-color", out}
+	// The apply takes the state lock again, so it waits for a lock held
+	// briefly by something else, as the plan does.
+	want := []string{"apply", "-input=false", "-no-color", "-lock-timeout=60s", out}
 	if !slices.Equal(args, want) {
 		t.Errorf("apply argv = %q, want %q", args, want)
 	}

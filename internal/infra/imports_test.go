@@ -179,3 +179,27 @@ func checkModuleAddress(t *testing.T, to string) {
 		}
 	}
 }
+
+// The marks discovery checks on the installation's unlabelled resources
+// are the ones the installation module sets: a title or display name that
+// drifted would refuse (or fail to adopt) every retried installation.
+func TestSingletonMarksMatchModule(t *testing.T) {
+	src := readDir(t, "gcp/modules/installation")
+	for _, m := range []struct{ resource, attr, want string }{
+		{`google_project_iam_custom_role" "launcher"`, "title", launcherRoleTitle},
+		{`google_project_iam_custom_role" "job_runner"`, "title", jobRunnerRoleTitle},
+		{`google_project_iam_custom_role" "build_submitter"`, "title", buildSubmitterRoleTitle},
+		{`google_service_account" "scheduler"`, "display_name", schedulerDisplayName},
+	} {
+		re := regexp.MustCompile(`(?s)resource "` + m.resource + ` \{(.*?)\n\}`)
+		block := re.FindStringSubmatch(src)
+		if block == nil {
+			t.Errorf("no resource %s", m.resource)
+			continue
+		}
+		attr := regexp.MustCompile(`\n\s*` + m.attr + `\s*=\s*"([^"]*)"`).FindStringSubmatch(block[1])
+		if attr == nil || attr[1] != m.want {
+			t.Errorf("%s: %s = %v, want %q", m.resource, m.attr, attr, m.want)
+		}
+	}
+}
