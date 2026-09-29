@@ -48,6 +48,9 @@ type LaunchSpec struct {
 	Repo     RepoRef
 	Workflow string
 	RunID    string
+	// Timeout is the workflow's total time for this run; zero means the job's own.
+	// The backend adds TaskTimeoutSlack to it.
+	Timeout time.Duration
 }
 
 // ExecID is an execution's identity, parsed from its resource name.

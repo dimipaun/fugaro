@@ -389,3 +389,28 @@ func TestRedactURL(t *testing.T) {
 		t.Errorf("unparseable: %q", got)
 	}
 }
+
+func TestLaunchSendsTimeoutOverride(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	spec := launchSpec()
+	spec.Timeout = 45 * time.Minute
+	if _, err := b.Launch(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	// The workflow's total plus the slack the job's task timeout adds.
+	if got := fr.RunRequests(); len(got) != 1 || got[0].Timeout != "2820s" {
+		t.Fatalf("requests = %+v, want timeout 2820s", got)
+	}
+}
+
+func TestLaunchNoTimeoutByDefault(t *testing.T) {
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	if _, err := b.Launch(context.Background(), launchSpec()); err != nil {
+		t.Fatal(err)
+	}
+	if got := fr.RunRequests(); len(got) != 1 || got[0].Timeout != "" {
+		t.Fatalf("requests = %+v, want no timeout override", got)
+	}
+}

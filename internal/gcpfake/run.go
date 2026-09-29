@@ -46,11 +46,12 @@ type Run struct {
 	// path supplies; they default to "fake-project" and "fake-region".
 	Project, Region string
 
-	mu    sync.Mutex
-	jobs  map[string]*runJob
-	execs map[execKey]*runExec
-	seq   int
-	ops   int
+	mu       sync.Mutex
+	requests []RunCall
+	jobs     map[string]*runJob
+	execs    map[execKey]*runExec
+	seq      int
+	ops      int
 }
 
 // RunCall is one jobs.run request.
@@ -58,6 +59,7 @@ type RunCall struct {
 	Execution string // the short name, as Cloud Run hands CLOUD_RUN_EXECUTION to the container
 	Job       string
 	Env       map[string]string // the override's env
+	Timeout   string            // the override's task timeout ("2820s"), empty when none
 }
 
 type runJob struct {
@@ -71,6 +73,7 @@ type runExec struct {
 	key                         execKey
 	seq                         int
 	state                       backend.State
+	timeout                     string // the task timeout override the execution was created with
 	created, started, completed time.Time
 }
 
@@ -87,6 +90,14 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// RunRequests returns every :run request the fake has answered, refused ones
+// included, oldest first. A refused request has no Execution.
+func (f *Run) RunRequests() []RunCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]RunCall(nil), f.requests...)
 }
 
 // SetOnRun sets OnRun under the fake's lock. Use it instead of assigning
@@ -358,24 +369,16 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		f.unhandled(w, r)
 		return
 	}
-	if f.FailRunWith != 0 {
-		writeError(w, f.FailRunWith, http.StatusText(f.FailRunWith), "injected failure")
-		return
-	}
 	var req struct {
 		Overrides struct {
 			ContainerOverrides []struct {
 				Env []struct{ Name, Value string } `json:"env"`
 			} `json:"containerOverrides"`
+			Timeout string `json:"timeout"`
 		} `json:"overrides"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad body: "+err.Error())
-		return
-	}
-	x := f.create(job)
-	if x == nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+job+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
 		return
 	}
 	env := map[string]string{}
@@ -384,10 +387,24 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 			env[e.Name] = e.Value
 		}
 	}
+	call := RunCall{Job: job, Env: env, Timeout: req.Overrides.Timeout}
+	if f.FailRunWith != 0 {
+		f.requests = append(f.requests, call)
+		writeError(w, f.FailRunWith, http.StatusText(f.FailRunWith), "injected failure")
+		return
+	}
+	x := f.create(job)
+	if x == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+job+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
+		return
+	}
+	x.timeout = req.Overrides.Timeout
+	call.Execution = x.key.short
+	f.requests = append(f.requests, call)
 	if on := f.OnRun; on != nil {
 		// Unlocked, so OnRun may call SetState and the other accessors.
 		f.mu.Unlock()
-		on(RunCall{Execution: x.key.short, Job: job, Env: env})
+		on(call)
 		f.mu.Lock()
 	}
 	f.ops++

@@ -77,6 +77,7 @@ type runOptions struct {
 	cloud                                 cloudOptions
 	repo, ref, workflow, runID, batch, tf string
 	retry                                 string
+	totalTimeout                          string
 	pr                                    int
 	asJSON                                bool
 }
@@ -101,6 +102,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.batch, "batch", "", "batch label, to group runs in fugaro ls")
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
+	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue the Fugaro PR N (M6)")
 	_ = f.MarkHidden("pr")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
@@ -109,7 +111,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout"}
 
 func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
@@ -117,6 +119,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		return userErr("follow-up runs (--pr) arrive in M6")
 	}
 	var text string
+	var total time.Duration
 	if o.retry != "" {
 		for _, name := range taskFlags {
 			if cmd.Flags().Changed(name) {
@@ -130,6 +133,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		var err error
 		if text, err = taskText(cmd, o.tf, args); err != nil {
 			return err
+		}
+		if o.totalTimeout != "" {
+			if total, err = parseTotalTimeout(o.totalTimeout); err != nil {
+				return err
+			}
 		}
 	}
 	env, err := openCloud(ctx, o.cloud)
@@ -145,7 +153,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if o.retry != "" {
 		slug, spec, err = retrySpec(ctx, env, o.retry)
 	} else {
-		slug, spec, err = newSpec(ctx, env, o, text)
+		slug, spec, err = newSpec(ctx, env, o, text, total)
 	}
 	if err != nil {
 		return err
@@ -207,7 +215,7 @@ func taskText(cmd *cobra.Command, file string, args []string) (string, error) {
 
 // newSpec builds a new run's spec, and its repository's slug, from the
 // flags, the local config and the checkout in the working directory.
-func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string) (string, *task.Spec, error) {
+func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration) (string, *task.Spec, error) {
 	repo := o.repo
 	if repo == "" {
 		var err error
@@ -226,6 +234,13 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string) (st
 	workflow, err := resolveWorkflow(env, repo, o.workflow, checkout)
 	if err != nil {
 		return "", nil, err
+	}
+	if total > 0 {
+		if c := checkout(); c != nil {
+			if w, ok := c.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
+				return "", nil, userErr("--total-timeout %s must be longer than workflow %s's timeouts.finalize_reserve %s", total, workflow, w.Timeouts.FinalizeReserve.Duration)
+			}
+		}
 	}
 	ref := o.ref
 	if ref == "" {
@@ -248,10 +263,49 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string) (st
 		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch}
+	if total > 0 {
+		spec.Overrides.TotalTimeout = total.String()
+	}
 	if err := spec.Validate(); err != nil {
 		return "", nil, userErr("%v", err)
 	}
 	return slug, spec, nil
+}
+
+// OverrideCap is the longest total time a run may ask for with
+// --total-timeout: a runaway value is more likely a typo than a plan.
+const OverrideCap = 24 * time.Hour
+
+// parseTotalTimeout checks the parts of --total-timeout that need no
+// checkout: the runner and the platform bound what is left.
+func parseTotalTimeout(s string) (time.Duration, error) {
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, userErr("--total-timeout %q must be a duration such as 45m", s)
+	}
+	if d <= 0 {
+		return 0, userErr("--total-timeout must be greater than 0")
+	}
+	if d > OverrideCap {
+		return 0, userErr("--total-timeout %s is above the %s cap", d, OverrideCap)
+	}
+	if limit := gcp.MaxTaskTimeout - backend.TaskTimeoutSlack; d > limit {
+		return 0, userErr("--total-timeout %s is above what a Cloud Run task allows (%s)", d, limit)
+	}
+	return d, nil
+}
+
+// launchTimeoutOf is the backend timeout of a stored task: its
+// overrides.total_timeout, or zero for the job's own.
+func launchTimeoutOf(spec *task.Spec) time.Duration {
+	if spec.Overrides.TotalTimeout == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(spec.Overrides.TotalTimeout)
+	if err != nil {
+		return 0 // Validate refuses this earlier
+	}
+	return d
 }
 
 // checkoutOf returns a memoized lookup of the working directory's
@@ -520,7 +574,7 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
-	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID})
+	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
 	cancel()
 	if err != nil {
 		if errors.Is(err, backend.ErrRejected) {

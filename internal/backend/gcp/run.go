@@ -110,6 +110,9 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 			Env: []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID}},
 		}},
 	}}
+	if spec.Timeout != 0 {
+		req.Overrides.Timeout = fmt.Sprintf("%ds", int((spec.Timeout+backend.TaskTimeoutSlack)/time.Second))
+	}
 	op, err := b.run.Projects.Locations.Jobs.Run(job, req).Context(ctx).Do()
 	if err != nil {
 		return backend.ExecutionRef{}, launchError(job, err)
