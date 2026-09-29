@@ -189,6 +189,7 @@ func TestBuildPushesOnlyCandidate(t *testing.T) {
 		`--label "org.opencontainers.image.created=$$created"`,
 		`--label "dev.fugaro.base.digest=$${base#*@}"`,
 		`--build-arg "FUGARO_BUILT_AT=$$created"`,
+		`--build-arg "FUGARO_COMMIT=$$commit"`,
 		`docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate"`,
 		`> /workspace/out/image-digest`,
 		`> "$$BUILDER_OUTPUT/output"`,
@@ -197,8 +198,10 @@ func TestBuildPushesOnlyCandidate(t *testing.T) {
 			t.Errorf("the build step lacks %s", want)
 		}
 	}
-	if !strings.Contains(images.DerivedTemplate, `ARG FUGARO_BUILT_AT=""`) {
-		t.Error("the template does not declare FUGARO_BUILT_AT")
+	for _, arg := range []string{`ARG FUGARO_BUILT_AT=""`, `ARG FUGARO_COMMIT=""`} {
+		if !strings.Contains(images.DerivedTemplate, arg) {
+			t.Errorf("the template does not declare %s", arg)
+		}
 	}
 }
 
@@ -821,7 +824,8 @@ esac; done
 		t.Errorf("argv:\n%s", logged)
 	}
 	for _, want := range []string{
-		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--label org.opencontainers.image.revision=c0ffee",
+		"--build-arg FUGARO_BUILT_AT=2026-09-29T10:00:00Z", "--build-arg FUGARO_COMMIT=c0ffee",
+		"--label org.opencontainers.image.revision=c0ffee",
 		"--label org.opencontainers.image.created=2026-09-29T10:00:00Z", "--label dev.fugaro.base.digest=sha256:abc",
 		"--tag example.com/img:candidate-b7 ", "docker push example.com/img:candidate-b7\n",
 	} {

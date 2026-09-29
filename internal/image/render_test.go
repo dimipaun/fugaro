@@ -25,6 +25,8 @@ const wantFull = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c0a1
 #   REPO_URL     what to clone: a git URL, or /src/repo.bundle from the build context
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
+#   FUGARO_COMMIT  the commit to bake in; Cloud Build passes the one its
+#                render step read, and without it the branch's head is used
 # Build secrets, all optional: git-credentials (a git credential-store file
 # for REPO_URL) and one per workflow secret, mounted as a file and exported
 # as that variable inside the warm-up and setup commands only.
@@ -45,11 +47,23 @@ RUN /usr/local/lib/fugaro/install-node 24.19.0
 USER fugaro
 
 WORKDIR /work/repo
+# A push to the branch after the render step must not change what is baked
+# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
+# when it is no longer on the branch.
+ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
-    GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+    case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
+ && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && if [ -n "$FUGARO_COMMIT" ]; then \
+      git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+             -c credential.helper='store --file=/run/secrets/git-credentials' \
+             fetch --quiet origin "$FUGARO_COMMIT"; \
+      git reset --quiet --hard "$FUGARO_COMMIT"; \
+    fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 # Dependency warm-up for yarn.lock.
@@ -99,6 +113,8 @@ const wantMinimal = `# syntax=docker/dockerfile:1.10@sha256:865e5dd094beca432e8c
 #   REPO_URL     what to clone: a git URL, or /src/repo.bundle from the build context
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
+#   FUGARO_COMMIT  the commit to bake in; Cloud Build passes the one its
+#                render step read, and without it the branch's head is used
 # Build secrets, all optional: git-credentials (a git credential-store file
 # for REPO_URL) and one per workflow secret, mounted as a file and exported
 # as that variable inside the warm-up and setup commands only.
@@ -112,11 +128,23 @@ ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
 
 WORKDIR /work/repo
+# A push to the branch after the render step must not change what is baked
+# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
+# when it is no longer on the branch.
+ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
-    GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+    case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
+ && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && if [ -n "$FUGARO_COMMIT" ]; then \
+      git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+             -c credential.helper='store --file=/run/secrets/git-credentials' \
+             fetch --quiet origin "$FUGARO_COMMIT"; \
+      git reset --quiet --hard "$FUGARO_COMMIT"; \
+    fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 
 USER root
@@ -491,6 +519,82 @@ func TestTemplateWritesImageJSON(t *testing.T) {
 		}
 		if !maps.Equal(got, want) {
 			t.Fatalf("image.json with FUGARO_BUILT_AT=%q = %v, want %v", builtAt, got, want)
+		}
+	}
+}
+
+// The clone step bakes in exactly the commit Cloud Build's source step
+// read (FUGARO_COMMIT), so a push to the branch between the two clones
+// changes nothing, and a commit no longer on the branch is fetched by
+// itself. With no FUGARO_COMMIT (a local build) it keeps the branch's
+// head. The step is run here against a scratch repository.
+func TestTemplatePinsTheCommit(t *testing.T) {
+	rendered, err := Render(RenderInput{Workflow: "app", Base: "web-node", Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var step []string
+	in := false
+	for _, line := range strings.Split(string(rendered), "\n") {
+		if strings.HasPrefix(line, "RUN --mount=type=bind,target=/src") {
+			in = true
+		}
+		if !in {
+			continue
+		}
+		if tr := strings.TrimSpace(line); !strings.HasPrefix(tr, "RUN --mount") && !strings.HasPrefix(tr, "--mount") {
+			step = append(step, line)
+		}
+		if !strings.HasSuffix(line, `\`) {
+			break
+		}
+	}
+	if len(step) == 0 || !strings.Contains(strings.Join(step, "\n"), "FUGARO_COMMIT") {
+		t.Fatalf("the clone step does not use FUGARO_COMMIT:\n%s", strings.Join(step, "\n"))
+	}
+	if strings.Index(string(rendered), `ARG FUGARO_COMMIT=""`) > strings.Index(string(rendered), "RUN --mount=type=bind,target=/src") {
+		t.Fatal("FUGARO_COMMIT is declared after the clone step")
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("no sh")
+	}
+	testutil.IsolateGit(t)
+	src := t.TempDir()
+	testutil.Git(t, src, "init", "--quiet", "-b", "main", src)
+	commit := func(name string) string {
+		testutil.WriteFiles(t, src, map[string]string{name: name + "\n"})
+		testutil.Git(t, src, "add", "-A")
+		testutil.Git(t, src, "commit", "--quiet", "-m", name)
+		return testutil.Git(t, src, "rev-parse", "HEAD")
+	}
+	first := commit("one")
+	testutil.Git(t, src, "checkout", "--quiet", "-b", "gone")
+	offBranch := commit("off")
+	testutil.Git(t, src, "checkout", "--quiet", "main")
+	head := commit("two")
+	const origin = "https://example.com/acme/app.git"
+
+	for _, c := range []struct{ pin, want string }{{"", head}, {first, first}, {offBranch, offBranch}, {"--upload-pack=touch x", ""}} {
+		dir := t.TempDir()
+		cmd := exec.Command(sh, "-c", strings.ReplaceAll(strings.Join(step, "\n"), "/work/repo", dir))
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "REPO_URL=file://"+src, "REPO_ORIGIN="+origin, "BASE_BRANCH=main", "FUGARO_COMMIT="+c.pin)
+		out, err := cmd.CombinedOutput()
+		if c.want == "" {
+			if err == nil {
+				t.Errorf("FUGARO_COMMIT=%q was accepted:\n%s", c.pin, out)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("FUGARO_COMMIT=%q: %v\n%s", c.pin, err, out)
+		}
+		if got := testutil.Git(t, dir, "rev-parse", "HEAD"); got != c.want {
+			t.Errorf("FUGARO_COMMIT=%q: HEAD = %s, want %s", c.pin, got, c.want)
+		}
+		if got := testutil.Git(t, dir, "remote", "get-url", "origin"); got != origin {
+			t.Errorf("FUGARO_COMMIT=%q: origin = %s", c.pin, got)
 		}
 	}
 }
