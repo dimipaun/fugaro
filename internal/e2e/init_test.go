@@ -1297,3 +1297,17 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 		t.Fatalf("want exit 2 on a permission 403:\n%s", res)
 	}
 }
+
+// init --repo with the Storage API disabled fails as a remote error at
+// the state bucket, not as "no installation: run fugaro init first".
+func TestInitRepoStorageDisabledIsRemote(t *testing.T) {
+	r := sandboxRig(t)
+	r.su.Disable("storage.googleapis.com", r.gcs.Server)
+	res := r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
+	if res.code != 2 || !strings.Contains(res.stderr, "state bucket") || strings.Contains(res.stderr, "run fugaro init first") {
+		t.Fatalf("want exit 2 at the state bucket:\n%s", res)
+	}
+	if len(r.calls(t)) != 0 {
+		t.Fatalf("terraform calls %q", r.calls(t))
+	}
+}

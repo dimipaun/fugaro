@@ -15,38 +15,90 @@ import (
 )
 
 // errorInfo is a googleapi error carrying one ErrorInfo detail, as the
-// client parses Google's answer.
+// client parses Google's answer, for consumer projects/1.
 func errorInfo(code int, reason, service, message string) error {
+	return errorInfoFor(code, reason, service, "projects/1", message)
+}
+
+func errorInfoFor(code int, reason, service, consumer, message string) error {
+	md := map[string]any{"service": service}
+	if consumer != "" {
+		md["consumer"] = consumer
+	}
 	return &googleapi.Error{Code: code, Message: message, Details: []any{
-		map[string]any{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason, "domain": "googleapis.com",
-			"metadata": map[string]any{"service": service, "consumer": "projects/1"}},
+		map[string]any{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": reason, "domain": "googleapis.com", "metadata": md},
 	}}
 }
 
 // Only the structured detail says an API is disabled: its ErrorInfo
-// reason, for the API asked about. The message alone doesn't.
+// reason, for the API asked about, in the target project. The message
+// alone doesn't.
 func TestServiceDisabledReadsErrorInfo(t *testing.T) {
 	const sched = "cloudscheduler.googleapis.com"
+	p := target{project: "proj-1234", number: 1}
 	for _, tc := range []struct {
 		name string
 		err  error
+		tg   target
 		want bool
 	}{
-		{"disabled", errorInfo(403, "SERVICE_DISABLED", sched, "Cloud Scheduler API has not been used"), true},
-		{"wrapped", fmt.Errorf("reading: %w", errorInfo(403, "SERVICE_DISABLED", sched, "x")), true},
-		{"another API", errorInfo(403, "SERVICE_DISABLED", "logging.googleapis.com", "x"), false},
-		{"permission denied", errorInfo(403, "IAM_PERMISSION_DENIED", sched, "Permission denied"), false},
-		{"message only", &googleapi.Error{Code: 403, Message: "SERVICE_DISABLED: Cloud Scheduler API has not been used", Body: `SERVICE_DISABLED ` + sched}, false},
-		{"legacy reason only", &googleapi.Error{Code: 403, Message: "disabled", Errors: []googleapi.ErrorItem{{Reason: "accessNotConfigured"}}}, false},
-		{"not a 403", errorInfo(500, "SERVICE_DISABLED", sched, "x"), false},
+		{"disabled", errorInfo(403, "SERVICE_DISABLED", sched, "Cloud Scheduler API has not been used"), p, true},
+		{"wrapped", fmt.Errorf("reading: %w", errorInfo(403, "SERVICE_DISABLED", sched, "x")), p, true},
+		{"consumer by project ID", errorInfoFor(403, "SERVICE_DISABLED", sched, "projects/proj-1234", "x"), p, true},
+		{"another consumer", errorInfoFor(403, "SERVICE_DISABLED", sched, "projects/2", "x"), p, false},
+		{"another consumer by ID", errorInfoFor(403, "SERVICE_DISABLED", sched, "projects/other", "x"), p, false},
+		{"no consumer", errorInfoFor(403, "SERVICE_DISABLED", sched, "", "x"), p, false},
+		{"number unknown, a project consumer", errorInfoFor(403, "SERVICE_DISABLED", sched, "projects/2", "x"), target{project: "proj-1234"}, true},
+		{"number unknown, no consumer", errorInfoFor(403, "SERVICE_DISABLED", sched, "", "x"), target{project: "proj-1234"}, false},
+		{"number unknown, not a project", errorInfoFor(403, "SERVICE_DISABLED", sched, "folders/2", "x"), target{project: "proj-1234"}, false},
+		{"another API", errorInfo(403, "SERVICE_DISABLED", "logging.googleapis.com", "x"), p, false},
+		{"permission denied", errorInfo(403, "IAM_PERMISSION_DENIED", sched, "Permission denied"), p, false},
+		{"message only", &googleapi.Error{Code: 403, Message: "SERVICE_DISABLED: Cloud Scheduler API has not been used", Body: `SERVICE_DISABLED ` + sched}, p, false},
+		{"legacy reason only", &googleapi.Error{Code: 403, Message: "disabled", Errors: []googleapi.ErrorItem{{Reason: "accessNotConfigured"}}}, p, false},
+		{"not a 403", errorInfo(500, "SERVICE_DISABLED", sched, "x"), p, false},
 		{"another domain", &googleapi.Error{Code: 403, Details: []any{map[string]any{"@type": "type.googleapis.com/google.rpc.ErrorInfo",
-			"reason": "SERVICE_DISABLED", "domain": "example.com", "metadata": map[string]any{"service": sched}}}}, false},
-		{"404", &googleapi.Error{Code: 404}, false},
-		{"nil", nil, false},
+			"reason": "SERVICE_DISABLED", "domain": "example.com", "metadata": map[string]any{"service": sched, "consumer": "projects/1"}}}}, p, false},
+		{"404", &googleapi.Error{Code: 404}, p, false},
+		{"nil", nil, p, false},
 	} {
-		if got := serviceDisabled(tc.err, sched); got != tc.want {
+		if got := serviceDisabled(tc.err, sched, tc.tg); got != tc.want {
 			t.Errorf("%s: serviceDisabled = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// A disabled Storage API is an environment error for the state bucket,
+// the Terraform backend: never "no state bucket yet", which would offer a
+// create (or say there is no installation).
+func TestStateBucketStorageDisabled(t *testing.T) {
+	f := newCloud(t)
+	f.gcs.AddBucket(testStateBucket, testProjectNumber, tfstate)
+	f.su.Disable("storage.googleapis.com", f.gcs.Server)
+	exists, err := CheckStateBucket(context.Background(), f.c, "proj-1234", testStateBucket)
+	var ue *UserError
+	if err == nil || exists || errors.As(err, &ue) || !strings.Contains(err.Error(), "SERVICE_DISABLED") && !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("exists %v, err %v; want a remote error", exists, err)
+	}
+	for _, r := range f.gcs.Requests() {
+		if r.Method != http.MethodGet {
+			t.Errorf("sent %s %s", r.Method, r.Path)
+		}
+	}
+}
+
+// Discovery's lookups after the project's number compare the consumer
+// with it: a SERVICE_DISABLED naming another project fails closed.
+func TestDisabledAPIOtherConsumerFailsClosed(t *testing.T) {
+	f := newCloud(t)
+	spec := sandboxSpec(t)
+	f.bootstrap(t, spec, newDisplay)
+	f.m5(t, spec)
+	f.su.Consumer = "projects/999"
+	f.su.Disable("cloudscheduler.googleapis.com", f.sched.Server)
+	im, _, err := DiscoverRepo(context.Background(), f.c, spec)
+	var ue *UserError
+	if err == nil || errors.As(err, &ue) || len(im.List) != 0 {
+		t.Fatalf("err = %v, imports %v; want a remote error", err, im.List)
 	}
 }
 

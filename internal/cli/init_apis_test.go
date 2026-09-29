@@ -82,6 +82,7 @@ func TestInitResourceManagerEnabledAsksNothing(t *testing.T) {
 // Without a terminal and without --yes, nothing is enabled: exit 1 with
 // the command to run by hand. At a terminal, a wrong answer is the same.
 func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
+	noEnableWait(t, 1)
 	r := newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
@@ -98,7 +99,6 @@ func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || len(r.su.Enables()) != 0 {
 		t.Fatalf("declined at a terminal: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
 	}
-	noEnableWait(t, 1)
 	if _, _, err := executeStdin(t, initProject+"\n", "init", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
 		t.Fatalf("typed project ID: %v, enables %q", err, r.su.Enables())
 	}
@@ -149,5 +149,37 @@ func TestInitDisabledLoggingPlansCreate(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join(r.root(), infra.ImportsFile))
 	if err != nil || strings.Contains(string(b), "google_logging") {
 		t.Fatalf("imports (%v):\n%s", err, b)
+	}
+}
+
+// A disabled Storage API is an environment error at the state bucket,
+// the Terraform backend: exit 2, never a create offer or "no state".
+func TestInitStorageDisabledIsRemote(t *testing.T) {
+	for _, args := range [][]string{
+		{"init", "--yes"},
+		{"init", "--plan-only", "--yes"},
+		{"init", "--forget", "--yes"},
+		{"init", "--config-only", "--yes"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			r := newInitRig(t)
+			r.stateBucket()
+			r.su.Disable("storage.googleapis.com", r.gcs.Server)
+			out, _, err := executeStdin(t, "", args...)
+			if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "state bucket") {
+				t.Fatalf("exit %d, err %v", ExitCode(err), err)
+			}
+			if strings.Contains(out, "creates gs://") {
+				t.Errorf("offered to create the state bucket:\n%s", out)
+			}
+			for _, q := range r.gcs.Requests() {
+				if q.Method != http.MethodGet {
+					t.Errorf("sent %s %s", q.Method, q.Path)
+				}
+			}
+			if len(r.ran(t, "plan")) != 0 {
+				t.Errorf("calls = %q", r.calls(t))
+			}
+		})
 	}
 }

@@ -497,20 +497,21 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 	}
 	r.res.Enabled = append(r.res.Enabled, infra.ServiceResourceManager)
 	fmt.Fprintf(r.w, "enabled %s in %s\n", infra.ServiceResourceManager, r.project)
-	for i, wait := range resourceManagerRetries {
+	for i := 0; ; i++ {
 		_, err := infra.ProjectNumber(ctx, c, r.project)
 		if !errors.As(err, &sd) {
 			return initErr(err)
 		}
+		if i == len(resourceManagerRetries) {
+			break
+		}
+		wait := resourceManagerRetries[i]
 		fmt.Fprintf(stderr, "waiting for the Cloud Resource Manager API to answer while the enable propagates (%d of %d, next try in %s)\n", i+1, len(resourceManagerRetries), wait)
 		select {
 		case <-ctx.Done():
 			return remote(ctx.Err())
 		case <-time.After(wait):
 		}
-	}
-	if _, err := infra.ProjectNumber(ctx, c, r.project); !errors.As(err, &sd) {
-		return initErr(err)
 	}
 	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.project))
 }

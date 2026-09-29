@@ -32,7 +32,7 @@ const projectViewerPrefix = "projectViewer:"
 // in the project, which fugaro init offers to fix.
 func ProjectNumber(ctx context.Context, c *Clients, project string) (uint64, error) {
 	p, err := c.CRM.Projects.Get(project).Context(ctx).Do()
-	if serviceDisabled(err, ServiceResourceManager) {
+	if serviceDisabled(err, ServiceResourceManager, target{project: project}) {
 		return 0, &ServiceDisabledError{Service: ServiceResourceManager, Project: project, Err: err}
 	}
 	if err != nil {
@@ -51,7 +51,9 @@ func CheckStateBucket(ctx context.Context, c *Clients, project, name string) (bo
 	}
 	b, err := c.Storage.Buckets.Get(name).Context(ctx).Do()
 	switch {
-	case absent(err, serviceStorage):
+	// Only a 404: the state bucket is Terraform's backend, so a disabled
+	// Storage API is an environment error here, not "no bucket yet".
+	case notFound(err):
 		return false, nil
 	case err != nil:
 		return false, fmt.Errorf("reading the state bucket gs://%s: %w", name, err)

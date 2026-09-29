@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"google.golang.org/api/googleapi"
@@ -41,18 +43,43 @@ func (e *ServiceDisabledError) Error() string {
 
 func (e *ServiceDisabledError) Unwrap() error { return e.Err }
 
+// target is the project a lookup reads, for matching a SERVICE_DISABLED
+// answer's consumer. number is 0 until the project's number is known.
+type target struct {
+	project string
+	number  uint64
+}
+
+// consumes reports whether consumer (ErrorInfo metadata, projects/<number>
+// in Google's answers) is the target project. Before its number is known
+// (the read of the number itself) any projects/ consumer passes: the
+// quota project is always the target project, so that is the target.
+func (t target) consumes(consumer string) bool {
+	id, ok := strings.CutPrefix(consumer, "projects/")
+	switch {
+	case !ok || id == "":
+		return false
+	case id == t.project:
+		return true
+	case t.number == 0:
+		return true
+	}
+	return id == strconv.FormatUint(t.number, 10)
+}
+
 // serviceDisabled reports whether err is Google's answer to a call to
-// service's API while that API is disabled in the project: a 403 whose
-// details carry a google.rpc.ErrorInfo with domain googleapis.com, reason
-// SERVICE_DISABLED, and service in its metadata. Only that structured
-// detail counts: not the message, and not the legacy accessNotConfigured
-// reason, which other refusals share.
+// service's API while that API is disabled in the target project: a 403
+// whose details carry a google.rpc.ErrorInfo with domain googleapis.com,
+// reason SERVICE_DISABLED, service in its metadata, and the target project
+// as its consumer. Only that structured detail counts: not the message,
+// and not the legacy accessNotConfigured reason, which other refusals
+// share.
 //
 // The rule for lookups (see absent): a disabled API holds nothing that can
 // be read, so its resources count as missing and the plan creates them
 // (its apply enables the API first). Any other 403, such as a missing
 // permission (IAM_PERMISSION_DENIED), and any 5xx still fail closed.
-func serviceDisabled(err error, service string) bool {
+func serviceDisabled(err error, service string, t target) bool {
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
 		return false
@@ -62,7 +89,9 @@ func serviceDisabled(err error, service string) bool {
 		if !ok || m["@type"] != "type.googleapis.com/google.rpc.ErrorInfo" || m["reason"] != "SERVICE_DISABLED" || m["domain"] != "googleapis.com" {
 			continue
 		}
-		if md, ok := m["metadata"].(map[string]any); ok && md["service"] == service {
+		md, _ := m["metadata"].(map[string]any)
+		consumer, _ := md["consumer"].(string)
+		if md["service"] == service && t.consumes(consumer) {
 			return true
 		}
 	}
@@ -70,12 +99,16 @@ func serviceDisabled(err error, service string) bool {
 }
 
 // absent reports whether a lookup's err means the resource isn't there:
-// the API's 404, or service's API being disabled in the project (see
-// serviceDisabled). An API disabled after its resources were made hides
-// them; the plan's create then fails on the existing name, loudly, rather
-// than adopting something unchecked.
-func absent(err error, service string) bool {
-	return notFound(err) || serviceDisabled(err, service)
+// the API's 404, or service's API being disabled in the target project
+// (see serviceDisabled). An API disabled after its resources were made
+// hides them; the plan's create then fails on the existing name, loudly,
+// rather than adopting something unchecked.
+//
+// It is for lookups of what the plan would create. The state bucket, the
+// Terraform backend, is not one: there a disabled Storage API is an
+// environment error (CheckStateBucket).
+func absent(err error, service string, t target) bool {
+	return notFound(err) || serviceDisabled(err, service, t)
 }
 
 // enablePoll is how often EnableService reads an enable's operation.

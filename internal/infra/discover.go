@@ -209,8 +209,14 @@ type discovery struct {
 	ctx      context.Context
 	c        *Clients
 	project  string
+	number   uint64 // the project's number, once bucket read it
 	im       Imports
 	refusals []error
+}
+
+// absent is absent for the project discovery reads.
+func (d *discovery) absent(err error, service string) bool {
+	return absent(err, service, target{project: d.project, number: d.number})
 }
 
 func (d *discovery) refuse(err error) { d.refusals = append(d.refusals, err) }
@@ -240,9 +246,13 @@ func (d *discovery) bucket(name string) (*storage.Bucket, error) {
 	if err != nil {
 		return nil, err
 	}
+	d.number = num
 	b, err := d.c.Storage.Buckets.Get(name).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceStorage):
+	// A disabled Storage API can't get here in practice (the state bucket
+	// check and Terraform's backend need Storage first); if it did, the
+	// plan's create would fail on the existing bucket.
+	case d.absent(err, serviceStorage):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading bucket gs://%s: %w", name, err)
@@ -267,7 +277,7 @@ func (d *discovery) registry(region, id string) (*artifactregistry.Repository, e
 	name := "projects/" + d.project + "/locations/" + region + "/repositories/" + id
 	r, err := d.c.AR.Projects.Locations.Repositories.Get(name).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceArtifactRegistry):
+	case d.absent(err, serviceArtifactRegistry):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading Artifact Registry repository %s: %w", name, err)
@@ -349,7 +359,7 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 		name := "projects/" + d.project + "/roles/" + r.id
 		role, err := d.c.IAM.Projects.Roles.Get(name).Context(d.ctx).Do()
 		switch {
-		case absent(err, serviceIAM):
+		case d.absent(err, serviceIAM):
 			continue
 		case err != nil:
 			return fmt.Errorf("reading custom role %s: %w", name, err)
@@ -381,7 +391,7 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 	name := "projects/" + d.project + "/locations/global/buckets/" + spec.Names.Log.Bucket
 	b, err := d.c.Logging.Projects.Locations.Buckets.Get(name).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceLogging):
+	case d.absent(err, serviceLogging):
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading log bucket %s: %w", name, err)
@@ -415,6 +425,9 @@ type Existing struct {
 	DisplayNames map[string]string
 	// CheckJob says the repository's check job exists (and is ours).
 	CheckJob bool
+	// ProjectNumber is the project's number, which the readiness gates
+	// match a SERVICE_DISABLED answer's consumer against (0: unknown).
+	ProjectNumber uint64
 }
 
 // uniqueSecrets are the logical secrets ws mounts, sorted.
@@ -447,7 +460,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 		name := "projects/" + spec.Project + "/secrets/" + id
 		s, err := c.Secrets.Projects.Secrets.Get(name).Context(ctx).Do()
 		switch {
-		case absent(err, serviceSecretManager):
+		case d.absent(err, serviceSecretManager):
 			continue
 		case err != nil:
 			return Imports{}, Existing{}, fmt.Errorf("reading secret %s: %w", id, err)
@@ -562,6 +575,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 	if err != nil {
 		return Imports{}, Existing{}, err
 	}
+	ex.ProjectNumber = d.number
 	return im, ex, nil
 }
 
@@ -577,7 +591,7 @@ func (d *discovery) schedulerJob(spec RepoSpec) error {
 	name := "projects/" + d.project + "/locations/" + spec.Check.SchedulerRegion + "/jobs/" + spec.Check.SchedulerJob
 	j, err := d.c.Scheduler.Projects.Locations.Jobs.Get(name).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceScheduler):
+	case d.absent(err, serviceScheduler):
 		return nil
 	case err != nil:
 		return fmt.Errorf("reading Cloud Scheduler job %s: %w", name, err)
@@ -605,7 +619,7 @@ func (d *discovery) schedulerJob(spec RepoSpec) error {
 func (d *discovery) accountName(email string) (string, bool, error) {
 	a, err := d.c.IAM.Projects.ServiceAccounts.Get("projects/" + d.project + "/serviceAccounts/" + email).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceIAM):
+	case d.absent(err, serviceIAM):
 		return "", false, nil
 	case err != nil:
 		return "", false, fmt.Errorf("reading service account %s: %w", email, err)
@@ -618,7 +632,7 @@ func (d *discovery) job(region, name string) (*run.GoogleCloudRunV2Job, error) {
 	full := "projects/" + d.project + "/locations/" + region + "/jobs/" + name
 	j, err := d.c.Run.Projects.Locations.Jobs.Get(full).Context(d.ctx).Do()
 	switch {
-	case absent(err, serviceRun):
+	case d.absent(err, serviceRun):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("reading Cloud Run job %s: %w", name, err)
