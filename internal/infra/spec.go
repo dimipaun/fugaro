@@ -587,6 +587,19 @@ func Repo(in Inputs) (RepoSpec, error) {
 	return rs, nil
 }
 
+// BaseImageWarning is a warning when the local config's base image (base)
+// isn't in the installation's base registry, else "". The build accounts
+// can read only that registry, so every build would fail at its pull; the
+// check job's own pull would still work, which hides it until then.
+func BaseImageWarning(base string, outs InstallationOutputs) string {
+	registry := outs.RegistryHost + "/" + outs.BaseRegistry
+	if base == "" || strings.HasPrefix(base, registry+"/") {
+		return ""
+	}
+	return fmt.Sprintf("the local config's base_image %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_image to it",
+		base, registry, registry)
+}
+
 // check is the daily image check of the workflows in checked. It runs as
 // the build account, from the base image, so it holds the provider
 // credential and nothing else.

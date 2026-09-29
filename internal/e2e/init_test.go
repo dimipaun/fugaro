@@ -662,6 +662,29 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 	}
 }
 
+// A base image outside the installation's base registry is a warning, not
+// a refusal: the build account reads only that registry, so its builds
+// would fail at the pull.
+func TestInitRepoWarnsBaseImageOutsideBaseRegistry(t *testing.T) {
+	r := sandboxRig(t)
+	legacy := strings.Replace(initRepoBaseImage, "/fugaro-base/", "/fugaro/", 1)
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(r.cfgText, initRepoBaseImage, legacy, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	if !strings.Contains(res.stdout, "warning: ") || !strings.Contains(res.stdout, legacy) || !strings.Contains(res.stdout, infra.BaseRegistry) {
+		t.Errorf("no warning about the base image:\n%s", res)
+	}
+	// The one in the base registry passes silently.
+	r = sandboxRig(t)
+	if res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build"); res.code != 0 || strings.Contains(res.stdout, "base registry") {
+		t.Errorf("a base image in the base registry:\n%s", res)
+	}
+}
+
 // init --repo reads the installation's outputs in a directory of its own,
 // so the installation's workdir (a fugaro init running meanwhile, or
 // terraform run there by hand) keeps its tfvars, imports and saved plan.

@@ -1112,6 +1112,9 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	r.res.Outputs = &outs
 	in.Installation = outs
+	if w := infra.BaseImageWarning(lc.BaseImage, outs); w != "" {
+		r.warn(w)
+	}
 	if spec, err = infra.Repo(in); err != nil {
 		return initErr(err)
 	}
