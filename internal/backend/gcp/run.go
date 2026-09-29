@@ -128,7 +128,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if err != nil {
 		return backend.ExecutionRef{}, fmt.Errorf("Cloud Run started %s (operation %s): %w", job, op.Name, err)
 	}
-	return backend.ExecutionRef{Name: id.String(), Job: id.Job, LogURL: meta.LogURI}, nil
+	return backend.ExecutionRef{Name: id.String(), Job: id.Job, LogURL: b.logURL(id, meta.LogURI, b.now())}, nil
 }
 
 // statusClientClosed is 499, gRPC CANCELLED over HTTP: the request was
@@ -318,6 +318,7 @@ func (b *Backend) toExecution(e *run.GoogleCloudRunV2Execution) (backend.Executi
 			b.o.Warn(fmt.Sprintf("execution %s: %s: %v", x.Name, t.what, err))
 		}
 	}
+	x.LogURL = b.logURL(id, e.LogUri, x.Created)
 	if e.Template != nil && len(e.Template.Containers) > 0 && e.Template.Containers[0].Resources != nil {
 		limits := e.Template.Containers[0].Resources.Limits
 		cpu, cerr := parseLimit(limits["cpu"], parseCPU)

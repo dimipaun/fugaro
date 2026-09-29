@@ -165,6 +165,12 @@ run "labels" {
     condition     = google_cloud_run_v2_job.check[0].labels == tomap({ fugaro = "managed", fugaro_repo = "acme-sandbox-100024cb41873d4e", fugaro_role = "check" })
     error_message = "the check job must carry fugaro=managed, fugaro_repo and fugaro_role=check"
   }
+  # Only the labels on the job's template reach its log entries, which the
+  # log sink and exclusion select on.
+  assert {
+    condition     = google_cloud_run_v2_job.check[0].template[0].labels == tomap({ fugaro = "managed", fugaro_repo = "acme-sandbox-100024cb41873d4e", fugaro_role = "check" })
+    error_message = "the check job's template must carry the same labels, for its log entries"
+  }
   assert {
     condition     = google_artifact_registry_repository.images.labels == tomap({ fugaro = "managed", fugaro_repo = "acme-sandbox-100024cb41873d4e" })
     error_message = "the registry must carry fugaro=managed and fugaro_repo"
@@ -192,6 +198,10 @@ run "labels_job" {
   assert {
     condition     = google_cloud_run_v2_job.this[0].labels == tomap({ fugaro = "managed", fugaro_repo = "acme-sandbox-100024cb41873d4e", fugaro_workflow = "web" })
     error_message = "the job must carry fugaro=managed, fugaro_repo and fugaro_workflow"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.this[0].template[0].labels == tomap({ fugaro = "managed", fugaro_repo = "acme-sandbox-100024cb41873d4e", fugaro_workflow = "web" })
+    error_message = "the job's template must carry the same labels, for its log entries"
   }
   assert {
     condition     = google_service_account.job.display_name == "Fugaro job acme-sandbox-100024cb41873d4e web"

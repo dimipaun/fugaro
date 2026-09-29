@@ -44,7 +44,7 @@ output "operators" {
 
 output "log_view" {
   description = "The log view Fugaro's job logs are read through, or null without log isolation."
-  value       = null
+  value       = var.log_isolation ? "${local.log_bucket_path}/views/${google_logging_log_view.runs[0].name}" : null
 }
 
 output "registry_cleanup_dry_run" {

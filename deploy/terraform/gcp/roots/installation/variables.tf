@@ -101,3 +101,9 @@ variable "adopt_legacy_registry" {
   default  = false
   nullable = false
 }
+
+variable "log_isolation" {
+  type     = bool
+  default  = true
+  nullable = false
+}

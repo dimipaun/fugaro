@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // at is a log timestamp sec seconds after the test starts. Entries must
@@ -190,5 +192,48 @@ func TestLogsStayInTheBackendsRegion(t *testing.T) {
 	}
 	if len(got) != 1 || got[0] != "here" {
 		t.Fatalf("entries = %q", got)
+	}
+}
+
+const testLogView = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
+
+// With a log view set, entries are read through the view, not the project.
+func TestReadLogsThroughView(t *testing.T) {
+	ctx := context.Background()
+	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
+	fr.Project, fr.Region = "proj-1234", "us-east5"
+	fl.Resource = testLogView // the fake fails the test on any other resourceNames
+	b, err := New(ctx, Options{Project: "proj-1234", Region: "us-east5", LogView: testLogView,
+		Endpoints: Endpoints{Run: fr.URL + "/", Logging: fl.URL + "/", NoAuth: true}, LogSettle: 50 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.now = func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }
+	fr.AddJob(webJob, "4", "8Gi")
+	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The Cloud Run page reads _Default, which holds nothing under
+	// isolation, so the URL opens the view in Logs Explorer instead.
+	name := ref.Name[strings.LastIndex(ref.Name, "/")+1:]
+	wantURL := "https://console.cloud.google.com/logs/query;query=" +
+		url.PathEscape(`resource.type="cloud_run_job" AND resource.labels.location="us-east5" AND resource.labels.job_name="`+webJob+`" AND labels."run.googleapis.com/execution_name"="`+name+`"`) +
+		";storageScope=storage," + url.PathEscape(testLogView) +
+		";timeRange=2026-09-27T09:59:00Z/2026-09-28T09:59:00Z?project=proj-1234"
+	if ref.LogURL != wantURL {
+		t.Fatalf("LogURL = %q\nwant     %q", ref.LogURL, wantURL)
+	}
+	if x, err := b.Execution(ctx, ref.Name); err != nil || x.LogURL == "" || x.LogURL == wantURL {
+		// Listed executions carry their own createTime, not the launch's clock.
+		t.Fatalf("Execution LogURL = %q, err %v", x.LogURL, err)
+	}
+	fl.AddJSONLines(ref.Name, []byte(`{"time":"`+at(1)+`","severity":"INFO","message":"hello"}`+"\n"))
+	var got []backend.LogEntry
+	if err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(e backend.LogEntry) error { got = append(got, e); return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Message != "hello" {
+		t.Fatalf("entries = %+v", got)
 	}
 }

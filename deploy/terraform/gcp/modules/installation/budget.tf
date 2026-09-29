@@ -4,6 +4,8 @@ data "google_project" "this" {
   count = var.budget == null ? 0 : 1
 
   project_id = var.project
+
+  depends_on = [google_project_service.this]
 }
 
 resource "google_billing_budget" "this" {
