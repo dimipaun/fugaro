@@ -170,3 +170,23 @@ func TestDiagnoseToleratesLogFailure(t *testing.T) {
 		t.Fatalf("diagnose --json with Logging down: %s, %v", js, err)
 	}
 }
+
+func TestDiagnoseUsesPriceOverride(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-120000-cccc"
+	seedFinishedRun(t, f, id)
+	compute := func() float64 {
+		out, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(out), &d); err != nil {
+			t.Fatalf("%v: %s", err, out)
+		}
+		return d.Row.Cost.ComputeUSD
+	}
+	list := compute()
+	f.appendConfig(t, priceOverride)
+	wantOverrideRatio(t, list, compute())
+}

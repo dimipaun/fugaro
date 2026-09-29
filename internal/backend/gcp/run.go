@@ -110,6 +110,9 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 			Env: []*run.GoogleCloudRunV2EnvVar{{Name: "FUGARO_RUN", Value: spec.Repo.Slug + "/" + spec.RunID}},
 		}},
 	}}
+	if spec.Timeout != 0 {
+		req.Overrides.Timeout = fmt.Sprintf("%ds", int((spec.Timeout+backend.TaskTimeoutSlack)/time.Second))
+	}
 	op, err := b.run.Projects.Locations.Jobs.Run(job, req).Context(ctx).Do()
 	if err != nil {
 		return backend.ExecutionRef{}, launchError(job, err)
@@ -125,7 +128,7 @@ func (b *Backend) Launch(ctx context.Context, spec backend.LaunchSpec) (backend.
 	if err != nil {
 		return backend.ExecutionRef{}, fmt.Errorf("Cloud Run started %s (operation %s): %w", job, op.Name, err)
 	}
-	return backend.ExecutionRef{Name: id.String(), Job: id.Job, LogURL: meta.LogURI}, nil
+	return backend.ExecutionRef{Name: id.String(), Job: id.Job, LogURL: b.logURL(id, meta.LogURI, b.now())}, nil
 }
 
 // statusClientClosed is 499, gRPC CANCELLED over HTTP: the request was
@@ -207,18 +210,12 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 			return nil, apiError("listing executions of "+parent, err)
 		}
 		for _, e := range resp.Executions {
-			// The API sorts by creation time, newest first: everything after
-			// the first execution older than Since is older too. For the
-			// jobs/- wildcard this assumes one ordering across every job,
-			// not per job; the live checklist's run must confirm it. If it is
-			// per job, executions of other jobs are cut off here, and ls
-			// falls back to one Get per run (slower, still correct). An
-			// Exhaustive listing skips the old execution and reads on.
+			// The API sorts by creation time, newest first, across every job
+			// for the jobs/- wildcard too (confirmed by the live check):
+			// everything after the first execution older than Since is
+			// older too.
 			if !f.Since.IsZero() {
 				if c, err := parseTime(e.CreateTime); err == nil && !c.IsZero() && c.Before(f.Since) {
-					if f.Exhaustive {
-						continue
-					}
 					return out, nil
 				}
 			}
@@ -239,6 +236,65 @@ func (b *Backend) list(ctx context.Context, parent string, onlyFugaro bool, f ba
 		}
 		token = resp.NextPageToken
 	}
+}
+
+// LongestTaskTimeout is the longest task timeout among the Fugaro workflow
+// jobs of the region: one paged jobs.list. A job whose name doesn't start
+// with "fugaro-" is skipped, which excludes the repositories' check jobs
+// ("fugarochk-"). It is zero when there are no such jobs.
+func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error) {
+	var longest time.Duration
+	token := ""
+	for {
+		resp, err := b.run.Projects.Locations.Jobs.List(b.location()).PageSize(b.listPageSize).PageToken(token).Context(ctx).Do()
+		if err != nil {
+			return 0, apiError("listing jobs", err)
+		}
+		for _, j := range resp.Jobs {
+			if i := strings.LastIndex(j.Name, "/"); !strings.HasPrefix(j.Name[i+1:], "fugaro-") {
+				continue
+			}
+			if j.Template == nil || j.Template.Template == nil || j.Template.Template.Timeout == "" {
+				continue
+			}
+			d, err := time.ParseDuration(j.Template.Template.Timeout)
+			if err != nil {
+				return 0, fmt.Errorf("job %s: task timeout %q: %w", j.Name, j.Template.Template.Timeout, err)
+			}
+			longest = max(longest, d)
+		}
+		if resp.NextPageToken == "" {
+			return longest, nil
+		}
+		token = resp.NextPageToken
+	}
+}
+
+// JobEnv reads job (a job name in the backend's region) and returns the
+// value of its container's env variable name, and whether the job exists.
+// A job without the variable gives "", true.
+func (b *Backend) JobEnv(ctx context.Context, job, name string) (string, bool, error) {
+	if !nameRE.MatchString(job) {
+		return "", false, fmt.Errorf("bad job name %q", job)
+	}
+	j, err := b.run.Projects.Locations.Jobs.Get(b.location() + "/jobs/" + job).Context(ctx).Do()
+	if err != nil {
+		err = apiError("reading job "+job, err)
+		if errors.Is(err, backend.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if j.Template != nil && j.Template.Template != nil {
+		for _, c := range j.Template.Template.Containers {
+			for _, e := range c.Env {
+				if e.Name == name {
+					return e.Value, true, nil
+				}
+			}
+		}
+	}
+	return "", true, nil
 }
 
 // Cancel asks Cloud Run to stop the execution. It does not wait.
@@ -289,6 +345,7 @@ func (b *Backend) toExecution(e *run.GoogleCloudRunV2Execution) (backend.Executi
 			b.o.Warn(fmt.Sprintf("execution %s: %s: %v", x.Name, t.what, err))
 		}
 	}
+	x.LogURL = b.logURL(id, e.LogUri, x.Created)
 	if e.Template != nil && len(e.Template.Containers) > 0 && e.Template.Containers[0].Resources != nil {
 		limits := e.Template.Containers[0].Resources.Limits
 		cpu, cerr := parseLimit(limits["cpu"], parseCPU)

@@ -11,6 +11,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -160,8 +161,8 @@ var bitbucketYAML = strings.Replace(strings.Replace(cliMinimalYAML, "provider: g
 
 // cloudBuildCheckout is a Bitbucket checkout of acme/app whose origin is
 // https, with a local config pointing at a Cloud Build fake. The local
-// config's repos entry is switched to Bitbucket to match; registry and
-// build.service_account are added unless bare.
+// config's repos entry is switched to Bitbucket to match. The repository's
+// image registry exists unless bare.
 func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture) {
 	t.Helper()
 	files := npmFiles()
@@ -179,7 +180,7 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 		t.Fatal(err)
 	}
 	if !bare {
-		f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
+		fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
 	}
 	return fb, f
 }
@@ -196,7 +197,7 @@ func TestImageBuildCloud(t *testing.T) {
 		t.Fatalf("%v:\n%s", err, out)
 	}
 	slug := mustSlug("bitbucket", "acme/app")
-	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/fugaro", slug, "app")+":latest" {
+	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")+":latest" {
 		t.Fatalf("result = %+v", res)
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
@@ -204,7 +205,7 @@ func TestImageBuildCloud(t *testing.T) {
 		subs["_GIT_USER"] != "x-token-auth" || subs["_SECRET_ENVS"] != "NPM_TOKEN" || subs["_BASE_BRANCH"] != "main" {
 		t.Fatalf("substitutions = %v", subs)
 	}
-	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/fugaro-build@proj-1234.iam.gserviceaccount.com" {
+	if sa, _ := fb.Last()["serviceAccount"].(string); sa != "projects/proj-1234/serviceAccounts/"+gcp.BuildServiceAccountID(slug)+"@proj-1234.iam.gserviceaccount.com" {
 		t.Fatalf("serviceAccount = %q", sa)
 	}
 }
@@ -216,42 +217,12 @@ func TestImageBuildCloudNoWait(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, r := range fb.Requests() {
-		if r.Method == "GET" {
+		if r.Method == "GET" && strings.Contains(r.Path, "/builds/") {
 			t.Errorf("--no-wait polled the build: %s", r.Path)
 		}
 	}
 	if !strings.Contains(out, "submitted") {
 		t.Errorf("output = %q", out)
-	}
-}
-
-func TestImageBuildCloudGitHubNeedsM5(t *testing.T) {
-	checkoutWith(t, npmFiles())
-	fb := gcpfake.NewBuild(t)
-	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
-	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\nbuild: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M5") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	if len(fb.Requests()) != 0 {
-		t.Error("a GitHub build reached Cloud Build")
-	}
-}
-
-func TestImageBuildCloudNeedsRegistry(t *testing.T) {
-	fb, f := cloudBuildCheckout(t, true)
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "registry") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	f.appendConfig(t, "registry: us-east5-docker.pkg.dev/proj-1234/fugaro\n")
-	_, _, err = execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "build.service_account") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	if len(fb.Requests()) != 0 {
-		t.Error("an incomplete config reached Cloud Build")
 	}
 }
 
@@ -297,4 +268,71 @@ func TestImageBuildCloudDigestUnknown(t *testing.T) {
 	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != "SUCCESS" || res.Digest != "" || strings.Contains(out, `"digest"`) {
 		t.Errorf("json output = %s, %v", out, err)
 	}
+}
+
+// The build always records to the runs bucket, the only bucket its account
+// may write; ls and image status read it there too. A bucket_url off GCS
+// (a test's local stand-in for the runs bucket) is read in its place, and
+// any bucket_url other than the runs bucket gets a warning from the build.
+func TestBuildRecordBucketAgreesWithReaders(t *testing.T) {
+	for _, c := range []struct {
+		bucketURL, read string
+		note            bool
+	}{
+		{"", "gs://fugaro-runs-x", false},
+		{"gs://fugaro-runs-x", "gs://fugaro-runs-x", false},
+		{"gs://other-bucket", "gs://fugaro-runs-x", true},
+		{"gs://other-bucket/prefix", "gs://fugaro-runs-x", true},
+		{"file:///tmp/runs", "file:///tmp/runs", true},
+	} {
+		lc := &localcfg.Config{RunsBucket: "fugaro-runs-x", Bucket: c.bucketURL}
+		if got := lc.RecordBucketURL(); got != "gs://fugaro-runs-x" {
+			t.Errorf("bucket_url %q: the build records to %s, want the runs bucket", c.bucketURL, got)
+		}
+		if got := recordReadURL(lc); got != c.read {
+			t.Errorf("bucket_url %q: ls and image status read %s, want %s", c.bucketURL, got, c.read)
+		}
+		if note := buildRecordNote(lc); (note != "") != c.note {
+			t.Errorf("bucket_url %q: note %q, want one: %v", c.bucketURL, note, c.note)
+		}
+	}
+}
+
+// With a bucket_url other than the runs bucket, fugaro image build still
+// sends the runs bucket as the record's bucket: the build account can't
+// write anywhere else, so the gate would fail after a whole billable build.
+func TestImageBuildRecordsToTheRunsBucket(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	setBucketURL(t, f, "gs://other-bucket")
+	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	subs, _ := fb.Last()["substitutions"].(map[string]any)
+	if subs["_BUCKET"] != "gs://unused-bucket" {
+		t.Fatalf("_BUCKET = %v, want the runs bucket gs://unused-bucket", subs["_BUCKET"])
+	}
+	if !strings.Contains(stderr, "gs://unused-bucket") || !strings.Contains(stderr, "bucket_url") {
+		t.Errorf("no warning about bucket_url: %q", stderr)
+	}
+}
+
+// setBucketURL points the fixture's local config at bucket_url u, with fake
+// application default credentials, which gocloud reads (but never uses) to
+// open a gs:// bucket.
+func setBucketURL(t *testing.T, f *cloudFixture, u string) {
+	t.Helper()
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "bucket_url: "+f.bucket, "bucket_url: "+u, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adc := filepath.Join(t.TempDir(), "adc.json")
+	if err := os.WriteFile(adc, []byte(`{"type":"authorized_user","client_id":"x","client_secret":"y","refresh_token":"z"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adc)
 }

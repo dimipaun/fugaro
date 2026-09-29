@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -178,6 +180,38 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
+	}
+}
+
+// The local config's log_view is a view of its own project's log bucket:
+// with --project naming another project, logs and diagnose would read the
+// wrong project's view (or be refused), so the view is dropped, with a note,
+// and the project's own logs are read.
+func TestCloudProjectFlagDropsAnotherProjectsLogView(t *testing.T) {
+	f := newCloudFixture(t) // project proj-1234
+	const view = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
+	f.appendConfig(t, "log_view: "+view+"\n")
+	for _, c := range []struct {
+		project, view string
+		note          bool
+	}{{"", view, false}, {"proj-1234", view, false}, {"other-proj-99", "", true}} {
+		var stderr bytes.Buffer
+		env, err := openCloud(context.Background(), cloudOptions{project: c.project, stderr: func() io.Writer { return &stderr }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.Close()
+		if env.gcp.LogView != c.view || env.lc.LogView != c.view {
+			t.Errorf("--project %q: log view %q (config %q), want %q", c.project, env.gcp.LogView, env.lc.LogView, c.view)
+		}
+		if got := strings.Contains(stderr.String(), "log_view"); got != c.note {
+			t.Errorf("--project %q: stderr %q, want a note: %v", c.project, stderr.String(), c.note)
+		}
+	}
+	// A command prints the note on its own stderr.
+	_, stderr, err := execute(t, "ls", "--project", "other-proj-99")
+	if err != nil || !strings.Contains(stderr, "log_view") || !strings.Contains(stderr, "other-proj-99") {
+		t.Fatalf("ls --project: stderr %q, %v", stderr, err)
 	}
 }
 

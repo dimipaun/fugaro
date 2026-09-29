@@ -93,6 +93,16 @@
         }
       }
     },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["baked_commit"],
+      "description": "What the image the run started in was built from, read before the checkout was synced.",
+      "properties": {
+        "built_at": { "type": "string", "format": "date-time", "description": "When the image was built; absent when the image doesn't say." },
+        "baked_commit": { "type": "string", "minLength": 1, "description": "The baked checkout's HEAD when the run started." }
+      }
+    },
     "started_at": { "type": "string", "format": "date-time" },
     "deadline": { "type": "string", "format": "date-time" },
     "finished_at": { "type": "string", "format": "date-time" },

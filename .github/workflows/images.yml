@@ -3,7 +3,7 @@ on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
-    paths: ["images/**", "cmd/**", "internal/**", "go.mod", "go.sum", ".dockerignore", ".github/workflows/images.yml"]
+    paths: ["images/**", "cmd/**", "internal/**", "deploy/terraform/**", "go.mod", "go.sum", ".dockerignore", ".github/workflows/images.yml"]
   schedule:
     - cron: "23 3 * * *" # nightly patch refresh of the latest release
   workflow_dispatch:

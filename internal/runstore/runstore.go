@@ -86,6 +86,18 @@ type Record struct {
 	// task's ref, overrides applied, in seconds; read it with
 	// FinalizeReserve. Absent until bootstrap has read fugaro.yaml.
 	FinalizeReserveS float64 `json:"finalize_reserve_s,omitempty"`
+	// Image is what the image the run started in was built from; absent
+	// when the runner could not tell.
+	Image *ImageInfo `json:"image,omitempty"`
+}
+
+// ImageInfo says what the run's image was built from, read at bootstrap
+// before the sync moves the checkout.
+type ImageInfo struct {
+	// BuiltAt is when the image was built; nil when the image doesn't say.
+	BuiltAt *time.Time `json:"built_at,omitempty"`
+	// BakedCommit is the baked checkout's HEAD when the run started.
+	BakedCommit string `json:"baked_commit"`
 }
 
 // FinalizeReserve is the run's finalize reserve, for cancel's grace floor

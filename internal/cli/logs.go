@@ -70,13 +70,27 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 	}
 	red := agent.RedactFunc(cliSecrets(os.Getenv)) // forms built once per command
 	out := cmd.OutOrStdout()
+	n := 0
 	err = env.be.Logs(ctx, logQuery(l, o.follow), func(e backend.LogEntry) error {
+		n++
 		return printLogEntry(out, redactEntry(e, red), o.asJSON)
 	})
 	if err != nil && !(o.follow && errors.Is(err, context.Canceled)) {
 		return remote(fmt.Errorf("reading the logs: %w", err))
 	}
+	if err == nil && n == 0 {
+		emptyViewHint(cmd.ErrOrStderr(), env)
+	}
 	return nil
+}
+
+// emptyViewHint says, when a read through the Fugaro log view found
+// nothing, that a run from before log isolation logged only to _Default,
+// which the view doesn't cover.
+func emptyViewHint(w io.Writer, env *cloudEnv) {
+	if env.lc.LogView != "" {
+		fmt.Fprintln(w, "note: no log entries in the Fugaro log view. A run from before log isolation logged only to the project's _Default bucket, which fugaro logs and diagnose no longer read; the Cloud Run console's page for its execution shows them.")
+	}
 }
 
 // logQuery reads l's execution from shortly before its launch.

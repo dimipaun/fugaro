@@ -17,7 +17,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 )
 
-// Logging is a stateful fake of Cloud Logging's entries.list, for the one
+// Logging is a stateful fake of Cloud Logging's entries.list, and of a log
+// bucket's get (for fugaro init's discovery). entries.list takes the one
 // filter shape Fugaro sends: a Cloud Run job execution's entries, optionally
 // from a timestamp on. Any other filter fails the test.
 //
@@ -27,9 +28,46 @@ import (
 // short name has no region and matches a query in any.
 type Logging struct {
 	*Server
-	mu      sync.Mutex
-	entries map[logExec][]LogEntry
-	nextID  int
+	// Resource, when set, is the one resource name (such as a log view)
+	// requests must read; any other resourceNames fails the test. Unset,
+	// the fake accepts a single projects/<p>.
+	Resource string
+	mu       sync.Mutex
+	entries  map[logExec][]LogEntry
+	nextID   int
+	buckets  map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
+}
+
+type logBucket struct{ state, description string }
+
+// AddBucket makes the log bucket id exist in project at location, in
+// state (ACTIVE, or DELETE_REQUESTED while it is pending deletion), with
+// description.
+func (l *Logging) AddBucket(project, location, id, state, description string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.buckets == nil {
+		l.buckets = map[string]logBucket{}
+	}
+	l.buckets["projects/"+project+"/locations/"+location+"/buckets/"+id] = logBucket{state, description}
+}
+
+var logBucketRE = regexp.MustCompile(`^/v2/(projects/[^/]+/locations/[^/]+/buckets/[^/:]+)$`)
+
+// getBucket answers a log bucket's get.
+func (l *Logging) getBucket(w http.ResponseWriter, name string) {
+	l.mu.Lock()
+	b, ok := l.buckets[name]
+	l.mu.Unlock()
+	if !ok {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Bucket "+name+" does not exist")
+		return
+	}
+	body := map[string]any{"name": name, "lifecycleState": b.state, "retentionDays": 30}
+	if b.description != "" {
+		body["description"] = b.description
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 // LogEntry is one fake log entry. JSON, when set, is the jsonPayload;
@@ -120,6 +158,10 @@ func (l *Logging) AddJSONLines(execution string, data []byte) {
 var logFilterRE = regexp.MustCompile(`^resource\.type="cloud_run_job" AND resource\.labels\.location="([^"]+)" AND resource\.labels\.job_name="([^"]+)" AND labels\."run\.googleapis\.com/execution_name"="([^"]+)"(?: AND timestamp>="([^"]+)")?$`)
 
 func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if m := logBucketRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		l.getBucket(w, m[1])
+		return
+	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {
 		l.unhandled(w, r)
 		return
@@ -145,7 +187,16 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 		since = t
 	}
-	if m == nil || len(req.ResourceNames) != 1 || !strings.HasPrefix(req.ResourceNames[0], "projects/") ||
+	wantRes := func() bool {
+		if len(req.ResourceNames) != 1 {
+			return false
+		}
+		if l.Resource != "" {
+			return req.ResourceNames[0] == l.Resource
+		}
+		return strings.HasPrefix(req.ResourceNames[0], "projects/") && !strings.Contains(req.ResourceNames[0], "/views/")
+	}
+	if m == nil || !wantRes() ||
 		(req.OrderBy != "" && req.OrderBy != "timestamp asc") {
 		l.failf("gcpfake: entries.list request the fake cannot answer: resourceNames=%q filter=%q orderBy=%q", req.ResourceNames, req.Filter, req.OrderBy)
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported request")

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,47 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 	}
 }
 
+func TestResultSchemaImageBlock(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	base := `{"version":1,"run_id":"20260927-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-09-27T10:00:00Z"`
+	check := func(image string, ok bool) {
+		t.Helper()
+		doc := base
+		if image != "" {
+			doc += `,"image":` + image
+		}
+		inst, err := jsonschema.UnmarshalJSON(strings.NewReader(doc + "}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sch.Validate(inst); (err == nil) != ok {
+			t.Errorf("image %s: valid = %v, want %v (%v)", image, err == nil, ok, err)
+		}
+	}
+	check(``, true)
+	check(`{"baked_commit":"abc123"}`, true)
+	check(`{"baked_commit":"abc123","built_at":"2026-09-28T10:00:00Z"}`, true)
+	check(`{"built_at":"2026-09-28T10:00:00Z"}`, false)
+	check(`{"baked_commit":""}`, false)
+	check(`{"baked_commit":"abc123","built_at":5}`, false)
+	check(`{"baked_commit":"abc123","commits_behind":3}`, false)
+
+	// What the runner writes validates.
+	at := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(runstore.Record{Version: 1, RunID: "20260927-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap",
+		Outcome: runstore.OutcomeNone, StartedAt: at, Image: &runstore.ImageInfo{BuiltAt: &at, BakedCommit: "abc123"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a runner record with an image block: %v\n%s", err, data)
+	}
+}
+
 // TestFugaroSchemaReservesTheSameEnv keeps the schema's reserved secret
 // variables in step with config.ReservedEnv.
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
@@ -218,5 +260,25 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 	providers := strs(at(doc, "properties", "git", "properties", "provider", "enum"))
 	if want := slices.Sorted(slices.Values(config.Providers)); !slices.Equal(providers, want) {
 		t.Errorf("schema providers %v, config.Providers %v", providers, want)
+	}
+}
+
+// The schema judges max_age as fugaro does for 0 in its every form (the
+// string "0" included, which turns the age trigger off) and for malformed
+// values. Other Go durations fugaro reads, such as 90m or 1.5h, are left
+// out: the schema asks for days or hours first, and the 1h to 90d bounds
+// are fugaro's to check.
+func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	const base = "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
+	for _, v := range []string{`0`, `"0"`, `0d`, `0s`, `0m`, `0h`, `0h0m`, `"00"`, `1h`, `14d`, `1d12h`, `90d`,
+		`soon`, `""`, `-1h`, `2d-5h`, `"0x"`, `1`, `0d-0h`} {
+		doc := []byte(base + v + " }\n")
+		_, problems := config.Parse(doc)
+		goOK := len(problems) == 0
+		schemaOK := sch.Validate(yamlInstance(t, doc)) == nil
+		if goOK != schemaOK {
+			t.Errorf("max_age: %s: fugaro accepts it: %v, the schema: %v (%v)", v, goOK, schemaOK, problems)
+		}
 	}
 }

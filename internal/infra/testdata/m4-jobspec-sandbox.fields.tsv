@@ -1,0 +1,7 @@
+bucket-condition	resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/acme-sandbox-100024cb41873d4e/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/cache/acme-sandbox-100024cb41873d4e/") || resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/locks/acme-sandbox-100024cb41873d4e/");
+sa-display-name	Fugaro M4 job acme-sandbox-100024cb41873d4e web;
+secret-names	bitbucket-token=fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba;claude-oauth-token=fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201;sandbox-probe=fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8;
+build-secret-ids	fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba;fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8;
+labels	fugaro=managed,fugaro_repo=acme-sandbox-100024cb41873d4e,fugaro_workflow=web;
+env	^;^FUGARO_BACKEND=cloud-run;FUGARO_BUCKET=gs://fugaro-runs-proj-1234;FUGARO_PROJECT=proj-1234;FUGARO_REGION=us-east5;FUGARO_SECRET_ENVS=CLAUDE_CODE_OAUTH_TOKEN,FUGARO_BITBUCKET_TOKEN,SANDBOX_PROBE;
+secrets	CLAUDE_CODE_OAUTH_TOKEN=fugaro-acme-sandbox-claude-oauth-token-d68d08fb66f32201:latest,FUGARO_BITBUCKET_TOKEN=fugaro-acme-sandbox-bitbucket-token-a9273afb5a2f66ba:latest,SANDBOX_PROBE=fugaro-acme-sandbox-sandbox-probe-8ed07eaf4b722cd8:latest;

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,15 +17,17 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/gitprov"
-	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func newImageCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "image", Short: "Build and inspect a workflow's derived container image"}
-	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd())
+	cmd.AddCommand(newImageBuildCmd(), newImageRenderCmd(), newImageSelftestCmd(), newImageGitCredentialCmd(),
+		newImageGateCmd(), newImageRecordCmd(), newImageCheckCmd(), newImageStatusCmd())
 	return cmd
 }
 
@@ -71,9 +74,13 @@ func newImageBuildCmd() *cobra.Command {
 		Short: "Build the derived image with Cloud Build; --local builds it with local Docker and smoke-tests it",
 		Long: "Build the workflow's derived image.\n\n" +
 			"Without --local, Cloud Build builds it from the repository's base branch\n" +
-			"(cloning with the repository's bitbucket-token secret) and pushes it to\n" +
-			"the local config's registry. Run it from the repository's checkout: the\n" +
-			"checkout's fugaro.yaml and origin say what to build.",
+			"as the repository's build account (cloning with its bitbucket-token, or\n" +
+			"a read-only token its GitHub App mints) and pushes it to the repository's\n" +
+			"own registry, which fugaro init --repo creates. It pushes a candidate,\n" +
+			"smoke-tests it without network, and only then points latest at it and\n" +
+			"records what it was built from, unless a newer build is already\n" +
+			"recorded. Run it from the repository's checkout: the checkout's\n" +
+			"fugaro.yaml and origin say what to build.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
 	}
@@ -84,7 +91,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_image, else the published base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
-	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test in the built image (--local)")
+	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked)")
 	f.BoolVar(&o.noWait, "no-wait", false, "submit the Cloud Build build and return without waiting for it")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
@@ -147,18 +154,12 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	defer env.Close()
 	lc := env.lc
+	for _, w := range lc.Warnings() {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
+	}
 	_, cfg, name, err := loadCheckout(ctx, o.workflow)
 	if err != nil {
 		return err
-	}
-	if cfg.Git.Provider != gitprov.KindBitbucket {
-		return userErr("Cloud Build images for GitHub repositories need a token-minting step that arrives in M5; use --local")
-	}
-	switch {
-	case lc.Registry == "":
-		return userErr("the local config has no registry, the Artifact Registry repository images are pushed to (such as <region>-docker.pkg.dev/<project>/fugaro)")
-	case lc.Build.ServiceAccount == "":
-		return userErr("the local config has no build.service_account, the service account Cloud Build runs as")
 	}
 	origin, err := originRepo(ctx)
 	if err != nil {
@@ -179,16 +180,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	slug, err := env.repoSlug(repo, func() *config.Config { return cfg })
-	if err != nil {
-		return err
-	}
-	branch := "main"
-	if r, ok := env.localRepo(repo); ok && r.BaseBranch != "" {
-		branch = r.BaseBranch
-	} else if cfg.Git.BaseBranch != "" {
-		branch = cfg.Git.BaseBranch
-	}
 	base := o.base
 	if base == "" {
 		base = lc.BaseImage
@@ -198,16 +189,39 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 			return userErr("%v", err)
 		}
 	}
-	spec := gcp.BuildSpec{
-		Slug: slug, GitProvider: cfg.Git.Provider, RepoURL: repoURL, BaseBranch: branch, Workflow: name, Base: base,
-		Image:       gcp.ImageName(lc.Registry, slug, name),
-		GitSecretID: gcp.SecretID(slug, "bitbucket-token"), GitUser: bitbucket.GitUsername,
-		ServiceAccount: lc.Build.ServiceAccount, MachineType: lc.Build.MachineType,
-		WorkflowSecrets: cfg.Workflows[name].Secrets,
+	// Every name comes from the repository's spec, as fugaro init --repo
+	// creates them: the build account, the registry (refused when its host
+	// names another project than --project's) and the provider
+	// credential. The spec's check job needs a base image, which this
+	// build doesn't use; the one the build uses stands in.
+	specLC := *lc
+	specLC.BaseImage = cmp.Or(specLC.BaseImage, base)
+	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
+	if err != nil {
+		return userErr("%v", err)
 	}
+	if note := buildRecordNote(lc); note != "" {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", note)
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+	if err != nil {
+		return err
+	}
+	spec.NoSmoke = o.noSmoke
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
 		return remote(err)
+	}
+	// A push to a missing registry would fail only at the build's end. An
+	// operator who may submit builds need not be able to read the
+	// registry: then the build goes ahead, and a missing registry fails it.
+	switch exists, err := b.RegistryExists(ctx, rs.RegistryPath); {
+	case errors.Is(err, gcp.ErrRegistryUnchecked):
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not check that the image registry %s exists (%s); submitting the build anyway: if the registry is missing, the build fails when it pushes\n", rs.RegistryPath, oneLine(err.Error()))
+	case err != nil:
+		return remote(err)
+	case !exists:
+		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.Project, rs.RegistryPath, repo)
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
@@ -243,13 +257,51 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return nil
 	}
 	if res.Digest == "" {
-		// SUCCESS covers the push of images:, so the tag is there; only
-		// the pushed-image report is missing.
+		// SUCCESS covers the promotion, so the tag is there; only the
+		// digest report is missing.
 		fmt.Fprintf(cmd.OutOrStdout(), "built %s, digest unknown: Cloud Build reported no pushed image (Cloud Build build %s)\n", oneLine(res.Image), oneLine(res.ID))
+		return nil
+	}
+	if res.Superseded {
+		fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s), but a newer build is already recorded, so latest and the record stay as they were\n",
+			oneLine(res.Image), oneLine(res.Digest), oneLine(res.ID))
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
 	return nil
+}
+
+// buildRecordNote is a warning when bucket_url names a bucket other than
+// the runs bucket, where a build always records its image (the only one
+// its account may write), or "".
+func buildRecordNote(lc *localcfg.Config) string {
+	rec := lc.RecordBucketURL()
+	switch {
+	case lc.Bucket == "" || lc.Bucket == rec:
+		return ""
+	case recordReadURL(lc) == rec:
+		return fmt.Sprintf("the build records its image in the runs bucket %s (the only bucket its account may write), not in bucket_url %s; ls and image status read it there", rec, lc.Bucket)
+	}
+	return fmt.Sprintf("the build records its image in the runs bucket %s (the only bucket its account may write), but ls and image status read bucket_url %s, so they won't see it", rec, lc.Bucket)
+}
+
+// cloudBuildSpec is the Cloud Build build of workflow name of the
+// repository rs, from base, recording to bucket (gs://…, the local
+// config's RecordBucketURL): the one spec fugaro image build, fugaro
+// init's first build and the daily image check submit.
+func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineType, bucket string) (gcp.BuildSpec, error) {
+	ws, ok := rs.Workflows[name]
+	if !ok {
+		return gcp.BuildSpec{}, userErr("fugaro.yaml has no workflow %q", name)
+	}
+	return gcp.BuildSpec{
+		Slug: rs.Slug, GitProvider: rs.Provider, RepoURL: rs.RepoURL, BaseBranch: cmp.Or(rs.BaseBranch, "main"), Workflow: name, Base: base,
+		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
+		GitSecretID: rs.Secrets[ws.GitSecret], GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
+		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
+		WorkflowSecrets: cfg.Workflows[name].Secrets,
+		Bucket:          bucket,
+	}, nil
 }
 
 func printBuildResult(w io.Writer, res gcp.BuildResult) error {
@@ -302,7 +354,7 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 }
 
 func newImageRenderCmd() *cobra.Command {
-	var workflow string
+	var workflow, cloudOutputs string
 	cmd := &cobra.Command{
 		Use:   "render",
 		Short: "Print the Dockerfile that builds the workflow's derived image",
@@ -322,26 +374,138 @@ func newImageRenderCmd() *cobra.Command {
 			if repoFile != "" {
 				fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: workflow %s uses the repository Dockerfile %s\n", name, repoFile)
 			}
+			if cloudOutputs != "" {
+				if err := writeCloudOutputs(cmd.Context(), root, cfg, name, cloudOutputs); err != nil {
+					return err
+				}
+			}
 			_, err = cmd.OutOrStdout().Write(data)
 			return err
 		},
 	}
 	cmd.Flags().StringVar(&workflow, "workflow", "", "workflow to render; optional when fugaro.yaml defines one")
+	cmd.Flags().StringVar(&cloudOutputs, "cloud-outputs", "", "also write, into this directory, what the Cloud Build steps after render need (used by the image build)")
+	_ = cmd.Flags().MarkHidden("cloud-outputs")
 	return cmd
+}
+
+// writeCloudOutputs writes, into dir, what the Cloud Build steps after
+// render read: selftest.json (the smoke's spec, image.SpecForCloud),
+// record.json (the build record's source side, which record completes),
+// and source-commit and built-at (the image's labels).
+func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, name, dir string) error {
+	git := func(args ...string) (string, error) {
+		c := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+		c.WaitDelay = 5 * time.Second
+		out, err := c.Output()
+		if err != nil {
+			return "", fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		}
+		return strings.TrimSpace(string(out)), nil
+	}
+	commit, err := git("rev-parse", "HEAD")
+	if err != nil {
+		return err
+	}
+	committed, err := git("show", "-s", "--format=%cI", "HEAD")
+	if err != nil {
+		return err
+	}
+	commitTime, err := time.Parse(time.RFC3339, committed)
+	if err != nil {
+		return fmt.Errorf("the commit time %q: %w", committed, err)
+	}
+	branch, err := git("symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		branch = cfg.Git.BaseBranch
+	}
+	origin, err := git("remote", "get-url", "origin")
+	if err != nil {
+		return userErr("no origin remote in this checkout")
+	}
+	origin = image.HTTPSOrigin(origin)
+	repo, ok := repoFromOrigin(origin)
+	if !ok {
+		return userErr("origin %s does not name owner/name", gcp.RedactURL(origin))
+	}
+	// Git's own view of HEAD, as the check reads the branch: blob IDs of
+	// what git stores, not of the checkout's bytes.
+	tree, err := imagecheck.Open(ctx, root, "HEAD", nil)
+	if err != nil {
+		return err
+	}
+	keys, err := imagecheck.KeyFiles(cfg, name, tree)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	configHash, err := imagecheck.ImageConfigHash(cfg, name, tree)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	spec, err := image.SpecForCloud(cfg, name, commit, origin)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	rec := imagecheck.Record{
+		Version: imagecheck.RecordVersion, Repo: repo, Workflow: name, BuiltAt: time.Now().UTC().Truncate(time.Second),
+		SourceCommit: commit, SourceCommitTime: commitTime.UTC(), BaseBranch: branch,
+		KeyFiles: keys, ImageConfigHash: configHash, FugaroVersion: Version, TemplateSalt: gcp.TemplateSalt(Version),
+	}
+	specJSON, err := json.Marshal(spec)
+	if err != nil {
+		return err
+	}
+	recJSON, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	for file, data := range map[string][]byte{
+		"selftest.json": specJSON, "record.json": recJSON,
+		"source-commit": []byte(commit + "\n"), "built-at": []byte(rec.BuiltAt.Format(time.RFC3339) + "\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(dir, file), data, 0o644); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // loadCheckout finds the git checkout containing the working directory,
 // loads its fugaro.yaml, validates and checks it the way `fugaro validate`
 // does, and selects the workflow.
 func loadCheckout(ctx context.Context, workflow string) (root string, cfg *config.Config, name string, err error) {
-	out, err := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel").Output()
+	if root, cfg, err = loadCheckoutConfig(ctx); err != nil {
+		return "", nil, "", err
+	}
+	if name, _, err = cfg.SelectWorkflow(workflow); err != nil {
+		return "", nil, "", &ExitError{Code: ExitUserError, Err: err}
+	}
+	return root, cfg, name, nil
+}
+
+// loadCheckoutConfig is loadCheckout without selecting a workflow.
+func loadCheckoutConfig(ctx context.Context) (root string, cfg *config.Config, err error) {
+	return loadCheckoutConfigAt(ctx, "")
+}
+
+// loadCheckoutConfigAt is loadCheckoutConfig for the checkout holding dir
+// (empty: the current directory).
+func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *config.Config, err error) {
+	args := []string{"rev-parse", "--show-toplevel"}
+	if dir != "" {
+		args = append([]string{"-C", dir}, args...)
+	}
+	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
-		return "", nil, "", &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
+		if dir != "" {
+			return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+		}
+		return "", nil, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
 	root = strings.TrimSpace(string(out))
 	data, err := os.ReadFile(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
-		return "", nil, "", &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:onboard or fugaro config example", err)}
+		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:onboard or fugaro config example", err)}
 	}
 	cfg, problems := config.Parse(data)
 	if cfg != nil {
@@ -352,10 +516,7 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 		for i, p := range problems {
 			msgs[i] = p.String()
 		}
-		return "", nil, "", &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
+		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
 	}
-	if name, _, err = cfg.SelectWorkflow(workflow); err != nil {
-		return "", nil, "", &ExitError{Code: ExitUserError, Err: err}
-	}
-	return root, cfg, name, nil
+	return root, cfg, nil
 }

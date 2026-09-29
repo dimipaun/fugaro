@@ -716,3 +716,85 @@ func TestRunProviderMismatch(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// timeoutCheckout makes the working directory a checkout of acme/other whose
+// only workflow has a 5m finalize reserve.
+func timeoutCheckout(t *testing.T, f *cloudFixture) {
+	t.Helper()
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	yaml := "version: 1\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\n    timeouts: { total: 2h, finalize_reserve: 5m }\n"
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+}
+
+func TestRunTotalTimeoutFlag(t *testing.T) {
+	f := newCloudFixture(t)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", "20260927-100000-abcd", "--total-timeout", "45m", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := blob.OpenBucket(context.Background(), f.bucket)
+	defer b.Close()
+	spec, err := runstore.Open(b, appSlug, "20260927-100000-abcd").ReadTask(context.Background())
+	if err != nil || spec.Overrides.TotalTimeout != "45m0s" {
+		t.Fatalf("task = %+v, %v", spec, err)
+	}
+	if got := f.run.RunRequests(); len(got) != 1 || got[0].Timeout != "2820s" {
+		t.Fatalf("requests = %+v, want timeout 2820s", got)
+	}
+}
+
+func TestRunTotalTimeoutValidation(t *testing.T) {
+	f := newCloudFixture(t)
+	timeoutCheckout(t, f)
+	for _, tc := range []struct{ in, want string }{
+		{"0", "greater than 0"},
+		{"-1m", "greater than 0"},
+		{"25h", "24h"},
+		{"abc", "duration"},
+		{"2m", "finalize_reserve"},
+		{"5m", "finalize_reserve"},
+	} {
+		_, _, err := execute(t, "run", "--total-timeout", tc.in, "A task")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("--total-timeout %s: %v", tc.in, err)
+		}
+	}
+	if n := len(f.run.RunRequests()); n != 0 {
+		t.Fatalf("%d launches after refused timeouts", n)
+	}
+	if _, _, err := execute(t, "run", "--total-timeout", "10m", "A task"); err != nil {
+		t.Fatalf("10m against a 5m reserve: %v", err)
+	}
+}
+
+func TestRetryKeepsTimeoutOverride(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.FailRunWith = 400
+	const id = "20260927-100000-abcd"
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--run-id", id, "--total-timeout", "45m", "A task"); !errors.Is(err, backend.ErrRejected) {
+		t.Fatalf("first launch: %v", err)
+	}
+	f.run.FailRunWith = 0
+	if _, _, err := execute(t, "run", "--retry", id); err != nil {
+		t.Fatal(err)
+	}
+	got := f.run.RunRequests()
+	if len(got) != 2 || got[0].Timeout != "2820s" || got[1].Timeout != "2820s" {
+		t.Fatalf("requests = %+v, want timeout 2820s twice", got)
+	}
+}
+
+func TestRetryRefusesTotalTimeout(t *testing.T) {
+	newCloudFixture(t)
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "run", "--retry", "20260927-100000-abcd", "--total-timeout", "45m")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--total-timeout") {
+		t.Fatalf("err = %v", err)
+	}
+}

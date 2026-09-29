@@ -26,6 +26,10 @@ type Options struct {
 	Endpoints       Endpoints
 	HTTPClient      *http.Client  // optional
 	LogSettle       time.Duration // follow's quiet period after the execution ends; zero means 30s
+	// LogView, when set, is the log view (projects/<p>/locations/<l>/buckets/<b>/views/<v>)
+	// logs are read through and log URLs open; empty reads the project's
+	// default logs.
+	LogView string
 	// Warn, when set, receives problems that don't fail a call: an
 	// execution whose limits or times can't be parsed (it is kept, with
 	// CPU and memory 0: cost unknown), or a listed job that doesn't exist.
@@ -39,6 +43,8 @@ type Backend struct {
 	logs *logging.Service
 	// listPageSize is List's page size; tests shrink it to exercise paging.
 	listPageSize int64
+	// now is the clock, which tests fix.
+	now func() time.Time
 }
 
 // RedactURL is u without userinfo, for error messages: the one helper for
@@ -94,5 +100,5 @@ func New(ctx context.Context, o Options) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Logging: %w", err)
 	}
-	return &Backend{o: o, run: rs, logs: ls, listPageSize: 100}, nil
+	return &Backend{o: o, run: rs, logs: ls, listPageSize: 100, now: time.Now}, nil
 }

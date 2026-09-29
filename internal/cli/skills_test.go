@@ -36,7 +36,7 @@ func skillCommands(md string) []string {
 }
 
 // notYet are commands design §9.1 defines that later milestones add.
-var notYet = []string{"init"}
+var notYet = []string{}
 
 // TestSkillCommandsExist fails when a skill tells the agent to run a fugaro
 // command or flag that the CLI doesn't have.

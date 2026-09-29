@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"math/rand/v2"
 	"regexp"
 	"strings"
 	"testing"
@@ -190,5 +191,140 @@ func TestRepoLabel(t *testing.T) {
 	}
 	if got, err := RepoLabel(strings.Repeat("a", 63)); err != nil || len(got) != 63 {
 		t.Fatalf("63-character slug: %q, %v", got, err)
+	}
+}
+
+// randomSlugs are n distinct real slugs of random repositories.
+func randomSlugs(t *testing.T, n int) []string {
+	t.Helper()
+	r := rand.New(rand.NewPCG(1, 2))
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789-._"
+	word := func() string {
+		b := make([]byte, 1+r.IntN(30))
+		b[0] = 'a' + byte(r.IntN(26))
+		for i := 1; i < len(b); i++ {
+			b[i] = alphabet[r.IntN(len(alphabet))]
+		}
+		return string(b)
+	}
+	seen := map[string]bool{}
+	var out []string
+	for len(out) < n {
+		provider := []string{"github", "bitbucket"}[r.IntN(2)]
+		s, err := task.Slug(provider, word()+"/"+word())
+		if err != nil || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// A build account's ID must never be a job account's, even for a workflow
+// named build, or one account would hold both sets of grants.
+func TestBuildSAIDDisjoint(t *testing.T) {
+	jobs := map[string]string{}
+	slugs := randomSlugs(t, 2000)
+	for _, s := range slugs {
+		for _, wf := range []string{"build", "web", "b", "x"} {
+			jobs[ServiceAccountID(s, wf)] = s + " " + wf
+		}
+	}
+	builds := map[string]string{}
+	for _, s := range slugs {
+		id := BuildServiceAccountID(s)
+		if len(id) < 6 || len(id) > 30 || !saIDRE.MatchString(id) {
+			t.Errorf("BuildServiceAccountID(%q) = %q (%d)", s, id, len(id))
+		}
+		if other, dup := jobs[id]; dup {
+			t.Errorf("BuildServiceAccountID(%q) = %q, the job account of %s", s, id, other)
+		}
+		if other, dup := builds[id]; dup {
+			t.Errorf("BuildServiceAccountID(%q) = %q, as for %s", s, id, other)
+		}
+		builds[id] = s
+	}
+	if id := BuildServiceAccountID(slugs[0]); id != BuildServiceAccountID(slugs[0]) || !strings.HasPrefix(id, "fugaro-b-") {
+		t.Errorf("BuildServiceAccountID = %q", id)
+	}
+}
+
+var registryIDRE = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func TestRegistryRepoID(t *testing.T) {
+	seen := map[string]string{}
+	long := "someorganization-" + strings.Repeat("verylongrepositoryname", 12)
+	for _, s := range append(randomSlugs(t, 2000), long, "a", "acme-my.app_x") {
+		id := RegistryRepoID(s)
+		if !registryIDRE.MatchString(id) || id == "fugaro" || id == "fugaro-base" || !strings.HasPrefix(id, "fugaro-") {
+			t.Errorf("RegistryRepoID(%q) = %q (%d)", s, id, len(id))
+		}
+		if other, dup := seen[id]; dup {
+			t.Errorf("RegistryRepoID(%q) = %q, as for %q", s, id, other)
+		}
+		seen[id] = s
+	}
+}
+
+// Check jobs must stay out of the fugaro- job listings (ls, max_parallel).
+func TestCheckJobNameNotFugaroPrefix(t *testing.T) {
+	long := "someorganization-" + strings.Repeat("verylongrepositoryname", 12)
+	for _, s := range append(randomSlugs(t, 200), long, "a", "-", "acme-my.app_x") {
+		for name, n := range map[string]string{"CheckJobName": CheckJobName(s), "SchedulerJobName": SchedulerJobName(s)} {
+			if strings.HasPrefix(n, "fugaro-") || !strings.HasPrefix(n, "fugarochk-") || len(n) > 49 || !jobNameRE.MatchString(n) {
+				t.Errorf("%s(%q) = %q", name, s, n)
+			}
+		}
+		if CheckJobName(s) == SchedulerJobName(s) {
+			t.Errorf("CheckJobName and SchedulerJobName of %q share a hash domain", s)
+		}
+	}
+}
+
+func TestSchedulerRegion(t *testing.T) {
+	for in, want := range map[string]string{"us-east5": "us-east4", "us-east4": "us-east4", "europe-west1": "europe-west1", "us-central1": "us-central1"} {
+		if got, err := SchedulerRegion(in); err != nil || got != want {
+			t.Errorf("SchedulerRegion(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if got, err := SchedulerRegion("mars-north1"); err == nil || !strings.Contains(err.Error(), "--scheduler-region") {
+		t.Errorf("SchedulerRegion(unknown) = %q, %v", got, err)
+	}
+	for _, r := range SchedulerRegions {
+		if got, err := SchedulerRegion(r); err != nil || got != r {
+			t.Errorf("listed region %q gives %q, %v", r, got, err)
+		}
+	}
+}
+
+func TestDisplayNamesAndConditions(t *testing.T) {
+	slug := realSlug(t, "bitbucket", "acme/sandbox")
+	for _, c := range []struct{ got, want string }{
+		{JobSADisplayName(slug, "web"), "Fugaro job " + slug + " web"},
+		{LegacyJobSADisplayName(slug, "web"), "Fugaro M4 job " + slug + " web"},
+		{BuildSADisplayName(slug), "Fugaro build " + slug},
+		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
+		{BucketCondition("b", []string{"runs", "cache"}, "s"),
+			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
+	}
+}
+
+// Pinned: these name live resources once a repository is onboarded.
+func TestNewNamesOfRealSlugs(t *testing.T) {
+	s := realSlug(t, "bitbucket", "acme/sandbox")
+	for _, c := range []struct{ got, want string }{
+		{BuildServiceAccountID(s), "fugaro-b-acme-sandbox-78cbc6a5"},
+		{RegistryRepoID(s), "fugaro-acme-sandbox-6a12f465054d"},
+		{CheckJobName(s), "fugarochk-acme-sandbox-39759bd68a27"},
+		{SchedulerJobName(s), "fugarochk-acme-sandbox-5d4307f21198"},
+	} {
+		if c.got != c.want {
+			t.Errorf("got %q, want %q", c.got, c.want)
+		}
 	}
 }

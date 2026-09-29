@@ -50,7 +50,7 @@
     }
   },
   "$defs": {
-    "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
+    "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$", "description": "Whole days, hours, minutes and seconds, such as 90m, 1h30m or 1d12h. fugaro also accepts any Go duration, such as 1.5h." },
     "workflow": {
       "type": "object",
       "additionalProperties": false,
@@ -171,6 +171,30 @@
             "stage": { "$ref": "#/$defs/duration" },
             "verify": { "$ref": "#/$defs/duration" },
             "finalize_reserve": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "rebuild": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "check": { "enum": ["daily", "off"] },
+            "max_age": {
+              "anyOf": [
+                { "const": 0 },
+                { "type": "string", "minLength": 1, "pattern": "^(0|(0+d)?(0+h)?(0+m)?(0+s)?)$", "description": "0 in any form fugaro reads, such as \"0\", 0d or 0s: no age limit." },
+                { "type": "string", "minLength": 2, "pattern": "^([0-9]+d|([0-9]+d)?[0-9]+h)([0-9]+m)?([0-9]+s)?$", "description": "At least 1h and at most 90d, which fugaro checks: days or hours, then optional minutes and seconds, such as 14d or 1d12h." }
+              ]
+            },
+            "lockfiles": { "type": "boolean" },
+            "base": { "type": "boolean" },
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[^/\\s]",
+                "not": { "pattern": "(^|/)\\.\\.(/|$)" }
+              }
+            }
           }
         }
       }

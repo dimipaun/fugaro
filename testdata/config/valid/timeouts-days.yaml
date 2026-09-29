@@ -1,0 +1,8 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    commands: { build: npm run build, test: npm test }
+    timeouts: { total: 1d, stage: 12h, verify: 1h30m, finalize_reserve: 10m }
+    rebuild: { max_age: 0d }

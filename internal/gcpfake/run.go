@@ -3,8 +3,10 @@ package gcpfake
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -16,7 +18,8 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, and executions get, list (including across jobs/-) and cancel.
+// jobs.run, jobs get and list, and executions get, list (including across
+// jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -46,11 +49,12 @@ type Run struct {
 	// path supplies; they default to "fake-project" and "fake-region".
 	Project, Region string
 
-	mu    sync.Mutex
-	jobs  map[string]*runJob
-	execs map[execKey]*runExec
-	seq   int
-	ops   int
+	mu       sync.Mutex
+	requests []RunCall
+	jobs     map[string]*runJob
+	execs    map[execKey]*runExec
+	seq      int
+	ops      int
 }
 
 // RunCall is one jobs.run request.
@@ -58,10 +62,15 @@ type RunCall struct {
 	Execution string // the short name, as Cloud Run hands CLOUD_RUN_EXECUTION to the container
 	Job       string
 	Env       map[string]string // the override's env
+	Timeout   string            // the override's task timeout ("2820s"), empty when none
 }
 
 type runJob struct {
 	cpu, memory string
+	timeout     time.Duration // the task template's timeout; zero is unset
+	labels      map[string]string
+	image       string
+	env         map[string]string // the container's env
 	n           int
 }
 
@@ -71,6 +80,7 @@ type runExec struct {
 	key                         execKey
 	seq                         int
 	state                       backend.State
+	timeout                     string // the task timeout override the execution was created with
 	created, started, completed time.Time
 }
 
@@ -87,6 +97,49 @@ func (f *Run) AddJob(name string, cpu, memory string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.jobs[name] = &runJob{cpu: cpu, memory: memory}
+}
+
+// SetJob creates job name, or updates it, with labels and its container's
+// image, as jobs get reports them.
+func (f *Run) SetJob(name string, labels map[string]string, image string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[name]
+	if j == nil {
+		j = &runJob{cpu: "1", memory: "512Mi"}
+		f.jobs[name] = j
+	}
+	j.labels, j.image = maps.Clone(labels), image
+}
+
+// SetJobEnv sets the env of job's container, as jobs get reports it.
+func (f *Run) SetJobEnv(job string, env map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobEnv(%q): no such job", job)
+	}
+	j.env = maps.Clone(env)
+}
+
+// SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
+func (f *Run) SetJobTimeout(job string, d time.Duration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobTimeout(%q): no such job", job)
+	}
+	j.timeout = d
+}
+
+// RunRequests returns every :run request the fake has answered, refused ones
+// included, oldest first. A refused request has no Execution.
+func (f *Run) RunRequests() []RunCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]RunCall(nil), f.requests...)
 }
 
 // SetOnRun sets OnRun under the fake's lock. Use it instead of assigning
@@ -328,8 +381,12 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			"name":     fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(id.Project), id.Region, f.ops),
 			"metadata": f.withType(f.render(id.Project, id.Region, x)),
 		})
+	case r.Method == http.MethodGet && strings.HasSuffix(p, "/jobs"):
+		f.listJobs(w, r, strings.TrimSuffix(p, "/jobs"))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/executions"):
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
+	case r.Method == http.MethodGet && isJobPath(p):
+		f.getJob(w, p)
 	case r.Method == http.MethodGet:
 		id, ok := backend.ParseExecution(p)
 		if !ok {
@@ -347,6 +404,43 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 }
 
+func isJobPath(p string) bool {
+	_, _, job, ok := jobPath(p)
+	return ok && job != "-"
+}
+
+// getJob answers jobs get with the job's labels and its template: the
+// container's image and limits, and the task timeout when set.
+func (f *Run) getJob(w http.ResponseWriter, p string) {
+	project, region, name, _ := jobPath(p)
+	j := f.jobs[name]
+	if j == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+name+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
+		return
+	}
+	container := map[string]any{
+		"image":     j.image,
+		"resources": map[string]any{"limits": map[string]any{"cpu": j.cpu, "memory": j.memory}},
+	}
+	if len(j.env) > 0 {
+		var env []any
+		for _, k := range slices.Sorted(maps.Keys(j.env)) {
+			env = append(env, map[string]any{"name": k, "value": j.env[k]})
+		}
+		container["env"] = env
+	}
+	task := map[string]any{"containers": []any{container}, "maxRetries": 0}
+	if j.timeout > 0 {
+		task["timeout"] = fmt.Sprintf("%ds", int(j.timeout/time.Second))
+	}
+	out := map[string]any{"name": "projects/" + f.project(project) + "/locations/" + region + "/jobs/" + name,
+		"template": map[string]any{"taskCount": 1, "template": task}}
+	if len(j.labels) > 0 {
+		out["labels"] = maps.Clone(j.labels)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (f *Run) withType(e map[string]any) map[string]any {
 	e["@type"] = "type.googleapis.com/google.cloud.run.v2.Execution"
 	return e
@@ -358,24 +452,16 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		f.unhandled(w, r)
 		return
 	}
-	if f.FailRunWith != 0 {
-		writeError(w, f.FailRunWith, http.StatusText(f.FailRunWith), "injected failure")
-		return
-	}
 	var req struct {
 		Overrides struct {
 			ContainerOverrides []struct {
 				Env []struct{ Name, Value string } `json:"env"`
 			} `json:"containerOverrides"`
+			Timeout string `json:"timeout"`
 		} `json:"overrides"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "bad body: "+err.Error())
-		return
-	}
-	x := f.create(job)
-	if x == nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+job+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
 		return
 	}
 	env := map[string]string{}
@@ -384,10 +470,24 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 			env[e.Name] = e.Value
 		}
 	}
+	call := RunCall{Job: job, Env: env, Timeout: req.Overrides.Timeout}
+	if f.FailRunWith != 0 {
+		f.requests = append(f.requests, call)
+		writeError(w, f.FailRunWith, http.StatusText(f.FailRunWith), "injected failure")
+		return
+	}
+	x := f.create(job)
+	if x == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+job+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
+		return
+	}
+	x.timeout = req.Overrides.Timeout
+	call.Execution = x.key.short
+	f.requests = append(f.requests, call)
 	if on := f.OnRun; on != nil {
 		// Unlocked, so OnRun may call SetState and the other accessors.
 		f.mu.Unlock()
-		on(RunCall{Execution: x.key.short, Job: job, Env: env})
+		on(call)
 		f.mu.Lock()
 	}
 	f.ops++
@@ -396,6 +496,42 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		meta = "unreadable"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": fmt.Sprintf("%s/operations/%d", jp, f.ops), "metadata": meta})
+}
+
+// listJobs answers jobs.list of a location, sorted by name, paged like
+// executions.list. Each job carries its task template's timeout when set.
+func (f *Run) listJobs(w http.ResponseWriter, r *http.Request, parent string) {
+	f0 := strings.Split(parent, "/")
+	if len(f0) != 4 || f0[0] != "projects" || f0[2] != "locations" {
+		f.unhandled(w, r)
+		return
+	}
+	names := make([]string, 0, len(f.jobs))
+	for n := range f.jobs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	q := r.URL.Query()
+	size, _ := strconv.Atoi(q.Get("pageSize"))
+	if size <= 0 {
+		size = 100
+	}
+	start, _ := strconv.Atoi(q.Get("pageToken"))
+	start = min(max(start, 0), len(names))
+	end := min(start+size, len(names))
+	var out []any
+	for _, n := range names[start:end] {
+		job := map[string]any{"name": parent + "/jobs/" + n}
+		if d := f.jobs[n].timeout; d > 0 {
+			job["template"] = map[string]any{"template": map[string]any{"timeout": fmt.Sprintf("%ds", int(d/time.Second))}}
+		}
+		out = append(out, job)
+	}
+	resp := map[string]any{"jobs": out}
+	if end < len(names) {
+		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (f *Run) list(w http.ResponseWriter, r *http.Request, parent string) {

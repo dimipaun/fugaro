@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -493,5 +495,51 @@ func TestCheckSudoersUnreadableFileIsFine(t *testing.T) {
 	c, ok := checkNamed(*r, "sudoers")
 	if !ok || !c.OK {
 		t.Fatalf("want sudoers to pass when the file is unreadable, got %+v", r.Checks)
+	}
+}
+
+// TestSpecForCloud: the Cloud Build smoke checks the image's structure,
+// its init and hardening and the baked commit, and never runs the
+// workflow's build, which would run repository code with its secrets.
+func TestSpecForCloud(t *testing.T) {
+	const yaml = `version: 1
+git: { provider: github }
+workflows:
+  web: { base: web-node, image: { node: "24" }, commands: { build: sh build.sh, test: sh test.sh } }
+`
+	cfg, problems := config.Parse([]byte(yaml))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	spec, err := SpecForCloud(cfg, "web", "abc123", "https://github.com/acme/webapp.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := SelftestSpec{Base: "web-node", RepoDir: "/work/repo", Commit: "abc123", Origin: "https://github.com/acme/webapp.git", Node: "24",
+		CheckInit: true, CheckHardening: true, SkipVerify: true}
+	if !reflect.DeepEqual(spec, want) {
+		t.Fatalf("SpecForCloud = %+v\nwant %+v", spec, want)
+	}
+	if _, err := SpecForCloud(cfg, "other", "abc123", "https://github.com/acme/webapp.git"); err == nil {
+		t.Error("an unknown workflow gave a spec")
+	}
+}
+
+// TestSelftestSkipVerify: with SkipVerify the checkout is still checked,
+// but the workflow's build doesn't run.
+func TestSelftestSkipVerify(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Verify.Build = "exit 3"
+	spec.SkipVerify = true
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	if !r.Passed {
+		t.Fatalf("report %+v", r)
+	}
+	if _, ok := checkNamed(r, "verify-build"); ok {
+		t.Errorf("verify-build ran: %+v", r)
+	}
+	if c, ok := checkNamed(r, "checkout"); !ok || !c.OK {
+		t.Errorf("no passing checkout check: %+v", r)
 	}
 }

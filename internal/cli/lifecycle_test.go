@@ -220,20 +220,68 @@ func (l listRecorder) List(ctx context.Context, f backend.ListFilter) ([]backend
 	return l.Backend.List(ctx, f)
 }
 
-// checkMaxParallel filters its listing by Cloud Run's longest task
-// timeout, since no active execution can be older, but never stops the
-// listing early: its count must not depend on how the jobs/- listing is
-// ordered across jobs.
-func TestCheckMaxParallelListsExhaustively(t *testing.T) {
-	f := newCloudFixture(t)
-	env := memEnv(t, f)
-	var got backend.ListFilter
-	env.be = listRecorder{Backend: env.be, got: &got}
-	if err := checkMaxParallel(context.Background(), env); err != nil {
-		t.Fatal(err)
+// executionPages is how many executions.list pages the Run fake has served.
+func executionPages(f *cloudFixture) (n int) {
+	for _, r := range f.run.Requests() {
+		if strings.HasSuffix(r.Path, "/executions") {
+			n++
+		}
 	}
-	if !got.ActiveOnly || !got.Exhaustive || got.Since.IsZero() || time.Since(got.Since) < gcp.MaxTaskTimeout {
-		t.Fatalf("filter = %+v", got)
+	return n
+}
+
+// startAt starts an execution of the web job created age ago, in state s.
+func startAt(f *cloudFixture, s backend.State, age time.Duration) {
+	e := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(e, s)
+	f.run.SetCreated(e, time.Now().Add(-age))
+}
+
+// The max_parallel check stops paging at the horizon (the longest job
+// timeout, plus slack), so it doesn't read every execution the region
+// still holds.
+func TestMaxParallelStopsAtHorizon(t *testing.T) {
+	f := newCloudFixture(t)
+	for range 500 {
+		startAt(f, backend.StateSucceeded, 30*24*time.Hour)
+	}
+	for range 3 {
+		startAt(f, backend.StateRunning, time.Minute)
+	}
+	env := memEnv(t, f)
+	err := checkMaxParallel(context.Background(), env)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "3 runs active") {
+		t.Fatalf("checkMaxParallel = %v; want 3 active", err)
+	}
+	if n := executionPages(f); n > 2 {
+		t.Fatalf("%d executions.list requests, want at most 2", n)
+	}
+}
+
+// A job with a timeout longer than the override cap widens the horizon to
+// cover an execution that is still legitimately active.
+func TestMaxParallelHorizonFromJobs(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.SetJobTimeout(gcp.JobName(appSlug, "web"), 30*time.Hour)
+	startAt(f, backend.StateRunning, 29*time.Hour)
+	startAt(f, backend.StateRunning, time.Minute)
+	err := checkMaxParallel(context.Background(), memEnv(t, f))
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "2 runs active") {
+		t.Fatalf("checkMaxParallel = %v; want the 29h-old run counted", err)
+	}
+}
+
+// A check job's long timeout does not widen the horizon.
+func TestMaxParallelIgnoresCheckJobs(t *testing.T) {
+	f := newCloudFixture(t)
+	// The check job's name has its own prefix, not "fugaro-".
+	chk := "fugarochk-" + appSlug
+	f.run.AddJob(chk, "1", "512Mi")
+	f.run.SetJobTimeout(chk, 30*time.Hour)
+	startAt(f, backend.StateRunning, 29*time.Hour)
+	startAt(f, backend.StateRunning, time.Minute)
+	if err := checkMaxParallel(context.Background(), memEnv(t, f)); err != nil {
+		t.Fatalf("checkMaxParallel = %v; want the 29h-old run outside the horizon", err)
 	}
 }
 

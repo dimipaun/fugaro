@@ -9,6 +9,8 @@
 #   REPO_URL     what to clone: a git URL, or /src/repo.bundle from the build context
 #   REPO_ORIGIN  the https origin URL the checkout keeps; defaults to REPO_URL
 #   BASE_BRANCH  the branch to bake in
+#   FUGARO_COMMIT  the commit to bake in; Cloud Build passes the one its
+#                render step read, and without it the branch's head is used
 # Build secrets, all optional: git-credentials (a git credential-store file
 # for REPO_URL) and one per workflow secret, mounted as a file and exported
 # as that variable inside the warm-up and setup commands only.
@@ -38,11 +40,25 @@ USER fugaro
 {{- end}}
 
 WORKDIR /work/repo
+# A push to the branch after the render step must not change what is baked
+# in, so the checkout is reset to FUGARO_COMMIT, which is fetched by itself
+# when it is no longer on the branch. When it can't be fetched either, the
+# build fails, saying so.
+ARG FUGARO_COMMIT=""
 RUN --mount=type=bind,target=/src \
     --mount=type=secret,id=git-credentials,uid=1000,required=false \
-    GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+    case "$FUGARO_COMMIT" in *[!0-9a-f]*) echo "FUGARO_COMMIT is not a commit ID" >&2; exit 1 ;; esac \
+ && GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
       -c credential.helper='store --file=/run/secrets/git-credentials' \
       clone --quiet --branch "$BASE_BRANCH" --single-branch -- "$REPO_URL" /work/repo \
+ && if [ -n "$FUGARO_COMMIT" ]; then \
+      { git cat-file -e "$FUGARO_COMMIT^{commit}" 2>/dev/null \
+        || GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+             -c credential.helper='store --file=/run/secrets/git-credentials' \
+             fetch --quiet origin "$FUGARO_COMMIT"; } \
+      && git reset --quiet --hard "$FUGARO_COMMIT" \
+      || { echo "commit $FUGARO_COMMIT is no longer reachable: the branch was force-pushed; re-run the build" >&2; exit 1; }; \
+    fi \
  && git remote set-url origin -- "$REPO_ORIGIN"
 {{- if .WarmUp}}
 
@@ -75,3 +91,16 @@ RUN rm -f /etc/sudoers.d/fugaro-build \
 USER fugaro
 
 RUN /usr/local/lib/fugaro/finalize-checkout /work/repo
+
+# The build time, which Cloud Build passes (empty in a local build). It is
+# declared here, so a new value never invalidates the cached steps above.
+ARG FUGARO_BUILT_AT=""
+# What the image was built from, for the runner to report how old the image
+# was at launch. built_at is left out of a local build. The checkout belongs
+# to fugaro, so root is told to trust it.
+USER root
+RUN mkdir -p /etc/fugaro \
+ && commit="$(git -c safe.directory=/work/repo -C /work/repo rev-parse HEAD)" \
+ && { printf '{'; [ -z "$FUGARO_BUILT_AT" ] || printf '"built_at":"%s",' "$FUGARO_BUILT_AT"; printf '"commit":"%s"}\n' "$commit"; } > /etc/fugaro/image.json \
+ && chmod 0644 /etc/fugaro/image.json
+USER fugaro

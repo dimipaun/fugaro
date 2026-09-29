@@ -1,0 +1,667 @@
+// Package infra computes every name, label, env and IAM condition of an
+// installation and its repositories, once, from the local config and a
+// checkout's fugaro.yaml. Terraform receives them all through the tfvars
+// this package writes; the HCL derives nothing (design §8.2).
+package infra
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"net/url"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/gitprov/bitbucket"
+	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/task"
+)
+
+// UserError is a problem with the inputs that the user can fix (exit 1).
+type UserError struct{ Err error }
+
+func (e *UserError) Error() string { return e.Err.Error() }
+func (e *UserError) Unwrap() error { return e.Err }
+
+func userErr(format string, a ...any) error { return &UserError{Err: fmt.Errorf(format, a...)} }
+
+// Env variables the spec sets beyond the M4 ones.
+const (
+	// CheckSpecEnv holds the check job's CheckJobSpec, as JSON.
+	CheckSpecEnv = "FUGARO_CHECK_SPEC"
+	// ComputePricesEnv is <vcpu>,<gib> per second, from the local config's
+	// override for the region, so the runner's report agrees with ls.
+	ComputePricesEnv = "FUGARO_COMPUTE_PRICES"
+)
+
+// githubGitUser is the HTTPS username of a GitHub App installation token.
+const githubGitUser = "x-access-token"
+
+// Inputs are what a repository's spec is computed from.
+type Inputs struct {
+	LC   *localcfg.Config
+	Repo string // owner/name
+	Cfg  *config.Config
+	// RepoURL is the https clone URL; empty means the provider's usual one.
+	RepoURL string
+	// GitHubAppID overrides the local config's github_app_id.
+	GitHubAppID string
+	// Installation are the installation root's outputs. Fields left empty
+	// take the values Go gives a new installation.
+	Installation InstallationOutputs
+}
+
+// InstallationOutputs are the installation root's outputs, as `terraform
+// output -json` names them.
+type InstallationOutputs struct {
+	RunsBucket              string   `json:"runs_bucket"`
+	RegistryHost            string   `json:"registry_host"`
+	BaseRegistry            string   `json:"base_registry"`
+	LegacyRegistry          string   `json:"legacy_registry"`
+	SchedulerServiceAccount string   `json:"scheduler_service_account"`
+	RoleIDs                 RoleIDs  `json:"role_ids"`
+	Launchers               []string `json:"launchers"`
+	Operators               []string `json:"operators"`
+	LogView                 string   `json:"log_view"`
+	RegistryCleanupDryRun   *bool    `json:"registry_cleanup_dry_run"`
+}
+
+// RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
+type RoleIDs struct {
+	Launcher       string `json:"launcher"`
+	JobRunner      string `json:"job_runner"`
+	BuildSubmitter string `json:"build_submitter"`
+}
+
+// ServiceAccount is an account to create or adopt.
+type ServiceAccount struct {
+	AccountID   string `json:"account_id"`
+	DisplayName string `json:"display_name"`
+}
+
+// Condition is an IAM condition, compared byte for byte with the live one.
+type Condition struct {
+	Title      string `json:"title"`
+	Expression string `json:"expression"`
+}
+
+// WorkflowSpec is one (repository, workflow): its job, job account and
+// grants. The tagged fields are the tfvars' repo.workflows.<name>.
+type WorkflowSpec struct {
+	Job             string            `json:"job"`
+	ServiceAccount  ServiceAccount    `json:"service_account"`
+	Image           string            `json:"image"` // tagged :latest
+	CPU             string            `json:"cpu"`
+	Memory          string            `json:"memory"`
+	TaskTimeoutS    int               `json:"task_timeout_s"`
+	Env             map[string]string `json:"env"`
+	SecretEnv       map[string]string `json:"secret_env"` // env var → logical secret name
+	BucketCondition Condition         `json:"bucket_condition"`
+	Vertex          bool              `json:"vertex"`
+	DeployJob       bool              `json:"deploy_job"`
+
+	Name                string            `json:"-"`
+	Slug                string            `json:"-"`
+	ServiceAccountEmail string            `json:"-"`
+	Labels              map[string]string `json:"-"` // on the job
+	// SecretIDs are the secret IDs of the logical secrets the job mounts.
+	SecretIDs map[string]string `json:"-"`
+	// GitSecret is the logical name of the provider credential.
+	GitSecret string `json:"-"`
+	// BuildSecrets are the logical secrets the workflow's image build
+	// mounts: the provider credential and the workflow's secrets, sorted.
+	BuildSecrets []string `json:"-"`
+	// LegacyImage is the M4 image path in the local config's legacy
+	// registry, untagged as M4 printed it; empty without one.
+	LegacyImage string `json:"-"`
+}
+
+// Registry is the repository's own image registry.
+type Registry struct {
+	RepositoryID  string `json:"repository_id"`
+	CleanupDryRun bool   `json:"cleanup_dry_run"`
+}
+
+// CheckSpec is the repository's daily image check job and its schedule.
+type CheckSpec struct {
+	Job             string `json:"job"`
+	Image           string `json:"image"`
+	SchedulerJob    string `json:"scheduler_job"`
+	SchedulerRegion string `json:"scheduler_region"`
+	Schedule        string `json:"schedule"`
+	Paused          bool   `json:"paused"`
+	// DeployJob is the readiness gate of the check job, its invoker grant
+	// and its Scheduler job.
+	DeployJob bool              `json:"deploy_job"`
+	Env       map[string]string `json:"env"`
+	SecretEnv map[string]string `json:"secret_env"`
+
+	// Workflows are the ones the check covers (rebuild.check: daily).
+	Workflows []string `json:"-"`
+}
+
+// CheckJobSpec is what the check job reads from CheckSpecEnv.
+type CheckJobSpec struct {
+	Repo                string   `json:"repo"`
+	Provider            string   `json:"provider"`
+	RepoURL             string   `json:"repo_url"`
+	BaseBranch          string   `json:"base_branch"`
+	Workflows           []string `json:"workflows"`
+	Registry            string   `json:"registry"` // <host>/<repository ID>
+	BuildServiceAccount string   `json:"build_service_account"`
+	MachineType         string   `json:"machine_type"`
+	BuildRegion         string   `json:"build_region"`
+	BaseImage           string   `json:"base_image"`
+}
+
+// RepoInstallation are the installation values a repository root needs.
+type RepoInstallation struct {
+	RunsBucket              string      `json:"runs_bucket"`
+	RegistryHost            string      `json:"registry_host"`
+	BaseRegistry            string      `json:"base_registry"`
+	SchedulerServiceAccount string      `json:"scheduler_service_account"`
+	RoleIDs                 RepoRoleIDs `json:"role_ids"`
+	Launchers               []string    `json:"launchers"`
+	Operators               []string    `json:"operators"`
+}
+
+// RepoRoleIDs are the custom roles a repository root grants.
+type RepoRoleIDs struct {
+	JobRunner      string `json:"job_runner"`
+	BuildSubmitter string `json:"build_submitter"`
+}
+
+// RepoSpec is one repository. The tagged fields are the tfvars' repo.
+type RepoSpec struct {
+	Name                 string                  `json:"name"`
+	Provider             string                  `json:"provider"`
+	Slug                 string                  `json:"slug"`
+	Label                string                  `json:"label"`
+	Secrets              map[string]string       `json:"secrets"` // logical name → secret ID
+	Registry             Registry                `json:"registry"`
+	BuildServiceAccount  ServiceAccount          `json:"build_service_account"`
+	BuildSecrets         []string                `json:"build_secrets"` // logical names
+	BuildBucketCondition Condition               `json:"build_bucket_condition"`
+	Check                *CheckSpec              `json:"check"`
+	Workflows            map[string]WorkflowSpec `json:"workflows"`
+
+	Project      string           `json:"-"`
+	Region       string           `json:"-"`
+	Installation RepoInstallation `json:"-"`
+	GitHubAppID  string           `json:"-"` // GitHub only
+	RepoURL      string           `json:"-"`
+	BaseBranch   string           `json:"-"`
+	GitUser      string           `json:"-"` // the HTTPS username of the provider credential
+	// BuildServiceAccountEmail and RegistryPath (<host>/<repository ID>)
+	// are where builds run as and push to.
+	BuildServiceAccountEmail string `json:"-"`
+	RegistryPath             string `json:"-"`
+}
+
+// repoCtx is what every workflow of a repository shares.
+type repoCtx struct {
+	in           Inputs
+	lc           *localcfg.Config
+	provider     string
+	slug, label  string
+	bucket       string
+	registryHost string
+	baseBranch   string
+	repoURL      string
+	appID        string
+	gitSecret    string
+	gitUser      string
+	inst         InstallationOutputs // with defaults filled in
+}
+
+var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
+
+func resolve(in Inputs) (*repoCtx, error) {
+	if in.LC == nil || in.Cfg == nil {
+		return nil, errors.New("infra: the local config and fugaro.yaml are both required")
+	}
+	lc := in.LC
+	c := &repoCtx{in: in, lc: lc, provider: in.Cfg.Git.Provider}
+	local, hasLocal := localRepo(lc, in.Repo)
+	if hasLocal && local.Provider != "" && local.Provider != c.provider {
+		return nil, userErr("the local config says %s is on %s, but its fugaro.yaml says %s; make them agree", in.Repo, local.Provider, c.provider)
+	}
+	var err error
+	if c.slug, err = task.Slug(c.provider, in.Repo); err != nil {
+		return nil, userErr("%v", err)
+	}
+	if c.label, err = gcp.RepoLabel(c.slug); err != nil {
+		return nil, userErr("%v", err)
+	}
+	if c.bucket, err = bucketName(lc); err != nil {
+		return nil, userErr("%v", err)
+	}
+	c.inst = withDefaults(in.Installation, lc, c.bucket)
+	if c.inst.RunsBucket != c.bucket {
+		return nil, userErr("the installation's runs bucket is %s, but the local config's is %s", c.inst.RunsBucket, c.bucket)
+	}
+	if c.registryHost, err = registryHost(lc, in.Installation.RegistryHost); err != nil {
+		return nil, err
+	}
+	c.inst.RegistryHost = c.registryHost
+	// Role IDs from a stale output of another project's state would grant
+	// that project's roles, so they must be this project's.
+	prefix := "projects/" + lc.Project + "/roles/"
+	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter} {
+		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
+			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.Project)
+		}
+	}
+
+	c.baseBranch = in.Cfg.Git.BaseBranch
+	if hasLocal && local.BaseBranch != "" {
+		c.baseBranch = local.BaseBranch
+	}
+	if c.repoURL, err = repoURL(c.provider, in.Repo, in.RepoURL); err != nil {
+		return nil, err
+	}
+	switch c.provider {
+	case gitprov.KindBitbucket:
+		c.gitSecret, c.gitUser = "bitbucket-token", bitbucket.GitUsername
+	case gitprov.KindGitHub:
+		c.gitSecret, c.gitUser = "github-app-key", githubGitUser
+		c.appID = in.GitHubAppID
+		if c.appID == "" && hasLocal {
+			c.appID = local.GitHubAppID
+		}
+		if c.appID == "" {
+			return nil, userErr("%s is on GitHub and has no GitHub App ID: pass --github-app-id (it is not a secret)", in.Repo)
+		}
+		if !appIDRE.MatchString(c.appID) {
+			return nil, userErr("GitHub App ID %q is not 1 to 20 digits (--github-app-id)", c.appID)
+		}
+	default:
+		return nil, userErr("git.provider %q is not bitbucket or github", c.provider)
+	}
+	return c, nil
+}
+
+// localRepo is the local config's entry for repo, matched as fugaro run
+// matches it (owner/name without regard to case).
+func localRepo(lc *localcfg.Config, repo string) (localcfg.Repo, bool) {
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return localcfg.Repo{}, false
+	}
+	for _, k := range slices.Sorted(maps.Keys(lc.Repos)) {
+		if c, err := task.CanonicalRepo(k); err == nil && c == want {
+			return lc.Repos[k], true
+		}
+	}
+	return localcfg.Repo{}, false
+}
+
+// bucketName is the runs bucket's name, which IAM conditions need: the
+// one image builds record in (lc.RecordBucketURL), so the specs, the
+// first build and readiness name the same bucket.
+func bucketName(lc *localcfg.Config) (string, error) {
+	if name := lc.RunsBucketName(); name != "" {
+		return name, nil
+	}
+	return "", errors.New("the local config's bucket_url is not a gs:// bucket")
+}
+
+var registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
+
+// RegistryHost is the installation's registry host for lc: its
+// registry_host, else the one a new installation creates, checked to be
+// lc's project.
+func RegistryHost(lc *localcfg.Config) (string, error) { return registryHost(lc, "") }
+
+// registryHost is <region>-docker.pkg.dev/<project>, the prefix of every
+// image registry: the local config's, else the installation's output,
+// else the one the installation creates. Images are pushed there with the
+// project's credentials, so a host naming another project is refused.
+func registryHost(lc *localcfg.Config, output string) (string, error) {
+	host := lc.RegistryHost
+	switch {
+	case host != "" && output != "" && host != output:
+		return "", userErr("the local config's registry_host %s is not the installation's %s", host, output)
+	case host == "":
+		host = output
+	}
+	if host == "" {
+		host = lc.Region + "-docker.pkg.dev/" + lc.Project
+	}
+	m := registryHostRE.FindStringSubmatch(host)
+	if m == nil {
+		return "", userErr("registry host %q is not <region>-docker.pkg.dev/<project>", host)
+	}
+	if m[2] != lc.Project {
+		return "", userErr("registry host %s names project %s, not %s", host, m[2], lc.Project)
+	}
+	return host, nil
+}
+
+// repoURL is the https clone URL: the given one, which must be on the
+// provider's host and carry no credentials, else the provider's usual one.
+func repoURL(provider, repo, given string) (string, error) {
+	if given == "" {
+		host := map[string]string{gitprov.KindGitHub: "github.com", gitprov.KindBitbucket: "bitbucket.org"}[provider]
+		if host == "" {
+			return "", userErr("git.provider %q is not bitbucket or github", provider)
+		}
+		return "https://" + host + "/" + repo + ".git", nil
+	}
+	u, err := url.Parse(given)
+	if err != nil || u.Scheme != "https" || u.User != nil || u.Host == "" || u.Port() != "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", userErr("the repository URL %s is not an https URL without credentials", gcp.RedactURL(given))
+	}
+	if gitprov.KindForURL(given) != provider {
+		return "", userErr("the repository URL %s is not on %s's host", given, provider)
+	}
+	// The URL is where the build and the check clone from, so it must be
+	// this repository, not only this provider.
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return "", userErr("%v", err)
+	}
+	if got, err := task.CanonicalRepo(strings.Trim(u.Path, "/")); err != nil || got != want {
+		return "", userErr("the repository URL %s is not %s", given, repo)
+	}
+	return given, nil
+}
+
+// withDefaults fills in the outputs the installation has not reported
+// with the names Go gives a new installation.
+func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) InstallationOutputs {
+	def := func(v *string, d string) {
+		if *v == "" {
+			*v = d
+		}
+	}
+	role := func(id string) string { return "projects/" + lc.Project + "/roles/" + id }
+	def(&o.RunsBucket, bucket)
+	def(&o.BaseRegistry, BaseRegistry)
+	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.Project))
+	def(&o.RoleIDs.Launcher, role(RoleLauncher))
+	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
+	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
+	if o.Launchers == nil {
+		o.Launchers = slices.Clone(lc.Terraform.Launchers)
+	}
+	if o.Operators == nil {
+		o.Operators = slices.Clone(lc.Terraform.Operators)
+	}
+	if o.Launchers == nil {
+		o.Launchers = []string{}
+	}
+	if o.Operators == nil {
+		o.Operators = []string{}
+	}
+	if o.RegistryCleanupDryRun == nil {
+		t := true
+		o.RegistryCleanupDryRun = &t
+	}
+	return o
+}
+
+func serviceAccountEmail(id, project string) string {
+	return id + "@" + project + ".iam.gserviceaccount.com"
+}
+
+// platformEnv is the M4 env every job and the check job get.
+func (c *repoCtx) platformEnv() map[string]string {
+	return map[string]string{
+		"FUGARO_BUCKET":  "gs://" + c.bucket,
+		"FUGARO_BACKEND": backend.CloudRun,
+		"FUGARO_PROJECT": c.lc.Project,
+		"FUGARO_REGION":  c.lc.Region,
+	}
+}
+
+func (c *repoCtx) registryPath() string { return c.registryHost + "/" + gcp.RegistryRepoID(c.slug) }
+
+// Workflow is the spec of one workflow of the repository.
+func Workflow(in Inputs, name string) (WorkflowSpec, error) {
+	c, err := resolve(in)
+	if err != nil {
+		return WorkflowSpec{}, err
+	}
+	return c.workflow(name)
+}
+
+func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
+	w, ok := c.in.Cfg.Workflows[name]
+	if !ok {
+		return WorkflowSpec{}, userErr("fugaro.yaml has no workflow %q", name)
+	}
+	if issues := gcp.CheckResources(w.Resources); len(issues) > 0 {
+		return WorkflowSpec{}, userErr("workflow %s: resources.%s: %s", name, issues[0].Field, issues[0].Message)
+	}
+	lc, slug := c.lc, c.slug
+	saID := gcp.ServiceAccountID(slug, name)
+	ws := WorkflowSpec{
+		Job:            gcp.JobName(slug, name),
+		ServiceAccount: ServiceAccount{AccountID: saID, DisplayName: gcp.JobSADisplayName(slug, name)},
+		Image:          gcp.ImageName(c.registryPath(), slug, name) + ":latest",
+		CPU:            strconv.Itoa(w.Resources.CPU),
+		Memory:         w.Resources.Memory,
+		TaskTimeoutS:   int((w.Timeouts.Total.Duration + backend.TaskTimeoutSlack) / time.Second),
+		Env:            c.platformEnv(),
+		SecretEnv:      map[string]string{},
+		BucketCondition: Condition{
+			Title:      gcp.BucketConditionTitle(saID),
+			Expression: gcp.BucketCondition(c.bucket, gcp.JobBucketPrefixes, slug),
+		},
+		Vertex:    c.in.Cfg.Agent.Auth == "vertex",
+		DeployJob: true,
+
+		Name:                name,
+		Slug:                slug,
+		ServiceAccountEmail: serviceAccountEmail(saID, lc.Project),
+		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: name},
+		SecretIDs:           map[string]string{},
+		GitSecret:           c.gitSecret,
+	}
+	if lc.Registry != "" {
+		ws.LegacyImage = gcp.ImageName(lc.Registry, slug, name)
+	}
+	if ws.Vertex {
+		ws.Env["CLOUD_ML_REGION"] = lc.Region
+		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.Project
+	}
+	if c.appID != "" {
+		ws.Env[providers.EnvGitHubAppID] = c.appID
+	}
+	if p, ok := lc.PriceOverride(lc.Region); ok {
+		ws.Env[ComputePricesEnv] = formatPrice(p.VCPUSecondUSD) + "," + formatPrice(p.GiBSecondUSD)
+	}
+
+	var collisions []string
+	mount := func(logical, env string) {
+		if _, dup := ws.SecretEnv[env]; dup {
+			collisions = append(collisions, env)
+		}
+		ws.SecretEnv[env] = logical
+		ws.SecretIDs[logical] = gcp.SecretID(slug, logical)
+	}
+	mount(c.gitSecret, config.ReservedSecrets[c.gitSecret])
+	switch c.in.Cfg.Agent.Auth {
+	case "oauth":
+		mount("claude-oauth-token", config.ReservedSecrets["claude-oauth-token"])
+	case "api-key":
+		mount("anthropic-api-key", config.ReservedSecrets["anthropic-api-key"])
+	}
+	ws.BuildSecrets = []string{c.gitSecret}
+	for _, s := range w.Secrets {
+		mount(s.Name, s.Env)
+		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
+	}
+	slices.Sort(ws.BuildSecrets)
+	ws.BuildSecrets = slices.Compact(ws.BuildSecrets)
+	// Every variable a secret is mounted as, so the runner can register
+	// them all for redaction before bootstrap.
+	ws.Env[runner.SecretEnvsVar] = strings.Join(slices.Sorted(maps.Keys(ws.SecretEnv)), ",")
+	for env := range ws.SecretEnv {
+		if _, dup := ws.Env[env]; dup {
+			collisions = append(collisions, env)
+		}
+	}
+	if len(collisions) > 0 {
+		slices.Sort(collisions)
+		return WorkflowSpec{}, userErr("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(slices.Compact(collisions), ", "))
+	}
+	return ws, nil
+}
+
+// formatPrice is the shortest decimal that parses back to v.
+func formatPrice(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
+
+// Repo is the spec of the repository and all of its workflows.
+func Repo(in Inputs) (RepoSpec, error) {
+	c, err := resolve(in)
+	if err != nil {
+		return RepoSpec{}, err
+	}
+	lc, slug := c.lc, c.slug
+	buildID := gcp.BuildServiceAccountID(slug)
+	rs := RepoSpec{
+		Name:                in.Repo,
+		Provider:            c.provider,
+		Slug:                slug,
+		Label:               c.label,
+		Secrets:             map[string]string{},
+		Registry:            Registry{RepositoryID: gcp.RegistryRepoID(slug), CleanupDryRun: *c.inst.RegistryCleanupDryRun},
+		BuildServiceAccount: ServiceAccount{AccountID: buildID, DisplayName: gcp.BuildSADisplayName(slug)},
+		BuildSecrets:        []string{},
+		BuildBucketCondition: Condition{
+			Title:      gcp.BucketConditionTitle(buildID),
+			Expression: gcp.BucketCondition(c.bucket, gcp.BuildBucketPrefixes, slug),
+		},
+		Workflows: map[string]WorkflowSpec{},
+
+		Project: lc.Project,
+		Region:  lc.Region,
+		Installation: RepoInstallation{
+			RunsBucket:              c.bucket,
+			RegistryHost:            c.registryHost,
+			BaseRegistry:            c.inst.BaseRegistry,
+			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
+			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter},
+			Launchers:               c.inst.Launchers,
+			Operators:               c.inst.Operators,
+		},
+		GitHubAppID:              c.appID,
+		RepoURL:                  c.repoURL,
+		BaseBranch:               c.baseBranch,
+		GitUser:                  c.gitUser,
+		BuildServiceAccountEmail: serviceAccountEmail(buildID, lc.Project),
+		RegistryPath:             c.registryPath(),
+	}
+	var checked []string
+	for _, name := range slices.Sorted(maps.Keys(in.Cfg.Workflows)) {
+		ws, err := c.workflow(name)
+		if err != nil {
+			return RepoSpec{}, err
+		}
+		rs.Workflows[name] = ws
+		maps.Copy(rs.Secrets, ws.SecretIDs)
+		rs.BuildSecrets = append(rs.BuildSecrets, ws.BuildSecrets...)
+		if in.Cfg.Workflows[name].Rebuild.Defaults().Check != "off" {
+			checked = append(checked, name)
+		}
+	}
+	slices.Sort(rs.BuildSecrets)
+	rs.BuildSecrets = slices.Compact(rs.BuildSecrets)
+	if len(checked) > 0 {
+		if rs.Check, err = c.check(rs, checked); err != nil {
+			return RepoSpec{}, err
+		}
+	}
+	return rs, nil
+}
+
+// UsesVertex reports whether any of the repository's workflows
+// authenticates its agent through Vertex AI.
+func (rs RepoSpec) UsesVertex() bool {
+	for _, ws := range rs.Workflows {
+		if ws.Vertex {
+			return true
+		}
+	}
+	return false
+}
+
+// BaseImageWarning is a warning when the local config's base image (base)
+// isn't in the installation's base registry, else "". The build accounts
+// can read only that registry, so every build would fail at its pull; the
+// check job's own pull would still work, which hides it until then.
+func BaseImageWarning(base string, outs InstallationOutputs) string {
+	registry := outs.RegistryHost + "/" + outs.BaseRegistry
+	if base == "" || strings.HasPrefix(base, registry+"/") {
+		return ""
+	}
+	return fmt.Sprintf("the local config's base_image %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_image to it",
+		base, registry, registry)
+}
+
+// check is the daily image check of the workflows in checked. It runs as
+// the build account, from the base image, so it holds the provider
+// credential and nothing else.
+func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
+	lc := c.lc
+	if lc.BaseImage == "" {
+		return nil, userErr("the local config has no base_image, which the daily image check of %s runs: set base_image in the local config to the base image in the installation's base registry", rs.Name)
+	}
+	region := lc.SchedulerRegion
+	if region == "" {
+		r, err := gcp.SchedulerRegion(lc.Region)
+		if err != nil {
+			return nil, userErr("%v", err)
+		}
+		region = r
+	}
+	spec, err := json.Marshal(CheckJobSpec{
+		Repo: rs.Name, Provider: c.provider, RepoURL: c.repoURL, BaseBranch: c.baseBranch,
+		Workflows: checked, Registry: rs.RegistryPath, BuildServiceAccount: rs.BuildServiceAccountEmail,
+		MachineType: lc.Build.MachineType, BuildRegion: lc.BuildRegion(), BaseImage: lc.BaseImage,
+	})
+	if err != nil {
+		return nil, err
+	}
+	gitEnv := config.ReservedSecrets[c.gitSecret]
+	env := c.platformEnv()
+	env[CheckSpecEnv] = string(spec)
+	if c.appID != "" {
+		env[providers.EnvGitHubAppID] = c.appID
+	}
+	env[runner.SecretEnvsVar] = gitEnv
+	return &CheckSpec{
+		Job:             gcp.CheckJobName(c.slug),
+		Image:           lc.BaseImage,
+		SchedulerJob:    gcp.SchedulerJobName(c.slug),
+		SchedulerRegion: region,
+		Schedule:        Schedule(c.slug),
+		Paused:          true,
+		DeployJob:       true,
+		Env:             env,
+		SecretEnv:       map[string]string{gitEnv: c.gitSecret},
+		Workflows:       checked,
+	}, nil
+}
+
+// Schedule is the check's daily cron schedule: a minute between 05:00 and
+// 06:59 UTC derived from the slug, so repositories don't all build at once.
+func Schedule(slug string) string {
+	sum := sha256.Sum256([]byte(slug))
+	n := binary.BigEndian.Uint16(sum[:2]) % 120
+	return fmt.Sprintf("%d %d * * *", n%60, 5+n/60)
+}

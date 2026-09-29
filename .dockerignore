@@ -1,8 +1,11 @@
-# The base image build needs only the Go sources and images/.
+# The base image build needs only the Go sources, images/ and the
+# Terraform the binary embeds (deploy/terraform), without provider dirs.
 *
 !go.mod
 !go.sum
 !cmd/
 !internal/
 !images/
+!deploy/terraform/
+deploy/terraform/**/.terraform/
 internal/**/testdata/

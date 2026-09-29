@@ -22,4 +22,44 @@ jobs:
       - run: go vet -tags docker ./...
       # Type-checks the live tests (never runs them), so they can't rot.
       - run: go vet -tags live ./...
+      # Type-checks the terraform-tagged tests (the real-terraform ones).
+      - run: go vet -tags terraform ./...
       - run: go test -race ./...
+  # Lints and tests the Terraform with a mock provider. No step has cloud
+  # credentials: init -backend=false only downloads the provider the lock
+  # file pins.
+  terraform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.16.4
+          terraform_wrapper: false
+      - uses: terraform-linters/setup-tflint@1cf010d3c7aef302051ccdb68c14c5dc2efa34ef # v6.3.1
+        with:
+          tflint_version: v0.64.0
+      - run: terraform fmt -check -recursive deploy/terraform
+      # Terraform's data directory stays outside the tree: deploy/terraform
+      # embeds all of gcp/, so provider binaries under a root's .terraform
+      # would end up in the Go test binary of the last step.
+      - name: validate and test the roots
+        run: |
+          for r in installation repo; do
+            [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
+            export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
+            terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false
+            terraform -chdir=deploy/terraform/gcp/roots/$r validate
+            terraform -chdir=deploy/terraform/gcp/roots/$r test
+          done
+      - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
+      # The Trivy image images/scan.sh pins, over the Terraform.
+      - run: sh deploy/terraform/scan.sh
+      # The tf wrapper's tests against a real terraform binary.
+      - run: go test -tags terraform ./internal/infra/...
