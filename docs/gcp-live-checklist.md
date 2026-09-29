@@ -276,6 +276,25 @@ These are the first live run's findings. Record every later run in the same way,
 
 To be filled in by the live bring-up and migration (gcp-setup.md, "Adopting an M4 installation"). Record every `FACT` and each plan summary in the same way as the runs above. Each item names the check that produces it.
 
+### Recorded so far (2026-09-29, the dev project)
+
+The installation and the sandbox are migrated; the web repo is applied and its first build is under way. What the run showed:
+
+- **Two bugs found and fixed by the live run.** Neither changed anything in the project before it failed.
+  - `fugaro init` read the project number through Cloud Resource Manager, which was disabled, and stopped with a 403 `SERVICE_DISABLED` before doing anything. `init` now offers to enable the API (its own confirmation) and reads other disabled APIs' resources as missing. After the enable the read succeeded at once, so the propagation delay is unmeasured.
+  - Cloud Monitoring refuses a policy that has a log-match condition next to another condition. The first apply created everything else and stopped at the alert; the image alert is now two policies, and a text test pins the rule. A rerun applied the rest, and the next plan showed no changes.
+- **The default build identity** is the Compute Engine default account, and it holds `roles/editor`, so the escalation path of §6.1 is real in this project. The owner accepted it: per-repository builds run as their own build accounts and never use it. It stays a known exposure for anyone who can submit a build without naming an account.
+- **The installation plan:** 2 imports (the runs bucket and the legacy registry, labels only), 28 creates, 2 in-place updates, 0 deletes. Removing project Viewers' read access to the runs bucket was confirmed and done.
+- **The sandbox plan:** 5 imports (the job, its account, three secrets), 24 creates, 4 label-only updates, 0 deletes; 4 live IAM bindings adopted, none duplicated; the runs bucket still has one conditional binding for the sandbox account; the job kept `maxRetries: 0`, its account and its legacy image until the second apply, which changed only the image.
+- **The sandbox's first build** ran as the sandbox's own build account into its own registry and succeeded: `latest` points at the built digest, the record exists (`fugaro image status` shows it with the base digest), and a `candidate-` tag was left behind, which is expected.
+- **Log isolation (check 6):** a new run's stdout and stderr appeared in the `fugaro` log bucket (readable through the view) and not in `_Default`, which held only the Cloud Run system line, as designed. The adopted job's template labels did reach the log entries, so the sink filter matched. A run from before isolation prints the hint that its lines are in `_Default`.
+- **The job account's prefix conditions (check 7):** pass on the adopted binding. The sandbox job account can write and delete under its own `runs/`, `cache/` and `locks/` prefixes and gets 403 on a sibling prefix, another repository's prefix, a read of another run's `task.json`, and listing `runs/`.
+- **The sandbox run** launched on the new image and got as far as the agent, which failed at once with "You've hit your org's monthly spend limit": a model-account limit, unrelated to the infrastructure. The run opened a draft PR, wrote its result and cache, and the test's cleanup declined the PR and deleted the branch. Rerun `TestLiveSandboxRun` after the limit is raised.
+- **The web repo's plan:** 4 imports, 23 creates, 3 label-only updates, 0 deletes, 3 bindings adopted; the check job, its invoker grant and a Scheduler job in the scheduler region, which stayed `PAUSED`; the job stayed on its legacy image. `fugaro image check --dry-run` printed `rebuild (no-record)`, as it must for a repository without a record.
+- **Gaps in the live suite:** `TestLiveCloudBuildSecretAndDigest` still needs `build.service_account`, which `init` drops, so it fails on a migrated installation; it needs to build as the repository's build account, and its 11b probes need the `docker run --network none` and default-network cases. `TestLiveSandboxRun` does not pass `--total-timeout 15m`, so nothing checks the 17-minute execution timeout. Both are follow-ups, tracked in design §14.
+
+Still to record: the items below that this list doesn't cover.
+
 - **The project's default build identity** (gcp-setup.md, precondition 9): the account `gcloud builds get-default-service-account` names, its roles, and whether the leaked-build-token path of design §6.1 is real in this project.
 - **Cloud Resource Manager disabled:** on a project where it was disabled, `fugaro init --plan-only` asked to enable it, enabled it, and carried on once the enable propagated (how many retries it took).
 - **The installation plan (adoption):** the imports, creates and in-place updates the plan showed, and that it had zero deletes; that `plan -detailed-exitcode` exits 2 for an import-only plan.
