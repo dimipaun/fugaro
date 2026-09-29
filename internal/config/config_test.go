@@ -148,3 +148,74 @@ func TestCheckMissingFiles(t *testing.T) {
 		t.Fatalf("unexpected problems after creating files: %v", ps)
 	}
 }
+
+func TestRebuildDefaults(t *testing.T) {
+	cfg, ps := Parse([]byte(minimalYAML))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	r := cfg.Workflows["server"].Rebuild
+	if r.Check != "daily" || r.MaxAge.Duration != 14*24*time.Hour || r.Lockfiles == nil || !*r.Lockfiles || r.Base == nil || !*r.Base || r.Paths == nil || len(r.Paths) != 0 {
+		t.Errorf("rebuild = %+v, want the defaults", r)
+	}
+	d := Rebuild{}.Defaults()
+	if d.Check != "daily" || d.MaxAge.Duration != 14*24*time.Hour || !*d.Lockfiles || !*d.Base || d.Paths == nil {
+		t.Errorf("Defaults() = %+v", d)
+	}
+}
+
+func TestRebuildExplicitValues(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/valid/rebuild-full.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	web, srv := cfg.Workflows["web"].Rebuild, cfg.Workflows["server"].Rebuild
+	if web.MaxAge.Duration != 30*24*time.Hour || *web.Base != false || !*web.Lockfiles || len(web.Paths) != 2 {
+		t.Errorf("web rebuild = %+v", web)
+	}
+	if srv.Check != "off" || srv.MaxAge.Duration != 0 {
+		t.Errorf("an explicit max_age of 0 must stay 0: %+v", srv)
+	}
+}
+
+func TestRebuildValidation(t *testing.T) {
+	for file, path := range map[string]string{
+		"rebuild-bad-check": "workflows.web.rebuild.check",
+		"rebuild-bad-age":   "workflows.web.rebuild.max_age",
+		"rebuild-bad-glob":  "workflows.web.rebuild.paths[0]",
+	} {
+		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, ps := Parse(data)
+		if cfg != nil || !hasProblem(ps, path, "", 0) {
+			t.Errorf("%s: want a problem at %s, got %v", file, path, ps)
+		}
+	}
+	data, _ := os.ReadFile("../../testdata/config/invalid/rebuild-unknown-field.yaml")
+	if cfg, ps := Parse(data); cfg != nil || !hasProblem(ps, "", "field smoke not found", 0) {
+		t.Errorf("unknown field: got %v", ps)
+	}
+}
+
+func TestRebuildPathAndAgeRules(t *testing.T) {
+	for _, tc := range []struct {
+		block string
+		ok    bool
+	}{
+		{"{ max_age: 1h }", true}, {"{ max_age: 90d }", true}, {"{ max_age: 91d }", false}, {"{ max_age: -1h }", false},
+		{"{ max_age: 0 }", true}, {"{ max_age: 1d12h }", true}, {"{ max_age: soon }", false},
+		{`{ paths: ["a/**/b"] }`, true}, {`{ paths: ["/abs"] }`, false}, {`{ paths: [""] }`, false},
+		{`{ paths: ["a/../b"] }`, false}, {`{ paths: ["[a"] }`, false}, {`{ paths: [".."] }`, false},
+	} {
+		_, ps := Parse([]byte(minimalYAML + "    rebuild: " + tc.block + "\n"))
+		if (len(ps) == 0) != tc.ok {
+			t.Errorf("%s: ok=%v, problems %v", tc.block, tc.ok, ps)
+		}
+	}
+}

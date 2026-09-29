@@ -41,6 +41,7 @@ func applyDefaults(c *Config) {
 				w.Resources.Memory = d.memory
 			}
 		}
+		w.Rebuild = w.Rebuild.Defaults()
 		t := &w.Timeouts
 		if t.Total.Duration == 0 {
 			t.Total.Duration = 90 * time.Minute

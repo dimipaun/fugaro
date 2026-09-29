@@ -1,0 +1,16 @@
+version: 1
+git: { provider: github }
+workflows:
+  web:
+    base: web-node
+    commands: { build: npm run build, test: npm test }
+    rebuild:
+      check: daily
+      max_age: 30d
+      lockfiles: true
+      base: false
+      paths: ["scripts/**", "*.gradle"]
+  server:
+    base: server-jvm
+    commands: { build: ./gradlew assemble, test: ./gradlew test }
+    rebuild: { check: off, max_age: 0 }
