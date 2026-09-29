@@ -210,12 +210,16 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return remote(err)
 	}
-	// A push to a missing registry would fail only at the build's end.
+	// A push to a missing registry would fail only at the build's end. An
+	// operator who may submit builds need not be able to read the
+	// registry: then the build goes ahead, and a missing registry fails it.
 	switch exists, err := b.RegistryExists(ctx, rs.RegistryPath); {
+	case errors.Is(err, gcp.ErrRegistryUnchecked):
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: could not check that the image registry %s exists (%s); submitting the build anyway: if the registry is missing, the build fails when it pushes\n", rs.RegistryPath, oneLine(err.Error()))
 	case err != nil:
 		return remote(err)
 	case !exists:
-		return userErr("the image registry %s of %s does not exist yet: run fugaro init --repo from this checkout to create it", rs.RegistryPath, repo)
+		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.Project, rs.RegistryPath, repo)
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {

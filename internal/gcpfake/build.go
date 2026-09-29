@@ -25,6 +25,9 @@ type Build struct {
 	FailGets, FailGetCode int
 	// NoResults makes a SUCCESS build report no pushed images.
 	NoResults bool
+	// ForbidRegistries makes every repositories get answer 403, as for a
+	// caller without read access to the registry.
+	ForbidRegistries bool
 
 	mu         sync.Mutex
 	builds     map[string]map[string]any // request bodies, by build ID
@@ -118,6 +121,10 @@ func (f *Build) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		writeJSON(w, http.StatusOK, out)
 	case r.Method == http.MethodGet && registryRE.MatchString(p):
 		name := registryRE.FindStringSubmatch(p)[1]
+		if f.ForbidRegistries {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "Permission 'artifactregistry.repositories.get' denied")
+			return
+		}
 		if !f.registries[name] {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Requested entity was not found.")
 			return

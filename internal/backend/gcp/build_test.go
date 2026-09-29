@@ -272,6 +272,10 @@ func TestRegistryExists(t *testing.T) {
 	if ok, err := b.RegistryExists(context.Background(), reg); err != nil || !ok {
 		t.Fatalf("an existing registry: %v, %v", ok, err)
 	}
+	fb.ForbidRegistries = true
+	if _, err := b.RegistryExists(context.Background(), reg); !errors.Is(err, ErrRegistryUnchecked) {
+		t.Errorf("a 403 = %v, want ErrRegistryUnchecked", err)
+	}
 	if _, err := b.RegistryExists(context.Background(), "us-east5-docker.pkg.dev/other-proj/"+RegistryRepoID(spec.Slug)); err == nil {
 		t.Error("a registry of another project was looked up")
 	}
@@ -380,5 +384,18 @@ func TestWaitRetriesTransientErrors(t *testing.T) {
 	fb.FailGets, fb.NoResults = 0, true
 	if done, err := b.Wait(context.Background(), res.ID, 0); err != nil || done.Status != "SUCCESS" || done.Digest != "" {
 		t.Fatalf("Wait without results = %+v, %v", done, err)
+	}
+}
+
+// TestRegistryLookupNotThroughRealCloudBuildOverride: a real (authenticated)
+// Cloud Build endpoint override, such as a regional one, serves no Artifact
+// Registry, so the lookup keeps Google's own endpoint; only a fake (no_auth)
+// serves both.
+func TestRegistryLookupNotThroughRealCloudBuildOverride(t *testing.T) {
+	if got := registryEndpoint(Endpoints{CloudBuild: "https://us-east5-cloudbuild.googleapis.com/"}); got != "" {
+		t.Errorf("an authenticated Cloud Build override sends Artifact Registry lookups to %q", got)
+	}
+	if got := registryEndpoint(Endpoints{CloudBuild: "http://127.0.0.1:9/", NoAuth: true}); got != "http://127.0.0.1:9/" {
+		t.Errorf("the fake's endpoint = %q", got)
 	}
 }

@@ -267,14 +267,13 @@ type Builder struct {
 }
 
 // NewBuilder connects to Cloud Build for builds in region, and to Artifact
-// Registry. An overridden Cloud Build endpoint (a fake) serves Artifact
-// Registry's repositories get too: its paths don't overlap Cloud Build's.
+// Registry (see registryEndpoint).
 func NewBuilder(ctx context.Context, o Options, region string) (*Builder, error) {
 	svc, err := cloudbuild.NewService(ctx, o.client(o.Endpoints.CloudBuild)...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Build: %w", err)
 	}
-	ar, err := artifactregistry.NewService(ctx, o.client(o.Endpoints.CloudBuild)...)
+	ar, err := artifactregistry.NewService(ctx, o.client(registryEndpoint(o.Endpoints))...)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Artifact Registry: %w", err)
 	}
@@ -283,10 +282,26 @@ func NewBuilder(ctx context.Context, o Options, region string) (*Builder, error)
 
 func (b *Builder) parent() string { return "projects/" + b.project + "/locations/" + b.region }
 
+// registryEndpoint is where Artifact Registry lookups go: Google's own
+// endpoint, except with a fake (NoAuth), whose Cloud Build endpoint serves
+// Artifact Registry's repositories get too (the paths don't overlap). A
+// real Cloud Build override, such as a regional one, serves no Artifact
+// Registry, and a lookup there would wrongly report every registry missing.
+func registryEndpoint(e Endpoints) string {
+	if e.NoAuth {
+		return e.CloudBuild
+	}
+	return ""
+}
+
+// ErrRegistryUnchecked means the caller may not read the registry (a 403):
+// it may still hold what a build needs, so this is no answer either way.
+var ErrRegistryUnchecked = errors.New("not allowed to read the registry")
+
 // RegistryExists reports whether the Docker registry registry
 // (<region>-docker.pkg.dev/<project>/<repository ID>, of the builder's
 // project) exists, with one repositories get. A build pushing to a missing
-// one would only fail at its end.
+// one would only fail at its end. A 403 is ErrRegistryUnchecked.
 func (b *Builder) RegistryExists(ctx context.Context, registry string) (bool, error) {
 	host, id, _ := strings.Cut(registry, "/"+b.project+"/")
 	m := registryHostRE.FindStringSubmatch(host + "/" + b.project)
@@ -299,6 +314,8 @@ func (b *Builder) RegistryExists(ctx context.Context, registry string) (bool, er
 	switch {
 	case errors.As(err, &ae) && ae.Code == http.StatusNotFound:
 		return false, nil
+	case errors.As(err, &ae) && ae.Code == http.StatusForbidden:
+		return false, fmt.Errorf("reading the Artifact Registry repository %s: %w: %w", name, ErrRegistryUnchecked, err)
 	case err != nil:
 		return false, fmt.Errorf("reading the Artifact Registry repository %s: %w", name, err)
 	}

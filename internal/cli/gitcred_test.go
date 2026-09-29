@@ -5,6 +5,8 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -107,7 +109,8 @@ func TestGitCredentialGitHubMints(t *testing.T) {
 	srv := httpfixture.Serve(t, filepath.Join("testdata", "github_build_token.json"))
 	t.Setenv("GITHUB_APP_KEY", appKeyPEM(t))
 	t.Setenv("GITHUB_APP_ID", "12345")
-	t.Setenv("FUGARO_GITHUB_API_URL", srv.URL)
+	defer func(u string) { gitCredGitHubAPI = u }(gitCredGitHubAPI)
+	gitCredGitHubAPI = srv.URL
 	out := filepath.Join(t.TempDir(), "git-credentials")
 	stdout, stderr, err := execute(t, "image", "git-credential", "--provider", "github", "--repo-url", "https://github.com/acme/webapp.git", "--out", out)
 	if err != nil {
@@ -164,5 +167,32 @@ func TestGitCredentialRefusesForeignHost(t *testing.T) {
 		if _, err := os.Stat(out); !os.IsNotExist(err) {
 			t.Errorf("%s %s: a credential file was written", c.provider, c.url)
 		}
+	}
+}
+
+// TestGitCredentialIgnoresAPIOverride: the step holds the App's private
+// key, so its JWT only ever goes to GitHub's own API, whatever the step's
+// environment says.
+func TestGitCredentialIgnoresAPIOverride(t *testing.T) {
+	gitCredentialEnv(t)
+	if gitCredGitHubAPI != "https://api.github.com" {
+		t.Fatalf("the credential step's GitHub API is %s", gitCredGitHubAPI)
+	}
+	hit := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true; http.Error(w, "no", http.StatusTeapot) }))
+	defer srv.Close()
+	t.Setenv("FUGARO_GITHUB_API_URL", srv.URL)
+	t.Setenv("GITHUB_APP_KEY", appKeyPEM(t))
+	t.Setenv("GITHUB_APP_ID", "12345")
+	// A GitHub API that refuses every connection stands in for the real
+	// one, so the test never reaches the network.
+	defer func(u string) { gitCredGitHubAPI = u }(gitCredGitHubAPI)
+	gitCredGitHubAPI = "http://127.0.0.1:1"
+	out := filepath.Join(t.TempDir(), "git-credentials")
+	if _, _, err := execute(t, "image", "git-credential", "--provider", "github", "--repo-url", "https://github.com/acme/webapp.git", "--out", out); err == nil {
+		t.Fatal("minted without reaching GitHub")
+	}
+	if hit {
+		t.Error("the App JWT went to FUGARO_GITHUB_API_URL")
 	}
 }

@@ -12,7 +12,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
-	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 )
 
 // The variables `fugaro image git-credential` reads its secrets from, as
@@ -24,6 +23,11 @@ const (
 	gitCredAppKeyEnv = "GITHUB_APP_KEY" // GitHub: the App's private key, PEM
 	gitCredAppIDEnv  = "GITHUB_APP_ID"  // GitHub: the App's ID
 )
+
+// gitCredGitHubAPI is the GitHub API the credential step mints its token
+// at. The step holds the App's private key, so its JWT goes only to
+// GitHub's own API: no flag or variable changes this; only tests do.
+var gitCredGitHubAPI = github.DefaultBaseURL
 
 type gitCredentialOptions struct{ provider, repoURL, out string }
 
@@ -99,7 +103,7 @@ func mintBuildToken(cmd *cobra.Command, u *url.URL) (string, error) {
 		return "", userErr("%s: %v", gitCredAppKeyEnv, err)
 	}
 	token, _, err := github.MintInstallationToken(cmd.Context(), github.Options{
-		Owner: owner, Repo: repo, AppID: appID, PrivateKey: key, BaseURL: os.Getenv(providers.EnvGitHubAPIURL),
+		Owner: owner, Repo: repo, AppID: appID, PrivateKey: key, BaseURL: gitCredGitHubAPI,
 	}, github.BuildTokenPermissions())
 	if err != nil {
 		return "", remote(err)

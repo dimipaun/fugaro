@@ -50,7 +50,7 @@ func buildPosts(fb *gcpfake.Build) int {
 func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, true)
 	_, _, err := execute(t, "image", "build", "--base", "b:1")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --repo") ||
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --repo") || !strings.Contains(err.Error(), "proj-1234") ||
 		!strings.Contains(err.Error(), gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app"))) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -146,5 +146,23 @@ func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 	}
 	if len(fb.Requests()) != 0 {
 		t.Error("a build for another project's registry reached Cloud Build")
+	}
+}
+
+// TestImageBuildCloudRegistryForbidden: an operator may submit builds but
+// not read the repository's registry. A 403 on the check is not a missing
+// registry: the build is submitted, with a warning.
+func TestImageBuildCloudRegistryForbidden(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	fb.ForbidRegistries = true
+	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stderr, "warning") || !strings.Contains(stderr, "could not check") {
+		t.Errorf("stderr = %q", stderr)
+	}
+	if buildPosts(fb) != 1 {
+		t.Errorf("builds submitted = %d", buildPosts(fb))
 	}
 }
