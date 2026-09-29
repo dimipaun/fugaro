@@ -358,6 +358,34 @@ func (b *Builder) RegistryExists(ctx context.Context, registry string) (bool, er
 	return true, nil
 }
 
+// ErrBuildNotFound means Cloud Build has no such build (in the builder's
+// region).
+var ErrBuildNotFound = errors.New("no such Cloud Build build")
+
+// Status reads build id's status (QUEUED, WORKING, SUCCESS, FAILURE, …)
+// with one builds get, without waiting. A missing build is
+// ErrBuildNotFound.
+func (b *Builder) Status(ctx context.Context, id string) (string, error) {
+	if !buildIDRE.MatchString(id) {
+		return "", fmt.Errorf("%q is not a Cloud Build build ID", id)
+	}
+	bd, err := b.svc.Projects.Locations.Builds.Get(b.parent() + "/builds/" + id).Context(ctx).Do()
+	var ae *googleapi.Error
+	switch {
+	case errors.As(err, &ae) && ae.Code == http.StatusNotFound:
+		return "", fmt.Errorf("Cloud Build build %s: %w", id, ErrBuildNotFound)
+	case err != nil:
+		return "", fmt.Errorf("reading the status of Cloud Build build %s: %w", id, err)
+	}
+	return bd.Status, nil
+}
+
+// buildIDRE is what a Cloud Build build ID may be: it goes into a path.
+var buildIDRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
+
+// IsDigest reports whether s is an image digest (sha256:<64 hex>).
+func IsDigest(s string) bool { return digestRE.MatchString(s) }
+
 // Submit starts the build of s and returns it as queued.
 func (b *Builder) Submit(ctx context.Context, s BuildSpec) (BuildResult, error) {
 	req, err := BuildRequest(b.project, s)
