@@ -31,6 +31,46 @@ func TestInstallationWorkdirPath(t *testing.T) {
 	}
 }
 
+// init --repo reads the installation's outputs in a workdir of its own,
+// inside the installation's: preparing either leaves the other's tree.
+func TestInstallationOutputsWorkdir(t *testing.T) {
+	getenv := env(map[string]string{"XDG_STATE_HOME": t.TempDir()})
+	inst, err := InstallationWorkdir(getenv, "proj-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outs, err := InstallationOutputsWorkdir(getenv, "proj-1234")
+	if err != nil || outs != filepath.Join(inst, "outputs") {
+		t.Fatalf("outputs workdir = %q, %v", outs, err)
+	}
+	w, err := PrepareWorkdir(inst, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.WriteVars([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	o, err := PrepareWorkdir(outs, "installation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, VarsFile)); err != nil {
+		t.Errorf("preparing the outputs workdir removed the installation's tfvars: %v", err)
+	}
+	if err := o.WriteVars([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareWorkdir(inst, "installation"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(o.Root, VarsFile)); err != nil {
+		t.Errorf("preparing the installation workdir removed the outputs workdir: %v", err)
+	}
+	if _, err := InstallationOutputsWorkdir(getenv, "../x"); err == nil {
+		t.Fatal("a project that is not an ID made a path")
+	}
+}
+
 // The workdir holds the embedded tree, fresh each time, and is private.
 func TestPrepareWorkdir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "w")

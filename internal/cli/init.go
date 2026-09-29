@@ -1136,6 +1136,13 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		}
 		built, err := r.buildImages(ctx, lc, cfg, spec, names)
 		if err != nil {
+			// The first apply already made the repository's resources, so
+			// it joins the local config (and says what it still needs)
+			// before the build's failure ends the run.
+			r.printMissing(spec, versions, missing)
+			if cerr := r.writeRepoConfig(lc, spec, cfg, path, old); cerr != nil {
+				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
+			}
 			return err
 		}
 		if built > 0 {
@@ -1206,9 +1213,10 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 }
 
 // installationOutputs reads the installation root's outputs from its
-// state, which is the repository root's input.
+// state, which is the repository root's input. It runs in a workdir of its
+// own, leaving the installation's workdir as it is.
 func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, bin, stateBucket string) (infra.InstallationOutputs, error) {
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.Project)
+	dir, err := infra.InstallationOutputsWorkdir(os.Getenv, lc.Project)
 	if err != nil {
 		return infra.InstallationOutputs{}, userErr("%v", err)
 	}

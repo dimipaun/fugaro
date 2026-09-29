@@ -56,6 +56,19 @@ func InstallationWorkdir(getenv func(string) string, project string) (string, er
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
 }
 
+// InstallationOutputsWorkdir is where fugaro init --repo reads the
+// installation's outputs: a workdir of its own inside the installation's
+// (which keeps only its gcp tree and terraform's data directory), so the
+// installation's tfvars, imports and saved plan are never rewritten by a
+// repository's run.
+func InstallationOutputsWorkdir(getenv func(string) string, project string) (string, error) {
+	dir, err := InstallationWorkdir(getenv, project)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "outputs"), nil
+}
+
 // PluginCache is terraform's provider cache,
 // $XDG_CACHE_HOME/fugaro/terraform-plugins (by default under ~/.cache).
 func PluginCache(getenv func(string) string) (string, error) {

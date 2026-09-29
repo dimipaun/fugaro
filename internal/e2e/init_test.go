@@ -662,6 +662,58 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 	}
 }
 
+// init --repo reads the installation's outputs in a directory of its own,
+// so the installation's workdir (a fugaro init running meanwhile, or
+// terraform run there by hand) keeps its tfvars, imports and saved plan.
+func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
+	r := sandboxRig(t)
+	dir, err := infra.InstallationWorkdir(os.Getenv, initRepoProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "gcp", "roots", "installation")
+	files := map[string]string{infra.VarsFile: `{"project":"` + initRepoProject + `"}`, infra.ImportsFile: "{}", infra.PlanFile: "a plan"}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, root, files)
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 0 {
+		t.Fatal(res)
+	}
+	for name, want := range files {
+		if got, err := os.ReadFile(filepath.Join(root, name)); err != nil || string(got) != want {
+			t.Errorf("the installation workdir's %s = %q, %v; want it untouched", name, got, err)
+		}
+	}
+	if count(r.calls(t), "installation output") != 1 {
+		t.Errorf("calls = %q", r.calls(t))
+	}
+}
+
+// A first build that fails comes after the first apply, which already
+// made the repository's resources: the repository still joins the local
+// config, and what it still needs is still printed, before the exit 2.
+func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
+	r := sandboxRig(t)
+	r.storedSecrets()
+	r.build.Steps["build"] = func(string) error { return errors.New("the build broke") }
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	if res.code != 2 {
+		t.Fatalf("want exit 2:\n%s", res)
+	}
+	if n := count(r.calls(t), "repo apply"); n != 1 {
+		t.Fatalf("applies = %d, want the first one only: %q", n, r.calls(t))
+	}
+	if !strings.Contains(res.stdout, "Still missing for acme/sandbox") || !strings.Contains(res.stdout, "fugaro image build --repo acme/sandbox --workflow web") {
+		t.Errorf("what is missing isn't printed:\n%s", res)
+	}
+	lc := r.localConfig(t)
+	if got, ok := lc.Repos["acme/sandbox"]; !ok || !slices.Equal(got.Workflows, []string{"web"}) {
+		t.Errorf("local config repos = %+v", lc.Repos)
+	}
+}
+
 func TestInitRepoAdoptedSwitchesImageAfterBuild(t *testing.T) {
 	r := sandboxRig(t)
 	r.bootstrap(t)
