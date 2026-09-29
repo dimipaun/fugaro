@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -69,6 +70,7 @@ type runJob struct {
 	timeout     time.Duration // the task template's timeout; zero is unset
 	labels      map[string]string
 	image       string
+	env         map[string]string // the container's env
 	n           int
 }
 
@@ -108,6 +110,17 @@ func (f *Run) SetJob(name string, labels map[string]string, image string) {
 		f.jobs[name] = j
 	}
 	j.labels, j.image = maps.Clone(labels), image
+}
+
+// SetJobEnv sets the env of job's container, as jobs get reports it.
+func (f *Run) SetJobEnv(job string, env map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[job]
+	if j == nil {
+		f.t.Fatalf("gcpfake: SetJobEnv(%q): no such job", job)
+	}
+	j.env = maps.Clone(env)
 }
 
 // SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
@@ -405,10 +418,18 @@ func (f *Run) getJob(w http.ResponseWriter, p string) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+name+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
 		return
 	}
-	task := map[string]any{"containers": []any{map[string]any{
+	container := map[string]any{
 		"image":     j.image,
 		"resources": map[string]any{"limits": map[string]any{"cpu": j.cpu, "memory": j.memory}},
-	}}, "maxRetries": 0}
+	}
+	if len(j.env) > 0 {
+		var env []any
+		for _, k := range slices.Sorted(maps.Keys(j.env)) {
+			env = append(env, map[string]any{"name": k, "value": j.env[k]})
+		}
+		container["env"] = env
+	}
+	task := map[string]any{"containers": []any{container}, "maxRetries": 0}
 	if j.timeout > 0 {
 		task["timeout"] = fmt.Sprintf("%ds", int(j.timeout/time.Second))
 	}
