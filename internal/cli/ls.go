@@ -48,6 +48,8 @@ type lsFilter struct {
 type lsDoc struct {
 	Runs   []runview.Row  `json:"runs"`
 	Totals runview.Totals `json:"totals"`
+	// Warnings are the lines a human listing prints before its table.
+	Warnings []string `json:"warnings"`
 }
 
 func newLsCmd() *cobra.Command {
@@ -118,7 +120,8 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if err := printRows(out, rows, now, o.asJSON); err != nil {
+		warnings := imageWarnings(ctx, env, f.slugs, now.UTC())
+		if err := printRows(out, rows, warnings, now, o.asJSON); err != nil {
 			return err
 		}
 		if !o.watch || allSettled(rows) {
@@ -401,13 +404,16 @@ func allSettled(rows []runview.Row) bool {
 }
 
 // printRows prints rows as a table with a totals line, or as one JSON
-// document.
-func printRows(w io.Writer, rows []runview.Row, now time.Time, asJSON bool) error {
+// document. The warnings come before the table, or go into the document.
+func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
 	tot := runview.Sum(rows)
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(lsDoc{Runs: rows, Totals: tot})
+		return enc.Encode(lsDoc{Runs: rows, Totals: tot, Warnings: warnings})
+	}
+	for _, line := range warnings {
+		fmt.Fprintln(w, line)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR")

@@ -63,7 +63,10 @@ type Row struct {
 	LogURL      string        `json:"log_url,omitempty"`
 	Created     time.Time     `json:"created"`
 	Cost        runstore.Cost `json:"cost"`
-	Terminal    bool          `json:"terminal"`
+	// ImageAgeS is how old the run's image was when the run started
+	// (started_at minus built_at), in seconds; absent when either is unknown.
+	ImageAgeS *int64 `json:"image_age_s,omitempty"`
+	Terminal  bool   `json:"terminal"`
 	// Settled means the row won't change on its own: terminal, or
 	// unlaunched (nobody is launching it). ls --watch stops when every row
 	// is settled; a launching row is not, since its launch.json is coming.
@@ -94,6 +97,12 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		}
 		if r.PR != nil {
 			row.PRURL = r.PR.URL
+		}
+		if im := r.Image; im != nil && im.BuiltAt != nil && !r.StartedAt.IsZero() {
+			// A build time after the start (clock skew) is not an age.
+			if s := int64(r.StartedAt.Sub(*im.BuiltAt) / time.Second); s >= 0 {
+				row.ImageAgeS = &s
+			}
 		}
 		if r.Execution != "" {
 			// The runner's record names the execution that owns the run; after

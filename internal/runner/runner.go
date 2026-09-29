@@ -70,6 +70,9 @@ type Deps struct {
 	// Prices are the backend's list prices for the job's compute; nil
 	// means compute is not estimated, as on a local run.
 	Prices *backend.Prices
+	// ImageInfoPath is the image's build record; empty means
+	// DefaultImageInfoPath.
+	ImageInfoPath string
 }
 
 type run struct {
@@ -558,6 +561,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.spec = spec
 	r.rec.RunID, r.rec.Repo = spec.RunID, spec.Repo
+	// Read before the sync below moves the checkout off the baked commit.
+	r.rec.Image = r.imageInfo(ctx)
 	if r.owned {
 		r.save(ctx)
 	} else if err := r.claimRecord(ctx); err != nil {

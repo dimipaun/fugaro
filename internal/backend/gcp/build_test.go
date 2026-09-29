@@ -494,3 +494,30 @@ func TestTemplateSalt(t *testing.T) {
 		t.Fatalf("TemplateSalt = %q, %q", a, b)
 	}
 }
+
+// TestBuilderStatus: one builds get, without waiting; a build Cloud Build
+// doesn't know is ErrBuildNotFound.
+func TestBuilderStatus(t *testing.T) {
+	fb := gcpfake.NewBuild(t)
+	fb.FailStep = "smoke"
+	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := b.Submit(context.Background(), buildSpec(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st, err := b.Status(context.Background(), res.ID); err != nil || st != "FAILURE" {
+		t.Fatalf("Status = %q, %v", st, err)
+	}
+	if _, err := b.Status(context.Background(), "b9999"); !errors.Is(err, ErrBuildNotFound) {
+		t.Fatalf("unknown build: %v", err)
+	}
+	if _, err := b.Status(context.Background(), "../x"); err == nil {
+		t.Fatal("a path in the build ID was accepted")
+	}
+	if !IsDigest("sha256:"+strings.Repeat("0", 64)) || IsDigest("sha256:x") {
+		t.Fatal("IsDigest")
+	}
+}
