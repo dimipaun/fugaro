@@ -16,7 +16,7 @@ Design §8 says how `init` works and why (the state layout, the guard, the envir
 - **It applies the plan it showed, and only that.** It saves the plan to a file and applies the file.
 - **It never deletes.** A plan that would delete or replace anything is refused (exit 1) unless `--allow-delete <address>` names that resource.
 - **`--plan-only`** stops after the plan. It can still create the state bucket, behind its own confirmation, because the plan needs it.
-- **`--print-vars`** prints the Terraform variables and exits, with no cloud calls, so you can read what would be sent.
+- **`--print-vars`** prints the Terraform variables and exits, with no cloud calls, so you can read what would be sent. With `--repo` the values are **ungated**: no discovery or readiness check ran, so every workflow has `deploy_job = true`, its job uses the new image path (which may not be built yet), and its account gets the new display name (an adopted bootstrap account would be renamed). It says so on stderr. Adopt a repository through `fugaro init --repo`, not by applying these values.
 - **It never touches a secret value.** Secret containers are Terraform's; their values are `fugaro secrets set`'s.
 - **Exit codes:** 0 ok, 1 a user error or refusal, 2 a remote failure.
 - **Reruns are safe.** Running a step again with the same inputs plans no change. Flags are not remembered, except the ones the local config stores (see "Flags to pass again").
@@ -102,7 +102,7 @@ fugaro init --base-image "$tag"
 
 ### 4. A repository
 
-1. **Write and commit its `fugaro.yaml`.** Use the `fugaro:onboard` skill, or `fugaro config example > fugaro.yaml` and edit it, then `fugaro validate` and `fugaro image build --local`. Merge it. For a sandbox that should never rebuild by itself, set `rebuild: { check: off }` on its workflows: it then gets no check job and no schedule.
+1. **Write and commit its `fugaro.yaml`.** Use the `fugaro:onboard` skill, or `fugaro config example > fugaro.yaml` and edit it, then `fugaro validate` and `fugaro image build --local`. Merge it. For a sandbox that should never rebuild by itself, set `rebuild: { check: off }` on its workflows before its first `init --repo`: it then gets no check job and no schedule. Turning the checks off later deletes a protected job: see "Turning checks off, or removing a workflow".
 2. **Plan it, from the repository's checkout:**
 
    ```bash
@@ -151,7 +151,21 @@ The repository step copies the installation's setting (its `registry_cleanup_dry
 - **Launchers and operators:** `--launcher` and `--operator`, repeatable, stored in the local config; rerun `fugaro init` and `fugaro init --repo` to change who has what. The installation step grants project-level and bucket-level roles, and each repository step the per-repository ones.
 - **The Scheduler region:** Cloud Scheduler isn't offered in every Cloud Run region, so the daily check's Scheduler job may run elsewhere (`us-east5` uses `us-east4`). `--scheduler-region` overrides it; the check job stays in `<region>`.
 - **Log isolation off:** `--no-log-isolation` leaves job logs in `_Default`.
-- **Running Terraform yourself:** use `deploy/terraform/gcp/roots/*` as examples, and `github.com/dimipaun/fugaro//deploy/terraform/gcp/modules/repo?ref=vX.Y.Z` as the module source, with the inputs from `fugaro init --print-vars`. Then `fugaro init --config-only` writes the local config from the installation's outputs.
+- **Running Terraform yourself:** use `deploy/terraform/gcp/roots/*` as examples, and `github.com/dimipaun/fugaro//deploy/terraform/gcp/modules/repo?ref=vX.Y.Z` as the module source, with the inputs from `fugaro init --print-vars` (for a repository these are ungated, see above: set `deploy_job` and the image yourself until the image exists). Then `fugaro init --config-only` writes the local config from the installation's outputs.
+
+## Turning checks off, or removing a workflow
+
+Setting every workflow of an onboarded repository to `check: off` makes the plan delete its check job, its Scheduler job and the scheduler's invoker grant. Removing a workflow from `fugaro.yaml` makes it delete that workflow's job, its account and grants, and any secret only it used. Neither works in one run:
+
+- the guard refuses every delete until `--allow-delete <address>` names it
+- a job keeps `deletion_protection = true` in the state, and once it has left the configuration `--allow-job-delete` can no longer lower it, so the apply fails
+- a secret has `prevent_destroy`, so the plan fails before the guard sees it
+
+So do it in this order:
+
+1. **Before changing `fugaro.yaml`,** run `fugaro init --repo --allow-job-delete` from the checkout. Its only change is `deletion_protection = false` on the repository's jobs.
+2. **A secret only the removed workflow used:** Terraform must forget it rather than delete it. Take it out of the state as in "Offboarding a repository", step 2 (a `removed` block, or `terraform state rm '<address>'`, run by hand in the repository's working directory, outside fugaro's guard); the secret and its value stay in Secret Manager, and `gcloud secrets delete` removes it if you want it gone. Skip this when no secret is used by that workflow alone.
+3. **Change `fugaro.yaml`,** merge it, and run `fugaro init --repo --allow-delete <address> …`, naming each address the guard listed (the refusal prints them). Read the plan: it must delete only what you removed. The remaining jobs get their protection back in the same apply.
 
 ## Flags to pass again
 
@@ -174,12 +188,13 @@ At any point before `fugaro-build` is retired:
 
 0. **First,** pause every Fugaro Scheduler job so no check submits a billable build during the rollback: `gcloud scheduler jobs pause <name> --location <scheduler region> --project <project>` (the names are in `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`).
 1. `fugaro init --repo --forget` in each onboarded repository. It removes the repository from Terraform's state and deletes its now-empty state object (the state bucket is versioned, so it stays recoverable); it destroys nothing.
-2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and `fugaro-base`'s cleanup policies (the repositories' registries keep theirs, which M4 never reads), and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed), and `fugaro init` then imports it. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
+2. `fugaro init --forget`. Its first phase is a normal guarded, confirmed apply with log isolation and registry cleanup turned off, which **deletes the `_Default` exclusion** (so M4's `fugaro logs` finds new lines in `_Default` again), the sink, the view, the log bucket and `fugaro-base`'s cleanup policies (the repositories' registries keep theirs, which M4 never reads), and nothing else. **A deleted log bucket stays pending deletion for 7 days and its ID can't be reused meanwhile.** To retry the migration within the week, first run `gcloud logging buckets undelete fugaro --location=global --project <project>` (confirmed); `fugaro init` then imports it. Its second phase, after another confirmation, runs `terraform state rm` for everything left.
 3. **Restore** the backed-up `~/.config/fugaro/config.yaml`.
 4. **Always,** redeploy each job with the M4 binary's `gcp-m4.sh --apply job`. It puts back the M4 image path, env and order, and drops `FUGARO_COMPUTE_PRICES`. The legacy display names were kept, so its ownership checks pass.
 5. Check `fugaro logs` on a new run, and `gcloud run jobs describe` for `maxRetries: 0`.
 6. What `--forget` leaves is additive and doesn't affect M4: the build accounts, the new registries, `fugaro-base`, the scheduler account and its (paused) Scheduler jobs, the custom roles and the state bucket. Remove them with `gcloud` from the snapshot's diff, each confirmed.
-7. If you removed the runs bucket's project-Viewer bindings, M4 doesn't need them; restore them from the snapshot if you want them back.
+7. **Retrying the migration later:** `fugaro init` and `fugaro init --repo` import again what `--forget` left behind and still carries our mark: the runs bucket, the registries, the log bucket (after the undelete above), the custom roles, the scheduler account, and each repository's accounts, secrets, jobs and Scheduler job. **Not** the alert's notification channel and policy, or the budget: they have no name Fugaro can find them by, so a retry creates a second of each. Delete them by hand before retrying (`gcloud alpha monitoring policies delete`, `gcloud alpha monitoring channels delete`, `gcloud billing budgets delete`, each confirmed), or accept the duplicates.
+8. If you removed the runs bucket's project-Viewer bindings, M4 doesn't need them; restore them from the snapshot if you want them back.
 
 After `fugaro-build` is retired, a rollback also needs it re-enabled (`gcloud iam service-accounts enable`) and its bindings restored from the snapshot.
 
