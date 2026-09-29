@@ -55,3 +55,25 @@ func TestLogsUnknownRun(t *testing.T) {
 		t.Fatalf("unknown run: %v", err)
 	}
 }
+
+// With log isolation on, logs and diagnose read only the Fugaro log view,
+// which holds nothing of a run from before isolation: an empty read says
+// so, once, on stderr. Without a view nothing is added.
+func TestLogsHintWhenTheViewIsEmpty(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRun(t, f, "20260927-100000-abcd", "", "someone@example.com", true)
+	for _, cmd := range []string{"logs", "diagnose"} {
+		if _, stderr, err := execute(t, cmd, "20260927-100000-abcd"); err != nil || strings.Contains(stderr, "log isolation") {
+			t.Fatalf("%s without a view: stderr %q, %v", cmd, stderr, err)
+		}
+	}
+	const view = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
+	f.appendConfig(t, "log_view: "+view+"\n")
+	f.logging.Resource = view
+	for _, cmd := range []string{"logs", "diagnose"} {
+		_, stderr, err := execute(t, cmd, "20260927-100000-abcd")
+		if err != nil || strings.Count(stderr, "log isolation") != 1 || !strings.Contains(stderr, "_Default") {
+			t.Fatalf("%s with a view: stderr %q, %v", cmd, stderr, err)
+		}
+	}
+}
