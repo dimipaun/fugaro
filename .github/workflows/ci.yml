@@ -22,6 +22,8 @@ jobs:
       - run: go vet -tags docker ./...
       # Type-checks the live tests (never runs them), so they can't rot.
       - run: go vet -tags live ./...
+      # Type-checks the terraform-tagged tests (the real-terraform ones).
+      - run: go vet -tags terraform ./...
       - run: go test -race ./...
   # Lints and tests the Terraform with a mock provider. No step has cloud
   # credentials: init -backend=false only downloads the provider the lock
@@ -33,6 +35,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: 1.16.4
@@ -52,3 +57,5 @@ jobs:
       - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
       # The Trivy image images/scan.sh pins, over the Terraform.
       - run: sh deploy/terraform/scan.sh
+      # The tf wrapper's tests against a real terraform binary.
+      - run: go test -tags terraform ./internal/infra/...
