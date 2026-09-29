@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -42,13 +43,23 @@ import (
 //   - Error bodies carry code, status and message, but no errors[].reason
 //     (real GCS answers a failed precondition with reason "conditionNotMet").
 //   - Listings are a single page: pageToken and maxResults are ignored.
+//   - A bucket's get and getIamPolicy answer only for a bucket AddBucket
+//     made; objects can be stored in any bucket without it.
 type GCS struct {
 	*Server
 	mu      sync.Mutex
 	gen     int64
 	buckets map[string]map[string]*object
+	meta    map[string]*bucketMeta
 	uploads map[string]*upload
 	nextID  int
+}
+
+// bucketMeta is what a bucket's get and getIamPolicy report.
+type bucketMeta struct {
+	projectNumber uint64
+	labels        map[string]string
+	policy        []Binding
 }
 
 type object struct {
@@ -70,9 +81,28 @@ type upload struct {
 // NewGCS starts a GCS fake that lives until the test ends.
 func NewGCS(t *testing.T) *GCS {
 	t.Helper()
-	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, uploads: map[string]*upload{}}
+	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{}, uploads: map[string]*upload{}}
 	g.Server = newServer(t, g.handle)
 	return g
+}
+
+// AddBucket makes bucket name exist, in the project numbered
+// projectNumber, carrying labels.
+func (g *GCS) AddBucket(name string, projectNumber uint64, labels map[string]string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.meta[name] = &bucketMeta{projectNumber: projectNumber, labels: maps.Clone(labels)}
+}
+
+// SetBucketPolicy replaces the IAM policy of a bucket AddBucket made.
+func (g *GCS) SetBucketPolicy(name string, bindings []Binding) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	m := g.meta[name]
+	if m == nil {
+		g.t.Fatalf("gcpfake: SetBucketPolicy(%q): no such bucket", name)
+	}
+	m.policy = cloneBindings(bindings)
 }
 
 // Client returns a storage client pointed at the fake. It reads through the
@@ -143,6 +173,10 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	case strings.HasPrefix(r.URL.Path, objPrefix):
 		bucket, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, objPrefix), "/")
+		if (rest == "" || rest == "iam") && r.Method == http.MethodGet {
+			g.bucketGet(w, r, bucket, rest == "iam")
+			return
+		}
 		if rest == "o" && r.Method == http.MethodGet {
 			g.list(w, bucket, q.Get("prefix"), q.Get("delimiter"))
 			return
@@ -164,6 +198,27 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		}
 	}
 	g.unhandled(w, r)
+}
+
+// bucketGet answers a bucket's get, or with iam its getIamPolicy.
+func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, iam bool) {
+	m := g.meta[bucket]
+	if m == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "The specified bucket does not exist.")
+		return
+	}
+	if iam {
+		servePolicy(w, r.URL.Query(), m.policy)
+		return
+	}
+	out := map[string]any{
+		"kind": "storage#bucket", "name": bucket, "id": bucket,
+		"projectNumber": strconv.FormatUint(m.projectNumber, 10),
+	}
+	if len(m.labels) > 0 {
+		out["labels"] = maps.Clone(m.labels)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ifGenerationMatch parses the precondition, nil when absent.

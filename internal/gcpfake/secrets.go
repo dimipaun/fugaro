@@ -16,7 +16,8 @@ import (
 
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
-// " AND "), delete, addVersion and versions list. It has no access call:
+// " AND "), delete, getIamPolicy, addVersion and versions list. It has no
+// access call:
 // Fugaro never reads a value back, so a client that tries fails the test.
 //
 // Known differences from real Secret Manager: the list filter supports only
@@ -40,6 +41,7 @@ type fakeSecret struct {
 	labels   map[string]string
 	created  time.Time
 	versions [][]byte
+	policy   []Binding
 }
 
 var (
@@ -47,6 +49,7 @@ var (
 	secretsPathRE  = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets$`)
 	addVersionRE   = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):addVersion$`)
 	versionsPathRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions$`)
+	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
 	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
 
@@ -71,11 +74,26 @@ func (f *Secrets) Latest(id string) []byte {
 }
 
 // Seed creates secret id with labels and one version holding value, as
-// another tool would.
+// another tool would. A nil value creates the secret with no version.
 func (f *Secrets) Seed(id string, labels map[string]string, value []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.secrets[id] = &fakeSecret{labels: maps.Clone(labels), created: time.Now(), versions: [][]byte{append([]byte(nil), value...)}}
+	s := &fakeSecret{labels: maps.Clone(labels), created: time.Now()}
+	if value != nil {
+		s.versions = [][]byte{append([]byte(nil), value...)}
+	}
+	f.secrets[id] = s
+}
+
+// SetPolicy replaces the IAM policy of secret id, which must exist.
+func (f *Secrets) SetPolicy(id string, bindings []Binding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := f.secrets[id]
+	if s == nil {
+		f.t.Fatalf("gcpfake: SetPolicy(%q): no such secret", id)
+	}
+	s.policy = cloneBindings(bindings)
 }
 
 func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -94,6 +112,14 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		writeJSON(w, http.StatusOK, s.json(m[1], m[2]))
+	case r.Method == http.MethodGet && secretPolicyRE.MatchString(p):
+		m := secretPolicyRE.FindStringSubmatch(p)
+		s := f.secrets[m[2]]
+		if s == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+m[2]+"] not found.")
+			return
+		}
+		servePolicy(w, r.URL.Query(), s.policy)
 	case r.Method == http.MethodDelete && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		if f.secrets[m[2]] == nil {
