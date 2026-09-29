@@ -1,2 +1,8 @@
 /dist/
 /fugaro
+# A local terraform init or test run under deploy/terraform. Set TF_DATA_DIR
+# outside the tree instead: go:embed doesn't read .gitignore, and a
+# .terraform/ there would put provider binaries in the fugaro binary.
+/deploy/terraform/**/.terraform/
+/deploy/terraform/**/*.tfstate
+/deploy/terraform/**/*.tfstate.*

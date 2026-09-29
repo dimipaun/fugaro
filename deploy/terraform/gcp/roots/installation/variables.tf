@@ -87,11 +87,10 @@ variable "alert_email" {
 
 variable "registry_cleanup" {
   type = object({
-    enabled        = optional(bool, true)
-    dry_run        = optional(bool, true)
-    untagged_days  = optional(number, 14)
-    candidate_days = optional(number, 2)
-    keep_versions  = optional(number, 3)
+    enabled       = optional(bool, true)
+    dry_run       = optional(bool, true)
+    untagged_days = optional(number, 14)
+    keep_versions = optional(number, 3)
   })
   default  = {}
   nullable = false
