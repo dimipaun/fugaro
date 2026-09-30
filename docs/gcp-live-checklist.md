@@ -261,8 +261,8 @@ writes, with your own credential):**
    The test reads the file back before launching, and fails at once, at no
    cost, if `followup.trusted` is empty.
 
-**⚠ CONFIRM** Then run it (it spends money and opens, declines and deletes
-a PR in the sandbox):
+**⚠ CONFIRM** Then run it (it spends money, and opens and declines
+a PR in the sandbox and deletes its branch):
 
 ```bash
 FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
@@ -312,6 +312,11 @@ What it does and checks:
   launches (it can't see the PR's state); the run ends `infra_error` with
   "PR #<n> is closed" (a `FACT`), and the PR's comments are exactly those
   from before.
+- **Timing.** A realistic run takes about 65 minutes: two runs of about 17
+  minutes each, your comments, the refused run's minute, and the build. The
+  waits are at most 30 minutes per run, 20 for the comments and 10 for the
+  refused run, 90 in all, under the `-timeout 100m` (an abort skips the
+  cleanup; run the sweep then).
 - **Cleanup**, as for check 13: every open PR from the branch declined, the
   branch deleted, the three runs' objects deleted. The sweep covers the
   batch, follow-ups included: it deletes a follow-up's PR branch when that

@@ -22,7 +22,7 @@ A follow-up acts on two things: the instructions you pass, and the PR's comments
 
 - **Trusted** means that the author's account ID is listed under `followup.trusted` in `fugaro.yaml` **on the base branch**, as the base branch is when the run starts. The copy of `fugaro.yaml` on the PR's own branch doesn't count, so a PR can't widen its own list. On GitHub the author must also be the repository's owner, a member or a collaborator.
 - **The IDs are account IDs, not names.** On GitHub a numeric user ID (`gh api users/<login> --jq .id`). On Bitbucket an `account_id`. Fugaro's documentation, ["Finding an account ID for followup.trusted"](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md#finding-an-account-id-for-followuptrusted), shows how to find one.
-- **Check the list when it matters.** If the user expects someone's comments to count, read the base branch's list: `git fetch origin <base>` and then `git show origin/<base>:fugaro.yaml`. `<base>` is the PR's target branch: `git.base_branch` in the checkout's `fugaro.yaml`, or the local config's `base_branch` for the repository (a follow-up keeps the base branch its first run used). When an ID is missing, tell the user. Adding one is a normal pull request to the base branch, reviewed like any change, because a trusted commenter steers an agent that holds the repository's secrets. With an empty or missing list, the run acts on your instructions alone.
+- **Check the list when it matters.** If the user expects someone's comments to count, read the base branch's list: `git fetch origin <base>` and then `git show origin/<base>:fugaro.yaml`. `<base>` is the `base_branch` of the rows `fugaro ls --pr N --json` prints (step 2): the base branch the follow-up will use. For rows from older runs without it, use `git.base_branch` in the checkout's `fugaro.yaml`. When an ID is missing, tell the user. Adding one is a normal pull request to the base branch, reviewed like any change, because a trusted commenter steers an agent that holds the repository's secrets. With an empty or missing list, the run acts on your instructions alone.
 - **Public repositories are refused** unless the base branch's `fugaro.yaml` sets `followup.allow_public: true`. That is the user's decision. Don't suggest it.
 - **Fugaro's own comments** (its reports and notes) are never fed back to the agent. Neither are comments by the PR's author, which is Fugaro's own account.
 
@@ -93,6 +93,7 @@ The CLI exits 1 and says why. Don't work around a refusal. Tell the user what it
 
 | The CLI says | What to do |
 |---|---|
+| `a launch of … is still in flight` | Another launch of this run ID may still be starting. This is the unknown-outcome case below: wait a few minutes, or cancel it, then repeat the same command. |
 | a run on the PR `is still` launching, pending or running | Wait for it to finish (`fugaro ls --pr N --repo <owner/name>`), or cancel it with `fugaro cancel <run>` if the user wants to. |
 | `not a Fugaro PR in this repository, or its runs are older than 90 days` | Offer a new run with the task instead. |
 | `no run on PR #N has pushed` | The PR's runs never pushed anything. Offer a new run. |
@@ -100,6 +101,8 @@ The CLI exits 1 and says why. Don't work around a refusal. Tell the user what it
 | `can't be read`, or the runs `disagree on its branch` | The PR's run records are unusable. Show the user `fugaro diagnose <run>` of the run named, and stop. |
 | `is not a Fugaro branch`, or `records branch …; follow it up by hand` | The PR's branch isn't the one a Fugaro run opened. Tell the user; offer a new run. |
 | `has no task.json, so its base branch is unknown` | The last run's task is gone. Offer a new run. |
+| `ran on ref …, which is not a branch name` | The PR's runs were launched at a tag or a commit, so a follow-up has no base branch to read its configuration from. Offer a new run. |
+| `continues X, but PR #N is on Y` | The PR moved to another branch since this follow-up was stored. Launch again with a new run ID. |
 | `run ID <id> already holds a different task` | You reused a run ID for another follow-up. Choose a new ID. |
 | `has updated PR #N since; start a new follow-up` | Another run updated the PR after this one was stored. Launch again with a new run ID. |
 | anything else | Show the user the message, and `fugaro diagnose <run>` of any run it names, and stop. |
