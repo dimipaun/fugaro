@@ -3,12 +3,16 @@ package bitbucket
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpfixture"
@@ -351,22 +355,357 @@ func TestFindLowercasesRepository(t *testing.T) {
 	}
 }
 
-// TestEnsureByNumberNeverFindsOrCreates: until updates by number are
-// implemented, one fails before any request, so it can never fall through
-// to find-or-create and open a second pull request.
-func TestEnsureByNumberNeverFindsOrCreates(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		http.Error(w, "no", http.StatusTeapot)
-	}))
-	t.Cleanup(srv.Close)
-	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "bb-token-1234", BaseURL: srv.URL + "/2.0"})
+// apiTransport sends every request to srv, whatever its host, so a
+// Provider can keep Bitbucket's real API root (and fixtures can hold its
+// real absolute "next" URLs) while a fixture server answers.
+type apiTransport struct{ srv *httptest.Server }
+
+func (a apiTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	u, _ := url.Parse(a.srv.URL)
+	r = r.Clone(r.Context())
+	r.URL.Scheme, r.URL.Host, r.Host = u.Scheme, u.Host, u.Host
+	return http.DefaultTransport.RoundTrip(r)
+}
+
+// openAPI is open with DefaultBaseURL as the API root, for fixtures whose
+// bodies carry absolute next-page URLs on api.bitbucket.org.
+func openAPI(t *testing.T, fixture string, warn func(string)) *Provider {
+	t.Helper()
+	srv := httpfixture.Serve(t, filepath.Join("testdata", fixture))
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "bb-token-1234",
+		HTTP: &http.Client{Transport: apiTransport{srv.Server}}, Warn: warn})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return p
+}
+
+func TestBitbucketRepositoryVisibility(t *testing.T) {
+	info, err := open(t, "repo_private.json").Repository(ctx)
+	if err != nil || !info.Private {
+		t.Fatalf("private repository = %+v, %v", info, err)
+	}
+	p := open(t, "repo_public.json")
+	if info, err := p.Repository(ctx); err != nil || info.Private {
+		t.Fatalf("public repository = %+v, %v", info, err)
+	}
+	// A response without is_private is never taken for a private
+	// repository.
+	if info, err := p.Repository(ctx); err == nil || !strings.Contains(err.Error(), "is_private") {
+		t.Fatalf("repository without is_private = %+v, %v; want an error", info, err)
+	}
+}
+
+func TestBitbucketPullRequestOpen(t *testing.T) {
+	p := open(t, "pull_open.json")
+	got, err := p.PullRequest(ctx, 12)
+	want := gitprov.PRInfo{Number: 12, URL: "https://bitbucket.org/acme/web/pull-requests/12", State: gitprov.PROpen, Draft: true,
+		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: "0123456789ab"}
+	if err != nil || got != want {
+		t.Fatalf("PullRequest = %+v, %v\nwant %+v", got, err, want)
+	}
+	if !gitprov.SameCommit(got.HeadSHA, "0123456789abcdef0123456789abcdef01234567") {
+		t.Fatalf("head %s does not match the full commit", got.HeadSHA)
+	}
+	// A deleted author account, a deleted source repository and no source
+	// commit leave those fields empty (so the author is nobody's, and the
+	// head matches no commit), never a guess.
+	got, err = p.PullRequest(ctx, 14)
+	if err != nil || got.AuthorID != "" || got.SourceRepo != "" || got.HeadSHA != "" || got.State != gitprov.PROpen {
+		t.Fatalf("PullRequest(14) = %+v, %v", got, err)
+	}
+	// A fork's source repository is reported as the fork's full name.
+	if got, err = p.PullRequest(ctx, 15); err != nil || got.SourceRepo != "someone/web-fork" {
+		t.Fatalf("PullRequest(15) = %+v, %v", got, err)
+	}
+}
+
+// TestBitbucketPullRequestWrongID: a response naming another pull request
+// than the one asked for is an error, and an update by number never
+// writes to it.
+func TestBitbucketPullRequestWrongID(t *testing.T) {
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			puts++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id": 13, "state": "OPEN", "title": "Other", "draft": true, "source": {"branch": {"name": %q}}}`, branchName)
+	}))
+	defer srv.Close()
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.PullRequest(ctx, 12); err == nil {
+		t.Fatalf("PullRequest(12) = %+v, want an error", got)
+	}
 	s := spec(false)
 	s.Number = 12
-	if pr, err := p.EnsurePR(ctx, s); err == nil || pr.Number != 0 {
-		t.Fatalf("EnsurePR by number = %+v, %v", pr, err)
+	if pr, err := p.EnsurePR(ctx, s); err == nil || puts != 0 {
+		t.Fatalf("EnsurePR by number = %+v, %v, %d writes", pr, err, puts)
+	}
+}
+
+func TestBitbucketPullRequestMerged(t *testing.T) {
+	got, err := open(t, "pull_merged.json").PullRequest(ctx, 12)
+	if err != nil || got.State != gitprov.PRMerged || got.Number != 12 {
+		t.Fatalf("PullRequest = %+v, %v", got, err)
+	}
+}
+
+// TestBitbucketPullRequestDeclined covers both of Bitbucket's closed,
+// unmerged states: DECLINED and SUPERSEDED.
+func TestBitbucketPullRequestDeclined(t *testing.T) {
+	p := open(t, "pull_declined.json")
+	for _, n := range []int{12, 13} {
+		got, err := p.PullRequest(ctx, n)
+		if err != nil || got.State != gitprov.PRClosed || got.Number != n {
+			t.Fatalf("PullRequest(%d) = %+v, %v", n, got, err)
+		}
+	}
+}
+
+// TestBitbucketPullRequestUnknownState: a state the adapter doesn't know,
+// or none, is an error, never guessed to be open.
+func TestBitbucketPullRequestUnknownState(t *testing.T) {
+	for _, body := range []string{`{"id": 12, "state": "REOPENED"}`, `{"id": 12}`} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(body))
+		}))
+		p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, err := p.PullRequest(ctx, 12); err == nil {
+			t.Errorf("PullRequest over %s = %+v, want an error", body, got)
+		}
+		srv.Close()
+	}
+	p, _ := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: "http://127.0.0.1:1/2.0"})
+	if _, err := p.PullRequest(ctx, 0); err == nil {
+		t.Error("PullRequest(0) succeeded")
+	}
+}
+
+const (
+	aliceID = "557058:00000000-0000-0000-0000-000000000001"
+	bobID   = "557058:00000000-0000-0000-0000-000000000002"
+	botID   = "712020:00000000-0000-4000-8000-00000000b07e"
+)
+
+func commentURL(id int) string {
+	return fmt.Sprintf("https://bitbucket.org/acme/web/pull-requests/12/_/diff#comment-%d", id)
+}
+
+func at(s string) time.Time {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+// TestBitbucketComments covers a resolved inline thread with a reply (the
+// resolution is on the thread's first comment), an unresolved, outdated
+// inline thread whose reply carries no inline field of its own, a deleted
+// comment, a general comment, and a pending one (unpublished, so left
+// out), returned oldest first.
+func TestBitbucketComments(t *testing.T) {
+	got, err := open(t, "comments.json").Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := gitprov.Comment{Collaborator: true, SelfKnown: true}
+	mk := func(id int, kind gitprov.CommentKind, author, authorID, body, created string, f func(*gitprov.Comment)) gitprov.Comment {
+		c := base
+		c.ID, c.Kind, c.Author, c.AuthorID, c.Body, c.CreatedAt, c.URL = fmt.Sprint(id), kind, author, authorID, body, at(created), commentURL(id)
+		if f != nil {
+			f(&c)
+		}
+		return c
+	}
+	want := []gitprov.Comment{
+		mk(101, gitprov.CommentInline, "Alice", aliceID, "Rename this.", "2026-09-20T10:00:00.123456Z", func(c *gitprov.Comment) {
+			c.Resolved, c.Path, c.Line = true, "src/a.go", 10
+		}),
+		mk(102, gitprov.CommentInline, "Bob", bobID, "Done.", "2026-09-20T10:30:00Z", func(c *gitprov.Comment) {
+			c.Resolved, c.Path, c.Line = true, "src/a.go", 10
+		}),
+		mk(103, gitprov.CommentInline, "Alice", aliceID, "Handle nil here.", "2026-09-20T11:00:00Z", func(c *gitprov.Comment) {
+			c.Outdated, c.Path, c.Line = true, "src/b.go", 7
+		}),
+		mk(106, gitprov.CommentInline, "Bob", bobID, "Agreed.", "2026-09-20T11:30:00Z", func(c *gitprov.Comment) {
+			c.Outdated, c.Path, c.Line = true, "src/b.go", 7
+		}),
+		mk(104, gitprov.CommentGeneral, "Alice", aliceID, "", "2026-09-20T12:00:00Z", func(c *gitprov.Comment) { c.Deleted = true }),
+		mk(105, gitprov.CommentGeneral, "Alice", aliceID, "Please add tests.", "2026-09-20T13:00:00Z", nil),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d comments, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if !reflect.DeepEqual(got[i], want[i]) {
+			t.Errorf("comment %d:\n got %+v\nwant %+v", i, got[i], want[i])
+		}
+		if got[i].Kind == gitprov.CommentReview {
+			t.Errorf("comment %s is a review summary: Bitbucket has none", got[i].ID)
+		}
+	}
+}
+
+func TestBitbucketCommentsPaged(t *testing.T) {
+	got, err := openAPI(t, "comments_paged.json", nil).Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bodies []string
+	for _, c := range got {
+		bodies = append(bodies, c.Body)
+	}
+	if strings.Join(bodies, ",") != "one,two,three" {
+		t.Fatalf("bodies = %q", bodies)
+	}
+}
+
+// TestBitbucketCommentsRefusesForeignNext: a next page on another host is
+// never requested (the fixture has no exchange for it), since the request
+// would carry the token there.
+func TestBitbucketCommentsRefusesForeignNext(t *testing.T) {
+	got, err := openAPI(t, "comments_foreign_next.json", nil).Comments(ctx, 12)
+	if err == nil || !strings.Contains(err.Error(), "left the API host") {
+		t.Fatalf("Comments = %+v, %v; want a refusal", got, err)
+	}
+	if strings.Contains(err.Error(), "bb-token-1234") {
+		t.Fatalf("the error holds the token: %v", err)
+	}
+}
+
+// TestBitbucketCommentsPageCap: a listing that never ends is refused after
+// 20 pages rather than read without end.
+func TestBitbucketCommentsPageCap(t *testing.T) {
+	var pages int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/2.0/user" {
+			w.Write([]byte(`{"type": "app_user", "uuid": "{00000000-0000-4000-8000-00000000b07e}"}`))
+			return
+		}
+		pages++
+		fmt.Fprintf(w, `{"values": [], "next": "http://%s/2.0/repositories/acme/web/pullrequests/12/comments?pagelen=100&page=%d"}`, r.Host, pages+1)
+	}))
+	defer srv.Close()
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Comments(ctx, 12); err == nil || !strings.Contains(err.Error(), "more than 20 pages") {
+		t.Fatalf("err = %v", err)
+	}
+	if pages != 20 {
+		t.Fatalf("served %d pages, want 20", pages)
+	}
+}
+
+// TestBitbucketCommentsSelf: a comment is Self when its user's uuid is the
+// token's user's (GET /user, read once per Provider), and only then: the
+// same account_id or display name under another uuid is not.
+func TestBitbucketCommentsSelf(t *testing.T) {
+	p := open(t, "comments_self.json")
+	got, err := p.Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := map[string]bool{}
+	for _, c := range got {
+		if !c.SelfKnown {
+			t.Errorf("comment %s: SelfKnown false", c.ID)
+		}
+		self[c.ID] = c.Self
+	}
+	if want := map[string]bool{"131": true, "132": false, "133": false, "134": false}; !reflect.DeepEqual(self, want) {
+		t.Fatalf("self = %v, want %v", self, want)
+	}
+	// A deleted account (user null) is nobody: no ID, so never trusted.
+	if last := got[len(got)-1]; last.ID != "134" || last.AuthorID != "" || last.Author != "" {
+		t.Fatalf("the comment by a deleted account = %+v", last)
+	}
+	if got[0].AuthorID != botID {
+		t.Fatalf("the report's AuthorID = %q", got[0].AuthorID)
+	}
+	// The second listing reuses the identity: the fixture has one GET /user.
+	if _, err := p.Comments(ctx, 12); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestBitbucketCommentsUserForbidden: a token that may not read GET /user
+// leaves every comment's SelfKnown false, with one warning, and the
+// lookup isn't tried again.
+func TestBitbucketCommentsUserForbidden(t *testing.T) {
+	var warnings []string
+	p := open(t, "user_forbidden.json")
+	p.o.Warn = func(m string) { warnings = append(warnings, m) }
+	got, err := p.Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Self || got[0].SelfKnown || got[0].AuthorID != botID {
+		t.Fatalf("comments = %+v", got)
+	}
+	if _, err := p.Comments(ctx, 12); err != nil {
+		t.Fatal(err)
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "GET /user") || !strings.Contains(warnings[0], "HTTP 403") {
+		t.Fatalf("warnings = %q, want one about GET /user", warnings)
+	}
+}
+
+// TestBitbucketCommentsUserTransient: a lookup that fails for a reason
+// other than the API's answer about the token (a 5xx, a network error)
+// fails the listing instead of reading every comment as not Fugaro's, and
+// is tried again on the next listing.
+func TestBitbucketCommentsUserTransient(t *testing.T) {
+	var warnings []string
+	p := open(t, "user_transient.json")
+	p.o.Warn = func(m string) { warnings = append(warnings, m) }
+	if got, err := p.Comments(ctx, 12); err == nil || !strings.Contains(err.Error(), "HTTP 503") {
+		t.Fatalf("Comments = %+v, %v; want the 503", got, err)
+	}
+	got, err := p.Comments(ctx, 12)
+	if err != nil || len(got) != 1 || !got[0].Self || !got[0].SelfKnown {
+		t.Fatalf("Comments after the retry = %+v, %v", got, err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("warnings = %q", warnings)
+	}
+}
+
+// TestBitbucketEnsureByNumber updates pull request 12's draft state only:
+// the fixture holds no lookup by branch and no POST …/pullrequests, so
+// either would fail the test.
+func TestBitbucketEnsureByNumber(t *testing.T) {
+	s := spec(false)
+	s.Number = 12
+	s.Title, s.Body = "A new title that must not be sent", "A new body that must not be sent"
+	pr, err := open(t, "ensure_by_number.json").EnsurePR(ctx, s)
+	if err != nil || pr != (gitprov.PR{Number: 12, URL: "https://bitbucket.org/acme/web/pull-requests/12"}) {
+		t.Fatalf("pr = %+v, %v", pr, err)
+	}
+}
+
+// TestBitbucketEnsureByNumberDeclined: a declined pull request, or one on
+// another branch, or a merged one, is never updated or replaced:
+// ErrPRNotOpen, with the PR.
+func TestBitbucketEnsureByNumberDeclined(t *testing.T) {
+	p := open(t, "ensure_by_number_declined.json")
+	for _, n := range []int{12, 13, 14} {
+		s := spec(false)
+		s.Number = n
+		pr, err := p.EnsurePR(ctx, s)
+		if !errors.Is(err, gitprov.ErrPRNotOpen) || pr.Number != n || pr.URL == "" {
+			t.Fatalf("EnsurePR(#%d) = %+v, %v; want ErrPRNotOpen with the PR", n, pr, err)
+		}
 	}
 }
