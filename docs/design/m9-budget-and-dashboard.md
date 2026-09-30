@@ -177,7 +177,7 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
   2. **inside a checkout, the `project:` of its `fugaro.yaml`**, which must have a project config. **A checkout naming a project with no config is refused, never guessed:** "this checkout belongs to project aurora; there is no project config for aurora (run `fugaro init --config-only --gcp-project <id>`)". A `--project` or `FUGARO_PROJECT` naming a different project is refused too;
   3. outside a checkout, `--project <name>`, else `FUGARO_PROJECT`;
   4. exactly one project config exists: that one;
-  5. no `projects/` directory: the old single `config.yaml`, during the transition (§2.6).
+  5. no project config at all: refuse (exit 1) with "no project config; see `fugaro init --config-only`". The old single `config.yaml` isn't read (D18).
 - **No `fugaro use`, no `--profile`, no `FUGARO_PROFILE`** (D16, D17). Remembered state that silently points later commands at a project is the failure we're preventing. Inside a checkout the repository decides. Outside one, `--project` or `FUGARO_PROJECT` is explicit, and a shell alias or `direnv` covers habitual use.
 - **Refusing ambiguity.** Outside a checkout, with several project configs and none named, commands refuse (exit 1) and list the projects.
 - **You always see the project.**
@@ -201,14 +201,13 @@ git: …
 
 - **This isn't a cloud resource path or a GCP project ID,** which is why it doesn't conflict with v1 §5.1's rule. It is the logical name that `fugaro init --name` set.
 - **Enforcement.**
-  - **`fugaro init --repo`** requires it from M9 on, and refuses when it differs from the installation's `project_name`. A repository onboarded before M9 gets a clear message on its next `init --repo`: "add `project: aurora` to fugaro.yaml on <base> through a PR, then run init --repo again".
-  - **`fugaro validate`** checks the form, and **warns** when the key is absent until then.
+  - **`fugaro init --repo` and `fugaro validate`** require it, and `init --repo` refuses when it differs from the installation's `project_name`. The error: "fugaro.yaml has no `project:`; add `project: aurora`".
   - **The schema, the config loader, `fugaro config example` and the `fugaro:onboard` skill** all learn it. The skill takes the name from the selected project config, and asks when there isn't one. It never invents a name.
-- **The runner checks it at bootstrap** (step 4, before the lock and before any remote change). When the job carries the project name (`FUGARO_PROJECT` on a job that also has `FUGARO_GCP_PROJECT`, §2.6), the runner reads `project:` from the **base branch's** `fugaro.yaml` (`git show origin/<base>:fugaro.yaml`; for a follow-up, that's the configuration it reads anyway). For a first run at another ref, it also checks the ref's `fugaro.yaml`. It refuses when the key is missing or different:
+- **The runner checks it at bootstrap** (step 4, before the lock and before any remote change). Every job carries `FUGARO_PROJECT` (the name) and `FUGARO_GCP_PROJECT` (§2.6). A job missing either fails at bootstrap with "job environment lacks FUGARO_PROJECT; run fugaro init --repo". The runner reads `project:` from the **base branch's** `fugaro.yaml` (`git show origin/<base>:fugaro.yaml`; for a follow-up, that's the configuration it reads anyway). For a first run at another ref, it also checks the ref's `fugaro.yaml`. It refuses when the key is missing or different:
   - status `infra_error`, outcome `none`, exit 2;
   - reason: "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora" (or "… names no project").
 
-  This catches repositories that were copied, forked, mis-onboarded, or pointed at the wrong project's jobs. Jobs deployed before M9 (no variable) skip the check.
+  This catches repositories that were copied, forked, mis-onboarded, or pointed at the wrong project's jobs.
 - **In the budget data** (§6.2):
   - `/fugaro/project` holds the name, and the launcher mints it into each run token as the claim `fp`. The rules require `auth.token.fp == root.child('fugaro/project').val()` on every write. That's a defensive check: the FP is already per project, so a token from another project's signer isn't valid there anyway.
   - Firestore documents carry `project`.
@@ -237,23 +236,9 @@ Freeing *project* for the Fugaro project means renaming everything that means th
 | Docs using `--project` or `FUGARO_PROJECT` | Updated | `docs/gcp-setup.md` and `docs/gcp-live-checklist.md` (13 uses of `--project`), v1.md §3.4, §5.4 and §9.1, and the plugin skills (none use `--project` today; the new project header is mentioned in `fugaro:launch` and `fugaro:status`). **The M4 and M5 plans are left as they are:** they are historical records |
 | Terraform variables `project` (the GCP ID) in `deploy/terraform/gcp/{modules,roots}/*/variables.tf` | **Unchanged**, a deliberate exception. `project` is the Google provider's own convention, and a module input that external Terraform users consume. The name arrives as a new variable, `fugaro_project` | The modules and roots |
 
-**Rolling out the environment swap.** `FUGARO_PROJECT` changes meaning on jobs that are already deployed, so the order matters:
+**No transition layer** (D18). The runner reads the GCP ID only from `FUGARO_GCP_PROJECT`, and the name only from `FUGARO_PROJECT`. The local config decodes strictly, so an old `project:` key is an unknown-field error: "`project:` is now `gcp_project:`; see §13.1".
 
-1. **Release N** of the runner (and the check job's binary) accepts both shapes.
-   - A job with `FUGARO_GCP_PROJECT` is new style: that variable is the GCP ID, and `FUGARO_PROJECT` is the name.
-   - A job without it is old style: `FUGARO_PROJECT` is the GCP ID, and there's no name, so the project check (§2.5) is skipped.
-
-   The presence of `FUGARO_GCP_PROJECT` is the only switch; there's no guessing from the value.
-2. **Images are rebuilt** so they carry release N's runner (`fugaro image build`, or the daily check).
-3. **`fugaro init --repo` moves a workflow's job to the new shape only when its image record's `fugaro_version` is N or later.** An old runner reading the new shape would take the name for the GCP ID and write wrong execution names. Until then it keeps the old shape and prints what to rebuild. The check job follows the same rule.
-4. **Release N+2** drops the old shape. A job still on it then fails at bootstrap with "job environment predates fugaro N; run fugaro init --repo".
-
-**Transition rules for the local config and the CLI:**
-
-- **An old local config** (`project:` and no `name:`) keeps working for one release. It is read as `gcp_project`, with the name defaulting to the GCP ID, and each run prints one warning: "run `fugaro init --config-only --name <slug>`". Once the cloud has a `project_name`, a config whose default name disagrees with it is refused, as any mismatch is.
-- **`--project <value>` that names no project:**
-  - if it equals a known GCP ID (a project config's `gcp_project`, or the old config's `project`), exit 1 with "`--project` takes a project name; for the GCP project use `--gcp-project`";
-  - otherwise exit 1 with the list of project names.
+- **`--project <value>` that names no project** exits 1, listing the project names and a one-line hint: "(the GCP project is `--gcp-project`)".
 - **`--gcp-project` that disagrees with the selected project's `gcp_project` is refused, with no force flag.** Its old use, pointing one config at another GCP project, now means acting on a *different Fugaro project* through the wrong project's config: exactly the confusion D16 and D17 exist to prevent. The legitimate uses remain:
   - **creating** a project config: `fugaro init` and `init --config-only` with no config yet;
   - agreeing with the selected config, which does nothing.
@@ -434,7 +419,6 @@ The local config's `budget.mode`:
   - `status` gains `halted`;
   - a new `halt: {reason, scope, at, detail}`, where `reason` is one of `kill_switch`, `run_cap`, `repo_daily_cap`, `global_daily_cap`, `no_cap`, `token_cap`, `budget_unavailable` or `budget_token_expired`;
   - `cost` gains `model_source: gateway|claude-code`, `model_by` and `unreconciled`.
-- **Older CLIs** show `halted` as a terminal status: `runview` passes through any non-running status and marks it terminal.
 - **Launch pre-check.** `fugaro run` refuses (exit 1) when the repository is killed, has no cap, or has less than $0.25 of daily headroom. When it can't read RTDB it exits 2, since it fails closed. `--no-budget-check` skips only this client-side check.
 
 ### 5.10 How the kill switch reaches a run
@@ -669,7 +653,6 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - **After the apply,** init deploys the RTDB rules and the mark.
   - **`--budget-mode observe|enforce`** sets the mode. `--budget-admin` repeats, and fills `terraform.budget_admins`.
   - **The guard** adds the database and instance to its `prevent_destroy` list.
-  - **`init --repo`** refuses `enforce` for a workflow whose image record names a pre-M9 runner.
 - **`fugaro init --firebase <fp-id>`** runs three applies, each with its own plan and confirmation:
   1. **The installation root,** which creates the history account, so the account exists before it is granted anything.
   2. **The Firebase root,** then the RTDB rules deployment and the mark.
@@ -816,17 +799,42 @@ The attacker is a compromised agent in run A. It runs as the same user as the ru
 | Price table stale | Check dates, a warning after 90 days, and the Claude Code cross-check |
 | Watch loses its stream | A header warning and reconnection. Nothing in the cloud is affected |
 
-## 13. Backward compatibility and rollout
+## 13. Rollout: no compatibility layer
 
-- **Off by default.** With no `budget:` block, no gateway runs and no token is minted. The agent's environment is exactly as today, which a golden test pins. `watch` degrades; `budget` and `report` explain how to set it up.
-- **Additive schemas.** `result.json` stays at version 1. The new `fugaro.yaml` keys are optional. Older runners decode `fugaro.yaml` strictly and so refuse unknown keys: **repositories should adopt the new keys only after their images carry the M9 runner.** `init --repo` refuses `enforce` for a pre-M9 image.
-- **The rollout.**
-  1. Create the FP and link billing (§6.0). Run `fugaro init --firebase <fp-id> --budget-mode observe`.
+**M9 carries no backward compatibility, by design** (D18). Fugaro is pre-release, and its only deployment is the user's own project: a sandbox repository and one web application repository in one GCP project. Adjusting those two once costs far less than dual-shape code, transition releases and the tests that would pin them. So:
+
+- **The runner and CLI understand only the new shapes.** Strict decoding rejects old local configs, job environments and `fugaro.yaml` files, each with a message that points at §13.1.
+- **The additions to `result.json` are optional fields.** Records already in the bucket still decode as they are, with no special code.
+- **The budget modes are features, not compatibility.** `off` (no `budget:` block) runs without the gateway or Firebase, and `observe` calibrates caps. Fail-closed behaviour (D14) is unchanged.
+- **Budget rollout,** once M9b ships:
+  1. Create the FP and link billing (§6.0), then run `fugaro init --firebase <fp-id> --budget-mode observe`.
   2. Set generous caps.
-  3. Rebuild the images.
-  4. Watch a week of `report --by model` and `budget show`.
-  5. Set the real caps and `enforce`.
-- **Rollback.** Set `--budget-mode off` and re-init. The data is kept (`prevent_destroy`).
+  3. Watch a week of `report --by model` and `budget show`.
+  4. Set the real caps and switch to `enforce`.
+- **Rollback.** `--budget-mode off` and re-init. The data is kept (`prevent_destroy`).
+
+### 13.1 One-time migration of the existing installs
+
+This lands with task 0. The controller runs it, and takes the user's confirmation before each step that changes the cloud or a repository. **Freeze launches for the duration.** Between an image rebuild and the matching `init --repo`, a new runner meets an old job environment. It refuses at bootstrap without writing anything, but the run is wasted.
+
+1. **The local config, by hand.** This is the simplest route: the new binary can't read the old file, and the cloud has no name yet.
+   - `mkdir -p ~/.config/fugaro/projects`.
+   - Copy `config.yaml` to `projects/<slug>.yaml`.
+   - Rename its `project:` key to `gcp_project:`, add `name: <slug>`, and keep the old file as `config.yaml.bak`.
+2. **`project: <slug>` in each repository's `fugaro.yaml`,** on its base branch. `init --repo` needs it, so this comes before the re-init.
+   - **The sandbox:** the controller commits it, as before, with the user's OK.
+   - **The web application repository:** the user's own PR, merged.
+3. **The base image.** Build and push the new base with the operator's image scripts, into `fugaro-base`, and set `base_image`.
+4. **The installation.** Run `fugaro init --name <slug>` against the project. It sets the canonical name (output, bucket label, `fugaro_project` tfvar) and rewrites `projects/<slug>.yaml` from the outputs. Check that its `name:` is unchanged.
+5. **Each repository, from its checkout:** `fugaro image build`, which builds the derived image on the new base, then `fugaro init --repo`. That writes the new job environment (`FUGARO_PROJECT=<slug>`, `FUGARO_GCP_PROJECT=<id>`) and points the jobs at the new `:latest`. The check job follows.
+6. **Verification.**
+   - `fugaro ls` prints `project: <slug> (GCP <id>)`, and both repositories' runs are listed.
+   - `gcloud run jobs describe` on one job of each repository shows the two variables.
+   - The runs bucket carries `fugaro_project=<slug>`.
+   - `fugaro validate` passes in both checkouts.
+   - Outside a checkout with no `--project`, a command refuses when there are several project configs, and works when there's exactly one.
+   - A sandbox run ends with a ready PR (live check 13).
+   - The web application repository gets a real run only with the user's go-ahead and task text.
 
 ## 14. Testing strategy
 
@@ -873,12 +881,12 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
 **Prerequisite (before M9a, or as its first task)**
 
-0. Project identity, project configs and the D17 renames (§2.4–§2.6, D16, D17). **L**
+0. Project identity, project configs and the D17 renames (§2.4–§2.6, D16–D18). **M** (was L before D18 removed the transition layer)
    - The canonical name: `init --name`, the output, the bucket label, `FUGARO_PROJECT` (the name), and the immutability checks.
-   - `project:` in `fugaro.yaml`: the schema, loader, `validate` warning, example and onboard skill, and the requirement in `init --repo`.
+   - `project:` in `fugaro.yaml`, required: the schema, loader, `validate`, example and onboard skill, and `init --repo`.
    - The runner's base-branch check.
-   - Project configs: `projects/<name>.yaml` with `name:` and `gcp_project:`, the name checked against the cloud, selection from the checkout, `--project` and `FUGARO_PROJECT`, refusing ambiguity, the project header on every command and in `--json`, and migrating the old `config.yaml`.
-   - The D17 renames (§2.6): `--gcp-project`, `gcp_project:`, the environment swap to `FUGARO_GCP_PROJECT` and `FUGARO_PROJECT` with the release N/N+2 rollout gated on the image's `fugaro_version`, `FUGARO_LIVE_GCP_PROJECT`, the Terraform test fixtures and the M4 golden, and the docs (gcp-setup, the live checklist, v1 §3.4, §5.4 and §9.1, the skills).
+   - Project configs: `projects/<name>.yaml` with `name:` and `gcp_project:`, the name checked against the cloud, selection from the checkout, `--project` and `FUGARO_PROJECT`, refusing ambiguity, the project header on every command and in `--json`, and no old-config reading.
+   - The D17 renames (§2.6), a straight replacement with strict decoding: `--gcp-project`, `gcp_project:`, `FUGARO_GCP_PROJECT` and `FUGARO_PROJECT`, `FUGARO_LIVE_GCP_PROJECT`, the Terraform test fixtures and the M4 golden, and the docs (gcp-setup, the live checklist, v1 §3.4, §5.4 and §9.1, the skills).
 
 **M9a: gateway, pinned models, per-run cap, halted (no Firebase)**
 
@@ -916,6 +924,10 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 20. The verify gate before review and `agent.verify_retries`. **M**
 21. Structured findings per round in the final report and `result.json`. **S**
 
+**Last: the one-time migration** (lands with task 0)
+
+22. Migrate the existing installs (§13.1), run by the controller with the user's confirmations: the local config, `project:` in both repositories, the base and derived images, `init --name`, `init --repo`, and verification. **S**
+
 ---
 
 ## 16. Decisions (settled 2026-09-30)
@@ -938,7 +950,8 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D14 | Budget backend unreachable | **Halt after a 3-minute grace, for every auth mode and every budget mode, `observe` included.** Image checks and rebuilds are unaffected | An outage of RTDB or Identity Toolkit stops even `oauth` runs and observe runs. `off` is the only mode that ignores the backend |
 | D15 | The PR flow | **PRs stay opened at finalize. The structured review format goes into the final report** | No draft PR at start, no per-round comments |
 | D16 | Project identity | **Each repository's `fugaro.yaml` names its project (`project: <slug>`)**, required by `init --repo` from M9 on and checked by the runner against the job's `FUGARO_PROJECT`. `fugaro init --name` sets the name once, in the cloud setup; project configs copy it; `fugaro use` is dropped. Renaming is unsupported in M9 | Mistakes can't cross projects. Existing repositories need one PR each, plus `init --repo`. The name is a label, not a boundary |
-| D17 | One word | **"Project" means only the Fugaro project, everywhere.** `--project <name>`, `FUGARO_PROJECT=<name>`, `projects/<name>.yaml` with `name:`; no profiles. The GCP ID becomes `--gcp-project`, `gcp_project:` and `FUGARO_GCP_PROJECT`. Terraform's `project` variable is the one exception | Breaking CLI and config renames, handled by one-release transition rules. An environment swap on deployed jobs, rolled out in order and gated on the image version (§2.6). `--gcp-project` can't override a selected project |
+| D17 | One word | **"Project" means only the Fugaro project, everywhere.** `--project <name>`, `FUGARO_PROJECT=<name>`, `projects/<name>.yaml` with `name:`; no profiles. The GCP ID becomes `--gcp-project`, `gcp_project:` and `FUGARO_GCP_PROJECT`. Terraform's `project` variable is the one exception | Breaking CLI, config and environment renames, applied directly (D18). `--gcp-project` can't override a selected project |
+| D18 | Compatibility | **None.** The runner and CLI understand only the new shapes, and strict decoding rejects the old ones with a clear message. The two existing installs are migrated once (§13.1) | No dual-shape code, no transition releases. Old configs and jobs fail loudly until migrated. Launches freeze during the migration |
 | A1 | `oauth` and Anthropic's terms | **The user accepts the risk.** `oauth` stays as it is and is never proxied. Dollar caps apply to API-key and Vertex only | §5.8 lists exactly what `oauth` runs get |
 
 ## 17. Assumptions to verify before building
