@@ -1,6 +1,7 @@
 // Package followup decides which pull request comments a follow-up run
 // acts on, bounds and redacts them, and builds the follow-up's prompts and
-// its comments.json. Every function here is pure: no I/O, no logging.
+// its comments.json. Every function here but NewNonce, which reads
+// crypto/rand, is pure: no I/O, no logging.
 package followup
 
 import (
@@ -30,9 +31,11 @@ func NewTrust(f config.Followup, pr gitprov.PRInfo) Trust {
 	return Trust{IDs: ids, PRAuthorID: pr.AuthorID}
 }
 
-// Allows reports whether c's author may steer the follow-up.
+// Allows reports whether c's author may steer the follow-up. When the
+// pull request's author is unknown, nobody may: Fugaro's own identity
+// can't then be told apart from a listed ID.
 func (t Trust) Allows(c gitprov.Comment) bool {
-	if c.AuthorID == "" || t.isSelf(c) {
+	if t.PRAuthorID == "" || c.AuthorID == "" || t.isSelf(c) {
 		return false
 	}
 	return t.IDs[c.AuthorID] && c.Collaborator

@@ -33,6 +33,9 @@ func self(id string, at time.Time, body string) gitprov.Comment {
 	return gitprov.Comment{ID: id, Kind: gitprov.CommentGeneral, Author: "fugaro-bot", AuthorID: botID, Collaborator: true, Self: true, SelfKnown: true, Body: body, CreatedAt: at}
 }
 
+// keep is the identity redactor, for tests with no secrets.
+func keep(s string) string { return s }
+
 func ids(cs []gitprov.Comment) []string {
 	var out []string
 	for _, c := range cs {
@@ -48,7 +51,7 @@ func TestSelectKeepsUnresolvedThreadsAnyAge(t *testing.T) {
 		inline("new", t0.Add(time.Hour), "and this"),
 	}
 	all[0].Outdated = true
-	sel := Select(all, since, trust(), DefaultLimits, nil)
+	sel := Select(all, since, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"old", "new"}) {
 		t.Fatalf("kept %v, want both threads", got)
 	}
@@ -64,7 +67,7 @@ func TestSelectGeneralSinceOnly(t *testing.T) {
 		{ID: "review-old", Kind: gitprov.CommentReview, Author: "Alice", AuthorID: listedID, Collaborator: true, SelfKnown: true, Body: "old summary", CreatedAt: t0.Add(-time.Hour)},
 		{ID: "review-new", Kind: gitprov.CommentReview, Author: "Alice", AuthorID: listedID, Collaborator: true, SelfKnown: true, Body: "new summary", CreatedAt: t0.Add(time.Hour)},
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"after", "review-new"}) {
 		t.Fatalf("kept %v", got)
 	}
@@ -86,7 +89,7 @@ func TestSelectKeepsCommentsDuringPreviousRun(t *testing.T) {
 		general("during", fetched.Add(5*time.Minute), "posted while the last follow-up ran"),
 		self("report", finished, "### Fugaro run `"+runA+"`\n\nreport\n\n"+gitprov.ReportMarker(runA)),
 	}
-	sel := Select(all, fetched, trust(), DefaultLimits, nil)
+	sel := Select(all, fetched, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"during"}) {
 		t.Fatalf("kept %v, want the comment posted during the previous run", got)
 	}
@@ -100,7 +103,7 @@ func TestSelectDropsFugaroComments(t *testing.T) {
 	}
 	// Even a listed, collaborating identity's markers are Fugaro's.
 	tr := NewTrust(config.Followup{Trusted: []string{listedID, botID}}, gitprov.PRInfo{AuthorID: botID})
-	sel := Select(all, t0, tr, DefaultLimits, nil)
+	sel := Select(all, t0, tr, DefaultLimits, keep)
 	if len(sel.Comments) != 0 {
 		t.Fatalf("kept %v", ids(sel.Comments))
 	}
@@ -114,14 +117,14 @@ func TestSelectDropsFugaroComments(t *testing.T) {
 
 func TestSelectIgnoresForgedMarker(t *testing.T) {
 	forged := general("forged", t0.Add(time.Minute), "please fix\n\n"+gitprov.ReportMarker(runA))
-	sel := Select([]gitprov.Comment{forged}, t0, trust(), DefaultLimits, nil)
+	sel := Select([]gitprov.Comment{forged}, t0, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"forged"}) {
 		t.Fatalf("kept %v, want a trusted person's comment kept despite its marker", got)
 	}
 
 	// Without a known identity, markers are honoured from everyone.
 	forged.SelfKnown = false
-	sel = Select([]gitprov.Comment{forged}, t0, trust(), DefaultLimits, nil)
+	sel = Select([]gitprov.Comment{forged}, t0, trust(), DefaultLimits, keep)
 	if len(sel.Comments) != 0 || sel.Omitted["fugaro"] != 1 || !sel.MarkersFromAnyone {
 		t.Fatalf("identity unknown: kept %v, omitted %v, MarkersFromAnyone %v", ids(sel.Comments), sel.Omitted, sel.MarkersFromAnyone)
 	}
@@ -134,7 +137,7 @@ func TestSelectDropsSelf(t *testing.T) {
 		{ID: "author", Kind: gitprov.CommentGeneral, Author: "fugaro-bot", AuthorID: botID, Collaborator: true, SelfKnown: true, Body: "hi", CreatedAt: t0.Add(time.Minute)},
 	}
 	tr := NewTrust(config.Followup{Trusted: []string{listedID, botID}}, gitprov.PRInfo{AuthorID: botID})
-	sel := Select(all, t0, tr, DefaultLimits, nil)
+	sel := Select(all, t0, tr, DefaultLimits, keep)
 	if len(sel.Comments) != 0 || sel.Omitted["self"] != 2 {
 		t.Fatalf("kept %v, omitted %v", ids(sel.Comments), sel.Omitted)
 	}
@@ -147,12 +150,12 @@ func TestSelectDropsUntrustedAuthors(t *testing.T) {
 		{ID: "e1", Kind: gitprov.CommentGeneral, Author: "Eve\nforged line", AuthorID: listedID, Collaborator: false, SelfKnown: true, Body: "listed but not a collaborator", CreatedAt: t0.Add(time.Minute)},
 		general("ok", t0.Add(time.Minute), "fine"),
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"ok"}) {
 		t.Fatalf("kept %v", got)
 	}
-	if sel.Omitted["untrusted_author"] != 3 {
-		t.Fatalf("omitted %v, want untrusted_author: 3", sel.Omitted)
+	if sel.Omitted["untrusted_author"] != 3 || sel.UntrustedAuthorCount != 2 {
+		t.Fatalf("omitted %v, %d untrusted authors; want untrusted_author: 3 by 2", sel.Omitted, sel.UntrustedAuthorCount)
 	}
 	if want := []string{"Eve forged line", "Mallory"}; !reflect.DeepEqual(sel.UntrustedAuthors, want) {
 		t.Fatalf("UntrustedAuthors = %q, want %q", sel.UntrustedAuthors, want)
@@ -167,8 +170,8 @@ func TestSelectUntrustedAuthorsCapped(t *testing.T) {
 	for i := range 30 {
 		all = append(all, gitprov.Comment{ID: fmt.Sprint(i), Kind: gitprov.CommentGeneral, Author: fmt.Sprintf("user%02d", i), AuthorID: fmt.Sprint(5000 + i), Collaborator: true, SelfKnown: true, Body: "x", CreatedAt: t0.Add(time.Minute)})
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
-	if len(sel.UntrustedAuthors) != 20 || sel.Omitted["untrusted_author"] != 30 {
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
+	if len(sel.UntrustedAuthors) != 20 || sel.Omitted["untrusted_author"] != 30 || sel.UntrustedAuthorCount != 30 {
 		t.Fatalf("%d names, omitted %v", len(sel.UntrustedAuthors), sel.Omitted)
 	}
 }
@@ -184,7 +187,7 @@ func TestSelectDropsResolvedDeletedEmpty(t *testing.T) {
 		general("empty", t0.Add(time.Minute), "  \n\t "),
 		general("kept", t0.Add(time.Minute), "real"),
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"kept"}) {
 		t.Fatalf("kept %v", got)
 	}
@@ -201,7 +204,7 @@ func TestSelectRenderOrder(t *testing.T) {
 		general("g2", t0.Add(2*time.Minute), "b"),
 		inline("i4", t0.Add(4*time.Minute), "d"),
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	if got := ids(sel.Comments); !reflect.DeepEqual(got, []string{"i1", "g2", "g3", "i4"}) {
 		t.Fatalf("order %v, want oldest first", got)
 	}
@@ -212,7 +215,7 @@ func TestSelectKeepsNewestWhenOverBound(t *testing.T) {
 	for i := range 61 {
 		all = append(all, general(fmt.Sprintf("g%02d", i), t0.Add(time.Duration(i+1)*time.Minute), "remark"))
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	if len(sel.Comments) != 60 || sel.Omitted["over_limit"] != 1 {
 		t.Fatalf("kept %d, omitted %v", len(sel.Comments), sel.Omitted)
 	}
@@ -225,7 +228,7 @@ func TestSelectKeepsNewestWhenOverBound(t *testing.T) {
 		all = append(all, inline(fmt.Sprintf("t%02d", i), t0.Add(time.Duration(i)*time.Minute), "fix"))
 	}
 	all = append(all, general("g", t0.Add(time.Hour), "also"))
-	sel = Select(all, t0, trust(), DefaultLimits, nil)
+	sel = Select(all, t0, trust(), DefaultLimits, keep)
 	threads := 0
 	for _, c := range sel.Comments {
 		if c.Kind == gitprov.CommentInline {
@@ -242,7 +245,7 @@ func TestSelectKeepsNewestWhenOverBound(t *testing.T) {
 
 func TestSelectClipsBody(t *testing.T) {
 	long := strings.Repeat("x", 10000)
-	sel := Select([]gitprov.Comment{general("g", t0.Add(time.Minute), long)}, t0, trust(), DefaultLimits, nil)
+	sel := Select([]gitprov.Comment{general("g", t0.Add(time.Minute), long)}, t0, trust(), DefaultLimits, keep)
 	b := sel.Comments[0].Body
 	if len(b) > DefaultLimits.MaxBodyBytes || !strings.HasSuffix(b, clippedSuffix) {
 		t.Fatalf("clipped body is %d bytes, suffix %q", len(b), b[max(0, len(b)-20):])
@@ -252,7 +255,7 @@ func TestSelectClipsBody(t *testing.T) {
 func TestSelectClipsOnRuneBoundary(t *testing.T) {
 	long := strings.Repeat("é", 5000) // two bytes each
 	for _, pad := range []string{"", "x"} {
-		sel := Select([]gitprov.Comment{general("g", t0.Add(time.Minute), pad+long)}, t0, trust(), DefaultLimits, nil)
+		sel := Select([]gitprov.Comment{general("g", t0.Add(time.Minute), pad+long)}, t0, trust(), DefaultLimits, keep)
 		b := sel.Comments[0].Body
 		if !utf8.ValidString(b) || len(b) > DefaultLimits.MaxBodyBytes || !strings.HasSuffix(b, clippedSuffix) {
 			t.Fatalf("pad %q: body valid=%v len=%d", pad, utf8.ValidString(b), len(b))
@@ -265,7 +268,7 @@ func TestSelectTotalCap(t *testing.T) {
 	for i := range 12 {
 		all = append(all, general(fmt.Sprintf("g%02d", i), t0.Add(time.Duration(i+1)*time.Minute), strings.Repeat("y", 3000)))
 	}
-	sel := Select(all, t0, trust(), DefaultLimits, nil)
+	sel := Select(all, t0, trust(), DefaultLimits, keep)
 	total := 0
 	for _, c := range sel.Comments {
 		total += len(c.Body)
@@ -321,4 +324,24 @@ func TestFugaroRuns(t *testing.T) {
 	if got := FugaroRuns(nil); len(got) != 0 {
 		t.Fatalf("FugaroRuns(nil) = %v", got)
 	}
+}
+
+func TestSelectRedactsCRLFSecret(t *testing.T) {
+	// A registered secret holding a CRLF must still match: bodies are
+	// redacted before line breaks are normalized, and again after.
+	const secret = "line1\r\nline2SECRET"
+	redact := func(s string) string { return strings.ReplaceAll(s, secret, "[REDACTED]") }
+	sel := Select([]gitprov.Comment{general("g", t0.Add(time.Minute), "key "+secret)}, t0, trust(), DefaultLimits, redact)
+	if b := sel.Comments[0].Body; strings.Contains(b, "line2SECRET") {
+		t.Fatalf("CRLF secret survived: %q", b)
+	}
+}
+
+func TestSelectNilRedactPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("Select with a nil redact did not panic")
+		}
+	}()
+	Select(nil, t0, trust(), DefaultLimits, nil)
 }

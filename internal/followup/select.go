@@ -37,12 +37,13 @@ const (
 // "resolved", "fugaro", "self", "untrusted_author", "deleted",
 // "before_since", "empty", "over_limit".
 type Selection struct {
-	Since             time.Time
-	Comments          []gitprov.Comment // bodies redacted and clipped; rendered oldest first
-	Authors           map[string]int    // display name → comments kept
-	UntrustedAuthors  []string          // sorted, unique, at most 20
-	Omitted           map[string]int
-	MarkersFromAnyone bool // no comment was SelfKnown: markers honoured from every author
+	Since                time.Time
+	Comments             []gitprov.Comment // bodies redacted and clipped; rendered oldest first
+	Authors              map[string]int    // display name → comments kept
+	UntrustedAuthors     []string          // sorted, unique, at most 20
+	UntrustedAuthorCount int               // how many distinct untrusted authors were dropped, beyond the 20 named too
+	Omitted              map[string]int
+	MarkersFromAnyone    bool // no comment was SelfKnown: markers honoured from every author
 }
 
 // Select picks the comments a follow-up acts on: unresolved review threads
@@ -50,12 +51,15 @@ type Selection struct {
 // or after since, by authors t allows. Fugaro's own comments, deleted and
 // empty ones are dropped. Over l's bounds the oldest go first, so the
 // newest remarks survive. Each body is cleaned of NUL bytes and invalid
-// UTF-8, then redacted (before clipping, so a secret straddling the cut is
-// never half-kept), then clipped. A nil redact keeps bodies as they are.
+// UTF-8 and redacted, both ways round (so a secret holding a CRLF matches
+// before cleaning, and one split by a NUL after), then clipped: after
+// redaction, so a secret straddling the cut is never half-kept.
+//
+// redact is required (Select panics on nil). It must be the run's
+// agent.RedactFunc, built after agent.BuildEnv has registered every
+// secret: RedactFunc copies the secret list when it is called.
 func Select(all []gitprov.Comment, since time.Time, t Trust, l Limits, redact func(string) string) Selection {
-	if redact == nil {
-		redact = func(s string) string { return s }
-	}
+	mustRedact(redact)
 	sel := Selection{
 		Since:             since,
 		Authors:           map[string]int{},
@@ -89,7 +93,7 @@ func Select(all []gitprov.Comment, since time.Time, t Trust, l Limits, redact fu
 		}
 		c.Author = displayName(c)
 		c.Path = oneLine(c.Path, 0)
-		c.Body = clip(redact(cleanText(c.Body)), l.MaxBodyBytes)
+		c.Body = clip(redact(cleanText(redact(c.Body))), l.MaxBodyBytes)
 		if c.Kind == gitprov.CommentInline {
 			threads = append(threads, c)
 		} else {
@@ -127,6 +131,7 @@ func Select(all []gitprov.Comment, since time.Time, t Trust, l Limits, redact fu
 			names = append(names, n)
 		}
 		slices.Sort(names)
+		sel.UntrustedAuthorCount = len(names)
 		sel.UntrustedAuthors = names[:min(len(names), maxUntrustedNames)]
 	}
 	return sel
@@ -159,6 +164,14 @@ func FugaroRuns(all []gitprov.Comment) []string {
 		}
 	}
 	return runs
+}
+
+// mustRedact panics when redact is missing: a forgotten redactor would
+// otherwise ship comment text unredacted.
+func mustRedact(redact func(string) string) {
+	if redact == nil {
+		panic("followup: redact is required; build it with agent.RedactFunc after agent.BuildEnv")
+	}
 }
 
 func anySelfKnown(all []gitprov.Comment) bool {

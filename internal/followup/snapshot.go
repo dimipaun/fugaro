@@ -19,7 +19,9 @@ type Snapshot struct {
 	Comments         []SnapshotComment `json:"comments"`
 	Authors          map[string]int    `json:"authors"`
 	UntrustedAuthors []string          `json:"untrusted_authors,omitempty"`
-	Omitted          map[string]int    `json:"omitted"`
+	// UntrustedAuthorCount counts every distinct untrusted author, named or not.
+	UntrustedAuthorCount int            `json:"untrusted_author_count,omitempty"`
+	Omitted              map[string]int `json:"omitted"`
 }
 
 // SnapshotComment is one comment in comments.json.
@@ -33,7 +35,7 @@ type SnapshotComment struct {
 	Outdated  bool      `json:"outdated,omitempty"`
 	Truncated bool      `json:"truncated,omitempty"` // its thread had more comments than were read
 	CreatedAt time.Time `json:"created_at"`
-	Body      string    `json:"body"` // cleaned, redacted and clipped, as the block quotes it
+	Body      string    `json:"body"` // cleaned, redacted and clipped; the block also replaces delimiter lookalikes, which this keeps
 }
 
 // NewSnapshot is comments.json for pull request pr, whose comments were
@@ -41,14 +43,15 @@ type SnapshotComment struct {
 // [] and {}.
 func NewSnapshot(pr int, sel Selection, fetched time.Time) Snapshot {
 	s := Snapshot{
-		Version:          SnapshotVersion,
-		PR:               pr,
-		Since:            sel.Since,
-		Fetched:          fetched,
-		Comments:         make([]SnapshotComment, 0, len(sel.Comments)),
-		Authors:          map[string]int{},
-		UntrustedAuthors: slices.Clone(sel.UntrustedAuthors),
-		Omitted:          map[string]int{},
+		Version:              SnapshotVersion,
+		PR:                   pr,
+		Since:                sel.Since,
+		Fetched:              fetched,
+		Comments:             make([]SnapshotComment, 0, len(sel.Comments)),
+		Authors:              map[string]int{},
+		UntrustedAuthors:     slices.Clone(sel.UntrustedAuthors),
+		UntrustedAuthorCount: sel.UntrustedAuthorCount,
+		Omitted:              map[string]int{},
 	}
 	maps.Copy(s.Authors, sel.Authors)
 	maps.Copy(s.Omitted, sel.Omitted)

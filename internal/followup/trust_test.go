@@ -29,7 +29,6 @@ func TestTrustAllowlist(t *testing.T) {
 		{"listed GitHub non-collaborator", gitprov.Comment{AuthorID: listedID, Collaborator: false}, false},
 		{"listed Bitbucket author", gitprov.Comment{AuthorID: bbID, Collaborator: true}, true},
 		{"PR author even when listed", gitprov.Comment{AuthorID: botID, Collaborator: true}, false},
-		{"PR author, identity unknown", gitprov.Comment{AuthorID: botID, Collaborator: true, SelfKnown: false}, false},
 		{"Fugaro's own identity", gitprov.Comment{AuthorID: listedID, Collaborator: true, Self: true, SelfKnown: true}, false},
 		{"no author ID", gitprov.Comment{AuthorID: "", Collaborator: true}, false},
 	}
@@ -41,14 +40,31 @@ func TestTrustAllowlist(t *testing.T) {
 		})
 	}
 
-	// An unknown PR author (empty) never matches an empty author ID as
-	// trusted, and a nil trusted list trusts nobody.
-	empty := NewTrust(config.Followup{}, gitprov.PRInfo{})
-	if empty.Allows(gitprov.Comment{AuthorID: listedID, Collaborator: true}) {
+	// A nil trusted list trusts nobody.
+	none := NewTrust(config.Followup{}, gitprov.PRInfo{AuthorID: botID})
+	if none.Allows(gitprov.Comment{AuthorID: listedID, Collaborator: true}) {
 		t.Fatal("nil trusted list allowed a comment")
 	}
-	if empty.Allows(gitprov.Comment{Collaborator: true}) {
-		t.Fatal("empty PR author and empty author ID allowed a comment")
+}
+
+func TestTrustUnknownPRAuthorTrustsNobody(t *testing.T) {
+	// The PR's author is unknown and so is Fugaro's identity: the bot's own
+	// ID, listed by mistake, must not steer the follow-up, so nobody does.
+	tr := NewTrust(config.Followup{Trusted: []string{listedID, botID}}, gitprov.PRInfo{})
+	for _, c := range []gitprov.Comment{
+		{AuthorID: botID, Collaborator: true},
+		{AuthorID: listedID, Collaborator: true},
+		{Collaborator: true},
+	} {
+		if tr.Allows(c) {
+			t.Fatalf("PR author unknown, yet %q is trusted", c.AuthorID)
+		}
+	}
+	sel := Select([]gitprov.Comment{
+		{ID: "1", Kind: gitprov.CommentGeneral, Author: "Alice", AuthorID: listedID, Collaborator: true, Body: "fix it", CreatedAt: t0.Add(time.Minute)},
+	}, t0, tr, DefaultLimits, keep)
+	if len(sel.Comments) != 0 || sel.Omitted["untrusted_author"] != 1 {
+		t.Fatalf("kept %d, omitted %v", len(sel.Comments), sel.Omitted)
 	}
 }
 
@@ -59,7 +75,7 @@ func TestTrustSelfDropsPRAuthorUnmarked(t *testing.T) {
 	all := []gitprov.Comment{
 		{ID: "1", Kind: gitprov.CommentGeneral, AuthorID: botID, Author: "fugaro-bot", Collaborator: true, Body: "an unmarked note", CreatedAt: t0.Add(time.Hour)},
 	}
-	sel := Select(all, t0, tr, DefaultLimits, nil)
+	sel := Select(all, t0, tr, DefaultLimits, keep)
 	if len(sel.Comments) != 0 || sel.Omitted["self"] != 1 {
 		t.Fatalf("got %d comments, omitted %v; want the PR author's comment dropped as self", len(sel.Comments), sel.Omitted)
 	}
