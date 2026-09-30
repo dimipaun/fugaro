@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -55,6 +56,7 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 		fmt.Fprintf(&b, "**Log tail** (%s):\n\n%stext\n%s\n%s\n\n", tail.Source, f, text, f)
 	}
 	fmt.Fprintf(&b, "Transcripts and verify records: `%s` in the runs bucket.\n", location)
+	b.WriteString("\n" + gitprov.ReportMarker(rec.RunID) + "\n")
 	return b.String()
 }
 

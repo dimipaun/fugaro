@@ -2,7 +2,10 @@ package runstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -110,5 +113,75 @@ func TestFinalizeReserve(t *testing.T) {
 	}
 	if d, ok := (&Record{}).FinalizeReserve(); ok || d != 0 {
 		t.Fatalf("FinalizeReserve of a record without one = %v, %v", d, ok)
+	}
+}
+
+func TestRecordFollowUpRoundTrip(t *testing.T) {
+	s := newStore(t)
+	fu := &FollowUp{
+		PR: 12, PreviousRun: "20260925-000000-0a1b", StartSHA: "0123456789abcdef0123456789abcdef01234567",
+		Session: "fresh", SessionNote: "no saved session", Comments: 3,
+		Authors: map[string]int{"Ada": 2, "Linus": 1}, UntrustedAuthors: []string{"mallory"},
+		Omitted: map[string]int{"self": 1, "untrusted_author": 1},
+	}
+	rec := &Record{Version: 1, RunID: runID, Status: StatusRunning, Outcome: OutcomeNone, StartedAt: time.Now().UTC(), FollowUp: fu}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || !reflect.DeepEqual(got.FollowUp, fu) {
+		t.Fatalf("ReadRecord follow_up = %+v, %v", got.FollowUp, err)
+	}
+	data, _ := json.Marshal(got)
+	if !strings.Contains(string(data), `"follow_up":{"pr":12,"previous_run":"20260925-000000-0a1b"`) {
+		t.Fatalf("encoded record = %s", data)
+	}
+
+	// A record written before follow-ups existed still parses, without one.
+	old := `{"version":1,"run_id":"` + runID + `","status":"succeeded","stage":"writeback","outcome":"ready","cost_usd":1,"started_at":"2026-09-26T22:15:30Z","pr":{"number":3,"url":"u"}}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.ReadRecord(ctx)
+	if err != nil || got.FollowUp != nil || got.PushedHead != "" || got.PR.Number != 3 {
+		t.Fatalf("old record = %+v, %v", got, err)
+	}
+	// And a first run's record encodes neither field.
+	data, _ = json.Marshal(&Record{Version: 1, RunID: runID})
+	if strings.Contains(string(data), "follow_up") || strings.Contains(string(data), "pushed_head") {
+		t.Fatalf("empty fields encoded: %s", data)
+	}
+}
+
+func TestRecordPushedHead(t *testing.T) {
+	s := newStore(t)
+	head := "0123456789abcdef0123456789abcdef01234567"
+	if err := s.WriteRecord(ctx, &Record{Version: 1, RunID: runID, Status: StatusRunning, PushedHead: head}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || got.PushedHead != head {
+		t.Fatalf("PushedHead = %q, %v", got.PushedHead, err)
+	}
+}
+
+func TestSibling(t *testing.T) {
+	b := memblob.OpenBucket(nil)
+	defer b.Close()
+	s := Open(b, "acme-app", runID)
+	const other = "20260925-000000-0a1b"
+	sib := s.Sibling(other)
+	if sib.RunID() != other || sib.Slug() != "acme-app" || sib.Prefix() != "runs/acme-app/"+other+"/" {
+		t.Fatalf("Sibling = %q %q %q", sib.RunID(), sib.Slug(), sib.Prefix())
+	}
+	// It shares the bucket: what one writes, the other's opener reads.
+	if err := sib.WriteRecord(ctx, &Record{Version: 1, RunID: other, Status: StatusSucceeded}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Open(b, "acme-app", other).ReadRecord(ctx); err != nil || got.RunID != other {
+		t.Fatalf("sibling's record = %+v, %v", got, err)
+	}
+	if s.RunID() != runID {
+		t.Fatalf("Sibling changed its receiver: %q", s.RunID())
 	}
 }

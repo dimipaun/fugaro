@@ -128,6 +128,7 @@ func TestVerifyLogTailRedactedBeforeClipping(t *testing.T) {
 	h.files["fugaro.yaml"] = strings.Replace(h.files["fugaro.yaml"], "test: sh test.sh", "test: echo "+pad+secret+"; sh test.sh", 1)
 	h.deps.Remote = testutil.NewRemote(t, h.files)
 	h.remote = h.deps.Remote
+	h.provider.Remote = h.remote
 	h.fails(t, "beta")
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)

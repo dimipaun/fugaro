@@ -945,7 +945,7 @@ func (r *run) finalize(ctx context.Context) error {
 			// even look ready: say so on the PR itself, best effort.
 			note := "**Fugaro:** this pull request is not ready. The run could not finish setting it up (" +
 				r.redact(err.Error()) + "), so it may not reflect the run's outcome, and it may look ready when it is not. " +
-				"Please check it by hand."
+				"Please check it by hand.\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
 			// ensurePR may have given up because finalize's reserve ran
 			// out, which is when this warning matters most: post it on a
 			// short context of its own, detached from that deadline.
