@@ -4,7 +4,7 @@
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement → test → review → fix → compile → open a PR) in ephemeral Google Cloud Run jobs instead of on your laptop. Each task gets its own container, runs to completion, pushes its work, and disappears.
 
-> **Status: pre-release, not yet on a tagged version.** The runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, and the Cloud Run backend with its CLI (`run`, `ls`, `logs`, `diagnose`, `cancel`, `secrets`, `image build`, `image check`, `image status`) are implemented. The GCP resources come from Terraform through `fugaro init` ([docs/gcp-setup.md](docs/gcp-setup.md)), which also adopts what M4's throwaway bootstrap script made; a daily check rebuilds each repository's image when it goes stale. Follow-up runs, the remaining plugin skills and the first release come after that. The design is [docs/design/v1.md](docs/design/v1.md). Expect breaking changes.
+> **Status: pre-release, not yet on a tagged version.** The runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, and the Cloud Run backend with its CLI (`run`, `ls`, `logs`, `diagnose`, `cancel`, `secrets`, `image build`, `image check`, `image status`) are implemented, and so are follow-up runs: `fugaro run --pr N` continues a Fugaro pull request, acting on the review comments of the accounts its base branch's `fugaro.yaml` trusts. The GCP resources come from Terraform through `fugaro init` ([docs/gcp-setup.md](docs/gcp-setup.md)), which also adopts what M4's throwaway bootstrap script made; a daily check rebuilds each repository's image when it goes stale. The remaining plugin skills and the first release come next. The design is [docs/design/v1.md](docs/design/v1.md). Expect breaking changes.
 
 ---
 
@@ -66,7 +66,7 @@ workflows:
 
 A task is a small hand-off spec: what to do, which repo, which branch, and which workflow. It can be launched directly or by your local coding agent, which builds the spec and executes the Cloud Run job via `gcloud`. Many tasks can run at once, independently.
 
-Planned local-agent skills:
+Local-agent skills (`plugin/`): `fugaro:onboard` sets a repository up, and `fugaro:followup` continues a Fugaro PR with a follow-up run. Planned:
 
 - launch a task
 - list running and recent tasks

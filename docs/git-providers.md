@@ -69,12 +69,45 @@ The agent's environment carries a short-lived, repository-scoped token. For Bitb
 
 The token is never written to `.git/config`, to a remote URL, or to a command line.
 
+**A follow-up's agent gets none of this** (design §6.1): no `FUGARO_GIT_*` or `GIT_CONFIG_*` variables and no `GH_TOKEN`. The runner fetches the pull request's branch at bootstrap and pushes it at finalize with its own git environment, and the review comments reach the agent in its prompt. This is defense in depth only: the agent runs as the same user as the runner, so it could still read the token from the runner's `/proc`.
+
 ## Pushing and draft pull requests
 
 - **Pushing.** Finalize pushes only the run's own `fugaro/<run-id>` branch, with `--force-with-lease`. It overwrites the remote branch only when the branch is absent or its tip is one of the run's own commits: an ancestor of the final HEAD, or a commit in HEAD's reflog. That covers the agent pushing the branch and then amending or rebasing. A tip merely present in the checkout, for example because a `git fetch` brought in someone else's push, does not count. A tip pushed from anywhere else is left alone, and the run fails with a clear reason. The base branch is never pushed. Protect it anyway (design §6.1).
 - **Draft PRs on GitHub.** Draft state is changed through GraphQL, because REST cannot change it. Some plans have no draft PRs for private repositories. There, Fugaro opens a normal PR titled `[DRAFT] …`, and removes the prefix when a later run marks the PR ready.
 - **Draft PRs on Bitbucket Cloud.** The REST API documents a `draft` boolean on create and update, which needs `pullrequest:write`. A repository access token can hold that scope. Fugaro sends `draft` and checks the response. If Bitbucket did not make the PR a draft, it uses the same `[DRAFT] ` title fallback. The live check (2026-09-27, a repository access token on a private workspace repository) found `draft` honoured on create and on update in both directions, so there the PRs are real drafts and the fallback is not used. A `PUT` behaves like a partial update: fields it leaves out (description, reviewers, and `draft` itself) are kept. Fugaro still sends `draft` along with every retitle, as seen, so a title change could not clear it if that ever changed.
 - **Which direction a failure falls in.** When `EnsurePR` cannot fully apply the draft state, it still returns the pull request. The error it returns depends on which way the PR is wrong. If the PR is left looking *more* like a draft than asked, for example still a draft or still titled `[DRAFT] …` when ready was wanted, the error is a `*gitprov.PartialError`. The run then records a draft outcome, naming the failure, and never reports the PR as ready. If the PR is left looking *more ready* than asked, the error is a plain one, and the runner retries `EnsurePR`. The usual case is Bitbucket ignoring `draft: true`, after which the retitle that adds the `[DRAFT] ` prefix fails. Each retry finds the same PR and tries the prefix again. If the retries run out, the run ends in `infra_error`, the PR is kept in the run record, and it may still look ready. The runner then posts a comment on the PR (best effort, with credentials redacted) saying it is not ready and needs a human check, in place of the run report. Check it by hand.
+
+## Follow-up runs (design §4.4)
+
+A follow-up (`fugaro run --pr N`) reads the repository, the pull request and its comments, and updates the pull request by number. **The permissions are unchanged:** everything below is covered by the scopes and permissions listed above, and the CLI still holds no provider credential (the runner makes every call).
+
+| What | GitHub | Bitbucket Cloud |
+|---|---|---|
+| The repository's visibility | `GET /repos/{owner}/{repo}` → `private` | `GET /repositories/{workspace}/{repo}` → `is_private` |
+| The pull request | `GET /repos/{owner}/{repo}/pulls/{n}`: `state` and `merged`, `user.id` (the author), `head.ref`, `head.repo.full_name`, `head.sha`, `draft` | `GET …/pullrequests/{n}`: `state` (`OPEN`, `MERGED`, `DECLINED` or `SUPERSEDED`), `author.account_id`, `source.branch.name`, `source.repository.full_name`, `source.commit.hash` (abbreviated), `draft` or the `[DRAFT] ` title prefix |
+| Inline comments | GraphQL `reviewThreads` (50 per page, 50 comments each): `isResolved`, `isOutdated`, `path`, `line`, and each comment's `authorAssociation` and author (`__typename`, `login`, `databaseId`) | `GET …/pullrequests/{n}/comments?pagelen=100`, the comments with `inline` (`path`, `to` else `from`, `outdated`); a reply without its own `inline` takes its thread's; a thread is resolved when its root has a `resolution` |
+| Review summaries | `GET …/pulls/{n}/reviews?per_page=100`, the reviews with a body and a `submitted_at` | none: Bitbucket has no review bodies |
+| General comments | `GET /repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | the same listing, the comments without `inline` |
+| Fugaro's own identity | `GET /app` with the App's JWT, for its `slug`: REST authors are `<slug>[bot]`, GraphQL authors `<slug>` with `__typename: Bot` | `GET /user` with the repository token, for its `uuid`, compared with each comment's `user.uuid` |
+| Update by number | read the PR, then the usual draft update (GraphQL `convertPullRequestToDraft` or `markPullRequestReadyForReview`, or the title prefix) | read the PR, then the usual `PUT {title, draft}` |
+
+- **Scopes used.** GitHub: *Pull requests: Read* for the pull request, its threads and reviews, and *Issues: Read* (or *Pull requests*) for the general comments; `GET /app` needs only the App's JWT. Bitbucket: *Repositories: Read* and *Pull requests: Read*. Whether `GET /user` accepts a repository access token is unverified until the live follow-up check (below); when it doesn't, the identity is unknown, as below.
+- **Paging** follows GitHub's `Link: rel="next"` header, Bitbucket's body `next` and GraphQL cursors, and only to URLs on the adapter's own API scheme, host and path prefix, so the token can't be sent anywhere else. A listing stops with an error after 20 pages.
+- **Authors.** Each comment carries its author's display name or login (for the report) and account ID (for the trust rule): GitHub's numeric user ID, Bitbucket's `account_id`. On GitHub, `authorAssociation` `OWNER`, `MEMBER` or `COLLABORATOR` counts as a collaborator; on Bitbucket, which has no such field, every author does. A deleted account has no ID and is never trusted.
+- **Drafts are left out:** GitHub reviews not yet submitted and Bitbucket's `pending` comments. Deleted Bitbucket comments are dropped too.
+- **The identity lookup and its fallbacks.** Fugaro's own comments are told apart by author, so its markers and headings are honoured only on those. On GitHub a definite failure of `GET /app` (an empty slug, or a 4xx other than 429) is kept for the provider's life and warned about once; any other failure isn't kept, and the read goes on with the identity unknown. On Bitbucket a 4xx from `GET /user` other than 408 and 429, or an empty `uuid`, is kept the same way, and any other failure fails the comment read, so the follow-up ends as `infra_error` before touching the PR. With the identity unknown, markers are honoured from every author, the log warns, and the report says so. The trust rule doesn't depend on the lookup: comments by the pull request's author, which is Fugaro's own identity, are always dropped (design §4.4).
+- **The update by number** never looks a PR up by branch and never creates one. It returns `gitprov.ErrPRNotOpen`, with the PR, when the PR is merged or closed or its source branch isn't the run's branch, and changes nothing then. It leaves the title and description alone, apart from the `[DRAFT] ` prefix the draft fallback uses.
+- **The marker.** Every comment Fugaro posts ends with `<!-- fugaro:report run=<run-id> -->`. GitHub renders it hidden. How Bitbucket renders it is unverified until the live follow-up check: if it shows it as text, it is a harmless last line.
+
+### Finding an account ID for `followup.trusted`
+
+`followup.trusted` in the base branch's `fugaro.yaml` lists the account IDs whose pull request comments a follow-up acts on (design §5.1, §6.1). Logins and display names aren't accepted: they can be renamed, and then reused by someone else.
+
+- **GitHub:** the numeric user ID, for example with `gh api users/<login> --jq .id`.
+- **Bitbucket:** the `account_id` (such as `557058:00000000-0000-0000-0000-000000000001`), not the `{…}` UUID. Any Bitbucket API response that names the person carries it in its user object: a comment's `user`, a PR's `author`, or a participant. The reviewer lookup above prints it with `account_id` added to its fields (`values.participants.user.account_id`). For a sandbox, `TestLiveInspect` (below) prints the `account_id` and display name of every comment on the PRs it inspects, so the person can post any comment on a sandbox PR and read their ID from its output.
+
+An account ID isn't a secret, but it names a person, so keep real ones out of Fugaro, its tests and its fixtures: they belong in the repository's own `fugaro.yaml`.
 
 ## Live check against a sandbox repository
 
@@ -89,7 +122,16 @@ FUGARO_LIVE_REPO=<owner>/<sandbox> FUGARO_BITBUCKET_TOKEN="$(cat <token-file>)" 
 
 Set `FUGARO_LIVE_REVIEWER` to the account UUID of a dedicated sandbox account to also check that reviewers survive every update; Bitbucket notifies that account, so never name a real person. Unset, those checks are skipped. A `-timeout` abort kills the test binary without running its cleanup (or the `TestLiveCleanup` in the same invocation), so after one, run `-run TestLiveCleanup` again.
 
-`TestLiveCleanup` alone sweeps anything a crashed run left (plus the run branches named in `FUGARO_LIVE_SWEEP_BRANCHES`), and `TestLiveInspect` prints the state and comments of the PRs in `FUGARO_LIVE_INSPECT_PRS`, for checking a `fugaro exec` run. The full-run steps:
+`TestLiveCleanup` alone sweeps anything a crashed run left (plus the run branches named in `FUGARO_LIVE_SWEEP_BRANCHES`), and `TestLiveInspect` prints the state and comments of the PRs in `FUGARO_LIVE_INSPECT_PRS`, for checking a `fugaro exec` run, with the PR's `author.account_id` and each comment's `user.account_id` and display name.
+
+**The follow-up reads,** since M6, are three more subtests of `TestLiveBitbucket`, on the test's own PR:
+- `follow_up_reads` posts a general comment ending in an HTML comment, an inline comment and a reply, and resolves the thread. It then reads the repository, the PR and its comments through the adapter, recorded as `live_follow_up_reads.json`. Its `FACT` lines record what the adapter reads, from fields written from Bitbucket's documentation until then: the repository's visibility (`is_private`); the PR's state, `author.account_id`, source branch and repository, and head (`source.commit.hash`, and whether it matches the pushed head); whether resolving the thread (`POST …/comments/{id}/resolve`) worked; the warnings `GET /user` gave with the repository token; and, for each comment, its kind (so whether a reply carries `inline`), author and `account_id`, whether it is the PR's author, whether it is Fugaro's own (which shows whether the token user's `uuid` and the comments' `user.uuid` are spelled alike), and its resolved, outdated and deleted flags, path and line; and whether the raw content keeps `<!-- … -->`. `pending` isn't exercised, and stays as documented. `TestRecordedFollowUpReads` replays the recording once it is committed as `testdata/recorded/follow_up_reads.json` (renamed and scrubbed as below), and skips until then.
+- `ensure_by_number` updates the PR by number and checks that its title and description are unchanged.
+- `ensure_by_number_declined` declines the PR, then checks that it reads as closed, that an update by number returns `ErrPRNotOpen` and that no open PR exists for the branch.
+
+The end-to-end follow-up, with review comments a person posts by hand, is check 19 of [gcp-live-checklist.md](gcp-live-checklist.md).
+
+The full-run steps:
 
 1. **Create the sandbox.** Make a repository containing `testdata/fixture-repo`, with `git.provider` set to that provider, and create its credential as described above.
 2. **Write a task file:**
