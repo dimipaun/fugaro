@@ -118,6 +118,10 @@ type FollowUp struct {
 	// UntrustedAuthors are the display names whose comments were dropped
 	// because their authors aren't trusted: sorted, at most 20.
 	UntrustedAuthors []string `json:"untrusted_authors,omitempty"`
+	// UntrustedAuthorCount is how many distinct untrusted authors were
+	// dropped, the ones beyond the 20 named included; absent in records
+	// from before it was kept.
+	UntrustedAuthorCount int `json:"untrusted_author_count,omitempty"`
 	// Omitted counts the comments left out, by reason.
 	Omitted map[string]int `json:"omitted,omitempty"`
 }

@@ -295,7 +295,7 @@ func TestResultSchemaFollowUp(t *testing.T) {
 		FollowUp: &runstore.FollowUp{
 			PR: 12, PreviousRun: "20260929-100000-0a1b", StartSHA: "0123456789abcdef0123456789abcdef01234567",
 			Session: "resumed", SessionNote: "resumed", Comments: 2,
-			Authors: map[string]int{"Ada": 2}, UntrustedAuthors: []string{"mallory"}, Omitted: map[string]int{"self": 1},
+			Authors: map[string]int{"Ada": 2}, UntrustedAuthors: []string{"mallory"}, UntrustedAuthorCount: 1, Omitted: map[string]int{"self": 1},
 		},
 	}
 	data, err := json.Marshal(rec)

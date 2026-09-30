@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -271,5 +272,23 @@ func TestDiagnoseFollowUpRedacts(t *testing.T) {
 		if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "[REDACTED]") {
 			t.Fatalf("%v = %s, %v", args, out, err)
 		}
+	}
+}
+
+// followUpLine counts every untrusted author, beyond the 20 names the
+// record keeps.
+func TestFollowUpLineCountsAllUntrusted(t *testing.T) {
+	names := make([]string, 20)
+	for i := range names {
+		names[i] = fmt.Sprintf("u%02d", i)
+	}
+	line := followUpLine(&runstore.FollowUp{PR: 7, PreviousRun: "20260101-000000-0000", Session: "fresh", UntrustedAuthors: names, UntrustedAuthorCount: 25})
+	if !strings.Contains(line, "(25 untrusted: u00") || !strings.Contains(line, "and 5 more") {
+		t.Fatalf("line = %q", line)
+	}
+	// A record from before the count was kept counts the names.
+	line = followUpLine(&runstore.FollowUp{PR: 7, PreviousRun: "20260101-000000-0000", Session: "fresh", UntrustedAuthors: []string{"x"}})
+	if !strings.Contains(line, "(1 untrusted: x)") {
+		t.Fatalf("line = %q", line)
 	}
 }

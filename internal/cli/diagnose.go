@@ -246,8 +246,12 @@ func followUpLine(fu *runstore.FollowUp) string {
 		}
 		line += " from " + strings.Join(names, ", ")
 	}
-	if n := len(fu.UntrustedAuthors); n > 0 {
-		line += fmt.Sprintf(" (%d untrusted: %s)", n, strings.Join(fu.UntrustedAuthors, ", "))
+	if n := max(fu.UntrustedAuthorCount, len(fu.UntrustedAuthors)); n > 0 {
+		names := strings.Join(fu.UntrustedAuthors, ", ")
+		if more := n - len(fu.UntrustedAuthors); more > 0 {
+			names += fmt.Sprintf(", and %d more", more)
+		}
+		line += fmt.Sprintf(" (%d untrusted: %s)", n, strings.TrimPrefix(names, ", "))
 	}
 	return line
 }

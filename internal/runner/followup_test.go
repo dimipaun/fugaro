@@ -465,7 +465,7 @@ func TestFollowUpReportNamesAuthors(t *testing.T) {
 	if strings.Contains(report, "@team") || strings.Contains(report, "Ignore me.") {
 		t.Fatalf("report carries a live mention or an untrusted body:\n%s", report)
 	}
-	if fu := rec.FollowUp; fu.Authors["alice"] != 2 || fu.Authors["bob"] != 1 || fu.Comments != 3 || len(fu.UntrustedAuthors) != 1 {
+	if fu := rec.FollowUp; fu.Authors["alice"] != 2 || fu.Authors["bob"] != 1 || fu.Comments != 3 || len(fu.UntrustedAuthors) != 1 || fu.UntrustedAuthorCount != 1 {
 		t.Fatalf("follow_up = %+v", fu)
 	}
 }

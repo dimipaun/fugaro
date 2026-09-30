@@ -234,6 +234,7 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 	}
 	fu := r.rec.FollowUp
 	fu.Comments, fu.Authors, fu.UntrustedAuthors, fu.Omitted = len(sel.Comments), sel.Authors, sel.UntrustedAuthors, sel.Omitted
+	fu.UntrustedAuthorCount = sel.UntrustedAuthorCount
 
 	r.follow.restored = r.restoreSession(ctx, prev, r.follow.startSHA)
 	if r.follow.restored.Resumed {

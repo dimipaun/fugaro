@@ -121,6 +121,7 @@
         "comments": { "type": "integer", "minimum": 0, "description": "How many comments reached the agent." },
         "authors": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Display name to the number of that author's comments used." },
         "untrusted_authors": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Display names whose comments were dropped as untrusted, sorted." },
+        "untrusted_author_count": { "type": "integer", "minimum": 0, "description": "How many distinct untrusted authors were dropped, those beyond the 20 named included." },
         "omitted": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Comments left out, by reason." }
       }
     },
