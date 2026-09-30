@@ -308,7 +308,7 @@ func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, err
 // Repository implements gitprov.Provider.
 func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 	var repo struct {
-		IsPrivate *bool `json:"is_private"` // unverified against the live API
+		IsPrivate *bool `json:"is_private"`
 	}
 	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug)
 	if err := p.api.Do(ctx, "GET", path, nil, &repo); err != nil {
@@ -326,13 +326,13 @@ func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 type pullDetail struct {
 	pullRequest
 	State  string `json:"state"`  // OPEN, MERGED, DECLINED or SUPERSEDED
-	Author *user  `json:"author"` // author.account_id: unverified against the live API
+	Author *user  `json:"author"` // author.account_id is <digits>:<uuid>
 	Source struct {
 		Branch struct {
 			Name string `json:"name"`
 		} `json:"branch"`
 		Commit *struct {
-			Hash string `json:"hash"` // abbreviated, 12 hex; unverified against the live API
+			Hash string `json:"hash"` // abbreviated, 12 hex
 		} `json:"commit"`
 		Repository *struct {
 			FullName string `json:"full_name"`
