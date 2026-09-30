@@ -143,6 +143,20 @@ func TestImageBuildIgnoresDeprecatedBuildSA(t *testing.T) {
 	}
 }
 
+// TestImageBuildResolvesSpecWithoutOutputs: fugaro image build has no
+// installation outputs, so the repository's spec takes the project's name
+// from the project config and still resolves.
+func TestImageBuildResolvesSpecWithoutOutputs(t *testing.T) {
+	fb, _ := cloudBuildCheckout(t, false)
+	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	if buildPosts(fb) != 1 || !strings.Contains(stderr, "project: aurora") {
+		t.Fatalf("builds %d, stderr %q", buildPosts(fb), stderr)
+	}
+}
+
 // TestImageBuildCloudRefusesOtherProjectRegistry: images are pushed with
 // the project's credentials, so the project config can't be pointed at
 // another GCP project with --gcp-project.

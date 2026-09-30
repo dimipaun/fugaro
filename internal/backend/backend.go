@@ -53,7 +53,7 @@ type LaunchSpec struct {
 }
 
 // ExecID is an execution's identity, parsed from its resource name.
-type ExecID struct{ Project, Region, Job, Name string }
+type ExecID struct{ GCPProject, Region, Job, Name string }
 
 // ParseExecution parses projects/<p>/locations/<r>/jobs/<j>/executions/<e>.
 // <p> may be a project ID or number.
@@ -67,7 +67,7 @@ func ParseExecution(name string) (ExecID, bool) {
 			return ExecID{}, false
 		}
 	}
-	return ExecID{Project: f[1], Region: f[3], Job: f[5], Name: f[7]}, true
+	return ExecID{GCPProject: f[1], Region: f[3], Job: f[5], Name: f[7]}, true
 }
 
 // Key identifies the execution regardless of how the project is written.
@@ -76,21 +76,29 @@ func (id ExecID) Key() string { return id.Region + "/" + id.Job + "/" + id.Name 
 
 // String is the canonical full resource name.
 func (id ExecID) String() string {
-	return "projects/" + id.Project + "/locations/" + id.Region + "/jobs/" + id.Job + "/executions/" + id.Name
+	return "projects/" + id.GCPProject + "/locations/" + id.Region + "/jobs/" + id.Job + "/executions/" + id.Name
+}
+
+// OnCloudRun reports whether this process runs as a Cloud Run job
+// execution: Cloud Run sets CLOUD_RUN_EXECUTION there and nowhere else.
+// It is the one signal for "in the cloud"; callers use it, not the job name
+// or a Fugaro variable.
+func OnCloudRun(getenv func(string) string) bool {
+	return getenv("CLOUD_RUN_EXECUTION") != ""
 }
 
 // ExecutionFromEnv is the canonical name of the Cloud Run execution this
 // process is, or "" outside Cloud Run. Cloud Run sets CLOUD_RUN_EXECUTION
-// (the short name) and CLOUD_RUN_JOB; the job sets FUGARO_PROJECT and
+// (the short name) and CLOUD_RUN_JOB; the job sets FUGARO_GCP_PROJECT (the
+// GCP project ID; FUGARO_PROJECT is the Fugaro project's name) and
 // FUGARO_REGION.
 func ExecutionFromEnv(getenv func(string) string) (string, error) {
-	short := getenv("CLOUD_RUN_EXECUTION")
-	if short == "" {
+	if !OnCloudRun(getenv) {
 		return "", nil
 	}
-	id := ExecID{Project: getenv("FUGARO_PROJECT"), Region: getenv("FUGARO_REGION"), Job: getenv("CLOUD_RUN_JOB"), Name: short}
-	if id.Project == "" || id.Region == "" || id.Job == "" {
-		return "", errors.New("on Cloud Run the job must set FUGARO_PROJECT and FUGARO_REGION (and Cloud Run sets CLOUD_RUN_JOB)")
+	id := ExecID{GCPProject: getenv("FUGARO_GCP_PROJECT"), Region: getenv("FUGARO_REGION"), Job: getenv("CLOUD_RUN_JOB"), Name: getenv("CLOUD_RUN_EXECUTION")}
+	if id.GCPProject == "" || id.Region == "" || id.Job == "" {
+		return "", errors.New("on Cloud Run the job must set FUGARO_GCP_PROJECT and FUGARO_REGION (and Cloud Run sets CLOUD_RUN_JOB)")
 	}
 	return id.String(), nil
 }

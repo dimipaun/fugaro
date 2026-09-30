@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -61,7 +63,31 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.run.AddJob(gcp.JobName(appSlug, "web"), "4", "8Gi")
+	// The installation names its project in the runs bucket, as its
+	// Terraform does; every cloud command checks it.
+	f.writeMarker(t, "aurora", "proj-1234")
 	return f
+}
+
+// markerPath is where the fixture's runs bucket keeps the project marker.
+func (f *cloudFixture) markerPath() string {
+	return filepath.Join(f.dir, "runs", filepath.FromSlash(infra.ProjectMarkerObject))
+}
+
+// writeMarker makes the fixture's installation name project name in GCP
+// project gcpProject.
+func (f *cloudFixture) writeMarker(t *testing.T, name, gcpProject string) {
+	t.Helper()
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcpProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(f.markerPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.markerPath(), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // isolateProjects points the project configs at a directory under dir,
@@ -71,6 +97,9 @@ func isolateProjects(t *testing.T, dir string) string {
 	t.Helper()
 	xdg := filepath.Join(dir, "xdg")
 	t.Setenv("XDG_CONFIG_HOME", xdg)
+	// The project-name check caches its answer here, never in the
+	// developer's own cache.
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
 	t.Setenv("FUGARO_PROJECT", "")
 	t.Setenv("FUGARO_CONFIG", "")
 	projects := filepath.Join(xdg, "fugaro", "projects")

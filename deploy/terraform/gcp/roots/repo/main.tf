@@ -29,6 +29,7 @@ module "repo" {
   source = "../../modules/repo"
 
   project          = var.project
+  fugaro_project   = var.fugaro_project
   region           = var.region
   installation     = var.installation
   repo             = var.repo

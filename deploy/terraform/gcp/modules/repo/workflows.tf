@@ -6,6 +6,7 @@ module "workflow" {
   for_each = var.repo.workflows
 
   project          = var.project
+  fugaro_project   = var.fugaro_project
   region           = var.region
   name             = each.key
   repo_label       = var.repo.label

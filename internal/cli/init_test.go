@@ -185,6 +185,7 @@ func outputsJSON(t *testing.T) string {
 func outputsJSONWith(t *testing.T, over map[string]any) string {
 	t.Helper()
 	vals := map[string]any{
+		"project_name":              initProjectName,
 		"runs_bucket":               initRunsBucket,
 		"registry_host":             "us-east5-docker.pkg.dev/proj-1234",
 		"base_registry":             infra.BaseRegistry,
@@ -1057,5 +1058,196 @@ func TestInitPlanOnlyLeavesCreatedBucketAlone(t *testing.T) {
 	}
 	if strings.Contains(out, "gs://"+initRunsBucket+", which holds") || len(policySets(r.gcs, initRunsBucket)) != 0 {
 		t.Errorf("--plan-only offered or changed the runs bucket's IAM:\n%s", out)
+	}
+}
+
+// The project's name never changes once the installation has one: the
+// state's project_name output wins over a project config and --name that
+// say otherwise, and the refusal comes before any plan.
+func TestInitNameImmutable(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	// A second project config for the same GCP project: same file, another name.
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--yes"}, {"init", "--yes", "--name", "borealis"}} {
+		_, _, err := executeStdin(t, "", args...)
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is aurora; renaming isn't supported") {
+			t.Fatalf("%v: exit %d, err %v", args, ExitCode(err), err)
+		}
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a refused rename planned: %q", r.calls(t))
+	}
+	// --name against the config that selected aurora is refused as well.
+	r = newInitRig(t)
+	r.stateBucket()
+	_, _, err = executeStdin(t, "", "init", "--yes", "--name", "borealis")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "renaming") {
+		t.Fatalf("--name against the config: exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 {
+		t.Fatalf("planned: %q", r.calls(t))
+	}
+}
+
+// An installation applied before M9a has no name in its state. Naming it
+// is permanent, so init asks for --name rather than taking the config's.
+func TestInitNameRequiredWhenUnnamed(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no project name yet") || !strings.Contains(err.Error(), "--name aurora") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("an unnamed installation was planned: %q", r.calls(t))
+	}
+	// With --name the apply goes ahead, and it carries the name.
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--name", "aurora"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.tfvars(t)["fugaro_project"]; got != "aurora" {
+		t.Errorf("fugaro_project = %v", got)
+	}
+	if len(r.ran(t, "apply")) == 0 {
+		t.Errorf("the named apply didn't run: %q", r.calls(t))
+	}
+}
+
+func TestCheckInstallationName(t *testing.T) {
+	named := infra.InstallationOutputs{ProjectName: "aurora"}
+	unnamed := infra.InstallationOutputs{}
+	for name, c := range map[string]struct {
+		flag, config string
+		outs         infra.InstallationOutputs
+		have         bool
+		want         string // "" is accepted
+	}{
+		// With no installation in the state yet there is nothing to
+		// disagree with: the project config's name is the installation's.
+		"no installation yet":     {config: "aurora"},
+		"no installation, --name": {flag: "aurora", config: "aurora"},
+		"named, agreeing":         {config: "aurora", outs: named, have: true},
+		"named, --name agrees":    {flag: "aurora", config: "aurora", outs: named, have: true},
+		"named, config differs":   {config: "borealis", outs: named, have: true, want: "the installation's project name is aurora; renaming isn't supported"},
+		"named, --name differs":   {flag: "borealis", config: "aurora", outs: named, have: true, want: "renaming isn't supported"},
+		"unnamed, no --name":      {config: "aurora", outs: unnamed, have: true, want: "--name aurora"},
+		"unnamed, --name":         {flag: "aurora", config: "aurora", outs: unnamed, have: true},
+	} {
+		err := checkInstallationName(c.flag, c.config, c.outs, c.have)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		case err != nil && ExitCode(err) != ExitUserError:
+			t.Errorf("%s: exit %d", name, ExitCode(err))
+		}
+	}
+}
+
+func TestInitConfigOnlyWithoutProjectName(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
+	r.save(t)
+	before, _ := os.ReadFile(r.cfg)
+	_, _, err := executeStdin(t, "", "init", "--config-only", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation has no project name yet") || !strings.Contains(err.Error(), "fugaro init --name") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
+		t.Error("the config was written for an unnamed installation")
+	}
+}
+
+func TestInitConfigOnlyRefusesOtherName(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--config-only", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is borealis") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// --config-only with no project config yet (only --gcp-project and
+// --region) learns the name from the installation's outputs and writes
+// projects/<project_name>.yaml. It is exercised below the command because
+// a config that doesn't exist yet has no fake endpoints to reach.
+func TestInitConfigOnlyTakesNameFromOutputs(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("FUGARO_CONFIG", "")
+	t.Setenv("FUGARO_PROJECT", "")
+	provisional := func() *localcfg.Config {
+		lc, err := localcfg.Parse([]byte("version: 1\nname: pending\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc.Name = ""
+		return lc
+	}
+	lc, path, old, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"})
+	if err != nil || lc.Name != "aurora" || old != nil || filepath.Base(path) != "aurora.yaml" || filepath.Base(filepath.Dir(path)) != "projects" {
+		t.Fatalf("lc %+v, path %q, old %q, err %v", lc, path, old, err)
+	}
+	// No name in the outputs: nothing to call the file.
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{}); err == nil ||
+		!strings.Contains(err.Error(), "the installation has no project name yet; an operator runs fugaro init --name <name>") {
+		t.Fatalf("no project_name: %v", err)
+	}
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "Not A Name"}); err == nil {
+		t.Fatal("a bad name was accepted")
+	}
+	// A file for that name that belongs to another GCP project is refused;
+	// one for the same project is kept and extended.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := "version: 1\nname: aurora\ngcp_project: other-proj\nregion: us-east5\nruns_bucket: fugaro-runs-other-proj\n"
+	if err := os.WriteFile(path, []byte(other), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"}); err == nil ||
+		!strings.Contains(err.Error(), "other-proj") || !strings.Contains(err.Error(), "proj-1234") {
+		t.Fatalf("a file for another GCP project: %v", err)
+	}
+	same := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nuser: me@example.com\n"
+	if err := os.WriteFile(path, []byte(same), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, _, old, err = nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"})
+	if err != nil || lc.User != "me@example.com" || string(old) != same {
+		t.Fatalf("an existing file for the same project: %+v, %q, %v", lc, old, err)
+	}
+}
+
+// What init writes can't drift from the installation's own name.
+func TestInitWriteConfigChecksName(t *testing.T) {
+	r := newInitRig(t)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := infra.Installation(lc, infra.InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := newInitCmd()
+	cmd.SetOut(io.Discard)
+	ir := newInitRun(cmd, &initOptions{})
+	err = ir.writeConfig(lc, spec, infra.InstallationOutputs{ProjectName: "borealis", RunsBucket: initRunsBucket}, r.cfg, nil, true)
+	if err == nil || !strings.Contains(err.Error(), "borealis") {
+		t.Fatalf("err = %v", err)
 	}
 }

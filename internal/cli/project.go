@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,7 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"gocloud.dev/gcerrors"
+
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -108,4 +113,46 @@ func (o cloudOptions) errw() io.Writer {
 		return o.stderr()
 	}
 	return os.Stderr
+}
+
+// markerMaxBytes bounds the project marker read: the object is a few
+// dozen bytes, and anyone holding objectAdmin on the bucket could replace it.
+const markerMaxBytes = 4 << 10
+
+// checkCloudName refuses a project config that doesn't point at its own
+// installation: the runs bucket's fugaro/project.json names the project
+// and the GCP project, and both must be the config's. A missing object
+// (an installation applied before M9a) is a user error naming the fix; a
+// read failure is remote (exit 2). A passed check is cached for a day per
+// project, keyed by the GCP project and the bucket it was made for.
+func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, getenv func(string) string, now time.Time) error {
+	bucketURL := lc.BucketURL()
+	if c, ok := localcfg.CachedNameCheck(getenv, lc.Name, now); ok && c.GCPProject == lc.GCPProject && c.RunsBucket == bucketURL {
+		return nil
+	}
+	r, err := b.Bucket.NewReader(ctx, infra.ProjectMarkerObject, nil)
+	if gcerrors.Code(err) == gcerrors.NotFound {
+		return userErr("project %s's installation has no project name yet; an operator runs fugaro init --name %s (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name, lc.Name)
+	}
+	if err != nil {
+		return remote(fmt.Errorf("reading %s from %s: %w", infra.ProjectMarkerObject, bucketURL, err))
+	}
+	defer r.Close()
+	data, err := io.ReadAll(io.LimitReader(r, markerMaxBytes+1))
+	if err != nil {
+		return remote(fmt.Errorf("reading %s from %s: %w", infra.ProjectMarkerObject, bucketURL, err))
+	}
+	var m infra.ProjectMarker
+	if len(data) > markerMaxBytes || json.Unmarshal(data, &m) != nil || m.Version != 1 || !config.ProjectNameRE.MatchString(m.Name) {
+		return userErr("%s in %s is not a version 1 project marker; an operator runs fugaro init --name %s to write it again", infra.ProjectMarkerObject, bucketURL, lc.Name)
+	}
+	switch {
+	case m.Name != lc.Name:
+		return userErr("project config %s points at a GCP project whose Fugaro project is %s (%s in %s says so): check gcp_project in the config", lc.Name, m.Name, infra.ProjectMarkerObject, bucketURL)
+	case m.GCPProject != lc.GCPProject:
+		return userErr("project config %s says GCP project %s, but its installation's marker (%s in %s) says %s: check gcp_project in the config", lc.Name, lc.GCPProject, infra.ProjectMarkerObject, bucketURL, m.GCPProject)
+	}
+	// Best effort: the next command checks again if this can't be saved.
+	_ = localcfg.SaveNameCheck(getenv, lc.Name, localcfg.NameCheck{GCPProject: lc.GCPProject, RunsBucket: bucketURL, CheckedAt: now})
+	return nil
 }

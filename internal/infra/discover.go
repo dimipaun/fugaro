@@ -241,7 +241,11 @@ func (d *discovery) add(k importKind, region, key, name string) {
 // bucket reads the runs bucket and checks that it is in the project and
 // carries fugaro=managed. It is nil when the bucket doesn't exist or is
 // refused.
-func (d *discovery) bucket(name string) (*storage.Bucket, error) {
+//
+// name is the Fugaro project the bucket must belong to: a bucket labelled
+// with another project's name is refused, and one without the label (an
+// earlier apply made it) is adopted, since the plan adds the label.
+func (d *discovery) bucket(name, projectName string) (*storage.Bucket, error) {
 	num, err := ProjectNumber(d.ctx, d.c, d.project)
 	if err != nil {
 		return nil, err
@@ -267,6 +271,10 @@ func (d *discovery) bucket(name string) (*storage.Bucket, error) {
 	want := map[string]string{gcp.LabelManaged: gcp.ManagedValue}
 	if !hasMarks(b.Labels, want) {
 		d.foreign("bucket gs://"+name, b.Labels, want)
+		return nil, nil
+	}
+	if have, ok := b.Labels[gcp.LabelProject]; ok && have != projectName {
+		d.foreign("bucket gs://"+name, b.Labels, map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelProject: projectName})
 		return nil, nil
 	}
 	return b, nil
@@ -309,7 +317,7 @@ const (
 // isolation on, the log bucket (by name, since it carries no labels).
 func DiscoverInstallation(ctx context.Context, c *Clients, spec InstallationSpec) (Imports, error) {
 	d := &discovery{ctx: ctx, c: c, project: spec.Project}
-	b, err := d.bucket(spec.RunsBucket)
+	b, err := d.bucket(spec.RunsBucket, spec.FugaroProject)
 	if err != nil {
 		return Imports{}, err
 	}
@@ -448,9 +456,9 @@ func uniqueSecrets(ws WorkflowSpec) []string {
 // a live grant that differs from the planned one is refused with a
 // *BindingError: the plan would add a second grant next to it.
 func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Existing, error) {
-	d := &discovery{ctx: ctx, c: c, project: spec.Project}
+	d := &discovery{ctx: ctx, c: c, project: spec.GCPProject}
 	ex := Existing{Jobs: map[string]string{}, DisplayNames: map[string]string{}}
-	b, err := d.bucket(spec.Installation.RunsBucket)
+	b, err := d.bucket(spec.Installation.RunsBucket, spec.Installation.ProjectName)
 	if err != nil {
 		return Imports{}, Existing{}, err
 	}
@@ -459,7 +467,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 	secretPolicies := map[string]*secretmanager.Policy{}
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
 		id := spec.Secrets[logical]
-		name := "projects/" + spec.Project + "/secrets/" + id
+		name := "projects/" + spec.GCPProject + "/secrets/" + id
 		s, err := c.Secrets.Projects.Secrets.Get(name).Context(ctx).Do()
 		switch {
 		case d.absent(err, serviceSecretManager):
@@ -584,7 +592,7 @@ func DiscoverRepo(ctx context.Context, c *Clients, spec RepoSpec) (Imports, Exis
 // checkRunURI is the URL the check's Scheduler job posts to: the check
 // job's run, in the repository's region.
 func checkRunURI(spec RepoSpec) string {
-	return "https://run.googleapis.com/v2/projects/" + spec.Project + "/locations/" + spec.Region + "/jobs/" + spec.Check.Job + ":run"
+	return "https://run.googleapis.com/v2/projects/" + spec.GCPProject + "/locations/" + spec.Region + "/jobs/" + spec.Check.Job + ":run"
 }
 
 // schedulerJob adopts the check's Scheduler job when it exists and is

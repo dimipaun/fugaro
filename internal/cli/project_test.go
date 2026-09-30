@@ -211,14 +211,20 @@ func TestInitWithoutNameRefused(t *testing.T) {
 	t.Chdir(t.TempDir())
 	for _, args := range [][]string{
 		{"init", "--gcp-project", "proj-1234", "--region", "us-east5"},
-		{"init", "--config-only", "--gcp-project", "proj-1234", "--region", "us-east5"},
 	} {
 		_, _, err := execute(t, args...)
 		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass --name") {
 			t.Errorf("%s: exit %d, err %v", strings.Join(args, " "), ExitCode(err), err)
 		}
 	}
-	_, _, err := execute(t, "init", "--name", "aurora", "--region", "us-east5")
+	// --config-only takes the name from the installation, so it needs the
+	// GCP project and region to find it (and with them it goes on to the
+	// cloud, which a test can't let it do: see TestInitConfigOnlyTakesNameFromOutputs).
+	_, _, err := execute(t, "init", "--config-only")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project and --region") {
+		t.Errorf("--config-only with nothing: exit %d, err %v", ExitCode(err), err)
+	}
+	_, _, err = execute(t, "init", "--name", "aurora", "--region", "us-east5")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project") {
 		t.Errorf("no --gcp-project: exit %d, err %v", ExitCode(err), err)
 	}

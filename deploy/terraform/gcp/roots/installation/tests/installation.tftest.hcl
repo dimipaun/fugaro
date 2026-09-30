@@ -9,10 +9,11 @@
 mock_provider "google" {}
 
 variables {
-  project      = "proj-1234"
-  region       = "us-east5"
-  runs_bucket  = "fugaro-runs-proj-1234"
-  state_bucket = "fugaro-tfstate-proj-1234"
+  project        = "proj-1234"
+  fugaro_project = "aurora"
+  region         = "us-east5"
+  runs_bucket    = "fugaro-runs-proj-1234"
+  state_bucket   = "fugaro-tfstate-proj-1234"
   names = {
     legacy_registry              = "fugaro"
     base_registry                = "fugaro-base"
@@ -48,6 +49,10 @@ run "root_passes_inputs" {
     error_message = "the root must pass runs_bucket to the module"
   }
   assert {
+    condition     = output.project_name == "aurora"
+    error_message = "the root must pass fugaro_project to the module and output it as project_name"
+  }
+  assert {
     condition     = output.base_registry == "fugaro-base" && output.legacy_registry == "fugaro"
     error_message = "the root must pass the registry names and adopt_legacy_registry to the module"
   }
@@ -81,8 +86,8 @@ run "bucket_is_marked" {
   }
 
   assert {
-    condition     = google_storage_bucket.runs.labels == tomap({ fugaro = "managed" })
-    error_message = "the runs bucket must carry exactly fugaro=managed"
+    condition     = google_storage_bucket.runs.labels == tomap({ fugaro = "managed", fugaro_project = "aurora" })
+    error_message = "the runs bucket must carry exactly fugaro=managed and the project's name"
   }
   assert {
     condition     = google_storage_bucket.runs.uniform_bucket_level_access == true
@@ -622,4 +627,43 @@ run "log_isolation_off" {
     condition     = output.log_view == null
     error_message = "log_view is null without log isolation"
   }
+}
+
+run "project_marker_object" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = google_storage_bucket_object.project_marker.name == "fugaro/project.json"
+    error_message = "the marker must be fugaro/project.json in the runs bucket"
+  }
+  assert {
+    condition     = google_storage_bucket_object.project_marker.content_type == "application/json"
+    error_message = "the marker is JSON"
+  }
+  assert {
+    condition     = jsondecode(google_storage_bucket_object.project_marker.content) == { version = 1, name = "aurora", gcp_project = "proj-1234" }
+    error_message = "the marker must hold the version, the project's name and the GCP project ID"
+  }
+  assert {
+    condition     = output.project_name == "aurora"
+    error_message = "the module must output project_name"
+  }
+}
+
+run "bad_project_name" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    fugaro_project = "Not A Name"
+  }
+
+  expect_failures = [var.fugaro_project]
 }

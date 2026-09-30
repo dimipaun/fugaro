@@ -722,3 +722,63 @@ func TestImageStatusReadsTheRunsBucket(t *testing.T) {
 		t.Fatalf("ls warnings = %q", w)
 	}
 }
+
+// The check job reads the GCP project from FUGARO_GCP_PROJECT and the
+// project's name from FUGARO_PROJECT; the old shape (a GCP ID under
+// FUGARO_PROJECT alone) is refused, asking for init --repo.
+func TestCheckJobReadsGCPProject(t *testing.T) {
+	newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil || e.gcpProject != "proj-1234" || e.name != "aurora" {
+		t.Fatalf("env = %+v, %v", e, err)
+	}
+	t.Setenv("FUGARO_GCP_PROJECT", "")
+	t.Setenv("FUGARO_PROJECT", "proj-1234") // the pre-M9a job
+	_, _, err = execute(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") || !strings.Contains(err.Error(), "fugaro init --repo") {
+		t.Fatalf("exit %d, %v", ExitCode(err), err)
+	}
+	t.Setenv("FUGARO_GCP_PROJECT", "proj-1234")
+	t.Setenv("FUGARO_PROJECT", "")
+	if _, err := readJobEnv(); err == nil || !strings.Contains(err.Error(), "FUGARO_PROJECT") {
+		t.Fatalf("no project name: %v", err)
+	}
+}
+
+// The job's spec carries the name from FUGARO_PROJECT into every job's env,
+// as the installed jobs have it.
+func TestCheckJobResolvesSpec(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, _ := config.Parse([]byte(bitbucketYAML))
+	rs, _, err := e.repoSpec(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check.Env["FUGARO_PROJECT"] != "aurora" || rs.Check.Env["FUGARO_GCP_PROJECT"] != "proj-1234" ||
+		rs.Workflows["app"].Env["FUGARO_PROJECT"] != "aurora" || rs.Installation.ProjectName != "aurora" {
+		t.Errorf("the spec's env = %v", rs.Check.Env)
+	}
+	if rs.RegistryPath != f.rs.RegistryPath || rs.BuildServiceAccountEmail != f.rs.BuildServiceAccountEmail {
+		t.Errorf("registry %s, build account %s; the installed job names %s and %s", rs.RegistryPath, rs.BuildServiceAccountEmail, f.rs.RegistryPath, f.rs.BuildServiceAccountEmail)
+	}
+}
+
+// The local check resolves the spec from the selected project config alone
+// (no installation outputs), and reports the project.
+func TestLocalCheckResolvesSpec(t *testing.T) {
+	localCheck(t)
+	out, stderr, err := execute(t, "image", "check", "--json", "--dry-run")
+	if err != nil {
+		t.Fatalf("%v (%s)", err, stderr)
+	}
+	var got struct {
+		Project string `json:"project"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Project != "aurora" {
+		t.Fatalf("json = %s, %v", out, err)
+	}
+}

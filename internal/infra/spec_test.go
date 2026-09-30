@@ -72,6 +72,7 @@ func installationOutputs() InstallationOutputs {
 		RunsBucket:              "fugaro-runs-proj-1234",
 		RegistryHost:            "us-east5-docker.pkg.dev/proj-1234",
 		BaseRegistry:            BaseRegistry,
+		ProjectName:             "aurora",
 		SchedulerServiceAccount: SchedulerServiceAccountID + "@proj-1234.iam.gserviceaccount.com",
 		RoleIDs: RoleIDs{
 			Launcher:       "projects/proj-1234/roles/" + RoleLauncher,
@@ -375,7 +376,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 	if !equalJSON(t, spec, want) {
 		t.Errorf("check spec = %+v, want %+v", spec, want)
 	}
-	for _, k := range []string{"FUGARO_BACKEND", "FUGARO_BUCKET", "FUGARO_PROJECT", "FUGARO_REGION"} {
+	for _, k := range []string{"FUGARO_BACKEND", "FUGARO_BUCKET", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"} {
 		if c.Env[k] != rs.Workflows["web"].Env[k] {
 			t.Errorf("check env %s = %q", k, c.Env[k])
 		}
@@ -661,7 +662,7 @@ func TestTfvarsSortedKeys(t *testing.T) {
 	if !bytes.Equal(buf.Bytes(), vars) {
 		t.Errorf("the tfvars are not in sorted-key form:\n%s", vars)
 	}
-	top := []string{"github_app_id", "installation", "project", "region", "repo"}
+	top := []string{"fugaro_project", "github_app_id", "installation", "project", "region", "repo"}
 	if got := slices.Sorted(maps.Keys(doc.(map[string]any))); !slices.Equal(got, top) {
 		t.Errorf("top-level keys = %v, want %v", got, top)
 	}
@@ -692,7 +693,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launchers", "log_bucket_description", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)

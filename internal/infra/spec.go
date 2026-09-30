@@ -66,6 +66,9 @@ type Inputs struct {
 // InstallationOutputs are the installation root's outputs, as `terraform
 // output -json` names them.
 type InstallationOutputs struct {
+	// ProjectName is the Fugaro project's name; empty in the outputs of an
+	// installation applied before M9a.
+	ProjectName             string   `json:"project_name"`
 	RunsBucket              string   `json:"runs_bucket"`
 	RegistryHost            string   `json:"registry_host"`
 	BaseRegistry            string   `json:"base_registry"`
@@ -171,6 +174,9 @@ type CheckJobSpec struct {
 
 // RepoInstallation are the installation values a repository root needs.
 type RepoInstallation struct {
+	// ProjectName comes from the installation's outputs; the repository
+	// root checks every job's FUGARO_PROJECT against it.
+	ProjectName             string      `json:"-"`
 	RunsBucket              string      `json:"runs_bucket"`
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
@@ -201,7 +207,9 @@ type RepoSpec struct {
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
 
-	Project      string           `json:"-"`
+	// GCPProject is the GCP project ID. It is not in the tfvars under this
+	// name: the root's own variable is "project".
+	GCPProject   string           `json:"-"`
 	Region       string           `json:"-"`
 	Installation RepoInstallation `json:"-"`
 	GitHubAppID  string           `json:"-"` // GitHub only
@@ -253,6 +261,9 @@ func resolve(in Inputs) (*repoCtx, error) {
 		return nil, userErr("%v", err)
 	}
 	c.inst = withDefaults(in.Installation, lc, c.bucket)
+	if c.inst.ProjectName != lc.Name {
+		return nil, userErr("the installation's project name is %s, but the local config's is %s; they must agree (renaming isn't supported)", c.inst.ProjectName, lc.Name)
+	}
 	if c.inst.RunsBucket != c.bucket {
 		return nil, userErr("the installation's runs bucket is %s, but the local config's is %s", c.inst.RunsBucket, c.bucket)
 	}
@@ -392,6 +403,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 		}
 	}
 	role := func(id string) string { return "projects/" + lc.GCPProject + "/roles/" + id }
+	def(&o.ProjectName, lc.Name)
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
 	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
@@ -425,10 +437,11 @@ func serviceAccountEmail(id, project string) string {
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
 	return map[string]string{
-		"FUGARO_BUCKET":  "gs://" + c.bucket,
-		"FUGARO_BACKEND": backend.CloudRun,
-		"FUGARO_PROJECT": c.lc.GCPProject,
-		"FUGARO_REGION":  c.lc.Region,
+		"FUGARO_BUCKET":      "gs://" + c.bucket,
+		"FUGARO_BACKEND":     backend.CloudRun,
+		"FUGARO_GCP_PROJECT": c.lc.GCPProject,
+		"FUGARO_PROJECT":     c.inst.ProjectName,
+		"FUGARO_REGION":      c.lc.Region,
 	}
 }
 
@@ -553,9 +566,10 @@ func Repo(in Inputs) (RepoSpec, error) {
 		},
 		Workflows: map[string]WorkflowSpec{},
 
-		Project: lc.GCPProject,
-		Region:  lc.Region,
+		GCPProject: lc.GCPProject,
+		Region:     lc.Region,
 		Installation: RepoInstallation{
+			ProjectName:             c.inst.ProjectName,
 			RunsBucket:              c.bucket,
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,

@@ -20,7 +20,7 @@ func TestRunFakeAcceptsEveryNameForm(t *testing.T) {
 	if f.State(full) != backend.StateRunning {
 		t.Fatal("short-name SetState not seen by full name")
 	}
-	id.Project = "999"
+	id.GCPProject = "999"
 	f.SetState(id.String(), backend.StateSucceeded) // number form
 	if f.State(full) != backend.StateSucceeded {
 		t.Fatal("number-form SetState not seen")

@@ -69,7 +69,10 @@ type Budget struct {
 // InstallationSpec is the installation root's tfvars: exactly its
 // variables.
 type InstallationSpec struct {
-	Project             string            `json:"project"`
+	Project string `json:"project"`
+	// FugaroProject is the Fugaro project's name (not the GCP ID, which is
+	// Project: Terraform's own variable keeps its name).
+	FugaroProject       string            `json:"fugaro_project"`
 	Region              string            `json:"region"`
 	RunsBucket          string            `json:"runs_bucket"`
 	StateBucket         string            `json:"state_bucket"`
@@ -139,10 +142,11 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, userErr("the runs bucket %s must be named fugaro-runs-…", bucket)
 	}
 	s := InstallationSpec{
-		Project:     lc.GCPProject,
-		Region:      lc.Region,
-		RunsBucket:  bucket,
-		StateBucket: firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject),
+		Project:       lc.GCPProject,
+		FugaroProject: lc.Name,
+		Region:        lc.Region,
+		RunsBucket:    bucket,
+		StateBucket:   firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject),
 		Names: InstallationNames{
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,
@@ -212,16 +216,17 @@ func launchersWithOperators(launchers, operators []string) []string {
 
 // repoVars is the repository root's tfvars.
 type repoVars struct {
-	Project      string           `json:"project"`
-	Region       string           `json:"region"`
-	Installation RepoInstallation `json:"installation"`
-	GitHubAppID  *string          `json:"github_app_id"`
-	Repo         RepoSpec         `json:"repo"`
+	Project       string           `json:"project"`
+	FugaroProject string           `json:"fugaro_project"`
+	Region        string           `json:"region"`
+	Installation  RepoInstallation `json:"installation"`
+	GitHubAppID   *string          `json:"github_app_id"`
+	Repo          RepoSpec         `json:"repo"`
 }
 
 // RepoVars is the repository root's terraform.tfvars.json for spec.
 func RepoVars(spec RepoSpec) ([]byte, error) {
-	v := repoVars{Project: spec.Project, Region: spec.Region, Installation: spec.Installation, Repo: spec}
+	v := repoVars{Project: spec.GCPProject, FugaroProject: spec.Installation.ProjectName, Region: spec.Region, Installation: spec.Installation, Repo: spec}
 	if spec.GitHubAppID != "" {
 		id := spec.GitHubAppID
 		v.GitHubAppID = &id

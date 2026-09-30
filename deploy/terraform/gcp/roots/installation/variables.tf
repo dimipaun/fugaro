@@ -5,6 +5,10 @@ variable "project" {
   type = string
 }
 
+variable "fugaro_project" {
+  type = string
+}
+
 variable "region" {
   type = string
 }

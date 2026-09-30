@@ -140,7 +140,7 @@ func ForgetRepoState(ctx context.Context, c *Clients, stateBucket, slug string) 
 func SecretVersions(ctx context.Context, c *Clients, spec RepoSpec) (map[string]bool, error) {
 	out := make(map[string]bool, len(spec.Secrets))
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
-		ok, err := hasEnabledVersion(ctx, c, target{project: spec.Project}, spec.Secrets[logical])
+		ok, err := hasEnabledVersion(ctx, c, target{project: spec.GCPProject}, spec.Secrets[logical])
 		if err != nil {
 			return nil, err
 		}
@@ -160,7 +160,7 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 		if slices.ContainsFunc(uniqueSecrets(ws), func(l string) bool { return !versions[l] }) {
 			continue
 		}
-		ok, err := hasRecord(ctx, c, target{project: spec.Project}, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
+		ok, err := hasRecord(ctx, c, target{project: spec.GCPProject}, spec.Installation.RunsBucket, imagecheck.RecordKey(spec.Slug, name))
 		if err != nil {
 			return nil, err
 		}

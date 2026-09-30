@@ -27,6 +27,7 @@ module "installation" {
   source = "../../modules/installation"
 
   project                = var.project
+  fugaro_project         = var.fugaro_project
   region                 = var.region
   runs_bucket            = var.runs_bucket
   state_bucket           = var.state_bucket

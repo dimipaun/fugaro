@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -120,6 +121,18 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	if err := os.MkdirAll(bucket, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The installation names its project in the runs bucket, as its
+	// Terraform does; every cloud command checks it.
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: cloudProjectName, GCPProject: cloudProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(bucket, filepath.Dir(filepath.FromSlash(infra.ProjectMarkerObject))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bucket, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	r.provider = filepath.Join(dir, "provider.json")
 	r.bucket = "file://" + bucket
 	// The project config, in a config directory of the rig's own, where
@@ -168,7 +181,7 @@ func (r *cloudRig) wait() {
 
 // fullName is the canonical name of the job's execution short.
 func (r *cloudRig) fullName(short string) string {
-	return backend.ExecID{Project: cloudProject, Region: cloudRegion, Job: r.job, Name: short}.String()
+	return backend.ExecID{GCPProject: cloudProject, Region: cloudRegion, Job: r.job, Name: short}.String()
 }
 
 // execute runs `fugaro exec` as execution full (already running in the
@@ -196,7 +209,7 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 	}
 	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_RUN", "FUGARO_BUCKET"),
 		"CLOUD_RUN_EXECUTION="+id.Name, "CLOUD_RUN_JOB="+id.Job,
-		"FUGARO_BACKEND=cloud-run", "FUGARO_PROJECT="+cloudProject, "FUGARO_REGION="+cloudRegion,
+		"FUGARO_BACKEND=cloud-run", "FUGARO_GCP_PROJECT="+cloudProject, "FUGARO_PROJECT="+cloudProjectName, "FUGARO_REGION="+cloudRegion,
 		"ANTHROPIC_API_KEY="+cloudSecret, "FIXTURE_FAILS_FILE="+failsFile, "HOME="+tmp)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) } // a hang leaves a goroutine dump
 	cmd.WaitDelay = 5 * time.Second
@@ -284,7 +297,8 @@ func (r *cloudRig) cli(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.fugaro, args...)
-	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG", "FUGARO_PROJECT", "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+r.xdgConfig)
+	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG", "FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"),
+		"XDG_CONFIG_HOME="+r.xdgConfig, "XDG_CACHE_HOME="+filepath.Join(r.dir, "xdg-cache"))
 	cmd.Dir = r.t.TempDir() // not a checkout
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer

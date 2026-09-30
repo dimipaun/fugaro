@@ -79,7 +79,7 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 	}
 	// A name spelled with the number is accepted too.
 	id, _ := backend.ParseExecution(ref.Name)
-	id.Project = "123456789"
+	id.GCPProject = "123456789"
 	if e, err := b.Execution(ctx, id.String()); err != nil || e.Name != ref.Name {
 		t.Fatalf("Execution(number form) = %+v, %v", e, err)
 	}
@@ -358,12 +358,12 @@ func TestExecutionNamesArePinnedToTheRegion(t *testing.T) {
 }
 
 func TestCheckRunExecution(t *testing.T) {
-	own := backend.ExecID{Project: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
+	own := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
 	if err := CheckRunExecution(own.String(), "us-east5", "acme-app", "web"); err != nil {
 		t.Fatalf("own execution refused: %v", err)
 	}
 	num := own
-	num.Project = "123456789"
+	num.GCPProject = "123456789"
 	if err := CheckRunExecution(num.String(), "us-east5", "acme-app", "web"); err != nil {
 		t.Fatalf("project number refused: %v", err)
 	}

@@ -118,7 +118,7 @@ Terraform's state, destroying nothing.`,
 	}
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the project's name, for a project config fugaro init creates (with one, it must be its name)")
+	f.StringVar(&o.name, "name", "", "the project's name: for a project config fugaro init creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes)")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
@@ -393,6 +393,23 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		}
 	} else {
 		name = cmp.Or(name, o.name)
+		if name == "" && o.configOnly {
+			// --config-only takes the name from the installation's
+			// outputs (nameFromOutputs), so the config starts without one.
+			if o.cloud.gcpProject == "" || o.cloud.region == "" {
+				return nil, "", nil, userErr("there is no project config yet: pass --gcp-project and --region (the project's name comes from the installation), or --name")
+			}
+			gcpProject := o.cloud.gcpProject
+			lc, err = localcfg.Parse([]byte("version: 1\nname: pending\ngcp_project: " + gcpProject + "\nregion: " + o.cloud.region + "\nruns_bucket: fugaro-runs-" + gcpProject + "\n"))
+			if err != nil {
+				return nil, "", nil, userErr("--gcp-project/--region: %v", err)
+			}
+			lc.Name = ""
+			if o.runsBucket != "" {
+				lc.RunsBucket = o.runsBucket
+			}
+			return lc, "", nil, nil
+		}
 		switch {
 		case name == "":
 			return nil, "", nil, userErr("there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one")
@@ -661,12 +678,22 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	if prior, err := t.Output(ctx); err == nil && r.o.registryCleanup == "" {
+	// What the installation already is: its name may not change, and an
+	// unnamed one is named only on request. Before any plan.
+	var prior infra.InstallationOutputs
+	havePrior := false
+	if raw, err := t.Output(ctx); err == nil {
+		if o, err := infra.DecodeOutputs(raw); err == nil {
+			prior, havePrior = o, true
+		}
+	}
+	if err := checkInstallationName(r.o.name, lc.Name, prior, havePrior); err != nil {
+		return err
+	}
+	if havePrior && prior.RegistryCleanupDryRun != nil && !*prior.RegistryCleanupDryRun && r.o.registryCleanup == "" {
 		// Nothing records a cleanup that was switched on, so say when the
 		// default puts it back in dry-run.
-		if o, err := infra.DecodeOutputs(prior); err == nil && o.RegistryCleanupDryRun != nil && !*o.RegistryCleanupDryRun {
-			r.warn("registry cleanup is on (or off) in the installation, and this plan puts it back to dry-run: pass --registry-cleanup=on or off to keep it")
-		}
+		r.warn("registry cleanup is on (or off) in the installation, and this plan puts it back to dry-run: pass --registry-cleanup=on or off to keep it")
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
@@ -758,12 +785,72 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 	return nil
 }
 
+// checkInstallationName refuses a run of fugaro init that would rename the
+// installation, or name one that has no name by accident. The name is the
+// state's project_name output, the project config's name: and --name; all
+// that are set must agree (design §2.5). An installation that has outputs
+// but no project_name (applied before M9a) is named only by --name: the
+// name is permanent, so it is never taken silently from a config. With no
+// outputs yet there is no installation to disagree with.
+func checkInstallationName(flagName, configName string, outs infra.InstallationOutputs, haveOutputs bool) error {
+	if !haveOutputs {
+		return nil
+	}
+	if outs.ProjectName == "" {
+		if flagName == "" {
+			return userErr("the installation has no project name yet; naming it is permanent, so pass --name %s to give it the project config's name (see docs/design/m9-budget-and-dashboard.md §13.1)", configName)
+		}
+		return nil
+	}
+	if outs.ProjectName != configName || (flagName != "" && flagName != outs.ProjectName) {
+		return userErr("the installation's project name is %s; renaming isn't supported (design §2.5): the project config says %s and --name says %q", outs.ProjectName, configName, flagName)
+	}
+	return nil
+}
+
+// nameFromOutputs completes the project config --config-only starts
+// without a name: the file is projects/<project_name>.yaml, the name the
+// installation reports. An existing file for that name is the base (its
+// repositories are kept) when it belongs to the same GCP project, and
+// refused when it doesn't.
+func nameFromOutputs(lc *localcfg.Config, outs infra.InstallationOutputs) (*localcfg.Config, string, []byte, error) {
+	name := outs.ProjectName
+	if name == "" {
+		return nil, "", nil, userErr("the installation has no project name yet; an operator runs fugaro init --name <name> first (see docs/design/m9-budget-and-dashboard.md §13.1)")
+	}
+	path, err := localcfg.ProjectPath(os.Getenv, name)
+	if err != nil {
+		return nil, "", nil, userErr("the installation's project name: %v", err)
+	}
+	existing, _, err := localcfg.LoadProject(os.Getenv, name)
+	switch {
+	case errors.Is(err, localcfg.ErrMissing):
+		next := *lc
+		next.Name = name
+		return &next, path, nil, nil
+	case err != nil:
+		return nil, "", nil, userErr("%v", err)
+	case existing.GCPProject != lc.GCPProject:
+		return nil, "", nil, userErr("%s is project %s's config, for GCP project %s, but --gcp-project says %s; the installation's project name is %s", path, name, existing.GCPProject, lc.GCPProject, name)
+	}
+	old, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", nil, userErr("reading the project config: %v", err)
+	}
+	return existing, path, old, nil
+}
+
 // configOnly writes the local config alone, from the installation's
-// outputs when its state is reachable, else from the flags.
+// outputs when its state is reachable, else from the flags. The outputs
+// name the project: a config without a name takes theirs, and one with a
+// name must match it.
 func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
 	outs, err := r.readOutputs(ctx, c, t, wd, spec)
 	switch {
 	case errors.Is(err, errNoState), errors.Is(err, infra.ErrNoOutputs):
+		if lc.Name == "" {
+			return userErr("there is no project config and no installation state to take the project's name from (%v): pass --name", err)
+		}
 		// Nothing applied yet: only then do the flags stand in.
 		host, herr := infra.RegistryHost(lc)
 		if herr != nil {
@@ -775,6 +862,16 @@ func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 		// A state bucket that isn't ours, or a state that can't be read, is
 		// a failure, not something to work around.
 		return initErr(err)
+	case lc.Name == "":
+		if lc, path, old, err = nameFromOutputs(lc, outs); err != nil {
+			return err
+		}
+		r.setProject(lc)
+		printProjectHeader(r.cmd.ErrOrStderr(), lc)
+	case outs.ProjectName == "":
+		return userErr("the installation has no project name yet; an operator runs fugaro init --name %s first (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name)
+	case outs.ProjectName != lc.Name:
+		return userErr("the installation's project name is %s; renaming isn't supported (design §2.5): project config %s names it %s", outs.ProjectName, path, lc.Name)
 	}
 	return r.writeConfig(lc, spec, outs, path, old, false)
 }
@@ -810,6 +907,9 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 // and backs up the file it replaces. A diff is confirmed by the apply's
 // confirmation (confirmed), else it asks on its own.
 func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, outs infra.InstallationOutputs, path string, old []byte, confirmed bool) error {
+	if outs.ProjectName != "" && outs.ProjectName != lc.Name {
+		return userErr("the installation's project name is %s, but the project config names %s; it isn't rewritten (renaming isn't supported, design §2.5)", outs.ProjectName, lc.Name)
+	}
 	r.res.Outputs = &outs
 	next := *lc
 	if outs.RunsBucket != "" {
@@ -1394,6 +1494,11 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 		return infra.InstallationOutputs{}, userErr("the installation's state in gs://%s has no outputs: run fugaro init first", stateBucket)
 	case err != nil:
 		return infra.InstallationOutputs{}, remote(err)
+	}
+	// Every job carries the project's name, which only the installation's
+	// outputs give: init --name names an installation first.
+	if outs.ProjectName == "" {
+		return infra.InstallationOutputs{}, userErr("the installation has no project name; an operator runs fugaro init --name %s first (see docs/design/m9-budget-and-dashboard.md §13.1)", lc.Name)
 	}
 	// An installation applied before the tag mover role existed doesn't
 	// output it; the repository's grant of it would fail at apply.

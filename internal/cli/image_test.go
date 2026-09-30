@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -335,4 +336,10 @@ func setBucketURL(t *testing.T, f *cloudFixture, u string) {
 		t.Fatal(err)
 	}
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", adc)
+	// A gs:// bucket can't be read here, so the project-name check (which
+	// reads fugaro/project.json from it) is answered from its cache, as if
+	// it had passed a moment ago.
+	if err := localcfg.SaveNameCheck(os.Getenv, "aurora", localcfg.NameCheck{GCPProject: "proj-1234", RunsBucket: u, CheckedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
 }

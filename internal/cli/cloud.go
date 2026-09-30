@@ -154,6 +154,10 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	if err != nil {
 		return nil, remote(err)
 	}
+	if err := checkCloudName(ctx, b, lc, os.Getenv, time.Now()); err != nil {
+		_ = b.Close()
+		return nil, err
+	}
 	return &cloudEnv{lc: lc, bucket: b, be: be, gcp: opts}, nil
 }
 

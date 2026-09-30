@@ -294,7 +294,7 @@ func (f *Run) project(p string) string {
 }
 
 func (f *Run) name(project, region string, k execKey) string {
-	return backend.ExecID{Project: f.project(project), Region: region, Job: k.job, Name: k.short}.String()
+	return backend.ExecID{GCPProject: f.project(project), Region: region, Job: k.job, Name: k.short}.String()
 }
 
 func stamp(t time.Time) string {
@@ -378,8 +378,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		x.set(backend.StateCancelled)
 		f.ops++
 		writeJSON(w, http.StatusOK, map[string]any{
-			"name":     fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(id.Project), id.Region, f.ops),
-			"metadata": f.withType(f.render(id.Project, id.Region, x)),
+			"name":     fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(id.GCPProject), id.Region, f.ops),
+			"metadata": f.withType(f.render(id.GCPProject, id.Region, x)),
 		})
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/jobs"):
 		f.listJobs(w, r, strings.TrimSuffix(p, "/jobs"))
@@ -398,7 +398,7 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "execution not found")
 			return
 		}
-		writeJSON(w, http.StatusOK, f.render(id.Project, id.Region, x))
+		writeJSON(w, http.StatusOK, f.render(id.GCPProject, id.Region, x))
 	default:
 		f.unhandled(w, r)
 	}

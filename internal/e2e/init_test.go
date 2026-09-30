@@ -269,6 +269,7 @@ func (r *initRepoRig) script(t *testing.T, root string, n int, s map[string]any)
 func installationOutputs(t *testing.T) string {
 	t.Helper()
 	vals := map[string]any{
+		"project_name":              initRepoProjectName,
 		"runs_bucket":               initRepoRunsBucket,
 		"registry_host":             initRepoRegion + "-docker.pkg.dev/" + initRepoProject,
 		"base_registry":             infra.BaseRegistry,
@@ -1034,6 +1035,29 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "tag_mover") {
 		t.Fatalf("init --repo on an installation without the tag mover role:\n%s", res)
+	}
+	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
+		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
+	}
+}
+
+// An installation applied before M9a has no project_name: every job
+// carries the name, so init --repo refuses it and names the fix.
+func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
+	r := sandboxRig(t)
+	var outs map[string]map[string]any
+	if err := json.Unmarshal([]byte(installationOutputs(t)), &outs); err != nil {
+		t.Fatal(err)
+	}
+	delete(outs, "project_name")
+	b, err := json.Marshal(outs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro init --name "+initRepoProjectName) {
+		t.Fatalf("init --repo on an unnamed installation:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want no plan or apply of the repository", calls)

@@ -101,7 +101,7 @@ func (f *cloud) bootstrap(t *testing.T, spec RepoSpec, display func(WorkflowSpec
 	accessors := map[string][]string{}
 	for _, name := range slices.Sorted(maps.Keys(spec.Workflows)) {
 		ws := spec.Workflows[name]
-		f.iam.AddServiceAccount(spec.Project, ws.ServiceAccountEmail, display(ws))
+		f.iam.AddServiceAccount(spec.GCPProject, ws.ServiceAccountEmail, display(ws))
 		f.run.SetJob(ws.Job, ws.Labels, ws.LegacyImage+":latest")
 		c := ws.BucketCondition
 		bucket = append(bucket, gcpfake.Binding{Role: "roles/storage.objectUser", Members: []string{saMember(ws.ServiceAccountEmail)},
@@ -126,11 +126,11 @@ func newDisplay(ws WorkflowSpec) string    { return ws.ServiceAccount.DisplayNam
 // registry, its build account and its check job.
 func (f *cloud) m5(t *testing.T, spec RepoSpec) {
 	t.Helper()
-	f.ar.AddRepository(spec.Project, spec.Region, spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
-	f.iam.AddServiceAccount(spec.Project, spec.BuildServiceAccountEmail, spec.BuildServiceAccount.DisplayName)
+	f.ar.AddRepository(spec.GCPProject, spec.Region, spec.Registry.RepositoryID, with(managed, gcp.LabelRepo, spec.Label))
+	f.iam.AddServiceAccount(spec.GCPProject, spec.BuildServiceAccountEmail, spec.BuildServiceAccount.DisplayName)
 	if spec.Check != nil {
 		f.run.SetJob(spec.Check.Job, with(managed, gcp.LabelRepo, spec.Label, gcp.LabelRole, gcp.RoleCheck), spec.Check.Image)
-		f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), spec.Installation.SchedulerServiceAccount)
+		f.sched.SetJob(spec.GCPProject, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), spec.Installation.SchedulerServiceAccount)
 	}
 }
 
@@ -299,7 +299,7 @@ func TestDiscoverRefusesSADisplayName(t *testing.T) {
 	// A build account must carry the build display name.
 	f = newCloud(t)
 	f.bootstrap(t, spec, newDisplay)
-	f.iam.AddServiceAccount(spec.Project, spec.BuildServiceAccountEmail, gcp.JobSADisplayName(spec.Slug, "web"))
+	f.iam.AddServiceAccount(spec.GCPProject, spec.BuildServiceAccountEmail, gcp.JobSADisplayName(spec.Slug, "web"))
 	_, _, err = DiscoverRepo(context.Background(), f.c, spec)
 	foreign(t, err, spec.BuildServiceAccountEmail)
 }
@@ -532,10 +532,10 @@ func TestDiscoverImportsSchedulerJob(t *testing.T) {
 	// isn't ours.
 	for name, set := range map[string]func(*cloud){
 		"target": func(f *cloud) {
-			f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, "https://example.com/", spec.Installation.SchedulerServiceAccount)
+			f.sched.SetJob(spec.GCPProject, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, "https://example.com/", spec.Installation.SchedulerServiceAccount)
 		},
 		"account": func(f *cloud) {
-			f.sched.SetJob(spec.Project, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), "x@proj-1234.iam.gserviceaccount.com")
+			f.sched.SetJob(spec.GCPProject, spec.Check.SchedulerRegion, spec.Check.SchedulerJob, checkRunURI(spec), "x@proj-1234.iam.gserviceaccount.com")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
