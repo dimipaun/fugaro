@@ -242,13 +242,15 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
 	}
-	if f.pr != 0 {
-		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
-	}
+	// A run left out warns only when it might be on the PR: its record
+	// is unreadable and its task doesn't place it on another one.
 	for _, r := range runs {
-		if r.warning != "" {
+		if r.warning != "" && (f.pr == 0 || onPR(r.in, f.pr) || r.mayBeOnPR()) {
 			fmt.Fprint(warn, multiLine(r.warning))
 		}
+	}
+	if f.pr != 0 {
+		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
 	}
 	if len(runs) == 0 {
 		return []runview.Row{}, nil
@@ -330,13 +332,23 @@ func onPR(in runview.Input, pr int) bool {
 	return (in.Task != nil && in.Task.PR == pr) || (in.Record != nil && in.Record.PR != nil && in.Record.PR.Number == pr)
 }
 
+// mayBeOnPR reports whether a run onPR leaves out could still be on a
+// pull request: its launch.json or result.json is unreadable, so its
+// record wasn't read, and no task says it follows another PR.
+func (r runObjects) mayBeOnPR() bool {
+	return r.unreadRecord && (r.in.Task == nil || r.in.Task.PR == 0)
+}
+
 // runObjects is what the bucket holds about one run, before its
 // execution is joined.
 type runObjects struct {
 	in        runview.Input
 	store     *runstore.Store
 	execution string // the execution to follow; "" when there is none
-	warning   string // printed only when the run is listed
+	warning   string // printed only when the run is listed (or may be)
+	// unreadRecord means a corrupt object stopped the reads before the
+	// record could say which pull request the run is on.
+	unreadRecord bool
 }
 
 // readRun reads what the bucket knows about one run; it makes no backend
@@ -367,6 +379,7 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, e
 	} {
 		if err := read.do(); corruptObject(err) {
 			problem(read.name + " is unreadable: " + err.Error())
+			r.unreadRecord = true
 			return r, nil
 		} else if err != nil {
 			return r, err

@@ -96,8 +96,10 @@ type Row struct {
 // record r pushed its branch, and the commit it pushed. A record with
 // pushed_head has. A record written before follow-ups existed has no
 // pushed_head, but then its pull request was opened only after a
-// successful push: a PR number means it pushed its head_sha. That reading
-// never applies to a follow-up, whose record names its PR from the start.
+// successful push: a PR number means it pushed its head_sha (none named,
+// nothing pushed). That reading never applies to a follow-up, whose record
+// names its PR from the start. The record tells one apart without its task
+// too: a first run's branch always names its own run ID.
 func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 	switch {
 	case r == nil:
@@ -106,7 +108,11 @@ func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
 		return r.PushedHead, true
 	case r.FollowUp != nil || (t != nil && t.IsFollowUp()):
 		return "", false
-	case r.PR != nil && r.PR.Number > 0:
+	}
+	if id, ok := task.BranchRunID(r.Branch); ok && id != r.RunID {
+		return "", false // another run's branch: a follow-up
+	}
+	if r.PR != nil && r.PR.Number > 0 && r.HeadSHA != "" {
 		return r.HeadSHA, true
 	}
 	return "", false

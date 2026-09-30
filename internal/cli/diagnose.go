@@ -46,6 +46,8 @@ type Diagnosis struct {
 	// FollowUp is what a follow-up acted on: the record's block, else the
 	// PR and previous run its task names. CommentsPath is where the
 	// comments it was given are stored. Both are absent for a first run.
+	// Not to be confused with row.follow_up, the row's bool saying
+	// whether the run is a follow-up at all.
 	FollowUp     *runstore.FollowUp `json:"follow_up,omitempty"`
 	CommentsPath string             `json:"comments_path,omitempty"`
 }

@@ -271,4 +271,29 @@ func TestJoinPushedPreM6(t *testing.T) {
 	if row := Join(Input{Task: spec}, prices, now); row.Pushed {
 		t.Fatalf("no record: %+v", row)
 	}
+	// A PR without a head_sha names no commit: not pushed.
+	headless := rec(runstore.StatusSucceeded, nil)
+	headless.PR = &runstore.PRRef{Number: 3}
+	if head, ok := Pushed(spec, headless); ok || head != "" {
+		t.Fatalf("a PR without a head_sha: %q, %v", head, ok)
+	}
+}
+
+// Without its task (task.json unreadable, or a caller holding only the
+// record), the record's branch tells a follow-up from a first run: a first
+// run's branch always names its own run ID.
+func TestPushedWithoutTask(t *testing.T) {
+	const head = "6666666666666666666666666666666666666666"
+	fu := &runstore.Record{RunID: followSpec.RunID, Branch: followSpec.Branch, HeadSHA: head, PR: &runstore.PRRef{Number: 7}}
+	if h, ok := Pushed(nil, fu); ok || h != "" {
+		t.Fatalf("a follow-up record with a PR and no block yet: %q, %v", h, ok)
+	}
+	first := &runstore.Record{RunID: spec.RunID, Branch: "fugaro/" + spec.RunID, HeadSHA: head, PR: &runstore.PRRef{Number: 7}}
+	if h, ok := Pushed(nil, first); !ok || h != head {
+		t.Fatalf("a first run's record: %q, %v", h, ok)
+	}
+	fu.PushedHead = head
+	if h, ok := Pushed(nil, fu); !ok || h != head {
+		t.Fatalf("a follow-up that pushed: %q, %v", h, ok)
+	}
 }

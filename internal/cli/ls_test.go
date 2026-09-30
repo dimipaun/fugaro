@@ -754,6 +754,35 @@ func TestLsPRNeedsOneRepo(t *testing.T) {
 	if got, _ := lsJSON(t, "--pr", "7", "--repo", "acme/app"); len(got.Runs) != 3 {
 		t.Fatalf("--repo: %v", runIDs(got.Runs))
 	}
+	// A config with no repositories (ls would list the whole bucket) needs --repo too.
+	none := strings.Replace(string(data), "repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n", "", 1)
+	if none == string(data) {
+		t.Fatal("the fixture's repos entry moved")
+	}
+	if err := os.WriteFile(path, []byte(none), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+		t.Fatalf("no repositories: %v", err)
+	}
+}
+
+// ls --pr can't tell whether a run whose record is unreadable, and whose
+// task names no PR, is on the PR: it leaves the run out but still warns.
+func TestLsPRWarnsUndecidableRun(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRRuns(t, f)
+	lost := runIDAt(0, "000500", "ffff")
+	seedSpec(t, f, firstRunSpec(lost), false)
+	putBuildObject(t, f, "runs/"+appSlug+"/"+lost+"/result.json", []byte("{not json"))
+	got, errOut := lsJSON(t, "--pr", "7")
+	if len(got.Runs) != 3 || !strings.Contains(errOut, lost+": result.json is unreadable") || !strings.Contains(errOut, r.fu2+": result.json is unreadable") {
+		t.Fatalf("ls --pr 7 = %v, stderr %q", runIDs(got.Runs), errOut)
+	}
+	// A run whose record says it is on another PR is off this one: no warning for it.
+	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, r.fu2) {
+		t.Fatalf("ls --pr 8 = %v, stderr %q", runIDs(got.Runs), errOut)
+	}
 }
 
 // ls --pr's totals line is the PR's total cost: every run on it, and only those.

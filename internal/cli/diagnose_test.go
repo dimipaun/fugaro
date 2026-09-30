@@ -252,3 +252,24 @@ func TestDiagnoseFollowUp(t *testing.T) {
 		t.Fatalf("first run human diagnose:\n%s", human)
 	}
 }
+
+// diagnose redacts the follow-up block: its note and the author names come
+// from the run.
+func TestDiagnoseFollowUpRedacts(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	root, id := runIDAt(1, "090000", "aaaa"), runIDAt(0, "000100", "bbbb")
+	seedSpec(t, f, followUpSpec(id, root, root, 7), false)
+	rec := prRecord(id, "", 7, 1)
+	rec.Branch = "fugaro/" + root
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root, Session: "fresh", SessionNote: "no session: " + secret,
+		Comments: 1, Authors: map[string]int{"alice " + secret: 1}, UntrustedAuthors: []string{secret}, Omitted: map[string]int{secret: 1}}
+	writeRecord(t, f, id, rec)
+	for _, args := range [][]string{{"diagnose"}, {"diagnose", "--json"}} {
+		out, _, err := execute(t, append(args, id)...)
+		if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "[REDACTED]") {
+			t.Fatalf("%v = %s, %v", args, out, err)
+		}
+	}
+}
