@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -18,10 +17,11 @@ import (
 // The fixtures in testdata/recorded are real Bitbucket Cloud exchanges,
 // recorded by live_test.go (build tag `live`) against the sandbox
 // repository with httpfixture.Recorder. Every account identity in them
-// (the reviewer's name, UUID, account ID and avatar hash, and the token
-// user's UUID, account ID and avatar) was replaced with a placeholder
-// before committing, which TestRecordedFixturesHoldNoIdentities enforces
-// for any future re-recording. These
+// (the reviewer's name, UUID, account ID and avatar hash, the token
+// user's UUID, account ID and avatar, the workspace's and project's names
+// and UUIDs, and the HTTPS clone link's user) was replaced with a
+// placeholder before committing, which TestRecordedFixturesHoldNoIdentities
+// enforces for any future re-recording. These
 // tests replay them, so the adapter is checked against Bitbucket's real
 // response shapes, and not only the hand-written fixtures in testdata.
 const (
@@ -129,69 +129,114 @@ const (
 	liveInlinePath  = "live-draft.txt"
 )
 
-var (
-	recPullPath = regexp.MustCompile(`/pullrequests/(\d+)$`)
-	recShortSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`) // Bitbucket abbreviates source.commit.hash
+var recShortSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`) // Bitbucket abbreviates source.commit.hash
+
+// The follow-up recordings (follow_up_reads.json, ensure_by_number.json
+// and ensure_by_number_declined.json) come from a later live run, on its
+// own pull request.
+const (
+	recFollowUpPR     = 16
+	recFollowUpBranch = "fugaro/live-20260930-130729-draft"
+	recBotID          = "712020:00000000-0000-4000-8000-00000000b07e" // the repository access token's account_id
 )
 
-// TestRecordedFollowUpReads replays follow_up_reads.json, which the live
-// check records (as live_follow_up_reads.json) once it has been run
-// against the sandbox: the repository, its pull request and the comments
-// the live check posted, read through the adapter. Until that recording
-// is committed there is nothing to replay, and the hand-written fixtures
-// in testdata stand in for it.
+// TestRecordedFollowUpReads replays follow_up_reads.json, the live
+// check's reads of its pull request (live_test.go, followUpReads): the
+// repository, the pull request, GET /user and the comments. What it
+// pins down, as Bitbucket really answered:
+//
+//   - is_private is present (true for the sandbox);
+//   - author.account_id is set, <digits>:<uuid>, and source.commit.hash is
+//     abbreviated to 12 hex;
+//   - GET /user answers a repository access token with HTTP 403, so no
+//     comment's Self is known, and the fallback (the PR author's account_id
+//     equals Fugaro's comments' author_id) is what tells them apart;
+//   - a reply carries parent {id, links} and an inline field of its own,
+//     and the resolved thread's first comment carries "resolution": {}
+//     (an empty object) while the others carry no resolution at all;
+//   - inline has from, to, path, start_from and start_to, and no outdated
+//     field while the comment is current;
+//   - deleted and pending are always present, false here;
+//   - the raw content keeps an HTML comment, while content.html escapes it
+//     as text (which is why Fugaro's report marker shows in Bitbucket).
 func TestRecordedFollowUpReads(t *testing.T) {
-	file := filepath.Join("testdata", "recorded", "follow_up_reads.json")
-	data, err := os.ReadFile(file)
-	if errors.Is(err, os.ErrNotExist) {
-		t.Skip("follow_up_reads.json has not been recorded yet (the live check records it)")
-	}
-	if err != nil {
-		t.Fatal(err)
-	}
-	var exchanges []httpfixture.Exchange
-	if err := json.Unmarshal(data, &exchanges); err != nil {
-		t.Fatal(err)
-	}
-	number := 0
-	for _, e := range exchanges {
-		if m := recPullPath.FindStringSubmatch(e.Path); m != nil {
-			number, _ = strconv.Atoi(m[1])
-			break
-		}
-	}
-	if number == 0 {
-		t.Fatalf("%s reads no pull request", file)
-	}
-	p := openRecorded(t, "follow_up_reads.json", "acme", "sandbox", nil)
+	var warnings []string
+	p := openRecorded(t, "follow_up_reads.json", "acme", "sandbox", func(m string) { warnings = append(warnings, m) })
 	if repo, err := p.Repository(ctx); err != nil || !repo.Private {
 		t.Fatalf("Repository = %+v, %v; the sandbox is private", repo, err)
 	}
-	info, err := p.PullRequest(ctx, number)
-	if err != nil || info.State != gitprov.PROpen || !strings.HasPrefix(info.SourceBranch, "fugaro/live-") ||
-		!strings.EqualFold(info.SourceRepo, "acme/sandbox") || info.AuthorID == "" || !recShortSHA.MatchString(info.HeadSHA) {
-		t.Fatalf("PullRequest = %+v, %v", info, err)
+	info, err := p.PullRequest(ctx, recFollowUpPR)
+	want := gitprov.PRInfo{Number: recFollowUpPR, URL: recPRURL + "16", State: gitprov.PROpen, AuthorID: recBotID,
+		SourceBranch: recFollowUpBranch, SourceRepo: "acme/sandbox", HeadSHA: "3bd808d407ef"}
+	if err != nil || info != want || !recShortSHA.MatchString(info.HeadSHA) {
+		t.Fatalf("PullRequest = %+v, %v\nwant %+v", info, err, want)
 	}
-	comments, err := p.Comments(ctx, number)
+	comments, err := p.Comments(ctx, recFollowUpPR)
 	if err != nil {
 		t.Fatal(err)
 	}
-	byBody := map[string]gitprov.Comment{}
-	for _, c := range comments {
-		byBody[c.Body] = c
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "HTTP 403") || !strings.Contains(warnings[0], "not accessible by this authentication mechanism") {
+		t.Errorf("warnings = %q, want the one about GET /user's 403", warnings)
 	}
-	for body, kind := range map[string]gitprov.CommentKind{liveGeneralBody: gitprov.CommentGeneral, liveInlineBody: gitprov.CommentInline, liveReplyBody: gitprov.CommentInline} {
-		c, ok := byBody[body]
-		if !ok || c.Kind != kind || (kind == gitprov.CommentInline && c.Path != liveInlinePath) {
-			t.Errorf("comment %q = %+v (found %v)", body, c, ok)
+	type shape struct {
+		kind     gitprov.CommentKind
+		path     string
+		line     int
+		resolved bool
+	}
+	wantShapes := map[string]shape{
+		"### Fugaro live check\n\nA **markdown** comment.": {kind: gitprov.CommentGeneral},
+		liveGeneralBody: {kind: gitprov.CommentGeneral},
+		liveInlineBody:  {gitprov.CommentInline, liveInlinePath, 1, true},
+		liveReplyBody:   {gitprov.CommentInline, liveInlinePath, 1, true}, // resolved through its thread's first comment
+	}
+	if len(comments) != len(wantShapes) {
+		t.Fatalf("got %d comments, want %d: %+v", len(comments), len(wantShapes), comments)
+	}
+	for _, c := range comments {
+		w, ok := wantShapes[c.Body]
+		if !ok {
+			t.Errorf("unexpected comment %+v", c)
 			continue
 		}
-		// The token posted both the pull request and the comments, so
-		// its comments carry the PR author's ID, and are its own when
-		// the adapter could tell.
-		if c.AuthorID != info.AuthorID || (c.SelfKnown && !c.Self) {
-			t.Errorf("comment %q: author %q, self %v/%v; the PR author is %q", body, c.AuthorID, c.Self, c.SelfKnown, info.AuthorID)
+		if c.Kind != w.kind || c.Path != w.path || c.Line != w.line || c.Resolved != w.resolved || c.Outdated || c.Deleted {
+			t.Errorf("comment %q = %+v, want %+v", c.Body, c, w)
 		}
+		// The token posted both the pull request and the comments, so
+		// its comments carry the PR author's ID; GET /user refused, so
+		// none is known to be Fugaro's own.
+		if c.AuthorID != recBotID || c.Author != "fugaro-live-check" || c.Self || c.SelfKnown || !c.Collaborator {
+			t.Errorf("comment %q: author %q/%q, self %v/%v", c.Body, c.Author, c.AuthorID, c.Self, c.SelfKnown)
+		}
+		if !strings.HasPrefix(c.URL, recPRURL+"16/_/diff#comment-"+c.ID) || c.CreatedAt.IsZero() {
+			t.Errorf("comment %q: url %q, created %v", c.Body, c.URL, c.CreatedAt)
+		}
+	}
+}
+
+// TestRecordedEnsureByNumber replays an update by number: one GET of the
+// pull request and a PUT of its draft state with the title it already
+// has; the spec's title and body are never sent.
+func TestRecordedEnsureByNumber(t *testing.T) {
+	p := openRecorded(t, "ensure_by_number.json", "acme", "sandbox", nil)
+	pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: recFollowUpPR, Branch: recFollowUpBranch, Title: "must not be sent", Body: "must not be sent", Draft: true})
+	if err != nil || pr != (gitprov.PR{Number: recFollowUpPR, URL: recPRURL + "16", Draft: true}) {
+		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// TestRecordedEnsureByNumberDeclined replays a declined pull request
+// (state DECLINED, closed_by set): it reads as closed, and an update by
+// number refuses it with ErrPRNotOpen, writing nothing.
+func TestRecordedEnsureByNumberDeclined(t *testing.T) {
+	p := openRecorded(t, "ensure_by_number_declined.json", "acme", "sandbox", nil)
+	info, err := p.PullRequest(ctx, recFollowUpPR)
+	if err != nil || info.State != gitprov.PRClosed || info.AuthorID != recBotID {
+		t.Fatalf("PullRequest = %+v, %v", info, err)
+	}
+	pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: recFollowUpPR, Branch: recFollowUpBranch})
+	if !errors.Is(err, gitprov.ErrPRNotOpen) || pr.Number != recFollowUpPR || pr.URL != recPRURL+"16" {
+		t.Fatalf("pr = %+v, err = %v; want ErrPRNotOpen with the PR", pr, err)
 	}
 }
 
@@ -203,14 +248,16 @@ func TestRecordedUnauthorized(t *testing.T) {
 }
 
 // Placeholder identities allowed in testdata/recorded: the reviewer
-// ("Sandbox Reviewer") and the repository access token's own app user.
+// ("Sandbox Reviewer"), the repository access token's own app user, and
+// the acme workspace ("Acme"), which is also the repository's team owner.
 var (
-	recAllowedUUIDs      = map[string]bool{recReviewer: true, "{00000000-0000-4000-8000-00000000b07e}": true}
+	recAllowedUUIDs      = map[string]bool{recReviewer: true, "{00000000-0000-4000-8000-00000000b07e}": true, recWorkspace: true}
 	recAllowedAccountIDs = map[string]bool{"557058:00000000-0000-4000-8000-00000000a11c": true, "712020:00000000-0000-4000-8000-00000000b07e": true}
-	recAllowedNames      = map[string]bool{"Sandbox Reviewer": true, "sandbox_reviewer": true, "fugaro-live-check": true}
+	recAllowedNames      = map[string]bool{"Sandbox Reviewer": true, "sandbox_reviewer": true, "fugaro-live-check": true, "Acme": true}
 	recEmail             = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}`)
 	recGravatar          = regexp.MustCompile(`gravatar\.com/avatar/([0-9a-fA-F]+)`)
-	recAvatarID          = "00000000-0000-4000-8000-000000000000" // the avatar image ID placeholder
+	recAvatarID          = "00000000-0000-4000-8000-000000000000"   // the avatar image ID placeholder
+	recWorkspace         = "{00000000-0000-4000-8000-0000000000ac}" // the acme workspace's (and its team owner's) uuid
 	recAtlAvatar         = regexp.MustCompile(`atl-paas\.net/([^/"]+)/([^/"]+)/`)
 	// The fixtures name only the generic acme/sandbox repository. The
 	// pattern below is assembled from pieces so this file does not itself
@@ -223,13 +270,18 @@ var (
 	// Any repository named in an API path or a Bitbucket link must be the
 	// generic one (case-insensitively: mixed_case.json spells it Acme/Sandbox).
 	recRepoRef = regexp.MustCompile(`(?:/2\.0/repositories|://bitbucket\.org)/([^/"%?]+)/([^/"%?]+)`)
+	// A repository's HTTPS clone link carries a user name before the
+	// host, which must be the placeholder (it is not an email address).
+	recCloneURL  = regexp.MustCompile(`://([^@/"]+)@bitbucket\.org/([^/"]+)/([^/"]+?)\.git`)
+	recCloneUser = "00000000000000000000000000b07e"
 )
 
 // TestRecordedFixturesHoldNoIdentities keeps real account identities out
 // of the recorded fixtures: a re-recording must be pseudonymized (see the
 // comment at the top of this file) before it is committed. It fails on any
-// email address, any user or app-user object (or any object carrying an
-// account_id) whose uuid, account_id or name is not a placeholder, any
+// email address, any user, app-user, team or workspace object (or any
+// object carrying an account_id) whose uuid, account_id, name, username
+// or slug is not a placeholder, any link naming another workspace, any
 // gravatar hash that is not all zeros, and any Atlassian avatar URL that
 // names a real account.
 func TestRecordedFixturesHoldNoIdentities(t *testing.T) {
@@ -258,14 +310,25 @@ func TestIdentityGuardCatchesRealIdentities(t *testing.T) {
 	    "links": {"avatar": {"href": "https://secure.gravatar.com/avatar/0123456789abcdef0123456789abcdef?d=x"}}},
 	  "summary": {"raw": "ping jane.doe@example.com"},
 	  "links": {"self": {"href": "https://api.bitbucket.org/2.0/repositories/` + "edge" + `appinc/other/pullrequests/1"}},
+	  "owner": {"type": "team", "display_name": "Jane's Company", "uuid": "{11111111-2222-4333-8444-666666666666}", "username": "janeco"},
+	  "workspace": {"type": "workspace", "name": "Jane's Company", "slug": "janeco", "uuid": "{11111111-2222-4333-8444-666666666666}",
+	    "links": {"html": {"href": "https://bitbucket.org/janeco/"}, "avatar": {"href": "https://bitbucket.org/workspaces/janeco/avatar/"}}},
+	  "clone": [{"name": "https", "href": "https://jdoe1234@bitbucket.org/acme/sandbox.git"}],
 	  "bot": {"type": "app_user", "links": {"avatar": {"href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:11111111-2222-4333-8444-555555555555/22222222-3333-4444-8555-666666666666/128"}}}}}]`)
 	problems := strings.Join(identityProblems(bad), "\n")
-	for _, want := range []string{"email", "real uuid", "real account_id", "real display_name", "real nickname", "gravatar", "avatar URL", "real sandbox", "other than acme/sandbox"} {
+	for _, want := range []string{"email", "real uuid", "real account_id", "real display_name", "real nickname", "gravatar", "avatar URL", "real sandbox", "other than acme/sandbox",
+		"team object with a real uuid", "team object with a real display_name", "team object with a real username",
+		"workspace object with a real uuid", "workspace object with a real name", "workspace object with a real slug", "names a workspace other than acme", "clone URL"} {
 		if !strings.Contains(problems, want) {
 			t.Errorf("the guard missed %q; it reported:\n%s", want, problems)
 		}
 	}
-	if good := identityProblems([]byte(`[{"response": {"type": "user", "display_name": "Sandbox Reviewer", "uuid": "` + recReviewer + `"}}]`)); len(good) != 0 {
+	if good := identityProblems([]byte(`[{"response": {"type": "user", "display_name": "Sandbox Reviewer", "uuid": "` + recReviewer + `"},
+	  "owner": {"type": "team", "display_name": "Acme", "uuid": "` + recWorkspace + `", "username": "acme"},
+	  "workspace": {"type": "workspace", "name": "Acme", "slug": "acme", "uuid": "` + recWorkspace + `",
+	    "links": {"avatar": {"href": "https://bitbucket.org/workspaces/acme/avatar/?ts=1"}, "html": {"href": "https://bitbucket.org/acme/workspace/projects/PER"}}},
+	  "avatar": {"href": "https://bitbucket.org/account/acme/avatar/"},
+	  "clone": [{"name": "https", "href": "https://` + recCloneUser + `@bitbucket.org/acme/sandbox.git"}]}]`)); len(good) != 0 {
 		t.Errorf("the guard flagged a placeholder identity: %q", good)
 	}
 }
@@ -282,11 +345,28 @@ func identityProblems(data []byte) []string {
 		out = append(out, fmt.Sprintf("holds the real sandbox's name or a real identifier %q", m))
 	}
 	for _, m := range recRepoRef.FindAllStringSubmatch(text, -1) {
-		if !strings.EqualFold(m[1], "acme") || !strings.EqualFold(m[2], "sandbox") {
+		switch {
+		case m[1] == "account" || m[1] == "workspaces": // a workspace's avatar
+			if !strings.EqualFold(m[2], "acme") {
+				out = append(out, "names a workspace other than acme: "+m[0])
+			}
+		case m[2] == "workspace": // a workspace's projects
+			if !strings.EqualFold(m[1], "acme") {
+				out = append(out, "names a workspace other than acme: "+m[0])
+			}
+		case !strings.EqualFold(m[1], "acme") || !strings.EqualFold(m[2], "sandbox"):
 			out = append(out, "names a repository other than acme/sandbox: "+m[0])
 		}
 	}
-	if m := recEmail.FindString(text); m != "" {
+	for _, m := range recCloneURL.FindAllStringSubmatch(text, -1) {
+		if m[1] != recCloneUser || !strings.EqualFold(m[2], "acme") || !strings.EqualFold(m[3], "sandbox") {
+			out = append(out, "clone URL names a real user or another repository: "+m[0])
+		}
+	}
+	// Neither clone link holds an email address: the HTTPS one's user is
+	// checked above, and the SSH one is always git@bitbucket.org.
+	noClone := strings.ReplaceAll(recCloneURL.ReplaceAllString(text, "://"), `"git@bitbucket.org:`, `"`)
+	if m := recEmail.FindString(noClone); m != "" {
 		out = append(out, fmt.Sprintf("holds an email address %q", m))
 	}
 	for _, m := range recGravatar.FindAllStringSubmatch(text, -1) {
@@ -311,15 +391,20 @@ func appendIdentities(out []string, v any) []string {
 	case map[string]any:
 		typ, _ := v["type"].(string)
 		_, hasAccount := v["account_id"]
-		if typ == "user" || typ == "app_user" || typ == "team" || hasAccount {
+		if typ == "user" || typ == "app_user" || typ == "team" || typ == "workspace" || hasAccount {
 			if u, ok := v["uuid"].(string); ok && !recAllowedUUIDs[u] {
 				out = append(out, fmt.Sprintf("%s object with a real uuid %s", typ, u))
 			}
 			if a, ok := v["account_id"].(string); ok && !recAllowedAccountIDs[a] {
 				out = append(out, fmt.Sprintf("%s object with a real account_id %s", typ, a))
 			}
-			for _, k := range []string{"display_name", "nickname"} {
+			for _, k := range []string{"display_name", "nickname", "name"} {
 				if n, ok := v[k].(string); ok && !recAllowedNames[n] {
+					out = append(out, fmt.Sprintf("%s object with a real %s %q", typ, k, n))
+				}
+			}
+			for _, k := range []string{"username", "slug"} { // a team's or workspace's
+				if n, ok := v[k].(string); ok && n != "acme" {
 					out = append(out, fmt.Sprintf("%s object with a real %s %q", typ, k, n))
 				}
 			}

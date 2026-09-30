@@ -1,0 +1,416 @@
+[
+  {
+    "method": "GET",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests/16",
+    "status": 200,
+    "response": {
+      "comment_count": 4,
+      "task_count": 0,
+      "type": "pullrequest",
+      "id": 16,
+      "title": "Fugaro live check 20260930-130729",
+      "description": "Live check description.\n\nSecond paragraph, which must survive every update.",
+      "rendered": {
+        "title": {
+          "type": "rendered",
+          "raw": "Fugaro live check 20260930-130729",
+          "markup": "markdown",
+          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/acme/sandbox/commits/20260930\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260930\u003c/a\u003e-130729\u003c/p\u003e"
+        },
+        "description": {
+          "type": "rendered",
+          "raw": "Live check description.\n\nSecond paragraph, which must survive every update.",
+          "markup": "markdown",
+          "html": "\u003cp\u003eLive check description.\u003c/p\u003e\n\u003cp\u003eSecond paragraph, which must survive every update.\u003c/p\u003e"
+        }
+      },
+      "state": "DECLINED",
+      "draft": false,
+      "merge_commit": null,
+      "close_source_branch": false,
+      "closed_by": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "author": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "reason": "",
+      "created_on": "2026-09-30T13:07:33.924449+00:00",
+      "updated_on": "2026-09-30T13:08:01.705515+00:00",
+      "destination": {
+        "branch": {
+          "name": "master"
+        },
+        "commit": {
+          "hash": "22b573f7c658",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/22b573f7c658"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox/commits/22b573f7c658"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "acme/sandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
+            }
+          },
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
+        }
+      },
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260930-130729-draft",
+          "links": {},
+          "sync_strategies": [
+            "merge_commit",
+            "rebase"
+          ]
+        },
+        "commit": {
+          "hash": "3bd808d407ef",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/3bd808d407ef"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox/commits/3bd808d407ef"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "acme/sandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
+            }
+          },
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
+        }
+      },
+      "reviewers": [],
+      "participants": [
+        {
+          "type": "participant",
+          "user": {
+            "type": "app_user",
+            "links": {
+              "avatar": {
+                "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+              }
+            },
+            "created_on": "2026-09-27T18:05:57.178462+00:00",
+            "display_name": "fugaro-live-check",
+            "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+            "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+            "account_status": "active",
+            "kind": "repository_access_token"
+          },
+          "role": "PARTICIPANT",
+          "approved": false,
+          "state": null,
+          "participated_on": "2026-09-30T13:07:44.225617+00:00"
+        }
+      ],
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16"
+        },
+        "html": {
+          "href": "https://bitbucket.org/acme/sandbox/pull-requests/16"
+        },
+        "commits": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/commits"
+        },
+        "approve": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/approve"
+        },
+        "request-changes": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/request-changes"
+        },
+        "diff": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diff/acme/sandbox:3bd808d407ef%0D22b573f7c658?from_pullrequest_id=16\u0026topic=true"
+        },
+        "diffstat": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diffstat/acme/sandbox:3bd808d407ef%0D22b573f7c658?from_pullrequest_id=16\u0026topic=true"
+        },
+        "comments": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/comments"
+        },
+        "activity": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/activity"
+        },
+        "merge": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/merge"
+        },
+        "decline": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/decline"
+        },
+        "statuses": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/statuses"
+        },
+        "mergeability_checks": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/mergeability/checks"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "Live check description.\n\nSecond paragraph, which must survive every update.",
+        "markup": "markdown",
+        "html": "\u003cp\u003eLive check description.\u003c/p\u003e\n\u003cp\u003eSecond paragraph, which must survive every update.\u003c/p\u003e"
+      },
+      "queued": false
+    }
+  },
+  {
+    "method": "GET",
+    "path": "/2.0/repositories/acme/sandbox/pullrequests/16",
+    "status": 200,
+    "response": {
+      "comment_count": 4,
+      "task_count": 0,
+      "type": "pullrequest",
+      "id": 16,
+      "title": "Fugaro live check 20260930-130729",
+      "description": "Live check description.\n\nSecond paragraph, which must survive every update.",
+      "rendered": {
+        "title": {
+          "type": "rendered",
+          "raw": "Fugaro live check 20260930-130729",
+          "markup": "markdown",
+          "html": "\u003cp\u003eFugaro live check \u003ca href=\"https://bitbucket.org/acme/sandbox/commits/20260930\" rel=\"nofollow\" class=\"ap-connect-link\"\u003e20260930\u003c/a\u003e-130729\u003c/p\u003e"
+        },
+        "description": {
+          "type": "rendered",
+          "raw": "Live check description.\n\nSecond paragraph, which must survive every update.",
+          "markup": "markdown",
+          "html": "\u003cp\u003eLive check description.\u003c/p\u003e\n\u003cp\u003eSecond paragraph, which must survive every update.\u003c/p\u003e"
+        }
+      },
+      "state": "DECLINED",
+      "draft": false,
+      "merge_commit": null,
+      "close_source_branch": false,
+      "closed_by": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "author": {
+        "type": "app_user",
+        "links": {
+          "avatar": {
+            "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+          }
+        },
+        "created_on": "2026-09-27T18:05:57.178462+00:00",
+        "display_name": "fugaro-live-check",
+        "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+        "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+        "account_status": "active",
+        "kind": "repository_access_token"
+      },
+      "reason": "",
+      "created_on": "2026-09-30T13:07:33.924449+00:00",
+      "updated_on": "2026-09-30T13:08:01.705515+00:00",
+      "destination": {
+        "branch": {
+          "name": "master"
+        },
+        "commit": {
+          "hash": "22b573f7c658",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/22b573f7c658"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox/commits/22b573f7c658"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "acme/sandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
+            }
+          },
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
+        }
+      },
+      "source": {
+        "branch": {
+          "name": "fugaro/live-20260930-130729-draft",
+          "links": {},
+          "sync_strategies": [
+            "merge_commit",
+            "rebase"
+          ]
+        },
+        "commit": {
+          "hash": "3bd808d407ef",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/commit/3bd808d407ef"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox/commits/3bd808d407ef"
+            }
+          },
+          "type": "commit"
+        },
+        "repository": {
+          "type": "repository",
+          "full_name": "acme/sandbox",
+          "links": {
+            "self": {
+              "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox"
+            },
+            "html": {
+              "href": "https://bitbucket.org/acme/sandbox"
+            },
+            "avatar": {
+              "href": "https://bytebucket.org/ravatar/%7B00000000-0000-4000-8000-000000000001%7D?ts=default"
+            }
+          },
+          "name": "Sandbox",
+          "uuid": "{00000000-0000-4000-8000-000000000001}"
+        }
+      },
+      "reviewers": [],
+      "participants": [
+        {
+          "type": "participant",
+          "user": {
+            "type": "app_user",
+            "links": {
+              "avatar": {
+                "href": "https://avatar-management--avatars.us-west-2.prod.public.atl-paas.net/712020:00000000-0000-4000-8000-00000000b07e/00000000-0000-4000-8000-000000000000/128"
+              }
+            },
+            "created_on": "2026-09-27T18:05:57.178462+00:00",
+            "display_name": "fugaro-live-check",
+            "uuid": "{00000000-0000-4000-8000-00000000b07e}",
+            "account_id": "712020:00000000-0000-4000-8000-00000000b07e",
+            "account_status": "active",
+            "kind": "repository_access_token"
+          },
+          "role": "PARTICIPANT",
+          "approved": false,
+          "state": null,
+          "participated_on": "2026-09-30T13:07:44.225617+00:00"
+        }
+      ],
+      "links": {
+        "self": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16"
+        },
+        "html": {
+          "href": "https://bitbucket.org/acme/sandbox/pull-requests/16"
+        },
+        "commits": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/commits"
+        },
+        "approve": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/approve"
+        },
+        "request-changes": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/request-changes"
+        },
+        "diff": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diff/acme/sandbox:3bd808d407ef%0D22b573f7c658?from_pullrequest_id=16\u0026topic=true"
+        },
+        "diffstat": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/diffstat/acme/sandbox:3bd808d407ef%0D22b573f7c658?from_pullrequest_id=16\u0026topic=true"
+        },
+        "comments": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/comments"
+        },
+        "activity": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/activity"
+        },
+        "merge": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/merge"
+        },
+        "decline": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/decline"
+        },
+        "statuses": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/statuses"
+        },
+        "mergeability_checks": {
+          "href": "https://api.bitbucket.org/2.0/repositories/acme/sandbox/pullrequests/16/mergeability/checks"
+        }
+      },
+      "summary": {
+        "type": "rendered",
+        "raw": "Live check description.\n\nSecond paragraph, which must survive every update.",
+        "markup": "markdown",
+        "html": "\u003cp\u003eLive check description.\u003c/p\u003e\n\u003cp\u003eSecond paragraph, which must survive every update.\u003c/p\u003e"
+      },
+      "queued": false
+    }
+  }
+]

@@ -508,10 +508,14 @@ func at(s string) time.Time {
 }
 
 // TestBitbucketComments covers a resolved inline thread with a reply (the
-// resolution is on the thread's first comment), an unresolved, outdated
-// inline thread whose reply carries no inline field of its own, a deleted
-// comment, a general comment, and a pending one (unpublished, so left
-// out), returned oldest first.
+// resolution, an empty object as Bitbucket really sends it, is on the
+// thread's first comment only), an unresolved, outdated inline thread
+// whose reply carries no inline field of its own, a deleted comment, a
+// general comment, and a pending one (unpublished, so left out), returned
+// oldest first. A live reply carries its thread's inline field, and a
+// current comment's inline has no outdated field
+// (testdata/recorded/follow_up_reads.json); the reply without one and the
+// outdated inline field are kept as the adapter's fallbacks, not seen live.
 func TestBitbucketComments(t *testing.T) {
 	got, err := open(t, "comments.json").Comments(ctx, 12)
 	if err != nil {
@@ -657,7 +661,9 @@ func TestBitbucketCommentsUserForbidden(t *testing.T) {
 	if _, err := p.Comments(ctx, 12); err != nil {
 		t.Fatal(err)
 	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "GET /user") || !strings.Contains(warnings[0], "HTTP 403") {
+	// Bitbucket's own answer to a repository access token (seen live).
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "GET /user") || !strings.Contains(warnings[0], "HTTP 403") ||
+		!strings.Contains(warnings[0], "not accessible by this authentication mechanism") {
 		t.Fatalf("warnings = %q, want one about GET /user", warnings)
 	}
 }

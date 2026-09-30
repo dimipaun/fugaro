@@ -1,19 +1,22 @@
 package bitbucket
 
-// The follow-up reads of a pull request's comments. The shapes, and the
-// test fixtures, follow Bitbucket Cloud's documentation:
+// The follow-up reads of a pull request's comments. The shapes follow
+// Bitbucket Cloud's documentation:
 //
 //   - comments: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-pullrequests/#api-repositories-workspace-repo-slug-pullrequests-pull-request-id-comments-get
 //   - paging (the body's "next"): https://developer.atlassian.com/cloud/bitbucket/rest/intro/#pagination
 //   - the token's user: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-users/#api-user-get
 //
-// No live check has confirmed these yet. Each field marked "unverified
-// against the live API" is hand-written from the documentation until the
-// live follow-up check (live_test.go, followUpReads) records it: in
-// bitbucket.go, is_private, author.account_id and source.commit.hash; here,
-// resolution, inline.outdated, deleted, pending, user.uuid, user.account_id
-// and user.display_name, a reply's missing inline field, and whether
-// GET /user answers a repository access token.
+// and were checked against the live API (testdata/recorded/follow_up_reads.json,
+// replayed by TestRecordedFollowUpReads): user.uuid, user.account_id
+// (<digits>:<uuid>) and user.display_name; deleted and pending, always
+// present; a reply's parent and its own inline field; "resolution": {} on
+// a resolved thread's first comment and absent elsewhere; inline's from,
+// to and path. GET /user answers a repository access token with HTTP 403,
+// so with such a token Fugaro's own comments are never known (SelfKnown
+// false). Not seen live: an outdated comment (a current one's inline has
+// no outdated field), a deleted or pending one, a reply without an inline
+// field, and a second page ("next").
 
 import (
 	"context"
@@ -35,9 +38,9 @@ const maxPages = 20
 
 // user is an account in a Bitbucket response; null for a deleted one.
 type user struct {
-	UUID        string `json:"uuid"`         // unverified against the live API
-	AccountID   string `json:"account_id"`   // unverified against the live API
-	DisplayName string `json:"display_name"` // unverified against the live API
+	UUID        string `json:"uuid"`
+	AccountID   string `json:"account_id"`
+	DisplayName string `json:"display_name"`
 }
 
 func (u *user) accountID() string {
@@ -61,7 +64,7 @@ type inline struct {
 	Path     string `json:"path"`
 	From     *int   `json:"from"`
 	To       *int   `json:"to"`
-	Outdated bool   `json:"outdated"` // unverified against the live API
+	Outdated bool   `json:"outdated"` // absent on a current comment; an outdated one is not seen live
 }
 
 func (in *inline) line() int {
@@ -82,13 +85,13 @@ type comment struct {
 	} `json:"content"`
 	User    *user   `json:"user"`
 	Inline  *inline `json:"inline"`
-	Deleted bool    `json:"deleted"` // unverified against the live API
-	Pending bool    `json:"pending"` // unverified against the live API: an unpublished draft comment
+	Deleted bool    `json:"deleted"`
+	Pending bool    `json:"pending"` // an unpublished draft comment
 	Parent  *struct {
 		ID int `json:"id"`
 	} `json:"parent"`
-	// Resolution is set on a resolved thread's first comment, and null
-	// (or absent) otherwise. Unverified against the live API.
+	// Resolution is set on a resolved thread's first comment (live, as
+	// an empty object: {}), and absent (or null) otherwise.
 	Resolution json.RawMessage `json:"resolution"`
 	Links      struct {
 		HTML struct {
