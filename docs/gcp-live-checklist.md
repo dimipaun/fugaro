@@ -30,6 +30,11 @@ M4 PR description and into the runbook (`docs/gcp-bootstrap.md`).
   - Google calls use Application Default Credentials only.
   - The prefix-denial check impersonates the job's service account, starting
     from ADC.
+  - Check 11's cleanup deletes the image it pushed with your own ADC, not the
+    build account's (which may push but not delete). That needs
+    `artifactregistry.versions.delete` on the repository's registry: project
+    owner or editor, or `roles/artifactregistry.repoAdmin` on that registry.
+    Without it the cleanup fails the test and names the image to delete.
   - The Bitbucket token comes only from `FUGARO_BITBUCKET_TOKEN`. It is used
     to read the sandbox's `fugaro.yaml` for the spend check and to clean up.
     The CLI's environment never holds it, and it is scrubbed from anything
@@ -73,10 +78,12 @@ export PROJECT="$FUGARO_LIVE_PROJECT" REGION=<region> BUCKET=fugaro-runs-<suffix
 
 From M5 on, set the project up with `fugaro init` (`docs/gcp-setup.md`)
 instead: the installation, then the sandbox with `fugaro init --repo`. The
-checks below still apply. Checks 11 and 11b still build as the deprecated
-`build.service_account` (the legacy `fugaro-build`) until the live test is
-moved to the repository's own build account and registry. The bootstrap steps that
-follow are the M4 path, kept for the rollback (`docs/gcp-bootstrap.md`).
+checks below still apply. Checks 11 and 11b build as the repository's own
+build account, into its own registry; only a local config with no
+installation (no `terraform.state_bucket`) that still names the deprecated
+`build.service_account` builds as that account, into the legacy registry. The
+bootstrap steps that follow are the M4 path, kept for the rollback
+(`docs/gcp-bootstrap.md`).
 
 Complete the bootstrap runbook (`docs/gcp-bootstrap.md`) for the sandbox
 repository, in the runbook's order:
@@ -178,10 +185,10 @@ In the commands below, `T` is short for
 | 8 | Secret Manager set, list and delete | `T -run TestLiveSecretsRoundTrip ./internal/backend/gcp/` | `Set` returns version `"1"`. `List` by labels shows 1 version with the matching latest. `Delete` succeeds. The value is random and never logged. |
 | 9 | The lock's generation preconditions on real GCS | `T -run TestLiveLockOnGCS ./internal/backend/gcp/` | A second holder gets `BusyError`, an expired takeover succeeds, and the old holder's `Release` leaves the new lock in place. The final `Release` deletes it. |
 | 10 | Cache save and restore, and `customTime` | `T -run TestLiveCacheOnGCS ./internal/backend/gcp/` | The 1 MiB archive is saved with a non-zero `customTime` and restores byte for byte. |
-| 11 | Cloud Build honours a BuildKit file secret (`--secret id=…,src=…`) in `gcr.io/cloud-builders/docker`, under the derived template's pinned `# syntax=` frontend | `T -run TestLiveCloudBuildSecretAndDigest ./internal/backend/gcp/` | The build succeeds, running as `build.service_account`, and its log has `LIVE secret-mounted`. That line comes from `RUN --mount=type=secret,id=SANDBOX_PROBE,uid=1000,mode=0400,required=true`. Cloud Build's docker does not support `env=` secret mounts: the first live derived build failed with `requested experimental feature exec.secretenv is not supported by build server`, so neither `cloudbuild.yaml` nor the template uses `env=` (design §7.2). |
-| 11b | Repository code can't reach the metadata server (design §7.2) | same test | `FACT` lines give each probe's outcome for the token endpoint, by name and by address. The control, a Cloud Build step on the `cloudbuild` network, is `REACHABLE`. A `RUN` on BuildKit's default network is `blocked`, and a `RUN --network=host` is `blocked` or `build-refused`. Any `REACHABLE` from a `RUN` fails the test as `BOUNDARY BROKEN`: stop, and don't onboard an untrusted repository until builds use a builder that denies `network.host` (design §7.2). **M5 adds two probes,** the path the build's smoke test takes: the same token endpoint, by name and by address, from `docker run --network none <image>` and from a plain `docker run <image>` (default network), inside a Cloud Build step. Both must be `blocked`; a `REACHABLE` from either means the smoke test, which runs repository code, could reach the build account's token, and the build must not be onboarded until the smoke's isolation is fixed. Until the test itself runs these probes, run them by hand in a scratch build and record the `FACT`s. |
+| 11 | Cloud Build honours a BuildKit file secret (`--secret id=…,src=…`) in `gcr.io/cloud-builders/docker`, under the derived template's pinned `# syntax=` frontend | `T -run TestLiveCloudBuildSecretAndDigest ./internal/backend/gcp/` | The build succeeds, running as the repository's build account (the one `fugaro image build` uses), and its log has `LIVE secret-mounted`. That line comes from `RUN --mount=type=secret,id=SANDBOX_PROBE,uid=1000,mode=0400,required=true`. Cloud Build's docker does not support `env=` secret mounts: the first live derived build failed with `requested experimental feature exec.secretenv is not supported by build server`, so neither `cloudbuild.yaml` nor the template uses `env=` (design §7.2). The build pushes its image as `candidate-<build ID>` to the workflow's image in the repository's registry (a `FACT` gives `<image>@sha256:…`), and the cleanup deletes it with your credentials (see Credentials above); it refuses, and fails, if a tag other than a `candidate-` one points at that version. A cancelled or aborted build whose push finishes after the cleanup leaves its candidate behind: delete it by hand. |
+| 11b | Repository code can't reach the metadata server (design §7.2) | same test | `FACT` lines give each probe's outcome for the token endpoint, by name and by address. The control, a Cloud Build step on the `cloudbuild` network, is `REACHABLE`. A `RUN` on BuildKit's default network is `blocked`, and a `RUN --network=host` is `blocked` or `build-refused`. Any `REACHABLE` from a `RUN` fails the test as `BOUNDARY BROKEN`: stop, and don't onboard an untrusted repository until builds use a builder that denies `network.host` (design §7.2). One more probe takes the smoke test's path: the pushed candidate, by digest, under `docker run --network none`, from a step on the smoke's builder. An additional probe runs the same candidate under a plain `docker run`, on docker's default network, which the smoke never uses. Both must be `blocked`, and a `REACHABLE` from either fails the test as `BOUNDARY BROKEN`. From `--network none`, it means the smoke test, which runs repository code, could reach the build account's token; from the default network, it means any `docker run` of repository code in a build step could. Either way, don't onboard an untrusted repository until that path is isolated. |
 | 12 | How `FROM repo@sha256` resolves | same test | `FACT` lines give the pinned `repo@sha256:<64 hex>`, BuildKit's `load metadata` and `FROM` or `resolve` lines, and whether the registry was contacted for metadata. |
-| 13 | The sandbox end to end: run, `ls`, cost, `logs`, `diagnose`, objects | `FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 45m -run TestLiveSandboxRun ./internal/e2e/` | See below. |
+| 13 | The sandbox end to end: run (with a `--total-timeout 15m` override, and the execution's 17m task timeout), `ls`, cost, `logs`, `diagnose`, objects | `FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 45m -run TestLiveSandboxRun ./internal/e2e/` | See below. |
 | 14 | Sweep | `FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 15m -run TestLiveGCPCleanup ./internal/e2e/` | It cancels, declines, deletes and logs every live-batch run, every `fugaro-live-*` prefix and every `fugaro-live-*` secret, and fails nothing. |
 | 15 | The GitHub credential mint (run only if a GitHub sandbox repository and App exist) | Store the App's private key with `fugaro secrets set github-app-key`, run `fugaro init --repo --github-app-id <id>` in the sandbox checkout, and let it submit the first build | The `credential` step's log shows `fugaro image git-credential` minting a token and no value; `source` clones the repository with it; the build succeeds. The minted token carries `contents: read` and `metadata: read` only (check the App's token request in the GitHub App's advanced log) and lives at least 30 minutes, which covers the clone. A `FACT` records the outcome. Skip, and say so in the PR, when there is no GitHub sandbox: M5 then ships the GitHub build path tested hermetically only. |
 | 16 | The daily image check: a skipped check, a back-off after a forced failure, and one forced rebuild | With the sandbox's schedule unpaused (its `rebuild.check` is `daily` and its record exists): `fugaro image check --dry-run` from its checkout; then `gcloud scheduler jobs run <scheduler job> --location <scheduler region>` (from `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`). To force a failure, temporarily disable the `bitbucket-token` secret's latest version and run the Scheduler job again, then re-enable the version. For the forced rebuild, run `fugaro image build`, which submits the request a fired trigger submits | (a) With nothing changed, the local check prints `skip`. The check job logs `decision: skip` for each workflow, `check.json` appears next to `image.json`, and no build starts. (b) The check job mounts the credential, so with its version disabled the execution fails at container start ("Failed to access secret ... Secret Version ... disabled"), before the check can log a decision or write `check.json`. Cloud Run records that only as an ERROR audit system event (`cloudaudit.googleapis.com%2Fsystem_event`, "Execution ... has failed to complete, 0/1 tasks were a success"), not in its system log, and the "Fugaro image check job failed" alert fires from that entry: the email arrives if one is configured, with log isolation on. A failure after start is covered by the check's own `decision: check-failed` line at ERROR (exit 2, the `fugaro ls` check warning and the "Fugaro image check failed" alert) and by the Cloud Run system log's ERROR lines. After a failed *rebuild* whose inputs haven't changed, the next check logs `rebuild-failed-last` and submits no build. (c) The forced rebuild runs candidate, smoke, gate, promote and record: `latest` moves to the record's `image_digest`, and `fugaro image status` shows the new build time. A leftover `candidate-` tag with an untag warning in the build log is expected. Record each as a `FACT`, and re-enable the secret version. |
@@ -190,7 +197,11 @@ In the commands below, `T` is short for
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
-- `run --json` reports `launched`, run `<slug>/<id>` and branch `fugaro/<id>`.
+- `run --total-timeout 15m --json` reports `launched`, run `<slug>/<id>` and
+  branch `fugaro/<id>`. 15m is below the sandbox's own `timeouts.total`, so
+  it is a real override.
+- The execution's task timeout is the override plus the task-timeout slack:
+  17m (a `FACT` line records it).
 - `ls --batch live-<stamp>` reaches a terminal `succeeded` or `failed` with a
   PR URL within 30m. It is polled every 20s.
 - `cost.model_basis` is `subscription`, `compute_usd` is above 0, and
@@ -292,7 +303,6 @@ The installation and the sandbox are migrated; the web repo is applied and its f
 - **The job account's prefix conditions (check 7):** pass on the adopted binding. The sandbox job account can write and delete under its own `runs/`, `cache/` and `locks/` prefixes and gets 403 on a sibling prefix, another repository's prefix, a read of another run's `task.json`, and listing `runs/`.
 - **The sandbox run** launched on the new image and got as far as the agent, which failed at once with "You've hit your org's monthly spend limit": a model-account limit, unrelated to the infrastructure. The run opened a draft PR, wrote its result and cache, and the test's cleanup declined the PR and deleted the branch. Rerun `TestLiveSandboxRun` after the limit is raised.
 - **The web repo's plan:** 4 imports, 23 creates, 3 label-only updates, 0 deletes, 3 bindings adopted; the check job, its invoker grant and a Scheduler job in the scheduler region, which stayed `PAUSED`; the job stayed on its legacy image. `fugaro image check --dry-run` printed `rebuild (no-record)`, as it must for a repository without a record.
-- **Gaps in the live suite:** `TestLiveCloudBuildSecretAndDigest` still needs `build.service_account`, which `init` drops, so it fails on a migrated installation; it needs to build as the repository's build account, and its 11b probes need the `docker run --network none` and default-network cases. `TestLiveSandboxRun` does not pass `--total-timeout 15m`, so nothing checks the 17-minute execution timeout. Both are follow-ups, tracked in design §14.
 
 Still to record: the items below that this list doesn't cover.
 
@@ -308,4 +318,5 @@ Still to record: the items below that this list doesn't cover.
 - **Cleanup (check 17):** what the dry run would delete.
 - **The pinned commit (check 18):** whether a push to the base branch during an image build left the smoke passing, and whether the provider served the fetch of the pinned commit by SHA.
 - **A real run:** its `ls --json` row's `image_age_s`, and that `--total-timeout 15m` gave the execution a 17-minute timeout.
+- **The live suite on a migrated installation (not yet run live):** `TestLiveCloudBuildSecretAndDigest` is expected to build as the repository's build account, into its registry, and to run the two `docker run` probes of check 11b; `TestLiveSandboxRun` is expected to launch with `--total-timeout 15m` and see the 17-minute execution timeout. Record their `FACT`s from the first run.
 - **Retirement:** `fugaro-build`'s bindings removed, disabled, deleted.

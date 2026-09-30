@@ -58,7 +58,12 @@ jobs:
             terraform -chdir=deploy/terraform/gcp/roots/$r validate
             terraform -chdir=deploy/terraform/gcp/roots/$r test
           done
+      # tflint --init asks the GitHub API for the plugin's release: with the
+      # workflow's read-only token it isn't held to the 60 requests an hour an
+      # anonymous caller on a shared runner gets.
       - run: tflint --chdir=deploy/terraform/gcp --init && tflint --chdir=deploy/terraform/gcp --recursive
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
       # The Trivy image images/scan.sh pins, over the Terraform.
       - run: sh deploy/terraform/scan.sh
       # The tf wrapper's tests against a real terraform binary.

@@ -164,6 +164,13 @@ func RegistryRepoID(slug string) string {
 	return derive(sanitize("fugaro-"+readableSlug(slug)), "registry\x00"+slug, "", maxRegistry, registryHashHex)
 }
 
+// DefaultRegistryHost is the registry host, the prefix of every image
+// registry, of a new installation in region of project:
+// <region>-docker.pkg.dev/<project>.
+func DefaultRegistryHost(region, project string) string {
+	return region + "-docker.pkg.dev/" + project
+}
+
 // CheckJobName is the repository's daily image check job. Its fugarochk-
 // prefix keeps it out of the fugaro- job listings (ls, max_parallel).
 func CheckJobName(slug string) string {

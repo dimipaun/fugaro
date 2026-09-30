@@ -20,7 +20,10 @@
 //     and build a test creates is removed (or cancelled) in a t.Cleanup that
 //     is registered before the side effect. Object names carry
 //     fugaro-live-<stamp>, and internal/e2e's TestLiveGCPCleanup sweeps
-//     whatever a -timeout abort left behind.
+//     whatever a -timeout abort left behind. The build check's pushed
+//     candidate-<build ID> image is deleted in its cleanup, which needs
+//     artifactregistry.versions.delete (see deleteCandidate); one an abort
+//     leaves behind must be deleted by hand.
 //   - Credentials come from ADC only (or, for the prefix-denial check, from
 //     impersonating the job's service account with ADC). Nothing reads a
 //     credential from argv, and nothing logged holds one.
@@ -34,6 +37,7 @@ package gcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	crand "crypto/rand"
 	"encoding/hex"
@@ -42,6 +46,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -53,6 +58,7 @@ import (
 	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
+	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
@@ -810,8 +816,8 @@ func TestLiveCacheOnGCS(t *testing.T) {
 }
 
 // TestLiveCloudBuildSecretAndDigest submits one small Cloud Build build, as
-// the configured build service account, that does what the derived-image
-// build step does and nothing else: it pulls the base image, pins it by its
+// the repository's build account, that does what the derived-image build
+// does and nothing it doesn't need: it pulls the base image, pins it by its
 // RepoDigest, and builds FROM repo@sha256:… with the sandbox-probe workflow
 // secret written to a file and passed as `--secret id=SANDBOX_PROBE,src=…`,
 // and mounted as a file with required=true, under the same pinned
@@ -819,38 +825,59 @@ func TestLiveCacheOnGCS(t *testing.T) {
 // derived build passes and mounts workflow secrets. (Without the syntax
 // line this check once passed while the derived build failed: the pinned
 // frontend asked the daemon for env= secret mounts, which Cloud Build's
-// docker refuses.) It pushes nothing. It records whether the secret was
-// mounted and how the digest FROM resolves (from the local image or the
-// registry).
+// docker refuses.) Like the derived build, it pushes that image as
+// candidate-<build ID> to the workflow's image in the repository's own
+// registry, and runs the pushed digest in a step like the smoke's; it
+// promotes nothing, writes no record, and deletes the candidate in its
+// cleanup. It records whether the secret was mounted and how the digest
+// FROM resolves (from the local image or the registry).
+//
+// The account and the image are the ones `fugaro image build` uses:
+// BuildRequest derives them from the slug and refuses any other. Only a
+// local config with no installation (no terraform.state_bucket) that still
+// names the deprecated build.service_account builds as that account, into
+// the legacy registry.
 //
 // It also probes the build isolation boundary (design §7.2): repository
-// code runs in the Dockerfile's RUN steps, and must not reach the metadata
-// server, which would hand it fugaro-build's token (every repository's
-// build secrets, and write access to every image). metaProbe tries the
-// token endpoint by name and by address from three places:
+// code runs in the Dockerfile's RUN steps and in the smoke test, and must
+// not reach the metadata server, which would hand it the build account's
+// token (the repository's build secrets, and write access to its images).
+// metaProbe tries the token endpoint by name and by address from five
+// places:
 //   - "step": a Cloud Build step on the cloudbuild network, the control,
 //     which must reach it (otherwise the probe proves nothing);
 //   - "default": a RUN on BuildKit's default network, as the derived build
 //     runs repository code;
 //   - "host": a `RUN --network=host`, which a repository's Dockerfile may
 //     ask for; BuildKit should refuse the entitlement, and if it doesn't,
-//     the host network must still not serve a token.
+//     the host network must still not serve a token;
+//   - "run-none": the pushed candidate, run by digest with `docker run
+//     --network none` from a step on the smoke's builder, as the smoke runs
+//     it;
+//   - "run-default": an additional probe, not the smoke's path: the same
+//     candidate under a plain `docker run`, on docker's default network.
 //
-// Both RUN probes must fail. If one reaches the token, the boundary does
-// not hold: builds must move to per-repository build service accounts
-// (M5), or deny the entitlement explicitly (a BuildKit builder created
-// without --allow network.host), before repositories that don't trust each
-// other share fugaro-build.
+// None but the control may reach it. If one does, the boundary does not
+// hold, and a repository that runs untrusted code must not be onboarded
+// until that path is isolated.
 func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	e := openLive(t)
-	if e.lc.BaseImage == "" || e.lc.Build.ServiceAccount == "" {
-		t.Fatal("the local config needs base_image and build.service_account (the bootstrap's config step writes build.service_account; set base_image after its base step)")
+	if e.lc.BaseImage == "" {
+		t.Fatal("the local config needs base_image (fugaro init writes it)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	bld, err := NewBuilder(ctx, e.opts, e.lc.BuildRegion())
 	if err != nil {
 		t.Fatal(err)
+	}
+	tgt := e.probeTarget(t)
+	fact(t, "probe build runs as %s and pushes to %s (legacy account: %v)", tgt.sa, tgt.image, tgt.legacy)
+	if !tgt.legacy {
+		registry := tgt.image[:strings.LastIndex(tgt.image, "/")]
+		if ok, err := bld.RegistryExists(ctx, registry); err != nil || !ok {
+			t.Fatalf("the repository's registry %s: exists=%v, %v (run fugaro init --repo first)", registry, ok, err)
+		}
 	}
 	// The markers the RUN steps echo are split with "" so BuildKit's echo
 	// of the command line itself never matches them.
@@ -862,27 +889,43 @@ ctx=$$(mktemp -d)
 sec=$$(mktemp -d)
 trap 'rm -rf "$$sec"' EXIT
 (umask 077 && printf '%s' "$$SANDBOX_PROBE" > "$$sec/SANDBOX_PROBE")
-printf '%s\nFROM %s\nRUN --mount=type=secret,id=SANDBOX_PROBE,uid=1000,mode=0400,required=true test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-"mounted"\n' "$$DOCKERFILE_SYNTAX" "$$base" > "$$ctx/Dockerfile"
-docker build --progress plain --no-cache --secret "id=SANDBOX_PROBE,src=$$sec/SANDBOX_PROBE" "$$ctx" 2>&1 | sed 's/^/LIVE build: /'
+printf '%s' "$$META_PROBE" > "$$ctx/probe.sh"
+printf '%s\nFROM %s\nCOPY probe.sh /probe.sh\nRUN --mount=type=secret,id=SANDBOX_PROBE,uid=1000,mode=0400,required=true test -s /run/secrets/SANDBOX_PROBE && echo LIVE secret-"mounted"\n' "$$DOCKERFILE_SYNTAX" "$$base" > "$$ctx/Dockerfile"
+candidate="$$IMAGE:candidate-$$BUILD_ID"
+docker build --progress plain --no-cache --secret "id=SANDBOX_PROBE,src=$$sec/SANDBOX_PROBE" --tag "$$candidate" "$$ctx" 2>&1 | sed 's/^/LIVE build: /'
+docker push "$$candidate" 2>&1 | sed 's/^/LIVE push: /'
+pushed=$$(docker image inspect --format '{{index .RepoDigests 0}}' "$$candidate")
+case "$$pushed" in "$$IMAGE@sha256:"*) ;; *) echo "the pushed candidate has no digest in $$IMAGE" >&2; exit 1 ;; esac
+printf '%s\n' "$$pushed" > /workspace/probe-candidate
+echo "LIVE candidate $$pushed"
 pctx=$$(mktemp -d)
-printf '%s' "$$META_PROBE" > "$$pctx/probe.sh"
+cp "$$ctx/probe.sh" "$$pctx/probe.sh"
 printf 'FROM %s\nCOPY probe.sh /probe.sh\nRUN sh /probe.sh default\n' "$$base" > "$$pctx/Dockerfile.default"
 printf 'FROM %s\nCOPY probe.sh /probe.sh\nRUN --network=host sh /probe.sh host\n' "$$base" > "$$pctx/Dockerfile.host"
 if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.default" "$$pctx" 2>&1 | sed 's/^/LIVE probe: /'; then echo "LIVE meta""data default build-failed"; fi
 if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pctx" 2>&1 | sed 's/^/LIVE probe: /'; then echo "LIVE meta""data host build-refused"; fi
+`
+	// The smoke's path: the pushed candidate, by digest, under docker run
+	// with no network, then on docker's default network.
+	const runScript = `set -u
+candidate=$$(cat /workspace/probe-candidate)
+docker run --rm --network none --entrypoint sh "$$candidate" /probe.sh run-none || echo "LIVE meta""data run-none run-failed"
+docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIVE meta""data run-default run-failed"
 `
 	req := &cloudbuild.Build{
 		Steps: []*cloudbuild.BuildStep{
 			// Pulls the base, and runs the metadata control on the cloudbuild network.
 			{Id: "pull", Name: e.lc.BaseImage, Entrypoint: "sh", Args: []string{"-c", metaProbe, "sh", "step"}},
 			{Id: "probe", Name: "gcr.io/cloud-builders/docker", Entrypoint: "bash",
-				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "META_PROBE=" + metaProbe, "DOCKERFILE_SYNTAX=" + dockerfileSyntax}, SecretEnv: []string{"SANDBOX_PROBE"},
+				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "IMAGE=" + tgt.image, "BUILD_ID=$BUILD_ID",
+					"META_PROBE=" + metaProbe, "DOCKERFILE_SYNTAX=" + dockerfileSyntax}, SecretEnv: []string{"SANDBOX_PROBE"},
 				Args: []string{"-c", script}},
+			{Id: "smoke-probe", Name: tgt.smoke.Name, Entrypoint: "bash", Args: []string{"-c", runScript}},
 		},
 		AvailableSecrets: &cloudbuild.Secrets{SecretManager: []*cloudbuild.SecretManagerSecret{{
 			Env: "SANDBOX_PROBE", VersionName: "projects/" + liveProject + "/secrets/" + SecretID(e.slug, "sandbox-probe") + "/versions/latest",
 		}}},
-		ServiceAccount: "projects/" + liveProject + "/serviceAccounts/" + e.lc.Build.ServiceAccount,
+		ServiceAccount: "projects/" + liveProject + "/serviceAccounts/" + tgt.sa,
 		Options:        &cloudbuild.BuildOptions{Logging: "CLOUD_LOGGING_ONLY"},
 		Timeout:        probeBuildTime,
 		Tags:           []string{"fugaro-live"},
@@ -899,6 +942,7 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 			_, err := bld.svc.Projects.Locations.Builds.Cancel(name, &cloudbuild.CancelBuildRequest{Name: name, ProjectId: liveProject, Id: buildID}).Context(cctx).Do()
 			t.Logf("CLEANUP: cancel build %s: %v", buildID, err)
 		}
+		deleteCandidate(t, cctx, bld, tgt.image, "candidate-"+buildID)
 	})
 	op, err := bld.svc.Projects.Locations.Builds.Create(bld.parent(), req).Context(ctx).Do()
 	if err != nil {
@@ -913,9 +957,9 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 	fact(t, "probe build %s ended %s (log %s)", buildID, res.Status, res.LogURL)
 
 	lines := buildLogLines(t, ctx, buildID)
-	var digest string
+	var digest, candidate string
 	secret, metadata := false, false
-	meta := map[string][]string{} // "step", "default", "host" -> each outcome
+	meta := map[string][]string{} // each metaProbe place -> its outcomes
 	for _, l := range lines {
 		if m := metaLineRE.FindStringSubmatch(l); m != nil {
 			meta[m[1]] = append(meta[m[1]], strings.TrimSpace(m[2]))
@@ -926,6 +970,9 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 		case strings.Contains(l, "LIVE base-digest "):
 			digest = strings.TrimSpace(l[strings.Index(l, "LIVE base-digest ")+len("LIVE base-digest "):])
 			fact(t, "render-step base %s pinned as %s", e.lc.BaseImage, digest)
+		case strings.Contains(l, "LIVE candidate "):
+			candidate = strings.TrimSpace(l[strings.Index(l, "LIVE candidate ")+len("LIVE candidate "):])
+			fact(t, "candidate pushed as %s", candidate)
 		case strings.Contains(l, "LIVE docker "):
 			fact(t, "%s", strings.TrimSpace(l[strings.Index(l, "LIVE docker "):]))
 		case strings.Contains(l, "LIVE build:") && strings.Contains(l, "LIVE secret-mounted"):
@@ -948,7 +995,132 @@ if ! docker build --progress plain --no-cache -f "$$pctx/Dockerfile.host" "$$pct
 	if !regexp.MustCompile(`^[^@\s]+@sha256:[0-9a-f]{64}$`).MatchString(digest) {
 		t.Errorf("base digest %q is not repo@sha256:<64 hex>", digest)
 	}
+	if rest, ok := strings.CutPrefix(candidate, tgt.image+"@"); !ok || !IsDigest(rest) {
+		t.Errorf("pushed candidate %q is not %s@sha256:<64 hex>", candidate, tgt.image)
+	}
 	checkMetadataProbes(t, meta)
+}
+
+// probeTarget is who the probe build runs as and where it pushes.
+type probeTarget struct {
+	sa    string // the build account's email
+	image string // the workflow's image, untagged
+	// smoke is the derived build's smoke step, whose builder the run
+	// probes use.
+	smoke *cloudbuild.BuildStep
+	// legacy is the deprecated build.service_account and legacy registry.
+	legacy bool
+}
+
+// probeTarget is the build account and image `fugaro image build` would use
+// for the sandbox's workflow, taken from the request BuildRequest makes for
+// it (which refuses any account or image but the repository's own). With no
+// installation in the local config but a build.service_account, it is that
+// deprecated account and the legacy registry instead.
+func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
+	t.Helper()
+	// The registry host as infra.RegistryHost picks it (this package can't
+	// import infra): the local config's, else DefaultRegistryHost.
+	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.Project))
+	spec := BuildSpec{
+		Slug: e.slug, GitProvider: liveProvider, RepoURL: "https://bitbucket.org/" + liveRepo + ".git",
+		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage,
+		Image:       ImageName(host+"/"+RegistryRepoID(e.slug), e.slug, liveWorkflow),
+		GitSecretID: SecretID(e.slug, "bitbucket-token"), GitUser: "x-token-auth",
+		ServiceAccount: BuildServiceAccountID(e.slug) + "@" + liveProject + ".iam.gserviceaccount.com",
+		Bucket:         "gs://" + e.lc.RunsBucket,
+	}
+	req, err := BuildRequest(liveProject, spec)
+	if err != nil {
+		t.Fatalf("the image build's request for %s: %v", liveRepo, err)
+	}
+	tgt := probeTarget{
+		sa:    strings.TrimPrefix(req.ServiceAccount, "projects/"+liveProject+"/serviceAccounts/"),
+		image: req.Substitutions["_IMAGE"],
+	}
+	for _, st := range req.Steps {
+		if st.Id == "smoke" {
+			tgt.smoke = st
+		}
+	}
+	if tgt.smoke == nil || !strings.Contains(strings.Join(tgt.smoke.Args, " "), "docker run --rm -i --network none ") {
+		t.Fatal("the derived build's smoke step no longer runs the candidate under docker run --network none; update the run probes to match it")
+	}
+	if e.lc.Terraform.StateBucket == "" && e.lc.Build.ServiceAccount != "" {
+		// Nothing may be pushed, or run as, outside the live project.
+		if !strings.HasSuffix(e.lc.Build.ServiceAccount, "@"+liveProject+".iam.gserviceaccount.com") {
+			t.Fatalf("the deprecated build.service_account %s is not an account of %s", e.lc.Build.ServiceAccount, liveProject)
+		}
+		image := ImageName(e.lc.Registry, e.slug, liveWorkflow)
+		if e.lc.Registry == "" || strings.Count(e.lc.Registry, "/") != 2 || candidatePackage(image) == "" {
+			t.Fatalf("the legacy registry %q is not <region>-docker.pkg.dev/%s/<repository>", e.lc.Registry, liveProject)
+		}
+		tgt.sa, tgt.image, tgt.legacy = e.lc.Build.ServiceAccount, image, true
+	}
+	return tgt
+}
+
+// candidatePackage is the Artifact Registry package resource of image
+// (<region>-docker.pkg.dev/<liveProject>/<repository>/<package>), or ""
+// when image is not one in the live project.
+func candidatePackage(image string) string {
+	host, rest, ok := strings.Cut(image, "/"+liveProject+"/")
+	m := registryHostRE.FindStringSubmatch(host + "/" + liveProject)
+	repo, pkg, ok2 := strings.Cut(rest, "/")
+	if !ok || !ok2 || m == nil || repo == "" || pkg == "" || strings.Contains(pkg, "/") {
+		return ""
+	}
+	return "projects/" + liveProject + "/locations/" + m[1] + "/repositories/" + repo + "/packages/" + url.PathEscape(pkg)
+}
+
+// deleteCandidate deletes the image version that tag names in image's
+// package, if it was pushed. It runs with the test's own credentials (the
+// build account may push but not delete), which need
+// artifactregistry.versions.delete on the registry: project owner or
+// editor, or repoAdmin on the registry. Any failure but not-found fails the
+// test, so a probe image is never left behind silently. It refuses to
+// delete a version that any tag other than a candidate- one points at.
+// (A cancel that lands during the push can let the push finish after this
+// ran; that candidate is left behind.)
+func deleteCandidate(t *testing.T, ctx context.Context, bld *Builder, image, tag string) {
+	t.Helper()
+	pkg := candidatePackage(image)
+	if pkg == "" || !strings.HasPrefix(tag, "candidate-") {
+		t.Errorf("CLEANUP: refusing to delete %s:%s", image, tag)
+		return
+	}
+	tags := bld.registries.Projects.Locations.Repositories.Packages.Tags
+	tg, err := tags.Get(pkg + "/tags/" + tag).Context(ctx).Do()
+	if httpStatus(err) == http.StatusNotFound {
+		return // never pushed
+	}
+	if err != nil {
+		t.Errorf("CLEANUP: reading %s:%s: %v; delete it by hand", image, tag, err)
+		return
+	}
+	var others []string
+	err = tags.List(pkg).Filter(`version="`+tg.Version+`"`).Pages(ctx, func(r *artifactregistry.ListTagsResponse) error {
+		for _, o := range r.Tags {
+			name := o.Name[strings.LastIndex(o.Name, "/")+1:]
+			if o.Version == tg.Version && !strings.HasPrefix(name, "candidate-") {
+				others = append(others, name)
+			}
+		}
+		return nil
+	})
+	switch {
+	case err != nil:
+		t.Errorf("CLEANUP: listing the tags of %s: %v; delete %s:%s by hand", tg.Version, err, image, tag)
+		return
+	case len(others) > 0:
+		t.Errorf("CLEANUP: refusing to delete %s (%s:%s): it is also tagged %v", tg.Version, image, tag, others)
+		return
+	}
+	if _, err := bld.registries.Projects.Locations.Repositories.Packages.Versions.Delete(tg.Version).Force(true).Context(ctx).Do(); err != nil {
+		t.Errorf("CLEANUP: deleting %s (%s:%s): %v; the test's credentials need artifactregistry.versions.delete on the registry (owner, editor or repoAdmin)", tg.Version, image, tag, err)
+		return
+	}
+	t.Logf("CLEANUP: deleted %s (%s:%s)", tg.Version, image, tag)
 }
 
 // dockerfileSyntax is the derived template's # syntax= line, so the probe
@@ -970,28 +1142,38 @@ done
 
 // metaLineRE matches a metadata probe's result line (not BuildKit's echo of
 // the command, which spells the marker split).
-var metaLineRE = regexp.MustCompile(`LIVE metadata (step|default|host) (.*)$`)
+var metaLineRE = regexp.MustCompile(`LIVE metadata (step|default|host|run-none|run-default) (.*)$`)
+
+// metaPlaces are the probes that run repository code's paths, each with
+// what it is, for the failure message.
+var metaPlaces = []struct{ where, what string }{
+	{"default", "a RUN step on BuildKit's default network"},
+	{"host", "a RUN --network=host step"},
+	{"run-none", "the candidate under docker run --network none (the smoke's path)"},
+	{"run-default", "the candidate under docker run on docker's default network (an additional probe; the smoke never uses it)"},
+}
 
 // checkMetadataProbes fails unless the control reached the token endpoint
-// and neither RUN probe did (see TestLiveCloudBuildSecretAndDigest).
+// and none of metaPlaces did (see TestLiveCloudBuildSecretAndDigest).
 func checkMetadataProbes(t *testing.T, meta map[string][]string) {
 	t.Helper()
 	reachable := func(outcomes []string) bool {
 		return slices.ContainsFunc(outcomes, func(o string) bool { return strings.HasPrefix(o, "REACHABLE ") })
 	}
 	if !reachable(meta["step"]) {
-		t.Errorf("the control probe on the cloudbuild network did not reach the metadata server (%q), so the RUN probes prove nothing", meta["step"])
+		t.Errorf("the control probe on the cloudbuild network did not reach the metadata server (%q), so the other probes prove nothing", meta["step"])
 	}
-	for _, where := range []string{"default", "host"} {
-		got := meta[where]
+	for _, p := range metaPlaces {
+		got := meta[p.where]
 		switch {
-		case len(got) == 0 || slices.Contains(got, "no-curl") || slices.Contains(got, "build-failed"):
-			t.Errorf("the %s-network RUN probe did not run (%q)", where, got)
+		case len(got) == 0 || slices.Contains(got, "no-curl") || slices.Contains(got, "build-failed") || slices.Contains(got, "run-failed"):
+			t.Errorf("the %s probe, %s, did not run (%q)", p.where, p.what, got)
 		case reachable(got):
-			t.Errorf("BOUNDARY BROKEN: a %s-network RUN step reached the metadata server (%q); repository code can take fugaro-build's token (design §7.2)", where, got)
+			t.Errorf("BOUNDARY BROKEN: %s reached the metadata server (%q); repository code can take the build account's token (design §7.2)", p.what, got)
 		}
 	}
 	fact(t, "metadata server from a RUN step: default network %q, --network=host %q", meta["default"], meta["host"])
+	fact(t, "metadata server from the candidate: docker run --network none %q, docker run (default network) %q", meta["run-none"], meta["run-default"])
 }
 
 // buildLogLines reads a Cloud Build build's log lines from Cloud Logging
