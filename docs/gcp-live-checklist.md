@@ -39,8 +39,8 @@ PR description and into this checklist's results, at the end.
     to read the sandbox's `fugaro.yaml` for the spend check and to clean up,
     and in check 19 to read the sandbox repository, its PR and the PR's
     comments, and to decline that PR. Every request it makes goes to the
-    sandbox repository (`FUGARO_LIVE_REPO`), and the tests refuse any other
-    path. The CLI's environment never holds it, and it is scrubbed from
+    sandbox repository (`FUGARO_LIVE_REPO`), and the GCP live tests
+    (`internal/e2e`) refuse any other path. The CLI's environment never holds it, and it is scrubbed from
     anything the tests log.
   - **No second credential.** Check 19's review comments are posted by the
     person running it, by hand, in the Bitbucket UI; the tests never post a
@@ -193,7 +193,7 @@ In the commands below, `T` is short for
 | 16 | The daily image check: a skipped check, a back-off after a forced failure, and one forced rebuild | With the sandbox's schedule unpaused (its `rebuild.check` is `daily` and its record exists): `fugaro image check --dry-run` from its checkout; then `gcloud scheduler jobs run <scheduler job> --location <scheduler region>` (from `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`). To force a failure, temporarily disable the `bitbucket-token` secret's latest version and run the Scheduler job again, then re-enable the version. For the forced rebuild, run `fugaro image build`, which submits the request a fired trigger submits | (a) With nothing changed, the local check prints `skip`. The check job logs `decision: skip` for each workflow, `check.json` appears next to `image.json`, and no build starts. (b) The check job mounts the credential, so with its version disabled the execution fails at container start ("Failed to access secret ... Secret Version ... disabled"), before the check can log a decision or write `check.json`. Cloud Run records that only as an ERROR audit system event (`cloudaudit.googleapis.com%2Fsystem_event`, "Execution ... has failed to complete, 0/1 tasks were a success"), not in its system log, and the "Fugaro image check job failed" alert fires from that entry: the email arrives if one is configured, with log isolation on. A failure after start is covered by the check's own `decision: check-failed` line at ERROR (exit 2, the `fugaro ls` check warning and the "Fugaro image check failed" alert) and by the Cloud Run system log's ERROR lines. After a failed *rebuild* whose inputs haven't changed, the next check logs `rebuild-failed-last` and submits no build. (c) The forced rebuild runs candidate, smoke, gate, promote and record: `latest` moves to the record's `image_digest`, and `fugaro image status` shows the new build time. A leftover `candidate-` tag with an untag warning in the build log is expected. Record each as a `FACT`, and re-enable the secret version. |
 | 17 | The registry cleanup policy's dry run never selects a `latest` or `dev-` version | A day or more after the installation and the first builds exist, read the Artifact Registry audit log (Cloud Logging, `protoPayload.serviceName="artifactregistry.googleapis.com"`) for what the cleanup policies of `fugaro-base` and each repository's registry would delete in dry run, and list each registry's tags with `gcloud artifacts docker tags list` | No version the dry run would delete is tagged `latest` or `dev-`, and none of a registry's three newest versions is. If one is, stop: the keep rules are wrong. Otherwise turn deletion on (gcp-setup.md, "Turning registry cleanup on"). Record a `FACT` naming what the dry run would delete. |
 | 18 | A push to the base branch during an image build does not fail the smoke (Bitbucket fetch-by-SHA of the pinned commit) | From the sandbox's checkout, start `fugaro image build`; while its render step has finished and the build step hasn't cloned yet, push a commit to the base branch (or force-push it back one commit, so the pinned commit is no longer the branch head) | The build clones, resets to the commit the render step read (fetching it by SHA when the clone lacks it), and the smoke, gate, promote and record succeed. The record's `source_commit`, `/etc/fugaro/image.json` and the image's revision label name that same commit, not the new head. If the provider refuses the fetch of an unadvertised commit, the build fails at the clone step: record that as a `FACT`. |
-| 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 75m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
+| 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -232,7 +232,8 @@ agent running it, post the review comments and edit the sandbox's trust
 list, each with your own Bitbucket credential. The test holds only the
 sandbox's repository access token.
 
-**Before it (free, read-only):**
+**Before it (free: nothing the tests do writes; steps 3 and 4 are your own
+writes, with your own credential):**
 
 1. The sandbox repository is private. A follow-up refuses a public one, and
    the sandbox's `fugaro.yaml` doesn't set `followup.allow_public`. The test
@@ -241,7 +242,9 @@ sandbox's repository access token.
    the branch under test (rebuild the base and the image as for any runner
    change; an older image fails a follow-up at bootstrap with "follow-up
    runs are not supported by this version of fugaro", touching nothing).
-3. Find your Bitbucket `account_id`: post any comment on a sandbox PR, then
+3. Find your Bitbucket `account_id`: post any comment on a sandbox PR (any
+   PR in the sandbox will do, including one an earlier check 13 declined:
+   Bitbucket allows comments on declined PRs), then
    run `TestLiveInspect` with that PR in `FUGARO_LIVE_INSPECT_PRS`
    ([git-providers.md](git-providers.md#finding-an-account-id-for-followuptrusted)).
    It prints each comment's `user.account_id`.
@@ -263,7 +266,7 @@ a PR in the sandbox):
 
 ```bash
 FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
-  go test -tags live -p 1 -v -timeout 75m -run TestLiveSandboxFollowUp ./internal/e2e/ 2>&1 | tee -a live.log
+  go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/ 2>&1 | tee -a live.log
 ```
 
 What it does and checks:

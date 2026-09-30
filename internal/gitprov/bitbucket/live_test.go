@@ -705,7 +705,7 @@ func TestLiveInspect(t *testing.T) {
 				} `json:"user"`
 			} `json:"values"`
 		}
-		if err := l.raw.Do(ctx, "GET", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments", id)), nil, &page); err != nil {
+		if err := l.raw.Do(ctx, "GET", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments?pagelen=100", id)), nil, &page); err != nil {
 			t.Fatal(l.scrub(err.Error()))
 		}
 		var heads []string

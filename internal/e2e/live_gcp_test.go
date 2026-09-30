@@ -35,7 +35,7 @@
 // credential but the sandbox's token, sends every provider request to the
 // sandbox repository only (sandboxPath), and never posts a comment or
 // edits the repository. It runs only with FUGARO_LIVE_FOLLOWUP=1; run it
-// with -timeout 75m.
+// with -timeout 100m.
 //
 // A -timeout abort skips t.Cleanup: run -run TestLiveGCPCleanup to sweep.
 package e2e
@@ -54,6 +54,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -314,7 +315,11 @@ func (r *liveRig) checkCaps(ctx context.Context) time.Duration {
 // repository, so no request of these tests can reach another one.
 func (r *liveRig) sandboxPath(p string) string {
 	r.t.Helper()
-	if root := "/repositories/" + liveRepo; p != root && !strings.HasPrefix(p, root+"/") {
+	// Dot segments or a non-clean path could step out of the sandbox
+	// after the prefix check, so they are refused too.
+	clean, _, _ := strings.Cut(p, "?")
+	if root := "/repositories/" + liveRepo; (clean != root && !strings.HasPrefix(clean, root+"/")) ||
+		path.Clean(clean) != clean {
 		r.t.Fatalf("refusing a Bitbucket request outside %s: %q", liveRepo, p)
 	}
 	return p
@@ -826,7 +831,7 @@ func jsonInt(v any) int {
 // trusted account ID from the sandbox's fugaro.yaml on its base branch,
 // which that person edits beforehand. It runs only with
 // FUGARO_LIVE_FOLLOWUP=1, so a plain -run TestLive never waits for a
-// person. Run it with -timeout 75m.
+// person. Run it with -timeout 100m.
 func TestLiveSandboxFollowUp(t *testing.T) {
 	if os.Getenv("FUGARO_LIVE_FOLLOWUP") != "1" {
 		t.Skip("check 19 pauses for a person to post review comments: set FUGARO_LIVE_FOLLOWUP=1 to run it (docs/gcp-live-checklist.md)")
