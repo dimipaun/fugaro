@@ -920,8 +920,10 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 		Runs   []map[string]any `json:"runs"`
 		Totals map[string]any   `json:"totals"`
 	}
-	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || len(ls.Runs) != 2 || ls.Runs[0]["run_id"] != second ||
-		ls.Runs[1]["run_id"] != first || ls.Totals["runs"] != float64(2) || ls.Totals["model_usd"] != float64(3) {
+	// The runs of this test start within one second of each other, so their
+	// order in ls is unspecified: compare the set.
+	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || !sameRunIDs(ls.Runs, first, second) ||
+		ls.Totals["runs"] != float64(2) || ls.Totals["model_usd"] != float64(3) {
 		t.Fatalf("ls --pr 1: %s, %v", out, err)
 	}
 	diag, err := r.cli("diagnose", "--json", second)
@@ -987,7 +989,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 		t.Fatalf("the second follow-up's implement: %d calls; %+v", len(calls), calls[min(4, len(calls)-1)])
 	}
 	out, err = r.cli("ls", "--json", "--pr", "1")
-	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || len(ls.Runs) != 3 || ls.Runs[0]["run_id"] != third ||
+	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || !sameRunIDs(ls.Runs, first, second, third) ||
 		ls.Totals["runs"] != float64(3) || ls.Totals["model_usd"] != float64(4.5) {
 		t.Fatalf("ls --pr 1 after the second follow-up: %s, %v", out, err)
 	}
@@ -1009,4 +1011,21 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	if !strings.Contains(string(r.readObject(second, "followup.md")), "Renamed x") {
 		t.Errorf("followup.md = %q", r.readObject(second, "followup.md"))
 	}
+}
+
+// sameRunIDs reports whether rows are exactly the runs with the given IDs, in
+// any order.
+func sameRunIDs(rows []map[string]any, ids ...string) bool {
+	if len(rows) != len(ids) {
+		return false
+	}
+	got := make([]string, 0, len(rows))
+	for _, r := range rows {
+		id, _ := r["run_id"].(string)
+		got = append(got, id)
+	}
+	want := slices.Clone(ids)
+	slices.Sort(got)
+	slices.Sort(want)
+	return slices.Equal(got, want)
 }
