@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -58,6 +59,25 @@ func TestParseStreamNoResult(t *testing.T) {
 	}
 }
 
+func TestParseStreamInitSessionID(t *testing.T) {
+	const initID, resultID = "3f2a9c1e-0000-4000-8000-000000000001", "3f2a9c1e-0000-4000-8000-000000000002"
+	init := `{"type":"system","subtype":"init","session_id":"` + initID + `"}` + "\n"
+	// A process killed before its result event: the init event's ID.
+	res, found, err := ParseStream(strings.NewReader(init), nil)
+	if err != nil || found || res.SessionID != initID {
+		t.Fatalf("init only: res = %+v, found = %v, err = %v", res, found, err)
+	}
+	// The result event is the final authority when the two differ.
+	result := `{"type":"result","subtype":"success","session_id":"` + resultID + `"}` + "\n"
+	if res, found, err := ParseStream(strings.NewReader(init+result), nil); err != nil || !found || res.SessionID != resultID {
+		t.Fatalf("init and result: res = %+v, found = %v, err = %v", res, found, err)
+	}
+	// A result event without an ID keeps the init event's.
+	if res, _, _ := ParseStream(strings.NewReader(init+`{"type":"result","subtype":"success"}`+"\n"), nil); res.SessionID != initID {
+		t.Fatalf("result without an ID: res = %+v", res)
+	}
+}
+
 func TestClaudeRun(t *testing.T) {
 	bin := testutil.FakeClaude(t, `{"calls":[{"text":"hello","cost":0.5}]}`)
 	var transcript bytes.Buffer
@@ -84,6 +104,36 @@ func TestClaudeRunTimeout(t *testing.T) {
 	_, err := Claude{Bin: bin, Grace: 100 * time.Millisecond}.Run(ctx, Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 5*time.Second {
 		t.Fatalf("err = %v after %s", err, time.Since(start))
+	}
+}
+
+// cancelOnInit cancels once the init event has passed through.
+type cancelOnInit struct {
+	cancel context.CancelFunc
+	buf    bytes.Buffer
+}
+
+func (c *cancelOnInit) Write(p []byte) (int, error) {
+	c.buf.Write(p)
+	if strings.Contains(c.buf.String(), `"init"`) {
+		c.cancel()
+	}
+	return len(p), nil
+}
+
+func TestClaudeRunKilledKeepsInitSessionID(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"sleep_s":30}]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res, err := Claude{Bin: bin, Grace: 100 * time.Millisecond}.Run(ctx, Request{
+		SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}, Transcript: &cancelOnInit{cancel: cancel},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
+	}
+	// Killed before its result event, the run still names its session.
+	if res.SessionID != "s" {
+		t.Fatalf("SessionID = %q, want the init event's", res.SessionID)
 	}
 }
 
@@ -146,6 +196,78 @@ func TestClaudeRunCapturesStderr(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "agent-stderr-marker") {
 		t.Fatalf("stderr = %q, want the shell's output", stderr.String())
+	}
+}
+
+// realDir returns dir with symlinks resolved, as the fake (like Claude
+// Code) sees its working directory.
+func realDir(t *testing.T, dir string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func TestFakeClaudeWritesSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"one"},{"text":"two"}]}`)
+	home, dir := t.TempDir(), t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	id := NewSessionID()
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{Prompt: "first", SessionID: id, Dir: dir, Env: env})
+	if err != nil || res.SessionID != id {
+		t.Fatalf("first run = %+v, %v", res, err)
+	}
+	res, err = Claude{Bin: bin}.Run(context.Background(), Request{Prompt: "second", SessionID: id, Resume: true, Dir: dir, Env: env})
+	if err != nil || res.SessionID != id {
+		t.Fatalf("resumed run = %+v, %v", res, err)
+	}
+	data, err := os.ReadFile(filepath.Join(SessionDir(home, realDir(t, dir)), id+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"first"`) || !strings.Contains(lines[1], `"second"`) {
+		t.Fatalf("session file = %q", data)
+	}
+}
+
+func TestFakeClaudeNoHomeNoSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"one"},{"text":"two"}]}`)
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	if _, err := (Claude{Bin: bin}).Run(context.Background(), Request{SessionID: "s-1", Dir: dir, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	// Without HOME the fake keeps no sessions, so a resume isn't checked.
+	if _, err := (Claude{Bin: bin}).Run(context.Background(), Request{SessionID: "s-2", Resume: true, Dir: dir, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFakeClaudeResumeMissing(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"never"}]}`)
+	var stderr bytes.Buffer
+	id := NewSessionID()
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{
+		SessionID: id, Resume: true, Dir: t.TempDir(), Stderr: &stderr,
+		Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()},
+	})
+	if !errors.Is(err, ErrNoSession) {
+		t.Fatalf("err = %v, want ErrNoSession", err)
+	}
+	if res.ExitCode != 1 || !strings.Contains(stderr.String(), "No conversation found with session ID: "+id) {
+		t.Fatalf("result = %+v, stderr = %q", res, stderr.String())
+	}
+}
+
+func TestClaudeRunOtherFailureIsNotNoSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"shell":"echo No conversation found with session ID: x 1>&2","no_result":true,"exit":1}]}`)
+	// Not a resume: the same text doesn't mean a missing session.
+	_, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err == nil || errors.Is(err, ErrNoSession) {
+		t.Fatalf("err = %v, want a plain failure", err)
 	}
 }
 
