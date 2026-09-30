@@ -430,13 +430,6 @@ func TestRetryBackfillsLaunchFromRecord(t *testing.T) {
 	}
 }
 
-func TestRunPRPointsToM6(t *testing.T) {
-	newCloudFixture(t)
-	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "12"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M6") {
-		t.Fatalf("--pr: %v", err)
-	}
-}
-
 func TestRetryRefusesFreshClaim(t *testing.T) {
 	f := newCloudFixture(t)
 	env := memEnv(t, f)

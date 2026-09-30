@@ -56,6 +56,10 @@ type launchResult struct {
 	Execution string `json:"execution"`
 	LogURL    string `json:"log_url,omitempty"`
 	Status    string `json:"status"` // launched | already-launched
+	// PR and PreviousRun are a follow-up's pull request and the run it
+	// continues; Branch is then the PR's branch.
+	PR          int    `json:"pr,omitempty"`
+	PreviousRun string `json:"previous_run,omitempty"`
 }
 
 // launchHooks lets tests stop launchRun between its steps, to make the
@@ -90,7 +94,11 @@ func newRunCmd() *cobra.Command {
 		Long: "Launch a task in the cloud. The task is TEXT or --task-file (- for stdin).\n\n" +
 			"A repeated --run-id reports the existing launch instead of starting another, so\n" +
 			"a caller that is unsure whether its launch went through can simply repeat it.\n" +
-			"--retry RUN launches a run whose task was stored but never started.",
+			"--retry RUN launches a run whose task was stored but never started.\n\n" +
+			"--pr N continues Fugaro's pull request N: the run acts on the PR's review comments\n" +
+			"by the authors fugaro.yaml's followup.trusted lists, on the PR's own branch, with\n" +
+			"the base branch and workflow of the runs before it. TEXT, or --task-file, is\n" +
+			"optional then, and adds instructions.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error { return runRun(cmd, &o, args) },
 	}
@@ -103,20 +111,30 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.tf, "task-file", "", "read the task from this file, or - for stdin")
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
-	f.IntVar(&o.pr, "pr", 0, "continue the Fugaro PR N (M6)")
-	_ = f.MarkHidden("pr")
+	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr"}
+
+// prFlags are the flags --pr excludes: the previous run on the PR supplies them.
+var prFlags = []string{"ref", "workflow"}
 
 func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	ctx := cmd.Context()
-	if cmd.Flags().Changed("pr") {
-		return userErr("follow-up runs (--pr) arrive in M6")
+	prSet := cmd.Flags().Changed("pr") && o.retry == ""
+	if prSet {
+		if o.pr <= 0 {
+			return userErr("--pr %d: use a pull request number", o.pr)
+		}
+		for _, name := range prFlags {
+			if cmd.Flags().Changed(name) {
+				return userErr("--pr continues the PR's base branch and workflow; it takes no --%s", name)
+			}
+		}
 	}
 	var text string
 	var total time.Duration
@@ -131,7 +149,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	} else {
 		var err error
-		if text, err = taskText(cmd, o.tf, args); err != nil {
+		if text, err = taskText(cmd, o.tf, args, prSet); err != nil {
 			return err
 		}
 		if o.totalTimeout != "" {
@@ -147,12 +165,17 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	defer env.Close()
 
 	var (
-		spec *task.Spec
-		slug string
+		spec   *task.Spec
+		slug   string
+		reused bool // a stored follow-up, which the PR's checks never saw run
 	)
-	if o.retry != "" {
+	switch {
+	case o.retry != "":
 		slug, spec, err = retrySpec(ctx, env, o.retry)
-	} else {
+		reused = err == nil && spec.IsFollowUp()
+	case prSet:
+		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
+	default:
 		slug, spec, err = newSpec(ctx, env, o, text, total)
 	}
 	if err != nil {
@@ -162,6 +185,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
 		return err
+	}
+	if prior == nil && reused {
+		if err := recheckFollowUp(ctx, env, slug, spec, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
 	}
 	if prior == nil {
 		if err := checkMaxParallel(ctx, env); err != nil {
@@ -184,8 +212,10 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 
-// taskText is the task from exactly one of TEXT and --task-file.
-func taskText(cmd *cobra.Command, file string, args []string) (string, error) {
+// taskText is the task from exactly one of TEXT and --task-file. With
+// optional (a follow-up, whose runner has instructions of its own) both
+// may be absent, and the task may be empty.
+func taskText(cmd *cobra.Command, file string, args []string, optional bool) (string, error) {
 	var text string
 	switch {
 	case file != "" && len(args) > 0:
@@ -204,10 +234,12 @@ func taskText(cmd *cobra.Command, file string, args []string) (string, error) {
 		text = string(data)
 	case len(args) == 1:
 		text = args[0]
+	case optional:
+		return "", nil
 	default:
 		return "", userErr("pass the task as TEXT or with --task-file (- for stdin)")
 	}
-	if text = strings.TrimSpace(text); text == "" {
+	if text = strings.TrimSpace(text); text == "" && !optional {
 		return "", userErr("the task is empty")
 	}
 	return text, nil
@@ -426,7 +458,11 @@ func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
 	if res.Status == "already-launched" {
 		verb = "already launched"
 	}
-	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, oneLine(res.Run), oneLine(res.Branch)); err != nil {
+	what := oneLine(res.Run)
+	if res.PR > 0 {
+		what += fmt.Sprintf(" (follow-up of PR #%d, after %s)", res.PR, oneLine(res.PreviousRun))
+	}
+	if _, err := fmt.Fprintf(w, "%s %s\n  branch %s\n", verb, what, oneLine(res.Branch)); err != nil {
 		return err
 	}
 	if res.LogURL != "" {
@@ -515,7 +551,11 @@ func existingLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec 
 // file:// buckets are single-user: fileblob's IfNotExist is not atomic.
 func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, now time.Time) (launchResult, error) {
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
-	res := launchResult{Run: slug + "/" + spec.RunID, Repo: spec.Repo, RunID: spec.RunID, Branch: "fugaro/" + spec.RunID}
+	res := launchResult{Run: slug + "/" + spec.RunID, Repo: spec.Repo, RunID: spec.RunID, Branch: "fugaro/" + spec.RunID,
+		PR: spec.PR, PreviousRun: spec.PreviousRun}
+	if spec.Branch != "" {
+		res.Branch = spec.Branch
+	}
 	done := func(l *runstore.Launch, status string) (launchResult, error) {
 		res.Execution, res.LogURL, res.Status = l.Execution, l.LogURL, status
 		return res, nil
