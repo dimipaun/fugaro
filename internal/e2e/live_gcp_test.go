@@ -19,8 +19,8 @@
 //     config's region.
 //   - Spend is capped before the launch: the sandbox job must have at most
 //     1 CPU, 2Gi and a 30m task timeout, and the sandbox's fugaro.yaml at
-//     most a $2 agent budget and a 20m total timeout. The test polls for at
-//     most 30m.
+//     most a $2 agent budget and a 20m total timeout. The run itself is
+//     launched with --total-timeout 15m. The test polls for at most 30m.
 //   - Cleanup is registered before the launch: it cancels the execution if
 //     it is still going, declines the run's PR and deletes its fugaro/<id>
 //     branch through the Bitbucket API, and deletes runs/<slug>/<id>/.
@@ -88,6 +88,11 @@ const (
 	livePollEvery    = 20 * time.Second
 	livePollFor      = 30 * time.Minute
 )
+
+// liveTotalTimeout is the run's --total-timeout: below the sandbox's own
+// timeouts.total, so it is a real override, which the execution's task
+// timeout must carry (plus backend.TaskTimeoutSlack).
+const liveTotalTimeout = 15 * time.Minute
 
 const liveTask = "Add a test to test.js checking that 2 + 2 is 4. Commit it, run fugaro verify test, and write pr.md."
 
@@ -229,8 +234,8 @@ func (r *liveRig) cli(args ...string) (string, error) {
 }
 
 // checkCaps refuses to launch unless the sandbox job and its fugaro.yaml
-// are within the spend caps.
-func (r *liveRig) checkCaps(ctx context.Context) {
+// are within the spend caps. It returns the workflow's timeouts.total.
+func (r *liveRig) checkCaps(ctx context.Context) time.Duration {
 	t := r.t
 	t.Helper()
 	svc, err := run.NewService(ctx, option.WithQuotaProject(liveProject))
@@ -287,6 +292,7 @@ func (r *liveRig) checkCaps(ctx context.Context) {
 			c.Agent.MaxBudgetUSD, w.Timeouts.Total.Duration, len(c.Git.PR.Reviewers), liveMaxBudgetUSD, liveMaxTotal)
 	}
 	liveFact(t, "sandbox fugaro.yaml: max_budget_usd=%g total=%s, no reviewers", c.Agent.MaxBudgetUSD, w.Timeouts.Total.Duration)
+	return w.Timeouts.Total.Duration
 }
 
 // liveCPU parses a Cloud Run CPU limit: "1", "0.5" or "1000m".
@@ -422,13 +428,15 @@ func (r *liveRig) lsLive(batch string) (rows []map[string]any, totals map[string
 func TestLiveSandboxRun(t *testing.T) {
 	r := newLiveRig(t, true)
 	ctx := context.Background()
-	r.checkCaps(ctx)
+	if total := r.checkCaps(ctx); liveTotalTimeout >= total {
+		t.Fatalf("--total-timeout %s is not below the sandbox's timeouts.total %s, so it would not test an override", liveTotalTimeout, total)
+	}
 	r.fugaro = testutil.BuildFugaro(t)
 	id := newRunID(t)
 	batch := liveBatchPrefix + r.stamp
 	t.Cleanup(func() { r.cleanupRun(id) })
 
-	out, err := r.cli("run", "--repo", liveRepo, "--run-id", id, "--batch", batch, "--json", liveTask)
+	out, err := r.cli("run", "--repo", liveRepo, "--run-id", id, "--batch", batch, "--total-timeout", liveTotalTimeout.String(), "--json", liveTask)
 	var launch struct{ Run, Status, Execution, Branch string }
 	if err != nil || json.Unmarshal([]byte(out), &launch) != nil || launch.Status != "launched" {
 		t.Fatalf("run: %s, %v", out, err)
@@ -437,6 +445,7 @@ func TestLiveSandboxRun(t *testing.T) {
 	if launch.Run != r.slug+"/"+id || launch.Branch != gitops.RunBranchPrefix+id {
 		t.Fatalf("launch %+v: want run %s/%s on %s%s", launch, r.slug, id, gitops.RunBranchPrefix, id)
 	}
+	r.checkExecutionTimeout(ctx, launch.Execution)
 
 	var row map[string]any
 	var rows []map[string]any
@@ -556,6 +565,36 @@ func TestLiveSandboxRun(t *testing.T) {
 	liveFact(t, "cache archives of %s/%s: %v", r.slug, liveWorkflow, archives)
 	if len(archives) == 0 {
 		t.Errorf("no cache/%s/%s/*.tar.zst archive after the run", r.slug, liveWorkflow)
+	}
+}
+
+// checkExecutionTimeout checks that the execution's task timeout is the
+// run's --total-timeout plus backend.TaskTimeoutSlack, not the job's own.
+func (r *liveRig) checkExecutionTimeout(ctx context.Context, execution string) {
+	t := r.t
+	t.Helper()
+	svc, err := run.NewService(ctx, option.WithQuotaProject(liveProject))
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := execution
+	if !strings.HasPrefix(name, "projects/") {
+		name = "projects/" + liveProject + "/locations/" + liveRegion + "/jobs/" + gcp.JobName(r.slug, liveWorkflow) + "/executions/" + name
+	}
+	x, err := svc.Projects.Locations.Jobs.Executions.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Errorf("reading execution %s: %v", name, err)
+		return
+	}
+	want := liveTotalTimeout + backend.TaskTimeoutSlack
+	var raw string
+	if x.Template != nil {
+		raw = x.Template.Timeout
+	}
+	got, perr := time.ParseDuration(raw)
+	liveFact(t, "execution %s: task timeout %q with --total-timeout %s (want %s: the override plus the %s slack)", name, raw, liveTotalTimeout, want, backend.TaskTimeoutSlack)
+	if perr != nil || got != want {
+		t.Errorf("execution %s has task timeout %q, want %s (--total-timeout %s + %s)", name, raw, want, liveTotalTimeout, backend.TaskTimeoutSlack)
 	}
 }
 
