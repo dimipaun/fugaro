@@ -103,6 +103,7 @@ func Validate(c *Config) []Problem {
 	if c.Agent.MaxBudgetUSD < 0 {
 		add("agent.max_budget_usd", "must not be negative")
 	}
+	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
 	}
@@ -216,6 +217,45 @@ func validateRebuild(p string, r Rebuild) []Problem {
 		case !doublestar.ValidatePattern(g):
 			add(gp, "is not a valid glob pattern")
 		}
+	}
+	return ps
+}
+
+// A trusted account ID, per provider: GitHub's numeric user ID, and
+// Bitbucket's account_id in either of its forms (a site number and a UUID,
+// or 24 hex digits). bitbucketUUIDRE is the Bitbucket user UUID, which the
+// adapter never matches comment authors by.
+var (
+	githubUserIDRE  = regexp.MustCompile(`^[0-9]{1,20}$`)
+	bitbucketIDRE   = regexp.MustCompile(`^[0-9]{1,10}:[0-9a-f-]{36}$|^[0-9a-f]{24}$`)
+	bitbucketUUIDRE = regexp.MustCompile(`^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$`)
+)
+
+// validateFollowup reports the followup block's problems, each at
+// followup.trusted[i]. An ID's form depends on the provider; with an
+// unknown provider (already reported at git.provider) only duplicates are
+// checked.
+func validateFollowup(provider string, f Followup) []Problem {
+	var ps []Problem
+	seen := map[string]bool{}
+	for i, id := range f.Trusted {
+		p := fmt.Sprintf("followup.trusted[%d]", i)
+		add := func(format string, args ...any) {
+			ps = append(ps, Problem{Path: p, Message: fmt.Sprintf(format, args...)})
+		}
+		switch {
+		case strings.TrimSpace(id) == "":
+			add("must not be empty")
+		case seen[id]:
+			add("%q is listed twice", id)
+		case provider == "github" && !githubUserIDRE.MatchString(id):
+			add("%q is not a GitHub numeric user ID (1 to 20 digits); a login can be renamed, so find the ID with: gh api users/%s --jq .id", id, id)
+		case provider == "bitbucket" && bitbucketUUIDRE.MatchString(id):
+			add("%q is a Bitbucket UUID; list the user's account_id instead (such as 557058:00000000-0000-0000-0000-000000000001), which is what comment authors are matched by", id)
+		case provider == "bitbucket" && !bitbucketIDRE.MatchString(id):
+			add("%q is not a Bitbucket account_id (such as 557058:00000000-0000-0000-0000-000000000001 or 24 hex digits)", id)
+		}
+		seen[id] = true
 	}
 	return ps
 }

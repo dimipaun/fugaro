@@ -262,3 +262,69 @@ func TestDurationFixtures(t *testing.T) {
 		t.Fatalf("rebuild-mixed-sign-age: %v", ps)
 	}
 }
+
+func TestFollowupDefaults(t *testing.T) {
+	cfg, ps := Parse([]byte(minimalYAML))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if len(cfg.Followup.Trusted) != 0 || cfg.Followup.AllowPublic {
+		t.Errorf("followup = %+v, want no trusted IDs and public repositories refused", cfg.Followup)
+	}
+	data, err := os.ReadFile("../../testdata/config/valid/followup-full.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg, ps = Parse(data); len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if got := cfg.Followup; len(got.Trusted) != 2 || got.Trusted[0] != "1234567" || got.Trusted[1] != "7654321" || !got.AllowPublic {
+		t.Errorf("followup = %+v", got)
+	}
+}
+
+// Who can steer a follow-up is a list of account IDs that a rename can't
+// change, in the form the provider's adapter matches comment authors by.
+func TestFollowupConfigValidation(t *testing.T) {
+	for file, want := range map[string]struct{ path, msg string }{
+		"followup-bad-github-id":    {"followup.trusted[0]", "gh api users/octocat --jq .id"},
+		"followup-bad-bitbucket-id": {"followup.trusted[0]", "account_id"},
+		"followup-bitbucket-uuid":   {"followup.trusted[0]", "UUID"},
+		"followup-duplicate-id":     {"followup.trusted[1]", "listed twice"},
+		"followup-unknown-field":    {"", "field trust_pr_author not found"},
+	} {
+		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, ps := Parse(data)
+		if cfg != nil || !hasProblem(ps, want.path, want.msg, 0) {
+			t.Errorf("%s: want a problem at %q mentioning %q, got %v", file, want.path, want.msg, ps)
+		}
+	}
+	github := minimalYAML
+	bitbucket := strings.Replace(minimalYAML, "provider: github", "provider: bitbucket", 1)
+	for _, tc := range []struct {
+		base, ids string
+		ok        bool
+	}{
+		{github, `[1]`, true},
+		{github, `["12345678901234567890"]`, true},
+		{github, `["123456789012345678901"]`, false},
+		{github, `[""]`, false},
+		{github, `["-1"]`, false},
+		{github, `["557058:00000000-0000-0000-0000-000000000001"]`, false},
+		{bitbucket, `["557058:00000000-0000-0000-0000-000000000001"]`, true},
+		{bitbucket, `["5b10ac8d82e05b22cc7d4ef5"]`, true},
+		{bitbucket, `["1234567"]`, false},
+		{bitbucket, `["557058:00000000-0000-0000-0000-00000000000G"]`, false},
+		{bitbucket, `["12345678901:00000000-0000-0000-0000-000000000001"]`, false},
+		{bitbucket, `["5B10AC8D82E05B22CC7D4EF5"]`, false},
+		{bitbucket, `["00000000-0000-0000-0000-000000000001"]`, false},
+	} {
+		_, ps := Parse([]byte(tc.base + "followup: { trusted: " + tc.ids + " }\n"))
+		if (len(ps) == 0) != tc.ok {
+			t.Errorf("%s on %s: ok=%v, problems %v", tc.ids, tc.base[strings.Index(tc.base, "provider"):strings.Index(tc.base, "\nworkflows")], tc.ok, ps)
+		}
+	}
+}

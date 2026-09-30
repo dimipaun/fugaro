@@ -6,6 +6,16 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "git", "workflows"],
+  "allOf": [
+    {
+      "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "github" } } } } },
+      "then": { "properties": { "followup": { "properties": { "trusted": { "items": { "$ref": "#/$defs/githubUserID" } } } } } }
+    },
+    {
+      "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "bitbucket" } } } } },
+      "then": { "properties": { "followup": { "properties": { "trusted": { "items": { "$ref": "#/$defs/bitbucketAccountID" } } } } } }
+    }
+  ],
   "properties": {
     "version": { "const": 1 },
     "git": {
@@ -42,6 +52,20 @@
         "review": { "type": "string" }
       }
     },
+    "followup": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Who can steer a follow-up run on a Fugaro pull request (design §4.4, §6.1).",
+      "properties": {
+        "trusted": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Account IDs whose PR comments a follow-up acts on: on GitHub the numeric user ID, on Bitbucket the account_id.",
+          "items": { "type": ["string", "integer"] }
+        },
+        "allow_public": { "type": "boolean", "description": "Allow follow-ups on a public repository, where anyone can comment." }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,
@@ -50,6 +74,18 @@
     }
   },
   "$defs": {
+    "githubUserID": {
+      "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
+      "anyOf": [
+        { "type": "string", "pattern": "^[0-9]{1,20}$" },
+        { "type": "integer", "minimum": 0, "maximum": 99999999999999999999 }
+      ]
+    },
+    "bitbucketAccountID": {
+      "type": "string",
+      "description": "A Bitbucket account_id, in either form; a user's UUID is not accepted, since comment authors are matched by account_id.",
+      "pattern": "^[0-9]{1,10}:[0-9a-f-]{36}$|^[0-9a-f]{24}$"
+    },
     "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$", "description": "Whole days, hours, minutes and seconds, such as 90m, 1h30m or 1d12h. fugaro also accepts any Go duration, such as 1.5h." },
     "workflow": {
       "type": "object",
