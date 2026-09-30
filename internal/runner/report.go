@@ -35,7 +35,11 @@ type FollowUpSection struct {
 	// MarkersFromAnyone is set when the provider couldn't tell Fugaro's
 	// own comments apart, so markers from every author were honoured.
 	MarkersFromAnyone bool
-	NoNewCommits      bool
+	// AuthorUnknown is set when the provider didn't name the pull
+	// request's author: no comment could then be told apart from Fugaro's
+	// own, so none was trusted.
+	AuthorUnknown bool
+	NoNewCommits  bool
 	// MovedToDraft is set when the pull request was ready before the run
 	// and ends as a draft.
 	MovedToDraft bool
@@ -156,7 +160,10 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 		}
 		fmt.Fprintf(&b, "- **Comments used:** %d, by %s\n", total, strings.Join(names, ", "))
 	}
-	if n := max(fu.UntrustedAuthorCount, len(fu.UntrustedAuthors)); n > 0 {
+	switch n := max(fu.UntrustedAuthorCount, len(fu.UntrustedAuthors)); {
+	case fu.AuthorUnknown:
+		fmt.Fprintf(&b, "- **Not used:** %s; the provider did not name the pull request's author, so no comment could be trusted\n", Plural(fu.UntrustedComments, "comment"))
+	case n > 0:
 		names := make([]string, len(fu.UntrustedAuthors))
 		for i, name := range fu.UntrustedAuthors {
 			names[i] = followup.MarkdownName(name)

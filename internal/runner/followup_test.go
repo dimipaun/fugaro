@@ -1286,3 +1286,25 @@ func TestFollowUpTagDoesNotShadowBranch(t *testing.T) {
 		t.Fatalf("started from %s, want the branch's %s", rec.FollowUp.StartSHA, h.first.PushedHead)
 	}
 }
+
+// When the provider doesn't name the PR's author, no comment can be told
+// apart from Fugaro's own, so none is trusted; the report and log say why,
+// rather than calling trusted people untrusted.
+func TestFollowUpUnknownPRAuthor(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.comment(t, "alice", aliceID, "Rename it.")
+	h.followUp(t, followID, runID, "Tidy up.")
+	h.provider.SelfID = ""
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	posted := h.posted(t)
+	report := posted[len(posted)-1]
+	if !strings.Contains(report, "did not name the pull request's author, so no comment could be trusted") || strings.Contains(report, "outside the trusted list") {
+		t.Fatalf("report:\n%s", report)
+	}
+	if !strings.Contains(logs.String(), "did not name the pull request's author") {
+		t.Fatalf("no warning in the log:\n%s", logs.String())
+	}
+}

@@ -214,6 +214,9 @@ func (r *run) prepareFollowUp(ctx context.Context) error {
 		return err
 	}
 	since := r.since(ctx, prev, prevTask, prevRec)
+	if r.follow.pr.AuthorID == "" {
+		r.d.Log.Warn("the provider did not name the pull request's author, so no comment can be told apart from Fugaro's own; trusting none")
+	}
 	redact := r.redactor()
 	sel := followup.Select(all, since, followup.NewTrust(r.cfg.Followup, r.follow.pr), followup.DefaultLimits, redact)
 	if sel.MarkersFromAnyone {
@@ -518,7 +521,7 @@ func (r *run) followUpSection() *FollowUpSection {
 	fu := &FollowUpSection{
 		PreviousRun: r.spec.PreviousRun, Authors: sel.Authors, UntrustedAuthors: sel.UntrustedAuthors,
 		UntrustedAuthorCount: sel.UntrustedAuthorCount, UntrustedComments: sel.Omitted[followup.OmitUntrusted],
-		MarkersFromAnyone: sel.MarkersFromAnyone, NoNewCommits: r.rec.HeadSHA == f.startSHA, Answer: r.answer(),
+		MarkersFromAnyone: sel.MarkersFromAnyone, AuthorUnknown: f.pr.AuthorID == "", NoNewCommits: r.rec.HeadSHA == f.startSHA, Answer: r.answer(),
 	}
 	if rf := r.rec.FollowUp; rf != nil {
 		fu.Session, fu.SessionNote = rf.Session, rf.SessionNote
