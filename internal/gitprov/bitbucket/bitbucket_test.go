@@ -350,3 +350,23 @@ func TestFindLowercasesRepository(t *testing.T) {
 		t.Fatalf("query = %q, want it to contain %q", gotQuery, want)
 	}
 }
+
+// TestEnsureByNumberNeverFindsOrCreates: until updates by number are
+// implemented, one fails before any request, so it can never fall through
+// to find-or-create and open a second pull request.
+func TestEnsureByNumberNeverFindsOrCreates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		http.Error(w, "no", http.StatusTeapot)
+	}))
+	t.Cleanup(srv.Close)
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "bb-token-1234", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := spec(false)
+	s.Number = 12
+	if pr, err := p.EnsurePR(ctx, s); err == nil || pr.Number != 0 {
+		t.Fatalf("EnsurePR by number = %+v, %v", pr, err)
+	}
+}

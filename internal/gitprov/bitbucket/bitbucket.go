@@ -96,6 +96,10 @@ func (p *Provider) prPath(suffix string) string {
 // no labels, so spec.Labels is ignored (logged once per Provider instance).
 // spec.Reviewers are account UUIDs ("{…}") or account IDs.
 func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	if spec.Number != 0 {
+		// An update by number must never fall through to find-or-create.
+		return gitprov.PR{}, errFollowUpReads
+	}
 	if len(spec.Labels) > 0 {
 		p.warnOnce.Do(func() {
 			p.o.Warn(fmt.Sprintf("bitbucket: pull request labels aren't supported; ignoring labels %v", spec.Labels))
@@ -295,8 +299,8 @@ func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, err
 	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil
 }
 
-// errFollowUpReads stands in for the follow-up reads until they are
-// implemented against the bitbucket API.
+// errFollowUpReads stands in for the follow-up reads, and for EnsurePR by
+// number, until they are implemented against the bitbucket API.
 var errFollowUpReads = errors.New("bitbucket: not implemented until M6 task 4")
 
 // Repository implements gitprov.Provider.

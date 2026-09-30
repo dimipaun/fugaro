@@ -56,7 +56,15 @@ func FugaroRun(body string) (runID string, ok bool) {
 // report heading from s, so text Fugaro quotes (an agent's answer) can't
 // forge a report or name another run.
 func StripMarkers(s string) string {
-	s = anyMarkerRE.ReplaceAllString(s, "")
+	// Removing one marker can join the text around it into another, so
+	// repeat until nothing changes; each pass shortens s, so it ends.
+	for {
+		t := anyMarkerRE.ReplaceAllString(s, "")
+		if t == s {
+			break
+		}
+		s = t
+	}
 	lines := strings.Split(s, "\n")
 	kept := lines[:0]
 	for _, l := range lines {

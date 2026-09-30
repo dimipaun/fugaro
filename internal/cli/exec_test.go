@@ -194,7 +194,7 @@ func TestExecFakeProviderKnowsRepoAndRemote(t *testing.T) {
 		t.Fatalf("open = %v, %v", secrets, err)
 	}
 	f, ok := p.(*fake.Provider)
-	if !ok || f.Repo != "acme/app" || f.Remote != "/srv/remote.git" || f.Path != state {
+	if !ok || f.Repo != "acme/app" || f.Remote != "/srv/remote.git" || f.Path != state || f.SelfID != "fugaro-bot" {
 		t.Fatalf("provider = %#v", p)
 	}
 }

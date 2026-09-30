@@ -108,6 +108,10 @@ func (p *Provider) repoPath(suffix string) string {
 // what an earlier attempt created, so a run never ends with two pull
 // requests for the same branch.
 func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	if spec.Number != 0 {
+		// An update by number must never fall through to find-or-create.
+		return gitprov.PR{}, errFollowUpReads
+	}
 	existing, err := p.find(ctx, spec.Branch)
 	if err != nil {
 		return gitprov.PR{}, err
@@ -318,8 +322,8 @@ func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov
 	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp, Env: map[string]string{"GH_TOKEN": tok}}, nil
 }
 
-// errFollowUpReads stands in for the follow-up reads until they are
-// implemented against the github API.
+// errFollowUpReads stands in for the follow-up reads, and for EnsurePR by
+// number, until they are implemented against the github API.
 var errFollowUpReads = errors.New("github: not implemented until M6 task 3")
 
 // Repository implements gitprov.Provider.

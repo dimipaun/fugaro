@@ -3,6 +3,7 @@
 package fake
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -79,7 +80,7 @@ type Provider struct {
 	Repo string
 	// Remote is a local bare repository: PullRequest reports the tip of
 	// refs/heads/<branch> there as the PR's head, unless PRState.Head
-	// overrides it. Empty means no head.
+	// overrides it. Empty, or a branch Remote lacks, means no head.
 	Remote string
 	// FailComments, FailPullRequest and FailRepository make that many
 	// calls of each fail.
@@ -138,7 +139,7 @@ func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR,
 		p.FailEnsureAfterCreate--
 		pr, err := p.ensureLocked(spec.Branch, spec.Draft, spec)
 		if err != nil {
-			return gitprov.PR{}, err
+			return pr, err
 		}
 		return pr, errors.New("fake provider: injected EnsurePR failure after creating the PR")
 	}
@@ -149,7 +150,7 @@ func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR,
 	if p.PartialEnsure != nil {
 		pr, err := p.ensureLocked(spec.Branch, p.PartialEnsureDraft, spec)
 		if err != nil {
-			return gitprov.PR{}, err
+			return pr, err
 		}
 		return pr, &gitprov.PartialError{Err: p.PartialEnsure}
 	}
@@ -251,6 +252,12 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 	cmd := exec.CommandContext(ctx, "git", "--git-dir", p.Remote, "rev-parse", "--verify", "--quiet", "refs/heads/"+head+"^{commit}")
 	cmd.WaitDelay = gitWaitDelay
 	out, err := cmd.Output()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && len(bytes.TrimSpace(out)) == 0 {
+		// --verify --quiet: the branch is gone (a merge closed it). A real
+		// host still shows the PR, so the fake does too, without a head.
+		return info, nil
+	}
 	if err != nil {
 		return gitprov.PRInfo{}, fmt.Errorf("fake provider: PR #%d's branch %s is not in %s: %w", number, head, p.Remote, err)
 	}

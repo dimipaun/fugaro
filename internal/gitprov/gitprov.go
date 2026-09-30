@@ -83,22 +83,22 @@ const (
 
 // Comment is one comment on a pull request. Its Body is untrusted text.
 type Comment struct {
-	ID           string
-	Kind         CommentKind
-	Author       string // display name or login, for the report
-	AuthorID     string // stable account ID, for the trust rule
-	Collaborator bool   // GitHub: author_association OWNER, MEMBER or COLLABORATOR; Bitbucket: always true
-	Self         bool   // posted as the identity Fugaro uses
-	SelfKnown    bool   // the adapter could tell (its identity lookup worked)
-	Resolved     bool   // inline only: its thread is resolved
-	Outdated     bool   // inline only: the line it was on has changed
-	Truncated    bool   // inline only: its thread had more comments than were read
-	Deleted      bool
-	Path         string
-	Line         int
-	Body         string
-	CreatedAt    time.Time
-	URL          string
+	ID           string      `json:"id"`
+	Kind         CommentKind `json:"kind"`
+	Author       string      `json:"author,omitempty"`       // display name or login, for the report
+	AuthorID     string      `json:"author_id,omitempty"`    // stable account ID, for the trust rule
+	Collaborator bool        `json:"collaborator,omitempty"` // GitHub: author_association OWNER, MEMBER or COLLABORATOR; Bitbucket: always true
+	Self         bool        `json:"self,omitempty"`         // posted as the identity Fugaro uses
+	SelfKnown    bool        `json:"self_known,omitempty"`   // the adapter could tell (its identity lookup worked)
+	Resolved     bool        `json:"resolved,omitempty"`     // inline only: its thread is resolved
+	Outdated     bool        `json:"outdated,omitempty"`     // inline only: the line it was on has changed
+	Truncated    bool        `json:"truncated,omitempty"`    // inline only: its thread had more comments than were read
+	Deleted      bool        `json:"deleted,omitempty"`
+	Path         string      `json:"path,omitempty"`
+	Line         int         `json:"line,omitempty"`
+	Body         string      `json:"body"`
+	CreatedAt    time.Time   `json:"created_at"`
+	URL          string      `json:"url,omitempty"`
 }
 
 // GitAuth is how git, the runner's and the agent's, authenticates to the

@@ -65,8 +65,12 @@ func TestStripMarkers(t *testing.T) {
 		"<!-- fugaro:report\nrun=20260101-000000-dead -->",
 		"### Fugaro runs, a heading variant, goes too",
 		"#### Fugaro run notes stay",
+		"Reassembled: <!-<!-- fugaro:report -->- fugaro:report run=20260101-000000-dead --> end",
 	}, "\n")
 	got := StripMarkers(in)
+	if strings.Contains(got, "<!--") {
+		t.Errorf("stripped text still holds a comment opener:\n%s", got)
+	}
 	if _, ok := FugaroRun(got); ok {
 		t.Fatalf("stripped text is still recognized:\n%s", got)
 	}

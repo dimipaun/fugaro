@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +89,15 @@ func TestFakeEnsureByNumberNeverCreates(t *testing.T) {
 	}
 	if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: 7, Branch: runBranch}); err == nil || len(p.State.PRs) != 1 {
 		t.Fatalf("a missing PR by number: %v, %d PRs", err, len(p.State.PRs))
+	}
+	// The failure-injection paths keep the PR a refusal returns.
+	p.FailEnsureAfterCreate = 1
+	if pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: 1, Branch: runBranch}); !errors.Is(err, gitprov.ErrPRNotOpen) || pr.Number != 1 {
+		t.Fatalf("FailEnsureAfterCreate refusal = %+v, %v", pr, err)
+	}
+	p.PartialEnsure = errors.New("labels")
+	if pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: 1, Branch: runBranch}); !errors.Is(err, gitprov.ErrPRNotOpen) || pr.Number != 1 {
+		t.Fatalf("PartialEnsure refusal = %+v, %v", pr, err)
 	}
 }
 
@@ -181,6 +191,16 @@ func TestFakeStateFileBackCompat(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "provider.json")
 	old := `{"prs":[{"number":1,"url":"https://example.invalid/pr/1","draft":true,"spec":{"branch":"` + runBranch + `","base":"main","title":"T","body":"B","draft":true},"comments":["report"]}]}`
+	// A test may hand-write foreign comments, in snake_case like the rest.
+	withForeign := strings.Replace(old, `"comments":["report"]`, `"comments":["report"],"foreign":[{"id":"c1","kind":"inline","author":"Ada","author_id":"1234567","collaborator":true,"path":"a.go","line":3,"body":"fix it","created_at":"2026-01-02T10:00:00Z"}]`, 1)
+	fp := filepath.Join(t.TempDir(), "foreign.json")
+	if err := os.WriteFile(fp, []byte(withForeign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fcs, err := (&Provider{Path: fp}).Comments(ctx, 1)
+	if err != nil || len(fcs) != 2 || fcs[1].AuthorID != "1234567" || fcs[1].Kind != gitprov.CommentInline || !fcs[1].Collaborator || fcs[1].Line != 3 || fcs[1].CreatedAt.IsZero() {
+		t.Fatalf("hand-written foreign comments = %+v, %v", fcs, err)
+	}
 	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -250,8 +270,15 @@ func TestFakePullRequestHeadFromRemote(t *testing.T) {
 	}
 	st.Head = ""
 	testutil.Git(t, remote, "update-ref", "-d", "refs/heads/"+runBranch)
-	if _, err := p.PullRequest(ctx, 1); err == nil {
-		t.Fatal("PullRequest of a branch the remote lacks succeeded")
+	// A deleted branch (a merge that closed it) still has its PR, as on a
+	// real host; the fake just doesn't know its head.
+	if info, err := p.PullRequest(ctx, 1); err != nil || info.HeadSHA != "" || info.Number != 1 || info.State != gitprov.PRMerged {
+		t.Fatalf("PullRequest of a branch the remote lacks = %+v, %v", info, err)
+	}
+	// Any other git failure is an error.
+	bad := &Provider{Remote: filepath.Join(t.TempDir(), "missing.git"), State: p.State}
+	if _, err := bad.PullRequest(ctx, 1); err == nil {
+		t.Fatal("PullRequest against a missing remote succeeded")
 	}
 	p.FailPullRequest = 1
 	st.Head = "0123456789ab"
