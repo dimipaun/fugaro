@@ -261,9 +261,10 @@ func headCommit(t *testing.T) (string, time.Time) {
 	return testutil.Git(t, ".", "rev-parse", "HEAD"), at
 }
 
-// TestUntagFailureIsOnlyAWarning: the build account may not delete tags,
-// so the candidate tag's removal fails; the build still succeeds, latest
-// is the candidate's digest, the record is written, and the log warns.
+// TestUntagFailureIsOnlyAWarning: when the candidate tag's removal is
+// refused (a build account without the tag mover role, say), the build
+// still succeeds, latest is the candidate's digest, the record is written,
+// and the log warns.
 func TestUntagFailureIsOnlyAWarning(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	bucket := recordFlow(t, fb)

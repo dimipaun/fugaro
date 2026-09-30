@@ -61,7 +61,7 @@ type Build struct {
 	// with the fake locked, so a hook must not call the fake.
 	Steps map[string]func(dir string) error
 	// UntagDenied refuses the candidate tag's delete, as a 403 for a
-	// caller with artifactregistry.writer only.
+	// caller without artifactregistry.tags.delete (writer alone lacks it).
 	UntagDenied bool
 
 	mu         sync.Mutex
