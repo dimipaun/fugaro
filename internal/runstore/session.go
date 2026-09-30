@@ -22,6 +22,9 @@ type SessionMeta struct {
 	ID      string `json:"id"`
 	// HeadSHA is the commit the session's run pushed (else its HEAD).
 	HeadSHA string `json:"head_sha"`
+	// Pushed is whether the run pushed HeadSHA. When it didn't, HeadSHA is
+	// its local HEAD, a commit the branch never had.
+	Pushed bool `json:"pushed"`
 	// WorkDir is the checkout the session ran in; Claude Code keys its
 	// sessions on it.
 	WorkDir string `json:"workdir"`

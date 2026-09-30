@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -73,6 +74,17 @@ func withSession(s step, id, content string) step {
 	}
 }
 
+// initOnly is what agent.Claude returns for a process killed after its
+// init event and before its result event.
+func initOnly(t *testing.T, id string) agent.Result {
+	t.Helper()
+	res, found, err := agent.ParseStream(strings.NewReader(`{"type":"system","subtype":"init","session_id":"`+id+`"}`+"\n"), nil)
+	if err != nil || found {
+		t.Fatalf("parsing an init event: found %v, err %v", found, err)
+	}
+	return res
+}
+
 // bucketObjects returns every object in b, by key.
 func bucketObjects(t *testing.T, b *blob.Bucket) map[string][]byte {
 	t.Helper()
@@ -109,7 +121,7 @@ func TestSaveSessionUploads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := runstore.SessionMeta{Version: 1, ID: id, HeadSHA: rec.PushedHead, WorkDir: h.deps.WorkDir, Bytes: int64(len(content))}
+	want := runstore.SessionMeta{Version: 1, ID: id, HeadSHA: rec.PushedHead, Pushed: true, WorkDir: h.deps.WorkDir, Bytes: int64(len(content))}
 	if *m != want || string(data) != content {
 		t.Fatalf("session = %+v, %q; want %+v", m, data, want)
 	}
@@ -227,9 +239,10 @@ func TestSaveSessionOnCancel(t *testing.T) {
 		if err := h.store.RequestCancel(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		res, err := blockUntilDone(t, ctx, req)
-		res.SessionID = req.SessionID
-		return res, err
+		_, err := blockUntilDone(t, ctx, req)
+		// Killed before its result event, Claude Code has emitted only
+		// its init event: that is all the stage's result can carry.
+		return initOnly(t, req.SessionID), err
 	}
 	rec, err := h.run(t, cancelThenBlock)
 	if err != nil || rec.Status != runstore.StatusCancelled {
@@ -358,7 +371,8 @@ func newRestoreRig(t *testing.T) *restoreRig {
 	}
 }
 
-// put stores a previous session with m's fields over the defaults.
+// put stores a previous session, whose head was pushed, with m's fields
+// over the defaults.
 func (g *restoreRig) put(t *testing.T, m runstore.SessionMeta, data string) runstore.SessionMeta {
 	t.Helper()
 	if m.Version == 0 {
@@ -373,6 +387,10 @@ func (g *restoreRig) put(t *testing.T, m runstore.SessionMeta, data string) runs
 	if m.HeadSHA == "" {
 		m.HeadSHA = g.head
 	}
+	if m.Bytes == 0 {
+		m.Bytes = int64(len(data))
+	}
+	m.Pushed = true
 	if err := g.prev.PutSession(context.Background(), m, []byte(data)); err != nil {
 		t.Fatal(err)
 	}
@@ -503,5 +521,169 @@ func TestRestoreRefusesExistingFile(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(p); string(data) != "already here\n" {
 		t.Fatalf("existing file changed: %q", data)
+	}
+}
+
+func TestSaveSessionFallsBackToResumedID(t *testing.T) {
+	h := newHarness(t, "", nil)
+	// Neither stage reports an ID (no init, no result event): the fix
+	// asked to resume one, so that is the session saved.
+	implementNoID := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		writeSession(t, req, req.SessionID, "implement\n")
+		return implement("feature")(t, ctx, req)
+	}
+	fixNoID := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo more >> feature.txt && git commit -qam 'Address review'")
+		verifyTest(t, ctx, req)
+		return agent.Result{}, nil
+	}
+	if _, err := h.run(t, implementNoID, review("changes", 1), fixNoID, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	m, data, err := h.store.ReadSession(context.Background())
+	if err != nil || m.ID != h.agent.calls[2].SessionID || m.ID != h.agent.calls[0].SessionID || string(data) != "implement\n" {
+		t.Fatalf("session = %+v, %q, %v", m, data, err)
+	}
+}
+
+func TestSaveSessionRefusesSymlinkedProjectDir(t *testing.T) {
+	h := newHarness(t, "", nil)
+	outside := t.TempDir()
+	swap := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := implement("feature")(t, ctx, req)
+		// The project directory is a link out of HOME, to a directory
+		// holding a file with the session's name.
+		if err := os.WriteFile(filepath.Join(outside, req.SessionID+".jsonl"), []byte("canary-7c21e9\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.Dir(sessionPath(t, req, req.SessionID))
+		if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, dir); err != nil {
+			t.Fatal(err)
+		}
+		res.SessionID = req.SessionID
+		return res, err
+	}
+	if _, err := h.run(t, swap, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	for key, data := range bucketObjects(t, h.bucket) {
+		if bytes.Contains(data, []byte("canary-7c21e9")) {
+			t.Fatalf("%s holds a file from outside HOME", key)
+		}
+	}
+	if _, _, err := h.store.ReadSession(context.Background()); !errors.Is(err, runstore.ErrNotFound) {
+		t.Fatalf("ReadSession err = %v, want nothing saved", err)
+	}
+}
+
+func TestSaveSessionTooLargeAfterRedaction(t *testing.T) {
+	h := newHarness(t, "", nil)
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	// Just under the cap, but "test-key" (8 bytes) redacts to
+	// "[REDACTED]" (10), which takes it over.
+	line := "test-key\n"
+	content := strings.Repeat(line, runstore.MaxSessionBytes/len(line))
+	rec, err := h.run(t, withSession(implement("feature"), "", content), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if _, _, err := h.store.ReadSession(context.Background()); !errors.Is(err, runstore.ErrNotFound) {
+		t.Fatalf("ReadSession err = %v, want nothing saved", err)
+	}
+	if !strings.Contains(logs.String(), "session too large to save") {
+		t.Fatalf("no warning in the run log:\n%s", logs.String())
+	}
+}
+
+func TestSaveSessionUnpushedHead(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.RetryDelay = time.Millisecond
+	// A push that fails: the run's commits never reach the remote.
+	hook := filepath.Join(h.remote, "hooks", "pre-receive")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, withSession(implement("feature"), "", "x\n"), review("ship", 0))
+	if err == nil || rec.PushedHead != "" {
+		t.Fatalf("rec = %+v, err = %v; want a failed push", rec, err)
+	}
+	m, _, err := h.store.ReadSession(context.Background())
+	if err != nil || m.Pushed || m.HeadSHA != rec.HeadSHA {
+		t.Fatalf("session = %+v, %v; want the local head, not pushed", m, err)
+	}
+}
+
+// fakeClaudeScript is the scripted fake claude's stream for the
+// runner: implement commits, the first review asks for a change, fix
+// commits again, and the second review ships.
+const fakeClaudeScript = `{"calls":[
+ {"shell":"echo one > one.txt && git add -A && git commit -qm one","text":"implemented"},
+ {"structured":{"verdict":"changes","findings":[{"summary":"fix it"}]}},
+ {"shell":"echo two > two.txt && git add -A && git commit -qm two","text":"fixed"},
+ {"structured":{"verdict":"ship","findings":[]}}
+]}`
+
+func TestFakeClaudeRunSavesSession(t *testing.T) {
+	h := newHarness(t, "", nil)
+	bin := testutil.FakeClaude(t, fakeClaudeScript)
+	h.deps.Agent = agent.Claude{Bin: bin}
+	rec, err := runner.Run(context.Background(), h.deps)
+	if err != nil || rec.PushedHead == "" {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	calls := testutil.FakeClaudeCalls(t, bin)
+	if len(calls) != 4 || !slices.Contains(calls[2].Args, "--resume") {
+		t.Fatalf("calls = %d, fix args %q", len(calls), calls[min(2, len(calls)-1)].Args)
+	}
+	// The fake's own session file, named as Claude Code names it, is what
+	// was saved: implement's prompt, then fix's, under the resumed ID.
+	m, data, err := h.store.ReadSession(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := calls[2].Args[slices.Index(calls[2].Args, "--resume")+1]
+	if m.ID != id || !m.Pushed || m.HeadSHA != rec.PushedHead || strings.Count(string(data), `"prompt"`) != 2 {
+		t.Fatalf("session = %+v, %q", m, data)
+	}
+	if _, ok := bucketObjects(t, h.bucket)[h.store.Prefix()+"session/"+id+".jsonl"]; !ok {
+		t.Fatal("no session/ object in the store")
+	}
+}
+
+func TestRestoreRefusesUnpushedHead(t *testing.T) {
+	g := newRestoreRig(t)
+	calls := runner.RecordSessionGit(t)
+	m := runstore.SessionMeta{Version: 1, ID: agent.NewSessionID(), HeadSHA: g.head, WorkDir: g.deps.WorkDir, Bytes: 2}
+	if err := g.prev.PutSession(context.Background(), m, []byte("x\n")); err != nil {
+		t.Fatal(err)
+	}
+	g.wantFresh(t, g.restore(t), "never pushed")
+	if n := len(calls()); n != 0 {
+		t.Fatalf("%d git calls for a session whose head was never pushed", n)
+	}
+}
+
+func TestRestoreRefusesWrongSize(t *testing.T) {
+	g := newRestoreRig(t)
+	m := g.put(t, runstore.SessionMeta{}, "whole\n")
+	m.Bytes = 3
+	if err := g.prev.PutSession(context.Background(), m, []byte("whole\n")); err != nil {
+		t.Fatal(err)
+	}
+	g.wantFresh(t, g.restore(t), "size")
+}
+
+func TestRestoreTooLarge(t *testing.T) {
+	g := newRestoreRig(t)
+	var logs bytes.Buffer
+	g.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	g.put(t, runstore.SessionMeta{}, strings.Repeat("x", runstore.MaxSessionBytes+1))
+	g.wantFresh(t, g.restore(t), "too large")
+	if !strings.Contains(logs.String(), "session too large to restore") {
+		t.Fatalf("no warning in the run log:\n%s", logs.String())
 	}
 }

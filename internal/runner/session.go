@@ -44,11 +44,16 @@ var commitRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // errSessionTooLarge means the session file is over MaxSessionBytes.
 var errSessionTooLarge = errors.New("session file is larger than its cap")
 
-// noteSession remembers the session a stage's result reports: Claude Code
-// may report another ID than the one it was asked for, and that is the
-// one that holds the conversation.
-func (r *run) noteSession(res agent.Result) {
+// noteSession remembers the session a stage ran in: the one its result
+// reports (the result event's ID, else its init event's, so a stage killed
+// before its result still names it). Claude Code may report another ID
+// than the one it was asked for, and that is the one that holds the
+// conversation. A stage that reported none keeps the one it was asked to
+// resume, if any: that session existed before it ran.
+func (r *run) noteSession(req agent.Request, res agent.Result) {
 	switch {
+	case res.SessionID == "" && req.Resume && agent.ValidSessionID(req.SessionID):
+		r.sessionID = req.SessionID
 	case res.SessionID == "":
 	case !agent.ValidSessionID(res.SessionID):
 		r.d.Log.Warn("the agent reported a session ID that is not a lower-case UUID; ignoring it")
@@ -57,19 +62,25 @@ func (r *run) noteSession(res agent.Result) {
 	}
 }
 
-// sessionDir is where Claude Code keeps this run's sessions: under the
-// agent's HOME, named after the checkout's real path (Claude Code names
-// it after its resolved working directory).
-func (r *run) sessionDir() (string, error) {
-	home := envLookup(r.d.Env, "HOME")
+// sessionDir is where Claude Code keeps this run's sessions: the agent's
+// HOME, and the session directory relative to it, named after the
+// checkout's real path (Claude Code names it after its resolved working
+// directory). Callers open an os.Root on home and reach the directory
+// through it, so no link on the way can lead out of HOME.
+func (r *run) sessionDir() (home, rel string, err error) {
+	home = envLookup(r.d.Env, "HOME")
 	if home == "" {
-		return "", errors.New("HOME is not set")
+		return "", "", errors.New("HOME is not set")
 	}
 	wd := r.d.WorkDir
 	if real, err := filepath.EvalSymlinks(wd); err == nil {
 		wd = real
 	}
-	return agent.SessionDir(home, wd), nil
+	rel, err = filepath.Rel(home, agent.SessionDir(home, wd))
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", "", errors.New("the session directory is not under HOME")
+	}
+	return home, rel, nil
 }
 
 // saveSession uploads the session of the latest implement or fix stage.
@@ -90,6 +101,12 @@ func (r *run) saveSession(ctx context.Context) {
 		return
 	}
 	data = r.redactLines(data)
+	if len(data) > runstore.MaxSessionBytes {
+		// Redaction can lengthen it: "[REDACTED]" is longer than a short
+		// secret. A follow-up would refuse it, so it isn't stored.
+		log.Warn("session too large to save once redacted; the next follow-up starts fresh", "cap_bytes", runstore.MaxSessionBytes)
+		return
+	}
 	head := r.rec.PushedHead
 	if head == "" {
 		if r.repo == nil {
@@ -101,7 +118,8 @@ func (r *run) saveSession(ctx context.Context) {
 			return
 		}
 	}
-	m := runstore.SessionMeta{Version: 1, ID: r.sessionID, HeadSHA: head, WorkDir: r.d.WorkDir, Bytes: int64(len(data))}
+	m := runstore.SessionMeta{Version: 1, ID: r.sessionID, HeadSHA: head, Pushed: r.rec.PushedHead != "",
+		WorkDir: r.d.WorkDir, Bytes: int64(len(data))}
 	if err := r.d.Store.PutSession(ctx, m, data); err != nil {
 		log.Warn("storing the session failed; the next follow-up starts fresh", "err", r.redact(err.Error()))
 		return
@@ -109,19 +127,19 @@ func (r *run) saveSession(ctx context.Context) {
 	log.Info("session saved", "bytes", len(data))
 }
 
-// readSessionFile reads session id's file through an os.Root on the
-// session directory, as a regular file of at most MaxSessionBytes.
+// readSessionFile reads session id's file through an os.Root on HOME, as
+// a regular file of at most MaxSessionBytes.
 func (r *run) readSessionFile(id string) ([]byte, error) {
-	dir, err := r.sessionDir()
+	home, rel, err := r.sessionDir()
 	if err != nil {
 		return nil, err
 	}
-	root, err := os.OpenRoot(dir)
+	root, err := os.OpenRoot(home)
 	if err != nil {
-		return nil, fmt.Errorf("opening the session directory: %w", err)
+		return nil, fmt.Errorf("opening HOME: %w", err)
 	}
 	defer root.Close()
-	name := id + ".jsonl"
+	name := filepath.Join(rel, id+".jsonl")
 	li, err := root.Lstat(name)
 	if err != nil {
 		return nil, fmt.Errorf("the session file: %w", err)
@@ -220,12 +238,19 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 	case !commitRE.MatchString(head):
 		return fresh("this run's head is not a commit ID")
 	case errors.Is(err, runstore.ErrTooLarge):
+		r.d.Log.Warn("session too large to restore; starting fresh", "cap_bytes", runstore.MaxSessionBytes)
 		return fresh("the previous session file is too large to restore")
 	case errors.Is(err, runstore.ErrNotFound):
 		return fresh("the previous session file is missing")
 	case err != nil:
 		r.d.Log.Warn("reading the previous session file failed", "err", r.redact(err.Error()))
 		return fresh("the previous session file could not be read")
+	case int64(len(data)) != m.Bytes:
+		return fresh("the previous session file does not match its recorded size")
+	case !m.Pushed:
+		// Its head is the previous run's local HEAD, which the branch
+		// never had: resuming would pick up work that isn't there.
+		return fresh("the previous session's head commit was never pushed")
 	}
 	// Exit 1 (not an ancestor) and 128 (an unknown commit) both mean
 	// the session saw a history the branch no longer has.
@@ -262,14 +287,9 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 // HOME, creating the project directory 0700 and the file 0600, and never
 // replacing a file (or following a symlink) already there.
 func (r *run) writeSessionFile(id string, data []byte) error {
-	home := envLookup(r.d.Env, "HOME")
-	dir, err := r.sessionDir()
+	home, rel, err := r.sessionDir()
 	if err != nil {
 		return err
-	}
-	rel, err := filepath.Rel(home, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("the session directory is not under HOME")
 	}
 	root, err := os.OpenRoot(home)
 	if err != nil {

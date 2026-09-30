@@ -734,8 +734,9 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) agentLoop(ctx context.Context) {
 	sessionID := agent.NewSessionID()
 	sys := SystemPrompt(PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}, r.instructions)
-	res, ok := r.stage(ctx, "implement", agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys})
-	r.noteSession(res)
+	req := agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys}
+	res, ok := r.stage(ctx, "implement", req)
+	r.noteSession(req, res)
 	if !ok {
 		return
 	}
@@ -755,8 +756,9 @@ func (r *run) agentLoop(ctx context.Context) {
 		if r.sessionID != "" {
 			sessionID = r.sessionID
 		}
-		res, ok = r.stage(ctx, "fix", agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys})
-		r.noteSession(res)
+		req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
+		res, ok = r.stage(ctx, "fix", req)
+		r.noteSession(req, res)
 		if !ok {
 			return
 		}

@@ -59,6 +59,25 @@ func TestParseStreamNoResult(t *testing.T) {
 	}
 }
 
+func TestParseStreamInitSessionID(t *testing.T) {
+	const initID, resultID = "3f2a9c1e-0000-4000-8000-000000000001", "3f2a9c1e-0000-4000-8000-000000000002"
+	init := `{"type":"system","subtype":"init","session_id":"` + initID + `"}` + "\n"
+	// A process killed before its result event: the init event's ID.
+	res, found, err := ParseStream(strings.NewReader(init), nil)
+	if err != nil || found || res.SessionID != initID {
+		t.Fatalf("init only: res = %+v, found = %v, err = %v", res, found, err)
+	}
+	// The result event is the final authority when the two differ.
+	result := `{"type":"result","subtype":"success","session_id":"` + resultID + `"}` + "\n"
+	if res, found, err := ParseStream(strings.NewReader(init+result), nil); err != nil || !found || res.SessionID != resultID {
+		t.Fatalf("init and result: res = %+v, found = %v, err = %v", res, found, err)
+	}
+	// A result event without an ID keeps the init event's.
+	if res, _, _ := ParseStream(strings.NewReader(init+`{"type":"result","subtype":"success"}`+"\n"), nil); res.SessionID != initID {
+		t.Fatalf("result without an ID: res = %+v", res)
+	}
+}
+
 func TestClaudeRun(t *testing.T) {
 	bin := testutil.FakeClaude(t, `{"calls":[{"text":"hello","cost":0.5}]}`)
 	var transcript bytes.Buffer
@@ -85,6 +104,36 @@ func TestClaudeRunTimeout(t *testing.T) {
 	_, err := Claude{Bin: bin, Grace: 100 * time.Millisecond}.Run(ctx, Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
 	if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 5*time.Second {
 		t.Fatalf("err = %v after %s", err, time.Since(start))
+	}
+}
+
+// cancelOnInit cancels once the init event has passed through.
+type cancelOnInit struct {
+	cancel context.CancelFunc
+	buf    bytes.Buffer
+}
+
+func (c *cancelOnInit) Write(p []byte) (int, error) {
+	c.buf.Write(p)
+	if strings.Contains(c.buf.String(), `"init"`) {
+		c.cancel()
+	}
+	return len(p), nil
+}
+
+func TestClaudeRunKilledKeepsInitSessionID(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"sleep_s":30}]}`)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	res, err := Claude{Bin: bin, Grace: 100 * time.Millisecond}.Run(ctx, Request{
+		SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}, Transcript: &cancelOnInit{cancel: cancel},
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want the cancellation", err)
+	}
+	// Killed before its result event, the run still names its session.
+	if res.SessionID != "s" {
+		t.Fatalf("SessionID = %q, want the init event's", res.SessionID)
 	}
 }
 
