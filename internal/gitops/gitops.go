@@ -201,6 +201,25 @@ func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
 	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
 }
 
+// TreeEntryMode returns the mode of path in revision rev's tree
+// (`git ls-tree`), such as "100644" for a file or "120000" for a symbolic
+// link, or "" when the tree has no such entry. path must be as ShowFile
+// accepts it.
+func (r *Repo) TreeEntryMode(ctx context.Context, rev, path string) (string, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") || strings.ContainsAny(rev, ": \t\n") {
+		return "", fmt.Errorf("refusing to read the tree of revision %q", rev)
+	}
+	if !cleanRelPath(path) {
+		return "", fmt.Errorf("refusing to look up %q: the path must be relative and clean, without ..", path)
+	}
+	out, err := r.git(ctx, "ls-tree", rev, "--", path)
+	if err != nil || out == "" {
+		return "", err
+	}
+	mode, _, _ := strings.Cut(out, " ")
+	return mode, nil
+}
+
 // cleanRelPath reports whether p is a relative, clean, slash-separated
 // path with no empty, "." or ".." segment, that doesn't start with "-".
 func cleanRelPath(p string) bool {

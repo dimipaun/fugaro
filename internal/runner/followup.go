@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -104,13 +105,7 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 	if b := cfg.Git.BaseBranch; b != ref {
 		return nil, fmt.Errorf("fugaro.yaml on %s names base %s; a follow-up's base must be the branch its configuration comes from", ref, b)
 	}
-	read := func(rel string) (string, error) {
-		if rel == "" {
-			return "", nil
-		}
-		data, err := r.repo.ShowFile(ctx, rev, rel)
-		return string(data), err
-	}
+	read := func(rel string) (string, error) { return r.readBaseFile(ctx, rev, rel) }
 	if r.instructions, err = read(cfg.Agent.Instructions); err != nil {
 		return nil, fmt.Errorf("agent.instructions: %w", err)
 	}
@@ -120,6 +115,46 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// maxLinkHops bounds how many symbolic links readBaseFile follows.
+const maxLinkHops = 8
+
+// readBaseFile reads rel, a path fugaro.yaml names, from revision rev's
+// tree as a first run would read it from its checkout: the path is
+// cleaned first (./a and a//b are fine), and a symbolic link is followed
+// within the tree, so CLAUDE.md -> AGENTS.md reads AGENTS.md. A path, or
+// a link target, that leads outside the repository is refused. "" reads
+// as "".
+func (r *run) readBaseFile(ctx context.Context, rev, rel string) (string, error) {
+	if rel == "" {
+		return "", nil
+	}
+	p := path.Clean(filepath.ToSlash(rel))
+	for hop := 0; ; hop++ {
+		if !filepath.IsLocal(p) {
+			return "", fmt.Errorf("%s leads outside the repository", rel)
+		}
+		mode, err := r.repo.TreeEntryMode(ctx, rev, p)
+		if err != nil {
+			return "", err
+		}
+		data, err := r.repo.ShowFile(ctx, rev, p)
+		if err != nil {
+			return "", err
+		}
+		if mode != "120000" {
+			return string(data), nil
+		}
+		if hop == maxLinkHops {
+			return "", fmt.Errorf("%s: too many symbolic links", rel)
+		}
+		target := string(data)
+		if path.IsAbs(target) {
+			return "", fmt.Errorf("%s is a symbolic link outside the repository", rel)
+		}
+		p = path.Clean(path.Join(path.Dir(p), target))
+	}
 }
 
 // checkPullRequest makes sure the follow-up may touch the pull request: the

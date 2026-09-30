@@ -994,3 +994,87 @@ func TestReportDedupeOnlyForFollowUps(t *testing.T) {
 		t.Fatalf("%d comments carry the follow-up's marker, want 1", n)
 	}
 }
+
+// baseWithFiles is the follow-up config with agent.instructions and
+// agent.review set, and change applied to the base branch before the
+// first run.
+func baseWithFiles(t *testing.T, instructions, review string, change func(dir string)) *fuHarness {
+	t.Helper()
+	base := strings.Replace(followUpYAML(t, ""), "agent:\n", "agent:\n  instructions: "+instructions+"\n  review: "+review+"\n", 1)
+	return followUpHarness(t, base, func(h *harness) { commitToRemote(t, h, change) })
+}
+
+func TestFollowUpBaseFilePathsLikeFirstRun(t *testing.T) {
+	h := baseWithFiles(t, "./BASE.md", "docs//review.md", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"BASE.md": "Base instructions.\n", "docs/review.md": "Review the SQL.\n"})
+	})
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	if !strings.Contains(h.agent.calls[0].AppendSystemPrompt, "Base instructions.") || !strings.Contains(h.agent.calls[1].Prompt, "Review the SQL.") {
+		t.Fatalf("system prompt:\n%s\nreview prompt:\n%s", h.agent.calls[0].AppendSystemPrompt, h.agent.calls[1].Prompt)
+	}
+}
+
+func TestFollowUpBaseFileSymlinkFollowedInTree(t *testing.T) {
+	h := baseWithFiles(t, "CLAUDE.md", "docs/review.md", func(dir string) {
+		testutil.WriteFiles(t, dir, map[string]string{"AGENTS.md": "Agents instructions.\n", "prompts/review.md": "Review the SQL.\n"})
+		for link, target := range map[string]string{"CLAUDE.md": "AGENTS.md", "docs/review.md": "../prompts/review.md"} {
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, link)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	if sys := h.agent.calls[0].AppendSystemPrompt; !strings.Contains(sys, "Agents instructions.") {
+		t.Fatalf("system prompt:\n%s", sys)
+	}
+	if p := h.agent.calls[1].Prompt; !strings.Contains(p, "Review the SQL.") {
+		t.Fatalf("review prompt:\n%s", p)
+	}
+}
+
+func TestFollowUpBaseFileSymlinkEscapeRefused(t *testing.T) {
+	for name, target := range map[string]string{"relative": "../../outside.md", "absolute": "/etc/hosts"} {
+		t.Run(name, func(t *testing.T) {
+			h := followUpHarness(t, "", nil)
+			// Changed on the base after the first run, which never read it.
+			commitToRemote(t, h.harness, func(dir string) {
+				cfg := strings.Replace(followUpYAML(t, ""), "agent:\n", "agent:\n  instructions: docs/ESCAPE.md\n", 1)
+				testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": cfg, "docs/keep.md": "x\n"})
+				if err := os.Symlink(target, filepath.Join(dir, "docs", "ESCAPE.md")); err != nil {
+					t.Fatal(err)
+				}
+			})
+			h.followUp(t, followID, runID, "Tidy up.")
+			rec, err := h.run(t)
+			if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "agent.instructions") || !strings.Contains(rec.Reason, "outside the repository") {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+		})
+	}
+}
+
+func TestFollowUpClearsStaleAnswer(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	// An earlier run's followup.md left in the state dir, as a reused
+	// directory would hold it.
+	if err := os.MkdirAll(h.deps.StateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.deps.StateDir, "followup.md"), []byte("STALE ANSWER\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	posted := h.posted(t)
+	if report := posted[len(posted)-1]; strings.Contains(report, "STALE ANSWER") || !strings.Contains(report, "wrote no `followup.md`") {
+		t.Fatalf("report:\n%s", report)
+	}
+}

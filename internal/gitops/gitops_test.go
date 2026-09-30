@@ -434,3 +434,26 @@ func TestRemoteTip(t *testing.T) {
 		t.Fatalf("RemoteTip(main) = %q, %v", tip, err)
 	}
 }
+
+func TestTreeEntryMode(t *testing.T) {
+	repo, remote := setup(t)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	if err := os.Symlink("README.md", filepath.Join(other, "LINK.md")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, other, "add", "-A")
+	testutil.Git(t, other, "commit", "--quiet", "-m", "link")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	if err := repo.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	for p, want := range map[string]string{"README.md": "100755", "LINK.md": "120000", "missing.md": ""} {
+		if got, err := repo.TreeEntryMode(ctx, "origin/main", p); err != nil || got != want {
+			t.Errorf("TreeEntryMode(%s) = %q, %v; want %q", p, got, err, want)
+		}
+	}
+	if _, err := repo.TreeEntryMode(ctx, "origin/main", "../x"); err == nil {
+		t.Error("TreeEntryMode accepted ../x")
+	}
+}
