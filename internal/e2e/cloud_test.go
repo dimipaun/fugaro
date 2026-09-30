@@ -969,7 +969,11 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	if err := json.Unmarshal(r.readObject(third, "comments.json"), &snap3); err != nil {
 		t.Fatal(err)
 	}
-	if len(snap3.Comments) != 1 || snap3.Comments[0].Body != moreBody || !snap3.Since.Equal(firstSnap.Fetched) {
+	// It reads from 2 minutes before the first follow-up's fetch (a
+	// margin for clock skew), so the first follow-up's comment may be seen
+	// again; the new one must be there.
+	n3 := len(snap3.Comments)
+	if n3 == 0 || n3 > 2 || snap3.Comments[n3-1].Body != moreBody || !snap3.Since.Equal(firstSnap.Fetched.Add(-2*time.Minute)) {
 		t.Fatalf("the second follow-up's comments.json = %+v (the first fetched at %s)", snap3, firstSnap.Fetched)
 	}
 	_, rec3 := r.launched(third)
