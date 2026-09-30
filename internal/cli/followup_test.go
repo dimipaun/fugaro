@@ -567,3 +567,25 @@ func TestPRLookbacksAgree(t *testing.T) {
 		t.Fatalf("ls --pr looks back %v (%v), run --pr %v", d, err, followUpLookback)
 	}
 }
+
+// A recorded base_branch is a real git.base_branch, however much it looks
+// like a commit ID.
+func TestRunPRRecordedHexBaseBranch(t *testing.T) {
+	for _, base := range []string{"cafe123", "20241001"} {
+		t.Run(base, func(t *testing.T) {
+			f := newCloudFixture(t)
+			spec := firstRunSpec(rootID)
+			spec.Ref = base
+			seedSpec(t, f, spec, false)
+			rec := prRecord(rootID, "", 7, 1)
+			rec.BaseBranch = base
+			writeRecord(t, f, rootID, rec)
+			if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+				t.Fatal(err)
+			}
+			if got := readSpec(t, f, fuID); got.Ref != base {
+				t.Fatalf("task ref = %q, want %s", got.Ref, base)
+			}
+		})
+	}
+}

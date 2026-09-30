@@ -114,10 +114,13 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// The base the PR targets, which the previous run recorded; a record
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
-	if c.Ref == "" {
+	recorded := c.Ref != ""
+	if !recorded {
 		c.Ref = prev.Ref
 	}
-	ref, ok := branchName(c.Ref)
+	// A recorded base is a real git.base_branch, whatever it looks like;
+	// only a fallback ref might be a commit ID.
+	ref, ok := branchName(c.Ref, !recorded)
 	if !ok {
 		return nil, userErr("run %s, the last to update PR #%d, ran on ref %q, which is not a branch name (a tag or a commit?); a follow-up reads its configuration from its base branch, so start a new run instead",
 			c.Previous.Run, pr, oneLine(c.Ref))
@@ -133,14 +136,16 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 var commitLikeRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
 
 // branchName is ref as a branch name ("refs/heads/x" is x), and false when
-// it is plainly something else: a tag or other ref, HEAD, a commit ID, a
-// revision expression, or a name git would refuse. A tag without refs/tags/
+// it is plainly something else: a tag or other ref, HEAD, a revision
+// expression, a name git would refuse, or, when commitLike is set, a name
+// shaped like a commit ID (a branch may be named so, so only a ref that
+// isn't known to be a branch is refused for it). A tag without refs/tags/
 // can't be told apart without the remote; the runner then refuses it.
-func branchName(ref string) (string, bool) {
+func branchName(ref string, commitLike bool) (string, bool) {
 	name := strings.TrimPrefix(ref, "refs/heads/")
 	switch {
 	case name == "", name == "HEAD", strings.HasPrefix(name, "refs/"), strings.HasPrefix(name, "-"), strings.HasPrefix(name, "/"),
-		commitLikeRE.MatchString(name), strings.ContainsAny(name, " ~^:?*[\\\t\n"), strings.Contains(name, ".."), strings.Contains(name, "@{"),
+		commitLike && commitLikeRE.MatchString(name), strings.ContainsAny(name, " ~^:?*[\\\t\n"), strings.Contains(name, ".."), strings.Contains(name, "@{"),
 		strings.Contains(name, "//"), strings.HasSuffix(name, "/"), strings.HasSuffix(name, "."), strings.HasSuffix(name, ".lock"):
 		return "", false
 	}
