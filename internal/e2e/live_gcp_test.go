@@ -33,9 +33,10 @@
 // on that PR by hand, and needs their account ID in followup.trusted of
 // the sandbox's fugaro.yaml on its base branch beforehand; it holds no
 // credential but the sandbox's token, sends every provider request to the
-// sandbox repository only (sandboxPath), and never posts a comment or
-// edits the repository. It runs only with FUGARO_LIVE_FOLLOWUP=1; run it
-// with -timeout 100m.
+// sandbox repository only (sandboxPath), and never posts a comment, pushes,
+// or changes the repository's files or configuration: it declines its own
+// PR, and its cleanup deletes that PR's branch. It runs only with
+// FUGARO_LIVE_FOLLOWUP=1; run it with -timeout 100m.
 //
 // A -timeout abort skips t.Cleanup: run -run TestLiveGCPCleanup to sweep.
 package e2e
@@ -501,11 +502,17 @@ func (r *liveRig) lsLive(batch string) (rows []map[string]any, totals map[string
 // waitRun polls ls --batch until run id's row is terminal, for at most
 // livePollFor, and returns that row with the batch's rows and totals.
 func (r *liveRig) waitRun(batch, id string) (row map[string]any, rows []map[string]any, totals map[string]any) {
+	r.t.Helper()
+	return r.waitRunFor(batch, id, livePollFor)
+}
+
+// waitRunFor is waitRun with its own limit.
+func (r *liveRig) waitRunFor(batch, id string, limit time.Duration) (row map[string]any, rows []map[string]any, totals map[string]any) {
 	t := r.t
 	t.Helper()
 	lastState := ""
 	start := time.Now()
-	for deadline := start.Add(livePollFor); ; time.Sleep(livePollEvery) {
+	for deadline := start.Add(limit); ; time.Sleep(livePollEvery) {
 		rs, tt, err := r.lsLive(batch)
 		if err == nil {
 			rows, totals = rs, tt
@@ -526,7 +533,7 @@ func (r *liveRig) waitRun(batch, id string) (row map[string]any, rows []map[stri
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run %s did not finish within %s; last row %v", id, livePollFor, row)
+			t.Fatalf("run %s did not finish within %s; last row %v", id, limit, row)
 		}
 	}
 	liveFact(t, "run %s ended %v at stage %v after about %s; PR %v", id, row["status"], row["stage"], time.Since(start).Round(time.Second), row["pr_url"])
@@ -675,6 +682,11 @@ const (
 	liveFollowUpTask   = "Also add a line to the README saying the follow-up ran."
 	liveCommentWait    = 20 * time.Minute
 	liveMaxCommentPage = 20
+	// liveRefusedPollFor bounds the wait for the follow-up of the declined
+	// PR, which ends at bootstrap. With two runs of livePollFor and the
+	// comment wait, the worst case stays under the documented -timeout
+	// 100m (30 + 20 + 30 + 10 minutes, plus the build).
+	liveRefusedPollFor = 10 * time.Minute
 )
 
 // liveLaunch is run --json's output.
@@ -826,8 +838,9 @@ func jsonInt(v any) int {
 // TestLiveSandboxFollowUp is check 19: a first run, a follow-up acting on
 // review comments the person running the test posts by hand, and a
 // follow-up refused because its PR was declined. It holds no credential
-// but the sandbox's repository access token, and never posts a comment
-// or edits the repository: the comments come from the person, and the
+// but the sandbox's repository access token, and never posts a comment,
+// pushes, or changes the repository's files or configuration (it declines
+// its own PR, and its cleanup deletes the PR's branch): the comments come from the person, and the
 // trusted account ID from the sandbox's fugaro.yaml on its base branch,
 // which that person edits beforehand. It runs only with
 // FUGARO_LIVE_FOLLOWUP=1, so a plain -run TestLive never waits for a
@@ -1044,7 +1057,7 @@ func TestLiveSandboxFollowUp(t *testing.T) {
 	rid := newRunID(t)
 	t.Cleanup(func() { r.cleanupRun(rid) })
 	r.launch("--repo", liveRepo, "--pr", strconv.Itoa(n), "--run-id", rid, "--batch", batch, total, "--json")
-	rrow, _, _ := r.waitRun(batch, rid)
+	rrow, _, _ := r.waitRunFor(batch, rid, liveRefusedPollFor)
 	reason, _ := rrow["reason"].(string)
 	r.fact("follow-up of the declined PR #%d: status %v, reason %q", n, rrow["status"], reason)
 	if rrow["status"] != "infra_error" || !strings.Contains(reason, fmt.Sprintf("PR #%d is closed", n)) {
