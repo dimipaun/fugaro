@@ -57,7 +57,7 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	case runstore.OutcomeReady:
 		b.WriteString("**Outcome:** ready for review\n\n")
 	case runstore.OutcomeNone:
-		fmt.Fprintf(&b, "**Outcome:** the pull request was not updated — %s\n\n", rec.Reason)
+		fmt.Fprintf(&b, "**Outcome:** stopped — %s\n\n", rec.Reason)
 	default:
 		fmt.Fprintf(&b, "**Outcome:** draft — %s\n\n", rec.Reason)
 	}

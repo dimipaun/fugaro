@@ -34,8 +34,15 @@ type PromptData struct {
 // gave none.
 const DefaultInstructions = "Address the unresolved review comments on this PR."
 
+// MaxMovedCommits is how many commits made since the previous session a
+// resumed follow-up's prompt lists; MaxMovedRunes bounds each line, which
+// is other people's text.
 const (
-	maxMovedCommits  = 20
+	MaxMovedCommits = 20
+	MaxMovedRunes   = 120
+)
+
+const (
 	maxDiffStatBytes = 4 << 10
 	maxPrevAnswer    = 4 << 10
 	maxQuotedAnswer  = 8 << 10
@@ -129,11 +136,11 @@ func ImplementPrompt(d PromptData, sel Selection) string {
 		b.WriteString("You are resuming the session in which this branch was last worked on, so you already know its changes.\n")
 		if len(d.MovedCommits) > 0 {
 			b.WriteString("\nSince that session, these commits were added to the branch by someone else. Read them (`git show <commit>`) before editing anything:\n\n")
-			for _, l := range d.MovedCommits[:min(len(d.MovedCommits), maxMovedCommits)] {
-				b.WriteString(indent + oneLine(redact(l), 0) + "\n")
+			for _, l := range d.MovedCommits[:min(len(d.MovedCommits), MaxMovedCommits)] {
+				b.WriteString(indent + oneLine(redact(l), MaxMovedRunes) + "\n")
 			}
-			if len(d.MovedCommits) > maxMovedCommits {
-				fmt.Fprintf(&b, "%s(and %d more: see `git log`)\n", indent, len(d.MovedCommits)-maxMovedCommits)
+			if len(d.MovedCommits) > MaxMovedCommits {
+				fmt.Fprintf(&b, "%s(and %d more: see `git log`)\n", indent, len(d.MovedCommits)-MaxMovedCommits)
 			}
 		}
 	} else {

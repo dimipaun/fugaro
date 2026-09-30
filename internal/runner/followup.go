@@ -12,7 +12,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -53,10 +52,6 @@ const followupFile = "followup.md"
 // maxAnswerRead bounds how much of the agent's followup.md is read; the
 // report quotes at most a few KiB of it anyway.
 const maxAnswerRead = 1 << 20
-
-// maxMovedSubject bounds each commit line a resumed follow-up's prompt
-// lists: the subjects are other people's text.
-const maxMovedSubject = 120
 
 // redactor is a redactor for every secret the run knows now. It is built
 // on each use: the list grows when git credentials are refreshed.
@@ -301,8 +296,16 @@ func (r *run) since(ctx context.Context, prev *runstore.Store, prevTask *task.Sp
 		r.d.Log.Warn("the previous follow-up's comments.json is unusable; reading comments since it started", "err", r.redact(err.Error()))
 		return prevRec.StartedAt
 	}
-	return snap.Fetched
+	// The fetch time is the runner's clock, comment times the provider's:
+	// a margin keeps a comment posted around the fetch from being lost to
+	// skew. Seeing one again is harmless; the previous answer says what
+	// was already done.
+	return snap.Fetched.Add(-sinceSkewMargin)
 }
+
+// sinceSkewMargin is how far before the previous follow-up's fetch the
+// comments a follow-up reads start.
+const sinceSkewMargin = 2 * time.Minute
 
 // freshContext gathers what a fresh session's prompt carries: the root
 // run's task, when it is still stored, and the branch's diff stat.
@@ -325,27 +328,14 @@ func (r *run) freshContext(ctx context.Context) {
 	r.follow.diffStat = stat
 }
 
-// promptData fills the follow-up's prompts. The commit lines of a moved
-// branch are other people's text: each is clipped.
+// promptData fills the follow-up's prompts.
 func (r *run) promptData() followup.PromptData {
 	f := r.follow
-	moved := make([]string, len(f.restored.Moved))
-	for i, l := range f.restored.Moved {
-		moved[i] = clipRunes(l, maxMovedSubject)
-	}
 	return followup.PromptData{
 		PR: r.spec.PR, PRURL: f.pr.URL, Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: moved,
+		Instructions: r.spec.Task, Resumed: f.restored.Resumed, MovedCommits: f.restored.Moved,
 		RootTask: f.rootTask, DiffStat: f.diffStat, PreviousAnswer: f.prevAnswer, Nonce: f.nonce, Redact: r.redactor(),
 	}
-}
-
-// clipRunes cuts s to at most n runes, marking the cut.
-func clipRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n-1]) + "…"
 }
 
 // fellBackFresh records that the saved session couldn't be resumed after
@@ -524,7 +514,7 @@ func (r *run) followUpSection() *FollowUpSection {
 	f, sel := r.follow, r.follow.sel
 	fu := &FollowUpSection{
 		PreviousRun: r.spec.PreviousRun, Authors: sel.Authors, UntrustedAuthors: sel.UntrustedAuthors,
-		UntrustedAuthorCount: sel.UntrustedAuthorCount, UntrustedComments: sel.Omitted[omittedUntrusted],
+		UntrustedAuthorCount: sel.UntrustedAuthorCount, UntrustedComments: sel.Omitted[followup.OmitUntrusted],
 		MarkersFromAnyone: sel.MarkersFromAnyone, NoNewCommits: r.rec.HeadSHA == f.startSHA, Answer: r.answer(),
 	}
 	if rf := r.rec.FollowUp; rf != nil {
@@ -532,7 +522,3 @@ func (r *run) followUpSection() *FollowUpSection {
 	}
 	return fu
 }
-
-// omittedUntrusted is followup.Selection.Omitted's key for comments by
-// authors outside the trusted list.
-const omittedUntrusted = "untrusted_author"

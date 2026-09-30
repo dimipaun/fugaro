@@ -26,12 +26,16 @@ const (
 	omitResolved   = "resolved"
 	omitFugaro     = "fugaro"
 	omitSelf       = "self"
-	omitUntrusted  = "untrusted_author"
+	omitUntrusted  = OmitUntrusted
 	omitDeleted    = "deleted"
 	omitBeforeTime = "before_since"
 	omitEmpty      = "empty"
 	omitOverLimit  = "over_limit"
 )
+
+// OmitUntrusted is Selection.Omitted's key for comments by authors
+// outside the trusted list.
+const OmitUntrusted = "untrusted_author"
 
 // Selection is what the agent gets. Omitted counts the drops by reason:
 // "resolved", "fugaro", "self", "untrusted_author", "deleted",

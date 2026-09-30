@@ -244,13 +244,26 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
-	if err := r.finalize(finCtx); err != nil {
-		// writeback, which saves the session, won't run: save it here, on
-		// a context of its own, as finalize's may have run out.
+	// writeback, which saves the session, won't run when finalize fails
+	// or panics: save it then, on a context of its own, as finalize's may
+	// have run out.
+	saveSession := func() {
 		sctx, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), sessionSaveTimeout)
 		r.saveSession(sctx)
 		cancelSave()
-		return nil, fmt.Errorf("finalize: %w", err)
+	}
+	finErr := func() error {
+		defer func() {
+			if p := recover(); p != nil {
+				saveSession()
+				panic(p)
+			}
+		}()
+		return r.finalize(finCtx)
+	}()
+	if finErr != nil {
+		saveSession()
+		return nil, fmt.Errorf("finalize: %w", finErr)
 	}
 	r.writeback(ctx)
 	return r.rec, nil
@@ -794,7 +807,9 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 	res, ok, err := r.stage(ctx, "implement", req, opts)
 	r.noteSession(req, res)
-	if !ok && err != nil && opts.Recoverable != nil && opts.Recoverable(err) {
+	// Only an error stage recovered from, and so recorded nothing about:
+	// one that came with a timeout or a cancel is a failed stage.
+	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
 		r.fellBackFresh(ctx)
 		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
@@ -834,6 +849,13 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 }
 
+// recoveredError is an agent error stage left to its caller, having
+// recorded nothing about it (stageOpts.Recoverable).
+type recoveredError struct{ err error }
+
+func (e recoveredError) Error() string { return e.err.Error() }
+func (e recoveredError) Unwrap() error { return e.err }
+
 // stageOpts adjust how stage treats the agent's error.
 type stageOpts struct {
 	// Recoverable, when set, picks the agent errors the caller handles
@@ -844,7 +866,7 @@ type stageOpts struct {
 
 // stage runs one agent stage and reports whether the loop may continue,
 // with the agent's error. The error is only for the caller to inspect: a
-// failure is already recorded, unless opts.Recoverable picked it.
+// failure is already recorded, unless it is a recoveredError.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
@@ -903,7 +925,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	switch {
 	case err != nil && opts.Recoverable != nil && stageCtx.Err() == nil && opts.Recoverable(err):
 		r.save(ctx)
-		return res, false, err
+		return res, false, recoveredError{err}
 	case err != nil:
 		r.fail(StageError(name, stageCtx, r.budget, err))
 		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
@@ -1085,7 +1107,13 @@ func (r *run) finalize(ctx context.Context) error {
 				r.d.Log.Warn("posting the not-ready comment failed", "err", r.redact(cerr.Error()))
 			}
 		}
-		return fmt.Errorf("opening pull request: %w", err)
+		err = fmt.Errorf("opening pull request: %w", err)
+		if r.follow != nil {
+			// The branch was pushed: the next follow-up quotes this run's
+			// answer, and diagnose shows its report.
+			r.storeUnposted(ctx, err, records)
+		}
+		return err
 	}
 	r.rec.Reason = reason
 	switch {

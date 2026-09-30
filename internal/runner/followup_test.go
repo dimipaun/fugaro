@@ -563,9 +563,15 @@ func TestFollowUpAfterGiveUpNote(t *testing.T) {
 	h.followUp(t, followID, runID, "Tidy up.")
 	h.deps.RetryDelay = time.Millisecond
 	h.provider.FailEnsureAfterCreate = 3
-	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	rec, err := h.run(t, withAnswer(implement("tidy"), "Tidied the loop."), review("ship", 0))
 	if err == nil || rec.Status != runstore.StatusInfraError || rec.PushedHead == "" {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// The branch was pushed: the next follow-up needs this run's answer.
+	for _, name := range []string{"report.md", "followup.md"} {
+		if data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+name); err != nil || !strings.Contains(string(data), "Tidied the loop.") {
+			t.Errorf("%s = %q, %v", name, data, err)
+		}
 	}
 	posted := h.posted(t)
 	if last := posted[len(posted)-1]; !strings.Contains(last, "not ready") {
@@ -864,6 +870,10 @@ func TestFollowUpPRClosedDuringFinalizeNoNote(t *testing.T) {
 	}
 	if hp.ensureCalls != 1 || rec.PushedHead == "" || h.remoteTip(t) != rec.PushedHead {
 		t.Fatalf("EnsurePR calls %d, pushed_head %q, remote %s", hp.ensureCalls, rec.PushedHead, h.remoteTip(t))
+	}
+	report, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil || !strings.Contains(string(report), "**Outcome:** stopped — PR #1 was closed during finalize; the branch was pushed") || strings.Contains(string(report), "not updated") {
+		t.Fatalf("report.md = %s, %v", report, err)
 	}
 	if n := len(h.posted(t)); n != 1 {
 		t.Fatalf("%d comments, want only the first run's report", n)
@@ -1204,5 +1214,62 @@ func TestRecordsBaseBranch(t *testing.T) {
 	mustReady(t, rec, err)
 	if rec.BaseBranch != "main" {
 		t.Fatalf("follow-up base_branch = %q", rec.BaseBranch)
+	}
+}
+
+// A resumed implement whose stage times out as Claude reports no session
+// is a failed stage: no fresh implement runs after it.
+func TestFollowUpNoFreshRetryAfterStageTimeout(t *testing.T) {
+	cfg := strings.Replace(followUpYAML(t, ""), "stage: 2m", "stage: 1s", 1)
+	h := followUpHarness(t, cfg, nil, sessionFirst(firstSession)...)
+	h.followUp(t, followID, runID, "Tidy up.")
+	timedOut := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		<-ctx.Done()
+		return agent.Result{}, fmt.Errorf("%w: claude exited with code 1", agent.ErrNoSession)
+	}
+	rec, err := h.run(t, timedOut)
+	if err != nil || rec.Outcome != runstore.OutcomeDraft || !strings.Contains(rec.Reason, "timed out") || len(h.agent.calls) != 1 {
+		t.Fatalf("rec = %+v, err = %v, %d agent calls", rec, err, len(h.agent.calls))
+	}
+}
+
+// A comment posted just before the previous follow-up's fetch, by the
+// provider's clock, is not lost to clock skew.
+func TestFollowUpSinceHasSkewMargin(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"comments.json")
+	var snap followup.Snapshot
+	if err != nil || json.Unmarshal(data, &snap) != nil {
+		t.Fatalf("comments.json = %s, %v", data, err)
+	}
+	h.editState(t, func(st *fake.State) {
+		st.PRs[0].Foreign = append(st.PRs[0].Foreign, gitprov.Comment{ID: "skew", Kind: gitprov.CommentGeneral, Author: "alice", AuthorID: aliceID,
+			Collaborator: true, Body: "Posted during the fetch.", CreatedAt: snap.Fetched.Add(-30 * time.Second)})
+	})
+	h.followUp(t, follow2ID, followID, "")
+	rec, err = h.run(t, implement("again"), review("ship", 0))
+	mustReady(t, rec, err)
+	if p := h.agent.calls[0].Prompt; !strings.Contains(p, "Posted during the fetch.") {
+		t.Fatalf("prompt:\n%s", p)
+	}
+}
+
+// panicky panics in EnsurePR, inside finalize.
+type panicky struct{ *fake.Provider }
+
+func (p panicky) EnsurePR(context.Context, gitprov.PRSpec) (gitprov.PR, error) { panic("boom") }
+
+func TestSaveSessionOnFinalizePanic(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.OpenProvider = gitprov.Static(panicky{h.provider})
+	_, err := h.run(t, withSession(implement("feature"), firstSession, "{}\n"), review("ship", 0))
+	if err == nil || !strings.Contains(err.Error(), "panic") {
+		t.Fatalf("err = %v", err)
+	}
+	if m, _, err := h.store.ReadSession(context.Background()); err != nil || m.ID != firstSession {
+		t.Fatalf("session = %+v, %v", m, err)
 	}
 }

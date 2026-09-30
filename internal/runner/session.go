@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -31,10 +32,6 @@ import (
 // sessionSaveTimeout bounds the save Run makes when finalize fails, on a
 // context of its own.
 const sessionSaveTimeout = 30 * time.Second
-
-// maxMovedCommits is how many commits made since the previous session a
-// resumed follow-up lists.
-const maxMovedCommits = 20
 
 // commitRE is a full commit ID. session.json is writable by the previous
 // run's agent, so its head_sha is checked against it before it reaches
@@ -188,7 +185,7 @@ func (r *run) redactLines(data []byte) []byte {
 // restored is what restoreSession decided: resume session ID, or start
 // fresh (Resumed false) for the reason in Note. Moved lists the commits
 // made on the branch since the resumed session (git log --oneline, at
-// most maxMovedCommits), for the agent to re-read.
+// most followup.MaxMovedCommits), for the agent to re-read.
 type restored struct {
 	ID      string
 	Resumed bool
@@ -259,7 +256,7 @@ func (r *run) restoreSession(ctx context.Context, prev *runstore.Store, head str
 	}
 	var moved []string
 	if m.HeadSHA != head {
-		out, err := sessionGit(ctx, r.repo, "log", "--oneline", "--no-decorate", "-n", fmt.Sprint(maxMovedCommits), m.HeadSHA+".."+head)
+		out, err := sessionGit(ctx, r.repo, "log", "--oneline", "--no-decorate", "-n", fmt.Sprint(followup.MaxMovedCommits), m.HeadSHA+".."+head)
 		if err != nil {
 			r.d.Log.Warn("listing the commits since the previous session failed", "err", r.redact(err.Error()))
 			return fresh("the commits since the previous session could not be listed")
