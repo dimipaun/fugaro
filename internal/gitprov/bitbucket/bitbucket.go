@@ -30,9 +30,11 @@ type Options struct {
 	Token     string // repository access token: Repositories read/write, Pull requests read/write
 	BaseURL   string // API root; empty means DefaultBaseURL
 	HTTP      *http.Client
-	// Warn, when set, receives one message the first time a PRSpec with
-	// non-empty Labels is seen: Bitbucket Cloud pull requests have no
-	// labels, so they are silently dropped otherwise. Nil means no-op.
+	// Warn, when set, receives adapter warnings meant for the run's log:
+	// once, the first time a PRSpec with non-empty Labels is seen
+	// (Bitbucket Cloud pull requests have no labels, so they are silently
+	// dropped otherwise), and once if the token may not read its own
+	// identity (GET /user). Nil means no-op.
 	Warn func(string)
 }
 
@@ -41,6 +43,10 @@ type Provider struct {
 	o        Options
 	api      *httpjson.Client
 	warnOnce sync.Once
+
+	identityMu   sync.Mutex
+	identityDone bool   // GET /user has given its answer
+	selfUUID     string // the token's user's uuid; "" when GET /user was refused
 }
 
 // New returns a Provider for o.
@@ -98,7 +104,7 @@ func (p *Provider) prPath(suffix string) string {
 func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	if spec.Number != 0 {
 		// An update by number must never fall through to find-or-create.
-		return gitprov.PR{}, errFollowUpReads
+		return p.updateByNumber(ctx, spec)
 	}
 	if len(spec.Labels) > 0 {
 		p.warnOnce.Do(func() {
@@ -127,7 +133,7 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 // is a *gitprov.PartialError; when a draft was wanted it still looks
 // ready, so the failure is a plain error the runner retries.
 func (p *Provider) update(ctx context.Context, existing pullRequest, draft bool) (gitprov.PR, error) {
-	seenDraft := existing.Draft || strings.HasPrefix(existing.Title, gitprov.DraftPrefix)
+	seenDraft := existing.isDraft()
 	title := existing.Title
 	if !draft {
 		title = gitprov.DraftTitle(existing.Title, false)
@@ -299,21 +305,98 @@ func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, err
 	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil
 }
 
-// errFollowUpReads stands in for the follow-up reads, and for EnsurePR by
-// number, until they are implemented against the bitbucket API.
-var errFollowUpReads = errors.New("bitbucket: not implemented until M6 task 4")
-
 // Repository implements gitprov.Provider.
-func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
-	return gitprov.RepoInfo{}, errFollowUpReads
+func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
+	var repo struct {
+		IsPrivate *bool `json:"is_private"` // confirm live (T11 step 2)
+	}
+	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug)
+	if err := p.api.Do(ctx, "GET", path, nil, &repo); err != nil {
+		return gitprov.RepoInfo{}, fmt.Errorf("reading the repository: %w", err)
+	}
+	if repo.IsPrivate == nil {
+		// Never guess: a public repository taken for private would let a
+		// follow-up run there without allow_public.
+		return gitprov.RepoInfo{}, errors.New("reading the repository: the response has no is_private field")
+	}
+	return gitprov.RepoInfo{Private: *repo.IsPrivate}, nil
+}
+
+// pullDetail is GET …/pullrequests/{id}.
+type pullDetail struct {
+	pullRequest
+	State  string `json:"state"` // OPEN, MERGED, DECLINED or SUPERSEDED
+	Author *user  `json:"author"`
+	Source struct {
+		Branch struct {
+			Name string `json:"name"`
+		} `json:"branch"`
+		Commit *struct {
+			Hash string `json:"hash"` // abbreviated, 12 hex
+		} `json:"commit"`
+		Repository *struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	} `json:"source"`
+}
+
+func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov.PRInfo, error) {
+	if number <= 0 {
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: not a pull request number", number)
+	}
+	var d pullDetail
+	if err := p.api.Do(ctx, "GET", p.prPath(fmt.Sprintf("/%d", number)), nil, &d); err != nil {
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: %w", number, err)
+	}
+	info := gitprov.PRInfo{Number: d.ID, URL: d.Links.HTML.Href, Draft: d.isDraft(), AuthorID: d.Author.accountID(),
+		SourceBranch: d.Source.Branch.Name}
+	if d.Source.Commit != nil {
+		info.HeadSHA = d.Source.Commit.Hash
+	}
+	if d.Source.Repository != nil {
+		info.SourceRepo = d.Source.Repository.FullName
+	}
+	switch d.State {
+	case "OPEN":
+		info.State = gitprov.PROpen
+	case "MERGED":
+		info.State = gitprov.PRMerged
+	case "DECLINED", "SUPERSEDED":
+		info.State = gitprov.PRClosed
+	default:
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: unknown state %q", number, d.State)
+	}
+	return d, info, nil
+}
+
+// isDraft reports whether the pull request is a draft, by Bitbucket's
+// flag or by the fallback title prefix (design §15).
+func (pr pullRequest) isDraft() bool {
+	return pr.Draft || strings.HasPrefix(pr.Title, gitprov.DraftPrefix)
 }
 
 // PullRequest implements gitprov.Provider.
-func (p *Provider) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
-	return gitprov.PRInfo{}, errFollowUpReads
+func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo, error) {
+	_, info, err := p.getPull(ctx, number)
+	return info, err
 }
 
-// Comments implements gitprov.Provider.
-func (p *Provider) Comments(context.Context, int) ([]gitprov.Comment, error) {
-	return nil, errFollowUpReads
+// updateByNumber is EnsurePR for spec.Number: it reads that pull request
+// and changes its draft state only when it is still open on spec.Branch.
+// It never looks a pull request up by branch, and never creates one. It
+// doesn't check the source repository: a pull request's source can't
+// change, and the follow-up checked it when it started.
+func (p *Provider) updateByNumber(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	d, info, err := p.getPull(ctx, spec.Number)
+	if err != nil {
+		return gitprov.PR{}, err
+	}
+	pr := gitprov.PR{Number: info.Number, URL: info.URL, Draft: info.Draft}
+	if info.State != gitprov.PROpen {
+		return pr, fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
+	}
+	if info.SourceBranch != spec.Branch {
+		return pr, fmt.Errorf("pull request #%d is on %s, not %s: %w", info.Number, info.SourceBranch, spec.Branch, gitprov.ErrPRNotOpen)
+	}
+	return p.update(ctx, d.pullRequest, spec.Draft)
 }
