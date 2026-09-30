@@ -600,3 +600,13 @@ func TestGitHubPullRequestWrongNumber(t *testing.T) {
 		t.Fatal("EnsurePR updated another pull request")
 	}
 }
+
+// TestGitHubPullRequestDraftByTitle: where GitHub refuses draft pull
+// requests, the adapter marks drafts with DraftPrefix, so a PR with it is
+// a draft, as the Bitbucket adapter reads it.
+func TestGitHubPullRequestDraftByTitle(t *testing.T) {
+	got, err := open(t, "pull_open_prefixed.json").PullRequest(ctx, 12)
+	if err != nil || !got.Draft || got.State != gitprov.PROpen {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}

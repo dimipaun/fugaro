@@ -413,7 +413,9 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 		// Never act on another pull request than the one asked for.
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: the response is for #%d", number, d.Number)
 	}
-	info := gitprov.PRInfo{Number: d.Number, URL: d.HTMLURL, Draft: d.Draft, AuthorID: d.User.id(),
+	// Where GitHub refuses drafts, the adapter marks them with DraftPrefix.
+	draft := d.Draft || strings.HasPrefix(d.Title, gitprov.DraftPrefix)
+	info := gitprov.PRInfo{Number: d.Number, URL: d.HTMLURL, Draft: draft, AuthorID: d.User.id(),
 		SourceBranch: d.Head.Ref, HeadSHA: d.Head.SHA}
 	if d.Head.Repo != nil {
 		info.SourceRepo = d.Head.Repo.FullName
