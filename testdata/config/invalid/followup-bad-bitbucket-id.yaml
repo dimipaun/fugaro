@@ -1,0 +1,6 @@
+version: 1
+git: { provider: bitbucket }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }
+followup:
+  trusted: ["557058:not-an-account-id"]

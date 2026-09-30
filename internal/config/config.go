@@ -22,6 +22,21 @@ type Config struct {
 	Git       Git                 `yaml:"git"`
 	Agent     Agent               `yaml:"agent"`
 	Workflows map[string]Workflow `yaml:"workflows"`
+	Followup  Followup            `yaml:"followup"`
+}
+
+// Followup says who can steer a follow-up run on a Fugaro pull request
+// (design §4.4, §6.1). A follow-up agent runs with the workflow's secrets
+// and the model credential, so only the listed accounts' PR comments reach
+// it. The zero value trusts no comment and refuses public repositories.
+type Followup struct {
+	// Trusted are the account IDs whose PR comments a follow-up acts on:
+	// on GitHub the numeric user ID, on Bitbucket the account_id. Both
+	// survive a rename, unlike a login or a nickname.
+	Trusted []string `yaml:"trusted"`
+	// AllowPublic lets a follow-up run on a public repository, where
+	// anyone can comment.
+	AllowPublic bool `yaml:"allow_public"`
 }
 
 // Git describes the repository's git provider and pull request settings.

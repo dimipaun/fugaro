@@ -1,0 +1,6 @@
+version: 1
+git: { provider: github }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }
+followup:
+  trusted: [octocat]   # a login, not the numeric user ID
