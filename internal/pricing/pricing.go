@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
 )
 
 // Micros are integer micro-dollars (µ$). A price of $X per million tokens
@@ -163,7 +164,8 @@ func (t *Table) Max() Rates {
 
 // With returns a copy of the table with the overrides applied. An
 // override replaces the whole of a model's rates (found by ID or alias),
-// keeping its aliases and limits; a model the table doesn't have is added
+// keeping its aliases and limits (two keys for the same model, such as
+// an ID and its alias, are refused); a model the table doesn't have is added
 // with only its rates, so its images are refused and a PDF reserves the
 // default context window.
 func (t *Table) With(o Overrides) (*Table, error) {
@@ -171,8 +173,27 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		return nil, err
 	}
 	out := t.clone()
-	for key, r := range o {
-		r = r.clone()
+	// Resolve every key to the model it prices before changing anything,
+	// in a fixed order: two keys for one model (an ID and its alias)
+	// would otherwise leave the price to map iteration order.
+	keys := make([]string, 0, len(o))
+	for key := range o {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	byID := map[string]string{}
+	for _, key := range keys {
+		id := key
+		if m, ok := out.Lookup(key); ok {
+			id = m.ID
+		}
+		if prev, dup := byID[id]; dup {
+			return nil, fmt.Errorf("model prices: %s and %s both price %s: keep one", prev, key, id)
+		}
+		byID[id] = key
+	}
+	for _, key := range keys {
+		r := o[key].clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
 			out.Models[m.ID] = m

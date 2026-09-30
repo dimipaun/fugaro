@@ -138,3 +138,19 @@ func TestWithOverridesReplacesModel(t *testing.T) {
 		t.Errorf("no overrides: %v %v", same, err)
 	}
 }
+
+func TestWithRefusesTwoKeysForOneModel(t *testing.T) {
+	a := Rates{InputPerM: 1, OutputPerM: 5, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	b := Rates{InputPerM: 9, OutputPerM: 45, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1}
+	// The ID and its alias both price the same model: whichever the map
+	// visited last would win, so the pair is refused, every time.
+	for i := 0; i < 50; i++ {
+		_, err := testTable().With(Overrides{"claude-alpha-1": a, "claude-alpha-1@20260101": b})
+		if err == nil {
+			t.Fatal("an ID and its alias were both accepted")
+		}
+		if want := "claude-alpha-1 and claude-alpha-1@20260101 both price claude-alpha-1"; !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not say %q", err, want)
+		}
+	}
+}

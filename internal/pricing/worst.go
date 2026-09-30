@@ -6,10 +6,15 @@ import "math"
 // it, enough to bound what the call can cost.
 type Request struct {
 	BodyBytes  int64
-	HasPDF     bool   // a base64 PDF block: input is bounded by ContextTokens, not bytes
-	ImageCount int64  // base64 image blocks, each reserved at ImageTokens
-	MaxTokens  int64  // already refused above MaxOutputTokens by the gateway
-	CacheTTL   string // "", "5m" or "1h": the longest TTL any cache_control asks for
+	HasPDF     bool  // a base64 PDF block: input is bounded by ContextTokens, not bytes
+	ImageCount int64 // base64 image blocks, each reserved at ImageTokens
+	MaxTokens  int64 // already refused above MaxOutputTokens by the gateway
+	// CacheTTL is the longest cache write the request can cause: "" only
+	// when the request has no cache_control anywhere (the top-level
+	// automatic one included); "5m" for a cache_control without a ttl
+	// (the API's default) or with "5m"; "1h" when any asks for "1h". Any
+	// other value is reserved like "1h".
+	CacheTTL string
 }
 
 // WorstCase bounds what a call can cost, rounded up to the µ$:
@@ -21,8 +26,9 @@ type Request struct {
 // the body holds a PDF. cacheMult is the dearest way the input can be
 // billed, from the model's own rates (owner overrides included): cache
 // reads (an override may price them above fresh input), plus a 5-minute
-// write with any cache_control, plus a 1-hour write with a 1-hour TTL (or
-// one it doesn't know). A long-context tier applies when inputBound passes
+// write unless CacheTTL is "" (no cache_control anywhere; one without a
+// ttl must be passed as "5m"), plus a 1-hour write unless CacheTTL is ""
+// or "5m". A long-context tier applies when inputBound passes
 // its threshold. It is a bound only for the shapes the gateway lets
 // through; every other shape (server tools included, so there is no
 // web-search term) is refused before this is called. The arithmetic

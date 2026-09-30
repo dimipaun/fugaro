@@ -239,3 +239,23 @@ func TestWorstCaseBoundsActual(t *testing.T) {
 		}
 	}
 }
+
+// "" means no cache_control anywhere in the request, the top-level one
+// included; a cache_control without a ttl is the API's default 5-minute
+// write and is passed as "5m".
+func TestWorstCaseCacheTTLContract(t *testing.T) {
+	m := model(Rates{InputPerM: 4, OutputPerM: 20, CacheWrite5m: 1.5, CacheWrite1h: 2, CacheRead: 0.1})
+	none := m.WorstCase(Request{BodyBytes: 1000, CacheTTL: ""})
+	noTTL := m.WorstCase(Request{BodyBytes: 1000, CacheTTL: "5m"})
+	if none != Micros(1000*4) {
+		t.Errorf("no cache_control: %d µ$, want fresh input only", none)
+	}
+	if noTTL != Micros(1000*4*1.5) {
+		t.Errorf("a cache_control without ttl: %d µ$, want the 5-minute write", noTTL)
+	}
+	for _, unknown := range []string{"x", "24h", "5M"} {
+		if got := m.WorstCase(Request{BodyBytes: 1000, CacheTTL: unknown}); got != Micros(1000*4*2) {
+			t.Errorf("ttl %q: %d µ$, want the 1-hour write", unknown, got)
+		}
+	}
+}
