@@ -37,7 +37,7 @@ import (
 type followState struct {
 	pr       gitprov.PRInfo     // the pull request as bootstrap read it
 	startSHA string             // the branch's head when the run started
-	wasReady bool               // the pull request was not a draft at bootstrap
+	wasReady bool               // the pull request was not a draft: at bootstrap, then right before finalize's push
 	sel      followup.Selection // the comments the agent gets
 	nonce    string             // the comments block's delimiter nonce
 	restored restored           // the session to resume, or why not
@@ -426,6 +426,9 @@ func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done b
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; nothing was pushed", n, pr.State), records)
 		return true, nil
 	}
+	// What finalize changes is the state people see now, which they may
+	// have changed during the run: the report's "was ready" is about it.
+	r.follow.wasReady = !pr.Draft
 	err = r.repo.PushExisting(ctx, branch, r.follow.startSHA)
 	switch {
 	case err == nil:

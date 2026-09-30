@@ -1156,3 +1156,40 @@ func TestFollowUpRewoundBranchNotPushedOver(t *testing.T) {
 		t.Fatalf("posted = %q", posted)
 	}
 }
+
+// The draft wording follows the pull request's state right before
+// finalize changes it, not its state at bootstrap.
+func TestFollowUpMovedToDraftFromStateAtFinalize(t *testing.T) {
+	t.Run("readied during the run", func(t *testing.T) {
+		h := followUpHarness(t, "", nil) // the first run left a draft
+		h.followUp(t, followID, runID, "Tidy up.")
+		h.fails(t, "beta")
+		ready := func(t *testing.T, req agent.Request) {
+			h.editState(t, func(st *fake.State) { st.PRs[0].Draft = false })
+		}
+		rec, err := h.run(t, then(implement("tidy"), ready), review("ship", 0))
+		if err != nil || rec.Outcome != runstore.OutcomeDraft {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		posted := h.posted(t)
+		if report := posted[len(posted)-1]; !strings.Contains(report, "was ready; moved back to draft because") {
+			t.Fatalf("report:\n%s", report)
+		}
+	})
+	t.Run("made a draft during the run", func(t *testing.T) {
+		h := followUpHarness(t, "", nil, implement("feature"), review("ship", 0))
+		h.followUp(t, followID, runID, "Tidy up.")
+		h.fails(t, "beta")
+		draft := func(t *testing.T, req agent.Request) {
+			h.editState(t, func(st *fake.State) { st.PRs[0].Draft = true })
+		}
+		rec, err := h.run(t, then(implement("tidy"), draft), review("ship", 0))
+		if err != nil || rec.Outcome != runstore.OutcomeDraft {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		posted := h.posted(t)
+		if report := posted[len(posted)-1]; strings.Contains(report, "was ready") {
+			t.Fatalf("report:\n%s", report)
+		}
+	})
+}
