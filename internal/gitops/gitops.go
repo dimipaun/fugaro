@@ -304,8 +304,19 @@ func (r *Repo) PushExisting(ctx context.Context, branch, expected string) error 
 	if expected == "" || (tip != expected && tip != head) {
 		return fmt.Errorf("%s on origin is at %s, not %s where this run started: %w, so it is not overwritten", branch, tip, expected, ErrForeignTip)
 	}
-	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
-	return err
+	if _, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref); err != nil {
+		// A push that landed after the check fails the lease: that is
+		// someone else's push, like one the check saw.
+		now, rerr := r.remoteTip(ctx, ref)
+		switch {
+		case rerr == nil && now == "":
+			return fmt.Errorf("%s was deleted from origin during the push; not recreating it: %w", branch, ErrBranchGone)
+		case rerr == nil && now != tip:
+			return fmt.Errorf("%s on origin moved to %s during the push: %w, so it is not overwritten (%v)", branch, now, ErrForeignTip, err)
+		}
+		return err
+	}
+	return nil
 }
 
 // checkRunBranch refuses a branch the runner must never push: anything

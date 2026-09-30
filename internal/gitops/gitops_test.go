@@ -518,3 +518,42 @@ func TestPushExistingAcceptsItsOwnEarlierPush(t *testing.T) {
 		t.Fatalf("a repeated push: %v", err)
 	}
 }
+
+// TestPushExistingRaceIsForeignTip: someone pushes between the tip check
+// and the push, so the lease refuses it; that is someone else's push too,
+// not a generic failure. The remote's pre-receive hook plays that person,
+// moving the branch and refusing the push. A refusal that leaves the tip
+// where it was stays a plain error.
+func TestPushExistingRaceIsForeignTip(t *testing.T) {
+	for _, moves := range []bool{true, false} {
+		repo, remote := setup(t)
+		if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.CommitEmpty(ctx, "a"); err != nil {
+			t.Fatal(err)
+		}
+		if err := repo.Push(ctx, "fugaro/x"); err != nil {
+			t.Fatal(err)
+		}
+		start, _ := repo.HeadSHA(ctx)
+		if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+			t.Fatal(err)
+		}
+		main := testutil.Git(t, remote, "rev-parse", "refs/heads/main")
+		hook := "#!/bin/sh\nexit 1\n"
+		if moves {
+			hook = "#!/bin/sh\nenv -u GIT_QUARANTINE_PATH -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES git update-ref refs/heads/fugaro/x " + main + "\nexit 1\n"
+		}
+		if err := os.WriteFile(filepath.Join(remote, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		err := repo.PushExisting(ctx, "fugaro/x", start)
+		if err == nil || errors.Is(err, ErrForeignTip) != moves {
+			t.Fatalf("moves %v: err = %v", moves, err)
+		}
+		if moves && testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x") != main {
+			t.Fatal("the hook did not move the branch")
+		}
+	}
+}
