@@ -83,6 +83,9 @@ type RoleIDs struct {
 	Launcher       string `json:"launcher"`
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
+	// TagMover is empty in the outputs of an installation applied before
+	// the role existed; fugaro init --repo refuses those.
+	TagMover string `json:"tag_mover"`
 }
 
 // ServiceAccount is an account to create or adopt.
@@ -181,6 +184,7 @@ type RepoInstallation struct {
 type RepoRoleIDs struct {
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
+	TagMover       string `json:"tag_mover"`
 }
 
 // RepoSpec is one repository. The tagged fields are the tfvars' repo.
@@ -259,7 +263,7 @@ func resolve(in Inputs) (*repoCtx, error) {
 	// Role IDs from a stale output of another project's state would grant
 	// that project's roles, so they must be this project's.
 	prefix := "projects/" + lc.Project + "/roles/"
-	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter} {
+	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter, c.inst.RoleIDs.TagMover} {
 		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
 			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.Project)
 		}
@@ -394,6 +398,7 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
+	def(&o.RoleIDs.TagMover, role(RoleTagMover))
 	if o.Launchers == nil {
 		o.Launchers = slices.Clone(lc.Terraform.Launchers)
 	}
@@ -555,7 +560,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
 			SchedulerServiceAccount: c.inst.SchedulerServiceAccount,
-			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter},
+			RoleIDs:                 RepoRoleIDs{JobRunner: c.inst.RoleIDs.JobRunner, BuildSubmitter: c.inst.RoleIDs.BuildSubmitter, TagMover: c.inst.RoleIDs.TagMover},
 			Launchers:               c.inst.Launchers,
 			Operators:               c.inst.Operators,
 		},

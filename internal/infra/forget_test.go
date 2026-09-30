@@ -54,6 +54,17 @@ func TestCheckForgetPlan(t *testing.T) {
 	if err := CheckForgetPlan(bad); err == nil || !strings.Contains(err.Error(), "google_storage_bucket.runs") {
 		t.Fatalf("err = %v", err)
 	}
+	// An installation applied before the tag mover role existed gets it
+	// from the rollback's plan: that create alone is no sign of a foreign
+	// state, but alongside anything else the plan is still refused.
+	older := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(ForgetDeletes[0], "delete"), change(TagMoverRoleAddress, "create")}}
+	if err := CheckForgetPlan(older); err != nil {
+		t.Fatalf("the tag mover role's create: %v", err)
+	}
+	both := &tf.Plan{ResourceChanges: []tf.ResourceChange{change(TagMoverRoleAddress, "create"), change("module.installation.google_storage_bucket.runs", "create")}}
+	if err := CheckForgetPlan(both); err == nil || !strings.Contains(err.Error(), "google_storage_bucket.runs") || strings.Contains(err.Error(), "tag_mover") {
+		t.Fatalf("err = %v", err)
+	}
 }
 
 func TestForgetSpec(t *testing.T) {

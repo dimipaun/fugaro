@@ -201,6 +201,8 @@ steps:
     args: [-c, 'exec fugaro image gate --record /workspace/out/record.json --slug "$$SLUG" --bucket "$$BUCKET"']
   # A registry-side retag by digest, so the smoked digest is the promoted
   # one. When superseded, its step output says so, for fugaro image build.
+  # Moving an existing latest deletes the old tag first, so the build
+  # account holds the tag mover role (tags.delete) besides writer.
   - id: promote
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
@@ -231,9 +233,10 @@ steps:
         exec fugaro image record --in /workspace/out/record.json --digest-from /workspace/out/image-digest \
           --base-digest-from /workspace/base-digest --image "$$IMAGE" --base "$$FUGARO_BASE" --build-id "$$BUILD_ID" \
           --slug "$$SLUG" --bucket "$$BUCKET"
-  # Best-effort: the build account (artifactregistry.writer) normally may
-  # not delete tags, and a leftover candidate tag is harmless, since the
-  # registry's cleanup policy removes it. It always exits 0.
+  # Best-effort: the build account's tag mover role lets it delete the
+  # candidate tag, and should that fail, a leftover candidate tag is
+  # harmless, since the registry's cleanup policy removes it. It always
+  # exits 0.
   - id: untag
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash

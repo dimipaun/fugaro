@@ -29,6 +29,7 @@ output "role_ids" {
     launcher        = google_project_iam_custom_role.launcher.name
     job_runner      = google_project_iam_custom_role.job_runner.name
     build_submitter = google_project_iam_custom_role.build_submitter.name
+    tag_mover       = google_project_iam_custom_role.tag_mover.name
   }
 }
 

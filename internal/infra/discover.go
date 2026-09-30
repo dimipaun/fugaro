@@ -292,6 +292,7 @@ const (
 	launcherRoleTitle       = "Fugaro launcher"
 	jobRunnerRoleTitle      = "Fugaro job runner"
 	buildSubmitterRoleTitle = "Fugaro build submitter"
+	tagMoverRoleTitle       = "Fugaro tag mover"
 	schedulerDisplayName    = "Fugaro scheduler"
 )
 
@@ -355,6 +356,7 @@ func (d *discovery) installationSingletons(spec InstallationSpec) error {
 		{importLauncherRole, ids.Launcher, launcherRoleTitle},
 		{importJobRunnerRole, ids.JobRunner, jobRunnerRoleTitle},
 		{importBuildSubmitterRole, ids.BuildSubmitter, buildSubmitterRoleTitle},
+		{importTagMoverRole, ids.TagMover, tagMoverRoleTitle},
 	} {
 		name := "projects/" + d.project + "/roles/" + r.id
 		role, err := d.c.IAM.Projects.Roles.Get(name).Context(d.ctx).Do()

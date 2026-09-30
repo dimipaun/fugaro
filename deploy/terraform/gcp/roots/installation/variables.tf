@@ -26,6 +26,7 @@ variable "names" {
       launcher        = string
       job_runner      = string
       build_submitter = string
+      tag_mover       = string
     })
     log = object({
       bucket    = string

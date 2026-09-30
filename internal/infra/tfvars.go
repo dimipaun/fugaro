@@ -16,6 +16,7 @@ const (
 	RoleLauncher              = "fugaroLauncher"
 	RoleJobRunner             = "fugaroJobRunner"
 	RoleBuildSubmitter        = "fugaroBuildSubmitter"
+	RoleTagMover              = "fugaroTagMover"
 	BaseRegistry              = "fugaro-base"
 	LegacyRegistry            = "fugaro"
 	LogBucket                 = "fugaro"
@@ -103,6 +104,7 @@ type InstallationRoleIDs struct {
 	Launcher       string `json:"launcher"`
 	JobRunner      string `json:"job_runner"`
 	BuildSubmitter string `json:"build_submitter"`
+	TagMover       string `json:"tag_mover"`
 }
 
 // LogNames are the log bucket, view, sink and exclusion that keep Fugaro's
@@ -145,7 +147,7 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,
 			SchedulerServiceAccountID: SchedulerServiceAccountID,
-			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter},
+			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
 		BucketLifecycle:      BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},

@@ -531,6 +531,11 @@ run "build_writes_own_registry_only" {
     error_message = "the build account must write its own registry"
   }
   assert {
+    condition = (google_artifact_registry_repository_iam_member.build_tag_mover.role == "projects/proj-1234/roles/fugaroTagMover" &&
+    google_artifact_registry_repository_iam_member.build_tag_mover.repository == google_artifact_registry_repository.images.repository_id)
+    error_message = "the build account must move tags on its own registry, and only there"
+  }
+  assert {
     condition = (google_artifact_registry_repository_iam_member.build_base.role == "roles/artifactregistry.reader" &&
     google_artifact_registry_repository_iam_member.build_base.repository == "fugaro-base")
     error_message = "the build account must only read the base registry"
@@ -561,14 +566,21 @@ run "build_role_set_on_own_registry" {
     }
   }
 
+  # Writer, plus the tag mover (tags.delete only), which moving an existing
+  # :latest needs: no repoAdmin, no admin, so no version is ever deletable.
   assert {
     condition = toset(concat(
-      [for m in [google_artifact_registry_repository_iam_member.build_images] : m.role
+      [for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover] : m.role
       if m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"],
       [for m in google_artifact_registry_repository_iam_member.operator_images : m.role
       if m.member == "serviceAccount:fugaro-b-acme-webapp-5b8bba58@proj-1234.iam.gserviceaccount.com"],
-    )) == toset(["roles/artifactregistry.writer"])
-    error_message = "the build account's only role on its registry must be writer: no repoAdmin, no admin"
+    )) == toset(["roles/artifactregistry.writer", "projects/proj-1234/roles/fugaroTagMover"])
+    error_message = "the build account's roles on its registry must be exactly writer and fugaroTagMover: no repoAdmin, no admin"
+  }
+  assert {
+    condition = alltrue([for m in [google_artifact_registry_repository_iam_member.build_images, google_artifact_registry_repository_iam_member.build_tag_mover] :
+    m.repository == google_artifact_registry_repository.images.repository_id && m.location == "us-east5" && m.project == "proj-1234"])
+    error_message = "the build account's writer and tag mover grants must be on its own registry only"
   }
   assert {
     condition = tomap({ for k, m in google_artifact_registry_repository_iam_member.operator_images : k => m.role }) == tomap({

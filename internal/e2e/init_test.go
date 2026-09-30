@@ -268,6 +268,7 @@ func installationOutputs(t *testing.T) string {
 			"launcher":        "projects/" + initRepoProject + "/roles/" + infra.RoleLauncher,
 			"job_runner":      "projects/" + initRepoProject + "/roles/" + infra.RoleJobRunner,
 			"build_submitter": "projects/" + initRepoProject + "/roles/" + infra.RoleBuildSubmitter,
+			"tag_mover":       "projects/" + initRepoProject + "/roles/" + infra.RoleTagMover,
 		},
 		"launchers":                []string{},
 		"operators":                []string{},
@@ -999,6 +1000,30 @@ func TestInitRepoRefusesForgottenInstallation(t *testing.T) {
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
 	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "forgotten") {
 		t.Fatalf("init --repo on a forgotten installation:\n%s", res)
+	}
+	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
+		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
+	}
+}
+
+// An installation applied before the tag mover role existed outputs no
+// role_ids.tag_mover: init --repo refuses to plan a grant of a role that
+// isn't there, and says to run fugaro init first.
+func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
+	r := sandboxRig(t)
+	var outs map[string]map[string]any
+	if err := json.Unmarshal([]byte(installationOutputs(t)), &outs); err != nil {
+		t.Fatal(err)
+	}
+	delete(outs["role_ids"]["value"].(map[string]any), "tag_mover")
+	b, err := json.Marshal(outs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 1 || !strings.Contains(res.stderr, "run fugaro init first") || !strings.Contains(res.stderr, "tag_mover") {
+		t.Fatalf("init --repo on an installation without the tag mover role:\n%s", res)
 	}
 	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
 		t.Errorf("calls = %q, want no plan or apply of the repository", calls)

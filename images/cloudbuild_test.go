@@ -259,8 +259,8 @@ func TestPromoteByDigest(t *testing.T) {
 }
 
 // TestUntagScriptAlwaysExitsZero: the candidate tag's removal ends in
-// || echo, and a refused delete (the build account may not delete tags)
-// only prints the warning.
+// || echo, and a refused delete (say, a registry whose grants are not yet
+// applied) only prints the warning.
 func TestUntagScriptAlwaysExitsZero(t *testing.T) {
 	_, cb := loadCloudBuild(t)
 	u := cb.Steps[cb.step(t, "untag")]
