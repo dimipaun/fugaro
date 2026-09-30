@@ -1053,7 +1053,7 @@ func (r *run) finalize(ctx context.Context) error {
 	}
 	var partial *gitprov.PartialError
 	switch {
-	case errors.Is(err, gitprov.ErrPRNotOpen):
+	case errors.Is(err, gitprov.ErrPRNotOpen) && r.follow != nil:
 		// Closed or merged after the push: nothing more may be posted.
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was closed during finalize; the branch was pushed", r.spec.PR), records)
 		return nil
@@ -1069,7 +1069,7 @@ func (r *run) finalize(ctx context.Context) error {
 			ready, reason = false, r.redact(err.Error())
 		}
 	case err != nil:
-		if pr.Number != 0 {
+		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
 			// The PR exists but its state could not be settled, and it may
 			// even look ready: say so on the PR itself, best effort.
 			note := "**Fugaro:** this pull request is not ready. The run could not finish setting it up (" +

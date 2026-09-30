@@ -18,8 +18,13 @@ type PromptData struct {
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
 func SystemPrompt(d PromptData, instructions string) string {
+	explain := "the pull request description"
+	if d.FollowUp != nil {
+		// A follow-up leaves the title and description as they are.
+		explain = d.StateDir + "/followup.md"
+	}
 	lines := []string{
-		"You are running unattended inside Fugaro, an ephemeral cloud worker. Nobody will answer questions: make reasonable decisions and explain them in the pull request description.",
+		"You are running unattended inside Fugaro, an ephemeral cloud worker. Nobody will answer questions: make reasonable decisions and explain them in " + explain + ".",
 		"",
 		"Rules for this run:",
 		fmt.Sprintf("- You are on branch %s; the pull request will target %s. Commit your work to this branch with clear messages and do not switch branches. You do not need to push or open the pull request: Fugaro does both when you finish.", d.Branch, d.Base),

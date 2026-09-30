@@ -386,8 +386,15 @@ func (r *run) answer() string {
 // reportPosted reports whether Fugaro's identity already posted a comment
 // carrying this run's marker on pr, as when an earlier attempt of this
 // execution posted its report. A listing that fails says no, with a
-// warning: a second report is better than none.
+// warning: a second report is better than none. Only Self comments
+// count, since anyone can type a marker: when the provider can't tell
+// Fugaro's own comments apart, nothing matches and the report is posted,
+// possibly twice.
 func (r *run) reportPosted(ctx context.Context, pr gitprov.PR) bool {
+	if r.follow.sel.MarkersFromAnyone {
+		r.d.Log.Warn("the provider can't tell Fugaro's own comments apart; posting the report without checking for an earlier copy")
+		return false
+	}
 	all, err := r.provider.Comments(ctx, pr.Number)
 	if err != nil {
 		r.d.Log.Warn("listing the pull request's comments failed; posting the report anyway", "err", r.redact(err.Error()))
@@ -408,9 +415,12 @@ func (r *run) reportPosted(ctx context.Context, pr gitprov.PR) bool {
 // and nothing but a short note for the last case goes on the pull request.
 func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done bool, err error) {
 	n, branch := r.spec.PR, r.rec.Branch
-	pr, err := r.provider.PullRequest(ctx, n)
+	pr, err := r.readPRRetrying(ctx)
 	if err != nil {
-		return false, fmt.Errorf("reading PR #%d before the push: %w", n, err)
+		// Never push to a pull request whose state is unknown.
+		err = fmt.Errorf("reading PR #%d before the push: %w", n, err)
+		r.storeUnposted(ctx, err, records)
+		return false, err
 	}
 	if pr.State != gitprov.PROpen {
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; nothing was pushed", n, pr.State), records)
@@ -433,7 +443,64 @@ func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done b
 		r.endUnchanged(ctx, reason, records)
 		return true, nil
 	}
-	return false, fmt.Errorf("pushing %s: %w", branch, err)
+	err = fmt.Errorf("pushing %s: %w", branch, err)
+	r.storeUnposted(ctx, err, records)
+	return false, err
+}
+
+// readPRRetrying reads the follow-up's pull request, retrying a failure
+// as ensurePR does: a passing provider error must not throw the run's
+// work away.
+func (r *run) readPRRetrying(ctx context.Context) (gitprov.PRInfo, error) {
+	delay := r.d.RetryDelay
+	if delay == 0 {
+		delay = 3 * time.Second
+	}
+	for attempt := 1; ; attempt++ {
+		pr, err := r.provider.PullRequest(ctx, r.spec.PR)
+		if err == nil || attempt == prAttempts {
+			return pr, err
+		}
+		r.d.Log.Warn("reading the pull request failed; retrying", "attempt", attempt, "err", r.redact(err.Error()))
+		select {
+		case <-ctx.Done():
+			return pr, err
+		case <-time.After(delay):
+		}
+	}
+}
+
+// storeUnposted stores the report of a follow-up that stops with err
+// before updating its pull request, as the infra_error Run then records,
+// so diagnose still shows what the agent did. Nothing is posted.
+func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Record) {
+	rec := *r.rec
+	rec.Status, rec.Outcome, rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
+	fu := r.followUpSection()
+	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secrets)
+	r.storeReport(ctx, report, fu)
+}
+
+// giveUpNoteAllowed reports whether finalize may post its not-ready note
+// after EnsurePR gave up. A first run's pull request is its own; a
+// follow-up's is read again first, and the note goes only on an open one:
+// a transport error can hide that it was merged or closed meanwhile.
+func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
+	if r.follow == nil {
+		return true
+	}
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+	defer cancel()
+	pr, err := r.provider.PullRequest(cctx, r.spec.PR)
+	switch {
+	case err != nil:
+		r.d.Log.Warn("reading the pull request before the not-ready note failed; not posting it", "err", r.redact(err.Error()))
+		return false
+	case pr.State != gitprov.PROpen:
+		r.d.Log.Warn("the pull request is no longer open; not posting the not-ready note", "state", string(pr.State))
+		return false
+	}
+	return true
 }
 
 // endUnchanged ends a follow-up whose pull request this run no longer

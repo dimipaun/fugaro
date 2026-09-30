@@ -291,7 +291,7 @@ func TestFollowUpUpdatesSamePR(t *testing.T) {
 	if impl.Resume || !strings.Contains(impl.Prompt, "Please rename the helper to fooBar.") || !strings.Contains(impl.Prompt, followup.DefaultInstructions) {
 		t.Fatalf("implement request = %+v", impl)
 	}
-	if !strings.Contains(impl.AppendSystemPrompt, "followup.md") || strings.Contains(impl.AppendSystemPrompt, "pr.md") {
+	if !strings.Contains(impl.AppendSystemPrompt, "followup.md") || strings.Contains(impl.AppendSystemPrompt, "pr.md") || strings.Contains(impl.AppendSystemPrompt, "pull request description") {
 		t.Fatalf("system prompt:\n%s", impl.AppendSystemPrompt)
 	}
 	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"comments.json")
@@ -1076,5 +1076,56 @@ func TestFollowUpClearsStaleAnswer(t *testing.T) {
 	posted := h.posted(t)
 	if report := posted[len(posted)-1]; strings.Contains(report, "STALE ANSWER") || !strings.Contains(report, "wrote no `followup.md`") {
 		t.Fatalf("report:\n%s", report)
+	}
+}
+
+func TestFollowUpGiveUpNoteSkippedWhenPRClosed(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	hp := h.hook()
+	h.deps.RetryDelay = time.Millisecond
+	// Closed while EnsurePR keeps failing with a plain error, as a
+	// transport failure would hide ErrPRNotOpen.
+	hp.beforeEnsure = func() {
+		h.editState(t, func(st *fake.State) { st.PRs[0].State = gitprov.PRClosed })
+		h.provider.FailEnsure = 1
+	}
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if n := len(h.posted(t)); n != 1 {
+		t.Fatalf("%d comments: a note went on a closed PR", n)
+	}
+}
+
+func TestFollowUpPrePushReadRetried(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	h.deps.RetryDelay = time.Millisecond
+	flaky := func(t *testing.T, req agent.Request) { h.provider.FailPullRequest = 2 }
+	rec, err := h.run(t, then(implement("tidy"), flaky), review("ship", 0))
+	mustReady(t, rec, err)
+	if h.remoteTip(t) != rec.HeadSHA {
+		t.Fatal("the branch was not pushed")
+	}
+}
+
+func TestFollowUpPrePushReadFailsNoPush(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	h.deps.RetryDelay = time.Millisecond
+	tip := h.remoteTip(t)
+	down := func(t *testing.T, req agent.Request) { h.provider.FailPullRequest = 100 }
+	rec, err := h.run(t, then(withAnswer(implement("tidy"), "Tidied."), down), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "reading PR #1 before the push") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if h.remoteTip(t) != tip || len(h.posted(t)) != 1 {
+		t.Fatal("the branch was pushed or something was posted")
+	}
+	data, err := h.bucket.ReadAll(context.Background(), h.store.Prefix()+"report.md")
+	if err != nil || !strings.Contains(string(data), "Tidied.") {
+		t.Fatalf("report.md = %q, %v", data, err)
 	}
 }
