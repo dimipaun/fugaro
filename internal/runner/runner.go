@@ -105,6 +105,9 @@ type run struct {
 	caches    []cacheSlot // the cache entries restored at bootstrap, for writeback
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
+	// sessionID is the session the latest implement or fix stage's result
+	// reported: the one the next fix resumes and writeback saves.
+	sessionID string
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -239,6 +242,11 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
 	if err := r.finalize(finCtx); err != nil {
+		// writeback, which saves the session, won't run: save it here, on
+		// a context of its own, as finalize's may have run out.
+		sctx, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), sessionSaveTimeout)
+		r.saveSession(sctx)
+		cancelSave()
 		return nil, fmt.Errorf("finalize: %w", err)
 	}
 	r.writeback(ctx)
@@ -726,7 +734,9 @@ func (r *run) readRepoFile(rel string) (string, error) {
 func (r *run) agentLoop(ctx context.Context) {
 	sessionID := agent.NewSessionID()
 	sys := SystemPrompt(PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}, r.instructions)
-	if _, ok := r.stage(ctx, "implement", agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys}); !ok {
+	res, ok := r.stage(ctx, "implement", agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys})
+	r.noteSession(res)
+	if !ok {
 		return
 	}
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
@@ -742,7 +752,12 @@ func (r *run) agentLoop(ctx context.Context) {
 		if v.Verdict == "ship" || round == rounds {
 			return
 		}
-		if _, ok := r.stage(ctx, "fix", agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}); !ok {
+		if r.sessionID != "" {
+			sessionID = r.sessionID
+		}
+		res, ok = r.stage(ctx, "fix", agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys})
+		r.noteSession(res)
+		if !ok {
 			return
 		}
 	}
@@ -918,6 +933,10 @@ func (r *run) finalize(ctx context.Context) error {
 	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}
+	// Saved at once, before anything is posted, so a run killed after
+	// posting still records that it updated its pull request.
+	r.rec.PushedHead = sha
+	r.save(ctx)
 	title, body := r.prText()
 	pr, err := r.ensurePR(ctx, gitprov.PRSpec{
 		Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,

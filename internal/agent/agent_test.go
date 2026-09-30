@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/url"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -146,6 +147,78 @@ func TestClaudeRunCapturesStderr(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "agent-stderr-marker") {
 		t.Fatalf("stderr = %q, want the shell's output", stderr.String())
+	}
+}
+
+// realDir returns dir with symlinks resolved, as the fake (like Claude
+// Code) sees its working directory.
+func realDir(t *testing.T, dir string) string {
+	t.Helper()
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return real
+}
+
+func TestFakeClaudeWritesSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"one"},{"text":"two"}]}`)
+	home, dir := t.TempDir(), t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	id := NewSessionID()
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{Prompt: "first", SessionID: id, Dir: dir, Env: env})
+	if err != nil || res.SessionID != id {
+		t.Fatalf("first run = %+v, %v", res, err)
+	}
+	res, err = Claude{Bin: bin}.Run(context.Background(), Request{Prompt: "second", SessionID: id, Resume: true, Dir: dir, Env: env})
+	if err != nil || res.SessionID != id {
+		t.Fatalf("resumed run = %+v, %v", res, err)
+	}
+	data, err := os.ReadFile(filepath.Join(SessionDir(home, realDir(t, dir)), id+".jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"first"`) || !strings.Contains(lines[1], `"second"`) {
+		t.Fatalf("session file = %q", data)
+	}
+}
+
+func TestFakeClaudeNoHomeNoSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"one"},{"text":"two"}]}`)
+	dir := t.TempDir()
+	env := []string{"PATH=" + os.Getenv("PATH")}
+	if _, err := (Claude{Bin: bin}).Run(context.Background(), Request{SessionID: "s-1", Dir: dir, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+	// Without HOME the fake keeps no sessions, so a resume isn't checked.
+	if _, err := (Claude{Bin: bin}).Run(context.Background(), Request{SessionID: "s-2", Resume: true, Dir: dir, Env: env}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFakeClaudeResumeMissing(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"text":"never"}]}`)
+	var stderr bytes.Buffer
+	id := NewSessionID()
+	res, err := Claude{Bin: bin}.Run(context.Background(), Request{
+		SessionID: id, Resume: true, Dir: t.TempDir(), Stderr: &stderr,
+		Env: []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()},
+	})
+	if !errors.Is(err, ErrNoSession) {
+		t.Fatalf("err = %v, want ErrNoSession", err)
+	}
+	if res.ExitCode != 1 || !strings.Contains(stderr.String(), "No conversation found with session ID: "+id) {
+		t.Fatalf("result = %+v, stderr = %q", res, stderr.String())
+	}
+}
+
+func TestClaudeRunOtherFailureIsNotNoSession(t *testing.T) {
+	bin := testutil.FakeClaude(t, `{"calls":[{"shell":"echo No conversation found with session ID: x 1>&2","no_result":true,"exit":1}]}`)
+	// Not a resume: the same text doesn't mean a missing session.
+	_, err := Claude{Bin: bin}.Run(context.Background(), Request{SessionID: "s", Env: []string{"PATH=" + os.Getenv("PATH")}})
+	if err == nil || errors.Is(err, ErrNoSession) {
+		t.Fatalf("err = %v, want a plain failure", err)
 	}
 }
 
