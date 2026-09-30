@@ -18,10 +18,11 @@ agent:
   # instructions: .fugaro/instructions.md   # appended to the agent's system prompt
   # review: /review           # a skill name, or a repo-relative prompt file
 
-# followup:                   # optional; who can steer `fugaro run --pr N`, a follow-up run on a Fugaro PR
+# followup:                   # optional; who can steer a follow-up run (fugaro run --pr N)
 #   # A follow-up agent holds the workflow's secrets, so only these accounts' PR comments reach it;
 #   # the list is read from the base branch, so a PR can't widen it.
-#   trusted: []               # GitHub: numeric user IDs (gh api users/<login> --jq .id); Bitbucket: account_id
+#   trusted: []               # GitHub: numeric user IDs (gh api users/<login> --jq .id)
+#                             #   Bitbucket: account_id
 #   allow_public: false       # refuse follow-ups on a public repository unless true
 
 workflows:

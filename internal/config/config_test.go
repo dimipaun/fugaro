@@ -312,6 +312,10 @@ func TestFollowupConfigValidation(t *testing.T) {
 		{github, `["12345678901234567890"]`, true},
 		{github, `["123456789012345678901"]`, false},
 		{github, `[""]`, false},
+		{github, `[0]`, false},
+		{github, `["0"]`, false},
+		{github, `["01234567"]`, false},
+		{github, `["10"]`, true},
 		{github, `["-1"]`, false},
 		{github, `["557058:00000000-0000-0000-0000-000000000001"]`, false},
 		{bitbucket, `["557058:00000000-0000-0000-0000-000000000001"]`, true},
@@ -320,11 +324,24 @@ func TestFollowupConfigValidation(t *testing.T) {
 		{bitbucket, `["557058:00000000-0000-0000-0000-00000000000G"]`, false},
 		{bitbucket, `["12345678901:00000000-0000-0000-0000-000000000001"]`, false},
 		{bitbucket, `["5B10AC8D82E05B22CC7D4EF5"]`, false},
+		{bitbucket, `["557058:ABCDEF00-0000-0000-0000-000000000001"]`, false},
 		{bitbucket, `["00000000-0000-0000-0000-000000000001"]`, false},
 	} {
 		_, ps := Parse([]byte(tc.base + "followup: { trusted: " + tc.ids + " }\n"))
 		if (len(ps) == 0) != tc.ok {
 			t.Errorf("%s on %s: ok=%v, problems %v", tc.ids, tc.base[strings.Index(tc.base, "provider"):strings.Index(tc.base, "\nworkflows")], tc.ok, ps)
+		}
+	}
+}
+
+// An upper-case account_id would never match Bitbucket's lower-case one, and
+// the message says the case is all that is wrong with it.
+func TestFollowupBitbucketUpperCaseHint(t *testing.T) {
+	bitbucket := strings.Replace(minimalYAML, "provider: github", "provider: bitbucket", 1)
+	for _, id := range []string{"5B10AC8D82E05B22CC7D4EF5", "557058:ABCDEF00-0000-0000-0000-000000000001"} {
+		_, ps := Parse([]byte(bitbucket + "followup: { trusted: [\"" + id + "\"] }\n"))
+		if !hasProblem(ps, "followup.trusted[0]", "lower case", 0) {
+			t.Errorf("%s: want a lower-case hint, got %v", id, ps)
 		}
 	}
 }

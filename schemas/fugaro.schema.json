@@ -77,8 +77,8 @@
     "githubUserID": {
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
       "anyOf": [
-        { "type": "string", "pattern": "^[0-9]{1,20}$" },
-        { "type": "integer", "minimum": 0, "maximum": 99999999999999999999 }
+        { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
+        { "type": "integer", "minimum": 1, "maximum": 99999999999999999999 }
       ]
     },
     "bitbucketAccountID": {

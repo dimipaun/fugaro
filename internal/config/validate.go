@@ -226,7 +226,7 @@ func validateRebuild(p string, r Rebuild) []Problem {
 // or 24 hex digits). bitbucketUUIDRE is the Bitbucket user UUID, which the
 // adapter never matches comment authors by.
 var (
-	githubUserIDRE  = regexp.MustCompile(`^[0-9]{1,20}$`)
+	githubUserIDRE  = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 	bitbucketIDRE   = regexp.MustCompile(`^[0-9]{1,10}:[0-9a-f-]{36}$|^[0-9a-f]{24}$`)
 	bitbucketUUIDRE = regexp.MustCompile(`^\{?[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}\}?$`)
 )
@@ -249,9 +249,11 @@ func validateFollowup(provider string, f Followup) []Problem {
 		case seen[id]:
 			add("%q is listed twice", id)
 		case provider == "github" && !githubUserIDRE.MatchString(id):
-			add("%q is not a GitHub numeric user ID (1 to 20 digits); a login can be renamed, so find the ID with: gh api users/%s --jq .id", id, id)
+			add("%q is not a GitHub numeric user ID (1 to 20 digits, no leading zero); a login can be renamed, so find the ID with: gh api users/%s --jq .id", id, id)
 		case provider == "bitbucket" && bitbucketUUIDRE.MatchString(id):
 			add("%q is a Bitbucket UUID; list the user's account_id instead (such as 557058:00000000-0000-0000-0000-000000000001), which is what comment authors are matched by", id)
+		case provider == "bitbucket" && !bitbucketIDRE.MatchString(id) && bitbucketIDRE.MatchString(strings.ToLower(id)):
+			add("%q is not a Bitbucket account_id: write its hex digits in lower case, as Bitbucket does (comment authors are matched exactly)", id)
 		case provider == "bitbucket" && !bitbucketIDRE.MatchString(id):
 			add("%q is not a Bitbucket account_id (such as 557058:00000000-0000-0000-0000-000000000001 or 24 hex digits)", id)
 		}
