@@ -473,8 +473,8 @@ run "alert_set" {
     error_message = "the alert must match every check-job decision line logged at ERROR: a failed check, a backed-off failed rebuild, and a rebuild after a failed one"
   }
   assert {
-    condition     = one(google_monitoring_alert_policy.image["job"].conditions[0].condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
-    error_message = "the alert must match a failed check-job execution"
+    condition     = one(google_monitoring_alert_policy.image["job"].conditions[0].condition_matched_log).filter == "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" OR logName:\"cloudaudit.googleapis.com%2Fsystem_event\") AND severity>=ERROR"
+    error_message = "the alert must match a failed check-job execution in both logs: the audit log's system events (a failure at container start, such as an unreadable secret) and the Cloud Run system log (a failure after start)"
   }
   assert {
     condition = alltrue([for p in google_monitoring_alert_policy.image :

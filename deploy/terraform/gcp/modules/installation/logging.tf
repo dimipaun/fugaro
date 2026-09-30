@@ -43,7 +43,8 @@ resource "google_logging_project_sink" "fugaro" {
 # the dedicated sink above is unaffected by it. Log-based alerts don't
 # operate on excluded logs, so the two kinds of line the alerts match stay
 # in _Default as well: the check jobs' own decision lines and the Cloud Run
-# system log. Neither carries agent output.
+# system log. Neither carries agent output. The job alert's other log, the
+# audit system events, is in _Required, which no exclusion applies to.
 resource "google_logging_project_exclusion" "fugaro_from_default" {
   count = var.log_isolation ? 1 : 0
 

@@ -25,14 +25,18 @@ locals {
       condition    = "An image rebuild or check failed"
       filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND jsonPayload.event=\"image-check\" AND severity>=ERROR"
     }
-    # A check job execution that failed before it could log its decision,
-    # read from the Cloud Run system log (the exclusion keeps it in
-    # _Default). The query language has no prefix function; an anchored
-    # regex is its prefix match.
+    # A check job execution that failed before it could log its decision.
+    # Cloud Run records that in one of two logs. A failure at container
+    # start, such as a mounted secret version that can't be read, is only
+    # an audit system event ("Execution ... has failed to complete"); it
+    # lives in the _Required bucket, which no exclusion touches. A failure
+    # after start is a Cloud Run system log line, which the exclusion
+    # keeps in _Default. The query language has no prefix function; an
+    # anchored regex is its prefix match.
     job = {
       display_name = "Fugaro image check job failed"
       condition    = "An image check job failed"
-      filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" AND severity>=ERROR"
+      filter       = "resource.type=\"cloud_run_job\" AND resource.labels.job_name=~\"^fugarochk-\" AND (logName:\"run.googleapis.com%2Fvarlog%2Fsystem\" OR logName:\"cloudaudit.googleapis.com%2Fsystem_event\") AND severity>=ERROR"
     }
   }
 }
