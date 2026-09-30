@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -320,5 +321,116 @@ func TestPushRefusesNonRunBranches(t *testing.T) {
 	}
 	if after := testutil.Git(t, remote, "rev-parse", "refs/heads/main"); after != before {
 		t.Fatalf("main moved from %s to %s", before, after)
+	}
+}
+
+func TestShowFile(t *testing.T) {
+	repo, remote := setup(t)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	testutil.WriteFiles(t, other, map[string]string{"docs/notes.md": "base notes\n\n"})
+	testutil.Git(t, other, "add", "-A")
+	testutil.Git(t, other, "commit", "--quiet", "-m", "notes")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	// The working tree says something else: ShowFile reads the revision.
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"docs/notes.md": "branch notes\n"})
+	if err := repo.FetchBase(ctx, "main"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ShowFile(ctx, "origin/main", "docs/notes.md")
+	if err != nil || string(got) != "base notes\n\n" {
+		t.Fatalf("ShowFile = %q, %v", got, err)
+	}
+	if _, err := repo.ShowFile(ctx, "origin/main", "missing.md"); err == nil {
+		t.Fatal("ShowFile of a missing file succeeded")
+	}
+}
+
+func TestShowFileRefusesTraversal(t *testing.T) {
+	repo, _ := setup(t)
+	for _, p := range []string{"", ".", "/etc/passwd", "../x", "a/../../x", "a/../b", "./a", "a//b", "a/", `a\..\b`, "-x"} {
+		if _, err := repo.ShowFile(ctx, "HEAD", p); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("ShowFile(HEAD, %q) err = %v", p, err)
+		}
+	}
+	for _, rev := range []string{"", "--output=/tmp/x", "-p"} {
+		if _, err := repo.ShowFile(ctx, rev, "README.md"); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("ShowFile(%q, README.md) err = %v", rev, err)
+		}
+	}
+}
+
+func TestPushExistingUpdatesBranch(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "second"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushExisting(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"), testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != want {
+		t.Fatalf("remote branch %s, want %s", got, want)
+	}
+}
+
+func TestPushExistingRefusesAbsentBranch(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	err := repo.PushExisting(ctx, "fugaro/x")
+	if !errors.Is(err, ErrBranchGone) || !strings.Contains(err.Error(), "fugaro/x no longer exists on origin; not recreating it") {
+		t.Fatalf("err = %v", err)
+	}
+	if out := testutil.Git(t, remote, "for-each-ref", "refs/heads/fugaro/"); out != "" {
+		t.Fatalf("the branch was recreated: %s", out)
+	}
+}
+
+func TestPushForeignTipIsErrForeignTip(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", "--branch", "fugaro/x", remote, other)
+	testutil.Git(t, other, "commit", "--quiet", "--allow-empty", "-m", "theirs")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x")
+	if err := repo.CommitEmpty(ctx, "ours again"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushExisting(ctx, "fugaro/x"); !errors.Is(err, ErrForeignTip) {
+		t.Fatalf("err = %v, want ErrForeignTip", err)
+	}
+}
+
+func TestRemoteTip(t *testing.T) {
+	repo, remote := setup(t)
+	if tip, err := repo.RemoteTip(ctx, "fugaro/x"); err != nil || tip != "" {
+		t.Fatalf("RemoteTip of an absent branch = %q, %v", tip, err)
+	}
+	if tip, err := repo.RemoteTip(ctx, "main"); err != nil || tip != testutil.Git(t, remote, "rev-parse", "refs/heads/main") {
+		t.Fatalf("RemoteTip(main) = %q, %v", tip, err)
 	}
 }
