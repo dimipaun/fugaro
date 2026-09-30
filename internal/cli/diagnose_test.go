@@ -12,6 +12,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -189,4 +190,86 @@ func TestDiagnoseUsesPriceOverride(t *testing.T) {
 	list := compute()
 	f.appendConfig(t, priceOverride)
 	wantOverrideRatio(t, list, compute())
+}
+
+func TestDiagnoseFollowUp(t *testing.T) {
+	f := newCloudFixture(t)
+	root, id := runIDAt(1, "090000", "aaaa"), runIDAt(0, "000100", "bbbb")
+	exec := seedSpec(t, f, followUpSpec(id, root, root, 7), true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	rec.Branch = "fugaro/" + root
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root, Session: "resumed", SessionNote: "the branch moved by 1 commit",
+		Comments: 3, Authors: map[string]int{"alice": 2, "bob": 1}, UntrustedAuthors: []string{"mallory"},
+		Omitted: map[string]int{"untrusted_author": 1, "resolved": 2}}
+	writeRecord(t, f, id, rec)
+
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	fu := d.FollowUp
+	if fu == nil || fu.PR != 7 || fu.PreviousRun != root || fu.Session != "resumed" || fu.Comments != 3 || fu.Authors["alice"] != 2 ||
+		strings.Join(fu.UntrustedAuthors, ",") != "mallory" || fu.Omitted["resolved"] != 2 || !d.Row.FollowUp {
+		t.Fatalf("follow_up = %+v", fu)
+	}
+	if d.CommentsPath != "runs/"+appSlug+"/"+id+"/comments.json" {
+		t.Fatalf("comments_path = %q", d.CommentsPath)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	want := "follow-up of PR #7 after " + root + "; session resumed (the branch moved by 1 commit); 3 comments from alice (2), bob (1) (1 untrusted: mallory)"
+	if err != nil || !strings.Contains(human, want+"\n") {
+		t.Fatalf("human diagnose lacks %q (%v):\n%s", want, err, human)
+	}
+
+	// Before the runner has written its block, the task says what it follows.
+	waiting := runIDAt(0, "000200", "cccc")
+	seedSpec(t, f, followUpSpec(waiting, root, id, 7), false)
+	out, _, err = execute(t, "diagnose", "--json", waiting)
+	d = Diagnosis{}
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.FollowUp == nil || d.FollowUp.PR != 7 || d.FollowUp.PreviousRun != id ||
+		d.CommentsPath != "runs/"+appSlug+"/"+waiting+"/comments.json" {
+		t.Fatalf("task-only follow-up: %s, %v", out, err)
+	}
+	human, _, err = execute(t, "diagnose", waiting)
+	if err != nil || !strings.Contains(human, "follow-up of PR #7 after "+id+"\n") {
+		t.Fatalf("task-only human diagnose (%v):\n%s", err, human)
+	}
+
+	// A first run has neither.
+	first := runIDAt(0, "000300", "dddd")
+	seedSpec(t, f, firstRunSpec(first), false)
+	out, _, err = execute(t, "diagnose", "--json", first)
+	d = Diagnosis{}
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.FollowUp != nil || strings.Contains(out, "comments_path") {
+		t.Fatalf("first run: %s, %v", out, err)
+	}
+	if human, _, _ := execute(t, "diagnose", first); strings.Contains(human, "follow-up") {
+		t.Fatalf("first run human diagnose:\n%s", human)
+	}
+}
+
+// diagnose redacts the follow-up block: its note and the author names come
+// from the run.
+func TestDiagnoseFollowUpRedacts(t *testing.T) {
+	const secret = "ghp_test0123456789abcdef"
+	t.Setenv("FUGARO_BITBUCKET_TOKEN", secret)
+	f := newCloudFixture(t)
+	root, id := runIDAt(1, "090000", "aaaa"), runIDAt(0, "000100", "bbbb")
+	seedSpec(t, f, followUpSpec(id, root, root, 7), false)
+	rec := prRecord(id, "", 7, 1)
+	rec.Branch = "fugaro/" + root
+	rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root, Session: "fresh", SessionNote: "no session: " + secret,
+		Comments: 1, Authors: map[string]int{"alice " + secret: 1}, UntrustedAuthors: []string{secret}, Omitted: map[string]int{secret: 1}}
+	writeRecord(t, f, id, rec)
+	for _, args := range [][]string{{"diagnose"}, {"diagnose", "--json"}} {
+		out, _, err := execute(t, append(args, id)...)
+		if err != nil || strings.Contains(out, secret) || !strings.Contains(out, "[REDACTED]") {
+			t.Fatalf("%v = %s, %v", args, out, err)
+		}
+	}
 }

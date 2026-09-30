@@ -32,7 +32,12 @@ type lsOptions struct {
 	repo, since, batch       string
 	all, mine, watch, asJSON bool
 	interval                 time.Duration
+	pr                       int // only the runs on this pull request, when set
 }
+
+// prLookback is ls --pr's default --since: the runs bucket's lifecycle
+// age, so every run the bucket still holds is listed.
+const prLookback = "90d"
 
 // lsFilter selects the runs loadRows reads.
 type lsFilter struct {
@@ -40,6 +45,7 @@ type lsFilter struct {
 	since  time.Time // zero means no bound
 	mine   string    // keep runs requested by this identity, when set
 	batch  string    // keep runs of this batch, when set
+	pr     int       // keep runs on this pull request (task or record), when set
 	runRef string    // "<slug>/<run-id>": only this run (diagnose)
 	warn   io.Writer // where non-fatal problems go; nil discards them
 }
@@ -61,7 +67,10 @@ func newLsCmd() *cobra.Command {
 			"By default ls shows the last 7 days of the local config's repositories (every\n" +
 			"repository in the bucket when the config lists none). A run shows as succeeded\n" +
 			"only when its result.json says so; an execution that ended without finalizing\n" +
-			"is an infra_error.",
+			"is an infra_error.\n\n" +
+			"--pr N lists the runs on pull request N of one repository (the first run and\n" +
+			"its follow-ups), over the last " + prLookback + " unless --since says otherwise; the totals\n" +
+			"line is then the PR's total cost.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runLs(cmd, &o) },
 	}
@@ -71,6 +80,7 @@ func newLsCmd() *cobra.Command {
 	f.BoolVar(&o.mine, "mine", false, "only runs you requested")
 	f.StringVar(&o.since, "since", "7d", "only runs started within this long (7d, 36h, 90m; 0 for all)")
 	f.StringVar(&o.batch, "batch", "", "only runs of this batch")
+	f.IntVar(&o.pr, "pr", 0, "only runs on this pull request (needs one repository; --since defaults to "+prLookback+")")
 	f.BoolVar(&o.watch, "watch", false, "redraw until every run has settled")
 	f.DurationVar(&o.interval, "interval", 10*time.Second, "--watch's redraw interval")
 	_ = f.MarkHidden("interval")
@@ -83,6 +93,16 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	ctx := cmd.Context()
 	if o.repo != "" && o.all {
 		return userErr("--repo and --all don't go together")
+	}
+	prSet := cmd.Flags().Changed("pr")
+	if prSet && o.pr <= 0 {
+		return userErr("--pr %d: use a pull request number", o.pr)
+	}
+	if prSet && o.all {
+		return userErr("ls --pr needs --repo: a pull request number means something only in one repository")
+	}
+	if prSet && !cmd.Flags().Changed("since") {
+		o.since = prLookback
 	}
 	since, err := parseSince(o.since)
 	if err != nil {
@@ -97,9 +117,15 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 	}
 	defer env.Close()
 
-	f := lsFilter{batch: o.batch, warn: cmd.ErrOrStderr()}
+	f := lsFilter{batch: o.batch, pr: o.pr, warn: cmd.ErrOrStderr()}
+	if prSet && o.repo == "" && len(env.lc.Repos) != 1 {
+		return userErr("ls --pr needs --repo: the local config lists %d repositories", len(env.lc.Repos))
+	}
 	if f.slugs, err = lsSlugs(ctx, env, o, cmd.ErrOrStderr()); err != nil {
 		return err
+	}
+	if prSet && len(f.slugs) != 1 {
+		return userErr("ls --pr needs --repo: %d repositories to list", len(f.slugs))
 	}
 	if o.mine {
 		if f.mine, err = env.lc.Me(ctx); err != nil {
@@ -178,6 +204,10 @@ func lsSlugs(ctx context.Context, env *cloudEnv, o *lsOptions, warn io.Writer) (
 // corrupt, or names an execution that isn't the run's, is an error row
 // with a warning. Any other failed read but absence fails the whole
 // listing: ls never shows a status guessed from a partial read.
+//
+// It reads every run's objects first, keeps the runs f.pr selects, and
+// only then asks the backend about executions, so a PR's listing costs
+// no backend call for the runs off it.
 func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]runview.Row, error) {
 	warn := f.warn
 	if warn == nil {
@@ -202,7 +232,27 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 			}
 		}
 	}
-	if len(refs) == 0 {
+
+	// The bucket's objects, for every run.
+	runs := make([]runObjects, len(refs))
+	errs := make([]error, len(refs))
+	parallel(len(refs), func(i int) {
+		runs[i], errs[i] = readRun(ctx, env, refs[i].slug, refs[i].id)
+	})
+	if err := errors.Join(errs...); err != nil {
+		return nil, remote(err)
+	}
+	// A run left out warns only when it might be on the PR: its record
+	// is unreadable and its task doesn't place it on another one.
+	for _, r := range runs {
+		if r.warning != "" && (f.pr == 0 || onPR(r.in, f.pr) || r.mayBeOnPR()) {
+			fmt.Fprint(warn, multiLine(r.warning))
+		}
+	}
+	if f.pr != 0 {
+		runs = slices.DeleteFunc(runs, func(r runObjects) bool { return !onPR(r.in, f.pr) })
+	}
+	if len(runs) == 0 {
 		return []runview.Row{}, nil
 	}
 
@@ -210,7 +260,7 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	// back than the runs, since a run ID is minted before its launch only
 	// by moments, but clocks differ.
 	execs := map[string]backend.Execution{}
-	if f.runRef == "" {
+	if f.runRef == "" && slices.ContainsFunc(runs, func(r runObjects) bool { return r.execution != "" }) {
 		lf := backend.ListFilter{}
 		if !f.since.IsZero() {
 			lf.Since = f.since.Add(-time.Hour)
@@ -227,37 +277,19 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	}
 
 	prices := env.prices()
-	rows := make([]runview.Row, len(refs))
-	errs := make([]error, len(refs))
-	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex // guards warn
-		next = make(chan int)
-	)
+	rows := make([]runview.Row, len(runs))
+	errs = make([]error, len(runs))
+	var mu sync.Mutex // guards warn
 	warnf := func(format string, args ...any) {
 		mu.Lock()
 		defer mu.Unlock()
 		fmt.Fprint(warn, multiLine(fmt.Sprintf(format, args...)))
 	}
-	for range min(lsWorkers, len(refs)) {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range next {
-				in, err := readRun(ctx, env, refs[i].slug, refs[i].id, execs, warnf)
-				if err != nil {
-					errs[i] = err
-					continue
-				}
-				rows[i] = runview.Join(in, prices, now)
-			}
-		}()
-	}
-	for i := range refs {
-		next <- i
-	}
-	close(next)
-	wg.Wait()
+	parallel(len(runs), func(i int) {
+		if errs[i] = followExecution(ctx, env, &runs[i], execs, warnf); errs[i] == nil {
+			rows[i] = runview.Join(runs[i].in, prices, now)
+		}
+	})
 	if err := errors.Join(errs...); err != nil {
 		return nil, remote(err)
 	}
@@ -274,16 +306,67 @@ func loadRows(ctx context.Context, env *cloudEnv, f lsFilter, now time.Time) ([]
 	return rows, nil
 }
 
-// readRun gathers what the bucket and the backend know about one run.
-func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[string]backend.Execution, warnf func(string, ...any)) (runview.Input, error) {
+// parallel calls fn(0) … fn(n-1) on up to lsWorkers goroutines.
+func parallel(n int, fn func(i int)) {
+	var wg sync.WaitGroup
+	next := make(chan int)
+	for range min(lsWorkers, n) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				fn(i)
+			}
+		}()
+	}
+	for i := range n {
+		next <- i
+	}
+	close(next)
+	wg.Wait()
+}
+
+// onPR reports whether a run is on pull request pr: its task continues
+// it, or its record names it. An error row whose task says so is kept.
+func onPR(in runview.Input, pr int) bool {
+	return (in.Task != nil && in.Task.PR == pr) || (in.Record != nil && in.Record.PR != nil && in.Record.PR.Number == pr)
+}
+
+// mayBeOnPR reports whether a run onPR leaves out could still be on a
+// pull request: its launch.json or result.json is unreadable, so its
+// record wasn't read, and no task says it follows another PR.
+func (r runObjects) mayBeOnPR() bool {
+	return r.unreadRecord && (r.in.Task == nil || r.in.Task.PR == 0)
+}
+
+// runObjects is what the bucket holds about one run, before its
+// execution is joined.
+type runObjects struct {
+	in        runview.Input
+	store     *runstore.Store
+	execution string // the execution to follow; "" when there is none
+	warning   string // printed only when the run is listed (or may be)
+	// unreadRecord means a corrupt object stopped the reads before the
+	// record could say which pull request the run is on.
+	unreadRecord bool
+}
+
+// readRun reads what the bucket knows about one run; it makes no backend
+// call.
+func readRun(ctx context.Context, env *cloudEnv, slug, id string) (runObjects, error) {
 	s := runstore.Open(env.bucket.Bucket, slug, id)
-	in := runview.Input{Slug: slug, RunID: id}
+	r := runObjects{in: runview.Input{Slug: slug, RunID: id}, store: s}
+	in := &r.in
+	problem := func(p string) {
+		in.Problem = p
+		r.warning = fmt.Sprintf("warning: run %s/%s: %s\n", slug, id, p)
+	}
 	raw, err := s.ReadFile(ctx, "task.json")
 	switch {
 	case err == nil:
 		in.Task, _ = task.Parse(raw) // unparseable: the row says task.json unreadable
 	case !errors.Is(err, runstore.ErrNotFound):
-		return in, err
+		return r, err
 	}
 	// A corrupt object is this run's error row, with a warning; a read that
 	// fails otherwise (the bucket, the network) still fails the listing.
@@ -295,48 +378,53 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 		{"result.json", func() (err error) { in.Record, err = absent(s.ReadRecord(ctx)); return err }},
 	} {
 		if err := read.do(); corruptObject(err) {
-			in.Problem = read.name + " is unreadable: " + err.Error()
-			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
-			return in, nil
+			problem(read.name + " is unreadable: " + err.Error())
+			r.unreadRecord = true
+			return r, nil
 		} else if err != nil {
-			return in, err
+			return r, err
 		}
 	}
 	if in.Launch == nil && in.Record == nil {
 		if in.CancelMarker, err = s.CancelRequested(ctx); err != nil {
-			return in, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
+			return r, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
 		}
 		if in.Claim, err = absent(s.ReadClaim(ctx)); corruptObject(err) {
-			in.Problem = "the launch claim is unreadable: " + err.Error()
-			warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
+			problem("the launch claim is unreadable: " + err.Error())
 		} else if err != nil {
-			return in, err
+			return r, err
 		}
-		return in, nil
+		return r, nil
 	}
 	// The record names the execution that owns the run; launch.json may
 	// name a duplicate after a double launch.
-	name := ""
 	if in.Record != nil {
-		name = in.Record.Execution
+		r.execution = in.Record.Execution
 	}
-	if name == "" && in.Launch != nil {
-		name = in.Launch.Execution
+	if r.execution == "" && in.Launch != nil {
+		r.execution = in.Launch.Execution
 	}
-	if name == "" {
-		return in, nil
+	return r, nil
+}
+
+// followExecution joins r with its execution, from execs (the listing)
+// or, when the listing lacks it, from the backend.
+func followExecution(ctx context.Context, env *cloudEnv, r *runObjects, execs map[string]backend.Execution, warnf func(string, ...any)) error {
+	in, s, name := &r.in, r.store, r.execution
+	if name == "" || in.Problem != "" {
+		return nil
 	}
 	// The run's service account can write both objects: follow only an
 	// execution of the run's own job.
-	if err := env.checkExecution(name, slug, in.Task); err != nil {
+	if err := env.checkExecution(name, in.Slug, in.Task); err != nil {
 		in.Problem = "not following its execution: " + err.Error()
-		warnf("warning: run %s/%s: %s\n", slug, id, in.Problem)
-		return in, nil
+		warnf("warning: run %s/%s: %s\n", in.Slug, in.RunID, in.Problem)
+		return nil
 	}
 	eid, _ := backend.ParseExecution(name)
 	if e, ok := execs[eid.Key()]; ok {
 		in.Exec = &e
-		return in, nil
+		return nil
 	}
 	// Outside the listing's window, or not listed yet: ask for it alone.
 	e, err := env.be.Execution(ctx, name)
@@ -344,7 +432,7 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	case err == nil:
 		in.Exec = &e
 	case !errors.Is(err, backend.ErrNotFound):
-		return in, fmt.Errorf("run %s/%s: %w", slug, id, err)
+		return fmt.Errorf("run %s/%s: %w", in.Slug, in.RunID, err)
 	}
 	// The record was read before the execution: a runner that wrote its
 	// final record and exited in between would look like one that died
@@ -352,10 +440,10 @@ func readRun(ctx context.Context, env *cloudEnv, slug, id string, execs map[stri
 	// the record again, so it is as new as the execution.
 	if in.Record != nil && in.Record.Status == runstore.StatusRunning && (in.Exec == nil || in.Exec.State.Terminal()) {
 		if in.Record, err = absent(s.ReadRecord(ctx)); err != nil {
-			return in, err
+			return err
 		}
 	}
-	return in, nil
+	return nil
 }
 
 // corruptObject reports whether err is a run object that can't be used:
@@ -427,7 +515,7 @@ func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, oneLine(r.PRURL))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -449,6 +537,18 @@ func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// prColumn is a row's pull request: "#N <url>", "#N" while the URL is
+// unknown (a follow-up before it starts), else the URL alone.
+func prColumn(r runview.Row) string {
+	switch {
+	case r.PR > 0 && r.PRURL != "":
+		return fmt.Sprintf("#%d %s", r.PR, oneLine(r.PRURL))
+	case r.PR > 0:
+		return fmt.Sprintf("#%d", r.PR)
+	}
+	return oneLine(r.PRURL)
 }
 
 // age rounds d to minutes, hours or days.

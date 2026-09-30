@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -41,6 +43,13 @@ type Diagnosis struct {
 	AgentMessage string           `json:"agent_message,omitempty"`
 	LogTail      []string         `json:"log_tail,omitempty"`
 	ReportPath   string           `json:"report_path"`
+	// FollowUp is what a follow-up acted on: the record's block, else the
+	// PR and previous run its task names. CommentsPath is where the
+	// comments it was given are stored. Both are absent for a first run.
+	// Not to be confused with row.follow_up, the row's bool saying
+	// whether the run is a follow-up at all.
+	FollowUp     *runstore.FollowUp `json:"follow_up,omitempty"`
+	CommentsPath string             `json:"comments_path,omitempty"`
 }
 
 type diagnoseOptions struct {
@@ -131,6 +140,10 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	if err != nil {
 		return nil, remote(err)
 	}
+	d.FollowUp = followUpOf(d.Row, rec, red)
+	if d.FollowUp != nil {
+		d.CommentsPath = s.Prefix() + "comments.json"
+	}
 	if rec != nil {
 		d.Verify = rec.Verify
 		for i := range d.Verify {
@@ -176,6 +189,67 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// followUpOf is a run's follow-up block, redacted: its record's, else
+// the pull request and previous run its task names (row's); nil for a
+// first run.
+func followUpOf(row runview.Row, rec *runstore.Record, red func(string) string) *runstore.FollowUp {
+	var fu runstore.FollowUp
+	switch {
+	case rec != nil && rec.FollowUp != nil:
+		fu = *rec.FollowUp
+	case row.FollowUp && row.TaskPR > 0:
+		fu = runstore.FollowUp{PR: row.TaskPR, PreviousRun: row.PreviousRun}
+	default:
+		return nil
+	}
+	fu.PreviousRun, fu.Session, fu.SessionNote = red(fu.PreviousRun), red(fu.Session), red(fu.SessionNote)
+	if fu.Authors != nil {
+		authors := make(map[string]int, len(fu.Authors))
+		for name, n := range fu.Authors {
+			authors[red(name)] += n
+		}
+		fu.Authors = authors
+	}
+	fu.UntrustedAuthors = redactAll(fu.UntrustedAuthors, red)
+	if fu.Omitted != nil {
+		omitted := make(map[string]int, len(fu.Omitted))
+		for reason, n := range fu.Omitted {
+			omitted[red(reason)] += n
+		}
+		fu.Omitted = omitted
+	}
+	return &fu
+}
+
+// followUpLine is diagnose's one line about a follow-up: the PR and the
+// run it continued, the session, and whose comments steered it.
+func followUpLine(fu *runstore.FollowUp) string {
+	line := fmt.Sprintf("follow-up of PR #%d after %s", fu.PR, fu.PreviousRun)
+	if fu.Session == "" {
+		return line // not started yet: the task is all there is
+	}
+	line += "; session " + fu.Session
+	if fu.SessionNote != "" {
+		line += " (" + fu.SessionNote + ")"
+	}
+	noun := "comments"
+	if fu.Comments == 1 {
+		noun = "comment"
+	}
+	line += fmt.Sprintf("; %d %s", fu.Comments, noun)
+	if len(fu.Authors) > 0 {
+		names := slices.Sorted(maps.Keys(fu.Authors))
+		for i, name := range names {
+			names[i] = fmt.Sprintf("%s (%d)", name, fu.Authors[name])
+		}
+		line += " from " + strings.Join(names, ", ")
+	}
+	if n := len(fu.UntrustedAuthors); n > 0 {
+		line += fmt.Sprintf(" (%d untrusted: %s)", n, strings.Join(fu.UntrustedAuthors, ", "))
+	}
+	return line
 }
 
 // lastTest is the last test record of recs.
@@ -252,6 +326,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
 	if r.PRURL != "" {
 		fmt.Fprintf(&b, "PR:       %s\n", oneLine(r.PRURL))
+	}
+	if d.FollowUp != nil {
+		fmt.Fprintf(&b, "%s\n", oneLine(followUpLine(d.FollowUp)))
 	}
 	if r.LogURL != "" {
 		fmt.Fprintf(&b, "Logs:     %s\n", oneLine(r.LogURL))

@@ -367,3 +367,30 @@ func TestCancelGraceAndNowAreExclusive(t *testing.T) {
 		t.Fatalf("cancel --now --grace = exit %d, %v", ExitCode(err), err)
 	}
 }
+
+// A follow-up is cancelled like any run: the marker, the grace, and the
+// runner finalizing its pushed work onto the existing PR, which is draft.
+func TestCancelFollowUp(t *testing.T) {
+	f := newCloudFixture(t)
+	root, id := runIDAt(1, "090000", "aaaa"), runIDAt(0, "000100", "bbbb")
+	exec := seedSpec(t, f, followUpSpec(id, root, root, 7), true)
+	f.run.SetState(exec, backend.StateRunning)
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		rec := prRecord(id, exec, 7, 1)
+		rec.Status, rec.Stage, rec.Branch = runstore.StatusCancelled, "finalize", "fugaro/"+root
+		rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root}
+		writeRecord(t, f, id, rec)
+		f.run.SetState(exec, backend.StateSucceeded)
+	}()
+	out, _, err := execute(t, "cancel", "--grace", "5s", "--poll", "10ms", id)
+	if err != nil || !strings.Contains(out, "finalized (draft PR https://github.com/acme/app/pull/7)") || !cancelled(t, f, id) {
+		t.Fatalf("cancel = %q, %v", out, err)
+	}
+	if f.run.State(exec) != backend.StateSucceeded {
+		t.Fatalf("the follow-up was hard-cancelled: %s", f.run.State(exec))
+	}
+	if cancelled(t, f, root) {
+		t.Fatal("cancelling the follow-up marked the run that opened the PR")
+	}
+}
