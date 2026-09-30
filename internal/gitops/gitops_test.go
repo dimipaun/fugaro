@@ -374,10 +374,11 @@ func TestPushExistingUpdatesBranch(t *testing.T) {
 	if err := repo.Push(ctx, "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
+	start, _ := repo.HeadSHA(ctx)
 	if err := repo.CommitEmpty(ctx, "second"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.PushExisting(ctx, "fugaro/x"); err != nil {
+	if err := repo.PushExisting(ctx, "fugaro/x", start); err != nil {
 		t.Fatal(err)
 	}
 	if got, want := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"), testutil.Git(t, repo.Dir, "rev-parse", "HEAD"); got != want {
@@ -390,10 +391,11 @@ func TestPushExistingRefusesAbsentBranch(t *testing.T) {
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
+	start, _ := repo.HeadSHA(ctx)
 	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
 		t.Fatal(err)
 	}
-	err := repo.PushExisting(ctx, "fugaro/x")
+	err := repo.PushExisting(ctx, "fugaro/x", start)
 	if !errors.Is(err, ErrBranchGone) || !strings.Contains(err.Error(), "fugaro/x no longer exists on origin; not recreating it") {
 		t.Fatalf("err = %v", err)
 	}
@@ -413,6 +415,7 @@ func TestPushForeignTipIsErrForeignTip(t *testing.T) {
 	if err := repo.Push(ctx, "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
+	start, _ := repo.HeadSHA(ctx)
 	other := filepath.Join(t.TempDir(), "other")
 	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", "--branch", "fugaro/x", remote, other)
 	testutil.Git(t, other, "commit", "--quiet", "--allow-empty", "-m", "theirs")
@@ -420,7 +423,7 @@ func TestPushForeignTipIsErrForeignTip(t *testing.T) {
 	if err := repo.CommitEmpty(ctx, "ours again"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.PushExisting(ctx, "fugaro/x"); !errors.Is(err, ErrForeignTip) {
+	if err := repo.PushExisting(ctx, "fugaro/x", start); !errors.Is(err, ErrForeignTip) {
 		t.Fatalf("err = %v, want ErrForeignTip", err)
 	}
 }
@@ -455,5 +458,63 @@ func TestTreeEntryMode(t *testing.T) {
 	}
 	if _, err := repo.TreeEntryMode(ctx, "origin/main", "../x"); err == nil {
 		t.Error("TreeEntryMode accepted ../x")
+	}
+}
+
+// TestPushExistingRefusesRewoundBranch: a person who rewinds the branch
+// during the run (reset and force-push) pushed too, even though the new
+// tip is an ancestor of this run's HEAD; it must not be pushed over.
+func TestPushExistingRefusesRewoundBranch(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []string{"a", "b (to be dropped)"} {
+		if err := repo.CommitEmpty(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, _ := repo.HeadSHA(ctx)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", "--branch", "fugaro/x", remote, other)
+	testutil.Git(t, other, "reset", "--quiet", "--hard", "HEAD~1")
+	testutil.Git(t, other, "push", "--quiet", "-f", "origin", "HEAD:refs/heads/fugaro/x")
+	rewound := testutil.Git(t, other, "rev-parse", "HEAD")
+	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushExisting(ctx, "fugaro/x", start); !errors.Is(err, ErrForeignTip) {
+		t.Fatalf("err = %v, want ErrForeignTip", err)
+	}
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != rewound {
+		t.Fatalf("the rewind was pushed over: remote %s, want %s", got, rewound)
+	}
+}
+
+// TestPushExistingAcceptsItsOwnEarlierPush: a retried push finds the
+// branch already at HEAD.
+func TestPushExistingAcceptsItsOwnEarlierPush(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Push(ctx, "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, _ := repo.HeadSHA(ctx)
+	if err := repo.CommitEmpty(ctx, "ours"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushExisting(ctx, "fugaro/x", start); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushExisting(ctx, "fugaro/x", start); err != nil {
+		t.Fatalf("a repeated push: %v", err)
 	}
 }

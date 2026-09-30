@@ -1129,3 +1129,30 @@ func TestFollowUpPrePushReadFailsNoPush(t *testing.T) {
 		t.Fatalf("report.md = %q, %v", data, err)
 	}
 }
+
+// TestFollowUpRewoundBranchNotPushedOver: a person drops the first run's
+// commit (reset and force-push) while the follow-up runs; the follow-up
+// must not push it back.
+func TestFollowUpRewoundBranchNotPushedOver(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	h.followUp(t, followID, runID, "Tidy up.")
+	var rewound string
+	rewind := func(t *testing.T, req agent.Request) {
+		other := filepath.Join(t.TempDir(), "other")
+		testutil.Git(t, filepath.Dir(other), "clone", "--quiet", "--branch", "fugaro/"+runID, h.remote, other)
+		testutil.Git(t, other, "reset", "--quiet", "--hard", "HEAD~1")
+		testutil.Git(t, other, "push", "--quiet", "-f", "origin", "HEAD:refs/heads/fugaro/"+runID)
+		rewound = testutil.Git(t, other, "rev-parse", "HEAD")
+	}
+	rec, err := h.run(t, then(implement("tidy"), rewind), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeNone || rec.Reason != "someone pushed to fugaro/"+runID+" during the run; nothing was overwritten" {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if h.remoteTip(t) != rewound {
+		t.Fatal("the rewind was pushed over")
+	}
+	posted := h.posted(t)
+	if len(posted) != 2 || !strings.Contains(posted[1], "someone pushed") {
+		t.Fatalf("posted = %q", posted)
+	}
+}

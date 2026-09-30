@@ -256,32 +256,13 @@ func (r *Repo) RemoteTip(ctx context.Context, branch string) (string, error) {
 // and the suffix is validated as a real branch name so the refspec can't be
 // used to reach some other ref.
 func (r *Repo) Push(ctx context.Context, branch string) error {
-	return r.push(ctx, branch, false)
-}
-
-// PushExisting is Push for a branch that must already exist on origin,
-// as a follow-up's does: when the remote branch is gone (its pull request
-// was merged and the branch deleted), it refuses with ErrBranchGone rather
-// than recreate it. The lease makes this hold even when the branch is
-// deleted between the check and the push.
-func (r *Repo) PushExisting(ctx context.Context, branch string) error {
-	return r.push(ctx, branch, true)
-}
-
-func (r *Repo) push(ctx context.Context, branch string, mustExist bool) error {
-	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
-		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
-	}
-	if _, err := r.git(ctx, "check-ref-format", "--branch", branch); err != nil {
-		return fmt.Errorf("refusing to push %q: not a valid branch name: %w", branch, err)
+	if err := checkRunBranch(ctx, r, branch); err != nil {
+		return err
 	}
 	ref := "refs/heads/" + branch
 	tip, err := r.remoteTip(ctx, ref)
 	if err != nil {
 		return fmt.Errorf("reading %s on origin: %w", branch, err)
-	}
-	if tip == "" && mustExist {
-		return fmt.Errorf("%s no longer exists on origin; not recreating it: %w", branch, ErrBranchGone)
 	}
 	if tip != "" {
 		ours, err := r.tipBelongsToRun(ctx, tip)
@@ -294,6 +275,49 @@ func (r *Repo) push(ctx context.Context, branch string, mustExist bool) error {
 	}
 	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
 	return err
+}
+
+// PushExisting pushes HEAD to a branch that must still be on origin at
+// expected, the commit the run started from, as a follow-up's is. When
+// the remote branch is gone (its pull request was merged and the branch
+// deleted) it refuses with ErrBranchGone rather than recreate it. When it
+// is anywhere but expected, or HEAD itself (a retried push), someone else
+// pushed to it, even a rewind to an older commit, and it refuses with
+// ErrForeignTip. The lease is on the tip it checked, so a change between
+// the check and the push fails the push too.
+func (r *Repo) PushExisting(ctx context.Context, branch, expected string) error {
+	if err := checkRunBranch(ctx, r, branch); err != nil {
+		return err
+	}
+	ref := "refs/heads/" + branch
+	tip, err := r.remoteTip(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("reading %s on origin: %w", branch, err)
+	}
+	if tip == "" {
+		return fmt.Errorf("%s no longer exists on origin; not recreating it: %w", branch, ErrBranchGone)
+	}
+	head, err := r.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	if expected == "" || (tip != expected && tip != head) {
+		return fmt.Errorf("%s on origin is at %s, not %s where this run started: %w, so it is not overwritten", branch, tip, expected, ErrForeignTip)
+	}
+	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
+	return err
+}
+
+// checkRunBranch refuses a branch the runner must never push: anything
+// but a valid fugaro/<id> branch, so the refspec can't reach another ref.
+func checkRunBranch(ctx context.Context, r *Repo, branch string) error {
+	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
+		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
+	}
+	if _, err := r.git(ctx, "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("refusing to push %q: not a valid branch name: %w", branch, err)
+	}
+	return nil
 }
 
 // remoteTip returns the commit ref points at on origin, or "" if it does not exist.

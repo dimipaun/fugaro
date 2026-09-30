@@ -426,7 +426,7 @@ func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done b
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; nothing was pushed", n, pr.State), records)
 		return true, nil
 	}
-	err = r.repo.PushExisting(ctx, branch)
+	err = r.repo.PushExisting(ctx, branch, r.follow.startSHA)
 	switch {
 	case err == nil:
 		return false, nil
