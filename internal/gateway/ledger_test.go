@@ -746,3 +746,84 @@ func TestLedgerNeverExceedsGranted(t *testing.T) {
 	}
 	t.Logf("%d calls, used %d of %d, overrun %d", rep.Calls, l.Used, capM, rep.Overrun)
 }
+
+// TestIncompleteUsageChargesReservation: a 2xx whose usage lacks the input
+// or output count, or reports a negative one, can't be priced from usage;
+// it settles at its reservation, never at 0 for the missing field.
+func TestIncompleteUsageChargesReservation(t *testing.T) {
+	start := func(usage string) anthropicfake.Event {
+		return anthropicfake.Event{Name: "message_start", Data: `{"type":"message_start","message":{"model":"claude-sonnet-5-5","usage":` + usage + `}}`}
+	}
+	delta := func(usage string) anthropicfake.Event {
+		return anthropicfake.Event{Name: "message_delta", Data: `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":` + usage + `}`}
+	}
+	body := func(usage string) anthropicfake.Reply {
+		return anthropicfake.Reply{Body: `{"type":"message","model":"claude-sonnet-5-5","content":[],"usage":` + usage + `}`}
+	}
+	stream := func(ev ...anthropicfake.Event) anthropicfake.Reply {
+		return anthropicfake.Reply{Events: append(ev, anthropicfake.Stop)}
+	}
+	for _, c := range []struct {
+		name     string
+		reply    anthropicfake.Reply
+		isStream bool
+	}{
+		{"body with empty usage", body(`{}`), false},
+		{"body without output_tokens", body(`{"input_tokens":500}`), false},
+		{"body without input_tokens", body(`{"output_tokens":500}`), false},
+		{"body with a negative count", body(`{"input_tokens":500,"output_tokens":-400}`), false},
+		{"body with a negative cache count", body(`{"input_tokens":5,"cache_read_input_tokens":-1,"output_tokens":5}`), false},
+		{"delta with empty usage", stream(start(`{"input_tokens":500,"output_tokens":1}`), delta(`{}`)), true},
+		{"start without input_tokens", stream(start(`{"output_tokens":1}`), delta(`{"output_tokens":300}`)), true},
+		{"negative output in the delta", stream(start(`{"input_tokens":500,"output_tokens":1}`), delta(`{"output_tokens":-300}`)), true},
+		{"negative input at the start", stream(start(`{"input_tokens":-500,"output_tokens":1}`), delta(`{"output_tokens":300}`)), true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, c.reply)
+			b := msg(sonnet, 1000)
+			if c.isStream {
+				b = msg(sonnet, 1000, `"stream":true`)
+			}
+			if resp, _ := h.post(b); resp.StatusCode != 200 {
+				t.Fatalf("status %d", resp.StatusCode)
+			}
+			w := worst(t, sonnet, b, 1000, "")
+			rep := h.gw.EndStage()
+			if rep.Used != w || rep.UsageUnparsed != 1 || rep.Unreconciled != w {
+				t.Errorf("report %+v, want the reservation %d, one unparsed", rep, w)
+			}
+			if call := h.logs.lastCall(t); call["settled"] != "reserved" {
+				t.Errorf("settled %v", call["settled"])
+			}
+		})
+	}
+}
+
+// TestLongContextTierPricedFromUsage: a call whose reported input passes
+// a long-context tier (a beta such as context-1m can make one) is charged
+// at the tier's rates, and any excess over its reservation is overrun,
+// never dropped.
+func TestLongContextTierPricedFromUsage(t *testing.T) {
+	tier := pricing.Rates{InputPerM: 2, OutputPerM: 10, CacheWrite5m: 1.25, CacheWrite1h: 2, CacheRead: 0.1,
+		LongContext: &pricing.Tier{AboveInputTokens: 200_000, InputPerM: 4, OutputPerM: 15}}
+	table, err := pricing.Embedded().With(pricing.Overrides{sonnet: tier})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := pricing.Usage{Input: 150_000, CacheRead: 100_000, Output: 500}
+	h := newHarnessWith(t, func(o *Options) { o.Prices = table }, anthropicfake.StreamOK(sonnet, u))
+	b := msg(sonnet, 1000, `"stream":true`)
+	h.post(b, "anthropic-beta", "context-1m-2025-08-07")
+	rep := h.gw.EndStage()
+	want := tier.Cost(u)
+	flat := tier
+	flat.LongContext = nil
+	if want <= flat.Cost(u) {
+		t.Fatalf("the tier doesn't raise the price: %d <= %d", want, flat.Cost(u))
+	}
+	m, _ := table.Lookup(sonnet)
+	w := m.WorstCase(pricing.Request{BodyBytes: int64(len(b)), MaxTokens: 1000})
+	if rep.Used != want || rep.Overrun != want-w {
+		t.Errorf("report %+v, want %d at the tier's rates, overrun %d", rep, want, want-w)
+	}
+}

@@ -523,7 +523,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return reserved
 	case tee.sse && tee.started && tee.complete:
 		return s.fromUsage(tee, p, false)
-	case tee.sse && tee.started:
+	case tee.sse && tee.started && !tee.broken:
 		return s.fromUsage(tee, p, true)
 	case !tee.sse && eof && tee.complete:
 		return s.fromUsage(tee, p, false)

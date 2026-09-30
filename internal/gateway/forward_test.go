@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -219,18 +220,16 @@ func TestRequestTooLarge413(t *testing.T) {
 	if typ, _ := apiError(t, body); typ != "request_too_large" {
 		t.Errorf("error type %q", typ)
 	}
-	// Exactly at the limit is fine as far as size goes.
-	pad := MaxRequestBytes - len(msg(sonnet, 100, `"metadata":{"user_id":""}`))
-	exact := msg(sonnet, 100, `"metadata":{"user_id":"`+strings.Repeat("x", pad)+`"}`)
-	if len(exact) != MaxRequestBytes {
-		t.Fatalf("test body is %d bytes", len(exact))
-	}
-	h2 := newHarness(t, anthropicfake.MessageOK(sonnet, smallUsage))
-	if resp, body := h2.post(exact); resp.StatusCode != 200 {
-		t.Errorf("a body at the limit: %d %s", resp.StatusCode, body)
-	}
 	if h.fake.Count() != 0 {
 		t.Error("the large body was forwarded")
+	}
+	// Exactly at the limit is read whole (checked without parsing 32 MiB).
+	for n, want := range map[int]int{MaxRequestBytes: 0, MaxRequestBytes + 1: http.StatusRequestEntityTooLarge} {
+		req := httptest.NewRequest("POST", "/v1/messages", strings.NewReader(strings.Repeat("x", n)))
+		b, status, _ := readBody(req)
+		if status != want || (want == 0 && len(b) != n) {
+			t.Errorf("%d bytes: status %d (read %d), want %d", n, status, len(b), want)
+		}
 	}
 }
 

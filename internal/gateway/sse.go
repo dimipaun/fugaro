@@ -149,6 +149,16 @@ func (a *usageAcc) merge(u *wireUsage) {
 	}
 }
 
+// negative reports whether any reported count is below zero.
+func (a *usageAcc) negative() bool {
+	for _, f := range []field{a.in, a.cc, a.cr, a.out, a.w5, a.w1, a.web} {
+		if f.set && f.v < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // usage is the reported usage. Cache writes the response didn't split by
 // TTL are priced at the highest write the request allowed.
 func (a *usageAcc) usage(r pricing.Rates, cacheTTL string) pricing.Usage {
@@ -204,9 +214,9 @@ type usageTee struct {
 	overflow bool
 
 	started   bool // message_start (or a whole body) with usage was read
-	deltas    bool // a message_delta with usage was read after it
-	complete  bool // message_stop after both, or a whole body with usage
-	broken    bool // a usage event after the start didn't parse
+	deltas    bool // a message_delta reporting output_tokens was read after it
+	complete  bool // message_stop after both, or a whole body with input and output counts
+	broken    bool // usage after the start didn't parse, was negative, or the stream stopped without an output count
 	model     string
 	acc       usageAcc
 	errorType string
@@ -260,9 +270,10 @@ func (t *usageTee) onEvent(name string, data []byte) {
 		if json.Unmarshal(data, &ev) != nil || ev.Message.Usage == nil {
 			return
 		}
-		t.started = true
 		t.model = ev.Message.Model
 		t.acc.merge(ev.Message.Usage)
+		// Partial settlement charges the reported input: it must be there.
+		t.started = t.acc.in.set && !t.acc.negative()
 	case "message_delta":
 		if !t.started {
 			return // unparsed either way: the call settles at its reservation
@@ -277,10 +288,20 @@ func (t *usageTee) onEvent(name string, data []byte) {
 			return
 		}
 		t.acc.merge(ev.Usage)
-		t.deltas = true
+		if t.acc.negative() {
+			t.broken = true
+		}
+		if ev.Usage.OutputTokens != nil {
+			t.deltas = true
+		}
 	case "message_stop":
-		if t.started && t.deltas && !t.broken {
+		switch {
+		case t.started && t.deltas && !t.broken:
 			t.complete = true
+		case t.started:
+			// Stopped without an output count: the gateway can't tell
+			// what the call produced, so it settles at its reservation.
+			t.broken = true
 		}
 	case "error":
 		var ev struct {
@@ -321,5 +342,8 @@ func (t *usageTee) parseJSON() {
 	}
 	t.model = body.Model
 	t.acc.merge(body.Usage)
+	if !t.acc.in.set || !t.acc.out.set || t.acc.negative() {
+		return // counts missing or negative: settled at the reservation
+	}
 	t.started, t.complete = true, true
 }
