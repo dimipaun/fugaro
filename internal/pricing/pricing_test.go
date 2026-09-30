@@ -218,6 +218,16 @@ func TestMaxRates(t *testing.T) {
 	}
 }
 
+func TestMaxOfEmptyTableIsNotFree(t *testing.T) {
+	for name, tb := range map[string]*Table{"nil": nil, "empty": {}, "no models": {Models: map[string]Model{}}} {
+		r := tb.Max()
+		if r.InputPerM != MaxPerM || r.OutputPerM != MaxPerM || r.CacheWrite5m != MaxMultiplier ||
+			r.CacheWrite1h != MaxMultiplier || r.CacheRead != MaxMultiplier || r.WebSearchPer1k != MaxWebSearchPer1k {
+			t.Errorf("%s table: Max() = %+v, want every rate at its limit", name, r)
+		}
+	}
+}
+
 func TestFromUSD(t *testing.T) {
 	for _, c := range []struct {
 		usd  float64

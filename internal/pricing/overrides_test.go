@@ -75,6 +75,14 @@ func TestOverridesRejectBad(t *testing.T) {
 		"tier without rate": `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"long_context":{"above_input_tokens":200000,"output_per_m":30}}}`,
 		"trailing data":     `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20}} {}`,
 		"null model":        `{"claude-alpha-1":null}`,
+		"top-level null":    `null`,
+		"null field":        `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"cache_read":null}}`,
+		"upper-case field":  `{"claude-alpha-1":{"INPUT_PER_M":4,"output_per_m":20}}`,
+		"mixed-case field":  `{"claude-alpha-1":{"input_per_m":4,"Output_Per_M":20}}`,
+		"upper-case tier":   `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"long_context":{"Above_Input_Tokens":1,"input_per_m":8,"output_per_m":30}}}`,
+		"duplicate field":   `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20,"input_per_m":0.001}}`,
+		"duplicate model":   `{"claude-alpha-1":{"input_per_m":4,"output_per_m":20},"claude-alpha-1":{"input_per_m":1,"output_per_m":2}}`,
+		"object in a rate":  `{"claude-alpha-1":{"input_per_m":{"x":1},"output_per_m":20}}`,
 	} {
 		if o, err := ParseOverrides(s); err == nil {
 			t.Errorf("%s: %q parsed as %+v", name, s, o)

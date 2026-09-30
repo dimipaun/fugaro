@@ -140,11 +140,14 @@ func (t *Table) Lookup(model string) (Model, bool) {
 
 // Max is the highest of every rate in the table, for a call served by a
 // model the table doesn't know. A long-context tier's rates count towards
-// the input and output maximum, and the result is flat.
+// the input and output maximum, and the result is flat. A table with no
+// models (never Embedded() or anything With() returns) gives every rate
+// at its validation limit rather than zero, so nothing is priced free.
 func (t *Table) Max() Rates {
 	var r Rates
-	if t == nil {
-		return r
+	if t == nil || len(t.Models) == 0 {
+		return Rates{InputPerM: MaxPerM, OutputPerM: MaxPerM, CacheWrite5m: MaxMultiplier,
+			CacheWrite1h: MaxMultiplier, CacheRead: MaxMultiplier, WebSearchPer1k: MaxWebSearchPer1k}
 	}
 	for _, m := range t.Models {
 		x := m.Rates
@@ -259,9 +262,10 @@ func (r Rates) Cost(u Usage) Micros {
 // UnsplitCacheWrites splits a cache_creation_input_tokens count the
 // response didn't split by TTL. It is priced at the highest write
 // multiplier the request allowed: with a 1-hour TTL the dearer of the two
-// writes, with a 5-minute one the 5-minute write, and with no
-// cache_control at all (a response that shouldn't happen) the dearer of
-// the two, so doubt charges more.
+// writes, and with a 5-minute one the 5-minute write. With no
+// cache_control at all (a response that shouldn't happen) it deliberately
+// takes the dearer of the two rather than the 5-minute write: nothing in
+// the request says which TTL was used, so doubt charges more.
 func (r Rates) UnsplitCacheWrites(tokens int64, cacheTTL string) (w5m, w1h int64) {
 	if cacheTTL == "5m" || r.CacheWrite5m > r.CacheWrite1h {
 		return tokens, 0

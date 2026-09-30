@@ -21,8 +21,9 @@ type Request struct {
 //
 //	inputBound × inputRate × cacheMult + maxTokens × outputRate
 //
-// inputBound is the body's bytes (a token is at least a byte) plus each
-// image at the model's per-image ceiling, or the whole context window when
+// inputBound is the body's bytes (a token is at least a byte) plus
+// RequestOverheadTokens plus each image at the model's per-image ceiling,
+// or the whole context window when
 // the body holds a PDF. cacheMult is the dearest way the input can be
 // billed, from the model's own rates (owner overrides included): cache
 // reads (an override may price them above fresh input), plus a 5-minute
@@ -41,7 +42,7 @@ func (m Model) WorstCase(q Request) Micros {
 			bound = DefaultContextTokens
 		}
 	} else {
-		bound = satAdd(max(q.BodyBytes, 0), satMul(max(q.ImageCount, 0), max(m.ImageTokens, 0)))
+		bound = satAdd(satAdd(max(q.BodyBytes, 0), RequestOverheadTokens), satMul(max(q.ImageCount, 0), max(m.ImageTokens, 0)))
 	}
 
 	r := m.Rates
@@ -117,3 +118,11 @@ func satMul(a, b int64) int64 {
 	}
 	return a * b
 }
+
+// RequestOverheadTokens is added to a request's byte bound for the input
+// the API bills that the body doesn't hold: the tool-use system prompt
+// (a few hundred tokens with any tools) and the like. It matters only for
+// bodies of a few hundred bytes; on a typical agent request it is a few
+// cents' worth of over-reservation at most. A PDF's bound, the whole
+// context window, already covers it.
+const RequestOverheadTokens = 4096
