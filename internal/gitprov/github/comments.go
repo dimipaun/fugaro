@@ -48,8 +48,9 @@ func collaborator(association string) bool {
 
 // appSlug returns the App's slug, reading it with GET /app (as the App,
 // with its JWT). ok is false when that read failed. A definite answer (the
-// slug, or a 4xx refusal other than 429) is remembered for the Provider;
-// a passing failure (a cancelled context, a network error, a 429 or 5xx)
+// slug, or a 4xx refusal other than 408 and 429) is remembered for the
+// Provider; a passing failure (a cancelled context, a network error, a 408,
+// 429 or 5xx)
 // is not, so the next call asks again. A failure is warned about once.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
@@ -79,10 +80,12 @@ func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 }
 
 // definite reports whether err is an answer worth remembering rather than
-// a passing failure: an HTTP 4xx other than 429, with ctx still live.
+// a passing failure: an HTTP 4xx other than 408 and 429, with ctx still
+// live, as the Bitbucket adapter decides for its identity read.
 func definite(ctx context.Context, err error) bool {
 	var se *httpjson.StatusError
-	return ctx.Err() == nil && errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != http.StatusTooManyRequests
+	return ctx.Err() == nil && errors.As(err, &se) && se.Status >= 400 && se.Status < 500 &&
+		se.Status != http.StatusRequestTimeout && se.Status != http.StatusTooManyRequests
 }
 
 // Comments implements gitprov.Provider: the review threads' comments, the

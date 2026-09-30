@@ -409,6 +409,10 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 	if err := p.api.Do(ctx, "GET", p.repoPath(fmt.Sprintf("/pulls/%d", number)), nil, &d); err != nil {
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: %w", number, err)
 	}
+	if d.Number != number {
+		// Never act on another pull request than the one asked for.
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: the response is for #%d", number, d.Number)
+	}
 	info := gitprov.PRInfo{Number: d.Number, URL: d.HTMLURL, Draft: d.Draft, AuthorID: d.User.id(),
 		SourceBranch: d.Head.Ref, HeadSHA: d.Head.SHA}
 	if d.Head.Repo != nil {

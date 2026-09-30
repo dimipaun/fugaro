@@ -134,8 +134,19 @@ type Provider interface {
 	Repository(ctx context.Context) (RepoInfo, error)
 	// PullRequest reads pull request number, whatever its state.
 	PullRequest(ctx context.Context, number int) (PRInfo, error)
-	// Comments returns every comment on pull request number, oldest
-	// first; filtering is the caller's.
+	// Comments returns every published comment on pull request number,
+	// oldest first; filtering is the caller's. Unpublished ones (pending
+	// reviews and drafts) and reviews with no body are left out.
+	//
+	// Self and SelfKnown say whether a comment was posted as the identity
+	// Fugaro uses, which the adapter looks up (GitHub: the App, GET /app;
+	// Bitbucket: the token's user, GET /user). A lookup the provider
+	// answers definitely (a 4xx other than 408 and 429) leaves SelfKnown
+	// false on every comment, and the answer is kept. A passing failure (a
+	// network error, a 408, 429 or 5xx, a cancelled context) is not kept:
+	// the GitHub adapter then returns the comments with SelfKnown false,
+	// the Bitbucket adapter fails the call. Callers must work either way:
+	// trust never rests on Self.
 	Comments(ctx context.Context, number int) ([]Comment, error)
 }
 

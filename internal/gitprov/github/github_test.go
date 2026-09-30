@@ -384,7 +384,7 @@ func fakeAPIWarn(t *testing.T, h func(w http.ResponseWriter, r *http.Request) bo
 }
 
 // TestGitHubIdentityRetriedAfterTransientFailure covers a GET /app that
-// fails for a passing reason (a cancelled context, a 5xx): it is not
+// fails for a passing reason (a cancelled context, a 408, a 5xx): it is not
 // remembered, so the next lookup asks again and can succeed. A definite
 // answer (a 403, or the slug) is remembered, and GET /app isn't sent again.
 func TestGitHubIdentityRetriedAfterTransientFailure(t *testing.T) {
@@ -417,9 +417,13 @@ func TestGitHubIdentityRetriedAfterTransientFailure(t *testing.T) {
 	if _, ok := p.appSlug(cancelled); ok {
 		t.Fatal("a cancelled lookup found the slug")
 	}
-	appStatus = []int{http.StatusBadGateway, http.StatusOK}
+	// A 408 is as passing as a 5xx, as the Bitbucket adapter treats it.
+	appStatus = []int{http.StatusBadGateway, http.StatusRequestTimeout, http.StatusOK}
 	if _, ok := p.appSlug(ctx); ok {
 		t.Fatal("a 502 found the slug")
+	}
+	if _, ok := p.appSlug(ctx); ok {
+		t.Fatal("a 408 found the slug")
 	}
 	if slug, ok := p.appSlug(ctx); !ok || slug != "fugaro-app" {
 		t.Fatalf("slug = %q, %t after a transient failure", slug, ok)
@@ -576,5 +580,23 @@ func TestGitHubEnsureByNumberBranchMismatch(t *testing.T) {
 	pr, err := open(t, "pull_open.json").EnsurePR(ctx, s)
 	if !errors.Is(err, gitprov.ErrPRNotOpen) || !strings.Contains(err.Error(), branchName) || pr.Number != 12 {
 		t.Fatalf("pr = %+v, %v", pr, err)
+	}
+}
+
+// TestGitHubPullRequestWrongNumber: a response for another pull request
+// than the one asked for is refused, so nothing acts on that other PR.
+func TestGitHubPullRequestWrongNumber(t *testing.T) {
+	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/repos/acme/web/pulls/12" {
+			return false
+		}
+		w.Write([]byte(`{"number":13,"state":"open","html_url":"https://github.com/acme/web/pull/13","head":{"ref":"fugaro/x","sha":"0123456789abcdef0123456789abcdef01234567"},"user":{"id":1}}`))
+		return true
+	})
+	if _, err := p.PullRequest(ctx, 12); err == nil || !strings.Contains(err.Error(), "the response is for #13") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: 12, Branch: "fugaro/x", Draft: true}); err == nil {
+		t.Fatal("EnsurePR updated another pull request")
 	}
 }
