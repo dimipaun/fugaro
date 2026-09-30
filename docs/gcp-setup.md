@@ -180,7 +180,7 @@ A repository's build account needs `artifactregistry.tags.delete` on its own reg
 1. **`fugaro init`.** The plan's only change is one create, the role `fugaroTagMover`.
 2. **`fugaro init --repo`, in each onboarded repository.** The plan's only change is one create, the build account's grant of that role on the repository's registry (`google_artifact_registry_repository_iam_member.build_tag_mover`). Until step 1 is applied, `init --repo` refuses, saying the installation's outputs have no `role_ids.tag_mover` and to run `fugaro init` first.
 
-The next build then moves `latest` and removes its `candidate-` tag.
+The next build then moves `latest` and removes its `candidate-` tag. A new IAM grant can take a few minutes to take effect; if that build still fails at `promote` with a permission error right after the apply, wait and run it again.
 
 ## Adopting an M4 installation
 
