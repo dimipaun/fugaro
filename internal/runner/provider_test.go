@@ -307,6 +307,26 @@ func TestEnsurePRGivesUpAfterDeadlineStillComments(t *testing.T) {
 	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "not ready") {
 		t.Fatalf("comments = %q, want the not-ready comment despite the expired deadline", pr.Comments)
 	}
+	if id, ok := gitprov.FugaroRun(pr.Comments[0]); !ok || id != rec.RunID {
+		t.Fatalf("the not-ready comment names run %q, %v; want %q:\n%s", id, ok, rec.RunID, pr.Comments[0])
+	}
+}
+
+// TestNotReadyNoteCarriesMarker: the not-ready note ends with the run's
+// marker, so a later follow-up can tell which run posted it.
+func TestNotReadyNoteCarriesMarker(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.RetryDelay = time.Millisecond
+	h.provider.FailEnsureAfterCreate = 3 // every attempt creates or finds the PR, and still errors
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err == nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	pr := onlyPR(t, h.provider)
+	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "not ready") ||
+		!strings.HasSuffix(pr.Comments[0], "\n"+gitprov.ReportMarker(runID)+"\n") {
+		t.Fatalf("comments = %q, want the not-ready note ending with the run's marker", pr.Comments)
+	}
 }
 
 // TestEnsurePRGivesUpCommentIsRedacted checks that the give-up comment,

@@ -89,6 +89,32 @@ type Record struct {
 	// Image is what the image the run started in was built from; absent
 	// when the runner could not tell.
 	Image *ImageInfo `json:"image,omitempty"`
+	// FollowUp is set for a run that continues an existing pull request.
+	FollowUp *FollowUp `json:"follow_up,omitempty"`
+	// PushedHead is the commit the run pushed, set right after a
+	// successful push (every run) and saved at once, so a run killed
+	// after posting still records that it updated its pull request.
+	PushedHead string `json:"pushed_head,omitempty"`
+}
+
+// FollowUp is what a follow-up run acted on (design §4.4).
+type FollowUp struct {
+	PR          int    `json:"pr"`
+	PreviousRun string `json:"previous_run"`
+	// StartSHA is the pull request's head the run started from.
+	StartSHA string `json:"start_sha,omitempty"`
+	// Session is "resumed" or "fresh"; SessionNote says why.
+	Session     string `json:"session,omitempty"`
+	SessionNote string `json:"session_note,omitempty"`
+	// Comments is how many comments reached the agent.
+	Comments int `json:"comments"`
+	// Authors maps each author's display name to the comments of theirs used.
+	Authors map[string]int `json:"authors,omitempty"`
+	// UntrustedAuthors are the display names whose comments were dropped
+	// because their authors aren't trusted: sorted, at most 20.
+	UntrustedAuthors []string `json:"untrusted_authors,omitempty"`
+	// Omitted counts the comments left out, by reason.
+	Omitted map[string]int `json:"omitted,omitempty"`
 }
 
 // ImageInfo says what the run's image was built from, read at bootstrap
@@ -146,6 +172,11 @@ type Store struct {
 func Open(b *blob.Bucket, repoSlug, runID string) *Store {
 	return &Store{bucket: b, slug: repoSlug, runID: runID, prefix: path.Join("runs", repoSlug, runID) + "/"}
 }
+
+// Sibling returns the store for another run of the same repository, in
+// the same bucket. The caller checks runID's form first: it becomes part
+// of an object name.
+func (s *Store) Sibling(runID string) *Store { return Open(s.bucket, s.slug, runID) }
 
 // RunID is the run ID this store was opened with.
 func (s *Store) RunID() string { return s.runID }

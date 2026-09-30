@@ -5,6 +5,7 @@ package gitprov
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"strings"
 	"time"
@@ -18,6 +19,12 @@ const (
 
 // PRSpec describes the pull request a run wants.
 type PRSpec struct {
+	// Number, when non-zero, makes EnsurePR update pull request Number's
+	// draft state only: it never creates one, and never touches the title
+	// or body beyond the draft prefix. It returns ErrPRNotOpen (wrapped,
+	// with the PR) when that PR isn't open, or its source branch isn't
+	// Branch.
+	Number    int      `json:"number,omitempty"`
 	Branch    string   `json:"branch"`
 	Base      string   `json:"base"`
 	Title     string   `json:"title"`
@@ -32,6 +39,66 @@ type PR struct {
 	Number int    `json:"number"`
 	URL    string `json:"url"`
 	Draft  bool   `json:"draft"`
+}
+
+// ErrPRNotOpen means an update by number found the pull request merged
+// or closed, or on another source branch: a follow-up must never bring
+// back or reuse a pull request that isn't open on its branch.
+var ErrPRNotOpen = errors.New("pull request is not open on this branch")
+
+// RepoInfo is what a follow-up needs to know about the repository.
+type RepoInfo struct {
+	Private bool
+}
+
+// PRState is the lifecycle state of a pull request.
+type PRState string
+
+const (
+	PROpen   PRState = "open"
+	PRMerged PRState = "merged"
+	PRClosed PRState = "closed" // closed unmerged: declined or superseded on Bitbucket
+)
+
+// PRInfo is a pull request as the provider shows it.
+type PRInfo struct {
+	Number       int
+	URL          string
+	State        PRState
+	Draft        bool
+	AuthorID     string // the PR author's account ID (GitHub numeric user ID; Bitbucket account_id)
+	SourceBranch string
+	SourceRepo   string // owner/name of the head repository, as the provider spells it
+	HeadSHA      string // may be abbreviated (Bitbucket gives 12 hex); compare with SameCommit
+}
+
+// CommentKind is where a comment sits on a pull request.
+type CommentKind string
+
+const (
+	CommentInline  CommentKind = "inline"  // on a line of the diff, in a review thread
+	CommentReview  CommentKind = "review"  // a review's top-level body
+	CommentGeneral CommentKind = "general" // on the pull request's conversation
+)
+
+// Comment is one comment on a pull request. Its Body is untrusted text.
+type Comment struct {
+	ID           string
+	Kind         CommentKind
+	Author       string // display name or login, for the report
+	AuthorID     string // stable account ID, for the trust rule
+	Collaborator bool   // GitHub: author_association OWNER, MEMBER or COLLABORATOR; Bitbucket: always true
+	Self         bool   // posted as the identity Fugaro uses
+	SelfKnown    bool   // the adapter could tell (its identity lookup worked)
+	Resolved     bool   // inline only: its thread is resolved
+	Outdated     bool   // inline only: the line it was on has changed
+	Truncated    bool   // inline only: its thread had more comments than were read
+	Deleted      bool
+	Path         string
+	Line         int
+	Body         string
+	CreatedAt    time.Time
+	URL          string
 }
 
 // GitAuth is how git, the runner's and the agent's, authenticates to the
@@ -55,12 +122,21 @@ type Provider interface {
 	// left looking more like a draft than requested is safe to leave for
 	// a retry to heal; a PR left looking more ready than requested is not,
 	// so that direction is reported as a plain, retryable error instead).
+	// With spec.Number set it only updates that pull request's draft
+	// state, and never creates one (see PRSpec.Number).
 	EnsurePR(ctx context.Context, spec PRSpec) (PR, error)
 	// Comment posts a comment on the pull request.
 	Comment(ctx context.Context, pr PR, body string) error
 	// GitAuth returns git credentials that stay valid for at least
 	// minValid, refreshing them first if needed (design §6.2).
 	GitAuth(ctx context.Context, minValid time.Duration) (GitAuth, error)
+	// Repository reads the repository's visibility.
+	Repository(ctx context.Context) (RepoInfo, error)
+	// PullRequest reads pull request number, whatever its state.
+	PullRequest(ctx context.Context, number int) (PRInfo, error)
+	// Comments returns every comment on pull request number, oldest
+	// first; filtering is the caller's.
+	Comments(ctx context.Context, number int) ([]Comment, error)
 }
 
 // Opener opens the provider of kind (KindGitHub or KindBitbucket) for repo

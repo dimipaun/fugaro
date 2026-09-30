@@ -294,3 +294,22 @@ func (p *Provider) Comment(ctx context.Context, pr gitprov.PR, body string) erro
 func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, error) {
 	return gitprov.GitAuth{Username: GitUsername, Token: p.o.Token}, nil
 }
+
+// errFollowUpReads stands in for the follow-up reads until they are
+// implemented against the bitbucket API.
+var errFollowUpReads = errors.New("bitbucket: not implemented until M6 task 4")
+
+// Repository implements gitprov.Provider.
+func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
+	return gitprov.RepoInfo{}, errFollowUpReads
+}
+
+// PullRequest implements gitprov.Provider.
+func (p *Provider) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
+	return gitprov.PRInfo{}, errFollowUpReads
+}
+
+// Comments implements gitprov.Provider.
+func (p *Provider) Comments(context.Context, int) ([]gitprov.Comment, error) {
+	return nil, errFollowUpReads
+}

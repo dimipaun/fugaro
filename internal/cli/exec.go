@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -168,7 +169,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 func providerOptions(o execOptions, env []string, warn func(string)) (string, gitprov.Opener, error) {
 	switch o.provider {
 	case "fake":
-		return "", gitprov.Static(&fake.Provider{Path: o.providerState}), nil
+		// The fake learns the task's repository from the runner, and reads
+		// branch heads from --remote, as a real host would show them.
+		return "", func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+			return &fake.Provider{Path: o.providerState, Repo: repo, Remote: o.remote}, nil, nil
+		}, nil
 	case "", gitprov.KindGitHub, gitprov.KindBitbucket:
 		if o.providerState != "" {
 			return "", nil, errors.New("--provider-state only applies to --provider fake")

@@ -24,6 +24,19 @@ var (
 // BatchRE is the form of a task's batch label.
 var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 
+// BranchRE is the form of a Fugaro run's branch, fugaro/<run-id>: the only
+// branch a follow-up may continue.
+var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
+
+// BranchRunID returns the run ID a Fugaro branch names (the run that
+// created it), and false for any other branch.
+func BranchRunID(branch string) (string, bool) {
+	if !BranchRE.MatchString(branch) {
+		return "", false
+	}
+	return strings.TrimPrefix(branch, "fugaro/"), true
+}
+
 // Spec is the task spec stored as runs/<repo-slug>/<run-id>/task.json.
 type Spec struct {
 	Version     int       `json:"version"`
@@ -172,6 +185,9 @@ func (s *Spec) Validate() error {
 	}
 	if !anyFollowUp && strings.TrimSpace(s.Task) == "" {
 		bad("task spec: task is required")
+	}
+	if s.Branch != "" && !BranchRE.MatchString(s.Branch) {
+		bad("task spec: branch %q must be fugaro/<run-id>", s.Branch)
 	}
 	if s.PreviousRun != "" && !runIDRE.MatchString(s.PreviousRun) {
 		bad("task spec: previous_run %q is not a run ID", s.PreviousRun)

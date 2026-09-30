@@ -282,3 +282,54 @@ func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
 		}
 	}
 }
+
+// TestResultSchemaFollowUp: a follow-up's record, and every run's
+// pushed_head, validate; a session that is neither resumed nor fresh doesn't.
+func TestResultSchemaFollowUp(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap", Outcome: runstore.OutcomeNone,
+		Branch: "fugaro/20260929-100000-0a1b", PR: &runstore.PRRef{Number: 12, URL: "https://example.invalid/pr/12"},
+		PushedHead: "0123456789abcdef0123456789abcdef01234567", StartedAt: at,
+		FollowUp: &runstore.FollowUp{
+			PR: 12, PreviousRun: "20260929-100000-0a1b", StartSHA: "0123456789abcdef0123456789abcdef01234567",
+			Session: "resumed", SessionNote: "resumed", Comments: 2,
+			Authors: map[string]int{"Ada": 2}, UntrustedAuthors: []string{"mallory"}, Omitted: map[string]int{"self": 1},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a follow-up record: %v\n%s", err, data)
+	}
+	// A minimal follow_up (what bootstrap saves first) validates too.
+	first := rec
+	first.PushedHead, first.FollowUp = "", &runstore.FollowUp{PR: 12, PreviousRun: "20260929-100000-0a1b"}
+	minimal, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(minimal)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a minimal follow_up: %v\n%s", err, minimal)
+	}
+	bad := bytes.Replace(data, []byte(`"session":"resumed"`), []byte(`"session":"maybe"`), 1)
+	if bytes.Equal(bad, data) {
+		t.Fatalf("no session in %s", data)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bad)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Fatal(`schema accepts "session": "maybe"`)
+	}
+}

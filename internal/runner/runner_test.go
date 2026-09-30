@@ -83,7 +83,7 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 	tmp := t.TempDir()
 	failsFile := filepath.Join(tmp, "fails")
 	a := &scriptedAgent{t: t}
-	p := &fake.Provider{}
+	p := &fake.Provider{Repo: spec.Repo, Remote: remote}
 	return &harness{
 		files: files,
 		deps: runner.Deps{
@@ -104,6 +104,7 @@ func (h *harness) useHTTPRemote(t *testing.T, allow func(user, pass string) bool
 	t.Helper()
 	remote := testutil.NewHTTPRemote(t, h.files, allow)
 	h.deps.Remote, h.remote = remote.URL, remote.Bare
+	h.provider.Remote = remote.Bare
 	h.deps.ProviderKind = "github"
 	return remote
 }

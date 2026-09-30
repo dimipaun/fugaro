@@ -317,3 +317,22 @@ func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov
 	}
 	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp, Env: map[string]string{"GH_TOKEN": tok}}, nil
 }
+
+// errFollowUpReads stands in for the follow-up reads until they are
+// implemented against the github API.
+var errFollowUpReads = errors.New("github: not implemented until M6 task 3")
+
+// Repository implements gitprov.Provider.
+func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
+	return gitprov.RepoInfo{}, errFollowUpReads
+}
+
+// PullRequest implements gitprov.Provider.
+func (p *Provider) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
+	return gitprov.PRInfo{}, errFollowUpReads
+}
+
+// Comments implements gitprov.Provider.
+func (p *Provider) Comments(context.Context, int) ([]gitprov.Comment, error) {
+	return nil, errFollowUpReads
+}
