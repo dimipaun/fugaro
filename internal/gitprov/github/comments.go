@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"time"
@@ -46,27 +47,42 @@ func collaborator(association string) bool {
 }
 
 // appSlug returns the App's slug, reading it with GET /app (as the App,
-// with its JWT) the first time. ok is false when that read failed; it is
-// tried once per Provider, and its failure is warned about once.
+// with its JWT). ok is false when that read failed. A definite answer (the
+// slug, or a 4xx refusal other than 429) is remembered for the Provider;
+// a passing failure (a cancelled context, a network error, a 429 or 5xx)
+// is not, so the next call asks again. A failure is warned about once.
 func (p *Provider) appSlug(ctx context.Context) (slug string, ok bool) {
 	p.identityMu.Lock()
 	defer p.identityMu.Unlock()
-	if !p.identityDone {
-		p.identityDone = true
-		var app struct {
-			Slug string `json:"slug"`
-		}
-		err := p.tokens.app.Do(ctx, "GET", "/app", nil, &app)
-		if err == nil && app.Slug == "" {
-			err = errors.New("the response has no slug")
-		}
-		if err != nil {
-			p.warn(fmt.Sprintf("github: could not read the App's identity (GET /app): %v; Fugaro's own comments can't be told apart from others", err))
-		} else {
-			p.slug = app.Slug
-		}
+	if p.identityDone {
+		return p.slug, p.slug != ""
 	}
-	return p.slug, p.slug != ""
+	var app struct {
+		Slug string `json:"slug"`
+	}
+	err := p.tokens.app.Do(ctx, "GET", "/app", nil, &app)
+	switch {
+	case err == nil && app.Slug != "":
+		p.identityDone, p.slug = true, app.Slug
+		return p.slug, true
+	case err == nil:
+		err = errors.New("the response has no slug")
+		p.identityDone = true
+	case definite(ctx, err):
+		p.identityDone = true
+	}
+	if !p.identityWarned {
+		p.identityWarned = true
+		p.warn(fmt.Sprintf("github: could not read the App's identity (GET /app): %v; Fugaro's own comments can't be told apart from others", err))
+	}
+	return "", false
+}
+
+// definite reports whether err is an answer worth remembering rather than
+// a passing failure: an HTTP 4xx other than 429, with ctx still live.
+func definite(ctx context.Context, err error) bool {
+	var se *httpjson.StatusError
+	return ctx.Err() == nil && errors.As(err, &se) && se.Status >= 400 && se.Status < 500 && se.Status != http.StatusTooManyRequests
 }
 
 // Comments implements gitprov.Provider: the review threads' comments, the
@@ -197,16 +213,29 @@ func listAll[T any](ctx context.Context, c *httpjson.Client, what, path string) 
 	return all, nil
 }
 
+// restFields are the REST fields a review or an issue comment share.
+type restFields struct {
+	kind        gitprov.CommentKind
+	nodeID      string
+	id          int64
+	user        *restUser
+	association string
+	body        string
+	created     time.Time
+	url         string
+}
+
 // restComment builds a Comment from REST fields. The App's bot is
 // <slug>[bot] in the REST API.
-func restComment(kind gitprov.CommentKind, nodeID string, id int64, u *restUser, association, body string, created time.Time, url, slug string, known bool) gitprov.Comment {
-	if nodeID == "" {
-		nodeID = strconv.FormatInt(id, 10)
+func restComment(f restFields, slug string, known bool) gitprov.Comment {
+	id := f.nodeID
+	if id == "" {
+		id = strconv.FormatInt(f.id, 10)
 	}
 	return gitprov.Comment{
-		ID: nodeID, Kind: kind, Author: u.login(), AuthorID: u.id(), Collaborator: collaborator(association),
-		Self: known && u != nil && u.Login == slug+"[bot]", SelfKnown: known,
-		Body: body, CreatedAt: created, URL: url,
+		ID: id, Kind: f.kind, Author: f.user.login(), AuthorID: f.user.id(), Collaborator: collaborator(f.association),
+		Self: known && f.user != nil && f.user.Login == slug+"[bot]", SelfKnown: known,
+		Body: f.body, CreatedAt: f.created, URL: f.url,
 	}
 }
 
@@ -231,7 +260,8 @@ func (p *Provider) reviewComments(ctx context.Context, number int, slug string, 
 		if r.Body == "" || r.State == "PENDING" || r.SubmittedAt == nil {
 			continue // no summary, or not submitted
 		}
-		out = append(out, restComment(gitprov.CommentReview, r.NodeID, r.ID, r.User, r.AuthorAssociation, r.Body, *r.SubmittedAt, r.HTMLURL, slug, known))
+		out = append(out, restComment(restFields{kind: gitprov.CommentReview, nodeID: r.NodeID, id: r.ID, user: r.User,
+			association: r.AuthorAssociation, body: r.Body, created: *r.SubmittedAt, url: r.HTMLURL}, slug, known))
 	}
 	return out, nil
 }
@@ -253,7 +283,8 @@ func (p *Provider) issueComments(ctx context.Context, number int, slug string, k
 	}
 	out := make([]gitprov.Comment, 0, len(list))
 	for _, c := range list {
-		out = append(out, restComment(gitprov.CommentGeneral, c.NodeID, c.ID, c.User, c.AuthorAssociation, c.Body, c.CreatedAt, c.HTMLURL, slug, known))
+		out = append(out, restComment(restFields{kind: gitprov.CommentGeneral, nodeID: c.NodeID, id: c.ID, user: c.User,
+			association: c.AuthorAssociation, body: c.Body, created: c.CreatedAt, url: c.HTMLURL}, slug, known))
 	}
 	return out, nil
 }

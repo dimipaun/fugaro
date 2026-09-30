@@ -56,9 +56,10 @@ type Provider struct {
 	tokens      *tokenSource
 	warn        func(string)
 
-	identityMu   sync.Mutex
-	identityDone bool   // GET /app has been tried
-	slug         string // the App's slug; "" when GET /app failed
+	identityMu     sync.Mutex
+	identityDone   bool   // GET /app gave a definite answer
+	identityWarned bool   // a failed GET /app has been warned about
+	slug           string // the App's slug; "" until GET /app gives it
 }
 
 // New returns a Provider for o.
@@ -435,6 +436,8 @@ func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo,
 // updateByNumber is EnsurePR for spec.Number: it reads that pull request
 // and changes its draft state only when it is still open on spec.Branch.
 // It never looks a pull request up by branch, and never creates one.
+// It doesn't check the head repository (SourceRepo): the runner checks it
+// at bootstrap, and a pull request's head repository can't change after.
 func (p *Provider) updateByNumber(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	d, info, err := p.getPull(ctx, spec.Number)
 	if err != nil {

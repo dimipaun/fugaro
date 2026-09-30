@@ -352,8 +352,16 @@ func TestGitHubCommentsForeignLink(t *testing.T) {
 // hands every other request to h, failing the test when h doesn't handle it.
 func fakeAPI(t *testing.T, h func(w http.ResponseWriter, r *http.Request) bool) *Provider {
 	t.Helper()
+	return fakeAPIWarn(t, h, nil)
+}
+
+// fakeAPIWarn is fakeAPI with the adapter's warnings sent to warn. h sees
+// every request first, so it can override the defaults.
+func fakeAPIWarn(t *testing.T, h func(w http.ResponseWriter, r *http.Request) bool, warn func(string)) *Provider {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case h(w, r):
 		case r.URL.Path == "/repos/acme/web/installation":
 			w.Write([]byte(`{"id":777}`))
 		case r.URL.Path == "/app/installations/777/access_tokens":
@@ -361,19 +369,92 @@ func fakeAPI(t *testing.T, h func(w http.ResponseWriter, r *http.Request) bool) 
 			w.Write([]byte(`{"token":"ghs_fixture_token_1","expires_at":"2026-09-27T11:00:00Z"}`))
 		case r.URL.Path == "/app":
 			w.Write([]byte(`{"slug":"fugaro-app"}`))
-		case h(w, r):
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL)
 			http.Error(w, "unexpected", http.StatusTeapot)
 		}
 	}))
 	t.Cleanup(srv.Close)
-	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Warn: warn,
 		Now: func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// TestGitHubIdentityRetriedAfterTransientFailure covers a GET /app that
+// fails for a passing reason (a cancelled context, a 5xx): it is not
+// remembered, so the next lookup asks again and can succeed. A definite
+// answer (a 403, or the slug) is remembered, and GET /app isn't sent again.
+func TestGitHubIdentityRetriedAfterTransientFailure(t *testing.T) {
+	var mu sync.Mutex
+	var appStatus []int // what successive GET /app requests answer
+	var warnings []string
+	p := fakeAPIWarn(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/app" {
+			return false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(appStatus) == 0 {
+			t.Errorf("GET /app sent after a definite answer")
+			http.Error(w, "unexpected", http.StatusTeapot)
+			return true
+		}
+		status := appStatus[0]
+		appStatus = appStatus[1:]
+		if status != http.StatusOK {
+			http.Error(w, `{"message":"no"}`, status)
+			return true
+		}
+		w.Write([]byte(`{"slug":"fugaro-app"}`))
+		return true
+	}, func(msg string) { warnings = append(warnings, msg) })
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, ok := p.appSlug(cancelled); ok {
+		t.Fatal("a cancelled lookup found the slug")
+	}
+	appStatus = []int{http.StatusBadGateway, http.StatusOK}
+	if _, ok := p.appSlug(ctx); ok {
+		t.Fatal("a 502 found the slug")
+	}
+	if slug, ok := p.appSlug(ctx); !ok || slug != "fugaro-app" {
+		t.Fatalf("slug = %q, %t after a transient failure", slug, ok)
+	}
+	if slug, ok := p.appSlug(ctx); !ok || slug != "fugaro-app" {
+		t.Fatalf("slug = %q, %t once known", slug, ok)
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %q, want one", warnings)
+	}
+
+	// A 403 is a definite answer: remembered, and warned about once.
+	warnings = nil
+	p = fakeAPIWarn(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/app" {
+			return false
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if len(appStatus) == 0 {
+			t.Errorf("GET /app sent after a definite answer")
+		}
+		appStatus = nil
+		http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+		return true
+	}, func(msg string) { warnings = append(warnings, msg) })
+	appStatus = []int{http.StatusForbidden}
+	for range 2 {
+		if _, ok := p.appSlug(ctx); ok {
+			t.Fatal("a 403 found the slug")
+		}
+	}
+	if len(warnings) != 1 {
+		t.Fatalf("warnings = %q, want one", warnings)
+	}
 }
 
 // TestGitHubCommentsPageCap covers a listing that never ends: it stops at
