@@ -16,9 +16,30 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
 
 ---
 
+## Terminology
+
+- **Fugaro project** (the word users see; for example *Aurora*). A semantic project made of many repositories, worked on by several people. It is:
+  - one GCP project, plus one Firebase project (FP);
+  - its repositories;
+  - its people lists (`launchers`, `operators`, `budget_admins`);
+  - one local config (one profile, §2.4).
+
+  A different project (say *Borealis*) has its own GCP project, its own FP, its own config and its own people. Nothing is shared between the two.
+- **Installation.** The technical name for a project's cloud-side setup: what `fugaro init` creates, and the name M5's docs and the Terraform root `installation` use. It appears in this document only in that sense.
+- **Repository.** A member of a project, for example `aurora-server`, `aurora-android`, `aurora-ios` and `aurora-web`, on Bitbucket or GitHub. It is what the source spec calls `project-a` or `project-b`, and it is the unit of budget caps and kill switches below the project.
+- **Global** (in the spec and in cap names) means **the Fugaro project**. There is no live state spanning projects.
+- **GCP project** is always written out in full when it means the cloud project. `--project` and the local config's `project` key keep meaning the GCP project ID (§2.4).
+
+**Example.**
+
+| Project | Budget controls |
+|---|---|
+| **Aurora** | One daily cap for the whole project (`global.dailyUsd`), a cap per repository (`repos/<slug>.dailyUsd`) and per run, one project kill switch (`kill/global`), and one kill switch per repository (`kill/repos/<slug>`) |
+| **Borealis** | Its own caps, switches, FP, dashboard and history. Aurora's people and tools never touch it unless they select Borealis's profile, and hold rights there |
+
 ## 0. Summary
 
-- **Budget scope.** A *project* in the spec's sense is one Fugaro **repository**. Caps nest: repository inside global, and each level has a per-day and a per-run cap. There is a global kill switch and one per repository. The day is UTC. "Global" is the installation: each installation has its own dedicated Firebase project (D3, §6.0).
+- **Budget scope.** A *project* in the spec's sense is one Fugaro **repository**. Caps nest: repository inside global, and each level has a per-day and a per-run cap. There is a global kill switch and one per repository. The day is UTC. "Global" is the Fugaro project: each project has its own dedicated Firebase project (D3, §6.0).
 - **The gateway runs inside the runner** (`fugaro exec`, part of the base image's binary) and listens on `127.0.0.1`.
   - Claude Code reaches it through `ANTHROPIC_BASE_URL` (API key) or `ANTHROPIC_VERTEX_BASE_URL` with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` (Vertex).
   - The gateway holds the real credential; the agent's environment no longer does.
@@ -134,6 +155,33 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
 
 ---
 
+### 2.4 Working across Fugaro projects: profiles (a prerequisite, task 0)
+
+**Today one local config holds one project.** `--config` and `FUGARO_CONFIG` pick another file, but nothing says which project a command is acting on. Once each project has its own kill switches and caps, that is a safety problem: a launch or a kill must never hit the wrong project. `--project` already overrides the **GCP project ID**, so it isn't reused for this.
+
+- **Profiles.** Each project gets a file, `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`: a complete local config (§5.4), plus a new `name:` field, `[a-z0-9-]{1,40}`, the project's display name.
+  - `fugaro init` and `fugaro init --config-only` write the profile. Each person on a project runs `--config-only` to get theirs from the Terraform outputs.
+- **Which profile a command uses,** first match wins:
+  1. `--config <file>` (unchanged);
+  2. `--profile <name>`;
+  3. `FUGARO_PROFILE`;
+  4. the checkout's repository, when exactly one profile's `repos` lists it;
+  5. `fugaro use <name>`, which records the choice in `$XDG_CONFIG_HOME/fugaro/current`;
+  6. the legacy `config.yaml`, when no `projects/` directory exists. Today's behaviour is unchanged.
+- **Refusing ambiguity.**
+  - With several profiles and none selected, commands refuse (exit 1) and list the profiles.
+  - When the checkout's repository belongs to a profile other than the selected one, commands refuse too: "this checkout is in project aurora; selected: borealis".
+- **You always see the project.**
+  - Every cloud command prints `project: aurora (GCP <id>)` as its first line on stderr, and its `--json` output gains `fugaro_project`.
+  - The watch header, `budget show` and `report` show it too.
+  - `budget kill --all` asks you to type the project name.
+- **Later:** `fugaro ls --all-projects` (read-only, one section per profile), and the organization-wide read-only roll-up (§18).
+- **Several people per project.**
+  - Membership is the project's lists: `launchers` and `operators` (applied by `fugaro init`), and `budget_admins` together with the GCP project's owners and editors (D6).
+  - Every person has their own identity in the records. `requested_by` (task.json) is also minted into the run token as the claim `rb`, taken from the launcher's own credential. The registry and outcomes must carry the same value (a rules check), so attribution can't be forged by the run.
+  - Kill and cap changes record `by`.
+  - `fugaro report --by person` and `watch` show who launched what, and `spendDaily` gains `byPerson`.
+
 ## 3. Architecture
 
 ```
@@ -148,8 +196,8 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
 
 - **The gateway** is a `net/http` handler inside `fugaro exec`. It starts at bootstrap when `FUGARO_BUDGET_MODE` is set, and holds the lease, the price table and the real credential. It forwards requests byte for byte and streams responses back without buffering.
 - **The run's Firebase identity** comes from a custom token that the launcher minted. The runner exchanges it for an ID token at bootstrap and keeps the ID token and refresh token only in memory.
-- **The history job** is a Cloud Run job in the installation project with its own distroless image (D11), running `fugaro budget history`. Cloud Scheduler starts it daily for the rollover and every 15 minutes for the sweep. **It is a scheduled, admin-privileged job, not a long-running service.** It is the one exception to "no budget service": it holds `firebasedatabase.admin` on the FP. The optional budget service remains a documented later hardening (§11).
-- **RTDB and Firestore** live in the installation's own Firebase project (FP), which is a separate GCP project (§6.0). The runs bucket, jobs, the history job and Scheduler stay in the installation project.
+- **The history job** is a Cloud Run job in the project's GCP project with its own distroless image (D11), running `fugaro budget history`. Cloud Scheduler starts it daily for the rollover and every 15 minutes for the sweep. **It is a scheduled, admin-privileged job, not a long-running service.** It is the one exception to "no budget service": it holds `firebasedatabase.admin` on the FP. The optional budget service remains a documented later hardening (§11).
+- **RTDB and Firestore** live in the project's own Firebase project (FP), which is a separate GCP project (§6.0). The runs bucket, jobs, the history job and Scheduler stay in the installation project.
 
 ---
 
@@ -157,7 +205,7 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
 
 | Cap | Set with | Bounds |
 |---|---|---|
-| `global.dailyUsd` | `fugaro budget set --global --daily` | The sum over all of the installation's repositories of reserved minus released per UTC day |
+| `global.dailyUsd` | `fugaro budget set --global --daily` | The sum over all of the project's repositories of reserved minus released per UTC day |
 | `global.perRunUsd` | `--global --per-run` | Each run's lifetime reserved minus released, and the default for every repository |
 | `repos/<slug>.dailyUsd` | `--repo R --daily` | This repository per day. A repository without one uses `defaults.repoDailyUsd`. With neither, it has **no budget and halts** (fail closed) |
 | `repos/<slug>.perRunUsd` | `--repo R --per-run` | Per run. The effective cap is `min(repo, global)` |
@@ -325,15 +373,15 @@ The local config's `budget.mode`:
 
 ### 6.0 Where Firebase lives (D3, settled)
 
-**Each installation gets its own dedicated Firebase project (FP).** One GCP project is one Fugaro installation, which has exactly one FP. All users of that installation share it.
+**Each installation gets its own dedicated Firebase project (FP).** One Fugaro project is one GCP project and exactly one FP, shared by all its repositories and all its people.
 
-- **"Global" means the installation,** and the installation's repositories are the spec's "projects".
-- **There is no live state across installations.** Aggregating across an organization comes later and is read-only: for example, each installation's history job exports its daily `spendDaily` roll-up to one shared place.
+- **"Global" means the Fugaro project,** and its repositories are the spec's "projects".
+- **There is no live state across Fugaro projects.** Aggregating across an organization comes later and is read-only: for example, each project's history job exports its daily `spendDaily` roll-up to one shared place.
 
 **What creating the FP takes.**
 
 1. **The user creates it,** as a new GCP project.
-   - This needs `resourcemanager.projects.create` on the parent. We recommend the same organization or folder as the installation, so the same org policies apply. A user without an organization creates it without a parent.
+   - This needs `resourcemanager.projects.create` on the parent. We recommend the same organization or folder as the project's GCP project, so the same org policies apply. A user without an organization creates it without a parent.
    - Only people who hold that right can do this. `fugaro init` never creates projects.
 2. **The user links a billing account** (Blaze plan). This needs `billing.resourceAssociations.create` on the billing account (Billing Account User) and on the project.
    - `fugaro init` never enables billing (§8.2), and that rule stays.
@@ -348,23 +396,23 @@ The local config's `budget.mode`:
 
 **Considered and rejected:**
 
-- **V2: Firebase inside the installation's own GCP project.** Rejected because the user wants a separate project.
-- **V3: one FP shared by several installations.** Rejected because it adds a shared blast radius, an installation level in the rules, and cross-installation admin ambiguity. Cross-installation views come later, read-only, as described above.
+- **V2: Firebase inside the project's own GCP project.** Rejected because the user wants a separate project.
+- **V3: one FP shared by several Fugaro projects.** Rejected because it adds a shared blast radius, a project level in the rules, and cross-project admin ambiguity. Cross-project views come later, read-only, as described above.
 
 ### 6.1 APIs, region and IAM
 
 - **APIs on the FP:** `firebase`, `firebasedatabase`, `firestore`, `firebaserules` (for Firestore rules) and `identitytoolkit` plus `securetoken` (for custom-token sign-in). `iamcredentials` must be enabled where the signer account lives.
 - **Regions (D4).** RTDB goes in `us-central1`: RTDB offers only `us-central1`, `europe-west1` and `asia-southeast1`, and a location can't be changed later. Firestore goes in `us-east5`, which Firestore lists as a regional location, with `nam5` as the fallback for installations elsewhere.
-- **IAM.** Each grant is an `*_iam_member` in the Firebase root (§6.6). Every grant to an installation principal is cross-project, onto the FP.
+- **IAM.** Each grant is an `*_iam_member` in the Firebase root (§6.6). Every grant to a principal of the project is cross-project, onto the FP.
 
 | Principal | Grants |
 |---|---|
 | `fugaro-token-signer` (a new account in the FP, display name `Fugaro token signer`) | **No roles at all.** It exists only as the key that signs custom tokens |
 | Launchers and operators | `roles/firebasedatabase.viewer` and `roles/datastore.viewer` on the FP, plus the custom role **`fugaroTokenMinter`** (`iam.serviceAccounts.signJwt` only) **on the signer account**. That is narrower than `serviceAccountTokenCreator`, which would also let them mint access tokens |
-| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the installation project, `fugaroLauncher` (`run.executions.list`, for the cross-check) |
+| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the project's GCP project, `fugaroLauncher` (`run.executions.list`, for the cross-check) |
 | `fugaro-scheduler` | `roles/run.invoker` on the history job |
 | Job accounts | **Nothing on the FP.** They hold a Firebase ID token, which is not an IAM identity |
-| Budget admins (D6) | `roles/firebasedatabase.admin` and `roles/datastore.viewer` on the FP, granted by the Firebase root to: the installation project's `roles/owner` and `roles/editor` members, which `init --firebase` reads from the installation's IAM policy and passes as tfvars; and `terraform.budget_admins`. The FP's own owners and editors (at least the person who created it) hold admin implicitly |
+| Budget admins (D6) | `roles/firebasedatabase.admin` and `roles/datastore.viewer` on the FP, granted by the Firebase root to: the GCP project's `roles/owner` and `roles/editor` members, which `init --firebase` reads from the GCP project's IAM policy and passes as tfvars; and `terraform.budget_admins`. The FP's own owners and editors (at least the person who created it) hold admin implicitly |
 | **Who can't** change caps or kill switches | Launchers and operators who aren't listed (they get the viewer role and the minter role only); job accounts; `fugaro-scheduler`. The history account holds `firebasedatabase.admin` for its sweep and rollover. Its code never writes `/config`, but IAM can't enforce that: a compromise of the history image or its account could lift caps (§11) |
 
 ### 6.2 Data model
@@ -396,7 +444,7 @@ The local config's `budget.mode`:
 
 **Firestore** (the `(default)` database):
 
-`spendDaily/<YYYY-MM-DD>_<slug>` holds `{repo, slug, date, spentUsd, notionalUsd, computeUsd, unreconciledUsd, overrunUsd, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{…}, capDailyUsd, archivedAt, version: 1}`.
+`spendDaily/<YYYY-MM-DD>_<slug>` holds `{repo, slug, date, spentUsd, notionalUsd, computeUsd, unreconciledUsd, overrunUsd, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{…}, byPerson{<requested_by>: usd}, capDailyUsd, archivedAt, version: 1}`.
 
 The global figure is computed on read. There is no composite index: queries use document-ID ranges.
 
@@ -517,7 +565,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - A heartbeat every 15 s updates the stage, round, verify step, spend and `updatedAt`.
   - At run end the runner writes `outcomes/<day>/<slug>/<run>` and deletes its entry.
 - **How watch flags a run.** It shows an entry as **silent** after 60 s without a heartbeat, and as **lost** after 3 minutes.
-- **The sweeper.** The history job runs every 15 minutes (D12). It lists the installation's Cloud Run executions (as `ls` does) and removes the registry entries of executions that have ended or no longer exist. It records `crashed` on their `/runs` ledgers, whose outstanding amounts stay counted, and writes an `infra_error` outcome. It also deletes the auth users of runs older than 2 days.
+- **The sweeper.** The history job runs every 15 minutes (D12). It lists the project's Cloud Run executions (as `ls` does) and removes the registry entries of executions that have ended or no longer exist. It records `crashed` on their `/runs` ledgers, whose outstanding amounts stay counted, and writes an `infra_error` outcome. It also deletes the auth users of runs older than 2 days.
 
 ### 6.6 Terraform
 
@@ -558,7 +606,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - has no billing;
   - already has Firebase with unmarked RTDB data or a non-empty unmarked Firestore database;
   - has a Firestore location other than D4's.
-- **Changing owners.** Re-run `init --firebase` after changing the installation's owners or editors, so the FP's admin grants follow them. The guard lists a removed admin grant under "⚠ Review these first".
+- **Changing owners.** Re-run `init --firebase` after changing the GCP project's owners or editors, so the FP's admin grants follow them. The guard lists a removed admin grant under "⚠ Review these first".
 - **Local config:**
 
   ```yaml
@@ -584,7 +632,7 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
 - **Firebase Auth.** Custom-token sign-in is free at this volume (about 3,000 users a month, deleted after two days).
 - **History job.** About 3,000 short executions a month, a few dollars at most.
 - **Scheduler.** Two more jobs, $0.20 a month.
-- **Total:** under $10 a month, billed to the FP's billing account; the history job's executions bill to the installation's. A new project costs nothing by itself.
+- **Total:** under $10 a month, billed to the FP's billing account; the history job's executions bill to the project's GCP project. A new project costs nothing by itself.
 
 ---
 
@@ -616,7 +664,7 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
 | `budget prices [--json]` | The effective price table, with sources and check dates. Warns when a check date is over 90 days old | None |
 | `budget history --rollover \| --sweep` | The history job's modes (hidden) | History account |
 
-Caps must be finite, non-negative and at most $100,000, and a per-run cap can't exceed the daily cap in the same scope. An admin is someone Terraform granted `roles/firebasedatabase.admin` on the FP (§6.1): the installation's owners and editors, plus `terraform.budget_admins`.
+Caps must be finite, non-negative and at most $100,000, and a per-run cap can't exceed the daily cap in the same scope. An admin is someone Terraform granted `roles/firebasedatabase.admin` on the FP (§6.1): the GCP project's owners and editors, plus `terraform.budget_admins`.
 
 ## 9. History and `fugaro report`
 
@@ -746,6 +794,10 @@ The attacker is a compromised agent in run A. It runs as the same user as the ru
 
 Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
+**Prerequisite (before M9a, or as its first task)**
+
+0. Project profiles (§2.4): `projects/<name>.yaml`, `name:`, `--profile`, `FUGARO_PROFILE`, `fugaro use`, auto-selection from the checkout, refusing ambiguity, the project header on every command and in `--json`, and migrating `config.yaml`. **M**
+
 **M9a: gateway, pinned models, per-run cap, halted (no Firebase)**
 
 1. `internal/pricing`: the table, aliases, tiers and overrides. **M**
@@ -790,10 +842,10 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 |---|---|---|---|
 | D1 | Who writes budget state | **Per-run Firebase custom tokens, minted by the launcher, bounded by database rules.** No budget service; only a scheduled, admin-privileged history and sweeper job | Rules carry the security (§6.4) and need the emulator in CI. Launchers need `signJwt` on the signer. A compromised run can fill up to its per-run cap (denial of service). A budget service stays as later hardening |
 | D2 | How hard the caps are | **A guardrail now. An external gateway later** | A compromised agent can spend around the gateway. The backstops are provider-side (§11) |
-| D3 | Where Firebase lives | **A dedicated FP per installation (V1).** The user creates the project and links billing; `fugaro init --firebase` adopts it. V2 and V3 were rejected | "Global" is the installation. Cross-project grants onto the FP, a third Terraform state, and separate billing. Organization-wide aggregation comes later and read-only |
+| D3 | Where Firebase lives | **A dedicated FP per Fugaro project (V1).** The user creates the project and links billing; `fugaro init --firebase` adopts it. V2 and V3 were rejected | "Global" is the Fugaro project. Grants from the GCP project onto the FP, a third Terraform state, and separate billing. Organization-wide aggregation comes later and read-only |
 | D4 | Regions | **RTDB `us-central1`. Firestore `us-east5`** (listed as supported; `nam5` elsewhere) | RTDB can't be moved later. About 25 ms from `us-east5` jobs, which is negligible next to model latency |
 | D5 | The budget day | **UTC** | Epoch-day keys. No days of 23 or 25 hours |
-| D6 | Budget admins | **The installation's owners and editors, plus an optional `budget_admins` list.** Terraform grants them `firebasedatabase.admin` on the FP | Launchers, operators and job accounts can't change caps or switches. The owner list is discovered at `init`, so re-run `init --firebase` after changing owners |
+| D6 | Budget admins | **The GCP project's owners and editors, plus an optional `budget_admins` list.** Terraform grants them `firebasedatabase.admin` on the FP | Launchers, operators and job accounts can't change caps or switches. The owner list is discovered at `init`, so re-run `init --firebase` after changing owners |
 | D7 | What caps count | **Model dollars only** | Compute is reported, never capped |
 | D8 | Unpinned models | **Rejected. The stage fails** | No rewriting of request bodies. A misconfiguration shows up as `failed`, not `halted` |
 | D9 | A halt before the branch exists | **`halted`, no PR, exit 0** | Keeps policy stops out of the infrastructure-error signals |
@@ -826,9 +878,10 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
 ## 18. Suggested milestone split
 
+- **Prerequisite: project profiles** (§2.4, task 0), so every command names the project it acts on before caps and kill switches exist.
 - **M9a: gateway, pinned models, per-run cap, `halted` (no Firebase).** Exact accounting per call, pinned models per stage, no real key in the agent's environment, a per-run cap enforced in-process, the `oauth` token cap, and the new status. It is useful on its own.
-- **M9b: Firebase counters, daily caps, kill switches, `fugaro budget`.** The dedicated FP per installation (`init --firebase`), per-run tokens and rules, leases, observe mode, the registry and the sweeper.
-- **Later, read-only: organization-wide roll-up.** Each installation's history job exports `spendDaily` to one shared place. There is no shared live state.
+- **M9b: Firebase counters, daily caps, kill switches, `fugaro budget`.** The dedicated FP per Fugaro project (`init --firebase`), per-run tokens and rules, leases, observe mode, the registry and the sweeper.
+- **Later, read-only: organization-wide roll-up.** Each project's history job exports `spendDaily` to one shared place. There is no shared live state.
 - **M9c: `fugaro watch`.** Only needs M9b's data.
 - **M9d: Firestore history and `fugaro report`.** Independent of M9c.
 - **M9e (optional): the verify gate and structured findings.**
