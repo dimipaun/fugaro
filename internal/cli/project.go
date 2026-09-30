@@ -19,8 +19,8 @@ import (
 // its git toplevel and its fugaro.yaml's project:. Nil when dir is in no
 // checkout, or its toplevel holds no fugaro.yaml. The project: is read
 // leniently (config.ProjectOf), so a fugaro.yaml that doesn't parse still
-// says which project it belongs to; only YAML that doesn't decode at all
-// is an error.
+// says which project it belongs to; YAML that doesn't decode, or a
+// project: that isn't one string, is an error.
 func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error) {
 	args := []string{"rev-parse", "--show-toplevel"}
 	if dir != "" {
@@ -42,7 +42,7 @@ func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error
 	}
 	project, err := config.ProjectOf(data)
 	if err != nil {
-		return nil, userErr("%s doesn't decode, so it can't say which project it belongs to: %v", filepath.Join(root, "fugaro.yaml"), err)
+		return nil, userErr("%s can't say which project it belongs to: %v", filepath.Join(root, "fugaro.yaml"), err)
 	}
 	return &localcfg.Checkout{Root: root, Project: project}, nil
 }

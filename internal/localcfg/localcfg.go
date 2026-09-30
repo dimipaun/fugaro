@@ -204,7 +204,8 @@ func legacyPath(getenv func(string) string) string {
 
 // Projects are the names of the project configs, sorted: every
 // projects/<name>.yaml file whose <name> is a project name (backups,
-// directories and other files are not project configs).
+// directories and other files are not project configs; a symlink to a
+// regular file is one).
 func Projects(getenv func(string) string) ([]string, error) {
 	d, err := ProjectsDir(getenv)
 	if err != nil {
@@ -220,7 +221,16 @@ func Projects(getenv func(string) string) ([]string, error) {
 	var names []string
 	for _, e := range entries {
 		name, ok := strings.CutSuffix(e.Name(), ".yaml")
-		if !ok || !e.Type().IsRegular() || !config.ProjectNameRE.MatchString(name) {
+		if !ok || !config.ProjectNameRE.MatchString(name) {
+			continue
+		}
+		// A symlink counts when it leads to a regular file, as loading
+		// it would follow it.
+		if e.Type()&os.ModeSymlink != 0 {
+			if fi, err := os.Stat(filepath.Join(d, e.Name())); err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
+		} else if !e.Type().IsRegular() {
 			continue
 		}
 		names = append(names, name)

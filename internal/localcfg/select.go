@@ -65,10 +65,13 @@ func (e *SelectError) Error() string { return e.Msg }
 //
 // Two selectors naming different projects are refused (the checkout
 // against --config, --project or $FUGARO_PROJECT; --config against
-// --project), never resolved silently. $FUGARO_CONFIG and $FUGARO_PROJECT
-// are ignored with a note when something above them selects another
-// project; $FUGARO_CONFIG naming the selected project is that project's
-// config, and its file is used.
+// --project), never resolved silently. $FUGARO_PROJECT is ignored with a
+// note when --config or --project, outside a checkout, selects another
+// project; $FUGARO_CONFIG likewise when anything above it does.
+// $FUGARO_CONFIG naming the project a higher step selected is used only
+// when that project has no config under projects/; when it has one, that
+// one is used (with a note), and a $FUGARO_CONFIG disagreeing with it on
+// the GCP project or the runs bucket is refused.
 func Select(in SelectInput) (Selection, *Config, error) {
 	s := selector{in: in}
 	return s.run()
@@ -77,23 +80,39 @@ func Select(in SelectInput) (Selection, *Config, error) {
 type selector struct {
 	in    SelectInput
 	names []string
+	err   error
 	read  bool
 }
 
-func (s *selector) projects() []string {
+// projects are the project configs there are; an error reading their
+// directory is returned, never taken for "none".
+func (s *selector) projects() ([]string, error) {
 	if !s.read {
-		s.names, _ = Projects(s.in.Getenv)
+		s.names, s.err = Projects(s.in.Getenv)
+		if s.err != nil {
+			s.err = fmt.Errorf("listing the project configs: %w", s.err)
+		}
 		s.read = true
 	}
-	return s.names
+	return s.names, s.err
 }
 
-func (s *selector) refuse(list bool, format string, a ...any) error {
-	e := &SelectError{Msg: fmt.Sprintf(format, a...)}
-	if list {
-		e.Projects = s.projects()
+func (s *selector) refuse(format string, a ...any) error {
+	return &SelectError{Msg: fmt.Sprintf(format, a...)}
+}
+
+// refuseListing is refuse, listing the project configs at the end of the
+// message, and in the error.
+func (s *selector) refuseListing(format string, a ...any) error {
+	names, err := s.projects()
+	if err != nil {
+		return err
 	}
-	return e
+	list := "none yet"
+	if len(names) > 0 {
+		list = strings.Join(names, ", ")
+	}
+	return &SelectError{Msg: fmt.Sprintf(format, a...) + "; the projects are: " + list + " (the GCP project is --gcp-project)", Projects: names}
 }
 
 // where names a selector in a note or a refusal.
@@ -104,38 +123,55 @@ func where(from string) string {
 	return from
 }
 
+// nameRule is how a project name is spelled, for refusals.
+const nameRule = "1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit"
+
 func (s *selector) run() (Selection, *Config, error) {
 	in := s.in
 	co := in.Checkout
-	if co != nil && co.Project == "" {
-		return Selection{}, nil, s.refuse(false, "this checkout's fugaro.yaml has no `project:`; add `project: <name>` (fugaro config example shows it)")
+	// The checkout's own rules, whatever selects the project: it must name
+	// a project, and the environment can't say another.
+	if co != nil {
+		switch {
+		case co.Project == "":
+			return Selection{}, nil, s.refuse("this checkout's fugaro.yaml has no `project:`; add `project: <name>` (fugaro config example shows it)")
+		case !config.ProjectNameRE.MatchString(co.Project):
+			return Selection{}, nil, s.refuse("this checkout's fugaro.yaml names project %q, which is not a project name (%s)", co.Project, nameRule)
+		case in.EnvProject != "" && in.EnvProject != co.Project:
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; FUGARO_PROJECT says %s", co.Project, in.EnvProject)
+		case in.Project != "" && in.Project != co.Project:
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; --project says %s", co.Project, in.Project)
+		}
 	}
 	// 1. --config.
 	if in.Config != "" {
-		sel, c, err := s.file(in.Config, "--config")
-		if err != nil || c == nil {
-			return sel, c, err
+		c, err := Load(in.Config)
+		if errors.Is(err, ErrMissing) && in.Creating {
+			// fugaro init creates it, for the project the other
+			// selectors name, which the checkout already agreed with.
+			name := in.Project
+			if co != nil {
+				name = co.Project
+			}
+			return s.withNotes(Selection{Path: in.Config, Name: name, From: "--config"}, nil)
+		}
+		if err != nil {
+			return Selection{}, nil, fmt.Errorf("--config: %w", err)
 		}
 		switch {
 		case in.Project != "" && in.Project != c.Name:
-			return Selection{}, nil, s.refuse(false, "--config names project %s, but --project says %s", c.Name, in.Project)
+			return Selection{}, nil, s.refuse("--config names project %s, but --project says %s", c.Name, in.Project)
 		case co != nil && co.Project != c.Name:
-			return Selection{}, nil, s.refuse(false, "this checkout belongs to project %s; --config names project %s", co.Project, c.Name)
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; --config names project %s", co.Project, c.Name)
 		}
-		return s.withNotes(sel, c, false)
+		return s.withNotes(Selection{Path: in.Config, Name: c.Name, From: "--config"}, c)
 	}
 	// 2. --project.
 	if in.Project != "" {
-		if co != nil && co.Project != in.Project {
-			return Selection{}, nil, s.refuse(false, "this checkout belongs to project %s; --project says %s", co.Project, in.Project)
-		}
 		return s.named(in.Project, "--project")
 	}
 	// 3. The checkout.
 	if co != nil {
-		if in.EnvProject != "" && in.EnvProject != co.Project {
-			return Selection{}, nil, s.refuse(false, "this checkout belongs to project %s; FUGARO_PROJECT says %s", co.Project, in.EnvProject)
-		}
 		return s.named(co.Project, "checkout")
 	}
 	// 4. $FUGARO_PROJECT.
@@ -144,10 +180,21 @@ func (s *selector) run() (Selection, *Config, error) {
 	}
 	// 5. $FUGARO_CONFIG.
 	if in.EnvConfig != "" {
-		return s.file(in.EnvConfig, "FUGARO_CONFIG")
+		c, err := Load(in.EnvConfig)
+		if errors.Is(err, ErrMissing) && in.Creating {
+			return Selection{Path: in.EnvConfig, From: "FUGARO_CONFIG"}, nil, nil
+		}
+		if err != nil {
+			return Selection{}, nil, fmt.Errorf("FUGARO_CONFIG: %w", err)
+		}
+		return Selection{Path: in.EnvConfig, Name: c.Name, From: "FUGARO_CONFIG"}, c, nil
 	}
 	// 6. The only project config.
-	switch names := s.projects(); len(names) {
+	names, err := s.projects()
+	if err != nil {
+		return Selection{}, nil, err
+	}
+	switch len(names) {
 	case 1:
 		c, path, err := LoadProject(in.Getenv, names[0])
 		if err != nil {
@@ -164,78 +211,64 @@ func (s *selector) run() (Selection, *Config, error) {
 				msg += fmt.Sprintf(" (the old %s isn't read any more: see docs/design/m9-budget-and-dashboard.md §13.1)", p)
 			}
 		}
-		return Selection{}, nil, s.refuse(false, "%s", msg)
+		return Selection{}, nil, s.refuse("%s", msg)
 	default:
-		return Selection{}, nil, s.refuse(true, "several project configs (%s) and nothing selects one: pass --project <name>, set FUGARO_PROJECT, or run from a checkout whose fugaro.yaml names its project",
-			strings.Join(names, ", "))
+		return Selection{}, nil, &SelectError{Projects: names, Msg: fmt.Sprintf(
+			"several project configs (%s) and nothing selects one: pass --project <name>, set FUGARO_PROJECT, or run from a checkout whose fugaro.yaml names its project",
+			strings.Join(names, ", "))}
 	}
 }
 
-// file loads an explicit config file, which --config or $FUGARO_CONFIG
-// named. A missing one is fugaro init's to create.
-func (s *selector) file(path, from string) (Selection, *Config, error) {
-	c, err := Load(path)
-	if errors.Is(err, ErrMissing) && s.in.Creating {
-		return Selection{Path: path, From: from}, nil, nil
-	}
-	if err != nil {
-		return Selection{}, nil, fmt.Errorf("%s: %w", from, err)
-	}
-	return Selection{Path: path, Name: c.Name, From: from}, c, nil
-}
-
-// named selects project name's config, which from named.
+// named selects project name's config, which from named: its
+// projects/<name>.yaml, else a $FUGARO_CONFIG holding that project.
 func (s *selector) named(name, from string) (Selection, *Config, error) {
 	in := s.in
-	// $FUGARO_CONFIG naming this very project is its config.
-	if in.EnvConfig != "" {
-		if c, err := Load(in.EnvConfig); err == nil && c.Name == name {
-			return s.withNotes(Selection{Path: in.EnvConfig, Name: name, From: from}, c, true)
-		}
-	}
-	if !config.ProjectNameRE.MatchString(name) && from == "checkout" {
-		return Selection{}, nil, s.refuse(false, "this checkout's fugaro.yaml names project %q, which is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
-	}
 	if !config.ProjectNameRE.MatchString(name) {
-		return Selection{}, nil, s.refuse(true, "%s %q is not a project name; the projects are: %s (the GCP project is --gcp-project)",
-			where(from), name, s.list())
+		return Selection{}, nil, s.refuseListing("%s %q is not a project name (%s)", from, name, nameRule)
 	}
 	c, path, err := LoadProject(in.Getenv, name)
+	if errors.Is(err, ErrMissing) && in.EnvConfig != "" {
+		// No canonical config: a $FUGARO_CONFIG holding this very project
+		// is its config.
+		if ec, eerr := Load(in.EnvConfig); eerr == nil && ec.Name == name {
+			return s.withNotes(Selection{Path: in.EnvConfig, Name: name, From: from}, ec)
+		}
+	}
 	switch {
 	case errors.Is(err, ErrMissing) && in.Creating:
-		return s.withNotes(Selection{Path: path, Name: name, From: from}, nil, false)
+		return s.withNotes(Selection{Path: path, Name: name, From: from}, nil)
 	case errors.Is(err, ErrMissing) && from == "checkout":
-		return Selection{}, nil, s.refuse(false, "this checkout belongs to project %s; there is no project config for %s (run `fugaro init --config-only --gcp-project <id>`)", name, name)
+		return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s (run `fugaro init --config-only --gcp-project <id>`)", name, name)
 	case errors.Is(err, ErrMissing):
-		return Selection{}, nil, s.refuse(true, "%s: there is no project config for %s; the projects are: %s (the GCP project is --gcp-project)",
-			where(from), name, s.list())
+		return Selection{}, nil, s.refuseListing("%s names project %s, which has no project config", from, name)
 	case err != nil:
 		return Selection{}, nil, err
 	}
-	return s.withNotes(Selection{Path: path, Name: name, From: from}, c, false)
+	return s.withNotes(Selection{Path: path, Name: name, From: from}, c)
 }
 
-func (s *selector) list() string {
-	if names := s.projects(); len(names) > 0 {
-		return strings.Join(names, ", ")
-	}
-	return "none yet"
-}
-
-// withNotes adds a note for each ambient selector that names another
-// project than sel, which it lost to. usedEnvConfig: $FUGARO_CONFIG is the
-// selected file.
-func (s *selector) withNotes(sel Selection, c *Config, usedEnvConfig bool) (Selection, *Config, error) {
+// withNotes adds a note for each ambient selector that lost to sel's, or
+// refuses a $FUGARO_CONFIG that is another copy of sel's project config
+// disagreeing with it.
+func (s *selector) withNotes(sel Selection, c *Config) (Selection, *Config, error) {
 	in := s.in
 	if in.EnvProject != "" && in.EnvProject != sel.Name && sel.From != "FUGARO_PROJECT" {
 		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_PROJECT (%s): %s selects %s", in.EnvProject, where(sel.From), sel.Name))
 	}
-	if in.EnvConfig != "" && !usedEnvConfig && sel.From != "FUGARO_CONFIG" && in.EnvConfig != sel.Path {
-		what := "unreadable"
-		if ec, err := Load(in.EnvConfig); err == nil {
-			what = "project " + ec.Name
-		}
-		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_CONFIG (%s): %s selects %s", what, where(sel.From), sel.Name))
+	if in.EnvConfig == "" || in.EnvConfig == sel.Path {
+		return sel, c, nil
+	}
+	ec, err := Load(in.EnvConfig)
+	switch {
+	case err != nil:
+		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_CONFIG (unreadable: %v): %s selects %s", err, where(sel.From), sel.Name))
+	case ec.Name != sel.Name:
+		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_CONFIG (project %s): %s selects %s", ec.Name, where(sel.From), sel.Name))
+	case c != nil && (ec.GCPProject != c.GCPProject || ec.RunsBucketName() != c.RunsBucketName() || ec.BucketURL() != c.BucketURL()):
+		return Selection{}, nil, s.refuse("FUGARO_CONFIG %s and %s are both project %s's config, but disagree on its GCP project or runs bucket (%s, %s against %s, %s); remove or fix one",
+			in.EnvConfig, sel.Path, sel.Name, ec.GCPProject, ec.BucketURL(), c.GCPProject, c.BucketURL())
+	default:
+		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_CONFIG (project %s): project %s's config is %s", ec.Name, sel.Name, sel.Path))
 	}
 	return sel, c, nil
 }

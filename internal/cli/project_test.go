@@ -354,6 +354,21 @@ func TestInitInCheckoutWithoutConfig(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "this checkout belongs to project aurora; --name says borealis") {
 		t.Fatalf("--name borealis: exit %d, err %v", ExitCode(err), err)
 	}
+	// Creating at a --config path that doesn't exist yet: still the
+	// checkout's project, and never another --name.
+	missing := filepath.Join(t.TempDir(), "local.yaml")
+	o.name, o.cloud.config = "", missing
+	if lc, path, _, err = loadInitConfig(ctx, o); err != nil || lc.Name != "aurora" || path != missing {
+		t.Fatalf("--config %s: %+v at %s, %v", missing, lc, path, err)
+	}
+	o.name = "borealis"
+	if _, _, _, err = loadInitConfig(ctx, o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--name says borealis") {
+		t.Fatalf("--config %s --name borealis: exit %d, err %v", missing, ExitCode(err), err)
+	}
+	o.name, o.cloud.project = "", "borealis"
+	if _, _, _, err = loadInitConfig(ctx, o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--project says borealis") {
+		t.Fatalf("--config %s --project borealis: exit %d, err %v", missing, ExitCode(err), err)
+	}
 	// Every other command is refused there: it has no config to act on.
 	_, _, err = execute(t, "ls")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --config-only --gcp-project <id>") {
@@ -370,5 +385,31 @@ func TestValidateWithoutProjectConfig(t *testing.T) {
 	}
 	if out, _, err := execute(t, "config", "example"); err != nil || !strings.Contains(out, "version: 1") {
 		t.Fatalf("config example: %v", err)
+	}
+}
+
+// A selection's notes come after the header, which is always first.
+func TestSelectionNotesFollowHeader(t *testing.T) {
+	newCloudFixture(t)
+	writeProject(t, "borealis", "proj-5678")
+	t.Setenv("FUGARO_PROJECT", "borealis")
+	_, stderr, err := execute(t, "ls", "--project", "aurora")
+	lines := strings.Split(stderr, "\n")
+	if err != nil || len(lines) < 2 || lines[0] != projectHeader || lines[1] != "fugaro: note: ignoring FUGARO_PROJECT (borealis): --project selects aurora" {
+		t.Fatalf("ls: %v, stderr %q", err, stderr)
+	}
+
+	// fugaro init creating a project config announces it once it exists.
+	t.Setenv("FUGARO_PROJECT", "")
+	t.Setenv("FUGARO_CONFIG", writeProject(t, "cyan", "proj-9999"))
+	t.Chdir(gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: delta\n"))
+	var errw strings.Builder
+	o := &initOptions{cloud: cloudOptions{gcpProject: "proj-4321", region: "us-east5", stderr: func() io.Writer { return &errw }}}
+	if _, _, _, err := loadInitConfig(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	lines = strings.Split(errw.String(), "\n")
+	if len(lines) < 2 || lines[0] != "project: delta (GCP proj-4321)" || !strings.HasPrefix(lines[1], "fugaro: note: ignoring FUGARO_CONFIG (project cyan)") {
+		t.Fatalf("init: stderr %q", errw.String())
 	}
 }

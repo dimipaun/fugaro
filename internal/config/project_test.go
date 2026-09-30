@@ -29,7 +29,9 @@ func TestProjectOf(t *testing.T) {
 		"empty":   {"", ""},
 		// A config that fails to parse still says which project it belongs to.
 		"broken config": {"version: 7\nproject: aurora\ncolour: blue\nworkflows: 3\n", "aurora"},
-		"not a string":  {"version: 1\nproject: { name: aurora }\n", ""},
+		"quoted":        {"version: 1\nproject: \"aurora\"\n", "aurora"},
+		"null":          {"version: 1\nproject: null\n", ""},
+		"empty value":   {"version: 1\nproject:\n", ""},
 		"nested only":   {"version: 1\nworkflows:\n  web:\n    project: aurora\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -42,6 +44,12 @@ func TestProjectOf(t *testing.T) {
 	for name, data := range map[string]string{
 		"not yaml":      "version: 1\nproject: [aurora\n",
 		"not a mapping": "- aurora\n",
+		"a mapping":     "version: 1\nproject: { name: aurora }\n",
+		"a number":      "version: 1\nproject: 1234\n",
+		"a boolean":     "version: 1\nproject: true\n",
+		// Two project: keys: which one counts is not for a lenient read
+		// to guess.
+		"duplicate": "version: 1\nproject: aurora\ngit: {}\nproject: borealis\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got, err := ProjectOf([]byte(data)); err == nil {

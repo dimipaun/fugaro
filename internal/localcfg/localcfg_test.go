@@ -153,6 +153,12 @@ func TestProjectsListsYAMLOnly(t *testing.T) {
 	if names, err := Projects(get); err != nil || len(names) != 0 {
 		t.Fatalf("no directory: %v, %v", names, err)
 	}
+	// A projects path that can't be listed is an error, not "none".
+	notDir := t.TempDir()
+	writeFile(t, filepath.Join(notDir, "fugaro", "projects"), "")
+	if names, err := Projects(func(k string) string { return map[string]string{"XDG_CONFIG_HOME": notDir}[k] }); err == nil {
+		t.Fatalf("projects is a file: %v, nil", names)
+	}
 	dir := filepath.Join(xdg, "fugaro", "projects")
 	for _, f := range []string{"borealis.yaml", "aurora.yaml", "aurora.yaml.bak", "aurora.yaml.bak-20260930T000000Z", "notes.txt", "Bad_Name.yaml"} {
 		writeFile(t, filepath.Join(dir, f), sample)
@@ -161,8 +167,16 @@ func TestProjectsListsYAMLOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFile(t, filepath.Join(xdg, "fugaro", "config.yaml"), sample)
+	// A symlink to a project config is one; to a directory or nowhere, not.
+	elsewhere := filepath.Join(t.TempDir(), "cyan.yaml")
+	writeFile(t, elsewhere, sample)
+	for link, target := range map[string]string{"cyan.yaml": elsewhere, "dirlink.yaml": t.TempDir(), "dangling.yaml": filepath.Join(t.TempDir(), "gone")} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	names, err := Projects(get)
-	if err != nil || strings.Join(names, ",") != "aurora,borealis" {
+	if err != nil || strings.Join(names, ",") != "aurora,borealis,cyan" {
 		t.Fatalf("Projects = %v, %v", names, err)
 	}
 }

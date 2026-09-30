@@ -1,6 +1,7 @@
 package localcfg
 
 import (
+	"cmp"
 	"errors"
 	"path/filepath"
 	"slices"
@@ -28,13 +29,17 @@ func TestSelect(t *testing.T) {
 		checkout   *Checkout
 		envProject string // FUGARO_PROJECT
 		envConfig  string // FUGARO_CONFIG: the explicit file of this project
+		envGCP     string // FUGARO_CONFIG's gcp_project, when not the project's own
+		missing    bool   // the --config file doesn't exist yet
+		unreadable bool   // the projects directory can't be listed
 		creating   bool
 
 		want, from string
 		explicit   bool     // the selected path is the explicit file, not projects/<name>.yaml
 		noConfig   bool     // selected without a config (creating)
-		note       string   // a note that must be there
+		note       string   // a note must say this
 		errs       []string // the refusal must say each
+		other      string   // an error that isn't a refusal of the selectors must say this
 	}{
 		"--config alone":     {projects: both, config: "borealis", want: "borealis", from: "--config", explicit: true},
 		"--project alone":    {projects: both, project: "borealis", want: "borealis", from: "--project"},
@@ -83,7 +88,7 @@ func TestSelect(t *testing.T) {
 			errs: []string{"this checkout belongs to project aurora; --project says borealis"}},
 		"creating with none": {creating: true, noConfig: true},
 		"unknown --project": {projects: both, project: "cyan",
-			errs: []string{"no project config for cyan", "aurora, borealis", "--gcp-project"}},
+			errs: []string{"--project names project cyan, which has no project config", "the projects are: aurora, borealis", "--gcp-project"}},
 		"a GCP ID as --project": {projects: both, project: "aurora-gcp-1",
 			errs: []string{"aurora, borealis", "--gcp-project"}},
 		"not a name as --project": {projects: both, project: "My_Project",
@@ -91,7 +96,34 @@ func TestSelect(t *testing.T) {
 		"checkout naming no project name": {projects: both, checkout: &Checkout{Project: "Aurora"},
 			errs: []string{"this checkout's fugaro.yaml names project \"Aurora\", which is not a project name"}},
 		"unknown FUGARO_PROJECT": {projects: both, envProject: "cyan",
-			errs: []string{"FUGARO_PROJECT", "no project config for cyan", "aurora, borealis"}},
+			errs: []string{"FUGARO_PROJECT names project cyan, which has no project config", "aurora, borealis"}},
+		// fugaro init creating the file --config names: for the project the
+		// other selectors name, never one they disagree on.
+		"creating at a missing --config in a checkout": {checkout: &Checkout{Project: "aurora"}, config: "new", missing: true, creating: true,
+			want: "aurora", from: "--config", noConfig: true, explicit: true},
+		"creating at a missing --config with --project": {config: "new", missing: true, project: "borealis", creating: true,
+			want: "borealis", from: "--config", noConfig: true, explicit: true},
+		"creating at a missing --config, --project against the checkout": {checkout: &Checkout{Project: "aurora"}, config: "new", missing: true,
+			project: "borealis", creating: true, errs: []string{"this checkout belongs to project aurora; --project says borealis"}},
+		"a missing --config, not creating": {config: "new", missing: true, other: "no local fugaro config"},
+		// A FUGARO_CONFIG holding the selected project, beside its
+		// canonical config: the canonical one is used; a copy disagreeing
+		// with it is refused.
+		"FUGARO_CONFIG copies the canonical config": {projects: both, project: "aurora", envConfig: "aurora",
+			want: "aurora", from: "--project", note: "ignoring FUGARO_CONFIG (project aurora): project aurora's config is "},
+		"FUGARO_CONFIG disagrees with the canonical config": {projects: both, project: "aurora", envConfig: "aurora", envGCP: "stale-gcp-9",
+			errs: []string{"both project aurora's config", "stale-gcp-9", "aurora-gcp-1"}},
+		"FUGARO_CONFIG disagrees with the checkout's canonical config": {projects: both, checkout: &Checkout{Project: "aurora"}, envConfig: "aurora", envGCP: "stale-gcp-9",
+			errs: []string{"both project aurora's config"}},
+		// The environment can't name another project than the checkout's,
+		// even when a flag selects the checkout's.
+		"FUGARO_PROJECT against the checkout, under --project": {projects: both, checkout: &Checkout{Project: "aurora"}, project: "aurora", envProject: "borealis",
+			errs: []string{"this checkout belongs to project aurora; FUGARO_PROJECT says borealis"}},
+		"FUGARO_PROJECT against the checkout, under --config": {projects: both, checkout: &Checkout{Project: "aurora"}, config: "aurora", envProject: "borealis",
+			errs: []string{"this checkout belongs to project aurora; FUGARO_PROJECT says borealis"}},
+		"--config beats FUGARO_PROJECT outside a checkout": {projects: both, config: "aurora", envProject: "borealis",
+			want: "aurora", from: "--config", explicit: true, note: "ignoring FUGARO_PROJECT (borealis): --config selects aurora"},
+		"an unreadable projects directory": {unreadable: true, other: "listing the project configs"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			xdg, explicit := t.TempDir(), t.TempDir()
@@ -99,20 +131,39 @@ func TestSelect(t *testing.T) {
 			for _, p := range tc.projects {
 				writeFile(t, filepath.Join(xdg, "fugaro", "projects", p+".yaml"), projectYAML(p, gcpOf[p]))
 			}
+			if tc.unreadable {
+				// projects is a file, not a directory: listing it fails.
+				writeFile(t, filepath.Join(xdg, "fugaro", "projects"), "")
+			}
 			if tc.legacy {
 				writeFile(t, filepath.Join(xdg, "fugaro", "config.yaml"), sample)
 			}
-			file := func(p string) string {
+			file := func(p, gcp string, write bool) string {
 				if p == "" {
 					return ""
 				}
 				path := filepath.Join(explicit, p+".yaml")
-				writeFile(t, path, projectYAML(p, gcpOf[p]))
+				if write {
+					writeFile(t, path, projectYAML(p, cmp.Or(gcp, gcpOf[p])))
+				}
 				return path
 			}
-			in := SelectInput{Config: file(tc.config), Project: tc.project, Checkout: tc.checkout,
-				EnvProject: tc.envProject, EnvConfig: file(tc.envConfig), Creating: tc.creating, Getenv: getenv}
+			envConfig := file(tc.envConfig, tc.envGCP, true)
+			if tc.envConfig != "" && tc.envConfig == tc.config {
+				// A copy of its own, so FUGARO_CONFIG isn't the --config file.
+				envConfig = filepath.Join(t.TempDir(), tc.envConfig+".yaml")
+				writeFile(t, envConfig, projectYAML(tc.envConfig, cmp.Or(tc.envGCP, gcpOf[tc.envConfig])))
+			}
+			in := SelectInput{Config: file(tc.config, "", !tc.missing), Project: tc.project, Checkout: tc.checkout,
+				EnvProject: tc.envProject, EnvConfig: envConfig, Creating: tc.creating, Getenv: getenv}
 			sel, cfg, err := Select(in)
+			if tc.other != "" {
+				var se *SelectError
+				if err == nil || errors.As(err, &se) || !strings.Contains(err.Error(), tc.other) {
+					t.Fatalf("err = %v (%T), want one saying %q", err, err, tc.other)
+				}
+				return
+			}
 			if len(tc.errs) > 0 {
 				var se *SelectError
 				if !errors.As(err, &se) {
@@ -138,8 +189,12 @@ func TestSelect(t *testing.T) {
 				if cfg != nil {
 					t.Fatalf("config = %+v, want none (to be created)", cfg)
 				}
-				if tc.want != "" && sel.Path != filepath.Join(xdg, "fugaro", "projects", tc.want+".yaml") {
-					t.Fatalf("path = %s", sel.Path)
+				want := filepath.Join(xdg, "fugaro", "projects", tc.want+".yaml")
+				if tc.explicit {
+					want = filepath.Join(explicit, tc.config+".yaml")
+				}
+				if tc.want != "" && sel.Path != want {
+					t.Fatalf("path = %s, want %s", sel.Path, want)
 				}
 				return
 			}
@@ -153,8 +208,8 @@ func TestSelect(t *testing.T) {
 			if sel.Path != wantPath {
 				t.Fatalf("path = %s, want %s", sel.Path, wantPath)
 			}
-			if tc.note != "" && !slices.Contains(sel.Notes, tc.note) {
-				t.Fatalf("notes = %q, want %q", sel.Notes, tc.note)
+			if tc.note != "" && !slices.ContainsFunc(sel.Notes, func(n string) bool { return strings.Contains(n, tc.note) }) {
+				t.Fatalf("notes = %q, want one saying %q", sel.Notes, tc.note)
 			}
 			if tc.note == "" && len(sel.Notes) > 0 {
 				t.Fatalf("notes = %q, want none", sel.Notes)

@@ -370,15 +370,21 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	if err != nil {
 		return nil, "", nil, err
 	}
-	if err := announce(o.cloud, sel, lc); err != nil {
-		return nil, "", nil, err
+	if lc != nil {
+		// A config to be created is announced once it exists, below.
+		if err := announce(o.cloud, sel, lc); err != nil {
+			return nil, "", nil, err
+		}
 	}
 	name := sel.Name
 	if o.name != "" && name != "" && o.name != name {
-		if sel.From == "checkout" {
+		switch sel.From {
+		case "checkout":
 			return nil, "", nil, userErr("this checkout belongs to project %s; --name says %s", name, o.name)
+		case "only project config":
+			return nil, "", nil, userErr("the only project config is project %s's; --name says %s (renaming a project isn't supported; to set up another project, pass --project %s too)", name, o.name, o.name)
 		}
-		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported; to set up another project, pass --project %s too)", sel.From, name, o.name, o.name)
+		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported)", sel.From, name, o.name)
 	}
 	if lc != nil {
 		path = sel.Path
@@ -405,7 +411,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		if err != nil {
 			return nil, "", nil, userErr("--name/--gcp-project/--region: %v", err)
 		}
-		printProjectHeader(o.cloud.errw(), lc)
+		if err := announce(o.cloud, sel, lc); err != nil {
+			return nil, "", nil, err
+		}
 	}
 	if o.runsBucket != "" {
 		lc.RunsBucket = o.runsBucket
