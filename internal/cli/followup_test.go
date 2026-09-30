@@ -11,6 +11,7 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -157,7 +158,8 @@ func TestRunPRRefusesActiveRun(t *testing.T) {
 		FollowUp: &runstore.FollowUp{PR: 7, PreviousRun: rootID}})
 	n := len(f.run.Executions())
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), active) || !strings.Contains(err.Error(), "still") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), active) || !strings.Contains(err.Error(), "still") ||
+		!strings.Contains(err.Error(), "fugaro ls --pr 7 --repo acme/app") {
 		t.Fatalf("err = %v", err)
 	}
 	if len(f.run.Executions()) != n {
@@ -537,5 +539,31 @@ func TestRunPRRefsHeadsRefIsItsBranch(t *testing.T) {
 	}
 	if got := readSpec(t, f, fuID); got.Ref != "release" {
 		t.Fatalf("task ref = %q, want release", got.Ref)
+	}
+}
+
+// A malformed --run-id is refused before it names any object.
+func TestRunPRRefusesBadRunID(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	for _, id := range []string{"../x", "20260930-120000-F00D", "x"} {
+		wantRefused(t, f, "--run-id", "run", "--repo", "acme/app", "--pr", "7", "--run-id", id)
+	}
+}
+
+// A lock object too large for the runner to read would fail its launch:
+// the CLI refuses it and names the object.
+func TestRunPRRefusesOversizedLock(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	key := lock.Key(appSlug, "fugaro/"+rootID)
+	putBuildObject(t, f, key, []byte(strings.Repeat(" ", blobx.MaxReadBytes+1)))
+	wantRefused(t, f, key, "run", "--repo", "acme/app", "--pr", "7")
+}
+
+// ls --pr and run --pr look back over the same window.
+func TestPRLookbacksAgree(t *testing.T) {
+	if d, err := parseSince(prLookback); err != nil || d != followUpLookback {
+		t.Fatalf("ls --pr looks back %v (%v), run --pr %v", d, err, followUpLookback)
 	}
 }

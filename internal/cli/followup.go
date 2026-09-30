@@ -39,7 +39,7 @@ type prChain struct {
 // to leave out (a retry, or a repeated --run-id). Every refusal is a
 // userErr naming the run and what to do; a failed read is a remote error.
 // The runner checks the PR itself with the provider when it starts.
-func resolvePR(ctx context.Context, env *cloudEnv, slug string, pr int, exclude string, warn io.Writer) (*prChain, error) {
+func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, exclude string, warn io.Writer) (*prChain, error) {
 	if warn == nil {
 		warn = io.Discard
 	}
@@ -71,7 +71,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, slug string, pr int, exclude 
 		case runview.StatusError:
 			return nil, userErr("run %s on PR #%d can't be read (%s), so the PR's state is unknown; see fugaro diagnose %s", r.Run, pr, oneLine(r.Reason), r.Run)
 		case runview.StatusLaunching, runview.StatusPending, string(runstore.StatusRunning):
-			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro ls --pr %d) or cancel it", r.Run, pr, r.Status, pr)
+			return nil, userErr("run %s on PR #%d is still %s; wait for it to finish (fugaro ls --pr %d --repo %s) or cancel it", r.Run, pr, r.Status, pr, repo)
 		case runview.StatusUnlaunched:
 			fmt.Fprintf(warn, "warning: run %s on PR #%d never launched; leaving it out\n", oneLine(r.Run), pr)
 			continue
@@ -197,13 +197,19 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 }
 
 // checkBranchLock refuses a branch whose lock is live. An absent, expired or
-// unreadable lock, or one naming no run, is fine: the runner takes it over
-// (lock.Acquire).
+// unparsable lock, or one naming no run, is fine: the runner takes it over
+// (lock.Acquire). One too large to read is refused: the runner can't take
+// it over.
 func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time) error {
-	data, _, err := env.bucket.Read(ctx, lock.Key(slug, branch))
+	key := lock.Key(slug, branch)
+	data, _, err := env.bucket.Read(ctx, key)
 	switch {
-	case errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrTooLarge):
+	case errors.Is(err, blobx.ErrNotExist):
 		return nil
+	case errors.Is(err, blobx.ErrTooLarge):
+		// The runner can't read it either, and would fail at the lock
+		// after a container start.
+		return userErr("the lock object %s is larger than fugaro reads, so no run can take the branch; delete it, then launch again", key)
 	case err != nil:
 		return remote(err)
 	}
@@ -217,6 +223,10 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a
 // repeated --run-id names (reused true), else a new one after resolvePR.
 func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration, warn io.Writer) (slug string, spec *task.Spec, reused bool, err error) {
+	// Checked first: the ID names objects below.
+	if o.runID != "" && !task.ValidRunID(o.runID) {
+		return "", nil, false, userErr("--run-id %q must look like 20260926-221530-a1b2", o.runID)
+	}
 	repo := o.repo
 	if repo == "" {
 		if repo, err = originRepo(ctx); err != nil {
@@ -234,7 +244,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 			return slug, spec, spec != nil, err
 		}
 	}
-	c, err := resolvePR(ctx, env, slug, o.pr, o.runID, warn)
+	c, err := resolvePR(ctx, env, repo, slug, o.pr, o.runID, warn)
 	if err != nil {
 		return "", nil, false, err
 	}
@@ -317,7 +327,7 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 // with the run itself left out, and refuses it when another run has
 // updated the PR since it was made: it would act on stale context.
 func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, warn io.Writer) error {
-	c, err := resolvePR(ctx, env, slug, spec.PR, spec.RunID, warn)
+	c, err := resolvePR(ctx, env, spec.Repo, slug, spec.PR, spec.RunID, warn)
 	if err != nil {
 		return err
 	}

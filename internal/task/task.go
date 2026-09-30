@@ -28,6 +28,10 @@ var BatchRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,62}$`)
 // branch a follow-up may continue.
 var BranchRE = regexp.MustCompile(`^fugaro/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
+// ValidRunID reports whether id has a run ID's form, as Validate requires
+// of run_id: check it before id names any object.
+func ValidRunID(id string) bool { return runIDRE.MatchString(id) }
+
 // BranchRunID returns the run ID a Fugaro branch names (the run that
 // created it), and false for any other branch.
 func BranchRunID(branch string) (string, bool) {

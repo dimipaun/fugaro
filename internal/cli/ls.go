@@ -35,9 +35,10 @@ type lsOptions struct {
 	pr                       int // only the runs on this pull request, when set
 }
 
-// prLookback is ls --pr's default --since: the runs bucket's lifecycle
-// age, so every run the bucket still holds is listed.
-const prLookback = "90d"
+// prLookback is ls --pr's default --since: run --pr's window
+// (followUpLookback), the runs bucket's lifecycle age, so every run the
+// bucket still holds is listed.
+var prLookback = fmt.Sprintf("%dd", int(followUpLookback/(24*time.Hour)))
 
 // lsFilter selects the runs loadRows reads.
 type lsFilter struct {
