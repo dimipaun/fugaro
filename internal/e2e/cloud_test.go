@@ -750,6 +750,35 @@ func (r *cloudRig) comment(pr int, c gitprov.Comment) {
 	}
 }
 
+// resolve marks comment id on pull request pr resolved, as a person
+// resolving its review thread would.
+func (r *cloudRig) resolve(pr int, id string) {
+	r.t.Helper()
+	st, err := fake.Load(r.provider)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	for i := range st.PRs {
+		if st.PRs[i].Number != pr {
+			continue
+		}
+		for j := range st.PRs[i].Foreign {
+			if st.PRs[i].Foreign[j].ID == id {
+				st.PRs[i].Foreign[j].Resolved = true
+				data, err := json.MarshalIndent(st, "", "  ")
+				if err != nil {
+					r.t.Fatal(err)
+				}
+				if err := os.WriteFile(r.provider, data, 0o644); err != nil {
+					r.t.Fatal(err)
+				}
+				return
+			}
+		}
+	}
+	r.t.Fatalf("no comment %s on PR #%d", id, pr)
+}
+
 // readObject is run id's object name, or fails the test.
 func (r *cloudRig) readObject(id, name string) []byte {
 	r.t.Helper()
@@ -764,7 +793,10 @@ func (r *cloudRig) readObject(id, name string) []byte {
 
 // A first run opens PR 1; people comment on it; fugaro run --pr 1 follows
 // it up in a new execution, on the same branch and PR, resuming the first
-// run's session, acting on the trusted comments only.
+// run's session, acting on the trusted comments only; a second follow-up
+// continues the first follow-up, with only the comments made since.
+// followup.trusted is added to the base branch after the first run
+// branched, so only a read from the base branch can find it.
 func TestCloudFollowUpOnePR(t *testing.T) {
 	const (
 		aliceID   = "1234567" // trusted by the base branch's fugaro.yaml
@@ -774,8 +806,10 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	// quotes its model credential: followup.md must be redacted.
 	followImplement := `{"shell":"echo renamed > x.txt && git add -A && git commit -qm 'Rename x' && fugaro verify test; ` +
 		`echo \"Renamed x as asked. key $ANTHROPIC_API_KEY\" > \"$FUGARO_STATE_DIR/followup.md\"","text":"done, key ${ANTHROPIC_API_KEY}","cost":1}`
-	r := newCloudRig(t, `{"calls":[`+implementOK+`,`+reviewShip+`,`+followImplement+`,`+reviewShip+`]}`, 100*time.Millisecond, fixedWorkdir)
-	r.trust(aliceID)
+	followImplement2 := `{"shell":"echo tidy > y.txt && git add -A && git commit -qm 'Tidy y' && fugaro verify test; ` +
+		`echo 'Tidied y.' > \"$FUGARO_STATE_DIR/followup.md\"","text":"done","cost":1}`
+	r := newCloudRig(t, `{"calls":[`+implementOK+`,`+reviewShip+`,`+followImplement+`,`+reviewShip+`,`+followImplement2+`,`+reviewShip+`]}`,
+		100*time.Millisecond, fixedWorkdir)
 	first := newRunID(t)
 	if _, err := r.cli("run", "--repo", "acme/app", "--run-id", first, "Add a feature"); err != nil {
 		t.Fatal(err)
@@ -784,6 +818,7 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 		t.Fatalf("first run: %v", row)
 	}
 	r.wait() // one execution at a time in the fixed workdir
+	r.trust(aliceID)
 	before, err := fake.Load(r.provider)
 	if err != nil || len(before.PRs) != 1 {
 		t.Fatalf("provider = %+v, %v", before, err)
@@ -798,9 +833,9 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 	r.comment(1, gitprov.Comment{ID: "i1", Kind: gitprov.CommentInline, Author: "alice", AuthorID: aliceID, Collaborator: true,
 		Path: "feature.txt", Line: 1, Body: inlineBody, CreatedAt: now})
 	r.comment(1, gitprov.Comment{ID: "g1", Kind: gitprov.CommentGeneral, Author: "alice", AuthorID: aliceID, Collaborator: true,
-		Body: generalBody, CreatedAt: now.Add(time.Second)})
+		Body: generalBody, CreatedAt: now.Add(time.Millisecond)})
 	r.comment(1, gitprov.Comment{ID: "g2", Kind: gitprov.CommentGeneral, Author: "mallory", AuthorID: malloryID, Collaborator: true,
-		Body: malloryBody, CreatedAt: now.Add(2 * time.Second)})
+		Body: malloryBody, CreatedAt: now.Add(2 * time.Millisecond)})
 
 	second := newRunID(t)
 	for second == first {
@@ -897,11 +932,69 @@ func TestCloudFollowUpOnePR(t *testing.T) {
 		t.Fatalf("diagnose: %s, %v", diag, err)
 	}
 
+	// A second follow-up. alice resolves her inline thread and asks for more;
+	// the comments the first follow-up already saw are older than its
+	// fetched_at, so only the new one reaches the agent.
+	firstSnap := snap
+	r.resolve(1, "i1")
+	const moreBody = "Please also tidy y."
+	r.comment(1, gitprov.Comment{ID: "g3", Kind: gitprov.CommentGeneral, Author: "alice", AuthorID: aliceID, Collaborator: true,
+		Body: moreBody, CreatedAt: time.Now().UTC()})
+	third := newRunID(t)
+	for third == first || third == second {
+		third = newRunID(t)
+	}
+	out, err = r.cli("run", "--repo", "acme/app", "--pr", "1", "--run-id", third, "--json")
+	prev.PreviousRun = ""
+	if err != nil || json.Unmarshal([]byte(out), &prev) != nil || prev.PreviousRun != second || !strings.Contains(out, `"branch": "fugaro/`+first+`"`) {
+		t.Fatalf("second run --pr 1: %s, %v", out, err)
+	}
+	if row := r.waitStatus(third, "succeeded", "failed", "infra_error", "cancelled"); row["status"] != "succeeded" {
+		t.Fatalf("second follow-up: %v", row)
+	}
+	r.wait()
+	st, err = fake.Load(r.provider)
+	if err != nil || len(st.PRs) != 1 {
+		t.Fatalf("provider after the second follow-up = %+v, %v", st, err)
+	}
+	pr = st.PRs[0]
+	if pr.Spec.Title != before.PRs[0].Spec.Title || pr.Spec.Body != before.PRs[0].Spec.Body || pr.Spec.Branch != "fugaro/"+first {
+		t.Fatalf("the second follow-up changed the PR: %+v, was %+v", pr.Spec, before.PRs[0].Spec)
+	}
+	if len(pr.Comments) != 3 || !strings.Contains(pr.Comments[2], "### Fugaro run `"+third+"`") ||
+		!strings.Contains(pr.Comments[2], "`"+second+"`") || strings.Count(pr.Comments[2], gitprov.ReportMarker(third)) != 1 {
+		t.Fatalf("Fugaro's comments after the second follow-up = %q", pr.Comments)
+	}
+	var snap3 followup.Snapshot
+	if err := json.Unmarshal(r.readObject(third, "comments.json"), &snap3); err != nil {
+		t.Fatal(err)
+	}
+	if len(snap3.Comments) != 1 || snap3.Comments[0].Body != moreBody || !snap3.Since.Equal(firstSnap.Fetched) {
+		t.Fatalf("the second follow-up's comments.json = %+v (the first fetched at %s)", snap3, firstSnap.Fetched)
+	}
+	_, rec3 := r.launched(third)
+	if rec3.FollowUp == nil || rec3.FollowUp.Session != "resumed" || rec3.FollowUp.PreviousRun != second || rec3.Branch != "fugaro/"+first {
+		t.Fatalf("second follow-up record = %+v (follow_up %+v)", rec3, rec3.FollowUp)
+	}
+	// Its implement resumed, and its prompt quotes what the first follow-up
+	// said it did, redacted as stored.
+	calls = testutil.FakeClaudeCalls(t, r.claude)
+	if len(calls) != 6 || !slices.Contains(calls[4].Args, "--resume") || !strings.Contains(calls[4].Prompt, "Renamed x as asked. key [REDACTED]") {
+		t.Fatalf("the second follow-up's implement: %d calls; %+v", len(calls), calls[min(4, len(calls)-1)])
+	}
+	out, err = r.cli("ls", "--json", "--pr", "1")
+	if err != nil || json.Unmarshal([]byte(out), &ls) != nil || len(ls.Runs) != 3 || ls.Runs[0]["run_id"] != third ||
+		ls.Totals["runs"] != float64(3) || ls.Totals["model_usd"] != float64(4.5) {
+		t.Fatalf("ls --pr 1 after the second follow-up: %s, %v", out, err)
+	}
+
 	scanned := r.checkNoSecret()
-	for _, want := range []string{"comments.json", "followup.md", "session/session.json"} {
-		key := "runs/" + cloudSlug + "/" + second + "/" + want
-		if !slices.Contains(scanned, key) {
-			t.Errorf("the secret scan did not cover %s (scanned %v)", key, scanned)
+	for _, id := range []string{second, third} {
+		for _, want := range []string{"comments.json", "followup.md", "session/session.json"} {
+			key := "runs/" + cloudSlug + "/" + id + "/" + want
+			if !slices.Contains(scanned, key) {
+				t.Errorf("the secret scan did not cover %s (scanned %v)", key, scanned)
+			}
 		}
 	}
 	if !slices.ContainsFunc(scanned, func(k string) bool {

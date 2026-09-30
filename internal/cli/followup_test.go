@@ -463,3 +463,31 @@ func TestRunPRMaxParallel(t *testing.T) {
 		t.Fatalf("err = %v, %d executions", err, len(f.run.Executions()))
 	}
 }
+
+// A lock with no holder named is no lock a runner wrote: the runner takes
+// it over even before it expires, so the CLI doesn't refuse it either.
+func TestRunPRLockWithoutHolderIsFine(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	data, _ := json.Marshal(lock.Holder{ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7"); err != nil {
+		t.Fatalf("lock without a holder: %v", err)
+	}
+}
+
+// A run on the PR that never launched is left out, so its branch can't
+// make the PR's runs disagree.
+func TestRunPRUnlaunchedBranchIgnored(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	waiting := runIDAt(0, "000100", "bbbb")
+	seedSpec(t, f, followUpSpec(waiting, runIDAt(1, "090000", "cccc"), rootID, 7), false)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID)
+	if err != nil || !strings.Contains(errOut, "never launched") {
+		t.Fatalf("stderr %q, %v", errOut, err)
+	}
+	if got := readSpec(t, f, fuID); got.Branch != "fugaro/"+rootID {
+		t.Fatalf("task = %+v", got)
+	}
+}

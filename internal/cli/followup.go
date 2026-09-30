@@ -77,7 +77,9 @@ func resolvePR(ctx context.Context, env *cloudEnv, slug string, pr int, exclude 
 		}
 		runs = append(runs, r)
 	}
-	for _, r := range rows {
+	// Only launched runs vote on the branch: an unlaunched one is left out,
+	// as its warning says.
+	for _, r := range runs {
 		switch {
 		case r.Branch == "":
 		case c.Branch == "":
@@ -165,7 +167,8 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 }
 
 // checkBranchLock refuses a branch whose lock is live. An absent, expired or
-// unreadable lock is fine: the runner takes it over.
+// unreadable lock, or one naming no run, is fine: the runner takes it over
+// (lock.Acquire).
 func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time) error {
 	data, _, err := env.bucket.Read(ctx, lock.Key(slug, branch))
 	switch {
@@ -175,14 +178,10 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 		return remote(err)
 	}
 	var h lock.Holder
-	if json.Unmarshal(data, &h) != nil || !now.Before(h.ExpiresAt) {
+	if json.Unmarshal(data, &h) != nil || h.RunID == "" || !now.Before(h.ExpiresAt) {
 		return nil
 	}
-	who := "another run"
-	if h.RunID != "" {
-		who = "run " + oneLine(h.RunID)
-	}
-	return userErr("branch busy: %s holds it until %s; wait for it, or cancel it", who, h.ExpiresAt.UTC().Format(time.RFC3339))
+	return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a
@@ -252,6 +251,9 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	}
+	// Best effort: the local checkout's finalize_reserve, which may not be
+	// the base branch's; the runner validates the override against the
+	// config it reads from origin/<ref>.
 	if total > 0 {
 		if cfg := checkout(); cfg != nil {
 			if w, ok := cfg.Workflows[workflow]; ok && total <= w.Timeouts.FinalizeReserve.Duration {
