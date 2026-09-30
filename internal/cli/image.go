@@ -191,7 +191,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	// Every name comes from the repository's spec, as fugaro init --repo
 	// creates them: the build account, the registry (refused when its host
-	// names another project than --project's) and the provider
+	// names another GCP project than the config's own) and the provider
 	// credential. The spec's check job needs a base image, which this
 	// build doesn't use; the one the build uses stands in.
 	specLC := *lc
@@ -221,7 +221,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	case err != nil:
 		return remote(err)
 	case !exists:
-		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.Project, rs.RegistryPath, repo)
+		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {
@@ -242,7 +242,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		res = done
 		if waitErr != nil {
 			if o.asJSON {
-				if err := printBuildResult(cmd.OutOrStdout(), res); err != nil {
+				if err := printBuildResult(cmd.OutOrStdout(), lc.Name, res); err != nil {
 					return err
 				}
 			}
@@ -250,7 +250,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		}
 	}
 	if o.asJSON {
-		return printBuildResult(cmd.OutOrStdout(), res)
+		return printBuildResult(cmd.OutOrStdout(), lc.Name, res)
 	}
 	if o.noWait {
 		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
@@ -304,10 +304,14 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 	}, nil
 }
 
-func printBuildResult(w io.Writer, res gcp.BuildResult) error {
+// printBuildResult prints a Cloud Build build of project's as JSON.
+func printBuildResult(w io.Writer, project string, res gcp.BuildResult) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	return enc.Encode(res)
+	return enc.Encode(struct {
+		Project string `json:"project"`
+		gcp.BuildResult
+	}{project, res})
 }
 
 // originURL is the checkout's origin as an https URL without credentials,

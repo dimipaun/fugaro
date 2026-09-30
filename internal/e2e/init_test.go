@@ -37,6 +37,7 @@ import (
 
 const (
 	initRepoProject       = "proj-1234"
+	initRepoProjectName   = "aurora"
 	initRepoProjectNumber = 123456789012
 	initRepoRegion        = "us-east5"
 	initRepoRunsBucket    = "fugaro-runs-proj-1234"
@@ -125,8 +126,12 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 
 	// The local config fugaro init leaves: the bootstrap's, plus the
 	// installation's outputs.
-	r.cfg = filepath.Join(r.dir, "config.yaml")
-	r.cfgText = "version: 1\nproject: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
+	// It is the project's config, found by the checkout's project:.
+	r.cfg = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initRepoProjectName+".yaml")
+	if err := os.MkdirAll(filepath.Dir(r.cfg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.cfgText = "version: 1\nname: " + initRepoProjectName + "\ngcp_project: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
 		"registry: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "/fugaro\n" +
 		"registry_host: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "\n" +
 		"base_image: " + initRepoBaseImage + "\n" +
@@ -139,7 +144,8 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FUGARO_CONFIG", r.cfg)
+	t.Setenv("FUGARO_CONFIG", "")
+	t.Setenv("FUGARO_PROJECT", "")
 
 	// The checkout: the sandbox fixture, committed, with its origin.
 	r.checkout = filepath.Join(r.dir, "checkout")
@@ -155,6 +161,10 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 			t.Fatal(err)
 		}
 		files[e.Name()] = string(b)
+	}
+	if p, err := config.ProjectOf([]byte(files["fugaro.yaml"])); err != nil || p == "" {
+		// The checkout names its project, which selects the project config.
+		files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "version: 1\n", "version: 1\nproject: "+initRepoProjectName+"\n", 1)
 	}
 	if edit != nil {
 		files["fugaro.yaml"] = edit(files["fugaro.yaml"])
@@ -1265,7 +1275,7 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	if res.code != 0 {
 		t.Fatalf("want exit 0:\n%s", res)
 	}
-	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
 		t.Errorf("no build banner:\n%s", res)
 	}
 	if !strings.Contains(res.stdout, "warning: the first image build of acme/sandbox/web was not confirmed") {
@@ -1309,7 +1319,7 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 	if got := r.su.Enables(); !slices.Equal(got, []string{infra.ServiceResourceManager}) {
 		t.Fatalf("enables = %q, want only Resource Manager", got)
 	}
-	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): enables the Cloud Resource Manager API") {
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): enables the Cloud Resource Manager API") {
 		t.Errorf("no confirmation:\n%s", res)
 	}
 	if _, ok := r.imports(t, 0)["module.repo.google_cloud_scheduler_job.check[0]"]; ok {

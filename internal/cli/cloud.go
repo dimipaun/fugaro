@@ -28,17 +28,21 @@ import (
 
 // cloudOptions are the flags every command that talks to the cloud shares.
 type cloudOptions struct {
-	config, project, region string
+	// config is a project config file; project a project's name;
+	// gcpProject a GCP project ID, which must be the selected config's.
+	config, project, gcpProject, region string
 	// stderr is the command's stderr, for notes; nil is os.Stderr.
 	stderr func() io.Writer
 }
 
-// addCloudFlags registers --config, --project and --region on cmd.
+// addCloudFlags registers --config, --project (a Fugaro project name),
+// --gcp-project and --region on cmd.
 func addCloudFlags(cmd *cobra.Command, o *cloudOptions) {
 	f := cmd.Flags()
-	f.StringVar(&o.config, "config", "", "local config file (default $FUGARO_CONFIG, else $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml)")
-	f.StringVar(&o.project, "project", "", "GCP project (overrides the local config)")
-	f.StringVar(&o.region, "region", "", "GCP region (overrides the local config)")
+	f.StringVar(&o.config, "config", "", "the project config file to use (default: the project's $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml)")
+	f.StringVar(&o.project, "project", "", "the Fugaro project to act on (default: the checkout's fugaro.yaml project:, else $FUGARO_PROJECT, else the only project config)")
+	f.StringVar(&o.gcpProject, "gcp-project", "", "the GCP project ID; it must be the selected project config's gcp_project")
+	f.StringVar(&o.region, "region", "", "GCP region (overrides the project config's)")
 	o.stderr = cmd.ErrOrStderr
 }
 
@@ -128,38 +132,18 @@ func remote(err error) error {
 	return &ExitError{Code: ExitRemoteError, Err: err}
 }
 
-// openCloud loads the local config (applying --project and --region) and
-// connects to the backend and the runs bucket.
+// openCloud selects the project config (selectProject: the header goes to
+// stderr, --gcp-project and --region are applied) and connects to the
+// backend and the runs bucket.
 func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return nil, err
 	}
-	path := o.config
-	if path == "" {
-		var err error
-		if path, err = localcfg.Path(os.Getenv); err != nil {
-			return nil, userErr("%v", err)
-		}
-	}
-	lc, err := localcfg.Load(path)
+	_, lc, err := selectProject(ctx, o)
 	if err != nil {
-		return nil, userErr("%v", err)
+		return nil, err
 	}
-	if err := lc.Override(o.project, o.region); err != nil {
-		return nil, userErr("--project/--region: %v", err)
-	}
-	// The log view lives in the config's project: with --project naming
-	// another one, reading it would show that project's logs (or be
-	// refused), so the project's own logs are read instead.
-	if view := lc.LogView; view != "" && !strings.HasPrefix(view, "projects/"+lc.Project+"/") {
-		errw := io.Writer(os.Stderr)
-		if o.stderr != nil {
-			errw = o.stderr()
-		}
-		fmt.Fprintf(errw, "fugaro: note: the local config's log_view %s is not in project %s, so logs and diagnose read %s's project-level logs\n", view, lc.Project, lc.Project)
-		lc.LogView = ""
-	}
-	opts := gcp.Options{Project: lc.Project, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
+	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
 	be, err := gcp.New(ctx, opts)

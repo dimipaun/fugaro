@@ -20,7 +20,7 @@ func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
 	fr.Project, fr.Region = "proj-1234", "us-east5"
-	b, err := New(context.Background(), Options{Project: "proj-1234", Region: "us-east5",
+	b, err := New(context.Background(), Options{GCPProject: "proj-1234", Region: "us-east5",
 		Endpoints: Endpoints{Run: fr.URL + "/", Logging: fl.URL + "/", NoAuth: true}, LogSettle: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

@@ -69,7 +69,7 @@ func TestNewClientsNoAuthNeedsEveryEndpoint(t *testing.T) {
 // options are the Google API options of the fakes, with hc (when set) as
 // the HTTP client.
 func (f *cloud) options(hc *http.Client) gcp.Options {
-	return gcp.Options{Project: "proj-1234", Region: "us-east5", HTTPClient: hc, Endpoints: gcp.Endpoints{
+	return gcp.Options{GCPProject: "proj-1234", Region: "us-east5", HTTPClient: hc, Endpoints: gcp.Endpoints{
 		Run: f.run.URL + "/", SecretManager: f.sm.URL + "/", Logging: f.logs.URL + "/", NoAuth: true}}
 }
 

@@ -23,7 +23,7 @@ var _ backend.Backend = (*Backend)(nil)
 
 // location is projects/<p>/locations/<r>, the parent of the jobs.
 func (b *Backend) location() string {
-	return "projects/" + b.o.Project + "/locations/" + b.o.Region
+	return "projects/" + b.o.GCPProject + "/locations/" + b.o.Region
 }
 
 // JobPath is the full resource name of the Cloud Run job of (slug, workflow).
@@ -49,7 +49,7 @@ func (b *Backend) canonical(name string) (backend.ExecID, error) {
 	if err != nil {
 		return backend.ExecID{}, err
 	}
-	id.Project = b.o.Project
+	id.Project = b.o.GCPProject
 	return id, nil
 }
 

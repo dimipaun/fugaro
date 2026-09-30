@@ -42,9 +42,11 @@ import (
 // tests prove that the CLI and the runner agree on every name and object.
 
 const (
-	cloudProject  = "proj-1234"
-	cloudRegion   = "us-east5"
-	cloudWorkflow = "app"
+	cloudProject = "proj-1234"
+	// cloudProjectName is the Fugaro project, whose config the CLI selects.
+	cloudProjectName = "aurora"
+	cloudRegion      = "us-east5"
+	cloudWorkflow    = "app"
 	// cloudProvider is acme/app's git provider in the local config, and so
 	// part of its slug. The runner uses the fake provider (--provider fake);
 	// it never derives the slug, which arrives whole in FUGARO_RUN.
@@ -64,7 +66,8 @@ type cloudRig struct {
 	t          *testing.T
 	fugaro     string
 	claude     string
-	cfg        string
+	cfg        string // the project config, under xdgConfig
+	xdgConfig  string // the CLI's XDG_CONFIG_HOME
 	bucket     string // file:// URL
 	remote     string
 	provider   string
@@ -119,8 +122,14 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	}
 	r.provider = filepath.Join(dir, "provider.json")
 	r.bucket = "file://" + bucket
-	r.cfg = filepath.Join(dir, "config.yaml")
-	cfg := "version: 1\nproject: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
+	// The project config, in a config directory of the rig's own, where
+	// the CLI finds it as the only one.
+	r.xdgConfig = filepath.Join(dir, "xdg-config")
+	r.cfg = filepath.Join(r.xdgConfig, "fugaro", "projects", cloudProjectName+".yaml")
+	if err := os.MkdirAll(filepath.Dir(r.cfg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
 		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" +
 		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  no_auth: true\n" +
 		"repos:\n  acme/app: { provider: " + cloudProvider + ", base_branch: main, workflows: [" + cloudWorkflow + "] }\n"
@@ -275,7 +284,7 @@ func (r *cloudRig) cli(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.fugaro, args...)
-	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG"), "FUGARO_CONFIG="+r.cfg)
+	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG", "FUGARO_PROJECT", "XDG_CONFIG_HOME"), "XDG_CONFIG_HOME="+r.xdgConfig)
 	cmd.Dir = r.t.TempDir() // not a checkout
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer

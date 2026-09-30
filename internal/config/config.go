@@ -18,7 +18,11 @@ import (
 
 // Config is a parsed fugaro.yaml.
 type Config struct {
-	Version   int                 `yaml:"version"`
+	Version int `yaml:"version"`
+	// Project is the Fugaro project this repository belongs to
+	// (ProjectNameRE). It is decoded here so a checkout can name its
+	// project; the rules that require it come with the runner's check.
+	Project   string              `yaml:"project,omitempty"`
 	Git       Git                 `yaml:"git"`
 	Agent     Agent               `yaml:"agent"`
 	Workflows map[string]Workflow `yaml:"workflows"`

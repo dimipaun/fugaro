@@ -203,7 +203,7 @@ func TestReadLogsThroughView(t *testing.T) {
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
 	fr.Project, fr.Region = "proj-1234", "us-east5"
 	fl.Resource = testLogView // the fake fails the test on any other resourceNames
-	b, err := New(ctx, Options{Project: "proj-1234", Region: "us-east5", LogView: testLogView,
+	b, err := New(ctx, Options{GCPProject: "proj-1234", Region: "us-east5", LogView: testLogView,
 		Endpoints: Endpoints{Run: fr.URL + "/", Logging: fl.URL + "/", NoAuth: true}, LogSettle: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)

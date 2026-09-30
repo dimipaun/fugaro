@@ -262,10 +262,10 @@ func resolve(in Inputs) (*repoCtx, error) {
 	c.inst.RegistryHost = c.registryHost
 	// Role IDs from a stale output of another project's state would grant
 	// that project's roles, so they must be this project's.
-	prefix := "projects/" + lc.Project + "/roles/"
+	prefix := "projects/" + lc.GCPProject + "/roles/"
 	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter, c.inst.RoleIDs.TagMover} {
 		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
-			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.Project)
+			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.GCPProject)
 		}
 	}
 
@@ -342,14 +342,14 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 		host = output
 	}
 	if host == "" {
-		host = gcp.DefaultRegistryHost(lc.Region, lc.Project)
+		host = gcp.DefaultRegistryHost(lc.Region, lc.GCPProject)
 	}
 	m := registryHostRE.FindStringSubmatch(host)
 	if m == nil {
 		return "", userErr("registry host %q is not <region>-docker.pkg.dev/<project>", host)
 	}
-	if m[2] != lc.Project {
-		return "", userErr("registry host %s names project %s, not %s", host, m[2], lc.Project)
+	if m[2] != lc.GCPProject {
+		return "", userErr("registry host %s names project %s, not %s", host, m[2], lc.GCPProject)
 	}
 	return host, nil
 }
@@ -391,10 +391,10 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 			*v = d
 		}
 	}
-	role := func(id string) string { return "projects/" + lc.Project + "/roles/" + id }
+	role := func(id string) string { return "projects/" + lc.GCPProject + "/roles/" + id }
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
-	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.Project))
+	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
@@ -427,7 +427,7 @@ func (c *repoCtx) platformEnv() map[string]string {
 	return map[string]string{
 		"FUGARO_BUCKET":  "gs://" + c.bucket,
 		"FUGARO_BACKEND": backend.CloudRun,
-		"FUGARO_PROJECT": c.lc.Project,
+		"FUGARO_PROJECT": c.lc.GCPProject,
 		"FUGARO_REGION":  c.lc.Region,
 	}
 }
@@ -471,7 +471,7 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 
 		Name:                name,
 		Slug:                slug,
-		ServiceAccountEmail: serviceAccountEmail(saID, lc.Project),
+		ServiceAccountEmail: serviceAccountEmail(saID, lc.GCPProject),
 		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: name},
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
@@ -481,7 +481,7 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 	if ws.Vertex {
 		ws.Env["CLOUD_ML_REGION"] = lc.Region
-		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.Project
+		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.GCPProject
 	}
 	if c.appID != "" {
 		ws.Env[providers.EnvGitHubAppID] = c.appID
@@ -553,7 +553,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 		},
 		Workflows: map[string]WorkflowSpec{},
 
-		Project: lc.Project,
+		Project: lc.GCPProject,
 		Region:  lc.Region,
 		Installation: RepoInstallation{
 			RunsBucket:              c.bucket,
@@ -568,7 +568,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 		RepoURL:                  c.repoURL,
 		BaseBranch:               c.baseBranch,
 		GitUser:                  c.gitUser,
-		BuildServiceAccountEmail: serviceAccountEmail(buildID, lc.Project),
+		BuildServiceAccountEmail: serviceAccountEmail(buildID, lc.GCPProject),
 		RegistryPath:             c.registryPath(),
 	}
 	var checked []string

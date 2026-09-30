@@ -35,6 +35,7 @@ const (
 // Diagnosis is what diagnose gathers about one run. Every string in it
 // that comes from the run is redacted.
 type Diagnosis struct {
+	Project      string           `json:"project"` // the Fugaro project
 	Row          runview.Row      `json:"row"`
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
@@ -109,6 +110,7 @@ func runDiagnose(cmd *cobra.Command, o *diagnoseOptions, ref string) error {
 	if err != nil {
 		return err
 	}
+	d.Project = env.lc.Name
 	if err := printDiagnosis(cmd.OutOrStdout(), d, o.asJSON); err != nil {
 		return err
 	}

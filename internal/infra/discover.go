@@ -84,10 +84,10 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 		}
 		if o.Endpoints.NoAuth {
 			out = append(out, option.WithoutAuthentication())
-		} else if o.Project != "" {
+		} else if o.GCPProject != "" {
 			// User ADC has no project of its own, and some APIs refuse it
 			// without a quota project.
-			out = append(out, option.WithQuotaProject(o.Project))
+			out = append(out, option.WithQuotaProject(o.GCPProject))
 		}
 		if o.HTTPClient != nil {
 			out = append(out, option.WithHTTPClient(o.HTTPClient))

@@ -462,7 +462,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	host, _, _ := strings.Cut(s.Registry, "/"+e.project+"/")
 	lc := &localcfg.Config{
-		Version: 1, Project: e.project, Region: e.region, RunsBucket: e.bucket, BaseImage: s.BaseImage,
+		Version: 1, GCPProject: e.project, Region: e.region, RunsBucket: e.bucket, BaseImage: s.BaseImage,
 		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
 		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
 	}
@@ -477,7 +477,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 		return failAll(fmt.Errorf("the installed check job names the registry %s and build account %s, but this fugaro names %s and %s: %s",
 			s.Registry, s.BuildServiceAccount, rs.RegistryPath, rs.BuildServiceAccountEmail, notInstalledReason))
 	}
-	builder, err := gcp.NewBuilder(ctx, gcp.Options{Project: e.project, Region: e.region, Endpoints: checkEndpoints}, s.BuildRegion)
+	builder, err := gcp.NewBuilder(ctx, gcp.Options{GCPProject: e.project, Region: e.region, Endpoints: checkEndpoints}, s.BuildRegion)
 	if err != nil {
 		return failAll(err)
 	}
@@ -671,7 +671,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 		enc.SetIndent("", "  ")
 		ds := make([]result, len(results))
 		copy(ds, results)
-		if err := enc.Encode(map[string]any{"repo": repo, "head": tree.Head(), "decisions": ds}); err != nil {
+		if err := enc.Encode(map[string]any{"project": lc.Name, "repo": repo, "head": tree.Head(), "decisions": ds}); err != nil {
 			return err
 		}
 	} else {
@@ -720,6 +720,7 @@ func nonNil(ss []string) []string {
 
 // imageStatusOut is fugaro image status --json.
 type imageStatusOut struct {
+	Project   string           `json:"project"` // the Fugaro project
 	Workflows []imageStatusRow `json:"workflows"`
 }
 
@@ -771,7 +772,7 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 		return remote(err)
 	}
 	now := time.Now().UTC()
-	out := imageStatusOut{Workflows: []imageStatusRow{}}
+	out := imageStatusOut{Project: env.lc.Name, Workflows: []imageStatusRow{}}
 	for _, repo := range repos {
 		local, _ := env.localRepo(repo)
 		slug, err := env.repoSlug(repo, func() *config.Config { return checkoutConfig(ctx, repo) })

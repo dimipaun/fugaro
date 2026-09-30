@@ -21,6 +21,7 @@ import (
 )
 
 const (
+	initProjectName   = "aurora"
 	initProject       = "proj-1234"
 	initProjectNumber = 123456789012
 	initRunsBucket    = "fugaro-runs-proj-1234"
@@ -71,7 +72,8 @@ type initRig struct {
 }
 
 const initConfig = `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry: us-east5-docker.pkg.dev/proj-1234/fugaro
@@ -302,7 +304,7 @@ func TestInitRefusesWithoutConfirmation(t *testing.T) {
 	if len(r.ran(t, "plan")) != 1 || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): applies 0 imports, 1 creates, 0 updates") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): applies 0 imports, 1 creates, 0 updates") {
 		t.Errorf("no confirmation banner:\n%s", out)
 	}
 }
@@ -386,7 +388,7 @@ func TestInitCreatesStateBucketAfterConfirm(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): creates gs://"+initStateBucket+" in us-east5 with versioning, for Terraform state (cents a month)") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): creates gs://"+initStateBucket+" in us-east5 with versioning, for Terraform state (cents a month)") {
 		t.Errorf("no state bucket banner:\n%s", out)
 	}
 	if r.gcs.Inserted(initStateBucket) != nil || len(r.ran(t, "init")) != 0 {
@@ -421,7 +423,7 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
 		t.Errorf("no viewers banner:\n%s", out)
 	}
 	sets := policySets(r.gcs, initRunsBucket)
@@ -459,7 +461,7 @@ func TestInitRunsBucketViewersDeclined(t *testing.T) {
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "no\n"+initProject+"\n", "init")
+	out, _, err := executeStdin(t, "no\n"+initProjectName+"\n", "init")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,11 +472,11 @@ func TestInitRunsBucketViewersDeclined(t *testing.T) {
 		t.Errorf("the summary doesn't note the declined removal:\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
-		t.Fatal("the typed project ID did not confirm the apply")
+		t.Fatal("the typed project name did not confirm the apply")
 	}
 }
 
-// fakeTerminal makes init treat stdin as a terminal, where the project ID
+// fakeTerminal makes init treat stdin as a terminal, where the project name
 // is typed to confirm.
 func fakeTerminal(t *testing.T) {
 	t.Helper()
@@ -483,7 +485,7 @@ func fakeTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
-// At a terminal, anything but the project ID declines.
+// At a terminal, anything but the project name declines.
 func TestInitTypedConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
@@ -492,8 +494,8 @@ func TestInitTypedConfirmation(t *testing.T) {
 	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
-	if _, _, err := executeStdin(t, initProject+"\n", "init"); err != nil || len(r.ran(t, "apply")) != 1 {
-		t.Fatalf("typed project ID: %v, calls %q", err, r.calls(t))
+	if _, _, err := executeStdin(t, initProjectName+"\n", "init"); err != nil || len(r.ran(t, "apply")) != 1 {
+		t.Fatalf("typed project name: %v, calls %q", err, r.calls(t))
 	}
 }
 
@@ -684,7 +686,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 	if ExitCode(err) != ExitUserError || len(policySets(r.gcs, initStateBucket)) != 0 || len(r.ran(t, "init")) != 0 {
 		t.Fatalf("unconfirmed: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
 		t.Errorf("no banner:\n%s", out)
 	}
 	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
@@ -846,7 +848,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(r.root(), infra.ImportsFile)); strings.TrimSpace(string(b)) != "{}" {
 		t.Errorf("the rollback imports: %s", b)
 	}
-	if strings.Count(out, "⚠ CONFIRM (project proj-1234)") != 2 {
+	if strings.Count(out, "⚠ CONFIRM (project aurora, GCP project proj-1234)") != 2 {
 		t.Errorf("want two confirmations:\n%s", out)
 	}
 
@@ -981,16 +983,17 @@ func TestInitJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var res struct {
-		Project string           `json:"project"`
-		Applied bool             `json:"applied"`
-		Changes infra.PlanCounts `json:"changes"`
-		Outputs map[string]any   `json:"outputs"`
-		Config  string           `json:"config"`
+		Project    string           `json:"project"`
+		GCPProject string           `json:"gcp_project"`
+		Applied    bool             `json:"applied"`
+		Changes    infra.PlanCounts `json:"changes"`
+		Outputs    map[string]any   `json:"outputs"`
+		Config     string           `json:"config"`
 	}
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
-	if res.Project != initProject || !res.Applied || res.Changes.Creates != 1 || res.Outputs["log_view"] != initLogView || res.Config != r.cfg {
+	if res.Project != initProjectName || res.GCPProject != initProject || !res.Applied || res.Changes.Creates != 1 || res.Outputs["log_view"] != initLogView || res.Config != r.cfg {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -1031,7 +1034,7 @@ func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	if len(r.ran(t, "apply")) != 1 {
 		t.Fatal("no apply")
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
 		t.Errorf("no viewers banner after the apply:\n%s", out)
 	}
 	if hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {

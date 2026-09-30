@@ -11,6 +11,7 @@ import (
 )
 
 const cliMinimalYAML = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }

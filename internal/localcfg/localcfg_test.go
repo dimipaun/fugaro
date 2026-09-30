@@ -12,7 +12,8 @@ import (
 )
 
 const sample = `version: 1
-project: my-project
+name: aurora
+gcp_project: my-project
 region: us-central1
 runs_bucket: my-runs
 registry: us-central1-docker.pkg.dev/my-project/fugaro
@@ -31,10 +32,10 @@ func TestParseDefaults(t *testing.T) {
 	if r := c.Repos["acme/web"]; r.Provider != "github" || r.BaseBranch != "main" || len(r.Workflows) != 1 {
 		t.Fatalf("repo = %+v", r)
 	}
-	if err := c.Override("other-project", "europe-west1"); err != nil {
+	if err := c.Override("my-project", "europe-west1"); err != nil {
 		t.Fatal(err)
 	}
-	if c.Project != "other-project" || c.Region != "europe-west1" || c.BuildRegion() != "europe-west1" {
+	if c.GCPProject != "my-project" || c.Region != "europe-west1" || c.BuildRegion() != "europe-west1" {
 		t.Fatalf("override = %+v", c)
 	}
 }
@@ -42,7 +43,7 @@ func TestParseDefaults(t *testing.T) {
 func TestParseRejects(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
 		"unknown field": {sample + "colour: blue\n", "colour"},
-		"bad project":   {strings.Replace(sample, "my-project\n", "My_Project\n", 1), "project"},
+		"bad project":   {strings.Replace(sample, "my-project\n", "My_Project\n", 1), "gcp_project"},
 		"no bucket":     {strings.Replace(sample, "runs_bucket: my-runs\n", "", 1), "runs_bucket"},
 		"bad repo":      {sample + "  nope: { workflows: [web] }\n", "owner/name"},
 		"bad workflow":  {sample + "  acme/api: { workflows: [Web] }\n", "workflow"},
@@ -58,38 +59,127 @@ func TestParseRejects(t *testing.T) {
 	}
 }
 
-func TestPathAndLoad(t *testing.T) {
+func TestProjectPathsAndLoad(t *testing.T) {
 	dir := t.TempDir()
 	env := map[string]string{"HOME": dir}
 	get := func(k string) string { return env[k] }
-	p, err := Path(get)
-	if err != nil || p != filepath.Join(dir, ".config", "fugaro", "config.yaml") {
-		t.Fatalf("Path = %q, %v", p, err)
+	d, err := ProjectsDir(get)
+	if err != nil || d != filepath.Join(dir, ".config", "fugaro", "projects") {
+		t.Fatalf("ProjectsDir = %q, %v", d, err)
 	}
 	env["XDG_CONFIG_HOME"] = filepath.Join(dir, "xdg")
-	if p, _ = Path(get); p != filepath.Join(dir, "xdg", "fugaro", "config.yaml") {
-		t.Fatalf("XDG Path = %q", p)
+	p, err := ProjectPath(get, "aurora")
+	if err != nil || p != filepath.Join(dir, "xdg", "fugaro", "projects", "aurora.yaml") {
+		t.Fatalf("ProjectPath = %q, %v", p, err)
 	}
-	env["FUGARO_CONFIG"] = filepath.Join(dir, "explicit.yaml")
-	if p, _ = Path(get); p != env["FUGARO_CONFIG"] {
-		t.Fatalf("FUGARO_CONFIG Path = %q", p)
+	if _, err := ProjectPath(get, "../x"); err == nil {
+		t.Fatal("ProjectPath accepted a name that isn't a project name")
 	}
-	if _, err := Load(p); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "run fugaro init") {
+	if _, err := ProjectsDir(func(string) string { return "" }); err == nil {
+		t.Fatal("no HOME, no XDG_CONFIG_HOME: ProjectsDir succeeded")
+	}
+	if _, _, err := LoadProject(get, "aurora"); !errors.Is(err, ErrMissing) || !strings.Contains(err.Error(), "fugaro init") {
 		t.Fatalf("missing file: %v", err)
 	}
-	if err := os.WriteFile(p, []byte(sample), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	c, err := Load(p)
-	if err != nil || c.Project != "my-project" {
-		t.Fatalf("Load = %+v, %v", c, err)
+	writeFile(t, p, sample)
+	c, path, err := LoadProject(get, "aurora")
+	if err != nil || c.GCPProject != "my-project" || c.Name != "aurora" || path != p {
+		t.Fatalf("LoadProject = %+v, %q, %v", c, path, err)
 	}
 	data, err := c.Marshal()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if again, err := Parse(data); err != nil || again.RunsBucket != "my-runs" {
+	if again, err := Parse(data); err != nil || again.RunsBucket != "my-runs" || again.Name != "aurora" || again.GCPProject != "my-project" {
 		t.Fatalf("round trip = %+v, %v", again, err)
+	}
+}
+
+func writeFile(t *testing.T, path, data string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The local config of before project configs had project: for the GCP
+// project; it is refused, saying what to do.
+func TestParseOldProjectKey(t *testing.T) {
+	old := strings.Replace(strings.Replace(sample, "gcp_project:", "project:", 1), "name: aurora\n", "", 1)
+	_, err := Parse([]byte(old))
+	for _, want := range []string{"`project:` is now `gcp_project:`", "projects/<name>.yaml", "name: <name>", "§13.1"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want one saying %q", err, want)
+		}
+	}
+	// Even beside the new keys.
+	if _, err := Parse([]byte(sample + "project: my-project\n")); err == nil || !strings.Contains(err.Error(), "gcp_project") {
+		t.Fatalf("both keys: err = %v", err)
+	}
+}
+
+func TestParseRequiresName(t *testing.T) {
+	if _, err := Parse([]byte(strings.Replace(sample, "name: aurora\n", "", 1))); err == nil || !strings.Contains(err.Error(), "name") {
+		t.Fatalf("no name: err = %v", err)
+	}
+	for _, bad := range []string{"Aurora", "-a", "a_b", strings.Repeat("a", 41)} {
+		if _, err := Parse([]byte(strings.Replace(sample, "name: aurora", "name: "+bad, 1))); err == nil || !strings.Contains(err.Error(), "name") {
+			t.Errorf("name %q: err = %v", bad, err)
+		}
+	}
+	if _, err := Parse([]byte(strings.Replace(sample, "gcp_project: my-project\n", "", 1))); err == nil || !strings.Contains(err.Error(), "gcp_project") {
+		t.Fatalf("no gcp_project: err = %v", err)
+	}
+}
+
+// projects/<name>.yaml holds project <name>: a file whose name: says
+// another is refused, never loaded as either.
+func TestLoadProjectNameMustMatchFile(t *testing.T) {
+	xdg := t.TempDir()
+	get := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": xdg}[k] }
+	writeFile(t, filepath.Join(xdg, "fugaro", "projects", "borealis.yaml"), sample)
+	_, _, err := LoadProject(get, "borealis")
+	if err == nil || !strings.Contains(err.Error(), "aurora") || !strings.Contains(err.Error(), "borealis") {
+		t.Fatalf("err = %v, want one naming both", err)
+	}
+}
+
+func TestProjectsListsYAMLOnly(t *testing.T) {
+	xdg := t.TempDir()
+	get := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": xdg}[k] }
+	if names, err := Projects(get); err != nil || len(names) != 0 {
+		t.Fatalf("no directory: %v, %v", names, err)
+	}
+	dir := filepath.Join(xdg, "fugaro", "projects")
+	for _, f := range []string{"borealis.yaml", "aurora.yaml", "aurora.yaml.bak", "aurora.yaml.bak-20260930T000000Z", "notes.txt", "Bad_Name.yaml"} {
+		writeFile(t, filepath.Join(dir, f), sample)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub.yaml"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(xdg, "fugaro", "config.yaml"), sample)
+	names, err := Projects(get)
+	if err != nil || strings.Join(names, ",") != "aurora,borealis" {
+		t.Fatalf("Projects = %v, %v", names, err)
+	}
+}
+
+// --gcp-project names the GCP project a project config already names: it
+// can't point the config at another one.
+func TestOverrideGCPProjectMustAgree(t *testing.T) {
+	c, _ := Parse([]byte(sample))
+	err := c.Override("other-project", "")
+	if err == nil || !strings.Contains(err.Error(), "other-project") || !strings.Contains(err.Error(), "my-project") || c.GCPProject != "my-project" {
+		t.Fatalf("another GCP project: err = %v, config %s", err, c.GCPProject)
+	}
+	if err := c.Override("my-project", "us-east5"); err != nil || c.Region != "us-east5" {
+		t.Fatalf("the same GCP project: %v, region %s", err, c.Region)
+	}
+	if err := c.Override("", ""); err != nil {
+		t.Fatalf("no flags: %v", err)
 	}
 }
 

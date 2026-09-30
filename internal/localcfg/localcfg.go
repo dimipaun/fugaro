@@ -1,7 +1,8 @@
-// Package localcfg reads the local CLI config, ~/.config/fugaro/config.yaml
-// (design §5.4): the installation's project, region and buckets, and the
-// onboarded repositories. fugaro init writes it (configs M4's bootstrap
-// script wrote still load).
+// Package localcfg reads the project configs, the local CLI config of each
+// Fugaro project: $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml (else under
+// ~/.config), holding the project's name, its GCP project, region and
+// buckets, and the onboarded repositories (design §2.4 and §5.4). fugaro
+// init writes them; Select picks the one a command acts on.
 package localcfg
 
 import (
@@ -28,15 +29,19 @@ import (
 
 // Config is the local CLI config.
 type Config struct {
-	Version    int    `yaml:"version"`
-	Project    string `yaml:"project"`
+	Version int `yaml:"version"`
+	// Name is the Fugaro project (config.ProjectNameRE), which the file
+	// is named after.
+	Name string `yaml:"name"`
+	// GCPProject is the GCP project ID the installation lives in.
+	GCPProject string `yaml:"gcp_project"`
 	Region     string `yaml:"region"`
 	RunsBucket string `yaml:"runs_bucket"`
 	Bucket     string `yaml:"bucket_url,omitempty"`
 	// Registry is the legacy shared image registry, which is only read:
 	// to roll back, and to find the images existing jobs still run.
 	Registry string `yaml:"registry,omitempty"`
-	// RegistryHost is <region>-docker.pkg.dev/<project>, the prefix of
+	// RegistryHost is <region>-docker.pkg.dev/<gcp_project>, the prefix of
 	// every image registry of the installation.
 	RegistryHost string    `yaml:"registry_host,omitempty"`
 	BaseImage    string    `yaml:"base_image,omitempty"`
@@ -153,20 +158,93 @@ var (
 	emailRE        = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 )
 
-// Path is where the config lives: $FUGARO_CONFIG, else
-// $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml.
-func Path(getenv func(string) string) (string, error) {
-	if p := getenv("FUGARO_CONFIG"); p != "" {
-		return p, nil
-	}
+// configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
+func configDir(getenv func(string) string) (string, error) {
 	if x := getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "fugaro", "config.yaml"), nil
+		return filepath.Join(x, "fugaro"), nil
 	}
 	home := getenv("HOME")
 	if home == "" {
-		return "", errors.New("HOME is not set; set FUGARO_CONFIG to the local config file")
+		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set, so there is no project config directory; pass --config")
 	}
-	return filepath.Join(home, ".config", "fugaro", "config.yaml"), nil
+	return filepath.Join(home, ".config", "fugaro"), nil
+}
+
+// ProjectsDir is where the project configs live:
+// $XDG_CONFIG_HOME/fugaro/projects, else ~/.config/fugaro/projects.
+func ProjectsDir(getenv func(string) string) (string, error) {
+	d, err := configDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "projects"), nil
+}
+
+// ProjectPath is the project config of project name.
+func ProjectPath(getenv func(string) string, name string) (string, error) {
+	if !config.ProjectNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+	}
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name+".yaml"), nil
+}
+
+// legacyPath is where the local config lived before project configs; it
+// isn't read any more, only mentioned when there is no project config.
+func legacyPath(getenv func(string) string) string {
+	d, err := configDir(getenv)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "config.yaml")
+}
+
+// Projects are the names of the project configs, sorted: every
+// projects/<name>.yaml file whose <name> is a project name (backups,
+// directories and other files are not project configs).
+func Projects(getenv func(string) string) ([]string, error) {
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(d)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".yaml")
+		if !ok || !e.Type().IsRegular() || !config.ProjectNameRE.MatchString(name) {
+			continue
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// LoadProject loads project name's config and its path. The file must
+// hold name: <name>: a projects/<name>.yaml naming another project is
+// refused rather than loaded as either.
+func LoadProject(getenv func(string) string, name string) (*Config, string, error) {
+	path, err := ProjectPath(getenv, name)
+	if err != nil {
+		return nil, "", err
+	}
+	c, err := Load(path)
+	if err != nil {
+		return nil, path, err
+	}
+	if c.Name != name {
+		return nil, path, fmt.Errorf("%s holds project %s, not %s: a project config's name: must be its file's name", path, c.Name, name)
+	}
+	return c, path, nil
 }
 
 // Load reads and validates the config at path.
@@ -185,8 +263,18 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
+// oldProjectKey is the refusal of a local config of before project
+// configs, whose project: was the GCP project.
+const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
+	var top map[string]yaml.Node
+	if yaml.Unmarshal(data, &top) == nil {
+		if _, ok := top["project"]; ok {
+			return nil, errors.New(oldProjectKey)
+		}
+	}
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -208,13 +296,11 @@ func Parse(data []byte) (*Config, error) {
 	return &c, c.checkRegistryHostProject()
 }
 
-// checkRegistryHostProject refuses a registry_host naming another project
-// than the file's own. It is checked on the file only: --project may point
-// a read-only command such as ls at another project, where the registry
-// is not used.
+// checkRegistryHostProject refuses a registry_host naming another GCP
+// project than the file's own gcp_project: the file must be consistent.
 func (c *Config) checkRegistryHostProject() error {
-	if m := registryHostRE.FindStringSubmatch(c.RegistryHost); m != nil && m[1] != c.Project {
-		return fmt.Errorf("local config: registry_host %q names project %s, not %s", c.RegistryHost, m[1], c.Project)
+	if m := registryHostRE.FindStringSubmatch(c.RegistryHost); m != nil && m[1] != c.GCPProject {
+		return fmt.Errorf("local config: registry_host %q names GCP project %s, not %s", c.RegistryHost, m[1], c.GCPProject)
 	}
 	return nil
 }
@@ -225,8 +311,11 @@ func (c *Config) validate() error {
 	if c.Version != 1 {
 		bad("version must be 1")
 	}
-	if !projectRE.MatchString(c.Project) {
-		bad("project %q is not a GCP project ID", c.Project)
+	if !config.ProjectNameRE.MatchString(c.Name) {
+		bad("name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Name)
+	}
+	if !projectRE.MatchString(c.GCPProject) {
+		bad("gcp_project %q is not a GCP project ID", c.GCPProject)
 	}
 	if !regionRE.MatchString(c.Region) {
 		bad("region %q is not a region such as us-central1", c.Region)
@@ -310,11 +399,13 @@ func (c *Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// Override applies --project and --region when they are set, and
-// validates the result: both go into resource paths.
-func (c *Config) Override(project, region string) error {
-	if project != "" {
-		c.Project = project
+// Override applies --gcp-project and --region when they are set, and
+// validates the result: both go into resource paths. --gcp-project can
+// only agree with the config's gcp_project: pointing a project's config at
+// another GCP project would act on another project through it.
+func (c *Config) Override(gcpProject, region string) error {
+	if gcpProject != "" && gcpProject != c.GCPProject {
+		return fmt.Errorf("--gcp-project %s is not project %s's GCP project %s; a project config can't be pointed at another GCP project (select that project's config instead)", gcpProject, c.Name, c.GCPProject)
 	}
 	if region != "" {
 		c.Region = region

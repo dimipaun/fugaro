@@ -165,7 +165,7 @@ func TestLoadRowsOneRun(t *testing.T) {
 	id := "20200101-000000-dddd" // far outside any --since
 	e := seedRun(t, f, id, "", "someone@example.com", true)
 	f.run.SetState(e, backend.StateRunning)
-	env, err := openCloud(context.Background(), cloudOptions{})
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestLsWarnsInOtherCases(t *testing.T) {
 	testutil.IsolateGit(t)
 	testutil.Git(t, dir, "init", "--quiet", "-b", "main", dir)
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n" +
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n" +
 		"    commands: { build: make, test: make test }\n    rebuild: { check: \"off\" }\n"})
 	t.Chdir(dir)
 	if ws := warnings(); len(ws) != 0 {

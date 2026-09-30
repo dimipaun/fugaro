@@ -30,7 +30,8 @@ const goldenDir = "../../deploy/terraform/gcp/roots/repo/tests/testdata"
 // m4LocalConfig is the local config the M4 job spec was captured with
 // (testdata/README.md).
 const m4LocalConfig = `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry: us-east5-docker.pkg.dev/proj-1234/fugaro
@@ -122,7 +123,8 @@ workflows:
 func webappInputs(t *testing.T) Inputs {
 	t.Helper()
 	lc := parseLC(t, `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
@@ -196,7 +198,7 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 	golden, rows := readGolden(t)
 	str := func(k string) string { return golden[k].(string) }
 	for _, c := range []struct{ field, got, want string }{
-		{"project", in.LC.Project, str("project")},
+		{"project", in.LC.GCPProject, str("project")},
 		{"region", in.LC.Region, str("region")},
 		{"slug", ws.Slug, str("slug")},
 		{"job", ws.Job, str("job")},

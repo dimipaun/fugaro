@@ -554,7 +554,7 @@ func TestRunResolvesFromTheCheckout(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +700,7 @@ func TestRunProviderMismatch(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/app.git")
-	yaml := "version: 1\ngit: { provider: bitbucket }\nworkflows:\n  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: bitbucket }\nworkflows:\n  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +719,7 @@ func timeoutCheckout(t *testing.T, f *cloudFixture) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\n    timeouts: { total: 2h, finalize_reserve: 5m }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\n    timeouts: { total: 2h, finalize_reserve: 5m }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}

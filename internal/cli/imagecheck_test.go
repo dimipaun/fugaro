@@ -99,7 +99,7 @@ func (f *checkFixture) hookCheck(t *testing.T) {
 // checkLC is the local config the check job's spec is made from.
 func checkLC() *localcfg.Config {
 	return &localcfg.Config{
-		Version: 1, Project: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImage: checkBase,
+		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImage: checkBase,
 		Build: localcfg.Build{MachineType: "E2_HIGHCPU_8"},
 		Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket", BaseBranch: "main", Workflows: []string{"app"}}},
 	}

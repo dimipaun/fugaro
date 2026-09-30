@@ -139,10 +139,10 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 		return InstallationSpec{}, userErr("the runs bucket %s must be named fugaro-runs-…", bucket)
 	}
 	s := InstallationSpec{
-		Project:     lc.Project,
+		Project:     lc.GCPProject,
 		Region:      lc.Region,
 		RunsBucket:  bucket,
-		StateBucket: firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.Project),
+		StateBucket: firstOf(o.StateBucket, lc.Terraform.StateBucket, "fugaro-tfstate-"+lc.GCPProject),
 		Names: InstallationNames{
 			LegacyRegistry:            LegacyRegistry,
 			BaseRegistry:              BaseRegistry,

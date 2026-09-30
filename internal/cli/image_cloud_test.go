@@ -144,12 +144,12 @@ func TestImageBuildIgnoresDeprecatedBuildSA(t *testing.T) {
 }
 
 // TestImageBuildCloudRefusesOtherProjectRegistry: images are pushed with
-// the project's credentials, so a registry_host of the file's project
-// can't be used against --project of another one.
+// the project's credentials, so the project config can't be pointed at
+// another GCP project with --gcp-project.
 func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 	fb, f := cloudBuildCheckout(t, false)
 	f.appendConfig(t, "registry_host: us-east5-docker.pkg.dev/proj-1234\n")
-	_, _, err := execute(t, "image", "build", "--base", "b:1", "--project", "other-proj")
+	_, _, err := execute(t, "image", "build", "--base", "b:1", "--gcp-project", "other-proj")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-proj") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}

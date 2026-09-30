@@ -3,6 +3,7 @@ package cli
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,10 @@ type initOptions struct {
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
+	// name is the project's name, for a project config fugaro init
+	// creates; with one, it must be that config's name.
+	name string
+
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	githubAppID                   string
@@ -71,8 +76,10 @@ func newInitCmd() *cobra.Command {
 		Long: `init plans the installation's shared resources (the runs bucket, registries,
 custom roles, the scheduler account, log isolation, an optional budget) with
 Terraform, adopting what the bootstrap already made, and applies the plan it
-showed once you confirm by typing the project ID (or pass --yes). It then
-writes the local config from the installation's outputs.
+showed once you confirm by typing the project's name (or pass --yes). It
+then writes the project config from the installation's outputs. With no
+project config yet, --name, --gcp-project and --region say what to create:
+projects/<name>.yaml.
 
 It enables the Cloud Resource Manager API when it is disabled (init reads
 the project's number through it before Terraform can enable it), creates
@@ -111,9 +118,10 @@ Terraform's state, destroying nothing.`,
 	}
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
+	f.StringVar(&o.name, "name", "", "the project's name, for a project config fugaro init creates (with one, it must be its name)")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
-	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the local config's, else fugaro-runs-<project>)")
-	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the local config's, else fugaro-tfstate-<project>)")
+	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
+	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringVar(&o.baseImage, "base-image", "", "the base image the image checks run and builds start from, recorded in the local config")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
@@ -139,31 +147,34 @@ Terraform's state, destroying nothing.`,
 
 // initRun is one run of fugaro init.
 type initRun struct {
-	cmd     *cobra.Command
-	o       *initOptions
-	w       io.Writer // the human-readable account: stdout, or stderr with --json
-	in      *bufio.Reader
-	project string
-	res     initResult
+	cmd *cobra.Command
+	o   *initOptions
+	w   io.Writer // the human-readable account: stdout, or stderr with --json
+	in  *bufio.Reader
+	// gcpProject is the GCP project ID every Google call uses;
+	// projectName is the project's name, shown and typed to confirm.
+	gcpProject, projectName string
+	res                     initResult
 }
 
 // initResult is what --json prints.
 type initResult struct {
-	Project   string                     `json:"project"`
-	Repo      string                     `json:"repo,omitempty"`
-	Workdir   string                     `json:"workdir,omitempty"`
-	Changes   *infra.PlanCounts          `json:"changes,omitempty"`
-	Applied   bool                       `json:"applied"`
-	Outputs   *infra.InstallationOutputs `json:"outputs,omitempty"`
-	Config    string                     `json:"config,omitempty"`
-	Backup    string                     `json:"backup,omitempty"`
-	Forgotten bool                       `json:"forgotten,omitempty"`
-	Deleted   []string                   `json:"deleted,omitempty"`
-	Enabled   []string                   `json:"enabled,omitempty"`
-	Undelete  string                     `json:"undelete,omitempty"`
-	Builds    []string                   `json:"builds,omitempty"`
-	Missing   []string                   `json:"missing,omitempty"`
-	Warnings  []string                   `json:"warnings,omitempty"`
+	Project    string                     `json:"project"`
+	GCPProject string                     `json:"gcp_project"`
+	Repo       string                     `json:"repo,omitempty"`
+	Workdir    string                     `json:"workdir,omitempty"`
+	Changes    *infra.PlanCounts          `json:"changes,omitempty"`
+	Applied    bool                       `json:"applied"`
+	Outputs    *infra.InstallationOutputs `json:"outputs,omitempty"`
+	Config     string                     `json:"config,omitempty"`
+	Backup     string                     `json:"backup,omitempty"`
+	Forgotten  bool                       `json:"forgotten,omitempty"`
+	Deleted    []string                   `json:"deleted,omitempty"`
+	Enabled    []string                   `json:"enabled,omitempty"`
+	Undelete   string                     `json:"undelete,omitempty"`
+	Builds     []string                   `json:"builds,omitempty"`
+	Missing    []string                   `json:"missing,omitempty"`
+	Warnings   []string                   `json:"warnings,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -185,12 +196,11 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 			return err
 		}
 	}
-	lc, path, old, err := loadInitConfig(o)
+	lc, path, old, err := loadInitConfig(cmd.Context(), o)
 	if err != nil {
 		return err
 	}
-	r.project = lc.Project
-	r.res.Project = lc.Project
+	r.setProject(lc)
 	spec, err := installOptions(o, lc)
 	if err != nil {
 		return err
@@ -214,7 +224,7 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	}
 
 	// 2. The workdir, and terraform in it.
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.Project)
+	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -252,8 +262,8 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 // config's warnings once it passes.
 func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
 	for _, k := range projectEnvVars {
-		if v := os.Getenv(k); v != "" && v != lc.Project {
-			return "", userErr("%s is set to %s, not the installation's project %s; unset it (or set it to %s) and rerun", k, v, lc.Project, lc.Project)
+		if v := os.Getenv(k); v != "" && v != lc.GCPProject {
+			return "", userErr("%s is set to %s, not the installation's project %s; unset it (or set it to %s) and rerun", k, v, lc.GCPProject, lc.GCPProject)
 		}
 	}
 	if _, set := os.LookupEnv(impersonateEnv); set {
@@ -298,7 +308,7 @@ func (r *initRun) terraform(bin, dir, root string) (*infra.Workdir, *tf.TF, erro
 
 // gcpOptions are the Google API options of lc's project and endpoints.
 func gcpOptions(lc *localcfg.Config) gcp.Options {
-	return gcp.Options{Project: lc.Project, Region: lc.Region, Endpoints: gcp.Endpoints{
+	return gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager, CloudBuild: lc.Endpoints.CloudBuild,
 		NoAuth: lc.Endpoints.NoAuth}}
 }
@@ -337,36 +347,65 @@ func (o *initOptions) check() error {
 	return nil
 }
 
-// loadInitConfig loads the local config with --project, --region and
-// --runs-bucket applied; without one, it starts a new one from those flags.
-// old is the file's content (nil when there is none).
-func loadInitConfig(o *initOptions) (lc *localcfg.Config, path string, old []byte, err error) {
-	path = o.cloud.config
-	if path == "" {
-		if path, err = localcfg.Path(os.Getenv); err != nil {
-			return nil, "", nil, userErr("%v", err)
-		}
+// setProject records lc's project: its GCP ID for the Google calls, its
+// name for the account and the confirmations.
+func (r *initRun) setProject(lc *localcfg.Config) {
+	r.gcpProject, r.projectName = lc.GCPProject, lc.Name
+	r.res.Project, r.res.GCPProject = lc.Name, lc.GCPProject
+}
+
+// loadInitConfig selects the project config (localcfg.Select, as fugaro
+// init: a missing one is to be created) with --gcp-project, --region and
+// --runs-bucket applied; without one, it starts a new one,
+// projects/<name>.yaml, from --name (else the name that selected it, such
+// as the checkout's project:), --gcp-project and --region. With one,
+// --name must be its name. old is the file's content (nil when there is
+// none).
+func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, path string, old []byte, err error) {
+	co, err := checkoutProject(ctx, "")
+	if err != nil {
+		return nil, "", nil, err
 	}
-	old, err = os.ReadFile(path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		if o.cloud.project == "" || o.cloud.region == "" {
-			return nil, "", nil, userErr("there is no local config at %s yet: pass --project and --region", path)
+	sel, lc, err := selectFrom(o.cloud, co, true)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	if err := announce(o.cloud, sel, lc); err != nil {
+		return nil, "", nil, err
+	}
+	name := sel.Name
+	if o.name != "" && name != "" && o.name != name {
+		if sel.From == "checkout" {
+			return nil, "", nil, userErr("this checkout belongs to project %s; --name says %s", name, o.name)
 		}
-		old = nil
-		lc, err = localcfg.Parse([]byte("version: 1\nproject: " + o.cloud.project + "\nregion: " + o.cloud.region + "\nruns_bucket: fugaro-runs-" + o.cloud.project + "\n"))
+		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported; to set up another project, pass --project %s too)", sel.From, name, o.name, o.name)
+	}
+	if lc != nil {
+		path = sel.Path
+		if old, err = os.ReadFile(path); err != nil {
+			return nil, "", nil, userErr("reading the project config: %v", err)
+		}
+	} else {
+		name = cmp.Or(name, o.name)
+		switch {
+		case name == "":
+			return nil, "", nil, userErr("there is no project config yet: pass --name <name> (the project's name), --gcp-project and --region to create one")
+		case !config.ProjectNameRE.MatchString(name):
+			return nil, "", nil, userErr("--name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+		case o.cloud.gcpProject == "" || o.cloud.region == "":
+			return nil, "", nil, userErr("there is no project config for %s yet: pass --gcp-project and --region to create one", name)
+		}
+		if path = sel.Path; path == "" {
+			if path, err = localcfg.ProjectPath(os.Getenv, name); err != nil {
+				return nil, "", nil, userErr("%v", err)
+			}
+		}
+		gcpProject := o.cloud.gcpProject
+		lc, err = localcfg.Parse([]byte("version: 1\nname: " + name + "\ngcp_project: " + gcpProject + "\nregion: " + o.cloud.region + "\nruns_bucket: fugaro-runs-" + gcpProject + "\n"))
 		if err != nil {
-			return nil, "", nil, userErr("--project/--region: %v", err)
+			return nil, "", nil, userErr("--name/--gcp-project/--region: %v", err)
 		}
-	case err != nil:
-		return nil, "", nil, userErr("reading the local config: %v", err)
-	default:
-		if lc, err = localcfg.Load(path); err != nil {
-			return nil, "", nil, userErr("%v", err)
-		}
-		if err := lc.Override(o.cloud.project, o.cloud.region); err != nil {
-			return nil, "", nil, userErr("--project/--region: %v", err)
-		}
+		printProjectHeader(o.cloud.errw(), lc)
 	}
 	if o.runsBucket != "" {
 		lc.RunsBucket = o.runsBucket
@@ -423,7 +462,7 @@ func (r *initRun) warn(msg string) {
 }
 
 // confirm shows the ⚠ CONFIRM banner for what, and returns nil once it is
-// confirmed: by --yes, or by the project ID typed at a terminal. Without a
+// confirmed: by --yes, or by the project's name typed at a terminal. Without a
 // terminal and without --yes it refuses; undone says what that leaves.
 func (r *initRun) confirm(what, undone string) error {
 	ok, err := r.ask(what)
@@ -432,9 +471,9 @@ func (r *initRun) confirm(what, undone string) error {
 	}
 	if !ok {
 		if !stdinIsTerminal(r.cmd.InOrStdin()) {
-			return userErr("this step needs a confirmation: run fugaro init at a terminal and type the project ID, or pass --yes once you have read what it does; %s", undone)
+			return userErr("this step needs a confirmation: run fugaro init at a terminal and type the project's name, or pass --yes once you have read what it does; %s", undone)
 		}
-		return userErr("not confirmed (the project ID was not typed); %s", undone)
+		return userErr("not confirmed (the project's name was not typed); %s", undone)
 	}
 	return nil
 }
@@ -442,7 +481,7 @@ func (r *initRun) confirm(what, undone string) error {
 // ask shows the banner and reports whether the step is confirmed; without
 // a terminal and without --yes it isn't.
 func (r *initRun) ask(what string) (bool, error) {
-	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): %s\n", r.project, what)
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.o.yes {
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return true, nil
@@ -450,12 +489,12 @@ func (r *initRun) ask(what string) (bool, error) {
 	if !stdinIsTerminal(r.cmd.InOrStdin()) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "Type the project ID to confirm: ")
+	fmt.Fprintf(r.w, "Type %s to apply to GCP project %s: ", r.projectName, r.gcpProject)
 	line, err := r.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, userErr("reading the confirmation: %v", err)
 	}
-	return strings.TrimSpace(line) == r.project, nil
+	return strings.TrimSpace(line) == r.projectName, nil
 }
 
 // resourceManagerRetries are the waits between reads of the project's
@@ -472,33 +511,33 @@ var resourceManagerRetries = []time.Duration{5 * time.Second, 10 * time.Second, 
 // terminal and without --yes it refuses with the gcloud command that does
 // it. Once enabled, it rereads the number until the enable propagates.
 func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
-	_, err := infra.ProjectNumber(ctx, c, r.project)
+	_, err := infra.ProjectNumber(ctx, c, r.gcpProject)
 	var sd *infra.ServiceDisabledError
 	if !errors.As(err, &sd) {
 		return initErr(err)
 	}
-	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + r.project
+	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + r.gcpProject
 	ok, err := r.ask("enables the Cloud Resource Manager API (" + infra.ServiceResourceManager + "), which is disabled: fugaro init reads the project's number through it before Terraform enables it (free, and nothing fugaro does disables it again)")
 	if err != nil {
 		return err
 	}
 	if !ok {
-		why := "this step needs a confirmation: rerun at a terminal and type the project ID, or pass --yes once you have read what it does, or"
+		why := "this step needs a confirmation: rerun at a terminal and type the project's name, or pass --yes once you have read what it does, or"
 		if stdinIsTerminal(r.cmd.InOrStdin()) {
-			why = "not confirmed (the project ID was not typed):"
+			why = "not confirmed (the project's name was not typed):"
 		}
 		return userErr("%s enable the Cloud Resource Manager API yourself with %s and rerun; fugaro init needs it to read the project's number. Nothing was enabled or applied",
 			why, command)
 	}
 	stderr := r.cmd.ErrOrStderr()
-	fmt.Fprintf(stderr, "enabling %s in %s...\n", infra.ServiceResourceManager, r.project)
-	if err := infra.EnableService(ctx, c, r.project, infra.ServiceResourceManager); err != nil {
+	fmt.Fprintf(stderr, "enabling %s in %s...\n", infra.ServiceResourceManager, r.gcpProject)
+	if err := infra.EnableService(ctx, c, r.gcpProject, infra.ServiceResourceManager); err != nil {
 		return remote(fmt.Errorf("%w; enable it with %s and rerun", err, command))
 	}
 	r.res.Enabled = append(r.res.Enabled, infra.ServiceResourceManager)
-	fmt.Fprintf(r.w, "enabled %s in %s\n", infra.ServiceResourceManager, r.project)
+	fmt.Fprintf(r.w, "enabled %s in %s\n", infra.ServiceResourceManager, r.gcpProject)
 	for i := 0; ; i++ {
-		_, err := infra.ProjectNumber(ctx, c, r.project)
+		_, err := infra.ProjectNumber(ctx, c, r.gcpProject)
 		if !errors.As(err, &sd) {
 			return initErr(err)
 		}
@@ -513,7 +552,7 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 		case <-time.After(wait):
 		}
 	}
-	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.project))
+	return remote(fmt.Errorf("%s was enabled in %s but still answers SERVICE_DISABLED: the enable is still propagating; rerun fugaro init in a few minutes", infra.ServiceResourceManager, r.gcpProject))
 }
 
 // guard is tf.Guard, a refusal being exit 1 with a hint for each refused
@@ -1099,11 +1138,12 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if err != nil {
 		return err
 	}
-	lc, path, old, err := loadRepoConfig(o)
+	lc, path, old, err := loadRepoConfig(ctx, o, dir)
 	if err != nil {
 		return err
 	}
-	r.project, r.res.Project, r.res.Repo = lc.Project, lc.Project, repo
+	r.setProject(lc)
+	r.res.Repo = repo
 	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL, GitHubAppID: o.githubAppID}
 	var spec infra.RepoSpec
 	if !o.forget {
@@ -1141,7 +1181,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if err := r.resourceManager(ctx, c); err != nil {
 		return err
 	}
-	switch exists, err := infra.CheckStateBucket(ctx, c, lc.Project, inst.StateBucket); {
+	switch exists, err := infra.CheckStateBucket(ctx, c, lc.GCPProject, inst.StateBucket); {
 	case err != nil:
 		return initErr(err)
 	case !exists:
@@ -1151,7 +1191,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	rdir, err := infra.RepoWorkdir(os.Getenv, lc.Project, slug)
+	rdir, err := infra.RepoWorkdir(os.Getenv, lc.GCPProject, slug)
 	if err != nil {
 		return userErr("%v", err)
 	}
@@ -1251,29 +1291,28 @@ const printVarsUngated = "these values are ungated: no discovery or readiness ch
 const printVarsUngatedInstallation = "these values are ungated: no discovery ran, so adopt_legacy_registry is false even when the bootstrap's legacy registry exists and is ours " +
 	"(a plan from these values would try to create it, and nothing imports what exists); set up the installation through fugaro init, not by applying these"
 
-// loadRepoConfig loads the local config fugaro init wrote, with --project
-// and --region applied.
-func loadRepoConfig(o *initOptions) (lc *localcfg.Config, path string, old []byte, err error) {
-	path = o.cloud.config
-	if path == "" {
-		if path, err = localcfg.Path(os.Getenv); err != nil {
-			return nil, "", nil, userErr("%v", err)
-		}
+// loadRepoConfig selects the project config fugaro init wrote, with
+// --gcp-project and --region applied. The checkout that selects it is
+// dir's, the one being onboarded, not the working directory's.
+func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localcfg.Config, path string, old []byte, err error) {
+	co, err := checkoutProject(ctx, dir)
+	if err != nil {
+		return nil, "", nil, err
 	}
-	old, err = os.ReadFile(path)
-	switch {
-	case errors.Is(err, os.ErrNotExist):
-		return nil, "", nil, userErr("there is no local config at %s: run fugaro init first, which sets up the installation and writes it", path)
-	case err != nil:
-		return nil, "", nil, userErr("reading the local config: %v", err)
+	sel, lc, err := selectFrom(o.cloud, co, false)
+	if err != nil {
+		return nil, "", nil, err
 	}
-	if lc, err = localcfg.Load(path); err != nil {
-		return nil, "", nil, userErr("%v", err)
+	if err := announce(o.cloud, sel, lc); err != nil {
+		return nil, "", nil, err
 	}
-	if err := lc.Override(o.cloud.project, o.cloud.region); err != nil {
-		return nil, "", nil, userErr("--project/--region: %v", err)
+	if o.name != "" && o.name != lc.Name {
+		return nil, "", nil, userErr("--name %s is not the selected project %s", o.name, lc.Name)
 	}
-	return lc, path, old, nil
+	if old, err = os.ReadFile(sel.Path); err != nil {
+		return nil, "", nil, userErr("reading the project config: %v", err)
+	}
+	return lc, sel.Path, old, nil
 }
 
 // checkoutRepo returns the checkout's owner/name, from its origin.
@@ -1313,7 +1352,7 @@ func checkoutURL(ctx context.Context, root string) (string, error) {
 // state, which is the repository root's input. It runs in a workdir of its
 // own, leaving the installation's workdir as it is.
 func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, bin, stateBucket string) (infra.InstallationOutputs, error) {
-	dir, err := infra.InstallationOutputsWorkdir(os.Getenv, lc.Project)
+	dir, err := infra.InstallationOutputsWorkdir(os.Getenv, lc.GCPProject)
 	if err != nil {
 		return infra.InstallationOutputs{}, userErr("%v", err)
 	}

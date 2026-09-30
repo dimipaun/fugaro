@@ -170,17 +170,15 @@ func newLiveRig(t *testing.T, needToken bool) *liveRig {
 			t.Fatalf("%s=%s: the live tests run only against %s", v, p, liveProject)
 		}
 	}
-	path, err := localcfg.Path(os.Getenv)
+	sel, lc, err := localcfg.Select(localcfg.SelectInput{
+		EnvProject: os.Getenv("FUGARO_PROJECT"), EnvConfig: os.Getenv("FUGARO_CONFIG"), Getenv: os.Getenv})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the live tests need the real project config: %v", err)
 	}
-	lc, err := localcfg.Load(path)
-	if err != nil {
-		t.Fatalf("the live tests need the real local config: %v", err)
-	}
+	path := sel.Path
 	switch {
-	case lc.Project != liveProject:
-		t.Fatalf("local config %s names project %q; the live tests run only against %s", path, lc.Project, liveProject)
+	case lc.GCPProject != liveProject:
+		t.Fatalf("project config %s names GCP project %q; the live tests run only against %s", path, lc.GCPProject, liveProject)
 	case lc.Region == "":
 		t.Fatalf("local config %s names no region", path)
 	case lc.Bucket != "" && lc.Bucket != "gs://"+lc.RunsBucket:
@@ -213,7 +211,7 @@ func newLiveRig(t *testing.T, needToken bool) *liveRig {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.bucket.Close() })
-	if r.be, err = gcp.New(ctx, gcp.Options{Project: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }}); err != nil {
+	if r.be, err = gcp.New(ctx, gcp.Options{GCPProject: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }}); err != nil {
 		t.Fatal(err)
 	}
 	return r
@@ -1151,7 +1149,7 @@ func TestLiveGCPCleanup(t *testing.T) {
 			}
 		}
 	}
-	s, err := gcp.NewSecrets(ctx, gcp.Options{Project: liveProject, Region: liveRegion})
+	s, err := gcp.NewSecrets(ctx, gcp.Options{GCPProject: liveProject, Region: liveRegion})
 	if err != nil {
 		t.Fatal(err)
 	}

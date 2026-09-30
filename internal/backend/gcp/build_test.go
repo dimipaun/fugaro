@@ -272,7 +272,7 @@ func TestBuildRequestImageInRepoRegistry(t *testing.T) {
 func TestRegistryExists(t *testing.T) {
 	spec := buildSpec(t)
 	fb := gcpfake.NewBuild(t)
-	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	b, err := NewBuilder(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func checkEverySubstitution(t *testing.T, spec BuildSpec) {
 func TestSubmitAndWait(t *testing.T) {
 	spec := buildSpec(t)
 	fb := gcpfake.NewBuild(t)
-	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	b, err := NewBuilder(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestWaitRetriesTransientErrors(t *testing.T) {
 	waitRetries, waitRetryBase = 3, time.Millisecond
 	spec := buildSpec(t)
 	fb := gcpfake.NewBuild(t)
-	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	b, err := NewBuilder(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,7 +447,7 @@ func TestBuildRequestNoSmoke(t *testing.T) {
 func TestWaitReadsStepOutputDigest(t *testing.T) {
 	spec := buildSpec(t)
 	fb := gcpfake.NewBuild(t)
-	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	b, err := NewBuilder(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -500,7 +500,7 @@ func TestTemplateSalt(t *testing.T) {
 func TestBuilderStatus(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
 	fb.FailStep = "smoke"
-	b, err := NewBuilder(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
+	b, err := NewBuilder(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}, "us-east5")
 	if err != nil {
 		t.Fatal(err)
 	}

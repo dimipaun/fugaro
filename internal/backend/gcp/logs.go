@@ -136,7 +136,7 @@ func (b *Backend) readLogs(ctx context.Context, id backend.ExecID, from time.Tim
 	if !from.IsZero() {
 		filter += ` AND timestamp>=` + strconv.Quote(from.UTC().Format(time.RFC3339Nano))
 	}
-	resource := "projects/" + b.o.Project
+	resource := "projects/" + b.o.GCPProject
 	if b.o.LogView != "" {
 		resource = b.o.LogView
 	}
@@ -214,5 +214,5 @@ func (b *Backend) logURL(id backend.ExecID, given string, created time.Time) str
 		from := created.Add(-createdMargin).UTC()
 		u += ";timeRange=" + from.Format(time.RFC3339) + "/" + from.Add(logMaxSpan).Format(time.RFC3339)
 	}
-	return u + "?project=" + url.QueryEscape(b.o.Project)
+	return u + "?project=" + url.QueryEscape(b.o.GCPProject)
 }
