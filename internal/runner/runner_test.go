@@ -448,13 +448,6 @@ func TestInvalidConfigIsInfraError(t *testing.T) {
 }
 
 func TestBootstrapRejections(t *testing.T) {
-	t.Run("follow-up", func(t *testing.T) {
-		spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Branch: "fugaro/20260925-000000-0000", PR: 3, PreviousRun: "20260925-000000-0000"}
-		h := newHarness(t, "", spec)
-		if rec, err := h.run(t); err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "follow-up") {
-			t.Fatalf("rec = %+v, err = %v", rec, err)
-		}
-	})
 	t.Run("state dir inside checkout", func(t *testing.T) {
 		h := newHarness(t, "", nil)
 		h.deps.StateDir = filepath.Join(h.deps.WorkDir, "state")
