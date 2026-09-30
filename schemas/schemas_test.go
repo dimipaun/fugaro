@@ -333,3 +333,49 @@ func TestResultSchemaFollowUp(t *testing.T) {
 		t.Fatal(`schema accepts "session": "maybe"`)
 	}
 }
+
+// TestFugaroSchemaTrustedAgreesWithGo: the schema and fugaro agree on
+// followup.trusted, except for the cases listed in looser, which JSON
+// Schema can't check: it sees the YAML-resolved value, not its text, so a
+// number written with leading zeros, in hex or as a float, and a number
+// and a string of the same digits in one list, look valid to it. fugaro
+// (config.Parse) is the authority and refuses them.
+func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	doc := func(provider, trusted string) []byte {
+		return []byte("version: 1\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
+	}
+	looser := map[string]bool{
+		"github " + `[01234567]`:           true,
+		"github " + `[0x10]`:               true,
+		"github " + `[1e3]`:                true,
+		"github " + `[1.0]`:                true,
+		"github " + `[1234567, "1234567"]`: true,
+		// 10^20 has 21 digits; the schema's bound is 10^20 so that 20
+		// nines, which decode to 10^20 as a float, pass.
+		"github " + `[100000000000000000000]`: true,
+	}
+	cases := []struct{ provider, trusted string }{
+		{"github", `[]`}, {"github", `null`}, {"github", `[1234567]`}, {"github", `["1234567"]`},
+		{"github", `[99999999999999999999]`}, {"github", `[100000000000000000000]`}, {"github", `["99999999999999999999"]`}, {"github", `["123456789012345678901"]`},
+		{"github", `["01234567"]`}, {"github", `[01234567]`}, {"github", `[0]`}, {"github", `[-1]`}, {"github", `[0x10]`},
+		{"github", `[1e3]`}, {"github", `[1.0]`}, {"github", `["octocat"]`}, {"github", `[""]`},
+		{"github", `["1234567", "1234567"]`}, {"github", `[1234567, "1234567"]`},
+		{"bitbucket", `["557058:00000000-0000-0000-0000-000000000001"]`}, {"bitbucket", `["0123456789abcdef01234567"]`},
+		{"bitbucket", `["{00000000-0000-0000-0000-000000000001}"]`}, {"bitbucket", `["0123456789ABCDEF01234567"]`},
+		{"bitbucket", `["someone"]`}, {"bitbucket", `[1234567]`},
+	}
+	for _, c := range cases {
+		d := doc(c.provider, c.trusted)
+		_, problems := config.Parse(d)
+		goOK := len(problems) == 0
+		schemaOK := sch.Validate(yamlInstance(t, d)) == nil
+		key := c.provider + " " + c.trusted
+		switch {
+		case looser[key] && (goOK || !schemaOK):
+			t.Errorf("%s: a known difference changed: fugaro accepts it: %v, the schema: %v", key, goOK, schemaOK)
+		case !looser[key] && goOK != schemaOK:
+			t.Errorf("%s: fugaro accepts it: %v, the schema: %v (%v)", key, goOK, schemaOK, problems)
+		}
+	}
+}

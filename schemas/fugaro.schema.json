@@ -58,7 +58,7 @@
       "description": "Who can steer a follow-up run on a Fugaro pull request (design §4.4, §6.1).",
       "properties": {
         "trusted": {
-          "type": "array",
+          "type": ["array", "null"],
           "uniqueItems": true,
           "description": "Account IDs whose PR comments a follow-up acts on: on GitHub the numeric user ID, on Bitbucket the account_id.",
           "items": { "type": ["string", "integer"] }
@@ -78,7 +78,7 @@
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
       "anyOf": [
         { "type": "string", "pattern": "^[1-9][0-9]{0,19}$" },
-        { "type": "integer", "minimum": 1, "maximum": 99999999999999999999 }
+        { "type": "integer", "minimum": 1, "maximum": 100000000000000000000, "description": "A YAML number is compared by value, so its 20-digit bound is approximate; fugaro checks the text." }
       ]
     },
     "bitbucketAccountID": {
