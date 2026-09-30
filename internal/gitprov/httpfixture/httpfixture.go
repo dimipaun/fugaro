@@ -34,9 +34,13 @@ type Exchange struct {
 	Auth string `json:"auth,omitempty"`
 	// Request, when set, is the JSON body the request must carry,
 	// compared as JSON values rather than as text.
-	Request  json.RawMessage `json:"request,omitempty"`
-	Status   int             `json:"status"`
-	Response json.RawMessage `json:"response,omitempty"`
+	Request json.RawMessage `json:"request,omitempty"`
+	Status  int             `json:"status"`
+	// Header, when set, holds response headers, such as a Link to the
+	// next page. "{{server}}" in a value stands for the replaying
+	// server's URL, which a fixture can't know in advance.
+	Header   map[string]string `json:"header,omitempty"`
+	Response json.RawMessage   `json:"response,omitempty"`
 }
 
 // Server replays one fixture file.
@@ -89,6 +93,9 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		s.t.Errorf("exchange %d (%s %s): %s", s.next, e.Method, e.Path, msg)
 		http.Error(w, msg, http.StatusInternalServerError)
 		return
+	}
+	for k, v := range e.Header {
+		w.Header().Set(k, strings.ReplaceAll(v, "{{server}}", s.URL))
 	}
 	if len(e.Response) > 0 {
 		w.Header().Set("Content-Type", "application/json")

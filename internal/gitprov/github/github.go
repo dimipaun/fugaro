@@ -6,11 +6,14 @@ package github
 import (
 	"context"
 	"crypto/rsa"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov"
@@ -40,6 +43,9 @@ type Options struct {
 	BaseURL     string // REST API root; empty means DefaultBaseURL
 	HTTP        *http.Client
 	Now         func() time.Time // nil means time.Now
+	// Warn, when set, receives adapter warnings meant for the run's log,
+	// such as a failed lookup of the App's own identity. Nil drops them.
+	Warn func(string)
 }
 
 // Provider is a GitHub repository reached through a GitHub App.
@@ -48,6 +54,12 @@ type Provider struct {
 	api         *httpjson.Client // authenticated with the installation token
 	graphqlURL  string
 	tokens      *tokenSource
+	warn        func(string)
+
+	identityMu     sync.Mutex
+	identityDone   bool   // GET /app gave a definite answer
+	identityWarned bool   // a failed GET /app has been warned about
+	slug           string // the App's slug; "" until GET /app gives it
 }
 
 // New returns a Provider for o.
@@ -71,8 +83,11 @@ func New(o Options) (*Provider, error) {
 		"User-Agent":           {"fugaro"},
 	}
 	app := &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: appAuth(o.AppID, o.PrivateKey, o.Now)}
+	if o.Warn == nil {
+		o.Warn = func(string) {}
+	}
 	p := &Provider{
-		owner: o.Owner, repo: o.Repo, graphqlURL: graphqlURL(o.BaseURL),
+		owner: o.Owner, repo: o.Repo, graphqlURL: graphqlURL(o.BaseURL), warn: o.Warn,
 		tokens: &tokenSource{app: app, owner: o.Owner, repo: o.Repo, now: o.Now},
 	}
 	p.api = &httpjson.Client{BaseURL: o.BaseURL, HTTP: o.HTTP, Header: header, Auth: func(ctx context.Context) (string, error) {
@@ -110,7 +125,7 @@ func (p *Provider) repoPath(suffix string) string {
 func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	if spec.Number != 0 {
 		// An update by number must never fall through to find-or-create.
-		return gitprov.PR{}, errFollowUpReads
+		return p.updateByNumber(ctx, spec)
 	}
 	existing, err := p.find(ctx, spec.Branch)
 	if err != nil {
@@ -263,12 +278,19 @@ func draftUnsupportedGraphQL(err error) bool {
 }
 
 func (p *Provider) graphql(ctx context.Context, query, id string) error {
+	return p.graphqlDo(ctx, query, map[string]any{"id": id}, nil)
+}
+
+// graphqlDo runs one GraphQL request, and decodes its data into out
+// unless out is nil. GraphQL errors, which come with HTTP 200, are errors.
+func (p *Provider) graphqlDo(ctx context.Context, query string, vars map[string]any, out any) error {
 	var resp struct {
+		Data   json.RawMessage `json:"data"`
 		Errors []struct {
 			Message string `json:"message"`
 		} `json:"errors"`
 	}
-	in := map[string]any{"query": query, "variables": map[string]string{"id": id}}
+	in := map[string]any{"query": query, "variables": vars}
 	if err := p.api.Do(ctx, "POST", p.graphqlURL, in, &resp); err != nil {
 		return err
 	}
@@ -278,6 +300,11 @@ func (p *Provider) graphql(ctx context.Context, query, id string) error {
 			msgs[i] = e.Message
 		}
 		return errors.New("graphql: " + strings.Join(msgs, "; "))
+	}
+	if out != nil {
+		if err := json.Unmarshal(resp.Data, out); err != nil {
+			return fmt.Errorf("graphql: decoding the response: %w", err)
+		}
 	}
 	return nil
 }
@@ -322,21 +349,106 @@ func (p *Provider) GitAuth(ctx context.Context, minValid time.Duration) (gitprov
 	return gitprov.GitAuth{Username: gitUsername, Token: tok, Expires: exp, Env: map[string]string{"GH_TOKEN": tok}}, nil
 }
 
-// errFollowUpReads stands in for the follow-up reads, and for EnsurePR by
-// number, until they are implemented against the github API.
-var errFollowUpReads = errors.New("github: not implemented until M6 task 3")
-
 // Repository implements gitprov.Provider.
-func (p *Provider) Repository(context.Context) (gitprov.RepoInfo, error) {
-	return gitprov.RepoInfo{}, errFollowUpReads
+func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
+	var repo struct {
+		Private *bool `json:"private"`
+	}
+	if err := p.api.Do(ctx, "GET", p.repoPath(""), nil, &repo); err != nil {
+		return gitprov.RepoInfo{}, fmt.Errorf("reading the repository: %w", err)
+	}
+	if repo.Private == nil {
+		// Never guess: a public repository taken for private would let a
+		// follow-up run there without allow_public.
+		return gitprov.RepoInfo{}, errors.New("reading the repository: the response has no private field")
+	}
+	return gitprov.RepoInfo{Private: *repo.Private}, nil
+}
+
+// restUser is a comment's or pull request's author in the REST API; null
+// for a deleted account.
+type restUser struct {
+	Login string `json:"login"`
+	ID    int64  `json:"id"`
+}
+
+func (u *restUser) id() string {
+	if u == nil || u.ID == 0 {
+		return ""
+	}
+	return strconv.FormatInt(u.ID, 10)
+}
+
+func (u *restUser) login() string {
+	if u == nil {
+		return ""
+	}
+	return u.Login
+}
+
+// pullDetail is GET /repos/{owner}/{repo}/pulls/{number}.
+type pullDetail struct {
+	pull
+	State  string    `json:"state"` // open or closed
+	Merged bool      `json:"merged"`
+	User   *restUser `json:"user"`
+	Head   struct {
+		Ref  string `json:"ref"`
+		SHA  string `json:"sha"`
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"` // null when the head repository (a fork) was deleted
+	} `json:"head"`
+}
+
+func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov.PRInfo, error) {
+	if number <= 0 {
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: not a pull request number", number)
+	}
+	var d pullDetail
+	if err := p.api.Do(ctx, "GET", p.repoPath(fmt.Sprintf("/pulls/%d", number)), nil, &d); err != nil {
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: %w", number, err)
+	}
+	info := gitprov.PRInfo{Number: d.Number, URL: d.HTMLURL, Draft: d.Draft, AuthorID: d.User.id(),
+		SourceBranch: d.Head.Ref, HeadSHA: d.Head.SHA}
+	if d.Head.Repo != nil {
+		info.SourceRepo = d.Head.Repo.FullName
+	}
+	switch {
+	case d.State == "open":
+		info.State = gitprov.PROpen
+	case d.State == "closed" && d.Merged:
+		info.State = gitprov.PRMerged
+	case d.State == "closed":
+		info.State = gitprov.PRClosed
+	default:
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: unknown state %q", number, d.State)
+	}
+	return d, info, nil
 }
 
 // PullRequest implements gitprov.Provider.
-func (p *Provider) PullRequest(context.Context, int) (gitprov.PRInfo, error) {
-	return gitprov.PRInfo{}, errFollowUpReads
+func (p *Provider) PullRequest(ctx context.Context, number int) (gitprov.PRInfo, error) {
+	_, info, err := p.getPull(ctx, number)
+	return info, err
 }
 
-// Comments implements gitprov.Provider.
-func (p *Provider) Comments(context.Context, int) ([]gitprov.Comment, error) {
-	return nil, errFollowUpReads
+// updateByNumber is EnsurePR for spec.Number: it reads that pull request
+// and changes its draft state only when it is still open on spec.Branch.
+// It never looks a pull request up by branch, and never creates one.
+// It doesn't check the head repository (SourceRepo): the runner checks it
+// at bootstrap, and a pull request's head repository can't change after.
+func (p *Provider) updateByNumber(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	d, info, err := p.getPull(ctx, spec.Number)
+	if err != nil {
+		return gitprov.PR{}, err
+	}
+	pr := gitprov.PR{Number: info.Number, URL: info.URL, Draft: info.Draft}
+	if info.State != gitprov.PROpen {
+		return pr, fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
+	}
+	if info.SourceBranch != spec.Branch {
+		return pr, fmt.Errorf("pull request #%d is on %s, not %s: %w", info.Number, info.SourceBranch, spec.Branch, gitprov.ErrPRNotOpen)
+	}
+	return p.update(ctx, d.pull, spec.Draft)
 }
