@@ -3,10 +3,12 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,8 +22,14 @@ var ctx = context.Background()
 
 func open(t *testing.T, fixture string) *Provider {
 	t.Helper()
+	return openWarn(t, fixture, nil)
+}
+
+// openWarn is open with the adapter's warnings sent to warn.
+func openWarn(t *testing.T, fixture string, warn func(string)) *Provider {
+	t.Helper()
 	srv := httpfixture.Serve(t, filepath.Join("testdata", fixture))
-	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL, Warn: warn,
 		Now: func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }})
 	if err != nil {
 		t.Fatal(err)
@@ -220,22 +228,272 @@ func TestNewValidates(t *testing.T) {
 	}
 }
 
-// TestEnsureByNumberNeverFindsOrCreates: until updates by number are
-// implemented, one fails before any request, so it can never fall through
-// to find-or-create and open a second pull request.
-func TestEnsureByNumberNeverFindsOrCreates(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		http.Error(w, "no", http.StatusTeapot)
-	}))
-	t.Cleanup(srv.Close)
-	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL})
+func TestGitHubRepositoryVisibility(t *testing.T) {
+	for fixture, private := range map[string]bool{"repo_private.json": true, "repo_public.json": false} {
+		t.Run(fixture, func(t *testing.T) {
+			info, err := open(t, fixture).Repository(ctx)
+			if err != nil || info.Private != private {
+				t.Fatalf("info = %+v, %v", info, err)
+			}
+		})
+	}
+}
+
+func TestGitHubRepositoryVisibilityMissing(t *testing.T) {
+	p := fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/repos/acme/web" {
+			w.Write([]byte(`{"full_name":"acme/web"}`))
+			return true
+		}
+		return false
+	})
+	if info, err := p.Repository(ctx); err == nil {
+		t.Fatalf("a repository without a private field read as %+v", info)
+	}
+}
+
+const headSHA = "0123456789abcdef0123456789abcdef01234567"
+
+func TestGitHubPullRequestOpen(t *testing.T) {
+	got, err := open(t, "pull_open.json").PullRequest(ctx, 12)
+	want := gitprov.PRInfo{Number: 12, URL: "https://github.com/acme/web/pull/12", State: gitprov.PROpen, Draft: true,
+		AuthorID: "900001", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: headSHA}
+	if err != nil || got != want {
+		t.Fatalf("got  %+v, %v\nwant %+v", got, err, want)
+	}
+}
+
+func TestGitHubPullRequestMerged(t *testing.T) {
+	got, err := open(t, "pull_merged.json").PullRequest(ctx, 12)
+	if err != nil || got.State != gitprov.PRMerged || got.Draft {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// TestGitHubPullRequestFork covers a head repository GitHub reports as
+// null (a deleted fork): the source repository is unknown, so it is
+// empty, and can never match the task's repository.
+func TestGitHubPullRequestFork(t *testing.T) {
+	got, err := open(t, "pull_fork.json").PullRequest(ctx, 12)
+	if err != nil || got.State != gitprov.PROpen || got.SourceRepo != "" || got.SourceBranch != branchName || got.HeadSHA != headSHA {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+func at(s string) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		panic(err)
+	}
+	return t
+}
+
+func TestGitHubComments(t *testing.T) {
+	got, err := open(t, "comments.json").Comments(ctx, 12)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := spec(false, nil, nil)
+	disc := func(id string) string { return "https://github.com/acme/web/pull/12#discussion_" + id }
+	want := []gitprov.Comment{
+		{ID: "IC_kwDOA602", Kind: gitprov.CommentGeneral, Author: "dave", AuthorID: "1004", SelfKnown: true,
+			Body: "Drive-by: use a map.", CreatedAt: at("2026-09-19T10:00:00Z"), URL: "https://github.com/acme/web/pull/12#issuecomment-602"},
+		{ID: "PRRC_1", Kind: gitprov.CommentInline, Author: "alice", AuthorID: "1001", Collaborator: true, SelfKnown: true, Resolved: true,
+			Path: "src/a.go", Line: 10, Body: "Rename this.", CreatedAt: at("2026-09-20T10:00:00Z"), URL: disc("PRRC_1")},
+		{ID: "PRRC_4", Kind: gitprov.CommentInline, Author: "alice", AuthorID: "1001", Collaborator: true, SelfKnown: true, Outdated: true,
+			Path: "src/c.go", Body: "Handle the error here.", CreatedAt: at("2026-09-21T09:00:00Z"), URL: disc("PRRC_4")},
+		{ID: "PRRC_2", Kind: gitprov.CommentInline, Author: "alice", AuthorID: "1001", Collaborator: true, SelfKnown: true,
+			Path: "src/b.go", Line: 20, Body: "This loop is off by one.", CreatedAt: at("2026-09-21T10:00:00Z"), URL: disc("PRRC_2")},
+		{ID: "PRRC_3", Kind: gitprov.CommentInline, Author: "bob", AuthorID: "1002", Collaborator: true, SelfKnown: true,
+			Path: "src/b.go", Line: 20, Body: "Agreed, and add a test.", CreatedAt: at("2026-09-21T11:00:00Z"), URL: disc("PRRC_3")},
+		{ID: "PRR_kwDOA501", Kind: gitprov.CommentReview, Author: "alice", AuthorID: "1001", Collaborator: true, SelfKnown: true,
+			Body: "Close; see the inline comments.", CreatedAt: at("2026-09-21T12:00:00Z"), URL: "https://github.com/acme/web/pull/12#pullrequestreview-501"},
+		{ID: "PRRC_5", Kind: gitprov.CommentInline, Author: "bob", AuthorID: "1002", Collaborator: true, SelfKnown: true, Truncated: true,
+			Path: "src/d.go", Line: 7, Body: "First of many.", CreatedAt: at("2026-09-22T08:00:00Z"), URL: disc("PRRC_5")},
+		{ID: "IC_kwDOA601", Kind: gitprov.CommentGeneral, Author: "alice", AuthorID: "1001", Collaborator: true, SelfKnown: true,
+			Body: "Please also update the docs.", CreatedAt: at("2026-09-22T09:00:00Z"), URL: "https://github.com/acme/web/pull/12#issuecomment-601"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d comments, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if !got[i].CreatedAt.Equal(want[i].CreatedAt) {
+			t.Errorf("comment %d: created %v, want %v", i, got[i].CreatedAt, want[i].CreatedAt)
+		}
+		got[i].CreatedAt, want[i].CreatedAt = time.Time{}, time.Time{}
+		if got[i] != want[i] {
+			t.Errorf("comment %d:\n got  %+v\n want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestGitHubCommentsPaged(t *testing.T) {
+	got, err := open(t, "comments_paged.json").Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bodies []string
+	for _, c := range got {
+		bodies = append(bodies, c.Body)
+	}
+	if strings.Join(bodies, " ") != "one two three four five six" {
+		t.Fatalf("bodies = %q", bodies)
+	}
+}
+
+// TestGitHubCommentsForeignLink covers a Link to the next page on another
+// host: the listing fails rather than send the installation token there.
+func TestGitHubCommentsForeignLink(t *testing.T) {
+	if got, err := open(t, "comments_foreign_link.json").Comments(ctx, 12); err == nil || !strings.Contains(err.Error(), "paging left the API host") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// fakeAPI serves the App-installation exchanges and GET /app itself, and
+// hands every other request to h, failing the test when h doesn't handle it.
+func fakeAPI(t *testing.T, h func(w http.ResponseWriter, r *http.Request) bool) *Provider {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/acme/web/installation":
+			w.Write([]byte(`{"id":777}`))
+		case r.URL.Path == "/app/installations/777/access_tokens":
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"token":"ghs_fixture_token_1","expires_at":"2026-09-27T11:00:00Z"}`))
+		case r.URL.Path == "/app":
+			w.Write([]byte(`{"slug":"fugaro-app"}`))
+		case h(w, r):
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+			http.Error(w, "unexpected", http.StatusTeapot)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p, err := New(Options{Owner: "acme", Repo: "web", AppID: "1234", PrivateKey: key(t), BaseURL: srv.URL,
+		Now: func() time.Time { return time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestGitHubCommentsPageCap covers a listing that never ends: it stops at
+// the cap with an error naming it, for the review threads and for a REST
+// listing alike.
+func TestGitHubCommentsPageCap(t *testing.T) {
+	for _, endless := range []string{"/graphql", "/repos/acme/web/issues/12/comments"} {
+		t.Run(endless, func(t *testing.T) {
+			var mu sync.Mutex
+			hits := 0
+			var p *Provider
+			p = fakeAPI(t, func(w http.ResponseWriter, r *http.Request) bool {
+				mu.Lock()
+				defer mu.Unlock()
+				more := r.URL.Path == endless
+				if more {
+					hits++
+				}
+				switch r.URL.Path {
+				case "/graphql":
+					fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{"reviewThreads":{"pageInfo":{"hasNextPage":%t,"endCursor":"c%d"},"nodes":[]}}}}}`, more, hits)
+				case "/repos/acme/web/pulls/12/reviews", "/repos/acme/web/issues/12/comments":
+					if more {
+						w.Header().Set("Link", fmt.Sprintf(`<http://%s%s?per_page=100&page=%d>; rel="next"`, r.Host, r.URL.Path, hits+1))
+					}
+					w.Write([]byte(`[]`))
+				default:
+					return false
+				}
+				return true
+			})
+			_, err := p.Comments(ctx, 12)
+			if err == nil || !strings.Contains(err.Error(), "20 pages") {
+				t.Fatalf("err = %v", err)
+			}
+			if hits != 20 {
+				t.Fatalf("%s served %d pages, want 20", endless, hits)
+			}
+		})
+	}
+}
+
+// TestGitHubCommentsSelf covers telling Fugaro's own comments apart: the
+// App's bot as REST shows it (<slug>[bot]) and as GraphQL shows it (a Bot
+// named <slug>), but not a person whose login is the slug, nor another bot.
+func TestGitHubCommentsSelf(t *testing.T) {
+	got, err := open(t, "comments_self.json").Comments(ctx, 12)
+	if err != nil {
+		t.Fatal(err)
+	}
+	self := map[string]bool{}
+	for _, c := range got {
+		if !c.SelfKnown {
+			t.Errorf("%s: SelfKnown is false", c.ID)
+		}
+		self[c.ID] = c.Self
+	}
+	want := map[string]bool{"PRRC_21": true, "PRRC_22": false, "PRRC_23": false, "IC_kwDOA621": true, "IC_kwDOA622": false}
+	if len(self) != len(want) {
+		t.Fatalf("self = %v", self)
+	}
+	for id, w := range want {
+		if self[id] != w {
+			t.Errorf("%s: Self = %t, want %t", id, self[id], w)
+		}
+	}
+}
+
+// TestGitHubCommentsIdentityForbidden covers an App that can't read its
+// own identity: the comments are still listed, none is marked as Fugaro's
+// or as known either way, and one warning says so, however many listings
+// follow (GET /app is tried once per Provider).
+func TestGitHubCommentsIdentityForbidden(t *testing.T) {
+	var warnings []string
+	p := openWarn(t, "app_identity_forbidden.json", func(msg string) { warnings = append(warnings, msg) })
+	for round := 0; round < 2; round++ {
+		got, err := p.Comments(ctx, 12)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range got {
+			if c.Self || c.SelfKnown {
+				t.Errorf("%s: Self = %t, SelfKnown = %t", c.ID, c.Self, c.SelfKnown)
+			}
+		}
+		if round == 0 && len(got) != 2 {
+			t.Fatalf("got %+v", got)
+		}
+	}
+	if len(warnings) != 1 || !strings.Contains(warnings[0], "403") {
+		t.Fatalf("warnings = %q", warnings)
+	}
+}
+
+func TestGitHubEnsureByNumber(t *testing.T) {
+	s := spec(false, []string{"fugaro"}, []string{"octocat"})
 	s.Number = 12
-	if pr, err := p.EnsurePR(ctx, s); err == nil || pr.Number != 0 {
-		t.Fatalf("EnsurePR by number = %+v, %v", pr, err)
+	pr, err := open(t, "ensure_by_number.json").EnsurePR(ctx, s)
+	if err != nil || pr != (gitprov.PR{Number: 12, URL: "https://github.com/acme/web/pull/12"}) {
+		t.Fatalf("pr = %+v, %v", pr, err)
+	}
+}
+
+// TestGitHubEnsureByNumberClosed covers a pull request closed since the
+// run began: the update fails with ErrPRNotOpen and sends nothing (the
+// fixture has no mutation, so one would fail the test).
+func TestGitHubEnsureByNumberClosed(t *testing.T) {
+	s := spec(true, nil, nil)
+	s.Number = 12
+	pr, err := open(t, "ensure_by_number_closed.json").EnsurePR(ctx, s)
+	if !errors.Is(err, gitprov.ErrPRNotOpen) || !strings.Contains(err.Error(), "closed") || pr.Number != 12 {
+		t.Fatalf("pr = %+v, %v", pr, err)
+	}
+}
+
+func TestGitHubEnsureByNumberBranchMismatch(t *testing.T) {
+	s := spec(true, nil, nil)
+	s.Number, s.Branch = 12, "fugaro/20260927-111500-ef01"
+	pr, err := open(t, "pull_open.json").EnsurePR(ctx, s)
+	if !errors.Is(err, gitprov.ErrPRNotOpen) || !strings.Contains(err.Error(), branchName) || pr.Number != 12 {
+		t.Fatalf("pr = %+v, %v", pr, err)
 	}
 }

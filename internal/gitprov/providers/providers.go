@@ -35,7 +35,8 @@ const minSecretLen = 4
 // (KEY=VALUE pairs, usually os.Environ()). hc is the HTTP client adapters
 // use; nil means their default. warn receives adapter warnings meant for
 // the run's log, such as the Bitbucket adapter's one-time "labels aren't
-// supported" (bitbucket.Options.Warn); nil drops them.
+// supported" (bitbucket.Options.Warn) or the GitHub adapter's one-time
+// "could not read the App's identity" (github.Options.Warn); nil drops them.
 //
 // Each call of the returned Opener builds a fresh Provider, and a
 // Provider's state lives for as long as it does: the Bitbucket labels
@@ -82,7 +83,7 @@ func FromEnv(env []string, hc *http.Client, warn func(string)) gitprov.Opener {
 			if err != nil {
 				return nil, nil, err
 			}
-			p, err := github.New(github.Options{Owner: owner, Repo: name, AppID: appID, PrivateKey: key, BaseURL: vars[EnvGitHubAPIURL], HTTP: hc})
+			p, err := github.New(github.Options{Owner: owner, Repo: name, AppID: appID, PrivateKey: key, BaseURL: vars[EnvGitHubAPIURL], HTTP: hc, Warn: warn})
 			return p, []string{pemData}, err
 		default:
 			return nil, nil, fmt.Errorf("unknown git provider %q (want %s or %s)", kind, gitprov.KindGitHub, gitprov.KindBitbucket)
