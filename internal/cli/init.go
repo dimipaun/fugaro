@@ -1091,7 +1091,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if err != nil {
 		return err
 	}
-	repo, err := checkoutRepo(ctx, root, "")
+	repo, err := checkoutRepo(ctx, root)
 	if err != nil {
 		return err
 	}
@@ -1274,6 +1274,23 @@ func loadRepoConfig(o *initOptions) (lc *localcfg.Config, path string, old []byt
 		return nil, "", nil, userErr("--project/--region: %v", err)
 	}
 	return lc, path, old, nil
+}
+
+// checkoutRepo returns the checkout's owner/name, from its origin.
+func checkoutRepo(ctx context.Context, root string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
+	cmd.WaitDelay = 5 * time.Second
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", &ExitError{Code: ExitUserError, Err: fmt.Errorf("reading the checkout's origin: %w: %s", err, strings.TrimSpace(stderr.String()))}
+	}
+	repo, ok := repoFromOrigin(strings.TrimSpace(string(out)))
+	if !ok {
+		return "", &ExitError{Code: ExitUserError, Err: errors.New("cannot tell the repository (owner/name) from the checkout's origin")}
+	}
+	return repo, nil
 }
 
 // checkoutURL is the checkout's origin as an https URL without

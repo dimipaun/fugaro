@@ -285,7 +285,7 @@ func originRepo(ctx context.Context) (string, error) {
 
 // repoFromOrigin is the owner/name an origin remote URL (https, ssh or
 // scp-like) names: the one rule for run, ls, secrets, image build and
-// job-spec. A nested path (group/subgroup/name) is not owner/name.
+// init. A nested path (group/subgroup/name) is not owner/name.
 func repoFromOrigin(origin string) (string, bool) {
 	u, err := url.Parse(image.HTTPSOrigin(origin))
 	if err != nil || u.Scheme != "https" || u.Host == "" {

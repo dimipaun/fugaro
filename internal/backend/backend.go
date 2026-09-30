@@ -19,9 +19,8 @@ import (
 const CloudRun = "cloud-run"
 
 // TaskTimeoutSlack is what the job's task timeout adds to the workflow's
-// timeouts.total (design §4.5): the bootstrap's job-spec (and M5's
-// Terraform) set it, and the runner's lock expiry and writeback window rely
-// on it. It is the single source for both.
+// timeouts.total (design §4.5): internal/infra hands it to Terraform, and
+// the runner's lock expiry and writeback window rely on it. It is the single source for both.
 const TaskTimeoutSlack = 2 * time.Minute
 
 // State is an execution's lifecycle state as the platform reports it.

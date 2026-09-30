@@ -30,9 +30,8 @@ import (
 // Each name carries the widest hash its limit allows while keeping a
 // readable prefix: 12 hex for jobs, 8 for service accounts (only 30
 // characters), 16 for secrets and images. A hash stops accidental
-// collisions; the control against a chosen one is the ownership check the
-// bootstrap (and M5's onboarding) makes before reusing a job, service
-// account or secret.
+// collisions; the control against a chosen one is the ownership check
+// fugaro init makes before adopting a job, service account or secret.
 const (
 	maxJobName  = 49
 	maxSAID     = 30
@@ -229,8 +228,8 @@ func JobSADisplayName(slug, workflow string) string {
 }
 
 // LegacyJobSADisplayName is the display name the M4 bootstrap gave job
-// accounts. It is accepted as a mark, and kept on adoption, so the M4
-// bootstrap still recognizes the account during a rollback.
+// accounts. It is accepted as a mark, and kept on adoption, so an adopted
+// account is never renamed.
 func LegacyJobSADisplayName(slug, workflow string) string {
 	return "Fugaro M4 job " + slug + " " + workflow
 }

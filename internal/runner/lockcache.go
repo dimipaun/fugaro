@@ -21,9 +21,8 @@ import (
 // (design §4.7). The duplicate exits without writing anything.
 var ErrDuplicateExecution = errors.New("another execution already owns this run")
 
-// taskTimeoutSlack is what Terraform (and the M4 bootstrap) add to
-// timeouts.total for the Cloud Run task timeout (design §4.5); job-spec
-// uses the same backend.TaskTimeoutSlack.
+// taskTimeoutSlack is what Terraform adds to timeouts.total for the Cloud
+// Run task timeout (design §4.5), the same backend.TaskTimeoutSlack.
 const taskTimeoutSlack = backend.TaskTimeoutSlack
 
 // lockSlack is how far past the task timeout the branch lock (and the

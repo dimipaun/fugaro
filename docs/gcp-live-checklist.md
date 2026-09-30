@@ -8,7 +8,7 @@ build-tag tests in `internal/backend/gcp/live_test.go` and
 `internal/e2e/live_gcp_test.go`. They never run in CI.
 
 Each test logs its observations as `FACT:` lines. Paste those lines into the
-M4 PR description and into the runbook (`docs/gcp-bootstrap.md`).
+PR description and into this checklist's results, at the end.
 
 ## Guardrails the tests enforce
 
@@ -68,56 +68,45 @@ whole bring-up:
 
 ```bash
 export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
-# FUGARO must be exported: the bootstrap script reads it, and would otherwise
-# use whatever fugaro is on PATH.
-export FUGARO=<path to the fugaro binary built from the branch under test>
+export FUGARO=<path to the fugaro binary built from the branch under test>   # jq is needed too
 export SANDBOX=<a checkout of the sandbox repository>
-# The bootstrap's shared settings, the same values config wrote:
-export PROJECT="$FUGARO_LIVE_PROJECT" REGION=<region> BUCKET=fugaro-runs-<suffix>
 ```
 
-From M5 on, set the project up with `fugaro init` (`docs/gcp-setup.md`)
-instead: the installation, then the sandbox with `fugaro init --repo`. The
-checks below still apply. Checks 11 and 11b build as the repository's own
-build account, into its own registry; only a local config with no
-installation (no `terraform.state_bucket`) that still names the deprecated
-`build.service_account` builds as that account, into the legacy registry. The
-bootstrap steps that follow are the M4 path, kept for the rollback
-(`docs/gcp-bootstrap.md`).
+Set the project up with `fugaro init` (`docs/gcp-setup.md`), using
+`"$FUGARO"`:
 
-Complete the bootstrap runbook (`docs/gcp-bootstrap.md`) for the sandbox
-repository, in the runbook's order:
+1. The installation (steps 1 to 3 of the runbook). The runs bucket must be
+   named `fugaro-runs-*` (the tests refuse any other runs bucket, and a
+   bucket can't be renamed later).
+2. **⚠ CONFIRM** Commit the sandbox fixture, `deploy/sandbox/`, to the
+   sandbox repository's base branch, `master`, as its `fugaro.yaml` says.
+   This pushes to a real repository.
+3. The sandbox, from `$SANDBOX` (step 4 of the runbook): `fugaro init
+   --repo`, then store every secret it lists, including `sandbox-probe`
+   (any random value), then rerun it for the first image build and the
+   switch to the new image.
 
-1. `config` first: every other step refuses without the local config it
-   writes. `BUCKET` must start with `fugaro-runs-` (the tests refuse any
-   other runs bucket, and `config` and `bucket` refuse one too; a bucket
-   can't be renamed later). The sandbox's `REPOS` entry must use the base
-   branch `master`, as `deploy/bootstrap/sandbox/fugaro.yaml` does, for
-   example `REPOS="$FUGARO_LIVE_REPO:master:web"`.
-2. The shared steps: `apis`, `bucket`, `registry`, `build-sa`.
-3. **⚠ CONFIRM** Commit the sandbox fixture, `deploy/bootstrap/sandbox/`,
-   to the sandbox repository's base branch (see
-   `deploy/bootstrap/README.md`). This pushes to a real repository.
-4. For the sandbox's `web` workflow, with
-   `export REPO="$FUGARO_LIVE_REPO" WORKFLOW=web CHECKOUT="$SANDBOX"`
-   set: `job-sa`, `secrets` (store every secret it prints, including
-   `sandbox-probe`), `secrets-access`, `base` (then set `base_image` as the
-   runbook's "Setting the base image" says), `image` and `job`.
+Checks 11 and 11b build as the repository's own build account, into its own
+registry; only a local config with no installation (no
+`terraform.state_bucket`) that still names the deprecated
+`build.service_account` builds as that account, into the legacy registry.
 
 Then set up the following:
 
 1. **⚠ CONFIRM** Enable the IAM Credentials API, which impersonation needs.
-   The bootstrap's seven APIs don't include it. Enabling it is free.
+   `fugaro init` doesn't enable it. Enabling it is free.
 
    ```bash
    gcloud services enable iamcredentials.googleapis.com --project "$FUGARO_LIVE_PROJECT"
    ```
 
 2. **⚠ CONFIRM** Give yourself the Token Creator role on the sandbox job's
-   service account (the runbook's "Live tests" section):
+   service account. Its account ID comes from the Terraform variables
+   `fugaro init --repo --print-vars` prints (no cloud calls; its warning goes
+   to stderr):
 
    ```bash
-   SA=$(cd "$SANDBOX" && "$FUGARO" gcp job-spec --repo "$FUGARO_LIVE_REPO" --workflow web --field sa)
+   SA="$("$FUGARO" init --repo "$SANDBOX" --print-vars | jq -r '.repo.workflows.web.service_account.account_id')@$FUGARO_LIVE_PROJECT.iam.gserviceaccount.com"
    gcloud iam service-accounts add-iam-policy-binding "$SA" \
      --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
    ```
@@ -221,8 +210,8 @@ For check 13, `TestLiveSandboxRun` checks the following:
   logic. A live check would hold a 15-minute sleep on the subscription, so
   it is a manual spot check.
 - **Cloud Build's docker has no `env=` secret mounts.** A `RUN --mount=type=secret,…,env=X` fails there with `requested experimental feature exec.secretenv is not supported by build server`. The derived template mounts workflow secrets as files and exports them inside the RUN instead; keep it that way.
-- **The full derived-image build.** The runbook's `image` step builds it for
-  real, and its `image.setup` step fails without `SANDBOX_PROBE`. Check 11
+- **The full derived-image build.** The sandbox's first image build (`fugaro
+  init --repo`, bring-up step 3) builds it for real, and its `image.setup` step fails without `SANDBOX_PROBE`. Check 11
   isolates the same mechanism.
 
 ## Undo
@@ -242,11 +231,10 @@ recorded:
    else uses it: `gcloud services disable iamcredentials.googleapis.com
    --project "$FUGARO_LIVE_PROJECT"`.
 
-Keep the rest for M5, which takes the bootstrap's resources over under the
-same names: the bucket, the registry, `fugaro-build`, the sandbox job, its
-service account and its secrets, and the sandbox fixture in its repository.
-Run the sweep (above) if an aborted run left anything behind. To remove
-everything instead, use the runbook's "Teardown".
+Keep the rest for the next live run: the installation, the sandbox's
+resources, and the sandbox fixture in its repository. Run the sweep (above)
+if an aborted run left anything behind. There is no teardown command; see
+`docs/gcp-setup.md`, "Offboarding a repository".
 
 ## Results of the first live run (2026-09-28)
 
@@ -295,7 +283,12 @@ The installation and the sandbox are migrated; the web repo is applied and its f
   - `fugaro init` read the project number through Cloud Resource Manager, which was disabled, and stopped with a 403 `SERVICE_DISABLED` before doing anything. `init` now offers to enable the API (its own confirmation) and reads other disabled APIs' resources as missing. After the enable the read succeeded at once, so the propagation delay is unmeasured.
   - Cloud Monitoring refuses a policy that has a log-match condition next to another condition. The first apply created everything else and stopped at the alert; the image alert is now two policies, and a text test pins the rule. A rerun applied the rest, and the next plan showed no changes.
 - **The default build identity** is the Compute Engine default account, and it holds `roles/editor`, so the escalation path of §6.1 is real in this project. The owner accepted it: per-repository builds run as their own build accounts and never use it. It stays a known exposure for anyone who can submit a build without naming an account.
-- **The forced failure alert (check 16b):** disabling the latest version of a repository's Git token made the check job fail at container start (Cloud Run couldn't read the secret). Cloud Run logged that only as an audit system event, `Execution ... has failed to complete, 0/1 tasks were a success`, not in its `varlog/system` log, so the alert's second condition missed it. The alert now matches ERROR entries in either log. Rerun the forced failure after applying the change to confirm the email.
+- **The forced failure alert (check 16b):** verified. Disabling the latest version of a repository's Git token made the check job fail at container start (Cloud Run couldn't read the secret). Cloud Run logged that only as an audit system event, `Execution ... has failed to complete, 0/1 tasks were a success`, not in its `varlog/system` log, so the alert's second condition first missed it; it now matches ERROR entries in either log. The first forced failure, minutes after the filter change, sent nothing: a policy edit takes some minutes to reach log matching, so wait half an hour before forcing a failure after changing an alert. The second one produced the "Fugaro image check job failed" email (a `Log alert fired` from Google Cloud Alerting, naming the job) within a minute. Email channels have no verification step (`sendVerificationCode` is for SMS).
+- **The web repo's first build and switch:** its first build ran as its own build account in about 8.5 minutes (`skip_build_scripts` in place); the second apply changed exactly two things, the job's image and the Scheduler job's `paused`; `fugaro image check --dry-run` then printed `skip`, and a manual Scheduler run logged `decision: skip`, wrote `check.json` and started no build.
+- **A real run on the migrated web repo** (a unit-test task) succeeded in 25 minutes: compute $0.12, $0.63 notional model usage, `image_age_s` about 54 minutes in its `ls --json` row, its logs readable through the view by `logs` and `diagnose`.
+- **Live tests on the migrated project:** `TestLiveSandboxRun` passes (with `--total-timeout 15m` the execution's task timeout is 1020s, the 17 minutes expected), and `TestLiveCloudBuildSecretAndDigest` passes as the repository's build account: the metadata server is reachable from a Cloud Build step (which is why the smoke isn't a step), blocked from a `docker run --network none` and from a default-network `docker run` of the candidate, and `--network=host` is refused.
+- **Cleanup (check 17):** all registries held one version each, younger than any delete rule, so nothing could match; the policies as applied were checked against the design and switched from dry run to on.
+- **Retiring the old build account:** its five bindings (project log writer, the legacy registry writer, three secret accessors) were removed and the account disabled after both repositories built as their own accounts; deleting it a week later is a separate step.
 - **The installation plan:** 2 imports (the runs bucket and the legacy registry, labels only), 28 creates, 2 in-place updates, 0 deletes. Removing project Viewers' read access to the runs bucket was confirmed and done.
 - **The sandbox plan:** 5 imports (the job, its account, three secrets), 24 creates, 4 label-only updates, 0 deletes; 4 live IAM bindings adopted, none duplicated; the runs bucket still has one conditional binding for the sandbox account; the job kept `maxRetries: 0`, its account and its legacy image until the second apply, which changed only the image.
 - **The sandbox's first build** ran as the sandbox's own build account into its own registry and succeeded: `latest` points at the built digest, the record exists (`fugaro image status` shows it with the base digest), and a `candidate-` tag was left behind, which is expected.

@@ -4,7 +4,7 @@
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement → test → review → fix → compile → open a PR) in ephemeral Google Cloud Run jobs instead of on your laptop. Each task gets its own container, runs to completion, pushes its work, and disappears.
 
-> **Status: pre-release, not yet on a tagged version.** The runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, and the Cloud Run backend with its CLI (`run`, `ls`, `logs`, `diagnose`, `cancel`, `secrets`, `image build`, `image check`, `image status`) are implemented. The GCP resources come from Terraform through `fugaro init` ([docs/gcp-setup.md](docs/gcp-setup.md)), which also adopts what M4's throwaway bootstrap ([docs/gcp-bootstrap.md](docs/gcp-bootstrap.md), now only a rollback path) made; a daily check rebuilds each repository's image when it goes stale. Follow-up runs, the remaining plugin skills and the first release come after that. The design is [docs/design/v1.md](docs/design/v1.md). Expect breaking changes.
+> **Status: pre-release, not yet on a tagged version.** The runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, and the Cloud Run backend with its CLI (`run`, `ls`, `logs`, `diagnose`, `cancel`, `secrets`, `image build`, `image check`, `image status`) are implemented. The GCP resources come from Terraform through `fugaro init` ([docs/gcp-setup.md](docs/gcp-setup.md)), which also adopts what M4's throwaway bootstrap script made; a daily check rebuilds each repository's image when it goes stale. Follow-up runs, the remaining plugin skills and the first release come after that. The design is [docs/design/v1.md](docs/design/v1.md). Expect breaking changes.
 
 ---
 

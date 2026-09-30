@@ -1,10 +1,10 @@
 //go:build live
 
-// Live checks of the Cloud Run backend against the real resources that the
-// M4 bootstrap creates in the live-test project (docs/gcp-live-checklist.md). They
-// never run in CI: they need the `live` build tag, Application Default
-// Credentials and the real local config. Run them only after the bootstrap
-// (docs/gcp-bootstrap.md) has been applied:
+// Live checks of the Cloud Run backend against the real resources that
+// fugaro init sets up in the live-test project (docs/gcp-live-checklist.md).
+// They never run in CI: they need the `live` build tag, Application Default
+// Credentials and the real local config. Run them only after the
+// checklist's setup (docs/gcp-setup.md) has been applied:
 //
 //	FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
 //	FUGARO_LIVE_JOB_SA=<sandbox job SA email> \

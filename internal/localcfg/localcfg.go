@@ -1,7 +1,7 @@
 // Package localcfg reads the local CLI config, ~/.config/fugaro/config.yaml
 // (design §5.4): the installation's project, region and buckets, and the
-// onboarded repositories. fugaro init writes it (M4's bootstrap script
-// wrote the first ones, which still load).
+// onboarded repositories. fugaro init writes it (configs M4's bootstrap
+// script wrote still load).
 package localcfg
 
 import (

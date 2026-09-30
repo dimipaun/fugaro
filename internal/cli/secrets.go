@@ -111,7 +111,7 @@ whitespace (a copy-and-paste slip, so it is refused rather than stored). Ctrl-C 
 // secretRepo is the repository a secrets command works on.
 type secretRepo struct {
 	repo, slug string
-	label      string                // the fugaro_repo label, job-spec's repo-label
+	label      string                // the fugaro_repo label, on the job and its secrets
 	checkout   func() *config.Config // the checkout's fugaro.yaml, when it is repo's
 }
 

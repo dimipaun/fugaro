@@ -58,8 +58,8 @@ func TestSecretsSetFromPipe(t *testing.T) {
 	if strings.Contains(out+errOut, "second-value") {
 		t.Fatalf("the value leaked: %q %q", out, errOut)
 	}
-	// The labels tie the secret to its repository (the bootstrap's
-	// teardown checks fugaro_repo against job-spec's repo-label).
+	// The labels tie the secret to its repository (discovery checks
+	// fugaro_repo before adopting it).
 	label, err := gcp.RepoLabel(appSlug)
 	if err != nil {
 		t.Fatal(err)
