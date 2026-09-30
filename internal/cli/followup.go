@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -110,11 +111,40 @@ func resolvePR(ctx context.Context, env *cloudEnv, slug string, pr int, exclude 
 	case err != nil:
 		return nil, err
 	}
-	c.Ref, c.Workflow = prev.Ref, prev.Workflow
+	// The base the PR targets, which the previous run recorded; a record
+	// from before it was kept falls back to that run's ref.
+	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
+	if c.Ref == "" {
+		c.Ref = prev.Ref
+	}
+	ref, ok := branchName(c.Ref)
+	if !ok {
+		return nil, userErr("run %s, the last to update PR #%d, ran on ref %q, which is not a branch name (a tag or a commit?); a follow-up reads its configuration from its base branch, so start a new run instead",
+			c.Previous.Run, pr, oneLine(c.Ref))
+	}
+	c.Ref = ref
 	if c.Workflow == "" {
 		c.Workflow = c.Previous.Workflow
 	}
 	return c, nil
+}
+
+// commitLikeRE is a ref that looks like a commit ID, full or abbreviated.
+var commitLikeRE = regexp.MustCompile(`^[0-9a-f]{7,40}$`)
+
+// branchName is ref as a branch name ("refs/heads/x" is x), and false when
+// it is plainly something else: a tag or other ref, HEAD, a commit ID, a
+// revision expression, or a name git would refuse. A tag without refs/tags/
+// can't be told apart without the remote; the runner then refuses it.
+func branchName(ref string) (string, bool) {
+	name := strings.TrimPrefix(ref, "refs/heads/")
+	switch {
+	case name == "", name == "HEAD", strings.HasPrefix(name, "refs/"), strings.HasPrefix(name, "-"), strings.HasPrefix(name, "/"),
+		commitLikeRE.MatchString(name), strings.ContainsAny(name, " ~^:?*[\\\t\n"), strings.Contains(name, ".."), strings.Contains(name, "@{"),
+		strings.Contains(name, "//"), strings.HasSuffix(name, "/"), strings.HasSuffix(name, "."), strings.HasSuffix(name, ".lock"):
+		return "", false
+	}
+	return name, true
 }
 
 // readTask reads run id's task.json: runstore.ErrNotFound when there is

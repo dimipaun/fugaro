@@ -658,7 +658,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
-	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl

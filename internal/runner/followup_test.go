@@ -1193,3 +1193,16 @@ func TestFollowUpMovedToDraftFromStateAtFinalize(t *testing.T) {
 		}
 	})
 }
+
+func TestRecordsBaseBranch(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	if h.first.BaseBranch != "main" {
+		t.Fatalf("first run base_branch = %q", h.first.BaseBranch)
+	}
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.BaseBranch != "main" {
+		t.Fatalf("follow-up base_branch = %q", rec.BaseBranch)
+	}
+}

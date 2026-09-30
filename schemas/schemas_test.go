@@ -122,7 +122,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
-		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", HeadSHA: "abcdef1234567",
+		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		PR:      &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
 		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 2}},
 		Verify: []verify.Record{{

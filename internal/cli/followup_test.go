@@ -491,3 +491,51 @@ func TestRunPRUnlaunchedBranchIgnored(t *testing.T) {
 		t.Fatalf("task = %+v", got)
 	}
 }
+
+// A first run launched with --ref develop opens its PR on the base its
+// config names: the follow-up's ref is that recorded base, not --ref.
+func TestRunPRUsesRecordedBaseBranch(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := firstRunSpec(rootID)
+	spec.Ref = "develop"
+	seedSpec(t, f, spec, false)
+	rec := prRecord(rootID, "", 7, 1)
+	rec.BaseBranch = "main"
+	writeRecord(t, f, rootID, rec)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID); got.Ref != "main" {
+		t.Fatalf("task ref = %q, want the recorded base main", got.Ref)
+	}
+}
+
+// A record from before base_branch was recorded falls back to the
+// previous run's ref, but one that isn't a branch name is refused at
+// launch rather than by the runner, after a container start.
+func TestRunPRRefusesNonBranchRef(t *testing.T) {
+	for _, ref := range []string{"0123456789abcdef0123456789abcdef01234567", "abc1234", "refs/tags/v1.0", "HEAD", "main~1"} {
+		t.Run(ref, func(t *testing.T) {
+			f := newCloudFixture(t)
+			spec := firstRunSpec(rootID)
+			spec.Ref = ref
+			seedSpec(t, f, spec, false)
+			writeRecord(t, f, rootID, prRecord(rootID, "", 7, 1))
+			wantRefused(t, f, "is not a branch name", "run", "--repo", "acme/app", "--pr", "7")
+		})
+	}
+}
+
+func TestRunPRRefsHeadsRefIsItsBranch(t *testing.T) {
+	f := newCloudFixture(t)
+	spec := firstRunSpec(rootID)
+	spec.Ref = "refs/heads/release"
+	seedSpec(t, f, spec, false)
+	writeRecord(t, f, rootID, prRecord(rootID, "", 7, 1))
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID); got.Ref != "release" {
+		t.Fatalf("task ref = %q, want release", got.Ref)
+	}
+}

@@ -17,6 +17,7 @@
     "outcome": { "enum": ["ready", "draft", "none"] },
     "reason": { "type": "string" },
     "branch": { "type": "string" },
+    "base_branch": { "type": "string", "minLength": 1, "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref." },
     "head_sha": { "type": "string" },
     "pr": {
       "type": "object",

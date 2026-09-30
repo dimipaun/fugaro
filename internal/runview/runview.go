@@ -87,6 +87,8 @@ type Row struct {
 	Pushed     bool       `json:"pushed"`
 	PushedHead string     `json:"pushed_head,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
+	// BaseBranch is the record's base branch, when it has one.
+	BaseBranch string `json:"base_branch,omitempty"`
 	// PreviousRun is the run a follow-up continues.
 	PreviousRun string `json:"previous_run,omitempty"`
 	FollowUp    bool   `json:"follow_up"`
@@ -221,7 +223,7 @@ func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
 		if r.Branch != "" {
 			row.Branch = r.Branch
 		}
-		row.Outcome = string(r.Outcome)
+		row.Outcome, row.BaseBranch = string(r.Outcome), r.BaseBranch
 		if r.PR != nil {
 			row.RecordPR = r.PR.Number
 		}
