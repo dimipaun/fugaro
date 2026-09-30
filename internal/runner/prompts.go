@@ -10,6 +10,10 @@ type PromptData struct {
 	Branch   string
 	Base     string
 	StateDir string
+	// FollowUp, for a follow-up run, replaces the pr.md line: the pull
+	// request exists, and the agent writes its account elsewhere
+	// (followup.SystemPromptLines).
+	FollowUp []string
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -21,7 +25,11 @@ func SystemPrompt(d PromptData, instructions string) string {
 		fmt.Sprintf("- You are on branch %s; the pull request will target %s. Commit your work to this branch with clear messages and do not switch branches. You do not need to push or open the pull request: Fugaro does both when you finish.", d.Branch, d.Base),
 		"- Build and test only through `fugaro verify build` and `fugaro verify test`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky.",
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
-		fmt.Sprintf("- Write the pull request title on the first line of %s/pr.md and the description below it.", d.StateDir),
+	}
+	if d.FollowUp != nil {
+		lines = append(lines, d.FollowUp...)
+	} else {
+		lines = append(lines, fmt.Sprintf("- Write the pull request title on the first line of %s/pr.md and the description below it.", d.StateDir))
 	}
 	s := strings.Join(lines, "\n") + "\n"
 	if strings.TrimSpace(instructions) != "" {
