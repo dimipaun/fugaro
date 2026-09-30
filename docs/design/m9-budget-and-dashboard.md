@@ -159,28 +159,70 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
 
 **Today one local config holds one project.** `--config` and `FUGARO_CONFIG` pick another file, but nothing says which project a command is acting on. Once each project has its own kill switches and caps, that is a safety problem: a launch or a kill must never hit the wrong project. `--project` already overrides the **GCP project ID**, so it isn't reused for this.
 
-- **Profiles.** Each project gets a file, `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`: a complete local config (§5.4), plus a new `name:` field, `[a-z0-9-]{1,40}`, the project's display name.
-  - `fugaro init` and `fugaro init --config-only` write the profile. Each person on a project runs `--config-only` to get theirs from the Terraform outputs.
+- **The canonical name** (D16). `fugaro init --name <slug>` sets the project's name once, as a slug of 1 to 40 characters, lower case, `[a-z0-9-]`, starting and ending with a letter or digit.
+  - It is stored in the cloud setup:
+    - the installation's Terraform output `project_name`;
+    - the label `fugaro_project=<slug>` on the runs bucket;
+    - the job environment variable `FUGARO_PROJECT_NAME` on every workflow and check job. (`FUGARO_PROJECT` already holds the GCP project ID, so the name needs its own variable);
+    - `/fugaro/project` in the project's RTDB, and a `project` field on every Firestore document.
+  - It is **immutable**:
+    - init refuses to change it: a different `--name`, or a bucket label that disagrees with the state;
+    - discovery refuses a runs bucket labelled for another project.
+- **Each repository names its project.** A top-level `project: <slug>` goes in `fugaro.yaml` (§2.5).
+- **Profiles.** Each project gets a file, `$XDG_CONFIG_HOME/fugaro/projects/<name>.yaml`: a complete local config (§5.4), plus `name:`.
+  - `fugaro init` and `fugaro init --config-only` write it, and copy the canonical name from the outputs. Each team member runs `--config-only` against the same GCP project, so everyone gets **the same name**.
+  - A profile whose `name:` differs from the cloud's `project_name` (checked on the first cloud call and cached for a day) is refused: "profile aurora points at a GCP project whose Fugaro project is borealis".
 - **Which profile a command uses,** first match wins:
   1. `--config <file>` (unchanged);
-  2. `--profile <name>`;
-  3. `FUGARO_PROFILE`;
-  4. the checkout's repository, when exactly one profile's `repos` lists it;
-  5. `fugaro use <name>`, which records the choice in `$XDG_CONFIG_HOME/fugaro/current`;
-  6. the legacy `config.yaml`, when no `projects/` directory exists. Today's behaviour is unchanged.
-- **Refusing ambiguity.**
-  - With several profiles and none selected, commands refuse (exit 1) and list the profiles.
-  - When the checkout's repository belongs to a profile other than the selected one, commands refuse too: "this checkout is in project aurora; selected: borealis".
+  2. **inside a checkout, the `project:` of its `fugaro.yaml`**, which must match a profile. **A checkout naming a project with no profile is refused, never guessed:** "this checkout belongs to project aurora; no profile named aurora (run `fugaro init --config-only` for it)". `--profile` or `FUGARO_PROFILE` naming a different project is refused as well;
+  3. outside a checkout, `--profile <name>`, else `FUGARO_PROFILE`;
+  4. exactly one profile exists: that one;
+  5. no `projects/` directory: the legacy `config.yaml`, which behaves as it does today.
+- **`fugaro use` is dropped** (D16). Remembered state that silently points later commands at a project is the failure we're preventing. Inside a checkout the repository decides. Outside one, `--profile` or `FUGARO_PROFILE` is explicit, and a shell alias or `direnv` covers habitual use.
+- **Refusing ambiguity.** Outside a checkout, with several profiles and none named, commands refuse (exit 1) and list the profiles.
 - **You always see the project.**
   - Every cloud command prints `project: aurora (GCP <id>)` as its first line on stderr, and its `--json` output gains `fugaro_project`.
   - The watch header, `budget show` and `report` show it too.
-  - `budget kill --all` asks you to type the project name.
+  - `budget kill --all` asks you to type the canonical project name.
 - **Later:** `fugaro ls --all-projects` (read-only, one section per profile), and the organization-wide read-only roll-up (§18).
 - **Several people per project.**
   - Membership is the project's lists: `launchers` and `operators` (applied by `fugaro init`), and `budget_admins` together with the GCP project's owners and editors (D6).
   - Every person has their own identity in the records. `requested_by` (task.json) is also minted into the run token as the claim `rb`, taken from the launcher's own credential. The registry and outcomes must carry the same value (a rules check), so attribution can't be forged by the run.
   - Kill and cap changes record `by`.
   - `fugaro report --by person` and `watch` show who launched what, and `spendDaily` gains `byPerson`.
+
+### 2.5 Each repository names its project (D16)
+
+```yaml
+version: 1
+project: aurora        # new, top level: the Fugaro project this repository belongs to; immutable
+git: …
+```
+
+- **This isn't a cloud resource path or a GCP project ID,** which is why it doesn't conflict with v1 §5.1's rule. It is the logical name that `fugaro init --name` set.
+- **Enforcement.**
+  - **`fugaro init --repo`** requires it from M9 on, and refuses when it differs from the installation's `project_name`. A repository onboarded before M9 gets a clear message on its next `init --repo`: "add `project: aurora` to fugaro.yaml on <base> through a PR, then run init --repo again".
+  - **`fugaro validate`** checks the form, and **warns** when the key is absent until then.
+  - **The schema, the config loader, `fugaro config example` and the `fugaro:onboard` skill** all learn it. The skill takes the name from the selected profile, and asks when there isn't one. It never invents a name.
+- **The runner checks it at bootstrap** (step 4, before the lock and before any remote change). When the job has `FUGARO_PROJECT_NAME`, the runner reads `project:` from the **base branch's** `fugaro.yaml` (`git show origin/<base>:fugaro.yaml`; for a follow-up, that's the configuration it reads anyway). For a first run at another ref, it also checks the ref's `fugaro.yaml`. It refuses when the key is missing or different:
+  - status `infra_error`, outcome `none`, exit 2;
+  - reason: "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora" (or "… names no project").
+
+  This catches repositories that were copied, forked, mis-onboarded, or pointed at the wrong project's jobs. Jobs deployed before M9 (no variable) skip the check.
+- **In the budget data** (§6.2):
+  - `/fugaro/project` holds the name, and the launcher mints it into each run token as the claim `fp`. The rules require `auth.token.fp == root.child('fugaro/project').val()` on every write. That's a defensive check: the FP is already per project, so a token from another project's signer isn't valid there anyway.
+  - Firestore documents carry `project`.
+  - `report`, `watch` and `budget` show it.
+  - `budget kill --all` asks you to type it.
+- **Renaming isn't supported in M9.** The name lives in the bucket label, the Terraform outputs, every job's environment, RTDB, Firestore history, every repository's `fugaro.yaml` and every person's profile. A rename would be a deliberate operation of several steps, deferred:
+  1. add an alias to the installation;
+  2. merge the new `project:` into every repository;
+  3. re-run init for the installation and every repository;
+  4. rewrite the Firestore `project` fields;
+  5. every member re-runs `--config-only`.
+
+  Until then init refuses a change, and a new name means a new project.
+- **Safety, not security.** The name is a label: it isn't a secret, and it isn't an authorization boundary. IAM, the per-repository service accounts and the per-run tokens remain the boundaries. Anyone who can edit `fugaro.yaml` on the base branch can write any name, but that only makes their runs refuse. The check prevents mistakes (the wrong profile, a copied repository, a kill switch sent to the wrong project), not attacks.
 
 ## 3. Architecture
 
@@ -710,6 +752,7 @@ The attacker is a compromised agent in run A. It runs as the same user as the ru
 | Steal another run's token? | Only a queued run of the **same repository**, during its queue window (the bucket object). The same per-repository boundary as §6.1 |
 | Spend money around the gateway? | **Yes. This is D2's accepted residual.** The API key is in the runner's environment; on Vertex, the metadata server's token works directly |
 | Inject into watch? | No. The text is sanitized |
+| Claim another project's name in `fugaro.yaml` | Its own runs then refuse at bootstrap. The name gives no access: IAM and the tokens do (§2.5) |
 | A compromised history job, or its image | It holds `firebasedatabase.admin` on the FP, so it **could** lift caps or clear switches. This is mitigated by: its own distroless image, pinned by digest in the base registry (which only operators write); no model credential; and no agent code in the job. It is the most privileged new identity M9 adds |
 
 **Backstops now:**
@@ -796,7 +839,11 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
 **Prerequisite (before M9a, or as its first task)**
 
-0. Project profiles (§2.4): `projects/<name>.yaml`, `name:`, `--profile`, `FUGARO_PROFILE`, `fugaro use`, auto-selection from the checkout, refusing ambiguity, the project header on every command and in `--json`, and migrating `config.yaml`. **M**
+0. Project identity and profiles (§2.4, §2.5, D16). **M–L**
+   - The canonical name: `init --name`, the output, the bucket label, `FUGARO_PROJECT_NAME`, and the immutability checks.
+   - `project:` in `fugaro.yaml`: the schema, loader, `validate` warning, example and onboard skill, and the requirement in `init --repo`.
+   - The runner's base-branch check.
+   - Profiles: `projects/<name>.yaml`, the name checked against the cloud, selection from the checkout, `--profile` and `FUGARO_PROFILE` (no `fugaro use`), refusing ambiguity, the project header on every command and in `--json`, and migrating `config.yaml`.
 
 **M9a: gateway, pinned models, per-run cap, halted (no Firebase)**
 
@@ -855,6 +902,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D13 | The TUI library | **Bubble Tea** | The first TUI dependency |
 | D14 | Budget backend unreachable | **Halt after a 3-minute grace, for every auth mode and every budget mode, `observe` included.** Image checks and rebuilds are unaffected | An outage of RTDB or Identity Toolkit stops even `oauth` runs and observe runs. `off` is the only mode that ignores the backend |
 | D15 | The PR flow | **PRs stay opened at finalize. The structured review format goes into the final report** | No draft PR at start, no per-round comments |
+| D16 | Project identity | **Each repository's `fugaro.yaml` names its project (`project: <slug>`)**, required by `init --repo` from M9 on and checked by the runner against the job's `FUGARO_PROJECT_NAME`. `fugaro init --name` sets the name once, in the cloud setup; profiles copy it; `fugaro use` is dropped. Renaming is unsupported in M9 | Mistakes can't cross projects. Existing repositories need one PR each, plus `init --repo`. The name is a label, not a boundary |
 | A1 | `oauth` and Anthropic's terms | **The user accepts the risk.** `oauth` stays as it is and is never proxied. Dollar caps apply to API-key and Vertex only | §5.8 lists exactly what `oauth` runs get |
 
 ## 17. Assumptions to verify before building
@@ -878,7 +926,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
 ## 18. Suggested milestone split
 
-- **Prerequisite: project profiles** (§2.4, task 0), so every command names the project it acts on before caps and kill switches exist.
+- **Prerequisite: project identity and profiles** (§2.4, §2.5, task 0, D16), so every repository, job and command names the project it belongs to before caps and kill switches exist.
 - **M9a: gateway, pinned models, per-run cap, `halted` (no Firebase).** Exact accounting per call, pinned models per stage, no real key in the agent's environment, a per-run cap enforced in-process, the `oauth` token cap, and the new status. It is useful on its own.
 - **M9b: Firebase counters, daily caps, kill switches, `fugaro budget`.** The dedicated FP per Fugaro project (`init --firebase`), per-run tokens and rules, leases, observe mode, the registry and the sweeper.
 - **Later, read-only: organization-wide roll-up.** Each project's history job exports `spendDaily` to one shared place. There is no shared live state.
