@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -576,5 +577,252 @@ func TestLsWarnsUnreadableStatus(t *testing.T) {
 		if !strings.HasPrefix(human, got.Warnings[0]+"\n") {
 			t.Fatalf("%s: human ls = %q", name, human)
 		}
+	}
+}
+
+// runIDAt is a run ID of the day d days ago, at hhmmss, with suffix hex.
+func runIDAt(daysAgo int, hhmmss, hex string) string {
+	return time.Now().UTC().AddDate(0, 0, -daysAgo).Format("20060102") + "-" + hhmmss + "-" + hex
+}
+
+// seedSpec stores spec as its run's task.json and, when launched, starts
+// an execution for it and records the launch; it returns the execution.
+func seedSpec(t *testing.T, f *cloudFixture, spec *task.Spec, launched bool) string {
+	t.Helper()
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, spec.RunID)
+	if err := s.CreateTask(ctx, spec); err != nil {
+		t.Fatal(err)
+	}
+	if !launched {
+		return ""
+	}
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: spec.RunID, Execution: exec, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	return exec
+}
+
+// firstRunSpec is a first run's task; followUpSpec continues root's PR pr.
+func firstRunSpec(id string) *task.Spec {
+	return &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x", RequestedBy: "someone@example.com"}
+}
+
+func followUpSpec(id, root, previous string, pr int) *task.Spec {
+	return &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web",
+		Branch: "fugaro/" + root, PR: pr, PreviousRun: previous, RequestedBy: "someone@example.com"}
+}
+
+// prRecord is a finished record of run id on PR pr, which pushed.
+func prRecord(id, exec string, pr int, cost float64) *runstore.Record {
+	c := runstore.NewCost(cost, 0.5, runstore.BasisAPIList)
+	return &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Branch: "fugaro/" + id, PushedHead: "1111111111111111111111111111111111111111", CostUSD: cost, Cost: &c,
+		PR: &runstore.PRRef{Number: pr, URL: "https://github.com/acme/app/pull/" + strconv.Itoa(pr)}}
+}
+
+// prFixture seeds runs on PR 7 and PR 8 of acme/app:
+//   - root, 30 days ago: the first run, which opened PR 7;
+//   - fu1, today: a follow-up of PR 7, finished;
+//   - fu2, today: a follow-up of PR 7 whose result.json is corrupt;
+//   - other, today: a first run that opened PR 8;
+//   - plain, today: a first run that never launched.
+type prRuns struct{ root, fu1, fu2, other, plain string }
+
+func seedPRRuns(t *testing.T, f *cloudFixture) prRuns {
+	t.Helper()
+	r := prRuns{root: runIDAt(30, "090000", "aaaa"), fu1: runIDAt(0, "000100", "bbbb"), fu2: runIDAt(0, "000200", "cccc"),
+		other: runIDAt(0, "000300", "dddd"), plain: runIDAt(0, "000400", "eeee")}
+	// Finished runs with no execution to join: their cost is the record's.
+	seedSpec(t, f, firstRunSpec(r.root), false)
+	writeRecord(t, f, r.root, prRecord(r.root, "", 7, 2))
+	seedSpec(t, f, followUpSpec(r.fu1, r.root, r.root, 7), false)
+	fu := prRecord(r.fu1, "", 7, 1)
+	fu.Branch, fu.FollowUp = "fugaro/"+r.root, &runstore.FollowUp{PR: 7, PreviousRun: r.root}
+	writeRecord(t, f, r.fu1, fu)
+	seedSpec(t, f, followUpSpec(r.fu2, r.root, r.fu1, 7), false)
+	putBuildObject(t, f, "runs/"+appSlug+"/"+r.fu2+"/result.json", []byte("{not json"))
+	seedSpec(t, f, firstRunSpec(r.other), false)
+	writeRecord(t, f, r.other, prRecord(r.other, "", 8, 5))
+	seedSpec(t, f, firstRunSpec(r.plain), false)
+	return r
+}
+
+func runIDs(rows []runview.Row) []string {
+	var ids []string
+	for _, r := range rows {
+		ids = append(ids, r.RunID)
+	}
+	return ids
+}
+
+func TestLsPRFilter(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRRuns(t, f)
+	got, errOut := lsJSON(t, "--pr", "7")
+	// Newest first; the root is 30 days old, inside --pr's 90-day default;
+	// the corrupt run is kept, since its task says it is on PR 7.
+	if want := []string{r.fu2, r.fu1, r.root}; strings.Join(runIDs(got.Runs), ",") != strings.Join(want, ",") {
+		t.Fatalf("ls --pr 7 = %v, want %v (stderr %q)", runIDs(got.Runs), want, errOut)
+	}
+	if got.Runs[0].Status != runview.StatusError || got.Runs[0].TaskPR != 7 || !got.Runs[1].FollowUp || got.Runs[1].PreviousRun != r.root ||
+		got.Runs[2].RecordPR != 7 || got.Runs[2].FollowUp || !got.Runs[2].Pushed {
+		t.Fatalf("rows = %+v", got.Runs)
+	}
+	if got, _ := lsJSON(t, "--pr", "8", "--repo", "acme/app"); strings.Join(runIDs(got.Runs), ",") != r.other {
+		t.Fatalf("ls --pr 8 = %v", runIDs(got.Runs))
+	}
+	// An explicit --since still bounds it.
+	if got, _ := lsJSON(t, "--pr", "7", "--since", "7d"); len(got.Runs) != 2 {
+		t.Fatalf("ls --pr 7 --since 7d = %v", runIDs(got.Runs))
+	}
+	if got, _ := lsJSON(t, "--pr", "9"); len(got.Runs) != 0 || got.Totals.Runs != 0 {
+		t.Fatalf("ls --pr 9 = %+v", got)
+	}
+	// Without --pr the default window is still 7 days.
+	if got, _ := lsJSON(t); len(got.Runs) != 4 {
+		t.Fatalf("ls = %v", runIDs(got.Runs))
+	}
+}
+
+// ls --pr joins executions only for the runs on the PR: a busy repository
+// costs no per-run backend call for runs off it.
+func TestLsPRJoinsExecutionsOnlyForPR(t *testing.T) {
+	f := newCloudFixture(t)
+	old := time.Now().Add(-200 * 24 * time.Hour) // outside the listing's window: each needs a call of its own
+	on := runIDAt(0, "000100", "aaaa")
+	e := seedSpec(t, f, firstRunSpec(on), true)
+	writeRecord(t, f, on, prRecord(on, e, 7, 1))
+	f.run.SetCreated(e, old)
+	for i, hex := range []string{"bbbb", "cccc", "dddd"} {
+		id := runIDAt(0, "00020"+strconv.Itoa(i), hex)
+		e := seedSpec(t, f, firstRunSpec(id), true)
+		writeRecord(t, f, id, prRecord(id, e, 8, 1))
+		f.run.SetCreated(e, old)
+	}
+	gets := func() int {
+		n := 0
+		for _, r := range f.run.Requests() {
+			if r.Method == "GET" && strings.Contains(r.Path, "/executions/") {
+				n++
+			}
+		}
+		return n
+	}
+	got, _ := lsJSON(t, "--pr", "7")
+	if len(got.Runs) != 1 || got.Runs[0].RunID != on {
+		t.Fatalf("ls --pr 7 = %v", runIDs(got.Runs))
+	}
+	if n := gets(); n != 1 {
+		t.Fatalf("ls --pr 7 asked for %d executions one by one, want 1 (the run on the PR)", n)
+	}
+	// Without --pr every run's execution is fetched: the count above is the filter's doing.
+	before := gets()
+	if got, _ := lsJSON(t); len(got.Runs) != 4 || gets()-before != 4 {
+		t.Fatalf("ls = %d runs, %d execution calls", len(got.Runs), gets()-before)
+	}
+}
+
+func TestLsPRNeedsOneRepo(t *testing.T) {
+	f := newCloudFixture(t)
+	if _, _, err := execute(t, "ls", "--pr", "7", "--all"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+		t.Fatalf("--pr --all: %v", err)
+	}
+	for _, bad := range []string{"0", "-3"} {
+		if _, _, err := execute(t, "ls", "--pr", bad); ExitCode(err) != ExitUserError {
+			t.Fatalf("--pr %s: %v", bad, err)
+		}
+	}
+	// A config with two repositories needs --repo.
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	two := strings.Replace(string(data), "repos:\n", "repos:\n  acme/webapp: { provider: github, base_branch: main, workflows: [web] }\n", 1)
+	if err := os.WriteFile(path, []byte(two), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+		t.Fatalf("two repositories: %v", err)
+	}
+	seedPRRuns(t, f)
+	if got, _ := lsJSON(t, "--pr", "7", "--repo", "acme/app"); len(got.Runs) != 3 {
+		t.Fatalf("--repo: %v", runIDs(got.Runs))
+	}
+	// A config with no repositories (ls would list the whole bucket) needs --repo too.
+	none := strings.Replace(string(data), "repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n", "", 1)
+	if none == string(data) {
+		t.Fatal("the fixture's repos entry moved")
+	}
+	if err := os.WriteFile(path, []byte(none), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "ls", "--pr", "7"); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "ls --pr needs --repo") {
+		t.Fatalf("no repositories: %v", err)
+	}
+}
+
+// ls --pr can't tell whether a run whose record is unreadable, and whose
+// task names no PR, is on the PR: it leaves the run out but still warns.
+func TestLsPRWarnsUndecidableRun(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRRuns(t, f)
+	lost := runIDAt(0, "000500", "ffff")
+	seedSpec(t, f, firstRunSpec(lost), false)
+	putBuildObject(t, f, "runs/"+appSlug+"/"+lost+"/result.json", []byte("{not json"))
+	got, errOut := lsJSON(t, "--pr", "7")
+	if len(got.Runs) != 3 || !strings.Contains(errOut, lost+": result.json is unreadable") || !strings.Contains(errOut, r.fu2+": result.json is unreadable") {
+		t.Fatalf("ls --pr 7 = %v, stderr %q", runIDs(got.Runs), errOut)
+	}
+	// A run whose record says it is on another PR is off this one: no warning for it.
+	if got, errOut := lsJSON(t, "--pr", "8"); len(got.Runs) != 1 || strings.Contains(errOut, r.fu2) {
+		t.Fatalf("ls --pr 8 = %v, stderr %q", runIDs(got.Runs), errOut)
+	}
+}
+
+// ls --pr's totals line is the PR's total cost: every run on it, and only those.
+func TestLsPRTotals(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRRuns(t, f)
+	got, _ := lsJSON(t, "--pr", "7")
+	// root $2 + $0.5, fu1 $1 + $0.5, fu2 nothing known; PR 8's $5 is not counted.
+	if got.Totals.Runs != 3 || math.Abs(got.Totals.ModelUSD-3) > 1e-9 || math.Abs(got.Totals.ComputeUSD-1) > 1e-9 {
+		t.Fatalf("totals = %+v (runs %v; other %s)", got.Totals, runIDs(got.Runs), r.other)
+	}
+	human, _, err := execute(t, "ls", "--pr", "7")
+	if err != nil || !strings.Contains(human, "3 runs · ≈ $4.00 billed") {
+		t.Fatalf("human ls --pr 7 = %s, %v", human, err)
+	}
+}
+
+// The PR column shows the number, and the URL once it is known.
+func TestLsPRColumn(t *testing.T) {
+	f := newCloudFixture(t)
+	r := seedPRRuns(t, f)
+	waiting := runIDAt(0, "000500", "ffff") // a follow-up not launched yet: its task knows the PR, no record yet
+	seedSpec(t, f, followUpSpec(waiting, r.root, r.fu1, 7), false)
+	human, _, err := execute(t, "ls", "--pr", "7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := map[string]string{}
+	for _, l := range strings.Split(human, "\n") {
+		if fields := strings.Fields(l); len(fields) > 0 {
+			lines[fields[0]] = l
+		}
+	}
+	if l := lines[appSlug+"/"+r.fu1]; !strings.HasSuffix(l, "#7 https://github.com/acme/app/pull/7") {
+		t.Fatalf("finished follow-up line = %q\n%s", l, human)
+	}
+	if l := lines[appSlug+"/"+waiting]; !strings.HasSuffix(l, "#7") {
+		t.Fatalf("unlaunched follow-up line = %q\n%s", l, human)
+	}
+	if l := lines[appSlug+"/"+r.plain]; l != "" {
+		t.Fatalf("a run off the PR is listed: %q", l)
 	}
 }

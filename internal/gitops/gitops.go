@@ -92,6 +92,12 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, 
 var noHooks = []string{"-c", "core.hooksPath=" + os.DevNull}
 
 func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
+	out, err := r.gitRaw(ctx, args...)
+	return strings.TrimSpace(string(out)), err
+}
+
+// gitRaw runs git and returns its stdout exactly as written.
+func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
 	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
@@ -108,9 +114,9 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 		err = nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		return nil, fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return stdout.Bytes(), nil
 }
 
 // CheckoutNewBranch fetches ref from origin and points a fresh branch at it.
@@ -180,6 +186,67 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 	return r.git(ctx, "remote", "get-url", "origin")
 }
 
+// ShowFile returns the file at path in revision rev (`git show
+// rev:path`), whatever the working tree holds. path must be relative and
+// clean, without "." or ".." segments, and rev must not look like an
+// option, so neither can reach outside the revision's tree or into git's
+// arguments.
+func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") || strings.ContainsAny(rev, ": \t\n") {
+		return nil, fmt.Errorf("refusing to read a file at revision %q", rev)
+	}
+	if !cleanRelPath(path) {
+		return nil, fmt.Errorf("refusing to read %q: the path must be relative and clean, without ..", path)
+	}
+	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
+}
+
+// TreeEntryMode returns the mode of path in revision rev's tree
+// (`git ls-tree`), such as "100644" for a file or "120000" for a symbolic
+// link, or "" when the tree has no such entry. path must be as ShowFile
+// accepts it.
+func (r *Repo) TreeEntryMode(ctx context.Context, rev, path string) (string, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") || strings.ContainsAny(rev, ": \t\n") {
+		return "", fmt.Errorf("refusing to read the tree of revision %q", rev)
+	}
+	if !cleanRelPath(path) {
+		return "", fmt.Errorf("refusing to look up %q: the path must be relative and clean, without ..", path)
+	}
+	out, err := r.git(ctx, "ls-tree", rev, "--", path)
+	if err != nil || out == "" {
+		return "", err
+	}
+	mode, _, _ := strings.Cut(out, " ")
+	return mode, nil
+}
+
+// cleanRelPath reports whether p is a relative, clean, slash-separated
+// path with no empty, "." or ".." segment, that doesn't start with "-".
+func cleanRelPath(p string) bool {
+	if p == "" || strings.HasPrefix(p, "-") || strings.ContainsAny(p, "\\\x00") {
+		return false
+	}
+	for _, seg := range strings.Split(p, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrForeignTip means the remote branch's tip is a commit this run never
+// had: someone else pushed to it. Push leaves it alone.
+var ErrForeignTip = errors.New("something else pushed to the branch")
+
+// ErrBranchGone means PushExisting found no remote branch to update.
+var ErrBranchGone = errors.New("the branch no longer exists on origin")
+
+// RemoteTip returns the commit branch points at on origin, or "" when
+// origin has no such branch.
+func (r *Repo) RemoteTip(ctx context.Context, branch string) (string, error) {
+	return r.remoteTip(ctx, "refs/heads/"+branch)
+}
+
 // Push pushes HEAD to the run branch on origin. The agent may already have
 // pushed the branch and then amended or rebased it, so the push is forced,
 // but under a lease: the remote branch is overwritten only if it is absent
@@ -189,11 +256,8 @@ func (r *Repo) OriginURL(ctx context.Context) (string, error) {
 // and the suffix is validated as a real branch name so the refspec can't be
 // used to reach some other ref.
 func (r *Repo) Push(ctx context.Context, branch string) error {
-	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
-		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
-	}
-	if _, err := r.git(ctx, "check-ref-format", "--branch", branch); err != nil {
-		return fmt.Errorf("refusing to push %q: not a valid branch name: %w", branch, err)
+	if err := checkRunBranch(ctx, r, branch); err != nil {
+		return err
 	}
 	ref := "refs/heads/" + branch
 	tip, err := r.remoteTip(ctx, ref)
@@ -206,11 +270,65 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
 			return fmt.Errorf("checking whether %s's tip on origin belongs to this run: %w", branch, err)
 		}
 		if !ours {
-			return fmt.Errorf("%s on origin is at %s, a commit this run never had: something else pushed to the branch, so it is not overwritten", branch, tip)
+			return fmt.Errorf("%s on origin is at %s, a commit this run never had: %w, so it is not overwritten", branch, tip, ErrForeignTip)
 		}
 	}
 	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
 	return err
+}
+
+// PushExisting pushes HEAD to a branch that must still be on origin at
+// expected, the commit the run started from, as a follow-up's is. When
+// the remote branch is gone (its pull request was merged and the branch
+// deleted) it refuses with ErrBranchGone rather than recreate it. When it
+// is anywhere but expected, or HEAD itself (a retried push), someone else
+// pushed to it, even a rewind to an older commit, and it refuses with
+// ErrForeignTip. The lease is on the tip it checked, so a change between
+// the check and the push fails the push too.
+func (r *Repo) PushExisting(ctx context.Context, branch, expected string) error {
+	if err := checkRunBranch(ctx, r, branch); err != nil {
+		return err
+	}
+	ref := "refs/heads/" + branch
+	tip, err := r.remoteTip(ctx, ref)
+	if err != nil {
+		return fmt.Errorf("reading %s on origin: %w", branch, err)
+	}
+	if tip == "" {
+		return fmt.Errorf("%s no longer exists on origin; not recreating it: %w", branch, ErrBranchGone)
+	}
+	head, err := r.HeadSHA(ctx)
+	if err != nil {
+		return err
+	}
+	if expected == "" || (tip != expected && tip != head) {
+		return fmt.Errorf("%s on origin is at %s, not %s where this run started: %w, so it is not overwritten", branch, tip, expected, ErrForeignTip)
+	}
+	if _, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref); err != nil {
+		// A push that landed after the check fails the lease: that is
+		// someone else's push, like one the check saw.
+		now, rerr := r.remoteTip(ctx, ref)
+		switch {
+		case rerr == nil && now == "":
+			return fmt.Errorf("%s was deleted from origin during the push; not recreating it: %w", branch, ErrBranchGone)
+		case rerr == nil && now != tip:
+			return fmt.Errorf("%s on origin moved to %s during the push: %w, so it is not overwritten (%v)", branch, now, ErrForeignTip, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// checkRunBranch refuses a branch the runner must never push: anything
+// but a valid fugaro/<id> branch, so the refspec can't reach another ref.
+func checkRunBranch(ctx context.Context, r *Repo, branch string) error {
+	if !strings.HasPrefix(branch, RunBranchPrefix) || len(branch) == len(RunBranchPrefix) {
+		return fmt.Errorf("refusing to push %q: the runner only pushes %s<run-id> branches", branch, RunBranchPrefix)
+	}
+	if _, err := r.git(ctx, "check-ref-format", "--branch", branch); err != nil {
+		return fmt.Errorf("refusing to push %q: not a valid branch name: %w", branch, err)
+	}
+	return nil
 }
 
 // remoteTip returns the commit ref points at on origin, or "" if it does not exist.

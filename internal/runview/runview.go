@@ -71,6 +71,53 @@ type Row struct {
 	// unlaunched (nobody is launching it). ls --watch stops when every row
 	// is settled; a launching row is not, since its launch.json is coming.
 	Settled bool `json:"settled"`
+
+	// Branch is the run's branch: the record's, else the task's (a
+	// follow-up's, known before it starts).
+	Branch  string `json:"branch,omitempty"`
+	Outcome string `json:"outcome,omitempty"`
+	// TaskPR is the pull request the task continues (a follow-up);
+	// RecordPR is the one the run's record names; PR is the record's,
+	// else the task's.
+	TaskPR   int `json:"task_pr,omitempty"`
+	RecordPR int `json:"record_pr,omitempty"`
+	PR       int `json:"pr,omitempty"`
+	// Pushed means the run updated its branch, and PushedHead is the
+	// commit it pushed; see Pushed.
+	Pushed     bool       `json:"pushed"`
+	PushedHead string     `json:"pushed_head,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	// BaseBranch is the record's base branch, when it has one.
+	BaseBranch string `json:"base_branch,omitempty"`
+	// PreviousRun is the run a follow-up continues.
+	PreviousRun string `json:"previous_run,omitempty"`
+	FollowUp    bool   `json:"follow_up"`
+}
+
+// Pushed reports whether the run of task t (nil when unreadable) with
+// record r pushed its branch, and the commit it pushed. A record with
+// pushed_head has. A record written before follow-ups existed has no
+// pushed_head, but then its pull request was opened only after a
+// successful push: a PR number means it pushed its head_sha (none named,
+// nothing pushed). That reading never applies to a follow-up, whose record
+// names its PR from the start. The record tells one apart without its task
+// too: a first run's branch always names its own run ID.
+func Pushed(t *task.Spec, r *runstore.Record) (head string, ok bool) {
+	switch {
+	case r == nil:
+		return "", false
+	case r.PushedHead != "":
+		return r.PushedHead, true
+	case r.FollowUp != nil || (t != nil && t.IsFollowUp()):
+		return "", false
+	}
+	if id, ok := task.BranchRunID(r.Branch); ok && id != r.RunID {
+		return "", false // another run's branch: a follow-up
+	}
+	if r.PR != nil && r.PR.Number > 0 && r.HeadSHA != "" {
+		return r.HeadSHA, true
+	}
+	return "", false
 }
 
 // PriceBook is the compute prices of a region (a local override, else the
@@ -90,6 +137,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Execution, row.LogURL = in.Launch.Execution, in.Launch.LogURL
 	}
 	r, e := in.Record, in.Exec
+	followUpFields(&row, in.Task, r)
 	if r != nil {
 		row.Stage = r.Stage
 		if r.Reason != "" {
@@ -162,6 +210,39 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Cost = runstore.NewCost(row.Cost.ModelUSD, 0, row.Cost.ModelBasis)
 	}
 	return row
+}
+
+// followUpFields sets row's branch, PR and follow-up fields from task t
+// and record r, either of which may be nil.
+func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
+	if t != nil {
+		row.Branch, row.TaskPR, row.PreviousRun = t.Branch, t.PR, t.PreviousRun
+		row.FollowUp = t.IsFollowUp()
+	}
+	if r != nil {
+		if r.Branch != "" {
+			row.Branch = r.Branch
+		}
+		row.Outcome, row.BaseBranch = string(r.Outcome), r.BaseBranch
+		if r.PR != nil {
+			row.RecordPR = r.PR.Number
+		}
+		if !r.StartedAt.IsZero() {
+			at := r.StartedAt
+			row.StartedAt = &at
+		}
+		if fu := r.FollowUp; fu != nil {
+			row.FollowUp = true
+			if row.PreviousRun == "" {
+				row.PreviousRun = fu.PreviousRun
+			}
+		}
+	}
+	row.PR = row.RecordPR
+	if row.PR == 0 {
+		row.PR = row.TaskPR
+	}
+	row.PushedHead, row.Pushed = Pushed(t, r)
 }
 
 // Lost reports whether launch l, of a run with no record and no execution

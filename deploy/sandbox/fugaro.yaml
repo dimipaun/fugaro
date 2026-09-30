@@ -1,6 +1,13 @@
 version: 1
 git: { provider: bitbucket, base_branch: master }   # no reviewers: the sandbox must never notify a person
 agent: { auth: oauth, review_rounds: 1, max_budget_usd: 2 }
+# The follow-up live check (docs/gcp-live-checklist.md, check 19) needs the
+# Bitbucket account_id of the person who posts its review comments. They add
+# it in the sandbox repository's own copy of this file, on master, with
+# their own credential; the real ID is never committed here. No
+# allow_public: the sandbox must stay private.
+# followup:
+#   trusted: ["557058:00000000-0000-0000-0000-000000000001"]
 workflows:
   web:
     base: web-node

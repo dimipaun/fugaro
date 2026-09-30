@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -152,5 +153,18 @@ func TestCostLine(t *testing.T) {
 		if got := CostLine(c); got != want {
 			t.Errorf("CostLine(%+v) = %q, want %q", c, got, want)
 		}
+	}
+}
+
+// TestReportCarriesMarker: the report ends with the run's marker, which
+// names the run that posted it.
+func TestReportCarriesMarker(t *testing.T) {
+	rec := &runstore.Record{RunID: "20260926-221530-abcd", Outcome: runstore.OutcomeReady}
+	got := Report(rec, "loc/", nil)
+	if !strings.HasSuffix(got, "\n"+gitprov.ReportMarker(rec.RunID)+"\n") {
+		t.Fatalf("report does not end with the marker:\n%s", got)
+	}
+	if id, ok := gitprov.FugaroRun(got); !ok || id != rec.RunID {
+		t.Fatalf("FugaroRun(report) = %q, %v", id, ok)
 	}
 }

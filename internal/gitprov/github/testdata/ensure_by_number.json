@@ -1,0 +1,6 @@
+[
+  {"method": "GET", "path": "/repos/acme/web/installation", "status": 200, "response": {"id": 777}},
+  {"method": "POST", "path": "/app/installations/777/access_tokens", "status": 201, "response": {"token": "ghs_fixture_token_1", "expires_at": "2026-09-27T11:00:00Z"}},
+  {"method": "GET", "path": "/repos/acme/web/pulls/12", "auth": "Bearer ghs_fixture_token_1", "status": 200, "response": {"number": 12, "state": "open", "merged": false, "draft": true, "html_url": "https://github.com/acme/web/pull/12", "node_id": "PR_kwDOA12", "title": "Add search", "user": {"login": "fugaro-app[bot]", "id": 900001, "type": "Bot"}, "head": {"ref": "fugaro/20260927-101500-abcd", "sha": "0123456789abcdef0123456789abcdef01234567", "repo": {"full_name": "acme/web"}}, "base": {"ref": "main"}}},
+  {"method": "POST", "path": "/graphql", "auth": "Bearer ghs_fixture_token_1", "request": {"query": "mutation($id: ID!) { markPullRequestReadyForReview(input: {pullRequestId: $id}) { pullRequest { isDraft } } }", "variables": {"id": "PR_kwDOA12"}}, "status": 200, "response": {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": false}}}}}
+]

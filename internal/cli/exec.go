@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -161,6 +162,9 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	return nil
 }
 
+// fakeSelfID is the account ID `exec --provider fake` posts as.
+const fakeSelfID = "fugaro-bot"
+
 // providerOptions turns --provider into the runner's provider settings: the
 // kind to open before fugaro.yaml is read ("" lets the origin URL's host or
 // git.provider decide), and how to open it. warn receives the adapters'
@@ -168,7 +172,13 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 func providerOptions(o execOptions, env []string, warn func(string)) (string, gitprov.Opener, error) {
 	switch o.provider {
 	case "fake":
-		return "", gitprov.Static(&fake.Provider{Path: o.providerState}), nil
+		// The fake learns the task's repository from the runner, and reads
+		// branch heads from --remote, as a real host would show them. It
+		// posts as fakeSelfID, which is also its PRs' author, so Fugaro's
+		// own comments and PRs look as they would on a real host.
+		return "", func(_ context.Context, _, repo string) (gitprov.Provider, []string, error) {
+			return &fake.Provider{Path: o.providerState, Repo: repo, Remote: o.remote, SelfID: fakeSelfID}, nil, nil
+		}, nil
 	case "", gitprov.KindGitHub, gitprov.KindBitbucket:
 		if o.providerState != "" {
 			return "", nil, errors.New("--provider-state only applies to --provider fake")

@@ -1,4 +1,4 @@
-# GCP live checklist (M4, extended for M5)
+# GCP live checklist (M4, extended for M5 and M6)
 
 These checks confirm the facts about Cloud Run, Cloud Logging, Cloud Storage
 and Cloud Build that only a real project can show. The hermetic fakes
@@ -36,14 +36,22 @@ PR description and into this checklist's results, at the end.
     owner or editor, or `roles/artifactregistry.repoAdmin` on that registry.
     Without it the cleanup fails the test and names the image to delete.
   - The Bitbucket token comes only from `FUGARO_BITBUCKET_TOKEN`. It is used
-    to read the sandbox's `fugaro.yaml` for the spend check and to clean up.
-    The CLI's environment never holds it, and it is scrubbed from anything
-    the tests log.
+    to read the sandbox's `fugaro.yaml` for the spend check and to clean up,
+    and in check 19 to read the sandbox repository, its PR and the PR's
+    comments, and to decline that PR. Every request it makes goes to the
+    sandbox repository (`FUGARO_LIVE_REPO`), and the GCP live tests
+    (`internal/e2e`) refuse any other path. The CLI's environment never holds it, and it is scrubbed from
+    anything the tests log.
+  - **No second credential.** Check 19's review comments are posted by the
+    person running it, by hand, in the Bitbucket UI; the tests never post a
+    comment or push to the sandbox's base branch.
   - Nothing reads a credential from argv.
 - **Cleanup comes first.** Each test registers its `t.Cleanup` before its
   first side effect. The cleanup does the following:
   - cancels an execution or build that is still going
-  - declines the run's PR and deletes its `fugaro/<run-id>` branch
+  - declines the run's PR and deletes its `fugaro/<run-id>` branch (for a
+    follow-up, the PR's branch, named after its first run, when that run is
+    a live-test run too)
   - deletes the run's `runs/<slug>/<run-id>/` objects
   - deletes every `fugaro-live-*` object and secret the test made
 
@@ -134,7 +142,9 @@ grep 'FACT:' live.log
 ```
 
 To run a single check, narrow `-run`. The commands are listed in the table
-below.
+below. Check 19 (`TestLiveSandboxFollowUp`) is skipped by this run: it
+pauses for you to post review comments, so it runs only on its own, with
+`FUGARO_LIVE_FOLLOWUP=1` (see "Check 19").
 
 On a fresh project `TestLiveListAndLogs` (checks 1, 1b and 2) runs before
 anything has made an execution, and skips with "rerun … after the sandbox
@@ -183,6 +193,7 @@ In the commands below, `T` is short for
 | 16 | The daily image check: a skipped check, a back-off after a forced failure, and one forced rebuild | With the sandbox's schedule unpaused (its `rebuild.check` is `daily` and its record exists): `fugaro image check --dry-run` from its checkout; then `gcloud scheduler jobs run <scheduler job> --location <scheduler region>` (from `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`). To force a failure, temporarily disable the `bitbucket-token` secret's latest version and run the Scheduler job again, then re-enable the version. For the forced rebuild, run `fugaro image build`, which submits the request a fired trigger submits | (a) With nothing changed, the local check prints `skip`. The check job logs `decision: skip` for each workflow, `check.json` appears next to `image.json`, and no build starts. (b) The check job mounts the credential, so with its version disabled the execution fails at container start ("Failed to access secret ... Secret Version ... disabled"), before the check can log a decision or write `check.json`. Cloud Run records that only as an ERROR audit system event (`cloudaudit.googleapis.com%2Fsystem_event`, "Execution ... has failed to complete, 0/1 tasks were a success"), not in its system log, and the "Fugaro image check job failed" alert fires from that entry: the email arrives if one is configured, with log isolation on. A failure after start is covered by the check's own `decision: check-failed` line at ERROR (exit 2, the `fugaro ls` check warning and the "Fugaro image check failed" alert) and by the Cloud Run system log's ERROR lines. After a failed *rebuild* whose inputs haven't changed, the next check logs `rebuild-failed-last` and submits no build. (c) The forced rebuild runs candidate, smoke, gate, promote and record: `latest` moves to the record's `image_digest`, and `fugaro image status` shows the new build time. A leftover `candidate-` tag with an untag warning in the build log is expected. Record each as a `FACT`, and re-enable the secret version. |
 | 17 | The registry cleanup policy's dry run never selects a `latest` or `dev-` version | A day or more after the installation and the first builds exist, read the Artifact Registry audit log (Cloud Logging, `protoPayload.serviceName="artifactregistry.googleapis.com"`) for what the cleanup policies of `fugaro-base` and each repository's registry would delete in dry run, and list each registry's tags with `gcloud artifacts docker tags list` | No version the dry run would delete is tagged `latest` or `dev-`, and none of a registry's three newest versions is. If one is, stop: the keep rules are wrong. Otherwise turn deletion on (gcp-setup.md, "Turning registry cleanup on"). Record a `FACT` naming what the dry run would delete. |
 | 18 | A push to the base branch during an image build does not fail the smoke (Bitbucket fetch-by-SHA of the pinned commit) | From the sandbox's checkout, start `fugaro image build`; while its render step has finished and the build step hasn't cloned yet, push a commit to the base branch (or force-push it back one commit, so the pinned commit is no longer the branch head) | The build clones, resets to the commit the render step read (fetching it by SHA when the clone lacks it), and the smoke, gate, promote and record succeed. The record's `source_commit`, `/etc/fugaro/image.json` and the image's revision label name that same commit, not the new head. If the provider refuses the fetch of an unadvertised commit, the build fails at the clone step: record that as a `FACT`. |
+| 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -202,7 +213,120 @@ For check 13, `TestLiveSandboxRun` checks the following:
   `launch.json`'s.
 - The branch lock is gone.
 - A `cache/<slug>/web/*.tar.zst` archive exists.
+- `result.json` has `pushed_head`, and the run saved its Claude Code
+  session: `session/session.json` is readable, says `pushed`, names
+  `pushed_head` as its `head_sha` and the file's size, and its
+  `session/<id>.jsonl` is there (`FACT` lines give the session ID, size and
+  workdir). Every run saves one, so that its PR's first follow-up can
+  resume it.
 - Cleanup declines the PR, deletes the branch and deletes the run's objects.
+
+## Check 19: a follow-up run
+
+`TestLiveSandboxFollowUp` runs three sandbox executions: a first run, a
+follow-up of its PR, and a follow-up of the same PR after it was declined,
+which ends at bootstrap. That is about twice the sandbox's cap plus a
+minute of compute, and two runs' model usage. It needs things only a person
+can do, so it is run one step at a time, and **you**, not the test or an
+agent running it, post the review comments and edit the sandbox's trust
+list, each with your own Bitbucket credential. The test holds only the
+sandbox's repository access token.
+
+**Before it (free: nothing the tests do writes; steps 3 and 4 are your own
+writes, with your own credential):**
+
+1. The sandbox repository is private. A follow-up refuses a public one, and
+   the sandbox's `fugaro.yaml` doesn't set `followup.allow_public`. The test
+   checks `is_private` before launching anything.
+2. The sandbox's image has the follow-up runner: its `fugaro` is built from
+   the branch under test (rebuild the base and the image as for any runner
+   change; an older image fails a follow-up at bootstrap with "follow-up
+   runs are not supported by this version of fugaro", touching nothing).
+3. Find your Bitbucket `account_id`: post any comment on a sandbox PR (any
+   PR in the sandbox will do, including one an earlier check 13 declined:
+   Bitbucket allows comments on declined PRs), then
+   run `TestLiveInspect` with that PR in `FUGARO_LIVE_INSPECT_PRS`
+   ([git-providers.md](git-providers.md#finding-an-account-id-for-followuptrusted)).
+   It prints each comment's `user.account_id`.
+4. **You** add it to the sandbox's `fugaro.yaml` on `master`, in the
+   sandbox repository only, with your own credential: an edit in the
+   Bitbucket UI, or a PR you merge. `deploy/sandbox/fugaro.yaml` shows where
+   it goes, commented out; the real ID is never committed to Fugaro.
+
+   ```yaml
+   followup:
+     trusted: ["<your account_id>"]
+   ```
+
+   The test reads the file back before launching, and fails at once, at no
+   cost, if `followup.trusted` is empty.
+
+**⚠ CONFIRM** Then run it (it spends money, and opens and declines
+a PR in the sandbox and deletes its branch):
+
+```bash
+FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
+  go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/ 2>&1 | tee -a live.log
+```
+
+What it does and checks:
+
+- Before any launch: the spend caps of check 13, a non-empty
+  `followup.trusted`, and a private sandbox. Every cleanup is registered
+  before its launch.
+- **The first run**, as check 13 (`--total-timeout 15m`, batch
+  `live-<stamp>`), until its PR exists.
+- **The pause.** It logs `ACTION: post one inline and one general review
+  comment on <PR URL> in the Bitbucket UI now` and then only reads: every
+  20 seconds, for up to `FUGARO_LIVE_COMMENT_WAIT` (default `20m`), it lists
+  the PR's comments with the repository token until there is both an inline
+  comment and a general one (not a reply) by someone other than the PR's
+  author, who is the token's own identity. Post one comment on a line of the
+  diff and one on the PR itself, from your own account. Each author's
+  `account_id` is a `FACT`, and must be in `followup.trusted` (else: "add
+  <id> to followup.trusted in the sandbox's fugaro.yaml on master, then
+  rerun"). Past the wait it fails; the cleanup still runs.
+- **The follow-up:** `fugaro run --pr <n> --run-id <id> --batch <same>
+  --total-timeout 15m --json "Also add a line to the README saying the
+  follow-up ran."` reports `launched` on the same branch, with `pr` and
+  `previous_run` (the first run) set. Once it ends:
+  - exactly one open PR comes from the branch, the same one;
+  - the PR has one report per run, each carrying its run's marker, and the
+    follow-up's report names your display name under "Comments used"; a
+    `FACT` for each says whether Bitbucket shows the marker as text and
+    gives the report's cost line (the follow-up's own cost);
+  - the follow-up's `comments.json` holds your inline and general comments
+    and neither report;
+  - `result.json`'s `follow_up` names the PR and the first run, at least two
+    comments, and `session: resumed` (a `FACT`; `fresh` fails the check and
+    its `session_note` says why; "the saved session could not be resumed"
+    means Claude Code's session directory naming or its `--resume`
+    behaviour isn't what the runner assumes);
+  - the follow-up saved its own session and has `pushed_head`;
+  - `ls --pr <n> --json` lists exactly the two runs, with `totals.runs` 2;
+  - `diagnose --json` of the follow-up has a `follow_up` block (a `FACT`);
+  - the branch lock is gone.
+- **The closed-PR refusal.** It declines the PR through the API, keeping its
+  branch and both runs' objects, lists the PR's comments, and launches
+  `fugaro run --pr <n> --batch <same> --json` with no instructions. The CLI
+  launches (it can't see the PR's state); the run ends `infra_error` with
+  "PR #<n> is closed" (a `FACT`), and the PR's comments are exactly those
+  from before.
+- **Timing.** A realistic run takes about 65 minutes: two runs of about 17
+  minutes each, your comments, the refused run's minute, and the build. The
+  waits are at most 30 minutes per run, 20 for the comments and 10 for the
+  refused run, 90 in all, under the `-timeout 100m` (an abort skips the
+  cleanup; run the sweep then).
+- **Cleanup**, as for check 13: every open PR from the branch declined, the
+  branch deleted, the three runs' objects deleted. The sweep covers the
+  batch, follow-ups included: it deletes a follow-up's PR branch when that
+  branch's first run is a live-test run too.
+
+Afterwards, if you prefer the sandbox not to trust anyone between live
+runs, remove the `followup:` block from its `fugaro.yaml` on `master`
+again, the same way you added it. An older `fugaro validate` refuses the
+block (strict decoding), so remove it before rolling a checkout's tooling
+back.
 
 ## Not covered by these tests (manual)
 
@@ -313,3 +437,46 @@ Still to record: the items below that this list doesn't cover.
 - **A real run:** its `ls --json` row's `image_age_s`, and that `--total-timeout 15m` gave the execution a 17-minute timeout.
 - **The live suite on a migrated installation (not yet run live):** `TestLiveCloudBuildSecretAndDigest` is expected to build as the repository's build account, into its registry, and to run the two `docker run` probes of check 11b; `TestLiveSandboxRun` is expected to launch with `--total-timeout 15m` and see the 17-minute execution timeout. Record their `FACT`s from the first run.
 - **Retirement:** `fugaro-build`'s bindings removed, disabled, deleted.
+
+## Results of the fourth live run (M6)
+
+To be filled in by the M6 live verification: the Bitbucket adapter's live
+test with recording (git-providers.md, "Live check against a sandbox
+repository"), check 13 as the regression check for first runs, and check 19.
+Record every `FACT` the same way as the runs above, and commit the recorded
+`follow_up_reads.json` fixture, scrubbed, with the tests updated first where
+it differs from the hand-written fixtures.
+
+These are **unverified until the live check**, each written from
+documentation or observation elsewhere; record what the run shows for each:
+
+- **Claude Code's session directory:** it names a project directory
+  `~/.claude/projects/<working directory, symbolic links resolved, with
+  every byte outside [A-Za-z0-9] replaced by ->`, so `/work/repo` is
+  `-work-repo` (check 19: `session: resumed`).
+- **`claude -p --resume <id>`** keeps the session ID rather than forking a
+  new one (the runner follows the ID the result reports either way; the
+  saved `session.json` of the follow-up shows which), and a missing session
+  makes it print "No conversation found with session ID".
+- **Bitbucket's field shapes:** `is_private`; the PR's `author.account_id`
+  and `source.commit.hash`; a comment's `resolution` (on the thread's root,
+  and cleared when reopened?), `inline.outdated`, `deleted`, `pending`,
+  `user.uuid` and `user.account_id`; whether a reply carries `inline`; and
+  whether `GET /user`'s `uuid` is spelled as the comments' `user.uuid` (the
+  adapter's live test).
+- **Whether `GET /user` accepts a repository access token**, and its status
+  if not. Nothing depends on it for trust: comments by the PR's author are
+  always dropped.
+- **How Bitbucket renders `<!-- fugaro:report run=… -->`** in a comment:
+  hidden, or a visible last line (check 19's report `FACT`s).
+- **Whether users with read access can edit a Bitbucket PR's reviewers**;
+  not load-bearing under the allowlist, recorded if the run happens to
+  show it.
+- **GitHub, with no live check in M6:** that GraphQL's `Bot.databaseId`
+  equals the REST `user.id` of `<slug>[bot]`, and that a bot's GraphQL
+  login has no `[bot]` suffix; the GraphQL shapes (`reviewThreads`,
+  `isResolved`, `isOutdated`, `path`, `line`, `authorAssociation`,
+  `comments.pageInfo`); that organization members whose membership is
+  private show as `CONTRIBUTOR` to an App without `members: read`; and
+  that converting a PR to a draft keeps its requested reviewers. These
+  stay open until a GitHub sandbox and App exist.

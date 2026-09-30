@@ -19,7 +19,10 @@ type resultEvent struct {
 }
 
 // ParseStream copies claude's stream-json output to transcript (if not nil)
-// and returns the last result event. found is false if there was none.
+// and returns the last result event. found is false if there was none; the
+// returned SessionID is then the init event's, so a run killed before its
+// result still names its session. When both carry one, the result event's
+// wins.
 func ParseStream(r io.Reader, transcript io.Writer) (res Result, found bool, err error) {
 	br := bufio.NewReader(r)
 	for {
@@ -31,12 +34,22 @@ func ParseStream(r io.Reader, transcript io.Writer) (res Result, found bool, err
 				}
 			}
 			var ev resultEvent
-			if json.Unmarshal(bytes.TrimSpace(line), &ev) == nil && ev.Type == "result" {
+			switch {
+			case json.Unmarshal(bytes.TrimSpace(line), &ev) != nil:
+			case ev.Type == "system" && ev.Subtype == "init" && ev.SessionID != "" && !found:
+				// The session exists from here on: a process killed before
+				// its result event still names it.
+				res.SessionID = ev.SessionID
+			case ev.Type == "result":
 				structured := ev.StructuredOutput
 				if string(structured) == "null" {
 					structured = nil
 				}
-				res = Result{SessionID: ev.SessionID, Text: ev.Result, Structured: structured,
+				id := ev.SessionID
+				if id == "" {
+					id = res.SessionID
+				}
+				res = Result{SessionID: id, Text: ev.Result, Structured: structured,
 					CostUSD: ev.TotalCostUSD, IsError: ev.IsError, Subtype: ev.Subtype}
 				found = true
 			}

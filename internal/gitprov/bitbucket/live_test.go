@@ -287,6 +287,10 @@ func TestLiveBitbucket(t *testing.T) {
 	}
 
 	draftBranch := l.push(ctx, t, "draft")
+	draftHead, err := l.repo.HeadSHA(ctx)
+	if err != nil {
+		t.Fatal(l.scrub(err.Error()))
+	}
 	mkSpec := func(branch string, draft bool) gitprov.PRSpec {
 		return gitprov.PRSpec{Branch: branch, Base: liveBase, Title: "Fugaro live check " + l.stamp, Body: body,
 			Draft: draft, Reviewers: reviewers}
@@ -437,6 +441,25 @@ func TestLiveBitbucket(t *testing.T) {
 		}
 	})
 
+	// The follow-up reads: a general comment, an inline one with a reply,
+	// the inline thread resolved if the API allows, then the repository,
+	// the pull request and its comments read back through the adapter.
+	t.Run("follow_up_reads", func(t *testing.T) { l.followUpReads(ctx, t, id, draftBranch, draftHead) })
+
+	// An update by number changes the draft state only.
+	t.Run("ensure_by_number", func(t *testing.T) {
+		p := l.provider(t, "live_ensure_by_number", l.ws, l.slug, l.token, nil)
+		pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: id, Branch: draftBranch, Title: "must not be sent", Body: "must not be sent", Draft: true})
+		if err != nil || pr.Number != id || !pr.Draft {
+			t.Fatalf("pr = %+v, err = %v", pr, l.scrub(fmt.Sprint(err)))
+		}
+		got := l.get(ctx, t, id)
+		l.fact("EnsurePR by number (draft) -> GET draft=%s title=%q description kept=%v", got.draft(), got.Title, got.Description == body)
+		if got.Description != body || strings.Contains(got.Title, "must not be sent") {
+			t.Errorf("an update by number changed the title or description")
+		}
+	})
+
 	// Ready on create, and the labels warning once across two PRs.
 	t.Run("labels_warning", func(t *testing.T) {
 		a, b := l.push(ctx, t, "labels-a"), l.push(ctx, t, "labels-b")
@@ -481,6 +504,26 @@ func TestLiveBitbucket(t *testing.T) {
 		}
 	})
 
+	// A declined pull request reads as closed, and an update by number
+	// refuses it rather than bringing it back or opening another.
+	t.Run("ensure_by_number_declined", func(t *testing.T) {
+		if err := l.raw.Do(ctx, "POST", l.repoPath(fmt.Sprintf("/pullrequests/%d/decline", id)), nil, nil); err != nil {
+			t.Fatal(l.scrub(err.Error()))
+		}
+		p := l.provider(t, "live_ensure_by_number_declined", l.ws, l.slug, l.token, nil)
+		info, err := p.PullRequest(ctx, id)
+		l.fact("declined PR #%d -> PullRequest state=%s err=%v", id, info.State, errText(l, err))
+		if err != nil || info.State != gitprov.PRClosed {
+			t.Errorf("state = %q, want %q", info.State, gitprov.PRClosed)
+		}
+		pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: id, Branch: draftBranch, Draft: false})
+		n := l.openFor(ctx, t, draftBranch)
+		l.fact("EnsurePR by number on the declined PR -> pr=%+v err=%v; open PRs for the branch = %d", pr, errText(l, err), n)
+		if !errors.Is(err, gitprov.ErrPRNotOpen) || n != 0 {
+			t.Errorf("want ErrPRNotOpen and no open pull request")
+		}
+	})
+
 	// A bad token: HTTP 401, and the token never appears in the error.
 	t.Run("unauthorized", func(t *testing.T) {
 		p := l.provider(t, "live_unauthorized", l.ws, l.slug, "not-a-real-token-0000", nil)
@@ -490,6 +533,73 @@ func TestLiveBitbucket(t *testing.T) {
 			t.Errorf("err = %v, want HTTP 401", err)
 		}
 	})
+}
+
+// postComment posts a comment on pull request id with the raw client (as
+// the token's user), returning its ID.
+func (l *live) postComment(ctx context.Context, t *testing.T, id int, in map[string]any) int {
+	t.Helper()
+	var out struct {
+		ID int `json:"id"`
+	}
+	if err := l.raw.Do(ctx, "POST", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments", id)), in, &out); err != nil {
+		t.Fatal(l.scrub(err.Error()))
+	}
+	return out.ID
+}
+
+// followUpReads posts the comments a follow-up reads (see the live*Body
+// constants), then reads the repository, pull request id and its comments
+// through the adapter, recording them as live_follow_up_reads.json.
+func (l *live) followUpReads(ctx context.Context, t *testing.T, id int, branch, head string) {
+	general := l.postComment(ctx, t, id, map[string]any{"content": map[string]string{"raw": liveGeneralBody}})
+	inlineID := l.postComment(ctx, t, id, map[string]any{"content": map[string]string{"raw": liveInlineBody},
+		"inline": map[string]any{"path": liveInlinePath, "to": 1}})
+	reply := l.postComment(ctx, t, id, map[string]any{"content": map[string]string{"raw": liveReplyBody},
+		"parent": map[string]int{"id": inlineID}})
+	resolveErr := l.raw.Do(ctx, "POST", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments/%d/resolve", id, inlineID)), nil, nil)
+	resolved := resolveErr == nil
+	l.fact("posted general #%d, inline #%d, reply #%d; resolving the inline thread (POST …/comments/%d/resolve) -> %s",
+		general, inlineID, reply, inlineID, errText(l, resolveErr))
+
+	var warnings []string
+	p := l.provider(t, "live_follow_up_reads", l.ws, l.slug, l.token, func(m string) { warnings = append(warnings, m) })
+	repo, err := p.Repository(ctx)
+	l.fact("Repository -> private=%v err=%v", repo.Private, errText(l, err))
+	if err != nil || !repo.Private {
+		t.Errorf("the sandbox must read as private (is_private)")
+	}
+	info, err := p.PullRequest(ctx, id)
+	if err != nil {
+		t.Fatal(l.scrub(err.Error()))
+	}
+	l.fact("PullRequest #%d -> state=%s draft=%v author.account_id=%q source=%s repo=%s head=%q (SameCommit with the pushed head: %v)",
+		id, info.State, info.Draft, info.AuthorID, info.SourceBranch, info.SourceRepo, info.HeadSHA, gitprov.SameCommit(info.HeadSHA, head))
+	if info.State != gitprov.PROpen || info.SourceBranch != branch || info.AuthorID == "" || !strings.EqualFold(info.SourceRepo, l.ws+"/"+l.slug) {
+		t.Errorf("PullRequest = %+v", info)
+	}
+	comments, err := p.Comments(ctx, id)
+	if err != nil {
+		t.Fatal(l.scrub(err.Error()))
+	}
+	l.fact("GET /user with the repository access token: warnings=%q", warnings)
+	byBody := map[string]gitprov.Comment{}
+	for _, c := range comments {
+		byBody[c.Body] = c
+		l.fact("comment %s kind=%s author=%q author_id=%q (PR author: %v) self=%v self_known=%v resolved=%v outdated=%v deleted=%v path=%q line=%d",
+			c.ID, c.Kind, c.Author, c.AuthorID, c.AuthorID == info.AuthorID, c.Self, c.SelfKnown, c.Resolved, c.Outdated, c.Deleted, c.Path, c.Line)
+	}
+	g, ok := byBody[liveGeneralBody]
+	l.fact("the raw content keeps <!-- … -->: %v", ok)
+	if !ok || g.Kind != gitprov.CommentGeneral {
+		t.Errorf("the general comment is missing or changed: %+v", g)
+	}
+	for _, body := range []string{liveInlineBody, liveReplyBody} {
+		c, ok := byBody[body]
+		if !ok || c.Kind != gitprov.CommentInline || c.Path != liveInlinePath || (resolved && !c.Resolved) {
+			t.Errorf("inline comment %q = %+v (found %v, thread resolved %v)", body, c, ok, resolved)
+		}
+	}
 }
 
 // TestLiveCleanup declines every open pull request from a fugaro/live-*
@@ -572,6 +682,9 @@ func TestLiveInspect(t *testing.T) {
 		}
 		var pr struct {
 			livePR
+			Author struct {
+				AccountID string `json:"account_id"`
+			} `json:"author"`
 			Source struct {
 				Branch struct {
 					Name string `json:"name"`
@@ -586,9 +699,13 @@ func TestLiveInspect(t *testing.T) {
 				Content struct {
 					Raw string `json:"raw"`
 				} `json:"content"`
+				User *struct {
+					AccountID   string `json:"account_id"`
+					DisplayName string `json:"display_name"`
+				} `json:"user"`
 			} `json:"values"`
 		}
-		if err := l.raw.Do(ctx, "GET", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments", id)), nil, &page); err != nil {
+		if err := l.raw.Do(ctx, "GET", l.repoPath(fmt.Sprintf("/pullrequests/%d/comments?pagelen=100", id)), nil, &page); err != nil {
 			t.Fatal(l.scrub(err.Error()))
 		}
 		var heads []string
@@ -596,7 +713,13 @@ func TestLiveInspect(t *testing.T) {
 			head, _, _ := strings.Cut(c.Content.Raw, "\n")
 			heads = append(heads, head)
 		}
-		l.fact("PR #%d branch=%s state=%s draft=%s title=%q open PRs for the branch=%d comments=%d %q",
-			id, pr.Source.Branch.Name, pr.State, pr.draft(), pr.Title, l.openFor(ctx, t, pr.Source.Branch.Name), len(page.Values), heads)
+		l.fact("PR #%d branch=%s state=%s draft=%s title=%q author.account_id=%q open PRs for the branch=%d comments=%d %q",
+			id, pr.Source.Branch.Name, pr.State, pr.draft(), pr.Title, pr.Author.AccountID, l.openFor(ctx, t, pr.Source.Branch.Name), len(page.Values), heads)
+		// Account IDs are not secrets: they are what followup.trusted lists.
+		for i, c := range page.Values {
+			if c.User != nil {
+				l.fact("PR #%d comment %d: user.account_id=%q display_name=%q", id, i+1, c.User.AccountID, c.User.DisplayName)
+			}
+		}
 	}
 }

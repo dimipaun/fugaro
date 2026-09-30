@@ -17,6 +17,7 @@
     "outcome": { "enum": ["ready", "draft", "none"] },
     "reason": { "type": "string" },
     "branch": { "type": "string" },
+    "base_branch": { "type": "string", "minLength": 1, "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref." },
     "head_sha": { "type": "string" },
     "pr": {
       "type": "object",
@@ -106,6 +107,25 @@
     "started_at": { "type": "string", "format": "date-time" },
     "deadline": { "type": "string", "format": "date-time" },
     "finished_at": { "type": "string", "format": "date-time" },
+    "follow_up": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pr", "previous_run", "comments"],
+      "description": "Set for a run that continues an existing pull request (design §4.4).",
+      "properties": {
+        "pr": { "type": "integer", "minimum": 1 },
+        "previous_run": { "type": "string", "pattern": "^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$" },
+        "start_sha": { "type": "string", "description": "The pull request's head the run started from." },
+        "session": { "enum": ["resumed", "fresh"] },
+        "session_note": { "type": "string" },
+        "comments": { "type": "integer", "minimum": 0, "description": "How many comments reached the agent." },
+        "authors": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Display name to the number of that author's comments used." },
+        "untrusted_authors": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Display names whose comments were dropped as untrusted, sorted." },
+        "untrusted_author_count": { "type": "integer", "minimum": 0, "description": "How many distinct untrusted authors were dropped, those beyond the 20 named included." },
+        "omitted": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Comments left out, by reason." }
+      }
+    },
+    "pushed_head": { "type": "string", "minLength": 1, "description": "The commit the run pushed, set right after a successful push." },
     "finalize_reserve_s": { "type": "number", "exclusiveMinimum": 0, "description": "The workflow's timeouts.finalize_reserve at the task's ref, overrides applied, in seconds; cancel floors its grace with it." }
   }
 }

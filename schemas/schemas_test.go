@@ -122,7 +122,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Workflow: "web",
 		Execution: "projects/p/locations/r/jobs/j/executions/e",
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
-		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", HeadSHA: "abcdef1234567",
+		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		PR:      &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
 		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 2}},
 		Verify: []verify.Record{{
@@ -279,6 +279,103 @@ func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
 		schemaOK := sch.Validate(yamlInstance(t, doc)) == nil
 		if goOK != schemaOK {
 			t.Errorf("max_age: %s: fugaro accepts it: %v, the schema: %v (%v)", v, goOK, schemaOK, problems)
+		}
+	}
+}
+
+// TestResultSchemaFollowUp: a follow-up's record, and every run's
+// pushed_head, validate; a session that is neither resumed nor fresh doesn't.
+func TestResultSchemaFollowUp(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap", Outcome: runstore.OutcomeNone,
+		Branch: "fugaro/20260929-100000-0a1b", PR: &runstore.PRRef{Number: 12, URL: "https://example.invalid/pr/12"},
+		PushedHead: "0123456789abcdef0123456789abcdef01234567", StartedAt: at,
+		FollowUp: &runstore.FollowUp{
+			PR: 12, PreviousRun: "20260929-100000-0a1b", StartSHA: "0123456789abcdef0123456789abcdef01234567",
+			Session: "resumed", SessionNote: "resumed", Comments: 2,
+			Authors: map[string]int{"Ada": 2}, UntrustedAuthors: []string{"mallory"}, UntrustedAuthorCount: 1, Omitted: map[string]int{"self": 1},
+		},
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a follow-up record: %v\n%s", err, data)
+	}
+	// A minimal follow_up (what bootstrap saves first) validates too.
+	first := rec
+	first.PushedHead, first.FollowUp = "", &runstore.FollowUp{PR: 12, PreviousRun: "20260929-100000-0a1b"}
+	minimal, err := json.Marshal(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(minimal)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a minimal follow_up: %v\n%s", err, minimal)
+	}
+	bad := bytes.Replace(data, []byte(`"session":"resumed"`), []byte(`"session":"maybe"`), 1)
+	if bytes.Equal(bad, data) {
+		t.Fatalf("no session in %s", data)
+	}
+	if inst, err = jsonschema.UnmarshalJSON(bytes.NewReader(bad)); err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err == nil {
+		t.Fatal(`schema accepts "session": "maybe"`)
+	}
+}
+
+// TestFugaroSchemaTrustedAgreesWithGo: the schema and fugaro agree on
+// followup.trusted, except for the cases listed in looser, which JSON
+// Schema can't check: it sees the YAML-resolved value, not its text, so a
+// number written with leading zeros, in hex or as a float, and a number
+// and a string of the same digits in one list, look valid to it. fugaro
+// (config.Parse) is the authority and refuses them.
+func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	doc := func(provider, trusted string) []byte {
+		return []byte("version: 1\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
+	}
+	looser := map[string]bool{
+		"github " + `[01234567]`:           true,
+		"github " + `[0x10]`:               true,
+		"github " + `[1e3]`:                true,
+		"github " + `[1.0]`:                true,
+		"github " + `[1234567, "1234567"]`: true,
+		// 10^20 has 21 digits; the schema's bound is 10^20 so that 20
+		// nines, which decode to 10^20 as a float, pass.
+		"github " + `[100000000000000000000]`: true,
+	}
+	cases := []struct{ provider, trusted string }{
+		{"github", `[]`}, {"github", `null`}, {"github", `[1234567]`}, {"github", `["1234567"]`},
+		{"github", `[99999999999999999999]`}, {"github", `[100000000000000000000]`}, {"github", `["99999999999999999999"]`}, {"github", `["123456789012345678901"]`},
+		{"github", `["01234567"]`}, {"github", `[01234567]`}, {"github", `[0]`}, {"github", `[-1]`}, {"github", `[0x10]`},
+		{"github", `[1e3]`}, {"github", `[1.0]`}, {"github", `["octocat"]`}, {"github", `[""]`},
+		{"github", `["1234567", "1234567"]`}, {"github", `[1234567, "1234567"]`},
+		{"bitbucket", `["557058:00000000-0000-0000-0000-000000000001"]`}, {"bitbucket", `["0123456789abcdef01234567"]`},
+		{"bitbucket", `["{00000000-0000-0000-0000-000000000001}"]`}, {"bitbucket", `["0123456789ABCDEF01234567"]`},
+		{"bitbucket", `["someone"]`}, {"bitbucket", `[1234567]`},
+	}
+	for _, c := range cases {
+		d := doc(c.provider, c.trusted)
+		_, problems := config.Parse(d)
+		goOK := len(problems) == 0
+		schemaOK := sch.Validate(yamlInstance(t, d)) == nil
+		key := c.provider + " " + c.trusted
+		switch {
+		case looser[key] && (goOK || !schemaOK):
+			t.Errorf("%s: a known difference changed: fugaro accepts it: %v, the schema: %v", key, goOK, schemaOK)
+		case !looser[key] && goOK != schemaOK:
+			t.Errorf("%s: fugaro accepts it: %v, the schema: %v (%v)", key, goOK, schemaOK, problems)
 		}
 	}
 }

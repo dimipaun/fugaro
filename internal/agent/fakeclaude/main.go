@@ -6,12 +6,15 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/agent"
 )
 
 type call struct {
@@ -58,7 +61,8 @@ func main() {
 		fail("unexpected call #%d (script has %d)", n+1, len(script.Calls))
 	}
 	c := script.Calls[n]
-	sid := sessionID(os.Args[1:])
+	sid, resume := sessionID(os.Args[1:])
+	session(sid, resume, wd, string(prompt))
 	emit(map[string]any{"type": "system", "subtype": "init", "session_id": sid})
 	if c.Shell != "" {
 		cmd := exec.Command("sh", "-c", c.Shell)
@@ -87,13 +91,41 @@ func main() {
 	os.Exit(c.Exit)
 }
 
-func sessionID(args []string) string {
+// sessionID returns the session the call names, and whether it resumes it.
+func sessionID(args []string) (string, bool) {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "--session-id" || args[i] == "--resume" {
-			return args[i+1]
+			return args[i+1], args[i] == "--resume"
 		}
 	}
-	return ""
+	return "", false
+}
+
+// session keeps a session file as Claude Code does, under
+// $HOME/.claude/projects/<escaped wd>/<sid>.jsonl, appending one line per
+// invocation. A resume of a session with no file fails as Claude Code
+// does: exit 1, the message on stderr, no result event. Without HOME the
+// fake keeps no sessions, so harnesses that don't set it are unaffected.
+func session(sid string, resume bool, wd, prompt string) {
+	home := os.Getenv("HOME")
+	if home == "" || sid == "" {
+		return
+	}
+	if !agent.ValidSessionID(sid) {
+		fail("session ID %q is not a lower-case UUID", sid)
+	}
+	dir := agent.SessionDir(home, wd)
+	path := filepath.Join(dir, sid+".jsonl")
+	if resume {
+		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "No conversation found with session ID: %s\n", sid)
+			os.Exit(1)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		fail("%v", err)
+	}
+	appendLine(path, map[string]string{"prompt": prompt})
 }
 
 func emit(v any) {

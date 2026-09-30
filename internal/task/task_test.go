@@ -240,3 +240,29 @@ func TestBatch(t *testing.T) {
 		}
 	}
 }
+
+func TestFollowUpBranchMustBeRunBranch(t *testing.T) {
+	s := &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", PR: 3, PreviousRun: "20260925-000000-0000"}
+	s.Branch = "fugaro/20260925-000000-0000"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("a run branch: %v", err)
+	}
+	for _, bad := range []string{"main", "fugaro/x", "fugaro/20260925-000000-0000/x", "fugaro/20260925-000000-000G", "x/fugaro/20260925-000000-0000"} {
+		s.Branch = bad
+		err := s.Validate()
+		if err == nil || !strings.Contains(err.Error(), "must be fugaro/<run-id>") {
+			t.Errorf("branch %q: err = %v", bad, err)
+		}
+	}
+}
+
+func TestBranchRunID(t *testing.T) {
+	if id, ok := BranchRunID("fugaro/20260925-000000-0a1b"); !ok || id != "20260925-000000-0a1b" {
+		t.Fatalf("BranchRunID = %q, %v", id, ok)
+	}
+	for _, bad := range []string{"", "main", "fugaro/x", "fugaro/20260925-000000-0a1b/x", "20260925-000000-0a1b"} {
+		if id, ok := BranchRunID(bad); ok || id != "" {
+			t.Errorf("BranchRunID(%q) = %q, %v", bad, id, ok)
+		}
+	}
+}

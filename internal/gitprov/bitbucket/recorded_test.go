@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -114,6 +115,83 @@ func TestRecordedReviewerRejected(t *testing.T) {
 	var partial *gitprov.PartialError
 	if !errors.As(err, &partial) || !strings.Contains(err.Error(), "Malformed reviewers list") || pr != (gitprov.PR{Number: 4, URL: recPRURL + "4"}) {
 		t.Fatalf("pr = %+v, err = %v", pr, err)
+	}
+}
+
+// The comments the live check posts on its pull request before reading
+// it back as a follow-up would (live_test.go, followUpReads). The general
+// one ends with an HTML comment, to see whether Bitbucket keeps it in the
+// raw content, as Fugaro's report marker needs.
+const (
+	liveGeneralBody = "Fugaro live check: a general comment.\n\n<!-- fugaro:live-check -->"
+	liveInlineBody  = "Fugaro live check: an inline comment."
+	liveReplyBody   = "Fugaro live check: a reply."
+	liveInlinePath  = "live-draft.txt"
+)
+
+var (
+	recPullPath = regexp.MustCompile(`/pullrequests/(\d+)$`)
+	recShortSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`) // Bitbucket abbreviates source.commit.hash
+)
+
+// TestRecordedFollowUpReads replays follow_up_reads.json, which the live
+// check records (as live_follow_up_reads.json) once it has been run
+// against the sandbox: the repository, its pull request and the comments
+// the live check posted, read through the adapter. Until that recording
+// is committed there is nothing to replay, and the hand-written fixtures
+// in testdata stand in for it.
+func TestRecordedFollowUpReads(t *testing.T) {
+	file := filepath.Join("testdata", "recorded", "follow_up_reads.json")
+	data, err := os.ReadFile(file)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("follow_up_reads.json has not been recorded yet (the live check records it)")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exchanges []httpfixture.Exchange
+	if err := json.Unmarshal(data, &exchanges); err != nil {
+		t.Fatal(err)
+	}
+	number := 0
+	for _, e := range exchanges {
+		if m := recPullPath.FindStringSubmatch(e.Path); m != nil {
+			number, _ = strconv.Atoi(m[1])
+			break
+		}
+	}
+	if number == 0 {
+		t.Fatalf("%s reads no pull request", file)
+	}
+	p := openRecorded(t, "follow_up_reads.json", "acme", "sandbox", nil)
+	if repo, err := p.Repository(ctx); err != nil || !repo.Private {
+		t.Fatalf("Repository = %+v, %v; the sandbox is private", repo, err)
+	}
+	info, err := p.PullRequest(ctx, number)
+	if err != nil || info.State != gitprov.PROpen || !strings.HasPrefix(info.SourceBranch, "fugaro/live-") ||
+		!strings.EqualFold(info.SourceRepo, "acme/sandbox") || info.AuthorID == "" || !recShortSHA.MatchString(info.HeadSHA) {
+		t.Fatalf("PullRequest = %+v, %v", info, err)
+	}
+	comments, err := p.Comments(ctx, number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byBody := map[string]gitprov.Comment{}
+	for _, c := range comments {
+		byBody[c.Body] = c
+	}
+	for body, kind := range map[string]gitprov.CommentKind{liveGeneralBody: gitprov.CommentGeneral, liveInlineBody: gitprov.CommentInline, liveReplyBody: gitprov.CommentInline} {
+		c, ok := byBody[body]
+		if !ok || c.Kind != kind || (kind == gitprov.CommentInline && c.Path != liveInlinePath) {
+			t.Errorf("comment %q = %+v (found %v)", body, c, ok)
+			continue
+		}
+		// The token posted both the pull request and the comments, so
+		// its comments carry the PR author's ID, and are its own when
+		// the adapter could tell.
+		if c.AuthorID != info.AuthorID || (c.SelfKnown && !c.Self) {
+			t.Errorf("comment %q: author %q, self %v/%v; the PR author is %q", body, c.AuthorID, c.Self, c.SelfKnown, info.AuthorID)
+		}
 	}
 }
 

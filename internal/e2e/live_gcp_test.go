@@ -28,6 +28,16 @@
 //     the cap check and the cleanup, never reaches the CLI's environment
 //     and is never logged. Google credentials are ADC only.
 //
+// TestLiveSandboxFollowUp (checklist check 19) adds a follow-up of the
+// run's PR. It pauses for the person running it to post review comments
+// on that PR by hand, and needs their account ID in followup.trusted of
+// the sandbox's fugaro.yaml on its base branch beforehand; it holds no
+// credential but the sandbox's token, sends every provider request to the
+// sandbox repository only (sandboxPath), and never posts a comment, pushes,
+// or changes the repository's files or configuration: it declines its own
+// PR, and its cleanup deletes that PR's branch. It runs only with
+// FUGARO_LIVE_FOLLOWUP=1; run it with -timeout 100m.
+//
 // A -timeout abort skips t.Cleanup: run -run TestLiveGCPCleanup to sweep.
 package e2e
 
@@ -45,7 +55,9 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -60,11 +72,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -107,6 +122,7 @@ type liveRig struct {
 	bb     *httpjson.Client
 	bucket *blobx.Bucket
 	be     *gcp.Backend
+	base   *config.Config // the sandbox's fugaro.yaml on its base branch, once checkCaps has read it
 }
 
 // The project, region and sandbox repository the live tests may touch. The
@@ -265,7 +281,7 @@ func (r *liveRig) checkCaps(ctx context.Context) time.Duration {
 
 	// The agent's budget and the run's total timeout come from the
 	// sandbox's fugaro.yaml on its base branch.
-	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.bitbucket.org/2.0"+r.repoPath("/src/"+liveBaseBranch+"/fugaro.yaml"), nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.bitbucket.org/2.0"+r.sandboxPath(r.repoPath("/src/"+liveBaseBranch+"/fugaro.yaml")), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +308,38 @@ func (r *liveRig) checkCaps(ctx context.Context) time.Duration {
 			c.Agent.MaxBudgetUSD, w.Timeouts.Total.Duration, len(c.Git.PR.Reviewers), liveMaxBudgetUSD, liveMaxTotal)
 	}
 	liveFact(t, "sandbox fugaro.yaml: max_budget_usd=%g total=%s, no reviewers", c.Agent.MaxBudgetUSD, w.Timeouts.Total.Duration)
+	r.base = c
 	return w.Timeouts.Total.Duration
+}
+
+// sandboxPath refuses a Bitbucket API path outside the sandbox
+// repository, so no request of these tests can reach another one.
+func (r *liveRig) sandboxPath(p string) string {
+	r.t.Helper()
+	// Dot segments or a non-clean path could step out of the sandbox
+	// after the prefix check, so they are refused too.
+	clean, _, _ := strings.Cut(p, "?")
+	if root := "/repositories/" + liveRepo; (clean != root && !strings.HasPrefix(clean, root+"/")) ||
+		path.Clean(clean) != clean {
+		r.t.Fatalf("refusing a Bitbucket request outside %s: %q", liveRepo, p)
+	}
+	return p
+}
+
+// bbDo is one Bitbucket API request, only ever to the sandbox repository.
+// Its error is logged only through errText, which scrubs the token.
+func (r *liveRig) bbDo(ctx context.Context, method, path string, in, out any) error {
+	r.t.Helper()
+	if r.bb == nil {
+		return errors.New("no FUGARO_BITBUCKET_TOKEN")
+	}
+	return r.bb.Do(ctx, method, r.sandboxPath(path), in, out)
+}
+
+// fact is liveFact with the token scrubbed.
+func (r *liveRig) fact(format string, args ...any) {
+	r.t.Helper()
+	r.t.Log(r.scrub("FACT: " + fmt.Sprintf(format, args...)))
 }
 
 // liveCPU parses a Cloud Run CPU limit: "1", "0.5" or "1000m".
@@ -311,8 +358,9 @@ func liveCPU(s string) (float64, error) {
 var liveRunIDRE = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
 // cleanupRun undoes one run: cancels its execution if it is still going,
-// declines its open PRs and deletes its fugaro/<id> branch, and deletes its
-// objects. Each step is logged; none stops the others.
+// declines the open PRs of its branch and deletes that branch (a first
+// run's fugaro/<id>, a follow-up's PR branch; see branchOf), and deletes
+// its objects. Each step is logged; none stops the others.
 func (r *liveRig) cleanupRun(id string) {
 	t := r.t
 	if !liveRunIDRE.MatchString(id) {
@@ -334,22 +382,25 @@ func (r *liveRig) cleanupRun(id string) {
 			t.Logf("CLEANUP: cancel execution %s: %v", exec, r.be.Cancel(ctx, exec))
 		}
 	}
-	branch := gitops.RunBranchPrefix + id
-	if r.bb == nil {
+	branch, ok := r.branchOf(ctx, s, id)
+	switch {
+	case !ok:
+		t.Logf("CLEANUP: not touching the branch of run %s: its first run is not a live-test run", id)
+	case r.bb == nil:
 		t.Errorf("CLEANUP: no FUGARO_BITBUCKET_TOKEN: decline the PR of %s and delete that branch by hand", branch)
-	} else {
+	default:
 		q := url.Values{"q": {fmt.Sprintf(`source.branch.name=%q AND state="OPEN"`, branch)}}
 		var page struct {
 			Values []struct{ ID int } `json:"values"`
 		}
-		if err := r.bb.Do(ctx, "GET", r.repoPath("/pullrequests?"+q.Encode()), nil, &page); err != nil {
-			t.Errorf("CLEANUP: listing the PRs of %s: %s", branch, r.scrub(err.Error()))
+		if err := r.bbDo(ctx, "GET", r.repoPath("/pullrequests?"+q.Encode()), nil, &page); err != nil {
+			t.Errorf("CLEANUP: listing the PRs of %s: %s", branch, r.errText(err))
 		}
 		for _, pr := range page.Values {
-			err := r.bb.Do(ctx, "POST", r.repoPath(fmt.Sprintf("/pullrequests/%d/decline", pr.ID)), nil, nil)
+			err := r.bbDo(ctx, "POST", r.repoPath(fmt.Sprintf("/pullrequests/%d/decline", pr.ID)), nil, nil)
 			t.Logf("CLEANUP: decline PR #%d: %s", pr.ID, r.errText(err))
 		}
-		err := r.bb.Do(ctx, "DELETE", r.repoPath("/refs/branches/"+url.PathEscape(branch)), nil, nil)
+		err := r.bbDo(ctx, "DELETE", r.repoPath("/refs/branches/"+url.PathEscape(branch)), nil, nil)
 		var se *httpjson.StatusError
 		if errors.As(err, &se) && se.Status == http.StatusNotFound {
 			err = nil // never pushed
@@ -357,6 +408,29 @@ func (r *liveRig) cleanupRun(id string) {
 		t.Logf("CLEANUP: delete branch %s: %s", branch, r.errText(err))
 	}
 	r.deleteTree(ctx, "runs/"+r.slug+"/"+id+"/")
+}
+
+// branchOf is the branch run id works on, and whether cleanup may touch
+// it: a first run's own fugaro/<id>, or a follow-up's branch (its task's),
+// which is another run's fugaro/<root>. A follow-up's task is written by
+// the CLI but sits in a prefix the sandbox's agent can write, so its
+// branch is cleaned up only when it has the Fugaro form and its first run
+// is a live-test run too (a live-* batch).
+func (r *liveRig) branchOf(ctx context.Context, s *runstore.Store, id string) (string, bool) {
+	own := gitops.RunBranchPrefix + id
+	spec, err := s.ReadTask(ctx)
+	if err != nil || spec.Branch == "" || spec.Branch == own {
+		return own, true
+	}
+	root, ok := task.BranchRunID(spec.Branch)
+	if !ok {
+		return "", false
+	}
+	rootTask, err := s.Sibling(root).ReadTask(ctx)
+	if err != nil || !strings.HasPrefix(rootTask.Batch, liveBatchPrefix) {
+		return "", false
+	}
+	return spec.Branch, true
 }
 
 func (r *liveRig) errText(err error) string {
@@ -425,6 +499,67 @@ func (r *liveRig) lsLive(batch string) (rows []map[string]any, totals map[string
 	return got.Runs, got.Totals, nil
 }
 
+// waitRun polls ls --batch until run id's row is terminal, for at most
+// livePollFor, and returns that row with the batch's rows and totals.
+func (r *liveRig) waitRun(batch, id string) (row map[string]any, rows []map[string]any, totals map[string]any) {
+	r.t.Helper()
+	return r.waitRunFor(batch, id, livePollFor)
+}
+
+// waitRunFor is waitRun with its own limit.
+func (r *liveRig) waitRunFor(batch, id string, limit time.Duration) (row map[string]any, rows []map[string]any, totals map[string]any) {
+	t := r.t
+	t.Helper()
+	lastState := ""
+	start := time.Now()
+	for deadline := start.Add(limit); ; time.Sleep(livePollEvery) {
+		rs, tt, err := r.lsLive(batch)
+		if err == nil {
+			rows, totals = rs, tt
+			for _, x := range rs {
+				if x["run_id"] == id {
+					row = x
+				}
+			}
+		}
+		if row != nil {
+			state := fmt.Sprintf("%v/%v", row["status"], row["stage"])
+			if state != lastState {
+				t.Logf("%s after %s: %s", id, time.Since(start).Round(time.Second), state)
+				lastState = state
+			}
+			if row["terminal"] == true && row["status"] != "running" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s did not finish within %s; last row %v", id, limit, row)
+		}
+	}
+	liveFact(t, "run %s ended %v at stage %v after about %s; PR %v", id, row["status"], row["stage"], time.Since(start).Round(time.Second), row["pr_url"])
+	return row, rows, totals
+}
+
+// checkSession checks that run id saved its Claude Code session
+// (session/session.json and its file) and recorded the commit it pushed.
+func (r *liveRig) checkSession(ctx context.Context, id string, rec *runstore.Record) {
+	t := r.t
+	t.Helper()
+	m, data, err := runstore.Open(r.bucket.Bucket, r.slug, id).ReadSession(ctx)
+	switch {
+	case err != nil:
+		t.Errorf("run %s saved no usable session: %v", id, err)
+	case !m.Pushed || m.HeadSHA != rec.PushedHead || int64(len(data)) != m.Bytes:
+		t.Errorf("run %s session.json = %+v with %d bytes; want pushed, head_sha = pushed_head %q, bytes = the file's size", id, *m, len(data), rec.PushedHead)
+	default:
+		r.fact("run %s saved session %s (%d bytes, head %s, workdir %s)", id, m.ID, m.Bytes, m.HeadSHA, m.WorkDir)
+	}
+	r.fact("run %s result.json pushed_head=%q head_sha=%q", id, rec.PushedHead, rec.HeadSHA)
+	if rec.PushedHead == "" {
+		t.Errorf("run %s has no pushed_head", id)
+	}
+}
+
 func TestLiveSandboxRun(t *testing.T) {
 	r := newLiveRig(t, true)
 	ctx := context.Background()
@@ -447,36 +582,7 @@ func TestLiveSandboxRun(t *testing.T) {
 	}
 	r.checkExecutionTimeout(ctx, launch.Execution)
 
-	var row map[string]any
-	var rows []map[string]any
-	var totals map[string]any
-	lastState := ""
-	start := time.Now()
-	for deadline := start.Add(livePollFor); ; time.Sleep(livePollEvery) {
-		rs, tt, err := r.lsLive(batch)
-		if err == nil {
-			rows, totals = rs, tt
-			for _, x := range rs {
-				if x["run_id"] == id {
-					row = x
-				}
-			}
-		}
-		if row != nil {
-			state := fmt.Sprintf("%v/%v", row["status"], row["stage"])
-			if state != lastState {
-				t.Logf("%s after %s: %s", id, time.Since(start).Round(time.Second), state)
-				lastState = state
-			}
-			if row["terminal"] == true && row["status"] != "running" {
-				break
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("run %s did not finish within %s; last row %v", id, livePollFor, row)
-		}
-	}
-	liveFact(t, "run %s ended %v at stage %v after about %s; PR %v", id, row["status"], row["stage"], time.Since(start).Round(time.Second), row["pr_url"])
+	row, rows, totals := r.waitRun(batch, id)
 	prURL, _ := row["pr_url"].(string)
 	if (row["status"] != "succeeded" && row["status"] != "failed") || prURL == "" {
 		t.Fatalf("row = %v: want succeeded or failed, with a PR", row)
@@ -544,6 +650,8 @@ func TestLiveSandboxRun(t *testing.T) {
 	if rec.Stage != "writeback" {
 		t.Errorf("result.json stage = %q, want writeback", rec.Stage)
 	}
+	// Every run saves its session, so its PR's first follow-up can resume it.
+	r.checkSession(ctx, id, rec)
 	if lerr != nil || !backend.SameExecution(rec.Execution, l.Execution) {
 		t.Errorf("result.json execution %q vs launch.json %v", rec.Execution, launchExec(l, lerr))
 	}
@@ -565,6 +673,402 @@ func TestLiveSandboxRun(t *testing.T) {
 	liveFact(t, "cache archives of %s/%s: %v", r.slug, liveWorkflow, archives)
 	if len(archives) == 0 {
 		t.Errorf("no cache/%s/%s/*.tar.zst archive after the run", r.slug, liveWorkflow)
+	}
+}
+
+// The follow-up check's task, and how long it waits for the person running
+// it to post the review comments (FUGARO_LIVE_COMMENT_WAIT overrides it).
+const (
+	liveFollowUpTask   = "Also add a line to the README saying the follow-up ran."
+	liveCommentWait    = 20 * time.Minute
+	liveMaxCommentPage = 20
+	// liveRefusedPollFor bounds the wait for the follow-up of the declined
+	// PR, which ends at bootstrap. With two runs of livePollFor and the
+	// comment wait, the worst case stays under the documented -timeout
+	// 100m (30 + 20 + 30 + 10 minutes, plus the build).
+	liveRefusedPollFor = 10 * time.Minute
+)
+
+// liveLaunch is run --json's output.
+type liveLaunch struct {
+	Run         string `json:"run"`
+	Status      string `json:"status"`
+	Execution   string `json:"execution"`
+	Branch      string `json:"branch"`
+	PR          int    `json:"pr"`
+	PreviousRun string `json:"previous_run"`
+}
+
+// launch runs fugaro run with args and requires a new launch.
+func (r *liveRig) launch(args ...string) liveLaunch {
+	r.t.Helper()
+	out, err := r.cli(append([]string{"run"}, args...)...)
+	var l liveLaunch
+	if err != nil || json.Unmarshal([]byte(out), &l) != nil || l.Status != "launched" {
+		r.t.Fatalf("run %s: %s, %v", strings.Join(args, " "), out, err)
+	}
+	r.fact("run %s launched execution %s on branch %s (pr %d, previous run %q)", l.Run, l.Execution, l.Branch, l.PR, l.PreviousRun)
+	return l
+}
+
+// liveComment is a Bitbucket pull request comment, as far as these tests
+// read one. Bodies are never logged: anyone who can comment wrote them.
+type liveComment struct {
+	ID      int `json:"id"`
+	Content struct {
+		Raw  string `json:"raw"`
+		HTML string `json:"html"`
+	} `json:"content"`
+	User *struct {
+		AccountID   string `json:"account_id"`
+		DisplayName string `json:"display_name"`
+	} `json:"user"`
+	Inline *struct {
+		Path string `json:"path"`
+	} `json:"inline"`
+	Parent *struct {
+		ID int `json:"id"`
+	} `json:"parent"`
+	Deleted bool `json:"deleted"`
+	Pending bool `json:"pending"`
+}
+
+func (c liveComment) author() string {
+	if c.User == nil {
+		return ""
+	}
+	return c.User.AccountID
+}
+
+// comments lists pull request n's comments with the repository token
+// (read only), following the listing's next links only within the
+// sandbox repository.
+func (r *liveRig) comments(ctx context.Context, n int) ([]liveComment, error) {
+	var all []liveComment
+	p := r.repoPath(fmt.Sprintf("/pullrequests/%d/comments?pagelen=100", n))
+	for page := 0; p != ""; page++ {
+		if page == liveMaxCommentPage {
+			return nil, fmt.Errorf("PR #%d has more than %d pages of comments", n, liveMaxCommentPage)
+		}
+		var body struct {
+			Values []liveComment `json:"values"`
+			Next   string        `json:"next"`
+		}
+		if err := r.bbDo(ctx, "GET", p, nil, &body); err != nil {
+			return nil, err
+		}
+		all = append(all, body.Values...)
+		p = ""
+		if body.Next != "" {
+			next, err := r.bb.PagePath(body.Next)
+			if err != nil {
+				return nil, err
+			}
+			p = next
+		}
+	}
+	return all, nil
+}
+
+// commentIDs is the sorted IDs of cs.
+func commentIDs(cs []liveComment) []int {
+	ids := make([]int, len(cs))
+	for i, c := range cs {
+		ids[i] = c.ID
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// waitForComments waits, for at most wait, until pull request n has both
+// an inline comment and a general one (not a reply) by someone other than
+// the PR's author, who is Fugaro's own identity. It never posts anything.
+func (r *liveRig) waitForComments(ctx context.Context, n int, prAuthor string, wait time.Duration) (inline, general liveComment) {
+	t := r.t
+	t.Helper()
+	for deadline := time.Now().Add(wait); ; time.Sleep(livePollEvery) {
+		cs, err := r.comments(ctx, n)
+		if err != nil {
+			t.Logf("listing PR #%d's comments: %s", n, r.errText(err))
+		}
+		var gotInline, gotGeneral bool
+		for _, c := range cs {
+			if c.Deleted || c.Pending || c.author() == "" || c.author() == prAuthor {
+				continue
+			}
+			switch {
+			case c.Inline != nil && !gotInline:
+				inline, gotInline = c, true
+			case c.Inline == nil && c.Parent == nil && !gotGeneral:
+				general, gotGeneral = c, true
+			}
+		}
+		if gotInline && gotGeneral {
+			return inline, general
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("PR #%d got no inline and general comment by someone other than its author within %s (inline %v, general %v); set FUGARO_LIVE_COMMENT_WAIT for longer", n, wait, gotInline, gotGeneral)
+		}
+	}
+}
+
+// openPRs is the IDs of the open pull requests from branch.
+func (r *liveRig) openPRs(ctx context.Context, branch string) []int {
+	r.t.Helper()
+	q := url.Values{"q": {fmt.Sprintf(`source.branch.name=%q AND state="OPEN"`, branch)}}
+	var page struct {
+		Values []struct{ ID int } `json:"values"`
+	}
+	if err := r.bbDo(ctx, "GET", r.repoPath("/pullrequests?"+q.Encode()), nil, &page); err != nil {
+		r.t.Fatalf("listing the open PRs of %s: %s", branch, r.errText(err))
+	}
+	ids := make([]int, len(page.Values))
+	for i, v := range page.Values {
+		ids[i] = v.ID
+	}
+	return ids
+}
+
+// jsonInt reads a JSON number decoded into an any.
+func jsonInt(v any) int {
+	f, _ := v.(float64)
+	return int(f)
+}
+
+// TestLiveSandboxFollowUp is check 19: a first run, a follow-up acting on
+// review comments the person running the test posts by hand, and a
+// follow-up refused because its PR was declined. It holds no credential
+// but the sandbox's repository access token, and never posts a comment,
+// pushes, or changes the repository's files or configuration (it declines
+// its own PR, and its cleanup deletes the PR's branch): the comments come from the person, and the
+// trusted account ID from the sandbox's fugaro.yaml on its base branch,
+// which that person edits beforehand. It runs only with
+// FUGARO_LIVE_FOLLOWUP=1, so a plain -run TestLive never waits for a
+// person. Run it with -timeout 100m.
+func TestLiveSandboxFollowUp(t *testing.T) {
+	if os.Getenv("FUGARO_LIVE_FOLLOWUP") != "1" {
+		t.Skip("check 19 pauses for a person to post review comments: set FUGARO_LIVE_FOLLOWUP=1 to run it (docs/gcp-live-checklist.md)")
+	}
+	r := newLiveRig(t, true)
+	ctx := context.Background()
+	wait := liveCommentWait
+	if v := os.Getenv("FUGARO_LIVE_COMMENT_WAIT"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d <= 0 {
+			t.Fatalf("FUGARO_LIVE_COMMENT_WAIT=%q is not a positive duration", v)
+		}
+		wait = d
+	}
+	// Everything that can fail for free fails before the first launch.
+	if total := r.checkCaps(ctx); liveTotalTimeout >= total {
+		t.Fatalf("--total-timeout %s is not below the sandbox's timeouts.total %s", liveTotalTimeout, total)
+	}
+	trusted := r.base.Followup.Trusted
+	if len(trusted) == 0 {
+		t.Fatalf("the sandbox's fugaro.yaml on %s trusts nobody: add your Bitbucket account_id under followup.trusted there first (docs/gcp-live-checklist.md, check 19), then rerun", liveBaseBranch)
+	}
+	r.fact("sandbox fugaro.yaml: followup.trusted lists %d account IDs, allow_public=%v", len(trusted), r.base.Followup.AllowPublic)
+	var repo struct {
+		IsPrivate *bool `json:"is_private"`
+	}
+	if err := r.bbDo(ctx, "GET", r.repoPath(""), nil, &repo); err != nil || repo.IsPrivate == nil {
+		t.Fatalf("reading the sandbox repository: %s (is_private %v)", r.errText(err), repo.IsPrivate)
+	}
+	r.fact("sandbox repository is_private=%v", *repo.IsPrivate)
+	if !*repo.IsPrivate {
+		t.Fatalf("the sandbox repository is public: the follow-up check runs only on a private one")
+	}
+
+	r.fugaro = testutil.BuildFugaro(t)
+	batch := liveBatchPrefix + r.stamp
+	total := "--total-timeout=" + liveTotalTimeout.String()
+
+	// 1. The first run, whose PR the follow-ups continue.
+	id := newRunID(t)
+	t.Cleanup(func() { r.cleanupRun(id) })
+	branch := gitops.RunBranchPrefix + id
+	if l := r.launch("--repo", liveRepo, "--run-id", id, "--batch", batch, total, "--json", liveTask); l.Branch != branch {
+		t.Fatalf("launch %+v: want branch %s", l, branch)
+	}
+	row, _, _ := r.waitRun(batch, id)
+	prURL, _ := row["pr_url"].(string)
+	n := jsonInt(row["pr"])
+	if (row["status"] != "succeeded" && row["status"] != "failed") || prURL == "" || n <= 0 {
+		t.Fatalf("row = %v: want succeeded or failed, with a PR", row)
+	}
+
+	// 2. The person posts the comments; the test only reads.
+	var pr struct {
+		Author struct {
+			AccountID string `json:"account_id"`
+		} `json:"author"`
+	}
+	if err := r.bbDo(ctx, "GET", r.repoPath(fmt.Sprintf("/pullrequests/%d", n)), nil, &pr); err != nil || pr.Author.AccountID == "" {
+		t.Fatalf("reading PR #%d: %s (author.account_id %q)", n, r.errText(err), pr.Author.AccountID)
+	}
+	r.fact("PR #%d author.account_id=%q (the repository token's identity)", n, pr.Author.AccountID)
+	t.Logf("ACTION: post one inline and one general review comment on %s in the Bitbucket UI now (waiting up to %s)", prURL, wait)
+	inline, general := r.waitForComments(ctx, n, pr.Author.AccountID, wait)
+	for _, c := range []liveComment{inline, general} {
+		kind := "general"
+		if c.Inline != nil {
+			kind = "inline on " + c.Inline.Path
+		}
+		r.fact("comment %d (%s) by account_id=%q display_name=%q", c.ID, kind, c.author(), c.User.DisplayName)
+		if !slices.Contains(trusted, c.author()) {
+			t.Fatalf("add %s to followup.trusted in the sandbox's fugaro.yaml on %s, then rerun", c.author(), liveBaseBranch)
+		}
+	}
+
+	// 3. The follow-up, on the same branch and PR.
+	fid := newRunID(t)
+	t.Cleanup(func() { r.cleanupRun(fid) })
+	fl := r.launch("--repo", liveRepo, "--pr", strconv.Itoa(n), "--run-id", fid, "--batch", batch, total, "--json", liveFollowUpTask)
+	if fl.Branch != branch || fl.PR != n || fl.PreviousRun != id {
+		t.Fatalf("follow-up launch %+v: want branch %s, pr %d, previous run %s", fl, branch, n, id)
+	}
+	frow, _, _ := r.waitRun(batch, fid)
+	if (frow["status"] != "succeeded" && frow["status"] != "failed") || frow["pr_url"] != prURL {
+		t.Errorf("follow-up row = %v: want succeeded or failed, on %s", frow, prURL)
+	}
+
+	// One PR, with one report per run, each carrying its run's marker.
+	if open := r.openPRs(ctx, branch); len(open) != 1 || open[0] != n {
+		t.Errorf("open PRs from %s = %v, want exactly #%d", branch, open, n)
+	}
+	cs, err := r.comments(ctx, n)
+	if err != nil {
+		t.Fatalf("listing PR #%d's comments: %s", n, r.errText(err))
+	}
+	reports := map[string]liveComment{}
+	for _, c := range cs {
+		if run, ok := gitprov.FugaroRun(c.Content.Raw); ok && strings.HasPrefix(strings.TrimSpace(c.Content.Raw), "### Fugaro run") {
+			if _, dup := reports[run]; dup {
+				t.Errorf("run %s posted more than one report on PR #%d", run, n)
+			}
+			reports[run] = c
+		}
+	}
+	for _, run := range []string{id, fid} {
+		c, ok := reports[run]
+		if !ok {
+			t.Errorf("PR #%d has no report of run %s", n, run)
+			continue
+		}
+		cost := ""
+		for _, l := range strings.Split(c.Content.Raw, "\n") {
+			if strings.HasPrefix(l, "**Cost:**") {
+				cost = l
+			}
+		}
+		r.fact("report of %s: comment %d, marker in the raw text %v, the rendered HTML shows %q as text %v; %s", run, c.ID,
+			strings.Contains(c.Content.Raw, gitprov.ReportMarker(run)), "fugaro:report", strings.Contains(c.Content.HTML, "fugaro:report"), cost)
+	}
+	if c, ok := reports[fid]; ok {
+		for _, who := range []liveComment{inline, general} {
+			if name := followup.MarkdownName(who.User.DisplayName); !strings.Contains(c.Content.Raw, name) || !strings.Contains(c.Content.Raw, "**Comments used:**") {
+				t.Errorf("the follow-up's report does not name %s as a trusted author", name)
+			}
+		}
+	}
+
+	// What the follow-up got, and what it recorded.
+	fs := runstore.Open(r.bucket.Bucket, r.slug, fid)
+	data, err := fs.ReadFile(ctx, "comments.json")
+	var snap followup.Snapshot
+	if err == nil {
+		err = json.Unmarshal(data, &snap)
+	}
+	if err != nil {
+		t.Errorf("the follow-up's comments.json: %v", err)
+	}
+	var sawInline, sawGeneral bool
+	for _, c := range snap.Comments {
+		sawInline = sawInline || (c.Kind == string(gitprov.CommentInline) && c.AuthorID == inline.author())
+		sawGeneral = sawGeneral || (c.Kind == string(gitprov.CommentGeneral) && c.AuthorID == general.author())
+		if strings.Contains(c.Body, "fugaro:report") || strings.Contains(c.Body, "### Fugaro run") {
+			t.Errorf("comments.json holds a Fugaro report (a %s comment by %q)", c.Kind, c.Author)
+		}
+	}
+	r.fact("comments.json: %d comments, authors %v, omitted %v, since %s, fetched_at %s", len(snap.Comments), snap.Authors, snap.Omitted, snap.Since, snap.Fetched)
+	if !sawInline || !sawGeneral {
+		t.Errorf("comments.json lacks the inline (%v) or the general (%v) comment", sawInline, sawGeneral)
+	}
+	frec, err := fs.ReadRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fu := frec.FollowUp; fu == nil {
+		t.Errorf("the follow-up's result.json has no follow_up block")
+	} else {
+		r.fact("follow-up result.json: status=%s outcome=%s follow_up session=%q note=%q comments=%d authors=%v untrusted=%v omitted=%v",
+			frec.Status, frec.Outcome, fu.Session, fu.SessionNote, fu.Comments, fu.Authors, fu.UntrustedAuthors, fu.Omitted)
+		if fu.PR != n || fu.PreviousRun != id || fu.Comments < 2 {
+			t.Errorf("follow_up = %+v: want pr %d, previous_run %s and at least 2 comments", *fu, n, id)
+		}
+		if fu.Session != "resumed" {
+			t.Errorf("the follow-up started a fresh session (%s); it should have resumed %s's", fu.SessionNote, id)
+		}
+	}
+	r.checkSession(ctx, fid, frec)
+	if ok, err := r.bucket.Exists(ctx, lock.Key(r.slug, branch)); err != nil || ok {
+		t.Errorf("the lock of %s exists=%v (%v) after the follow-up", branch, ok, err)
+	}
+	out, err := r.cli("ls", "--json", "--repo", liveRepo, "--pr", strconv.Itoa(n))
+	var ls struct {
+		Runs   []map[string]any `json:"runs"`
+		Totals map[string]any   `json:"totals"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &ls) != nil {
+		t.Errorf("ls --pr %d: %s, %v", n, out, err)
+	}
+	var lsIDs []string
+	for _, x := range ls.Runs {
+		s, _ := x["run_id"].(string)
+		lsIDs = append(lsIDs, s)
+	}
+	slices.Sort(lsIDs)
+	r.fact("ls --pr %d: runs %v, totals %v", n, lsIDs, ls.Totals)
+	if want := []string{id, fid}; !slices.Equal(lsIDs, want) || jsonInt(ls.Totals["runs"]) != 2 {
+		t.Errorf("ls --pr %d lists %v (totals %v), want %v", n, lsIDs, ls.Totals, want)
+	}
+	diag, err := r.cli("diagnose", "--json", fid)
+	var d struct {
+		FollowUp map[string]any `json:"follow_up"`
+	}
+	if err != nil || json.Unmarshal([]byte(diag), &d) != nil || d.FollowUp == nil {
+		t.Errorf("diagnose --json %s: %v, no follow_up block", fid, err)
+	}
+	r.fact("diagnose --json %s: follow_up %v", fid, d.FollowUp)
+
+	// 4. A follow-up of a declined PR: the CLI can't see the PR's state,
+	// so it launches, and the runner refuses at bootstrap, touching
+	// nothing. The branch is kept for it.
+	if err := r.bbDo(ctx, "POST", r.repoPath(fmt.Sprintf("/pullrequests/%d/decline", n)), nil, nil); err != nil {
+		t.Fatalf("declining PR #%d: %s", n, r.errText(err))
+	}
+	if err := r.bbDo(ctx, "GET", r.repoPath("/refs/branches/"+url.PathEscape(branch)), nil, nil); err != nil {
+		t.Fatalf("branch %s is gone after declining PR #%d: %s", branch, n, r.errText(err))
+	}
+	before, err := r.comments(ctx, n)
+	if err != nil {
+		t.Fatalf("listing PR #%d's comments: %s", n, r.errText(err))
+	}
+	rid := newRunID(t)
+	t.Cleanup(func() { r.cleanupRun(rid) })
+	r.launch("--repo", liveRepo, "--pr", strconv.Itoa(n), "--run-id", rid, "--batch", batch, total, "--json")
+	rrow, _, _ := r.waitRunFor(batch, rid, liveRefusedPollFor)
+	reason, _ := rrow["reason"].(string)
+	r.fact("follow-up of the declined PR #%d: status %v, reason %q", n, rrow["status"], reason)
+	if rrow["status"] != "infra_error" || !strings.Contains(reason, fmt.Sprintf("PR #%d is closed", n)) {
+		t.Errorf("the follow-up of declined PR #%d = %v, want infra_error %q", n, rrow, fmt.Sprintf("PR #%d is closed", n))
+	}
+	after, err := r.comments(ctx, n)
+	if err != nil {
+		t.Fatalf("listing PR #%d's comments: %s", n, r.errText(err))
+	}
+	if !slices.Equal(commentIDs(before), commentIDs(after)) {
+		t.Errorf("PR #%d's comments changed during the refused follow-up: %v, then %v", n, commentIDs(before), commentIDs(after))
 	}
 }
 
@@ -607,7 +1111,8 @@ func launchExec(l *runstore.Launch, err error) string {
 
 // TestLiveGCPCleanup sweeps what an aborted live run left: every sandbox run
 // whose task.json carries a live-* batch (its execution cancelled, its PR
-// declined, its branch and objects deleted), every fugaro-live-* object
+// declined, its branch and objects deleted; for a follow-up, the branch
+// is its PR's, as branchOf allows), every fugaro-live-* object
 // prefix, and every fugaro-live-* secret. Run it on its own (-p 1), never
 // alongside other live tests: it removes their objects.
 func TestLiveGCPCleanup(t *testing.T) {

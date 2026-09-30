@@ -110,11 +110,15 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 	// Flush a Redactor wrapped around it once Run is done.
 	errR, errW := io.Pipe()
 	stderrDone := make(chan struct{})
+	var noSession stderrMatch // read only after stderrDone
 	go func() {
 		defer close(stderrDone)
 		w := io.Writer(io.Discard)
 		if req.Stderr != nil {
 			w = req.Stderr
+		}
+		if req.Resume {
+			w = io.MultiWriter(&noSession, w)
 		}
 		_, _ = io.Copy(w, errR)
 	}()
@@ -134,6 +138,8 @@ func (c Claude) Run(ctx context.Context, req Request) (Result, error) {
 	case p.err != nil:
 		// ParseStream already wraps this with context.
 		return p.res, p.err
+	case !p.found && noSession.found:
+		return p.res, fmt.Errorf("%w: claude exited with code %d, saying it has no session %s", ErrNoSession, code, req.SessionID)
 	case !p.found:
 		return p.res, fmt.Errorf("claude exited with code %d without a result event", code)
 	}

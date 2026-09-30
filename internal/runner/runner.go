@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
@@ -105,6 +106,11 @@ type run struct {
 	caches    []cacheSlot // the cache entries restored at bootstrap, for writeback
 	cacheBase string      // the base-image part of every cache key
 	toolchain string      // the toolchain part of every cache key (toolchainHash)
+	// sessionID is the session the latest implement or fix stage's result
+	// reported: the one the next fix resumes and writeback saves.
+	sessionID string
+	// follow is a follow-up's state; nil for a first run.
+	follow *followState
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -238,8 +244,26 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
-	if err := r.finalize(finCtx); err != nil {
-		return nil, fmt.Errorf("finalize: %w", err)
+	// writeback, which saves the session, won't run when finalize fails
+	// or panics: save it then, on a context of its own, as finalize's may
+	// have run out.
+	saveSession := func() {
+		sctx, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), sessionSaveTimeout)
+		r.saveSession(sctx)
+		cancelSave()
+	}
+	finErr := func() error {
+		defer func() {
+			if p := recover(); p != nil {
+				saveSession()
+				panic(p)
+			}
+		}()
+		return r.finalize(finCtx)
+	}()
+	if finErr != nil {
+		saveSession()
+		return nil, fmt.Errorf("finalize: %w", finErr)
 	}
 	r.writeback(ctx)
 	return r.rec, nil
@@ -423,7 +447,9 @@ func (r *run) refreshGitAuth(ctx context.Context, minValid time.Duration) error 
 	if r.repo != nil {
 		r.repo.Env = gitops.WithVars(r.repo.Env, vars)
 	}
-	if r.env != nil {
+	// A follow-up's agent gets no git credentials (design §6.1): the
+	// runner fetches and pushes for it.
+	if r.env != nil && r.follow == nil {
 		r.env = gitops.WithVars(r.env, vars)
 	}
 	return nil
@@ -543,8 +569,10 @@ func clearStateDir(stateDir string) error {
 	if err := verify.ClearState(stateDir); err != nil {
 		return err
 	}
-	if err := os.Remove(filepath.Join(stateDir, prFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("removing stale %s: %w", prFile, err)
+	for _, name := range []string{prFile, followupFile} {
+		if err := os.Remove(filepath.Join(stateDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("removing stale %s: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -578,7 +606,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("%w before the run started", ErrCancelled)
 	}
 	if spec.IsFollowUp() {
-		return errors.New("follow-up runs are not supported by this version of fugaro")
+		r.follow = &followState{}
 	}
 	if err := stateDirOutsideCheckout(r.d.WorkDir, r.d.StateDir); err != nil {
 		return err
@@ -611,24 +639,30 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
-	branch := "fugaro/" + spec.RunID
-	if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
-		return fmt.Errorf("checking out %s: %w", spec.Ref, err)
-	}
 	r.repo = repo
-	r.rec.Branch = branch
-
-	data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
-	if err != nil {
-		return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
-	}
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		msgs := make([]string, len(problems))
-		for i, p := range problems {
-			msgs[i] = p.String()
+	var cfg *config.Config
+	if r.follow != nil {
+		// The pull request's branch, with the configuration of its base.
+		if err := r.checkoutFollowUp(ctx, repo); err != nil {
+			return err
 		}
-		return fmt.Errorf("fugaro.yaml is invalid: %s", strings.Join(msgs, "; "))
+		r.rec.Branch = spec.Branch
+		if cfg, err = r.readBaseConfig(ctx); err != nil {
+			return err
+		}
+	} else {
+		branch := "fugaro/" + spec.RunID
+		if err := repo.CheckoutNewBranch(ctx, spec.Ref, branch); err != nil {
+			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
+		}
+		r.rec.Branch = branch
+		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
+		if err != nil {
+			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
+		}
+		if cfg, err = parseConfig(data); err != nil {
+			return err
+		}
 	}
 	name, wf, err := cfg.SelectWorkflow(spec.Workflow)
 	if err != nil {
@@ -637,7 +671,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
-	r.cfg, r.wf, r.rec.Workflow = cfg, wf, name
+	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
@@ -655,16 +689,24 @@ func (r *run) bootstrap(ctx context.Context) error {
 	case r.providerKind != cfg.Git.Provider:
 		return fmt.Errorf("fugaro.yaml sets git.provider to %s, but %s says %s", cfg.Git.Provider, r.providerFrom, r.providerKind)
 	}
+	if r.follow != nil {
+		if err := r.checkPullRequest(ctx); err != nil {
+			return err
+		}
+	}
 	r.restoreCaches(ctx)
-	if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
-		return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
-	}
-	if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
-		return fmt.Errorf("agent.instructions: %w", err)
-	}
-	if cfg.Agent.Review != "" && !strings.HasPrefix(cfg.Agent.Review, "/") {
-		if r.reviewFile, err = r.readRepoFile(cfg.Agent.Review); err != nil {
-			return fmt.Errorf("agent.review: %w", err)
+	if r.follow == nil {
+		// A follow-up fetched its base, and read these from it, above.
+		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
+			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
+		}
+		if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
+			return fmt.Errorf("agent.instructions: %w", err)
+		}
+		if cfg.Agent.Review != "" && !strings.HasPrefix(cfg.Agent.Review, "/") {
+			if r.reviewFile, err = r.readRepoFile(cfg.Agent.Review); err != nil {
+				return fmt.Errorf("agent.review: %w", err)
+			}
 		}
 	}
 
@@ -694,11 +736,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	for k, v := range gitops.Identity {
 		set[k] = v
 	}
-	agentAuthVars, err := r.authVars()
-	if err != nil {
-		return fmt.Errorf("building git credentials: %w", err)
+	if r.follow == nil {
+		// A follow-up's agent gets no git credentials and no GH_TOKEN
+		// (design §6.1): the runner fetched the branch and pushes it, and
+		// the comments arrive in the prompt.
+		agentAuthVars, err := r.authVars()
+		if err != nil {
+			return fmt.Errorf("building git credentials: %w", err)
+		}
+		maps.Copy(set, agentAuthVars)
 	}
-	maps.Copy(set, agentAuthVars)
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
 	})
@@ -711,8 +758,26 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.budget = Budget{Start: r.rec.StartedAt, Total: wf.Timeouts.Total.Duration,
 		Reserve: wf.Timeouts.FinalizeReserve.Duration, Stage: wf.Timeouts.Stage.Duration, Now: r.d.Now}
+	if r.follow != nil {
+		if err := r.prepareFollowUp(ctx); err != nil {
+			return err
+		}
+	}
 	r.save(ctx)
 	return nil
+}
+
+// parseConfig parses fugaro.yaml, joining every problem into one error.
+func parseConfig(data []byte) (*config.Config, error) {
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		msgs := make([]string, len(problems))
+		for i, p := range problems {
+			msgs[i] = p.String()
+		}
+		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", strings.Join(msgs, "; "))
+	}
+	return cfg, nil
 }
 
 func (r *run) readRepoFile(rel string) (string, error) {
@@ -724,15 +789,45 @@ func (r *run) readRepoFile(rel string) (string, error) {
 }
 
 func (r *run) agentLoop(ctx context.Context) {
-	sessionID := agent.NewSessionID()
-	sys := SystemPrompt(PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}, r.instructions)
-	if _, ok := r.stage(ctx, "implement", agent.Request{Prompt: r.spec.Task, SessionID: sessionID, AppendSystemPrompt: sys}); !ok {
+	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}
+	if r.follow != nil {
+		pd.FollowUp = followup.SystemPromptLines(r.promptData())
+	}
+	sys := SystemPrompt(pd, r.instructions)
+	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+	var opts stageOpts
+	if f := r.follow; f != nil {
+		req.Prompt = followup.ImplementPrompt(r.promptData(), f.sel)
+		if f.restored.Resumed {
+			req.SessionID, req.Resume = f.restored.ID, true
+			// Claude Code may still not find the session it was given:
+			// that is a reason to start fresh, not a failed stage.
+			opts.Recoverable = func(err error) bool { return errors.Is(err, agent.ErrNoSession) }
+		}
+	}
+	res, ok, err := r.stage(ctx, "implement", req, opts)
+	r.noteSession(req, res)
+	// Only an error stage recovered from, and so recorded nothing about:
+	// one that came with a timeout or a cancel is a failed stage.
+	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
+		r.fellBackFresh(ctx)
+		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
+		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
+		r.noteSession(req, res)
+	}
+	if !ok {
 		return
 	}
+	sessionID := req.SessionID
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
+	if f := r.follow; f != nil {
+		if add := followup.ReviewAddendum(f.sel, f.nonce); add != "" {
+			reviewPrompt += "\n\n" + add
+		}
+	}
 	rounds := r.cfg.Agent.ReviewRounds
 	for round := 1; round <= rounds; round++ {
-		res, ok := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema})
+		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
 		if !ok {
 			return
 		}
@@ -742,22 +837,45 @@ func (r *run) agentLoop(ctx context.Context) {
 		if v.Verdict == "ship" || round == rounds {
 			return
 		}
-		if _, ok := r.stage(ctx, "fix", agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}); !ok {
+		if r.sessionID != "" {
+			sessionID = r.sessionID
+		}
+		req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
+		res, ok, _ = r.stage(ctx, "fix", req, stageOpts{})
+		r.noteSession(req, res)
+		if !ok {
 			return
 		}
 	}
 }
 
-// stage runs one agent stage and reports whether the loop may continue.
-func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.Result, bool) {
+// recoveredError is an agent error stage left to its caller, having
+// recorded nothing about it (stageOpts.Recoverable).
+type recoveredError struct{ err error }
+
+func (e recoveredError) Error() string { return e.err.Error() }
+func (e recoveredError) Unwrap() error { return e.err }
+
+// stageOpts adjust how stage treats the agent's error.
+type stageOpts struct {
+	// Recoverable, when set, picks the agent errors the caller handles
+	// itself: stage records nothing about them (no failure reason, no
+	// log tail) and returns them.
+	Recoverable func(error) bool
+}
+
+// stage runs one agent stage and reports whether the loop may continue,
+// with the agent's error. The error is only for the caller to inspect: a
+// failure is already recorded, unless it is a recoveredError.
+func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
 		r.cancelled = errors.Is(context.Cause(ctx), ErrCancelled)
-		return agent.Result{}, false
+		return agent.Result{}, false, ctx.Err()
 	}
 	if r.budget.Exhausted() {
 		r.fail("time budget exhausted before stage " + name)
-		return agent.Result{}, false
+		return agent.Result{}, false, nil
 	}
 	r.stageN[name]++
 	n := r.stageN[name]
@@ -805,18 +923,21 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request) (agent.
 	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
 
 	switch {
+	case err != nil && opts.Recoverable != nil && stageCtx.Err() == nil && opts.Recoverable(err):
+		r.save(ctx)
+		return res, false, recoveredError{err}
 	case err != nil:
 		r.fail(StageError(name, stageCtx, r.budget, err))
 		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
-		return res, false
+		return res, false, err
 	case res.IsError:
 		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
-		return res, false
+		return res, false, nil
 	}
 	r.save(ctx)
-	return res, true
+	return res, true, nil
 }
 
 // keepTail remembers the failing stage's output for the draft PR (design
@@ -876,14 +997,19 @@ func (r *run) finalize(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
-	ahead, err := r.repo.AheadOf(ctx, base)
-	if err != nil {
-		return fmt.Errorf("counting commits ahead of %s: %w", base, err)
-	}
-	if ahead == 0 {
-		r.fail("the agent made no commits")
-		if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
-			return fmt.Errorf("recording an empty commit: %w", err)
+	if r.follow == nil {
+		// A follow-up's branch is already ahead of its base: when its
+		// agent adds nothing, the report says so rather than an empty
+		// commit.
+		ahead, err := r.repo.AheadOf(ctx, base)
+		if err != nil {
+			return fmt.Errorf("counting commits ahead of %s: %w", base, err)
+		}
+		if ahead == 0 {
+			r.fail("the agent made no commits")
+			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
+				return fmt.Errorf("recording an empty commit: %w", err)
+			}
 		}
 	}
 	sha, err := r.repo.HeadSHA(ctx)
@@ -915,19 +1041,44 @@ func (r *run) finalize(ctx context.Context) error {
 	if err := r.refreshGitAuth(ctx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid))); err != nil {
 		r.warnAuthRefresh(err)
 	}
-	if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
+	if r.follow != nil {
+		if done, err := r.pushFollowUp(ctx, records); done || err != nil {
+			return err
+		}
+	} else if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}
-	title, body := r.prText()
-	pr, err := r.ensurePR(ctx, gitprov.PRSpec{
-		Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
-		Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
-	})
-	if pr.Number != 0 {
+	// Saved at once, before anything is posted, so a run killed after
+	// posting still records that it updated its pull request.
+	r.rec.PushedHead = sha
+	r.save(ctx)
+	var spec gitprov.PRSpec
+	if r.follow != nil {
+		// The pull request exists: only its draft state changes, and its
+		// title and description stay as people may have edited them.
+		spec = gitprov.PRSpec{Number: r.spec.PR, Branch: r.rec.Branch, Base: base, Draft: !ready}
+	} else {
+		title, body := r.prText()
+		spec = gitprov.PRSpec{
+			Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
+			Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
+		}
+	}
+	pr, err := r.ensurePR(ctx, spec)
+	if pr.Number != 0 && r.follow == nil {
 		r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	}
+	if r.follow != nil {
+		// The pull request bootstrap checked, whatever EnsurePR returned
+		// alongside an error.
+		pr = gitprov.PR{Number: r.spec.PR, URL: r.follow.pr.URL, Draft: pr.Draft}
 	}
 	var partial *gitprov.PartialError
 	switch {
+	case errors.Is(err, gitprov.ErrPRNotOpen) && r.follow != nil:
+		// Closed or merged after the push: nothing more may be posted.
+		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was closed during finalize; the branch was pushed", r.spec.PR), records)
+		return nil
 	case errors.As(err, &partial):
 		r.d.Log.Warn("pull request settings not fully applied", "err", r.redact(err.Error()))
 		if ready && pr.Draft {
@@ -940,12 +1091,12 @@ func (r *run) finalize(ctx context.Context) error {
 			ready, reason = false, r.redact(err.Error())
 		}
 	case err != nil:
-		if pr.Number != 0 {
+		if pr.Number != 0 && r.giveUpNoteAllowed(ctx) {
 			// The PR exists but its state could not be settled, and it may
 			// even look ready: say so on the PR itself, best effort.
 			note := "**Fugaro:** this pull request is not ready. The run could not finish setting it up (" +
 				r.redact(err.Error()) + "), so it may not reflect the run's outcome, and it may look ready when it is not. " +
-				"Please check it by hand."
+				"Please check it by hand.\n" + gitprov.ReportMarker(r.rec.RunID) + "\n"
 			// ensurePR may have given up because finalize's reserve ran
 			// out, which is when this warning matters most: post it on a
 			// short context of its own, detached from that deadline.
@@ -956,7 +1107,13 @@ func (r *run) finalize(ctx context.Context) error {
 				r.d.Log.Warn("posting the not-ready comment failed", "err", r.redact(cerr.Error()))
 			}
 		}
-		return fmt.Errorf("opening pull request: %w", err)
+		err = fmt.Errorf("opening pull request: %w", err)
+		if r.follow != nil {
+			// The branch was pushed: the next follow-up quotes this run's
+			// answer, and diagnose shows its report.
+			r.storeUnposted(ctx, err, records)
+		}
+		return err
 	}
 	r.rec.Reason = reason
 	switch {
@@ -968,14 +1125,34 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	r.updateCost()
-	report := agent.Redact(Report(r.rec, r.d.Store.Prefix(), r.logTail(ready, records)), r.secrets)
-	if err := r.provider.Comment(ctx, pr, report); err != nil {
+	var fu *FollowUpSection
+	if r.follow != nil {
+		fu = r.followUpSection()
+		fu.MovedToDraft = r.follow.wasReady && !ready
+	}
+	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu), r.secrets)
+	// A follow-up's pull request is the one people watch: an earlier
+	// attempt of this execution may already have posted this report.
+	if r.follow != nil && r.reportPosted(ctx, pr) {
+		r.d.Log.Info("the run report is already on the pull request; not posting it again")
+	} else if err := r.provider.Comment(ctx, pr, report); err != nil {
 		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
 	}
+	r.storeReport(ctx, report, fu)
+	return nil
+}
+
+// storeReport stores the report, and a follow-up's followup.md as the
+// report quotes it, in the run's prefix.
+func (r *run) storeReport(ctx context.Context, report string, fu *FollowUpSection) {
 	if err := r.d.Store.PutFile(ctx, "report.md", []byte(report), "text/markdown"); err != nil {
 		r.d.Log.Warn("storing the run report failed", "err", err)
 	}
-	return nil
+	if fu != nil && fu.Answer != "" {
+		if err := r.d.Store.PutFile(ctx, followupFile, []byte(fu.Answer), "text/markdown"); err != nil {
+			r.d.Log.Warn("storing followup.md failed", "err", err)
+		}
+	}
 }
 
 // ensurePR opens or updates the pull request, retrying a plain failure: a
@@ -1000,6 +1177,11 @@ func (r *run) ensurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, er
 		var partial *gitprov.PartialError
 		if err == nil || errors.As(err, &partial) {
 			return pr, err
+		}
+		if errors.Is(err, gitprov.ErrPRNotOpen) {
+			// Merged or closed: retrying can't reopen it, and nothing
+			// more may be done to it.
+			return last, err
 		}
 		if attempt == prAttempts {
 			return last, err

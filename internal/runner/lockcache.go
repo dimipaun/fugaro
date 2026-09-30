@@ -280,9 +280,10 @@ func (r *run) restoreCaches(ctx context.Context) {
 	}
 }
 
-// writeback is the last stage (design §4.1): cache write-back, then the
-// lock. A cancelled run only releases its lock, so a cancel never waits on
-// an upload. Nothing here fails the run.
+// writeback is the last stage (design §4.1): the session, cache
+// write-back, then the lock. A cancelled run saves its session (small, and
+// what a follow-up resumes) but skips the caches, so a cancel never waits
+// on a cache upload. Nothing here fails the run.
 func (r *run) writeback(ctx context.Context) {
 	r.rec.Stage = "writeback"
 	r.save(ctx)
@@ -292,6 +293,7 @@ func (r *run) writeback(ctx context.Context) {
 	}
 	wctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
+	r.saveSession(wctx)
 	if r.d.Bucket != nil && !r.cancelled {
 		store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
 		for _, s := range r.caches {

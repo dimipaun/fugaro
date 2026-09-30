@@ -1,0 +1,6 @@
+version: 1
+git: { provider: bitbucket }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }
+followup:
+  trusted: ["{00000000-0000-0000-0000-000000000001}"]   # a UUID, not the account_id

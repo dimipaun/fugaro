@@ -1,0 +1,5 @@
+[
+  {"method": "GET", "path": "/2.0/repositories/acme/web", "auth": "Bearer bb-token-1234", "status": 200,
+   "response": {"type": "repository", "full_name": "acme/web", "name": "web", "is_private": true, "scm": "git",
+                "links": {"html": {"href": "https://bitbucket.org/acme/web"}}}}
+]

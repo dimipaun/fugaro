@@ -197,3 +197,103 @@ func TestJoinPricesTheExecutionsRegion(t *testing.T) {
 		t.Fatalf("compute = %v (asked %v), want %v", row.Cost.ComputeUSD, asked, want)
 	}
 }
+
+// followSpec is a follow-up task on PR 7 of the branch run 20260927-090000-aaaa opened.
+var followSpec = &task.Spec{Version: 1, RunID: "20260927-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web",
+	Branch: "fugaro/20260927-090000-aaaa", PR: 7, PreviousRun: "20260927-090000-aaaa"}
+
+func TestJoinFollowUpFields(t *testing.T) {
+	started := now.Add(-time.Hour)
+	// A follow-up with a record: the record's PR and branch, pushed.
+	r := rec(runstore.StatusSucceeded, nil)
+	r.Outcome, r.Branch, r.StartedAt = runstore.OutcomeReady, followSpec.Branch, started
+	r.PR = &runstore.PRRef{Number: 7, URL: "https://example.invalid/pr/7"}
+	r.PushedHead, r.HeadSHA = "1111111111111111111111111111111111111111", "1111111111111111111111111111111111111111"
+	r.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: followSpec.PreviousRun}
+	row := Join(Input{Task: followSpec, Launch: launch, Record: r}, prices, now)
+	if row.Branch != followSpec.Branch || row.Outcome != "ready" || row.TaskPR != 7 || row.RecordPR != 7 || row.PR != 7 ||
+		!row.Pushed || row.PushedHead != r.PushedHead || !row.FollowUp || row.PreviousRun != followSpec.PreviousRun ||
+		row.StartedAt == nil || !row.StartedAt.Equal(started) {
+		t.Fatalf("follow-up with a record: %+v", row)
+	}
+
+	// Only the task so far: the task's branch and PR, nothing pushed.
+	row = Join(Input{Task: followSpec}, prices, now)
+	if row.Branch != followSpec.Branch || row.Outcome != "" || row.TaskPR != 7 || row.RecordPR != 0 || row.PR != 7 ||
+		row.Pushed || row.PushedHead != "" || !row.FollowUp || row.PreviousRun != followSpec.PreviousRun || row.StartedAt != nil {
+		t.Fatalf("task-only follow-up: %+v", row)
+	}
+
+	// A follow-up whose record got its PR at bootstrap but never pushed has
+	// not updated the PR.
+	early := rec(runstore.StatusInfraError, nil)
+	early.PR, early.HeadSHA = &runstore.PRRef{Number: 7}, "2222222222222222222222222222222222222222"
+	early.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: followSpec.PreviousRun}
+	if row := Join(Input{Task: followSpec, Launch: launch, Record: early}, prices, now); row.Pushed || row.PushedHead != "" {
+		t.Fatalf("an unpushed follow-up counts as pushed: %+v", row)
+	}
+	early.FollowUp = nil // even when the refusal came before the block was set
+	if row := Join(Input{Task: followSpec, Launch: launch, Record: early}, prices, now); row.Pushed {
+		t.Fatalf("an unpushed follow-up task counts as pushed: %+v", row)
+	}
+
+	// A first run: its own branch and PR, no task PR, not a follow-up.
+	first := rec(runstore.StatusFailed, nil)
+	first.Outcome, first.Branch = runstore.OutcomeDraft, "fugaro/"+spec.RunID
+	first.PR, first.PushedHead = &runstore.PRRef{Number: 7}, "3333333333333333333333333333333333333333"
+	row = Join(Input{Task: spec, Launch: launch, Record: first}, prices, now)
+	if row.Branch != first.Branch || row.Outcome != "draft" || row.TaskPR != 0 || row.RecordPR != 7 || row.PR != 7 ||
+		!row.Pushed || row.PushedHead != first.PushedHead || row.FollowUp || row.PreviousRun != "" {
+		t.Fatalf("first run: %+v", row)
+	}
+
+	// An error row keeps what its task says, so a PR's listing still shows it.
+	row = Join(Input{Task: followSpec, Launch: launch, Problem: "result.json is unreadable"}, prices, now)
+	if row.Status != StatusError || row.TaskPR != 7 || row.PR != 7 || !row.FollowUp || row.Pushed {
+		t.Fatalf("error row: %+v", row)
+	}
+}
+
+// A record written before follow-ups existed has no pushed_head; its PR
+// exists only because its push succeeded, so it has pushed its head_sha.
+func TestJoinPushedPreM6(t *testing.T) {
+	old := rec(runstore.StatusSucceeded, nil)
+	old.PR, old.HeadSHA = &runstore.PRRef{Number: 3, URL: "https://example.invalid/pr/3"}, "4444444444444444444444444444444444444444"
+	row := Join(Input{Task: spec, Launch: launch, Record: old}, prices, now)
+	if !row.Pushed || row.PushedHead != old.HeadSHA || row.PR != 3 {
+		t.Fatalf("pre-M6 record with a PR: %+v", row)
+	}
+	neither := rec(runstore.StatusInfraError, nil)
+	neither.HeadSHA = "5555555555555555555555555555555555555555"
+	if row := Join(Input{Task: spec, Launch: launch, Record: neither}, prices, now); row.Pushed || row.PushedHead != "" {
+		t.Fatalf("a record with neither a PR nor pushed_head: %+v", row)
+	}
+	if row := Join(Input{Task: spec}, prices, now); row.Pushed {
+		t.Fatalf("no record: %+v", row)
+	}
+	// A PR without a head_sha names no commit: not pushed.
+	headless := rec(runstore.StatusSucceeded, nil)
+	headless.PR = &runstore.PRRef{Number: 3}
+	if head, ok := Pushed(spec, headless); ok || head != "" {
+		t.Fatalf("a PR without a head_sha: %q, %v", head, ok)
+	}
+}
+
+// Without its task (task.json unreadable, or a caller holding only the
+// record), the record's branch tells a follow-up from a first run: a first
+// run's branch always names its own run ID.
+func TestPushedWithoutTask(t *testing.T) {
+	const head = "6666666666666666666666666666666666666666"
+	fu := &runstore.Record{RunID: followSpec.RunID, Branch: followSpec.Branch, HeadSHA: head, PR: &runstore.PRRef{Number: 7}}
+	if h, ok := Pushed(nil, fu); ok || h != "" {
+		t.Fatalf("a follow-up record with a PR and no block yet: %q, %v", h, ok)
+	}
+	first := &runstore.Record{RunID: spec.RunID, Branch: "fugaro/" + spec.RunID, HeadSHA: head, PR: &runstore.PRRef{Number: 7}}
+	if h, ok := Pushed(nil, first); !ok || h != head {
+		t.Fatalf("a first run's record: %q, %v", h, ok)
+	}
+	fu.PushedHead = head
+	if h, ok := Pushed(nil, fu); !ok || h != head {
+		t.Fatalf("a follow-up that pushed: %q, %v", h, ok)
+	}
+}

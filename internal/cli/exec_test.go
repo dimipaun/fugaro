@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -176,5 +177,24 @@ func TestExecUsesPriceEnv(t *testing.T) {
 				t.Fatalf("warnings = %q", warned)
 			}
 		})
+	}
+}
+
+// TestExecFakeProviderKnowsRepoAndRemote: `exec --provider fake` opens the
+// fake for the task's repository, reading branch heads from --remote, so a
+// follow-up's checks see the same PR a real host would show.
+func TestExecFakeProviderKnowsRepoAndRemote(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "provider.json")
+	kind, open, err := providerOptions(execOptions{provider: "fake", providerState: state, remote: "/srv/remote.git"}, nil, nil)
+	if err != nil || kind != "" {
+		t.Fatalf("providerOptions = %q, %v", kind, err)
+	}
+	p, secrets, err := open(context.Background(), "github", "acme/app")
+	if err != nil || len(secrets) != 0 {
+		t.Fatalf("open = %v, %v", secrets, err)
+	}
+	f, ok := p.(*fake.Provider)
+	if !ok || f.Repo != "acme/app" || f.Remote != "/srv/remote.git" || f.Path != state || f.SelfID != "fugaro-bot" {
+		t.Fatalf("provider = %#v", p)
 	}
 }

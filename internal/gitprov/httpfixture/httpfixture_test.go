@@ -188,3 +188,19 @@ func TestRecorderScrubsSuffixedTokenFields(t *testing.T) {
 		t.Fatalf("recording lost token_type:\n%s", s)
 	}
 }
+
+func TestServeSendsHeadersWithServerURL(t *testing.T) {
+	srv := Serve(t, writeFixture(t, `[
+	  {"method":"GET","path":"/items","status":200,"header":{"Link":"<{{server}}/items?page=2>; rel=\"next\""},"response":[1]},
+	  {"method":"GET","path":"/items?page=2","status":200,"response":[2]}
+	]`))
+	c := &httpjson.Client{BaseURL: srv.URL}
+	var page []int
+	next, err := c.DoPage(context.Background(), "GET", "/items", nil, &page)
+	if err != nil || next != "/items?page=2" {
+		t.Fatalf("next = %q, err = %v", next, err)
+	}
+	if next, err := c.DoPage(context.Background(), "GET", next, nil, &page); err != nil || next != "" || page[0] != 2 {
+		t.Fatalf("next = %q, page = %v, err = %v", next, page, err)
+	}
+}
