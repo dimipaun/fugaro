@@ -11,6 +11,10 @@ import (
 // LogBucketAddress is the log bucket's address in the installation root.
 const LogBucketAddress = "module.installation.google_logging_project_bucket_config.fugaro[0]"
 
+// TagMoverRoleAddress is the tag mover role's address in the installation
+// root.
+const TagMoverRoleAddress = "module.installation.google_project_iam_custom_role.tag_mover"
+
 // ForgetDeletes are the addresses the rollback's apply may delete: the log
 // isolation, which is behaviour M5 added and M4 doesn't expect (the
 // exclusion keeps job logs out of _Default, where M4 reads them).
@@ -50,10 +54,15 @@ func ForgetAllowDelete(p *tf.Plan) []string {
 
 // CheckForgetPlan refuses a rollback plan that creates anything: it only
 // takes M5's behaviour away, so a create means the state is not the
-// installation's (or is empty).
+// installation's (or is empty). The one exception is the tag mover role,
+// which an installation applied before it existed doesn't have yet: the
+// plan creates it, and it stays, ungranted, like the other custom roles.
 func CheckForgetPlan(p *tf.Plan) error {
 	var creates []string
 	for _, rc := range p.ResourceChanges {
+		if rc.Address == TagMoverRoleAddress && slices.Equal(rc.Change.Actions, []string{"create"}) {
+			continue
+		}
 		if slices.Contains(rc.Change.Actions, "create") {
 			creates = append(creates, rc.Address)
 		}

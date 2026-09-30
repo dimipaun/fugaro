@@ -64,6 +64,7 @@ const (
 	importLauncherRole       importKind = "launcher role"
 	importJobRunnerRole      importKind = "job runner role"
 	importBuildSubmitterRole importKind = "build submitter role"
+	importTagMoverRole       importKind = "tag mover role"
 	importSchedulerSA        importKind = "scheduler account"
 	importLogBucket          importKind = "log bucket"
 )
@@ -86,6 +87,7 @@ var importTable = map[importKind]struct{ to, id string }{
 	importLauncherRole:       {"module.installation.google_project_iam_custom_role.launcher", "projects/{project}/roles/{name}"},
 	importJobRunnerRole:      {"module.installation.google_project_iam_custom_role.job_runner", "projects/{project}/roles/{name}"},
 	importBuildSubmitterRole: {"module.installation.google_project_iam_custom_role.build_submitter", "projects/{project}/roles/{name}"},
+	importTagMoverRole:       {TagMoverRoleAddress, "projects/{project}/roles/{name}"},
 	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
 	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
 }

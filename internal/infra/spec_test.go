@@ -76,6 +76,7 @@ func installationOutputs() InstallationOutputs {
 			Launcher:       "projects/proj-1234/roles/" + RoleLauncher,
 			JobRunner:      "projects/proj-1234/roles/" + RoleJobRunner,
 			BuildSubmitter: "projects/proj-1234/roles/" + RoleBuildSubmitter,
+			TagMover:       "projects/proj-1234/roles/" + RoleTagMover,
 		},
 		Launchers:             []string{},
 		Operators:             []string{},
@@ -514,7 +515,10 @@ func TestSpecRefuses(t *testing.T) {
 			in.Installation.RoleIDs.JobRunner = "projects/other-proj/roles/" + RoleJobRunner
 		},
 		"role that isn't a custom role": func(in *Inputs) { in.Installation.RoleIDs.Launcher = "roles/owner" },
-		"no base image":                 func(in *Inputs) { in.LC.BaseImage = "" },
+		"tag mover role of another project": func(in *Inputs) {
+			in.Installation.RoleIDs.TagMover = "projects/other-proj/roles/" + RoleTagMover
+		},
+		"no base image": func(in *Inputs) { in.LC.BaseImage = "" },
 		"secret env collides": func(in *Inputs) {
 			w := in.Cfg.Workflows["web"]
 			w.Secrets = []config.Secret{{Name: "x", Env: "FUGARO_BUCKET"}}
@@ -669,7 +673,7 @@ func TestInstallationSpec(t *testing.T) {
 	}
 	n := s.Names
 	if n.SchedulerServiceAccountID != "fugaro-scheduler" || n.BaseRegistry != "fugaro-base" || n.LegacyRegistry != "fugaro" ||
-		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter"}) ||
+		n.RoleIDs != (InstallationRoleIDs{Launcher: "fugaroLauncher", JobRunner: "fugaroJobRunner", BuildSubmitter: "fugaroBuildSubmitter", TagMover: "fugaroTagMover"}) ||
 		n.Log != (LogNames{Bucket: "fugaro", View: "fugaro-runs", Sink: "fugaro-jobs", Exclusion: "fugaro-jobs-from-default"}) {
 		t.Errorf("names = %+v", n)
 	}

@@ -93,6 +93,49 @@ func TestNoProjectLevelSecretAccessor(t *testing.T) {
 	})
 }
 
+// The tag mover role lets a repository's build move its own :latest, which
+// needs artifactregistry.tags.delete, and nothing more: no version or
+// package delete. It is granted on a repository's own registry only, never
+// on the project.
+func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
+	roles, grants := 0, 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			if blk.name != "google_project_iam_custom_role.tag_mover" {
+				continue
+			}
+			roles++
+			m := regexp.MustCompile(`(?s)\n\s*permissions\s*=\s*\[(.*?)\]`).FindStringSubmatch(blk.body)
+			if m == nil {
+				t.Errorf("%s: %s has no literal permissions list", path, blk.name)
+				continue
+			}
+			var perms []string
+			for _, p := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(m[1], -1) {
+				perms = append(perms, p[1])
+			}
+			if fmt.Sprint(perms) != "[artifactregistry.tags.delete]" {
+				t.Errorf("%s: %s holds %v, want exactly artifactregistry.tags.delete", path, blk.name, perms)
+			}
+		}
+		for _, typ := range []string{"google_project_iam_member", "google_artifact_registry_repository_iam_member"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				if !strings.Contains(blk.body, "tag_mover") {
+					continue
+				}
+				grants++
+				if typ != "google_artifact_registry_repository_iam_member" || path != "gcp/modules/repo/build.tf" ||
+					!strings.Contains(blk.body, "google_artifact_registry_repository.images.repository_id") {
+					t.Errorf("%s: %s grants the tag mover role other than on the repository's own registry", path, blk.name)
+				}
+			}
+		}
+	})
+	if roles != 1 || grants != 1 {
+		t.Errorf("found %d tag mover roles and %d grants, want 1 of each", roles, grants)
+	}
+}
+
 // Destroying the Terraform config must never turn off an API the project
 // (or someone else in it) still uses.
 func TestProjectServicesKeepOnDestroy(t *testing.T) {

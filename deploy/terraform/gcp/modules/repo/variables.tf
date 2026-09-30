@@ -32,6 +32,7 @@ variable "installation" {
     role_ids = object({
       job_runner      = string
       build_submitter = string
+      tag_mover       = string
     })
     launchers = list(string)
     operators = list(string)

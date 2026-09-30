@@ -19,13 +19,23 @@ resource "google_secret_manager_secret_iam_member" "build" {
   member    = google_service_account.build.member
 }
 
-# Writer on its own registry only. Writer lacks tags.delete, which is why
-# the build's candidate untag is best-effort; no admin role is ever granted.
+# Writer on its own registry only; no admin role is ever granted.
 resource "google_artifact_registry_repository_iam_member" "build_images" {
   project    = var.project
   location   = google_artifact_registry_repository.images.location
   repository = google_artifact_registry_repository.images.repository_id
   role       = "roles/artifactregistry.writer"
+  member     = google_service_account.build.member
+}
+
+# The installation's tag mover role (tags.delete only), on its own registry
+# only: writer lacks tags.delete, which the build's promote needs to move an
+# existing :latest, and its untag to remove the candidate tag.
+resource "google_artifact_registry_repository_iam_member" "build_tag_mover" {
+  project    = var.project
+  location   = google_artifact_registry_repository.images.location
+  repository = google_artifact_registry_repository.images.repository_id
+  role       = var.installation.role_ids.tag_mover
   member     = google_service_account.build.member
 }
 

@@ -1348,6 +1348,11 @@ func (r *initRun) installationOutputs(ctx context.Context, lc *localcfg.Config, 
 	case err != nil:
 		return infra.InstallationOutputs{}, remote(err)
 	}
+	// An installation applied before the tag mover role existed doesn't
+	// output it; the repository's grant of it would fail at apply.
+	if outs.RoleIDs.TagMover == "" {
+		return infra.InstallationOutputs{}, userErr("the installation's state in gs://%s predates the tag mover role (its outputs have no role_ids.tag_mover): run fugaro init first", stateBucket)
+	}
 	return outs, nil
 }
 

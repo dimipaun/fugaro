@@ -143,6 +143,7 @@ func (f *cloud) m5Installation(inst InstallationSpec) {
 	f.iam.AddRole(inst.Project, RoleLauncher, "Fugaro launcher", false)
 	f.iam.AddRole(inst.Project, RoleJobRunner, "Fugaro job runner", false)
 	f.iam.AddRole(inst.Project, RoleBuildSubmitter, "Fugaro build submitter", false)
+	f.iam.AddRole(inst.Project, RoleTagMover, "Fugaro tag mover", false)
 	f.iam.AddServiceAccount(inst.Project, SchedulerServiceAccountID+"@"+inst.Project+".iam.gserviceaccount.com", "Fugaro scheduler")
 	f.logs.AddBucket(inst.Project, "global", LogBucket, "ACTIVE", LogBucketDescription)
 }
@@ -415,6 +416,7 @@ func TestDiscoverInstallationAfterForget(t *testing.T) {
 		"module.installation.google_project_iam_custom_role.launcher":        p + "roles/" + RoleLauncher,
 		"module.installation.google_project_iam_custom_role.job_runner":      p + "roles/" + RoleJobRunner,
 		"module.installation.google_project_iam_custom_role.build_submitter": p + "roles/" + RoleBuildSubmitter,
+		"module.installation.google_project_iam_custom_role.tag_mover":       p + "roles/" + RoleTagMover,
 		"module.installation.google_service_account.scheduler":               p + "serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com",
 		"module.installation.google_logging_project_bucket_config.fugaro[0]": p + "locations/global/buckets/" + LogBucket,
 	}
@@ -458,6 +460,11 @@ func TestDiscoverRefusesForeignSingletons(t *testing.T) {
 	f.iam.AddRole("proj-1234", RoleJobRunner, "Someone's runner", false)
 	_, err := DiscoverInstallation(ctx, f.c, inst)
 	foreign(t, err, "custom role projects/proj-1234/roles/"+RoleJobRunner, `"Someone's runner"`, `"Fugaro job runner"`)
+
+	f = newCloud(t)
+	f.iam.AddRole("proj-1234", RoleTagMover, "Someone's tagger", false)
+	_, err = DiscoverInstallation(ctx, f.c, inst)
+	foreign(t, err, "custom role projects/proj-1234/roles/"+RoleTagMover, `"Someone's tagger"`, `"Fugaro tag mover"`)
 
 	f = newCloud(t)
 	f.iam.AddServiceAccount("proj-1234", "fugaro-scheduler@proj-1234.iam.gserviceaccount.com", "Cron")

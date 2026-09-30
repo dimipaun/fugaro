@@ -41,6 +41,20 @@ resource "google_project_iam_custom_role" "build_submitter" {
   depends_on = [google_project_service.this]
 }
 
+# Granted to each repository's build account on that repository's own
+# registry only, by the repository module. Moving an existing :latest
+# (gcloud artifacts docker tags add) deletes the old tag first, and writer
+# lacks tags.delete. No version or package delete: a build can remove a
+# tag, never an image.
+resource "google_project_iam_custom_role" "tag_mover" {
+  project     = var.project
+  role_id     = var.names.role_ids.tag_mover
+  title       = "Fugaro tag mover"
+  permissions = ["artifactregistry.tags.delete"]
+
+  depends_on = [google_project_service.this]
+}
+
 resource "google_project_iam_member" "launcher" {
   for_each = toset(var.launchers)
 
