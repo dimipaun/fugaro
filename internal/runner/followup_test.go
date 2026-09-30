@@ -1273,3 +1273,16 @@ func TestSaveSessionOnFinalizePanic(t *testing.T) {
 		t.Fatalf("session = %+v, %v", m, err)
 	}
 }
+
+// A tag named like the branch must not shadow it: the follow-up checks
+// out the branch.
+func TestFollowUpTagDoesNotShadowBranch(t *testing.T) {
+	h := followUpHarness(t, "", nil)
+	testutil.Git(t, h.remote, "tag", "fugaro/"+runID, "refs/heads/main")
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	mustReady(t, rec, err)
+	if rec.FollowUp.StartSHA != h.first.PushedHead {
+		t.Fatalf("started from %s, want the branch's %s", rec.FollowUp.StartSHA, h.first.PushedHead)
+	}
+}

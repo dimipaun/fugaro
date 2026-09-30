@@ -68,7 +68,9 @@ func (r *run) checkoutFollowUp(ctx context.Context, repo *gitops.Repo) error {
 	if tip == "" {
 		return fmt.Errorf("branch %s no longer exists on origin; the PR was merged or its branch deleted", branch)
 	}
-	if err := repo.CheckoutNewBranch(ctx, branch, branch); err != nil {
+	// Fetched by its full name: a tag named like the branch would win a
+	// bare fetch.
+	if err := repo.CheckoutNewBranch(ctx, "refs/heads/"+branch, branch); err != nil {
 		return fmt.Errorf("checking out %s: %w", branch, err)
 	}
 	head, err := repo.HeadSHA(ctx)
