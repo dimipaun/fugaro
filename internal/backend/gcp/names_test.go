@@ -328,3 +328,9 @@ func TestNewNamesOfRealSlugs(t *testing.T) {
 		}
 	}
 }
+
+func TestDefaultRegistryHost(t *testing.T) {
+	if got := DefaultRegistryHost("us-east5", "my-proj"); got != "us-east5-docker.pkg.dev/my-proj" || !registryHostRE.MatchString(got) {
+		t.Errorf("DefaultRegistryHost = %q, want us-east5-docker.pkg.dev/my-proj", got)
+	}
+}

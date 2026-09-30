@@ -21,9 +21,9 @@
 //     is registered before the side effect. Object names carry
 //     fugaro-live-<stamp>, and internal/e2e's TestLiveGCPCleanup sweeps
 //     whatever a -timeout abort left behind. The build check's pushed
-//     candidate-<build ID> image is deleted in its cleanup; one an abort
-//     leaves behind is harmless, like the derived build's own leftover
-//     candidate tags.
+//     candidate-<build ID> image is deleted in its cleanup, which needs
+//     artifactregistry.versions.delete (see deleteCandidate); one an abort
+//     leaves behind must be deleted by hand.
 //   - Credentials come from ADC only (or, for the prefix-denial check, from
 //     impersonating the job's service account with ADC). Nothing reads a
 //     credential from argv, and nothing logged holds one.
@@ -58,6 +58,7 @@ import (
 	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
+	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	cloudbuild "google.golang.org/api/cloudbuild/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/impersonate"
@@ -853,8 +854,8 @@ func TestLiveCacheOnGCS(t *testing.T) {
 //   - "run-none": the pushed candidate, run by digest with `docker run
 //     --network none` from a step on the smoke's builder, as the smoke runs
 //     it;
-//   - "run-default": the same candidate under a plain `docker run`, on
-//     docker's default network.
+//   - "run-default": an additional probe, not the smoke's path: the same
+//     candidate under a plain `docker run`, on docker's default network.
 //
 // None but the control may reach it. If one does, the boundary does not
 // hold, and a repository that runs untrusted code must not be onboarded
@@ -1018,9 +1019,9 @@ type probeTarget struct {
 // deprecated account and the legacy registry instead.
 func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 	t.Helper()
-	// The registry host as infra.RegistryHost defaults it (this package
-	// can't import infra).
-	host := cmp.Or(e.lc.RegistryHost, e.lc.Region+"-docker.pkg.dev/"+e.lc.Project)
+	// The registry host as infra.RegistryHost picks it (this package can't
+	// import infra): the local config's, else DefaultRegistryHost.
+	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.Project))
 	spec := BuildSpec{
 		Slug: e.slug, GitProvider: liveProvider, RepoURL: "https://bitbucket.org/" + liveRepo + ".git",
 		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage,
@@ -1046,36 +1047,80 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 		t.Fatal("the derived build's smoke step no longer runs the candidate under docker run --network none; update the run probes to match it")
 	}
 	if e.lc.Terraform.StateBucket == "" && e.lc.Build.ServiceAccount != "" {
-		if e.lc.Registry == "" {
-			t.Fatal("the local config names the deprecated build.service_account but no legacy registry to push to")
+		// Nothing may be pushed, or run as, outside the live project.
+		if !strings.HasSuffix(e.lc.Build.ServiceAccount, "@"+liveProject+".iam.gserviceaccount.com") {
+			t.Fatalf("the deprecated build.service_account %s is not an account of %s", e.lc.Build.ServiceAccount, liveProject)
 		}
-		tgt.sa, tgt.image, tgt.legacy = e.lc.Build.ServiceAccount, ImageName(e.lc.Registry, e.slug, liveWorkflow), true
+		image := ImageName(e.lc.Registry, e.slug, liveWorkflow)
+		if e.lc.Registry == "" || strings.Count(e.lc.Registry, "/") != 2 || candidatePackage(image) == "" {
+			t.Fatalf("the legacy registry %q is not <region>-docker.pkg.dev/%s/<repository>", e.lc.Registry, liveProject)
+		}
+		tgt.sa, tgt.image, tgt.legacy = e.lc.Build.ServiceAccount, image, true
 	}
 	return tgt
 }
 
-// deleteCandidate deletes the image version that tag names in image's
-// package (<host>/<project>/<repository>/<package>), if it was pushed.
-func deleteCandidate(t *testing.T, ctx context.Context, bld *Builder, image, tag string) {
-	t.Helper()
+// candidatePackage is the Artifact Registry package resource of image
+// (<region>-docker.pkg.dev/<liveProject>/<repository>/<package>), or ""
+// when image is not one in the live project.
+func candidatePackage(image string) string {
 	host, rest, ok := strings.Cut(image, "/"+liveProject+"/")
 	m := registryHostRE.FindStringSubmatch(host + "/" + liveProject)
 	repo, pkg, ok2 := strings.Cut(rest, "/")
-	if !ok || !ok2 || m == nil || !strings.HasPrefix(tag, "candidate-") {
+	if !ok || !ok2 || m == nil || repo == "" || pkg == "" || strings.Contains(pkg, "/") {
+		return ""
+	}
+	return "projects/" + liveProject + "/locations/" + m[1] + "/repositories/" + repo + "/packages/" + url.PathEscape(pkg)
+}
+
+// deleteCandidate deletes the image version that tag names in image's
+// package, if it was pushed. It runs with the test's own credentials (the
+// build account may push but not delete), which need
+// artifactregistry.versions.delete on the registry: project owner or
+// editor, or repoAdmin on the registry. Any failure but not-found fails the
+// test, so a probe image is never left behind silently. It refuses to
+// delete a version that any tag other than a candidate- one points at.
+// (A cancel that lands during the push can let the push finish after this
+// ran; that candidate is left behind.)
+func deleteCandidate(t *testing.T, ctx context.Context, bld *Builder, image, tag string) {
+	t.Helper()
+	pkg := candidatePackage(image)
+	if pkg == "" || !strings.HasPrefix(tag, "candidate-") {
 		t.Errorf("CLEANUP: refusing to delete %s:%s", image, tag)
 		return
 	}
-	name := "projects/" + liveProject + "/locations/" + m[1] + "/repositories/" + repo + "/packages/" + url.PathEscape(pkg) + "/tags/" + tag
-	tg, err := bld.registries.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
+	tags := bld.registries.Projects.Locations.Repositories.Packages.Tags
+	tg, err := tags.Get(pkg + "/tags/" + tag).Context(ctx).Do()
 	if httpStatus(err) == http.StatusNotFound {
 		return // never pushed
 	}
 	if err != nil {
-		t.Logf("CLEANUP: reading %s: %v; delete %s:%s by hand", name, err, image, tag)
+		t.Errorf("CLEANUP: reading %s:%s: %v; delete it by hand", image, tag, err)
 		return
 	}
-	_, err = bld.registries.Projects.Locations.Repositories.Packages.Versions.Delete(tg.Version).Force(true).Context(ctx).Do()
-	t.Logf("CLEANUP: delete %s (%s:%s): %v", tg.Version, image, tag, err)
+	var others []string
+	err = tags.List(pkg).Filter(`version="`+tg.Version+`"`).Pages(ctx, func(r *artifactregistry.ListTagsResponse) error {
+		for _, o := range r.Tags {
+			name := o.Name[strings.LastIndex(o.Name, "/")+1:]
+			if o.Version == tg.Version && !strings.HasPrefix(name, "candidate-") {
+				others = append(others, name)
+			}
+		}
+		return nil
+	})
+	switch {
+	case err != nil:
+		t.Errorf("CLEANUP: listing the tags of %s: %v; delete %s:%s by hand", tg.Version, err, image, tag)
+		return
+	case len(others) > 0:
+		t.Errorf("CLEANUP: refusing to delete %s (%s:%s): it is also tagged %v", tg.Version, image, tag, others)
+		return
+	}
+	if _, err := bld.registries.Projects.Locations.Repositories.Packages.Versions.Delete(tg.Version).Force(true).Context(ctx).Do(); err != nil {
+		t.Errorf("CLEANUP: deleting %s (%s:%s): %v; the test's credentials need artifactregistry.versions.delete on the registry (owner, editor or repoAdmin)", tg.Version, image, tag, err)
+		return
+	}
+	t.Logf("CLEANUP: deleted %s (%s:%s)", tg.Version, image, tag)
 }
 
 // dockerfileSyntax is the derived template's # syntax= line, so the probe
@@ -1105,7 +1150,7 @@ var metaPlaces = []struct{ where, what string }{
 	{"default", "a RUN step on BuildKit's default network"},
 	{"host", "a RUN --network=host step"},
 	{"run-none", "the candidate under docker run --network none (the smoke's path)"},
-	{"run-default", "the candidate under docker run on the default network"},
+	{"run-default", "the candidate under docker run on docker's default network (an additional probe; the smoke never uses it)"},
 }
 
 // checkMetadataProbes fails unless the control reached the token endpoint

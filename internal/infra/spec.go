@@ -338,7 +338,7 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 		host = output
 	}
 	if host == "" {
-		host = lc.Region + "-docker.pkg.dev/" + lc.Project
+		host = gcp.DefaultRegistryHost(lc.Region, lc.Project)
 	}
 	m := registryHostRE.FindStringSubmatch(host)
 	if m == nil {
