@@ -441,43 +441,74 @@ Still to record: the items below that this list doesn't cover.
 
 ## Results of the fourth live run (M6)
 
-To be filled in by the M6 live verification: the Bitbucket adapter's live
-test with recording (git-providers.md, "Live check against a sandbox
-repository"), check 13 as the regression check for first runs, and check 19.
-Record every `FACT` the same way as the runs above, and commit the recorded
-`follow_up_reads.json` fixture, scrubbed, with the tests updated first where
-it differs from the hand-written fixtures.
+Run on 2026-09-30 in the dev project, against the Bitbucket sandbox, with
+the base image and the sandbox's image rebuilt from the M6 merge. The
+Bitbucket adapter's live test with recording, check 13 and check 19 all
+passed. What the run showed:
 
-These are **unverified until the live check**, each written from
-documentation or observation elsewhere; record what the run shows for each:
+- **One finding that led to a fix, before any check ran.** Rebuilding the sandbox's image for the M6 runner failed at `promote` with `PERMISSION_DENIED` on `tags/latest`: `gcloud artifacts docker tags add` on an existing tag deletes it and creates it again, and the build account held only `writer`, which lacks `artifactregistry.tags.delete`. `latest` stayed where it was. Every rebuild, the nightly check's included, would have failed the same way; the first builds had passed only because `latest` didn't exist yet. The fix is the `fugaroTagMover` role (`tags.delete` only) on each repository's own registry (merged; see the third run's sandbox build item and gcp-setup.md, "Installations from before the tag mover role"). **Verified live:** once `fugaro init` and `fugaro init --repo` had applied it (one create each), the sandbox's rebuild promoted, moved `latest`, updated its record and removed its `candidate-` tag.
+- **The sandbox's trust list.** For check 19, the sandbox's `fugaro.yaml` on `master` carries `followup: {trusted: ["<owner's account_id>"]}`. It can stay for the next live run; removing it is optional (check 19, "Afterwards").
+- **The Bitbucket adapter** (`TestLiveBitbucket` with `FUGARO_LIVE_RECORD_DIR`). The recordings of the follow-up reads and of both updates by number are committed, pseudonymized, in `internal/gitprov/bitbucket/testdata/recorded` and replayed by `TestRecordedFollowUpReads`, `TestRecordedEnsureByNumber` and `TestRecordedEnsureByNumberDeclined`; the hand-written fixtures now follow the real shapes where they differed. No adapter change was needed.
+  - git over HTTPS with the env-only credential helper works, and `.git/config` holds no token.
+  - As in the 2026-09-27 run: `draft` honoured on create and on update in both directions, a `PUT {title}` keeping `draft` and the description, the mixed-case lookup finding the existing PR, the comment, the labels warning once across two PRs, and an unknown reviewer answered with HTTP 400 "Malformed reviewers list", the PR opened without reviewers.
+  - `Repository` reads `is_private: true`. `PullRequest` reads `state` `OPEN`, `draft`, `author.account_id` (the token's app user; Bitbucket account IDs have the form `<digits>:<uuid>`), the source branch, `source.repository.full_name`, and a 12-hex `source.commit.hash` that `SameCommit` matches with the pushed head.
+  - **`GET /user` with the repository access token returns HTTP 403** ("This API is not accessible by this authentication mechanism"). The identity is unknown: one warning, every comment `self_known=false`, the designed fallback. The PR's `author.account_id` equals the `author_id` of every comment the token posted, so the rule that always drops the PR author's comments is what keeps Fugaro's own out.
+  - Comments: `POST …/comments/{id}/resolve` works. The resolved thread's first comment carries `"resolution": {}` (an empty object) and the others none, and the reply reads resolved through its thread. A reply carries `parent` (`id` and `links`) and an `inline` of its own. `inline` has `from`, `to`, `path`, `start_from` and `start_to`, and no `outdated` field while the comment is current. `deleted` and `pending` are always present. `user` has `uuid`, `account_id` and `display_name` (`type: app_user` and `kind: repository_access_token` for the token). A single page has no `next`.
+  - The raw content keeps `<!-- … -->`; `content.html` escapes it as text (the known issue below).
+  - The update by number changes only `draft`, keeping the title and description. On the declined PR (`DECLINED`, `closed_by` set) `PullRequest` reads `closed`, and `EnsurePR` by number returns `ErrPRNotOpen`, with no open PR for the branch.
+  - A bad token gets HTTP 401, and the token never appears in the error.
+- **Check 13, the first-run regression on the M6 runner:** succeeded and ended ready in about 44 seconds, with a 1020s task timeout under `--total-timeout 15m`. Compute $0.0008, model $0.30 notional on the subscription, `total_usd` 0. `logs --json` has a `stage started` line and an `"event":"tool"` entry; `result.json`'s execution matches `launch.json`'s; `pushed_head` equals `head_sha`; the run saved its session (about 200 KB, workdir `/work/repo`) and its cache archives.
+- **Check 19, the follow-up.** The first attempt ran out of the default 20-minute comment wait (nobody was at the Bitbucket UI in time; its cleanup declined the PR). The rerun, with `FUGARO_LIVE_COMMENT_WAIT=45m`, passed:
+  - Before launching: the sandbox is private, `followup.trusted` lists one account ID, `allow_public` is off.
+  - The first run ended ready in about 44 seconds; its PR's `author.account_id` is the token's identity.
+  - The trusted person posted one inline and one general comment by hand.
+  - The follow-up launched on the same branch with `pr` and `previous_run` set, ran implement, review and finalize, and ended `succeeded`, outcome `ready`, on the same PR, in about 1.5 minutes.
+  - Its `comments.json` holds 2 comments, both by the trusted person, with Fugaro's own report omitted (`omitted: {fugaro: 1}`) and no untrusted author; the report names the person under "Comments used".
+  - `follow_up.session` is `resumed`: Claude Code's session directory naming and `--resume` work as the runner assumes. The follow-up saved its own session (about 250 KB, workdir `/work/repo`), and its `pushed_head` equals `head_sha`.
+  - The PR has two reports, one per run, each with its marker in the raw text and its own cost line ($0.14 and $0.25 notional model, compute ≈ $0.00).
+  - `ls --pr` lists exactly the two runs (`totals.runs` 2, $0.39 notional model in all), and `diagnose --json` of the follow-up has its `follow_up` block (the PR, the previous run, `session: resumed`, `start_sha`, 2 comments, the authors and `omitted`).
+  - After the PR was declined, the third run ended `infra_error` at bootstrap after about 23 seconds, "bootstrap: PR #N is closed", touching nothing.
+  - The cleanup deleted the branch and the three runs' objects.
+- **Known issue (cosmetic): the report marker shows in Bitbucket.** Bitbucket's Markdown escapes the HTML comment (check 19's report `FACT`s: "the rendered HTML shows fugaro:report as text true"), so every comment Fugaro posts on Bitbucket ends with a visible `<!-- fugaro:report run=… -->` line. Nothing reads the rendered HTML, and the raw text keeps the marker, so recognizing Fugaro's own comments works. The fix is in the design's backlog (§14).
 
-- **Claude Code's session directory:** it names a project directory
+### The assumptions this run answered
+
+These were written from documentation or observation elsewhere before the
+run. What it showed for each:
+
+- **Claude Code's session directory: verified.** Naming a project directory
   `~/.claude/projects/<working directory, symbolic links resolved, with
   every byte outside [A-Za-z0-9] replaced by ->`, so `/work/repo` is
-  `-work-repo` (check 19: `session: resumed`).
-- **`claude -p --resume <id>`** keeps the session ID rather than forking a
-  new one (the runner follows the ID the result reports either way; the
-  saved `session.json` of the follow-up shows which), and a missing session
-  makes it print "No conversation found with session ID".
-- **Bitbucket's field shapes:** `is_private`; the PR's `author.account_id`
-  and `source.commit.hash`; a comment's `resolution` (on the thread's root,
-  and cleared when reopened?), `inline.outdated`, `deleted`, `pending`,
-  `user.uuid` and `user.account_id`; whether a reply carries `inline`; and
-  whether `GET /user`'s `uuid` is spelled as the comments' `user.uuid` (the
-  adapter's live test).
-- **Whether `GET /user` accepts a repository access token**, and its status
-  if not. Nothing depends on it for trust: comments by the PR's author are
-  always dropped.
-- **How Bitbucket renders `<!-- fugaro:report run=… -->`** in a comment:
-  hidden, or a visible last line (check 19's report `FACT`s).
-- **Whether users with read access can edit a Bitbucket PR's reviewers**;
-  not load-bearing under the allowlist, recorded if the run happens to
-  show it.
-- **GitHub, with no live check in M6:** that GraphQL's `Bot.databaseId`
-  equals the REST `user.id` of `<slug>[bot]`, and that a bot's GraphQL
-  login has no `[bot]` suffix; the GraphQL shapes (`reviewThreads`,
-  `isResolved`, `isOutdated`, `path`, `line`, `authorAssociation`,
-  `comments.pageInfo`); that organization members whose membership is
-  private show as `CONTRIBUTOR` to an App without `members: read`; and
-  that converting a PR to a draft keeps its requested reviewers. These
-  stay open until a GitHub sandbox and App exist.
+  `-work-repo`, is what Claude Code expects: check 19's follow-up resumed
+  the restored session (`session: resumed`).
+- **`claude -p --resume <id>`: verified that it resumes.** Whether it keeps
+  the session ID or forks a new one isn't recorded by the `FACT`s; the
+  runner follows the ID the result reports either way, and the follow-up
+  saved its own session. The "No conversation found with session ID" path
+  was not exercised, and stays covered by the fake `claude` only.
+- **Bitbucket's field shapes: answered** (the adapter item above).
+  `is_private`, `author.account_id` and `source.commit.hash` are as
+  documented. `resolution` is an empty object on the resolved thread's first
+  comment and absent elsewhere; whether reopening clears it wasn't
+  exercised. `inline.outdated` is absent on a current comment; an outdated
+  comment wasn't exercised. `deleted` and `pending` are always present,
+  `user.uuid` and `user.account_id` are set, and a reply carries its own
+  `inline`. Whether `GET /user`'s `uuid` is spelled as the comments'
+  `user.uuid` can't be seen with a repository access token, which may not
+  read `GET /user`.
+- **`GET /user` with a repository access token: answered, HTTP 403** ("This
+  API is not accessible by this authentication mechanism"). The identity is
+  unknown, as designed, and trust doesn't depend on it: the PR author's
+  comments, Fugaro's own, are always dropped.
+- **How Bitbucket renders `<!-- fugaro:report run=… -->`: answered, as a
+  visible last line** (the known issue above).
+- **Whether users with read access can edit a Bitbucket PR's reviewers:**
+  not shown by this run; not load-bearing under the allowlist.
+- **GitHub: still open, with no live check in M6.** That GraphQL's
+  `Bot.databaseId` equals the REST `user.id` of `<slug>[bot]`, and that a
+  bot's GraphQL login has no `[bot]` suffix; the GraphQL shapes
+  (`reviewThreads`, `isResolved`, `isOutdated`, `path`, `line`,
+  `authorAssociation`, `comments.pageInfo`); that organization members
+  whose membership is private show as `CONTRIBUTOR` to an App without
+  `members: read`; and that converting a PR to a draft keeps its requested
+  reviewers. These stay open until a GitHub sandbox and App exist.
