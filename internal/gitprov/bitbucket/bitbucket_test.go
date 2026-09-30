@@ -397,7 +397,8 @@ func TestBitbucketRepositoryVisibility(t *testing.T) {
 }
 
 func TestBitbucketPullRequestOpen(t *testing.T) {
-	got, err := open(t, "pull_open.json").PullRequest(ctx, 12)
+	p := open(t, "pull_open.json")
+	got, err := p.PullRequest(ctx, 12)
 	want := gitprov.PRInfo{Number: 12, URL: "https://bitbucket.org/acme/web/pull-requests/12", State: gitprov.PROpen, Draft: true,
 		AuthorID: "712020:00000000-0000-4000-8000-00000000b07e", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: "0123456789ab"}
 	if err != nil || got != want {
@@ -405,6 +406,44 @@ func TestBitbucketPullRequestOpen(t *testing.T) {
 	}
 	if !gitprov.SameCommit(got.HeadSHA, "0123456789abcdef0123456789abcdef01234567") {
 		t.Fatalf("head %s does not match the full commit", got.HeadSHA)
+	}
+	// A deleted author account, a deleted source repository and no source
+	// commit leave those fields empty (so the author is nobody's, and the
+	// head matches no commit), never a guess.
+	got, err = p.PullRequest(ctx, 14)
+	if err != nil || got.AuthorID != "" || got.SourceRepo != "" || got.HeadSHA != "" || got.State != gitprov.PROpen {
+		t.Fatalf("PullRequest(14) = %+v, %v", got, err)
+	}
+	// A fork's source repository is reported as the fork's full name.
+	if got, err = p.PullRequest(ctx, 15); err != nil || got.SourceRepo != "someone/web-fork" {
+		t.Fatalf("PullRequest(15) = %+v, %v", got, err)
+	}
+}
+
+// TestBitbucketPullRequestWrongID: a response naming another pull request
+// than the one asked for is an error, and an update by number never
+// writes to it.
+func TestBitbucketPullRequestWrongID(t *testing.T) {
+	var puts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" {
+			puts++
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"id": 13, "state": "OPEN", "title": "Other", "draft": true, "source": {"branch": {"name": %q}}}`, branchName)
+	}))
+	defer srv.Close()
+	p, err := New(Options{Workspace: "acme", Slug: "web", Token: "t", BaseURL: srv.URL + "/2.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.PullRequest(ctx, 12); err == nil {
+		t.Fatalf("PullRequest(12) = %+v, want an error", got)
+	}
+	s := spec(false)
+	s.Number = 12
+	if pr, err := p.EnsurePR(ctx, s); err == nil || puts != 0 {
+		t.Fatalf("EnsurePR by number = %+v, %v, %d writes", pr, err, puts)
 	}
 }
 
@@ -585,8 +624,12 @@ func TestBitbucketCommentsSelf(t *testing.T) {
 		}
 		self[c.ID] = c.Self
 	}
-	if want := map[string]bool{"131": true, "132": false, "133": false}; !reflect.DeepEqual(self, want) {
+	if want := map[string]bool{"131": true, "132": false, "133": false, "134": false}; !reflect.DeepEqual(self, want) {
 		t.Fatalf("self = %v, want %v", self, want)
+	}
+	// A deleted account (user null) is nobody: no ID, so never trusted.
+	if last := got[len(got)-1]; last.ID != "134" || last.AuthorID != "" || last.Author != "" {
+		t.Fatalf("the comment by a deleted account = %+v", last)
 	}
 	if got[0].AuthorID != botID {
 		t.Fatalf("the report's AuthorID = %q", got[0].AuthorID)
@@ -602,7 +645,8 @@ func TestBitbucketCommentsSelf(t *testing.T) {
 // lookup isn't tried again.
 func TestBitbucketCommentsUserForbidden(t *testing.T) {
 	var warnings []string
-	p := openAPI(t, "user_forbidden.json", func(m string) { warnings = append(warnings, m) })
+	p := open(t, "user_forbidden.json")
+	p.o.Warn = func(m string) { warnings = append(warnings, m) }
 	got, err := p.Comments(ctx, 12)
 	if err != nil {
 		t.Fatal(err)
@@ -652,10 +696,11 @@ func TestBitbucketEnsureByNumber(t *testing.T) {
 }
 
 // TestBitbucketEnsureByNumberDeclined: a declined pull request, or one on
-// another branch, is never updated or replaced: ErrPRNotOpen, with the PR.
+// another branch, or a merged one, is never updated or replaced:
+// ErrPRNotOpen, with the PR.
 func TestBitbucketEnsureByNumberDeclined(t *testing.T) {
 	p := open(t, "ensure_by_number_declined.json")
-	for _, n := range []int{12, 13} {
+	for _, n := range []int{12, 13, 14} {
 		s := spec(false)
 		s.Number = n
 		pr, err := p.EnsurePR(ctx, s)

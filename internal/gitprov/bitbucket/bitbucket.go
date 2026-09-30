@@ -308,7 +308,7 @@ func (p *Provider) GitAuth(context.Context, time.Duration) (gitprov.GitAuth, err
 // Repository implements gitprov.Provider.
 func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 	var repo struct {
-		IsPrivate *bool `json:"is_private"` // confirm live (T11 step 2)
+		IsPrivate *bool `json:"is_private"` // unverified against the live API
 	}
 	path := "/repositories/" + url.PathEscape(p.o.Workspace) + "/" + url.PathEscape(p.o.Slug)
 	if err := p.api.Do(ctx, "GET", path, nil, &repo); err != nil {
@@ -325,14 +325,14 @@ func (p *Provider) Repository(ctx context.Context) (gitprov.RepoInfo, error) {
 // pullDetail is GET …/pullrequests/{id}.
 type pullDetail struct {
 	pullRequest
-	State  string `json:"state"` // OPEN, MERGED, DECLINED or SUPERSEDED
-	Author *user  `json:"author"`
+	State  string `json:"state"`  // OPEN, MERGED, DECLINED or SUPERSEDED
+	Author *user  `json:"author"` // author.account_id: unverified against the live API
 	Source struct {
 		Branch struct {
 			Name string `json:"name"`
 		} `json:"branch"`
 		Commit *struct {
-			Hash string `json:"hash"` // abbreviated, 12 hex
+			Hash string `json:"hash"` // abbreviated, 12 hex; unverified against the live API
 		} `json:"commit"`
 		Repository *struct {
 			FullName string `json:"full_name"`
@@ -347,6 +347,10 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 	var d pullDetail
 	if err := p.api.Do(ctx, "GET", p.prPath(fmt.Sprintf("/%d", number)), nil, &d); err != nil {
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: %w", number, err)
+	}
+	if d.ID != number {
+		// Never act on another pull request than the one asked for.
+		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: the response is for #%d", number, d.ID)
 	}
 	info := gitprov.PRInfo{Number: d.ID, URL: d.Links.HTML.Href, Draft: d.isDraft(), AuthorID: d.Author.accountID(),
 		SourceBranch: d.Source.Branch.Name}

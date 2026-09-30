@@ -7,12 +7,13 @@ package bitbucket
 //   - paging (the body's "next"): https://developer.atlassian.com/cloud/bitbucket/rest/intro/#pagination
 //   - the token's user: https://developer.atlassian.com/cloud/bitbucket/rest/api-group-users/#api-user-get
 //
-// No live check has confirmed these yet. Each field below marked "confirm
-// live (T11 step 2)" is hand-written from the documentation until the live
-// test records it: is_private, author.account_id and source.commit.hash
-// (bitbucket.go), and here resolution, inline.outdated, deleted, pending,
-// user.account_id and user.uuid, a reply's missing inline field, and
-// whether GET /user answers a repository access token.
+// No live check has confirmed these yet. Each field marked "unverified
+// against the live API" is hand-written from the documentation until the
+// live follow-up check (live_test.go, followUpReads) records it: in
+// bitbucket.go, is_private, author.account_id and source.commit.hash; here,
+// resolution, inline.outdated, deleted, pending, user.uuid, user.account_id
+// and user.display_name, a reply's missing inline field, and whether
+// GET /user answers a repository access token.
 
 import (
 	"context"
@@ -34,9 +35,9 @@ const maxPages = 20
 
 // user is an account in a Bitbucket response; null for a deleted one.
 type user struct {
-	UUID        string `json:"uuid"`         // confirm live (T11 step 2)
-	AccountID   string `json:"account_id"`   // confirm live (T11 step 2)
-	DisplayName string `json:"display_name"` // confirm live (T11 step 2)
+	UUID        string `json:"uuid"`         // unverified against the live API
+	AccountID   string `json:"account_id"`   // unverified against the live API
+	DisplayName string `json:"display_name"` // unverified against the live API
 }
 
 func (u *user) accountID() string {
@@ -60,7 +61,7 @@ type inline struct {
 	Path     string `json:"path"`
 	From     *int   `json:"from"`
 	To       *int   `json:"to"`
-	Outdated bool   `json:"outdated"` // confirm live (T11 step 2)
+	Outdated bool   `json:"outdated"` // unverified against the live API
 }
 
 func (in *inline) line() int {
@@ -81,13 +82,13 @@ type comment struct {
 	} `json:"content"`
 	User    *user   `json:"user"`
 	Inline  *inline `json:"inline"`
-	Deleted bool    `json:"deleted"` // confirm live (T11 step 2)
-	Pending bool    `json:"pending"` // confirm live (T11 step 2): an unpublished draft comment
+	Deleted bool    `json:"deleted"` // unverified against the live API
+	Pending bool    `json:"pending"` // unverified against the live API: an unpublished draft comment
 	Parent  *struct {
 		ID int `json:"id"`
 	} `json:"parent"`
 	// Resolution is set on a resolved thread's first comment, and null
-	// (or absent) otherwise. Confirm live (T11 step 2).
+	// (or absent) otherwise. Unverified against the live API.
 	Resolution json.RawMessage `json:"resolution"`
 	Links      struct {
 		HTML struct {
