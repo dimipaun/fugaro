@@ -27,8 +27,8 @@ var update = flag.Bool("update", false, "rewrite the golden tfvars under deploy/
 // contract with the Terraform modules.
 const goldenDir = "../../deploy/terraform/gcp/roots/repo/tests/testdata"
 
-// m4LocalConfig is the local config testdata/capture-m4-jobspec.sh
-// captured the M4 job spec with.
+// m4LocalConfig is the local config the M4 job spec was captured with
+// (testdata/README.md).
 const m4LocalConfig = `version: 1
 project: proj-1234
 region: us-east5
@@ -83,11 +83,11 @@ func installationOutputs() InstallationOutputs {
 	}
 }
 
-// sandboxInputs is the M4 capture's fixture: the bootstrap's sandbox
+// sandboxInputs is the M4 capture's fixture: the live-test sandbox's
 // fugaro.yaml, as acme/sandbox on Bitbucket.
 func sandboxInputs(t *testing.T, extraLC string) Inputs {
 	t.Helper()
-	data, err := os.ReadFile("../../deploy/bootstrap/sandbox/fugaro.yaml")
+	data, err := os.ReadFile("../../deploy/sandbox/fugaro.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

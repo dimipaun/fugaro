@@ -30,7 +30,7 @@ import (
 )
 
 // The fugaro init --repo tests run the fugaro binary against the gcpfake
-// servers and a fake terraform, from a checkout of the bootstrap's sandbox
+// servers and a fake terraform, from a checkout of the live-test sandbox
 // fixture. The fake terraform plans whatever the test scripts; what the
 // tests check is what fugaro hands it: the tfvars and imports of each
 // plan, the applies, and the calls to the fakes.
@@ -143,7 +143,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 
 	// The checkout: the sandbox fixture, committed, with its origin.
 	r.checkout = filepath.Join(r.dir, "checkout")
-	src := filepath.Join(testutil.ModuleRoot(), "deploy", "bootstrap", "sandbox")
+	src := filepath.Join(testutil.ModuleRoot(), "deploy", "sandbox")
 	entries, err := os.ReadDir(src)
 	if err != nil {
 		t.Fatal(err)
@@ -432,7 +432,7 @@ func withLabels(m map[string]string, kv ...string) map[string]string {
 	return out
 }
 
-// bootstrap seeds exactly what gcp-m4.sh makes for the sandbox fixture:
+// bootstrap seeds exactly what the M4 bootstrap made for the sandbox fixture:
 // each job with the M4 labels and the legacy image, its account with the
 // legacy display name, the labelled secrets (stored, so with a version),
 // the account's conditional grant on the runs bucket, and the accessor

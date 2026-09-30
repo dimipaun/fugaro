@@ -421,7 +421,7 @@ type Existing struct {
 	Jobs map[string]string
 	// DisplayNames are the job accounts whose display name is the
 	// bootstrap's, by workflow. The spec keeps it, so the plan doesn't
-	// rename the account and the bootstrap still recognizes it.
+	// rename the account.
 	DisplayNames map[string]string
 	// CheckJob says the repository's check job exists (and is ours).
 	CheckJob bool

@@ -4,8 +4,8 @@
 // launches one run on the sandbox's Cloud Run job and follows it to its PR
 // (docs/gcp-live-checklist.md). It never runs in CI: it needs the `live`
 // build tag, Application Default Credentials, the real local config and the
-// sandbox's repository access token. Run it only after the bootstrap
-// (docs/gcp-bootstrap.md) has been applied:
+// sandbox's repository access token. Run it only after the checklist's
+// setup (docs/gcp-setup.md) has been applied:
 //
 //	FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
 //	FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \

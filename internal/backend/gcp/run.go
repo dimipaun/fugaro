@@ -143,7 +143,7 @@ func launchError(job string, err error) error {
 	if errors.As(err, &ge) {
 		switch {
 		case ge.Code == http.StatusNotFound:
-			return fmt.Errorf("launching: job %s does not exist; create it with the bootstrap (M5: fugaro init) (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
+			return fmt.Errorf("launching: job %s does not exist; create it with fugaro init --repo (%v): %w: %w", job, err, backend.ErrNotFound, backend.ErrRejected)
 		case ge.Code >= 400 && ge.Code < 500 && ge.Code != http.StatusRequestTimeout && ge.Code != http.StatusTooManyRequests &&
 			ge.Code != statusClientClosed:
 			return fmt.Errorf("launching %s: %w: %w", job, backend.ErrRejected, err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -26,6 +27,14 @@ func TestVersion(t *testing.T) {
 	}
 	if out != "dev\n" {
 		t.Fatalf("version output = %q, want %q", out, "dev\n")
+	}
+}
+
+// The M4 bootstrap's hidden `gcp job-spec` is gone: fugaro init computes
+// every name now.
+func TestNoGCPCommand(t *testing.T) {
+	if _, _, err := execute(t, "gcp", "--help"); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("fugaro gcp: err = %v, want unknown command", err)
 	}
 }
 
