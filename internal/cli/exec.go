@@ -21,9 +21,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -82,7 +84,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	// The budget, parsed once; a malformed one reaches the runner, which
 	// reports it as the run's infra_error after claiming the record.
 	spend, spendErr := runner.SpendFromEnv(os.LookupEnv)
-	if err := checkTestHooks(o, spend, spendErr); err != nil {
+	if err := checkTestHooks(o, spend, spendErr, localFileMode(o.workDir)); err != nil {
 		return err
 	}
 	if o.taskFile != "" && o.run != "" {
@@ -192,8 +194,12 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 // model's credential somewhere else: the gateway's upstream must be on
 // loopback, and the managed settings path can move only with such an
 // upstream, or when no gateway runs (the budget is off). A malformed
-// budget counts as on, since the runner will fail it anyway.
-func checkTestHooks(o execOptions, spend runner.Spend, spendErr error) error {
+// budget counts as on, since the runner will fail it anyway. The budget is
+// on when the merged mode is: a committed observe or enforce switches the
+// gateway on under an off ceiling, so fileMode, the mode the checkout's own
+// fugaro.yaml asks for, counts with the ceiling's.
+func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode string) error {
+	on := runner.Spend{Mode: policy.Merge(policy.Layer{Mode: spend.Mode}, policy.Layer{Mode: fileMode}).Mode}.On()
 	loopback := false
 	if o.gatewayUpstream != "" {
 		if !loopbackUpstream(o.gatewayUpstream) {
@@ -201,7 +207,7 @@ func checkTestHooks(o execOptions, spend runner.Spend, spendErr error) error {
 		}
 		loopback = true
 	}
-	if o.managedSettings != "" && !loopback && (spendErr != nil || spend.On()) {
+	if o.managedSettings != "" && !loopback && (spendErr != nil || on) {
 		return userErr("--managed-settings (or FUGARO_MANAGED_SETTINGS) needs a loopback --gateway-upstream when the budget is on: a job with a real upstream writes Claude Code's real managed settings")
 	}
 	return nil
@@ -350,4 +356,20 @@ func execPrices(getenv func(string) string, warn func(string)) *backend.Prices {
 		p = gcp.ListPrices(getenv("FUGARO_REGION"))
 	}
 	return &p
+}
+
+// localFileMode is the budget mode the checkout's fugaro.yaml asks for, ""
+// when there is no readable file or it sets none. A file the policy can't
+// read counts as enforce: the runner will fail it, and the hook is refused
+// the same way a malformed budget is.
+func localFileMode(workDir string) string {
+	data, err := os.ReadFile(filepath.Join(workDir, "fugaro.yaml"))
+	if err != nil {
+		return ""
+	}
+	p, err := config.PolicyOf(data)
+	if err != nil {
+		return policy.ModeEnforce
+	}
+	return p.Mode
 }

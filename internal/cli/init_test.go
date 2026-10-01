@@ -1497,3 +1497,25 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 		t.Errorf("tight block: %s", errOut)
 	}
 }
+
+// A project without a budget has no ceiling to announce.
+func TestInitRepoSilentWithoutCeiling(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
+		"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml)
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil || strings.Contains(out+errOut, "Budget ceiling") {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+}

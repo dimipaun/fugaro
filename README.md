@@ -64,7 +64,7 @@ workflows:
       - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
 ```
 
-A repository can also commit cost and model policy: an optional `budget:` block (`mode`, `per_run_usd`, `allowed_models`) and `agent.max_run_tokens`. It can only tighten the ceiling the project owner sets in the project config (`fugaro init --repo`): the runner reads it from the default branch, a run's own branch can tighten it further but never loosen it, and the tightest value wins. Prices stay with the owner. See [docs/design/v1.md](docs/design/v1.md) §5.1 and [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
+A repository can also commit cost and model policy: an optional `budget:` block (`mode`, `per_run_usd`, `allowed_models`) and `agent.max_run_tokens`. It can only tighten the ceiling the project owner sets in the project config (`fugaro init --repo`): the runner reads it from the default branch, a run's own branch can tighten it further but never loosen it, and the tightest value wins. Prices stay with the owner. `allowed_models` bounds the models `fugaro.yaml` may choose. It is enforced on every model call only while the gateway runs (`api-key` or `vertex` with the budget on); with `oauth`, or with the budget off, nothing stops the agent using another model through means a branch controls (a subagent's `model:` frontmatter, `/model`, `.claude/settings.json`), so there it is a configuration check only (accepted risk). See [docs/design/v1.md](docs/design/v1.md) §5.1 and [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
 
 ## Launching a task
 

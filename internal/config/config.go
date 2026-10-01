@@ -93,7 +93,8 @@ type Agent struct {
 	Models ModelRoles `yaml:"models"`
 	// MaxOutputTokens limits one call's output per role; 0 is no limit.
 	MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
-	// MaxRunTokens limits a whole run's tokens; 0 is none.
+	// MaxRunTokens limits a whole run's tokens; 0 is none. It can only
+	// tighten the project's ceiling and the default branch's value.
 	MaxRunTokens int64 `yaml:"max_run_tokens"`
 }
 

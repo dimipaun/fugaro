@@ -39,8 +39,11 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 // list (policy.Effective.HasAllowList) every model passes. A list that is set
 // but empty denies everything, and a role that names no model is refused too,
 // because the model the agent would pick is not known to be on the list. Each
-// problem names the role, the model and the layer that set the list.
-func CheckAllowed(a Agent, e policy.Effective) []Problem {
+// problem names the role, the model and the layer that set the list; when
+// that layer is not the ceiling and the ceiling has a list of its own
+// (ceiling, nil when it has none), the message gives that list too, so an
+// empty intersection can be understood.
+func CheckAllowed(a Agent, e policy.Effective, ceiling []string) []Problem {
 	if !e.HasAllowList() {
 		return nil
 	}
@@ -48,7 +51,11 @@ func CheckAllowed(a Agent, e policy.Effective) []Problem {
 	if len(e.AllowedModels) > 0 {
 		list = strings.Join(e.AllowedModels, ", ")
 	}
-	where := "allowed_models from " + e.Sources[policy.KeyAllowedModels] + ": " + list
+	src := e.Sources[policy.KeyAllowedModels]
+	where := "allowed_models from " + src + ": " + list
+	if src != policy.SourceCeiling && ceiling != nil {
+		where += "; the project's allow-list: " + strings.Join(ceiling, ", ")
+	}
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{
 		{"agent.models.coder", a.ModelFor(RoleCoder)},
@@ -59,8 +66,20 @@ func CheckAllowed(a Agent, e policy.Effective) []Problem {
 		case r.model == "":
 			ps = append(ps, Problem{Path: r.path, Message: "names no model, but the run has an allow-list (" + where + "): set it, or agent.model, to a model on the list"})
 		case !e.Allows(r.model):
-			ps = append(ps, Problem{Path: r.path, Message: r.model + " is not an allowed model (" + where + ")"})
+			ps = append(ps, Problem{Path: r.path, Message: CodeSpan(r.model) + " is not an allowed model (" + where + ")"})
 		}
 	}
 	return ps
+}
+
+// CodeSpan quotes s as a markdown code span with the characters that could
+// break out of it (backticks, control characters) replaced by "?", for text
+// that came from a branch and reaches a report.
+func CodeSpan(s string) string {
+	return "`" + strings.Map(func(r rune) rune {
+		if r == '`' || r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		return r
+	}, s) + "`"
 }

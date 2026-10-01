@@ -96,7 +96,24 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
 	}
-	problems = append(problems, config.CheckAllowed(cfg.Agent, e)...)
+	// The merge calls the file in hand the default branch's; here it is the
+	// file itself.
+	ef := e
+	ef.Sources = map[string]string{}
+	for k, v := range e.Sources {
+		if v == policy.SourceDefaultBranch {
+			v = "this file"
+		}
+		ef.Sources[k] = v
+	}
+	allowed := config.CheckAllowed(cfg.Agent, ef, ceilingLayer(lc).AllowedModels)
+	problems = append(problems, allowed...)
+	// A role with no model already has its problem: not a second one, from
+	// the pins, saying much the same.
+	named := map[string]bool{}
+	for _, p := range allowed {
+		named[p.Path] = true
+	}
 	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
 		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 	}
@@ -114,13 +131,23 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		problems = append(problems, config.Problem{Path: "model_prices", Message: err.Error() + " (in the project config)"})
 	} else if cfg.Agent.Auth != "oauth" {
 		// An oauth run has no gateway: nothing is priced or pinned.
-		problems = append(problems, config.CheckPins(cfg.Agent, prices)...)
+		for _, p := range config.CheckPins(cfg.Agent, prices) {
+			if !named[p.Path] {
+				problems = append(problems, p)
+			}
+		}
 	}
 	if cfg.Agent.Auth == "api-key" && e.Mode == policy.ModeEnforce && e.PerRunUSD <= 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_run_usd",
 			Message: "the mode is enforce but no per-run cap is set in the project config or here; the run would halt (no_cap)"})
 	}
 	return problems, warnings
+}
+
+// setsPolicy is whether the file has a budget: block or a token limit: the
+// keys that the default branch's file bounds.
+func setsPolicy(cfg *config.Config) bool {
+	return cfg.Budget != nil || cfg.Agent.MaxRunTokens > 0 || cfg.Agent.MaxOutputTokens != (config.RoleTokens{})
 }
 
 // branchNote says, when the file is a checkout's and its branch isn't the
@@ -185,7 +212,7 @@ func newValidateCmd() *cobra.Command {
 				lc := selectedProjectConfig(cmd.Context())
 				bp, bw := budgetProblems(cfg, lc)
 				problems, warnings = append(problems, bp...), bw
-				if lc != nil && lc.Name == cfg.Project {
+				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
 						warnings = append(warnings, config.Problem{Path: "branch", Message: n})
 					}

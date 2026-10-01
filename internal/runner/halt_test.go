@@ -469,3 +469,45 @@ func TestHaltRecordedInResult(t *testing.T) {
 		t.Fatalf("stored = %+v, %v", stored, err)
 	}
 }
+
+func TestHaltAdviceNamesLimitSource(t *testing.T) {
+	at := runCapHalt.At
+	cases := []struct {
+		name   string
+		reason runstore.HaltReason
+		key    string
+		source string
+		want   []string
+	}{
+		{"token ceiling", runstore.HaltTokenCap, "max_run_tokens", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}},
+		{"token default branch", runstore.HaltTokenCap, "max_run_tokens", "default-branch", []string{"default branch", "merge", "ignored"}},
+		{"token branch", runstore.HaltTokenCap, "max_run_tokens", "branch", []string{"`agent.max_run_tokens`", "this run's branch"}},
+		{"cap ceiling", runstore.HaltRunCap, "per_run_usd", "ceiling", []string{"project config", "fugaro init --repo", "ignored"}},
+		{"cap default branch", runstore.HaltRunCap, "per_run_usd", "default-branch", []string{"default branch", "merge", "ignored"}},
+		{"nocap default branch", runstore.HaltNoCap, "per_run_usd", "default-branch", []string{"default branch", "merge"}},
+	}
+	for _, tc := range cases {
+		rec := &runstore.Record{RunID: runID, Status: runstore.StatusHalted, Outcome: runstore.OutcomeNone,
+			Halt:   &runstore.Halt{Reason: tc.reason, Scope: "run", At: at},
+			Policy: &runstore.PolicyRecord{Sources: map[string]string{tc.key: tc.source}}}
+		got := runner.Report(rec, "runs/x/", nil)
+		for _, w := range tc.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: report lacks %q:\n%s", tc.name, w, got)
+			}
+		}
+		if tc.source != "ceiling" && strings.Contains(got, "fugaro init --repo") {
+			t.Errorf("%s: points at init --repo:\n%s", tc.name, got)
+		}
+	}
+}
+
+func TestPolicyLineQuotesIgnoredModels(t *testing.T) {
+	rec := &runstore.Record{RunID: runID, Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
+		Policy: &runstore.PolicyRecord{Ignored: []runstore.PolicyIgnored{
+			{Key: "allowed_models", Value: "[x](http://evil),@all", Effective: "claude-haiku-4-5", From: "ceiling"}}}}
+	got := runner.Report(rec, "runs/x/", nil)
+	if !strings.Contains(got, "`[x](http://evil),@all` -> `claude-haiku-4-5`") {
+		t.Fatalf("report:\n%s", got)
+	}
+}

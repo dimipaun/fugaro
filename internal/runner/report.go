@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -225,7 +226,7 @@ func policyLine(p *runstore.PolicyRecord) string {
 	parts := make([]string, len(order))
 	for i, k := range order {
 		e := seen[k]
-		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(e.first.Value), policyValue(e.last.Effective))
+		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
 	}
 	n := len(order)
 	where, limits := " on this branch", "the project's limits"
@@ -240,9 +241,14 @@ func policyLine(p *runstore.PolicyRecord) string {
 		Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
 }
 
-func policyValue(v string) string {
+// policyValue is a limit's value for the report. An allow-list's models come
+// from a branch, so they are quoted as code; the numbers and modes are ours.
+func policyValue(key, v string) string {
 	if v == "" {
 		return "none"
+	}
+	if key == policy.KeyAllowedModels {
+		return config.CodeSpan(v)
 	}
 	return v
 }

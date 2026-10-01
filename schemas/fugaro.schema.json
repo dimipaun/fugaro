@@ -66,7 +66,7 @@
             "reviewer": { "type": "integer", "minimum": 0, "maximum": 128000 }
           }
         },
-        "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none." },
+        "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none. In a fugaro.yaml it can only tighten the project's ceiling and the default branch's value." },
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
@@ -78,7 +78,7 @@
       "additionalProperties": false,
       "description": "The repository's cost and model policy. The runner reads it from the default branch and merges it with the project's ceiling; it can only tighten. Model prices are not settable here. A null block, mode, cap or list is the same as leaving it out.",
       "properties": {
-        "mode": { "enum": ["off", "observe", "enforce", null], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
+        "mode": { "enum": ["off", "observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
         "per_run_usd": {
           "type": ["number", "null"],
           "maximum": 100000,

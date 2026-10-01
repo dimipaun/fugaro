@@ -295,7 +295,7 @@ func (r *run) checkBudget() error {
 		return &HaltError{*r.haltValue()}
 	}
 	// The allow-list bounds the models whatever the credential or the mode.
-	if ps := config.CheckAllowed(r.cfg.Agent, r.policy); len(ps) > 0 {
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
 		for i, p := range ps {
 			msgs[i] = p.String()
@@ -331,3 +331,7 @@ func (r *run) noCapDetail() string {
 	}
 	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
 }
+
+// ceilingAllowed is the owner's allow-list from the job environment, nil when
+// none was set: error messages name it next to the merged one.
+func (r *run) ceilingAllowed() []string { return r.d.Spend.AllowedModels }

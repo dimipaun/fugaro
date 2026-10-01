@@ -371,6 +371,15 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		t.Fatalf("on the default branch: %v %q", err, errOut)
 	}
 	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
+	// A file with no budget or token key has no policy to bound: no note.
+	if out, errOut, err := execute(t, "validate", "--json", file); err != nil || strings.Contains(errOut, "default branch") ||
+		strings.Contains(out, "branch") || !strings.Contains(out, `"warnings": []`) {
+		t.Fatalf("no policy keys: %v out %q stderr %q", err, out, errOut)
+	}
+	withBudget := strings.Replace(cliMinimalYAML, "workflows:", "budget: { per_run_usd: 1 }\nworkflows:", 1)
+	if err := os.WriteFile(file, []byte(withBudget), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	out, errOut, err := execute(t, "validate", file)
 	if err != nil || !strings.Contains(out, "is valid") ||
 		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
@@ -430,5 +439,23 @@ func TestValidateRefusesCommittedVertexEnforceWithoutProjectConfig(t *testing.T)
 	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20 }\nworkflows:", 1)
 	if out, _, err := execute(t, "validate", writeConfig(t, body)); err != nil {
 		t.Fatalf("%v %s", err, out)
+	}
+}
+
+func TestValidateAllowListProblemLabelsLayers(t *testing.T) {
+	// Disjoint lists: the message blames the file and names the ceiling's list.
+	path := fileWithBudget(t, "budget: { allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n",
+		"budget: { allowed_models: [claude-opus-5-5] }\n", pinnedAgent)
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "allowed_models from this file: none") ||
+		!strings.Contains(out, "the project's allow-list: claude-sonnet-5-5, claude-haiku-4-5") || strings.Contains(out, "from default-branch") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// A role with no model is one problem, not two.
+	noBg := "  auth: api-key\n  model: claude-sonnet-5-5"
+	path = fileWithBudget(t, "budget: { mode: observe, allowed_models: [claude-sonnet-5-5] }\n", "", noBg)
+	out, _, _ = execute(t, "validate", path)
+	if n := strings.Count(out, "agent.models.background"); n != 1 {
+		t.Fatalf("%d problems for the background model:\n%s", n, out)
 	}
 }

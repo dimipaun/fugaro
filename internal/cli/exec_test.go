@@ -413,7 +413,7 @@ func TestExecGatewayUpstreamLoopbackOnly(t *testing.T) {
 			t.Errorf("%s: err = %v (exit %d)", bad, err, ExitCode(err))
 		}
 	}
-	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}, runner.Spend{}, nil); err != nil {
+	if err := checkTestHooks(execOptions{gatewayUpstream: "http://127.0.0.1:8080"}, runner.Spend{}, nil, ""); err != nil {
 		t.Errorf("a loopback upstream was refused: %v", err)
 	}
 }
@@ -429,17 +429,21 @@ func TestExecManagedSettingsFlag(t *testing.T) {
 		o        execOptions
 		spend    runner.Spend
 		spendErr error
+		fileMode string
 		refused  bool
 	}{
-		{"budget on, real upstream", execOptions{managedSettings: "/tmp/m.json"}, on, nil, true},
-		{"budget on, real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, on, nil, true},
-		{"malformed budget counts as on", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, errors.New("bad"), true},
-		{"budget on, loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, on, nil, false},
-		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, false},
-		{"unset", execOptions{}, on, nil, false},
+		{"committed enforce under an off ceiling", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "enforce", true},
+		{"committed observe, no ceiling", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, nil, "observe", true},
+		{"committed off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "off", false},
+		{"budget on, real upstream", execOptions{managedSettings: "/tmp/m.json"}, on, nil, "", true},
+		{"budget on, real upstream, even a real URL", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: "https://api.anthropic.com"}, on, nil, "", true},
+		{"malformed budget counts as on", execOptions{managedSettings: "/tmp/m.json"}, runner.Spend{}, errors.New("bad"), "", true},
+		{"budget on, loopback upstream", execOptions{managedSettings: "/tmp/m.json", gatewayUpstream: lo}, on, nil, "", false},
+		{"budget off", execOptions{managedSettings: "/tmp/m.json"}, off, nil, "", false},
+		{"unset", execOptions{}, on, nil, "", false},
 	}
 	for _, c := range cases {
-		err := checkTestHooks(c.o, c.spend, c.spendErr)
+		err := checkTestHooks(c.o, c.spend, c.spendErr, c.fileMode)
 		if c.refused != (err != nil) || (err != nil && ExitCode(err) != ExitUserError) {
 			t.Errorf("%s: err = %v", c.name, err)
 		}

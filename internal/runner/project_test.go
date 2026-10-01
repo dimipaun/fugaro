@@ -3,6 +3,8 @@ package runner_test
 import (
 	"context"
 	"log/slog"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -176,4 +178,44 @@ func TestProjectCheckBaseIsTheDefaultBranch(t *testing.T) {
 	pushBranch(t, h, "feature", own)
 	setRef(t, h, task.Spec{Ref: "feature"})
 	refused(t, h, "project mismatch", "main", "borealis", "aurora")
+}
+
+// A run asks origin for its default branch and fetches it once, for the
+// project check and the policy together, into the ref the file is read from.
+func TestPolicyDefaultBranchFetched(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	dir, logFile := t.TempDir(), filepath.Join(t.TempDir(), "git.log")
+	shim := "#!/bin/sh\necho \"$*\" >> \"$GIT_SHIM_LOG\"\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	h := projectHarness(t, "aurora")
+	t.Setenv("GIT_SHIM_LOG", logFile)
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	b, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fetch that follows the ls-remote is the default branch's; the
+	// bootstrap fetches the task's base before it.
+	var lsRemote, fetches, shows int
+	for _, l := range strings.Split(string(b), "\n") {
+		switch {
+		case strings.Contains(l, "ls-remote --symref origin HEAD"):
+			lsRemote++
+		case lsRemote > 0 && strings.Contains(l, "fetch") && strings.Contains(l, "+refs/heads/main:refs/remotes/origin/main"):
+			fetches++
+		case strings.Contains(l, "show --no-textconv refs/remotes/origin/main:fugaro.yaml"):
+			shows++
+		}
+	}
+	if lsRemote != 1 || fetches != 1 || shows != 1 {
+		t.Errorf("ls-remote %d, fetch %d, show %d; want 1 each:\n%s", lsRemote, fetches, shows, b)
+	}
 }

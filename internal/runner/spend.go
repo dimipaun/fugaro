@@ -10,8 +10,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
-// The job environment variables that carry the project's budget, set by
-// fugaro init --repo on every workflow job when the budget is not off.
+// The job environment variables that carry the project's budget (the
+// ceiling), set by fugaro init --repo on every workflow job from whatever the
+// project config holds: the mode whenever a budget block is there, the cap,
+// the prices, the token cap and the allow-list whatever the mode.
 const (
 	BudgetModeEnv  = "FUGARO_BUDGET_MODE"
 	MaxRunUSDEnv   = "FUGARO_MAX_RUN_USD"

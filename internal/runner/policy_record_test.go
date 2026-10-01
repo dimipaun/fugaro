@@ -91,7 +91,7 @@ func TestIgnoredValuesRecordedAndReported(t *testing.T) {
 		t.Errorf("sources = %v", p.Sources)
 	}
 	line := "**Policy:** 3 values from fugaro.yaml on this branch were looser than the project's limits and were ignored (" +
-		"budget.per_run_usd 500 -> 2; agent.max_run_tokens 900000 -> 100000; budget.allowed_models " + sonnet + "," + haiku + "," + opus + " -> " + both + ")\n"
+		"budget.per_run_usd 500 -> 2; agent.max_run_tokens 900000 -> 100000; budget.allowed_models `" + sonnet + "," + haiku + "," + opus + "` -> `" + both + "`)\n"
 	if report := reportOf(t, g.harness); strings.Count(report, "**Policy:**") != 1 || !strings.Contains(report, line) {
 		t.Errorf("report:\n%s\nwant the line %q", report, line)
 	}

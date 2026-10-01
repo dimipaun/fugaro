@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -1819,8 +1820,10 @@ func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, ba
 // has a budget block, which of its keys the ceiling would clamp.
 func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
 	ceiling := ceilingLayer(lc)
-	fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(ceiling))
-	if cfg.Budget == nil && cfg.Agent.MaxRunTokens == 0 {
+	if !reflect.DeepEqual(ceiling, policy.Layer{}) {
+		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(ceiling))
+	}
+	if !setsPolicy(cfg) {
 		return
 	}
 	for _, ig := range policy.Merge(ceiling, runner.FileLayer(cfg)).Ignored {

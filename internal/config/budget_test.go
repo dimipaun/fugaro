@@ -212,3 +212,42 @@ func TestPolicyOfStrictInsideBlocks(t *testing.T) {
 		t.Errorf("lenient parts: %v", err)
 	}
 }
+
+func TestPolicyOfFailsClosed(t *testing.T) {
+	for name, y := range map[string]string{
+		"merge key":   "base: &b\n  budget: {per_run_usd: 1}\n<<: *b\n",
+		"scalar root": "just text\n",
+		"list root":   "- a\n- b\n",
+		"Budget case": "Budget: {per_run_usd: 1}\n",
+		"AGENT case":  "AGENT: {max_run_tokens: 5}\n",
+	} {
+		if p, err := PolicyOf([]byte(y)); err == nil {
+			t.Errorf("%s: no error, policy %+v", name, p)
+		}
+	}
+	for _, y := range []string{"", "# only a comment\n", "~\n"} {
+		if p, err := PolicyOf([]byte(y)); err != nil || p.PerRunUSD != 0 {
+			t.Errorf("%q: %+v, %v", y, p, err)
+		}
+	}
+}
+
+func TestPolicyOfAnchorsInBlocks(t *testing.T) {
+	p, err := PolicyOf([]byte(`
+x: &lim
+  max_run_tokens: 500
+y: &b
+  per_run_usd: 2
+agent:
+  <<: *lim
+budget:
+  <<: *b
+  mode: observe
+`))
+	if err != nil || p.MaxRunTokens != 500 || p.PerRunUSD != 2 || p.Mode != "observe" {
+		t.Fatalf("got %+v, %v", p, err)
+	}
+	if _, err := PolicyOf([]byte("x: &a\n  bogus: 1\nagent:\n  <<: *a\n")); err == nil {
+		t.Fatal("an unknown key through an alias must still be refused")
+	}
+}
