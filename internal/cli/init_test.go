@@ -1432,3 +1432,49 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 		}
 	}
 }
+
+// init --repo says what ceiling it is about to apply and which keys of the
+// checkout's committed budget block it would clamp.
+func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := func(block string) string {
+		return "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" + block +
+			"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	}
+	run := func(block string) (string, string) {
+		t.Helper()
+		root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml(block))
+		testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+		t.Chdir(t.TempDir())
+		out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, errOut
+	}
+	out, errOut := run("budget: { mode: off, per_run_usd: 20 }\n")
+	want := "Budget ceiling for aurora from project aurora: per_run_usd 5, mode observe, max_run_tokens 1000"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	for _, w := range []string{"budget.per_run_usd: 20 is above the project's ceiling of 5", "budget.mode: off is looser than the project's observe"} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr lacks %q:\n%s", w, errOut)
+		}
+	}
+	if strings.Contains(out, "ceiling") {
+		t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+	}
+	// A tighter block clamps nothing.
+	if _, errOut = run("budget: { per_run_usd: 2 }\n"); !strings.Contains(errOut, "Budget ceiling") || strings.Contains(errOut, "above") {
+		t.Errorf("tight block: %s", errOut)
+	}
+}

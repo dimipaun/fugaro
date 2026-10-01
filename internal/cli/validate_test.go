@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const cliMinimalYAML = `version: 1
@@ -219,7 +220,7 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 		ModelPrices: map[string]localcfg.ModelPrice{"sonnet": {InputPerM: one(1), OutputPerM: one(5)}},
 	}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key", Model: "claude-acme-1", Models: config.ModelRoles{Background: "claude-haiku-4-5"}}}
-	ps := budgetProblems(cfg, lc)
+	ps, _ := budgetProblems(cfg, lc)
 	if len(ps) != 1 || ps[0].Path != "model_prices" {
 		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
@@ -229,11 +230,167 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 func TestBudgetProblemsSkipPinsForOAuth(t *testing.T) {
 	lc := &localcfg.Config{Name: "aurora", Budget: &localcfg.Budget{Mode: localcfg.BudgetObserve}}
 	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "oauth"}}
-	if ps := budgetProblems(cfg, lc); len(ps) != 0 {
+	if ps, _ := budgetProblems(cfg, lc); len(ps) != 0 {
 		t.Fatalf("problems = %v", ps)
 	}
 	cfg.Agent.Auth = "api-key"
-	if ps := budgetProblems(cfg, lc); len(ps) == 0 {
+	if ps, _ := budgetProblems(cfg, lc); len(ps) == 0 {
 		t.Fatal("api-key with no models passed")
+	}
+}
+
+// fileWithBudget is budgetProject with a committed fugaro.yaml block (YAML
+// at top level, e.g. "budget: {...}\n") added to the file.
+func fileWithBudget(t *testing.T, projectBudget, fileBlock, agent string) string {
+	t.Helper()
+	path := budgetProject(t, projectBudget, agent)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, fileBlock...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+const pinnedAgent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+
+func TestValidateWarnsOnLooserThanCeiling(t *testing.T) {
+	path := fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\n",
+		"budget: { mode: off, per_run_usd: 20 }\n", pinnedAgent+"\n  max_run_tokens: 9000")
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") {
+		t.Fatalf("looser values are not problems: %v %q", err, out)
+	}
+	for _, want := range []string{
+		"warning: budget.per_run_usd: 20 is above the project's ceiling of 5; the runner will use 5",
+		"warning: agent.max_run_tokens: 9000 is above the project's ceiling of 1000; the runner will use 1000",
+		"warning: budget.mode: off is looser than the project's observe; the runner will use observe",
+	} {
+		if !strings.Contains(errOut, want) {
+			t.Errorf("stderr lacks %q:\n%s", want, errOut)
+		}
+	}
+	// --json keeps warnings out of problems.
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Valid || len(got.Problems) != 0 || len(got.Warnings) != 3 {
+		t.Fatalf("json = %+v", got)
+	}
+	// A tighter file says nothing.
+	path = fileWithBudget(t, "budget: { mode: observe, per_run_usd: 5 }\n", "budget: { mode: enforce, per_run_usd: 2 }\n", pinnedAgent)
+	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "warning") {
+		t.Fatalf("tightening warned: %v %q", err, errOut)
+	}
+}
+
+func TestValidateModelOutsideAllowListIsProblem(t *testing.T) {
+	// Even with the budget off: the allow-list bounds the models.
+	path := fileWithBudget(t, "budget: { allowed_models: [claude-haiku-4-5] }\n", "", pinnedAgent)
+	out, errOut, err := execute(t, "validate", "--json", path)
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Valid || len(got.Problems) != 2 || got.Problems[0].Path != "agent.models.coder" ||
+		!strings.Contains(got.Problems[0].Message, "claude-sonnet-5-5") || !strings.Contains(got.Problems[0].Message, "ceiling") {
+		t.Fatalf("got %+v (stderr %q)", got, errOut)
+	}
+	// The file's own list narrows the ceiling's; the model it drops is a problem.
+	path = fileWithBudget(t, "budget: { allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n",
+		"budget: { allowed_models: [claude-haiku-4-5] }\n", pinnedAgent)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// A file that tries to add a model gets a warning, and still fails if it uses it.
+	path = fileWithBudget(t, "budget: { allowed_models: [claude-haiku-4-5] }\n",
+		"budget: { allowed_models: [claude-haiku-4-5, claude-sonnet-5-5] }\n", pinnedAgent)
+	out, errOut, err = execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") || !strings.Contains(errOut, "budget.allowed_models") {
+		t.Fatalf("exit %d: %s / %s", ExitCode(err), out, errOut)
+	}
+}
+
+func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: vertex, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
+	out, errOut, err := execute(t, "validate", writeConfig(t, body))
+	if err != nil || errOut != "" {
+		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
+	}
+	// The shape is still checked.
+	bad := strings.Replace(cliMinimalYAML, "workflows:", "budget: { mode: loud }\nworkflows:", 1)
+	if out, _, err = execute(t, "validate", writeConfig(t, bad)); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+func TestValidateEnforceWithoutCapWarnsNoCap(t *testing.T) {
+	// Valid in the file; with a project config the run would halt no_cap.
+	path := fileWithBudget(t, "budget: { mode: off }\n", "budget: { mode: enforce }\n", pinnedAgent)
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(errOut, "no_cap") {
+		t.Fatalf("%v out %q stderr %q", err, out, errOut)
+	}
+	// A cap in either place silences it.
+	for _, tc := range [][2]string{
+		{"budget: { mode: off, per_run_usd: 5 }\n", "budget: { mode: enforce }\n"},
+		{"budget: { mode: off }\n", "budget: { mode: enforce, per_run_usd: 5 }\n"},
+	} {
+		path = fileWithBudget(t, tc[0], tc[1], pinnedAgent)
+		if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "no_cap") {
+			t.Fatalf("%q: %v %q", tc, err, errOut)
+		}
+	}
+}
+
+func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1234")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), cliMinimalYAML)
+	testutil.Git(t, root, "add", ".")
+	testutil.Git(t, root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+	testutil.Git(t, root, "branch", "-M", "main")
+	testutil.Git(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	testutil.Git(t, root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	file := filepath.Join(root, "fugaro.yaml")
+	if _, errOut, err := execute(t, "validate", file); err != nil || strings.Contains(errOut, "default branch") {
+		t.Fatalf("on the default branch: %v %q", err, errOut)
+	}
+	testutil.Git(t, root, "checkout", "-q", "-b", "feature")
+	out, errOut, err := execute(t, "validate", file)
+	if err != nil || !strings.Contains(out, "is valid") ||
+		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
+		t.Fatalf("%v out %q stderr %q", err, out, errOut)
+	}
+}
+
+func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
+	// The ceiling is off; the committed enforce is what the runner would refuse.
+	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+	path := fileWithBudget(t, "", "budget: { mode: enforce, per_run_usd: 5 }\n", pinned)
+	out, _, err := execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	path = fileWithBudget(t, "", "budget: { mode: observe }\n", pinned)
+	if out, _, err = execute(t, "validate", path); err != nil {
+		t.Fatalf("observe: %v %s", err, out)
+	}
+	// A committed observe or enforce puts the pins on a repository whose ceiling is off.
+	path = fileWithBudget(t, "", "budget: { mode: observe }\n", "  auth: api-key\n  model: sonnet")
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
 }
