@@ -54,6 +54,10 @@ func IdentityEnv() []string {
 type Repo struct {
 	Dir string
 	Env []string
+	// StripEnv names variables that never reach git or anything git runs
+	// (a core.fsmonitor command or a filter driver an agent wrote into
+	// .git/config), whether they come from the process or from Env.
+	StripEnv []string
 }
 
 // Open returns the checkout at dir.
@@ -96,11 +100,24 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// processEnv is the environment of every git call: the process's, then
+// Env, without the variables in StripEnv.
+func (r *Repo) processEnv() []string {
+	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
+	if len(r.StripEnv) == 0 {
+		return env
+	}
+	return slices.DeleteFunc(env, func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(r.StripEnv, k)
+	})
+}
+
 // gitRaw runs git and returns its stdout exactly as written.
 func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
+	cmd.Env = r.processEnv()
 	cmd.WaitDelay = gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

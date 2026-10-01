@@ -11,8 +11,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 
 	"github.com/dimipaun/fugaro/images"
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -164,6 +166,7 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 	if spec.CheckHardening {
 		checkSudoers("/etc/sudoers.d", "/etc/sudoers", add)
+		checkManagedSettingsDir(filepath.Dir(agent.ManagedSettingsPath), agentUID, agentGID, add)
 	}
 	if spec.CheckInit {
 		cmdline, err := os.ReadFile("/proc/1/cmdline")
@@ -452,6 +455,71 @@ func checkSudoers(sudoersDir, sudoersFile string, add func(string, bool, string,
 		return
 	}
 	add("sudoers", true, "%s has only README; %s grants fugaro nothing", sudoersDir, sudoersFile)
+}
+
+// agentUID and agentGID are the fugaro user's, as the base image creates it.
+const agentUID, agentGID = 1000, 1000
+
+// checkManagedSettingsDir reports the "managed-settings-dir" check: dir
+// (normally /etc/claude-code) exists, is a real directory, is writable by
+// the agent's user (uid, gid), and is empty. The runner is not root, so the
+// image makes the directory the agent user's to hold the managed settings it
+// writes at run time. Nothing may be baked into it: a managed-mcp.json or a
+// managed-settings.d/ drop-in would be settings the runner can't vouch for,
+// and a baked managed-settings.json, which the runner replaces at run time,
+// is refused too, so an image.setup step that wrote one fails the build.
+//
+// Writability is worked out from the owner, group and mode bits against
+// uid and gid, not by trying to write, because part of the selftest runs as
+// root, for whom everything is writable.
+func checkManagedSettingsDir(dir string, uid, gid uint32, add func(string, bool, string, ...any)) {
+	const name = "managed-settings-dir"
+	fi, err := os.Lstat(dir)
+	switch {
+	case err != nil:
+		add(name, false, "%s: %v; rebuild the image on an M9a base image", dir, err)
+		return
+	case fi.Mode()&os.ModeSymlink != 0:
+		add(name, false, "%s is a symbolic link", dir)
+		return
+	case !fi.IsDir():
+		add(name, false, "%s is not a directory", dir)
+		return
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		add(name, false, "cannot read the owner of %s on this platform", dir)
+		return
+	}
+	// Writing an entry needs write and search permission on the directory.
+	var bits os.FileMode
+	switch {
+	case st.Uid == uid:
+		bits = fi.Mode().Perm() >> 6 & 0o7
+	case st.Gid == gid:
+		bits = fi.Mode().Perm() >> 3 & 0o7
+	default:
+		bits = fi.Mode().Perm() & 0o7
+	}
+	if bits&0o3 != 0o3 {
+		add(name, false, "%s (owner %d:%d, mode %04o) is not writable by uid %d; the base image must create it owned by the fugaro user", dir, st.Uid, st.Gid, fi.Mode().Perm(), uid)
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		add(name, false, "reading %s: %v", dir, err)
+		return
+	}
+	if len(entries) > 0 {
+		names := make([]string, len(entries))
+		for i, e := range entries {
+			names[i] = e.Name()
+		}
+		sort.Strings(names)
+		add(name, false, "%s must be empty at build time (the runner writes managed-settings.json at run time), but holds: %s", dir, strings.Join(names, ", "))
+		return
+	}
+	add(name, true, "%s is an empty directory writable by uid %d", dir, uid)
 }
 
 // verifyBuild runs `fugaro verify build` from PATH, as the agent would,

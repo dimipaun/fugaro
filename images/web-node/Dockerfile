@@ -47,13 +47,18 @@ ENV HOME=/home/fugaro \
 # steps only and remove the grant before the image is finished. libcap2-bin
 # provides getcap, which fugaro image selftest uses to check that no file
 # carries capabilities.
+#
+# /etc/claude-code is where Claude Code reads its managed settings. It is
+# created empty and owned by fugaro, because the runner is not root and
+# writes managed-settings.json there at run time; fugaro image selftest
+# refuses it if anything is baked into it.
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       ca-certificates curl dirmngr git gnupg libcap2-bin procps sudo tini xz-utils zstd \
  && rm -rf /var/lib/apt/lists/* \
  && userdel --remove ubuntu \
  && useradd --uid 1000 --user-group --create-home --shell /bin/bash fugaro \
- && install -d -o fugaro -g fugaro -m 0755 /work /work/repo /work/state \
+ && install -d -o fugaro -g fugaro -m 0755 /work /work/repo /work/state /etc/claude-code \
  && install -d -o fugaro -g fugaro -m 0700 /work/creds \
  && install -d -o fugaro -g fugaro -m 0755 /home/fugaro/.cache "$COREPACK_HOME" "$PLAYWRIGHT_BROWSERS_PATH"
 # gh (the GitHub CLI), installed from a pinned release tarball with its

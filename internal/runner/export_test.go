@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -78,6 +79,14 @@ func SetBootstrapHaltForTest(t *testing.T, f func() *runstore.Halt) {
 	prev := bootstrapHalt
 	bootstrapHalt = f
 	t.Cleanup(func() { bootstrapHalt = prev })
+}
+
+// SetGatewayForTest makes every run of t behave as if the gateway were on
+// and at gw.
+func SetGatewayForTest(t *testing.T, gw *agent.Gateway) {
+	prev := gatewayForTest
+	gatewayForTest = gw
+	t.Cleanup(func() { gatewayForTest = prev })
 }
 
 // SetStrictHaltCheck makes finalize panic when a halt and a cancel are both recorded.

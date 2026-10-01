@@ -81,6 +81,9 @@ type Deps struct {
 	// RequireProject (backend.OnCloudRun) makes a missing Project fail
 	// bootstrap; a local run without one skips the check.
 	RequireProject bool
+	// ManagedSettingsPath is where the managed Claude Code settings are
+	// written before each stage; empty means agent.ManagedSettingsPath.
+	ManagedSettingsPath string
 }
 
 type run struct {
@@ -531,7 +534,7 @@ func (r *run) warnAuthRefresh(err error) {
 // cloned from when there is no checkout yet.
 func (r *run) originURL(ctx context.Context) string {
 	if repo, err := gitops.Open(r.d.WorkDir, nil); err == nil {
-		if u, err := repo.OriginURL(ctx); err == nil {
+		if u, err := strip(repo).OriginURL(ctx); err == nil {
 			return u
 		}
 	}
@@ -685,7 +688,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
-	r.repo = repo
+	r.repo = strip(repo)
 	var cfg *config.Config
 	if r.follow != nil {
 		// The pull request's branch, with the configuration of its base.
@@ -730,6 +733,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
+	}
+	if r.gatewayOn() {
+		if reason := r.checkSettingsRouting(); reason != "" {
+			return errors.New(reason)
+		}
 	}
 	if bootstrapHalt != nil {
 		if h := bootstrapHalt(); h != nil {
@@ -805,7 +813,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		maps.Copy(set, agentAuthVars)
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
 	})
 	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)
@@ -941,6 +949,19 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.fail("time budget exhausted before stage " + name)
 		return agent.Result{}, false, nil
 	}
+	// With the gateway on, nothing the agent or the repository wrote since
+	// the last stage may send Claude Code around it.
+	if r.gatewayOn() {
+		if reason := r.checkSettingsRouting(); reason != "" {
+			r.fail("stage " + name + ": " + reason)
+			return agent.Result{}, false, errors.New(reason)
+		}
+	}
+	pins := r.stagePins(name)
+	if err := r.writeManagedSettings(pins); err != nil {
+		r.fail("stage " + name + ": " + err.Error())
+		return agent.Result{}, false, err
+	}
 	r.stageN[name]++
 	n := r.stageN[name]
 	started := r.d.Now()
@@ -969,7 +990,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	relay := agent.NewRelay(log, r.secrets)
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secrets)
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secrets)
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.env, tw, sw
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)

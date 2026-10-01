@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -542,5 +543,116 @@ func TestSelftestSkipVerify(t *testing.T) {
 	}
 	if c, ok := checkNamed(r, "checkout"); !ok || !c.OK {
 		t.Errorf("no passing checkout check: %+v", r)
+	}
+}
+
+// --- The managed settings directory (/etc/claude-code).
+
+// ownerIDs are the uid and gid that own a directory the test just made.
+func ownerIDs(t *testing.T, dir string) (uint32, uint32) {
+	t.Helper()
+	fi, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	return st.Uid, st.Gid
+}
+
+func managedDirResult(t *testing.T, dir string, uid, gid uint32) Check {
+	t.Helper()
+	add, r := addRecorder()
+	checkManagedSettingsDir(dir, uid, gid, add)
+	c, ok := checkNamed(*r, "managed-settings-dir")
+	if !ok {
+		t.Fatalf("no managed-settings-dir check in %+v", r.Checks)
+	}
+	return c
+}
+
+func TestSelftestManagedSettingsDir(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "claude-code")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := ownerIDs(t, dir)
+	if c := managedDirResult(t, dir, uid, gid); !c.OK {
+		t.Fatalf("an empty directory the agent owns: %+v", c)
+	}
+	if c := managedDirResult(t, filepath.Join(root, "missing"), uid, gid); c.OK {
+		t.Fatalf("a missing directory passed: %+v", c)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	if c := managedDirResult(t, link, uid, gid); c.OK || !strings.Contains(c.Detail, "symbolic link") {
+		t.Fatalf("a symlink passed: %+v", c)
+	}
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := managedDirResult(t, file, uid, gid); c.OK {
+		t.Fatalf("a file passed: %+v", c)
+	}
+	// Not the owner, so the group bits decide.
+	if err := os.Chmod(dir, 0o770); err != nil {
+		t.Fatal(err)
+	}
+	if c := managedDirResult(t, dir, uid+1, gid); !c.OK {
+		t.Fatalf("a group-writable directory for the agent's group: %+v", c)
+	}
+	if c := managedDirResult(t, dir, uid+1, gid+1); c.OK {
+		t.Fatalf("a group-writable directory for another group passed: %+v", c)
+	}
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	if c := managedDirResult(t, dir, uid, gid); c.OK {
+		t.Fatalf("a read-only directory passed: %+v", c)
+	}
+}
+
+// Part of the selftest runs as root, for whom any directory is writable, so
+// the check reads the owner and mode bits against uid 1000 instead.
+func TestSelftestManagedSettingsDirUID1000(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "claude-code")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uid, gid := ownerIDs(t, dir)
+	// A directory owned by someone else (root, in the image) with mode 0755
+	// is not writable by the agent, whoever runs the check.
+	if c := managedDirResult(t, dir, uid+1000, gid+1000); c.OK || !strings.Contains(c.Detail, "not writable") {
+		t.Fatalf("a directory owned by another user passed: %+v", c)
+	}
+}
+
+func TestSelftestManagedSettingsDirExtraEntries(t *testing.T) {
+	for name, entry := range map[string]string{
+		"managed-mcp.json":      "{}",
+		"managed-settings.json": `{"env":{}}`,
+		"managed-settings.d":    "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "claude-code")
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if entry == "" {
+				if err := os.Mkdir(filepath.Join(dir, name), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(filepath.Join(dir, name), []byte(entry), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			uid, gid := ownerIDs(t, dir)
+			if c := managedDirResult(t, dir, uid, gid); c.OK || !strings.Contains(c.Detail, name) {
+				t.Fatalf("an entry %s passed: %+v", name, c)
+			}
+		})
 	}
 }

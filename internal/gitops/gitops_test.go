@@ -557,3 +557,37 @@ func TestPushExistingRaceIsForeignTip(t *testing.T) {
 		}
 	}
 }
+
+// An agent can write .git/config, so a core.fsmonitor command runs under
+// the runner's git at finalize: the model credentials must not be in its env.
+func TestGitEnvStripsModelCredentials(t *testing.T) {
+	repo, _ := setup(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-real-key")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-real")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "auth-real")
+	t.Setenv("KEEP_ME", "kept")
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > "+dump+"\nprintf '\\0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "core.fsmonitor", hook)
+	repo.Env = append(repo.Env, "ANTHROPIC_API_KEY=sk-real-key-from-env")
+	repo.StripEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the fsmonitor hook never ran: %v", err)
+	}
+	if !strings.Contains(string(b), "KEEP_ME=kept") {
+		t.Fatalf("the hook's env lost an ordinary variable:\n%s", b)
+	}
+	for _, leaked := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "real"} {
+		if strings.Contains(string(b), leaked) {
+			t.Errorf("the hook's env holds %s:\n%s", leaked, b)
+		}
+	}
+}

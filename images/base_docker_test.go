@@ -75,3 +75,20 @@ func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
 		t.Fatalf("install-node without the keyring: err=%v\n%s", err, out)
 	}
 }
+
+// TestBaseImageManagedSettingsDir checks that /etc/claude-code, where the
+// runner writes Claude Code's managed settings, is an empty directory owned
+// by the agent's user (uid 1000), and that the runner's user can write there.
+func TestBaseImageManagedSettingsDir(t *testing.T) {
+	image := testutil.BaseImage(t)
+	out, err := exec.Command("docker", "run", "--rm", "--entrypoint", "sh", image, "-c",
+		`stat -c '%u:%g %a %F' /etc/claude-code && ls -A /etc/claude-code | wc -l && id -u &&
+		 touch /etc/claude-code/probe && rm /etc/claude-code/probe && echo writable`).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker run: %v\n%s", err, out)
+	}
+	want := "1000:1000 755 directory\n0\n1000\nwritable\n"
+	if string(out) != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}

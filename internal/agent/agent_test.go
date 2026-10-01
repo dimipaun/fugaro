@@ -565,3 +565,108 @@ func TestStageTokensTakesLarger(t *testing.T) {
 		t.Fatalf("usage larger = %d", got)
 	}
 }
+
+func TestBuildEnvGatewayDropsRealKey(t *testing.T) {
+	const realKey = "sk-ant-real-key-123"
+	parent := []string{"PATH=/bin", "ANTHROPIC_API_KEY=" + realKey, "ANTHROPIC_BASE_URL=https://elsewhere.invalid", "NPM_TOKEN=npm-456"}
+	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
+	env, secrets, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Secrets: []string{"NPM_TOKEN"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kv := range env {
+		if strings.Contains(kv, realKey) {
+			t.Errorf("the real key is in the agent's env: %s", kv)
+		}
+	}
+	for _, want := range []string{"ANTHROPIC_API_KEY=tok-abc", "ANTHROPIC_BASE_URL=http://127.0.0.1:4000", "NPM_TOKEN=npm-456"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	if !slices.Contains(secrets, realKey) {
+		t.Errorf("the real key is not registered for redaction: %v", secrets)
+	}
+	// A declared secret of the same name must not bring the real key back.
+	env, secrets, err = BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Secrets: []string{"ANTHROPIC_API_KEY"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.Contains(kv, realKey) }) || !slices.Contains(env, "ANTHROPIC_API_KEY=tok-abc") {
+		t.Errorf("a declared ANTHROPIC_API_KEY put the real key back: %v", env)
+	}
+	if !slices.Contains(secrets, realKey) {
+		t.Errorf("secrets = %v", secrets)
+	}
+	// The key is still required, so a misconfigured job fails as it did.
+	if _, _, err := BuildEnv([]string{"PATH=/bin"}, EnvSpec{Auth: "api-key", Gateway: gw}); err == nil {
+		t.Error("a missing real key was accepted")
+	}
+	// Set and the parent can't override the routing.
+	env, _, err = BuildEnv(parent, EnvSpec{Auth: "api-key", Gateway: gw, Set: map[string]string{"ANTHROPIC_BASE_URL": "https://set.invalid"}})
+	if err != nil || !slices.Contains(env, "ANTHROPIC_BASE_URL=http://127.0.0.1:4000") {
+		t.Errorf("env = %v, %v", env, err)
+	}
+}
+
+func TestBuildEnvGatewayVertex(t *testing.T) {
+	parent := []string{"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p", "ANTHROPIC_VERTEX_BASE_URL=https://elsewhere.invalid/v1"}
+	env, _, err := BuildEnv(parent, EnvSpec{Auth: "vertex", Gateway: &Gateway{BaseURL: "http://127.0.0.1:4000/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"ANTHROPIC_VERTEX_BASE_URL=http://127.0.0.1:4000/v1", "CLAUDE_CODE_SKIP_VERTEX_AUTH=1", "CLAUDE_CODE_USE_VERTEX=1",
+		"CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p",
+	} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	if slices.ContainsFunc(env, func(kv string) bool { return strings.Contains(kv, "elsewhere.invalid") }) {
+		t.Errorf("the parent's base URL passed through: %v", env)
+	}
+}
+
+func TestBuildEnvGatewayOAuthRefused(t *testing.T) {
+	_, _, err := BuildEnv([]string{"CLAUDE_CODE_OAUTH_TOKEN=oauth-123"}, EnvSpec{Auth: "oauth", Gateway: &Gateway{BaseURL: "http://127.0.0.1:1", Token: "t"}})
+	if err == nil || !strings.Contains(err.Error(), "oauth") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, err := GatewayVars("oauth", Gateway{BaseURL: "http://127.0.0.1:1", Token: "t"}, nil); err == nil {
+		t.Fatal("GatewayVars accepted oauth")
+	}
+}
+
+func TestBuildEnvNoGatewayUnchanged(t *testing.T) {
+	env, secrets, err := BuildEnv([]string{"PATH=/bin", "ANTHROPIC_API_KEY=key-123"}, EnvSpec{Auth: "api-key"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(env, "ANTHROPIC_API_KEY=key-123") || !slices.Equal(secrets, []string{"key-123"}) {
+		t.Fatalf("env = %v, secrets = %v", env, secrets)
+	}
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ANTHROPIC_BASE_URL") || strings.HasPrefix(kv, "NO_PROXY") || strings.HasPrefix(kv, "no_proxy") {
+			t.Errorf("unexpected variable without a gateway: %s", kv)
+		}
+	}
+}
+
+func TestNoProxyCoversLoopback(t *testing.T) {
+	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
+	env, _, err := BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "NO_PROXY=example.invalid"}, EnvSpec{Auth: "api-key", Gateway: gw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"NO_PROXY=example.invalid,127.0.0.1,localhost", "no_proxy=127.0.0.1,localhost"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("env lacks %s: %v", want, env)
+		}
+	}
+	// Already covered: no duplicates.
+	env, _, _ = BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "NO_PROXY=localhost,corp.invalid"}, EnvSpec{Auth: "api-key", Gateway: gw})
+	if !slices.Contains(env, "NO_PROXY=localhost,corp.invalid,127.0.0.1") {
+		t.Errorf("env = %v", env)
+	}
+}
