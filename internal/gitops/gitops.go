@@ -164,6 +164,23 @@ func (r *Repo) FetchBase(ctx context.Context, base string) error {
 	return err
 }
 
+// DefaultBranch asks origin which branch its HEAD names (the repository's
+// default branch), so it is never a name the checked-out files chose.
+func (r *Repo) DefaultBranch(ctx context.Context) (string, error) {
+	out, err := r.git(ctx, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+			if name, _, ok := strings.Cut(ref, "\tHEAD"); ok && name != "" {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("origin does not say which branch is its default")
+}
+
 // HeadSHA returns the commit HEAD points at.
 func (r *Repo) HeadSHA(ctx context.Context) (string, error) {
 	return r.git(ctx, "rev-parse", "HEAD")

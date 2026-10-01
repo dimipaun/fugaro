@@ -164,3 +164,16 @@ func TestProjectCheckBaseUnparseable(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
+
+// A branch whose fugaro.yaml names itself as the base must not choose
+// which file decides the project: the repository's default branch does.
+func TestProjectCheckBaseIsTheDefaultBranch(t *testing.T) {
+	h := projectHarness(t, "borealis")
+	own := strings.Replace(withProject(t, fixtureYAML(t), "aurora"), "base_branch: main", "base_branch: feature", 1)
+	if own == withProject(t, fixtureYAML(t), "aurora") {
+		t.Fatal("the fixture has no base_branch: main")
+	}
+	pushBranch(t, h, "feature", own)
+	setRef(t, h, task.Spec{Ref: "feature"})
+	refused(t, h, "project mismatch", "main", "borealis", "aurora")
+}

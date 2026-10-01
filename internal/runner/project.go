@@ -12,9 +12,11 @@ import (
 // refusal changes nothing remote. cfg is the configuration the run uses:
 // a first run's is the ref's, a follow-up's the base branch's.
 //
-// It reads project: from the base branch's fugaro.yaml leniently (a base
-// that doesn't parse still says which project it belongs to), and, for a
-// first run at another ref, from the ref's as well.
+// A first run reads project: leniently (a file that doesn't parse still
+// says which project it belongs to) from the repository's default branch,
+// which no file in the checkout can choose, and from the ref's own file
+// as well when the ref is another branch. A follow-up has nothing more to
+// read: readBaseConfig checked the pull request's base.
 func (r *run) checkProject(ctx context.Context, cfg *config.Config) error {
 	if r.d.Project == "" {
 		if r.d.RequireProject {
@@ -23,15 +25,24 @@ func (r *run) checkProject(ctx context.Context, cfg *config.Config) error {
 		r.d.Log.Info("FUGARO_PROJECT is not set: not checking which project fugaro.yaml belongs to")
 		return nil
 	}
-	base := cfg.Git.BaseBranch
-	data, err := r.repo.ShowFile(ctx, "origin/"+base, "fugaro.yaml")
-	if err != nil {
-		return fmt.Errorf("reading fugaro.yaml at origin/%s: %w", base, err)
+	if r.follow != nil {
+		return nil
 	}
-	if err := r.projectOfFile(base, data); err != nil {
+	def, err := r.repo.DefaultBranch(ctx)
+	if err != nil {
+		return fmt.Errorf("finding the default branch to read fugaro.yaml from: %w", err)
+	}
+	if err := r.repo.FetchBase(ctx, def); err != nil {
+		return fmt.Errorf("fetching default branch %s: %w", def, err)
+	}
+	data, err := r.repo.ShowFile(ctx, "origin/"+def, "fugaro.yaml")
+	if err != nil {
+		return fmt.Errorf("reading fugaro.yaml at origin/%s: %w", def, err)
+	}
+	if err := r.projectOfFile(def, data); err != nil {
 		return err
 	}
-	if r.follow == nil && r.spec.Ref != base {
+	if r.spec.Ref != def {
 		// The ref's own file, already parsed into cfg.
 		return r.sameProject(r.spec.Ref, cfg.Project)
 	}

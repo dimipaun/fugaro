@@ -58,3 +58,27 @@ func TestProjectOf(t *testing.T) {
 		})
 	}
 }
+
+// A name YAML does not read as a string is refused by Parse and by
+// ProjectOf alike, with the same message.
+func TestProjectMustBeAStringInBothPaths(t *testing.T) {
+	for _, v := range []string{"123", "true", "1e3", "007"} {
+		t.Run(v, func(t *testing.T) {
+			data := strings.Replace(minimalYAML, "project: aurora", "project: "+v, 1)
+			_, perr := ProjectOf([]byte(data))
+			if perr == nil {
+				t.Fatal("ProjectOf accepted it")
+			}
+			_, ps := Parse([]byte(data))
+			found := false
+			for _, p := range ps {
+				if strings.Contains(perr.Error(), p.Message) && strings.Contains(p.Message, "must be a string") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("Parse problems %v lack ProjectOf's message %q", ps, perr)
+			}
+		})
+	}
+}

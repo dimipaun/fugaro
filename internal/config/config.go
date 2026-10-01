@@ -312,6 +312,12 @@ func Parse(data []byte) (*Config, []Problem) {
 		}
 		return nil, yamlProblems(err)
 	}
+	// The strict decode reads 123 or true as the string "123"; a project
+	// name is a YAML string, as ProjectOf (which the runner and the CLI
+	// use) insists, so the two cannot disagree about a file.
+	if _, err := ProjectOf(data); err != nil {
+		return nil, []Problem{problemFromYAML(err.Error())}
+	}
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {
 		return nil, ps
