@@ -364,7 +364,7 @@ back.
 **If it fails**, read the failing line first. Known ways it can, and what they mean:
 
 - *No call logged, or a refused connection:* the managed settings did not outrank the repository's (A6 false). The settings refusal is then the only guard for committed settings: keep the budget off for `api-key` and say so in design §6.1.
-- *A stage fails with `context_management is not allowed` or a similar refusal:* Claude Code sent a shape the gateway refuses. The refusal names it. Narrow the refusal to the shapes that are really unbounded (an allow-list with its own test), never remove it.
+- *A stage fails with `context_management is not allowed` or a similar refusal:* Claude Code sent a shape the gateway refuses. The refusal names it. Narrow the refusal to the shapes that are really unbounded (an allow-list with its own test), never remove it. `context_management` is already narrowed: only `clear_thinking_*` and `clear_tool_uses_*` edits pass. The gateway's call log carries `max_tokens` and `tool_types`, so the live run shows what Claude Code sent.
 - *A content block type is refused:* the allow-list lacks a block Claude Code sends; add it with a test.
 - *A cost differing by more than 5%, or `usage_unparsed` above 0:* read the `model call` lines' `settled` and `priced_as` fields; a wrong price is fixed in the table or by `model_prices`.
 - *The review asked for no fix:* the task didn't provoke one; the test fails on purpose, since the resumed stage was not exercised. Adjust `lgwTask` and run again.
