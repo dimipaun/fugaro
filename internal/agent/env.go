@@ -200,17 +200,15 @@ func withLoopback(list string) string {
 }
 
 // PinVars are a stage's pins (design §2.1): the model for Claude Code's
-// opus, sonnet and subagent roles, the background model for its haiku
-// role (when set), and the output limit per call (when > 0). An empty model
-// pins nothing: nil.
+// opus, sonnet and subagent roles (when set), the background model for its
+// haiku role (when set), and the output limit per call (when > 0). Each is
+// independent of the others; with nothing set the result is empty.
 func PinVars(model, background string, maxOutput int64) map[string]string {
-	if model == "" {
-		return nil
-	}
-	out := map[string]string{
-		"ANTHROPIC_DEFAULT_OPUS_MODEL":   model,
-		"ANTHROPIC_DEFAULT_SONNET_MODEL": model,
-		"CLAUDE_CODE_SUBAGENT_MODEL":     model,
+	out := map[string]string{}
+	if model != "" {
+		out["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
+		out["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+		out["CLAUDE_CODE_SUBAGENT_MODEL"] = model
 	}
 	if background != "" {
 		out["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = background

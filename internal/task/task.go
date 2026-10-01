@@ -229,7 +229,13 @@ func (s *Spec) Apply(c *config.Config, w *config.Workflow) error {
 		c.Agent.MaxBudgetUSD = *o.MaxBudgetUSD
 	}
 	if o.Model != "" {
-		c.Agent.Models.Coder = o.Model
+		if c.Agent.Models.Coder == "" && c.Agent.Models.Reviewer == "" {
+			// No per-role models: the override keeps the reach it always
+			// had, every stage.
+			c.Agent.Model = o.Model
+		} else {
+			c.Agent.Models.Coder = o.Model
+		}
 	}
 	if o.TotalTimeout != "" {
 		d, err := time.ParseDuration(o.TotalTimeout)

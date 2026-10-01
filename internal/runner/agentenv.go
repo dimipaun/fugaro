@@ -45,47 +45,58 @@ func (r *run) parentEnv() map[string]string {
 }
 
 // stagePins are the pins of a stage's role: its model, the background model
-// and its output limit per call.
+// and its output limit per call. They exist for the gateway's pricing, so
+// without the gateway there are none and a run sets no variable the
+// budget-off runs never set.
 func (r *run) stagePins(stage string) map[string]string {
+	if !r.gatewayOn() {
+		return nil
+	}
 	role := config.StageRole(stage)
 	a := r.cfg.Agent
 	return agent.PinVars(a.ModelFor(role), a.Models.Background, a.MaxOutputFor(role))
 }
 
-// writeManagedSettings writes the managed settings for a stage: with the
-// gateway on its variables and the web-tool denial, and always the pins. It
-// does nothing when there is neither. A failure with the gateway on is an
+// writeManagedSettings writes the managed settings for a stage: the
+// gateway's variables, the pins and the web-tool denial. It does nothing
+// without the gateway: a budget-off run writes no file. A failure is an
 // error, since the settings are what keep a repository's own settings from
-// rerouting the agent; with pins only, it is only logged.
+// rerouting the agent.
 func (r *run) writeManagedSettings(pins map[string]string) error {
 	gw := r.gateway()
-	if gw == nil && len(pins) == 0 {
+	if gw == nil {
 		return nil
 	}
-	vars := map[string]string{}
-	if gw != nil {
-		gv, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
-		if err != nil {
-			return fmt.Errorf("writing Claude Code's managed settings: %w", err)
-		}
-		vars = gv
+	vars, err := agent.GatewayVars(r.cfg.Agent.Auth, *gw, r.parentEnv())
+	if err != nil {
+		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	}
 	for k, v := range pins {
 		vars[k] = v
 	}
-	err := agent.WriteManagedSettings(r.managedPath(), vars, gw != nil)
-	switch {
-	case err == nil:
-		return nil
-	case gw != nil:
+	if err := agent.WriteManagedSettings(r.managedPath(), vars, true); err != nil {
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
-	default:
-		if r.warnedSettings {
-			return nil
-		}
-		r.warnedSettings = true
-		r.d.Log.Warn("writing Claude Code's managed settings failed; the model pins apply through the environment only", "err", r.redact(err.Error()))
-		return nil
+	}
+	r.mu.Lock()
+	r.wroteManaged = true
+	r.mu.Unlock()
+	return nil
+}
+
+// removeManagedSettings deletes the managed settings file this run wrote:
+// they hold the gateway's address and token, dead once the run is over,
+// and a local run's file would otherwise redirect every later Claude Code
+// on the machine.
+func (r *run) removeManagedSettings() {
+	r.mu.Lock()
+	wrote := r.wroteManaged
+	r.wroteManaged = false
+	r.mu.Unlock()
+	if !wrote {
+		return
+	}
+	if err := os.Remove(r.managedPath()); err != nil && !os.IsNotExist(err) {
+		r.d.Log.Warn("removing Claude Code's managed settings failed", "err", r.redact(err.Error()))
 	}
 }
 

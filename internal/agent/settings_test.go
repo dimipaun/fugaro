@@ -24,7 +24,10 @@ func TestPinVars(t *testing.T) {
 		{"with max output", "m1", "", 4096, map[string]string{
 			"ANTHROPIC_DEFAULT_OPUS_MODEL": "m1", "ANTHROPIC_DEFAULT_SONNET_MODEL": "m1", "CLAUDE_CODE_SUBAGENT_MODEL": "m1",
 			"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096"}},
-		{"empty", "", "m2", 4096, nil},
+		// Each pin stands alone: no model doesn't drop the others.
+		{"no model", "", "m2", 4096, map[string]string{
+			"ANTHROPIC_DEFAULT_HAIKU_MODEL": "m2", "CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096"}},
+		{"nothing", "", "", 0, nil},
 	}
 	for _, c := range cases {
 		got := PinVars(c.model, c.bg, c.maxOutput)

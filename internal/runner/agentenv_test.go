@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,18 +18,20 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// pinnedConfig is the fixture's configuration with models per role.
+// pinnedConfig is the fixture's configuration with models per role, all in
+// the price table so the gateway can start: sonnet for the coder, opus for
+// the reviewer, haiku in the background.
 func pinnedConfig(t *testing.T) string {
 	t.Helper()
-	cfg := testutil.FixtureFiles(t)["fugaro.yaml"]
-	return strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
-  model: base-model
-  models: { coder: coder-model, reviewer: reviewer-model, background: small-model }
-  max_output_tokens: { coder: 4096, reviewer: 2048 }
-`, 1)
+	cfg := gwConfig(t, "")
+	out := strings.Replace(cfg, "models: { coder: "+sonnet+", reviewer: "+sonnet+", background: "+haiku+" }", "models: { coder: "+sonnet+", reviewer: "+opus+", background: "+haiku+" }", 1)
+	out = strings.Replace(out, "max_output_tokens: { coder: 4096, reviewer: 4096 }", "max_output_tokens: { coder: 4096, reviewer: 2048 }", 1)
+	if out == cfg {
+		t.Fatal("gwConfig changed shape")
+	}
+	return out
 }
 
 // settingsEnv reads the managed settings file as an agent would at its start.
@@ -54,7 +57,7 @@ func idle(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, e
 }
 
 func TestStagePinsPerRole(t *testing.T) {
-	h := newHarness(t, pinnedConfig(t), nil)
+	h := newGW(t, pinnedConfig(t), "observe", "").harness
 	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +67,7 @@ func TestStagePinsPerRole(t *testing.T) {
 	for i, want := range []struct {
 		model  string
 		output string
-	}{{"coder-model", "4096"}, {"reviewer-model", "2048"}, {"coder-model", "4096"}, {"reviewer-model", "2048"}} {
+	}{{sonnet, "4096"}, {opus, "2048"}, {sonnet, "4096"}, {opus, "2048"}} {
 		req := h.agent.calls[i]
 		if req.Model != want.model {
 			t.Errorf("call %d: --model = %q, want %q", i, req.Model, want.model)
@@ -74,7 +77,7 @@ func TestStagePinsPerRole(t *testing.T) {
 				t.Errorf("call %d: %s = %q, want %q", i, k, got, want.model)
 			}
 		}
-		if got := envValue(req.Env, "ANTHROPIC_DEFAULT_HAIKU_MODEL"); got != "small-model" {
+		if got := envValue(req.Env, "ANTHROPIC_DEFAULT_HAIKU_MODEL"); got != haiku {
 			t.Errorf("call %d: the background model = %q", i, got)
 		}
 		if got := envValue(req.Env, "CLAUDE_CODE_MAX_OUTPUT_TOKENS"); got != want.output {
@@ -84,16 +87,19 @@ func TestStagePinsPerRole(t *testing.T) {
 }
 
 func TestStagePinsFollowTheModelOverride(t *testing.T) {
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Overrides: task.Overrides{Model: "override-model"}}
-	h := newHarness(t, pinnedConfig(t), spec)
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Overrides: task.Overrides{Model: "claude-opus-5-5"}}
+	h := newGW(t, pinnedConfig(t), "observe", "").harness
+	if err := h.store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
 	impl, rev := h.agent.calls[0], h.agent.calls[1]
-	if impl.Model != "override-model" || envValue(impl.Env, "ANTHROPIC_DEFAULT_SONNET_MODEL") != "override-model" {
+	if impl.Model != "claude-opus-5-5" || envValue(impl.Env, "ANTHROPIC_DEFAULT_SONNET_MODEL") != "claude-opus-5-5" {
 		t.Errorf("implement: model %q, pin %q", impl.Model, envValue(impl.Env, "ANTHROPIC_DEFAULT_SONNET_MODEL"))
 	}
-	if rev.Model != "reviewer-model" {
+	if rev.Model != opus {
 		t.Errorf("the reviewer's model = %q", rev.Model)
 	}
 }
@@ -151,8 +157,14 @@ func TestGatewayRunKeepsRealKeyFromAgent(t *testing.T) {
 	}
 }
 
-func TestPinsWithoutBudgetWarnOnWriteFailure(t *testing.T) {
-	h := newHarness(t, pinnedConfig(t), nil)
+// With the budget off a run is what it was before the gateway existed:
+// models set in the configuration change nothing but --model. No pin is
+// put in the agent's environment, no settings file is written, and an
+// unwritable settings directory is of no concern.
+func TestBudgetOffSetsNoPinsAndWritesNoSettings(t *testing.T) {
+	cfg := strings.Replace(pinnedConfig(t), "auth: api-key", "auth: oauth", 1)
+	h := newHarness(t, cfg, nil)
+	h.deps.Env = append(h.deps.Env, "CLAUDE_CODE_OAUTH_TOKEN=oauth-token-for-tests-1234")
 	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
 	var logs bytes.Buffer
 	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
@@ -160,12 +172,52 @@ func TestPinsWithoutBudgetWarnOnWriteFailure(t *testing.T) {
 	if err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if !strings.Contains(logs.String(), "managed settings") || !strings.Contains(logs.String(), "level=WARN") {
-		t.Fatalf("no warning about the managed settings:\n%s", logs.String())
+	for i, req := range h.agent.calls {
+		for _, k := range []string{
+			"ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+			"CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "ANTHROPIC_BASE_URL",
+		} {
+			if got := envValue(req.Env, k); got != "" {
+				t.Errorf("call %d: %s = %q with the budget off", i, k, got)
+			}
+		}
 	}
-	// The pins still reach the agent through its environment.
-	if got := envValue(h.agent.calls[0].Env, "ANTHROPIC_DEFAULT_SONNET_MODEL"); got != "coder-model" {
-		t.Fatalf("pin = %q", got)
+	if h.agent.calls[0].Model != sonnet || h.agent.calls[1].Model != opus {
+		t.Errorf("--model = %q and %q", h.agent.calls[0].Model, h.agent.calls[1].Model)
+	}
+	if strings.Contains(logs.String(), "managed settings") {
+		t.Errorf("the log mentions managed settings:\n%s", logs.String())
+	}
+	if _, err := os.Stat(filepath.Dir(h.deps.ManagedSettingsPath)); !os.IsNotExist(err) {
+		t.Errorf("the settings directory was touched: %v", err)
+	}
+}
+
+// The managed settings hold the gateway's address and token: they are
+// gone when the run ends, whatever the run's outcome.
+func TestManagedSettingsRemovedAtRunEnd(t *testing.T) {
+	g := newGW(t, pinnedConfig(t), "observe", "")
+	h := g.harness
+	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(h.deps.ManagedSettingsPath); !os.IsNotExist(err) {
+		t.Fatalf("the managed settings outlived the run: %v", err)
+	}
+	// A run that fails after the first stage leaves none either.
+	g2 := newGW(t, pinnedConfig(t), "observe", "")
+	h2 := g2.harness
+	fail := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if _, err := os.Stat(h2.deps.ManagedSettingsPath); err != nil {
+			t.Errorf("no settings during the stage: %v", err)
+		}
+		return agent.Result{}, errors.New("agent crashed")
+	}
+	if _, err := h2.run(t, fail); err != nil {
+		t.Log(err)
+	}
+	if _, err := os.Stat(h2.deps.ManagedSettingsPath); !os.IsNotExist(err) {
+		t.Fatalf("the managed settings outlived a failed run: %v", err)
 	}
 }
 
@@ -313,18 +365,5 @@ func TestStaleManagedTmpFileIgnoredOtherEntriesRefused(t *testing.T) {
 	}
 	if rec, err := h2.run(t); err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".other.tmp") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-}
-
-func TestPinsWarningLoggedOnce(t *testing.T) {
-	h := newHarness(t, pinnedConfig(t), nil)
-	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
-	var logs bytes.Buffer
-	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
-	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
-		t.Fatal(err)
-	}
-	if n := strings.Count(logs.String(), "managed settings failed"); n != 1 {
-		t.Fatalf("the warning was logged %d times", n)
 	}
 }

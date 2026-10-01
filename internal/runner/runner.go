@@ -131,9 +131,9 @@ type run struct {
 	// stageExtra, when set, is called once after each stage's agent
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
-	warnedSettings bool // the pins-only managed settings warning was logged
-	warnedKnob     bool // the routing-settings knob's Cloud Run warning was logged
-	stageExtra     func(stage string) (violations []string, tokens int64)
+	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
+	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
+	stageExtra   func(stage string) (violations []string, tokens int64)
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu.
 	gw           *gateway.Server

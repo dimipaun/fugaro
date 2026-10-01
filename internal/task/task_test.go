@@ -200,7 +200,7 @@ func TestApply(t *testing.T) {
 	if err := s.Apply(cfg, w); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Agent.ReviewRounds != 4 || cfg.Agent.MaxBudgetUSD != 10 || cfg.Agent.Models.Coder != "m" || w.Timeouts.Total.Duration != 45*time.Minute {
+	if cfg.Agent.ReviewRounds != 4 || cfg.Agent.MaxBudgetUSD != 10 || cfg.Agent.ModelFor(config.RoleCoder) != "m" || cfg.Agent.ModelFor(config.RoleReviewer) != "m" || w.Timeouts.Total.Duration != 45*time.Minute {
 		t.Fatalf("not applied: %+v %+v", cfg.Agent, w.Timeouts)
 	}
 	s.Overrides = Overrides{TotalTimeout: "4m"}
@@ -276,6 +276,20 @@ func TestTaskOverrideModelIsCoder(t *testing.T) {
 	}
 	a := cfg.Agent
 	if a.ModelFor(config.RoleCoder) != "claude-opus-5-5" || a.ModelFor(config.RoleReviewer) != "claude-haiku-4-5" || a.Model != "claude-sonnet-5-5" {
+		t.Fatalf("agent = %+v", a)
+	}
+}
+
+// With no per-role models the override reaches every stage, as it always
+// has; the budget off must not change which model reviews.
+func TestTaskOverrideModelReachesAllStagesWithoutRoleModels(t *testing.T) {
+	s := &Spec{Overrides: Overrides{Model: "claude-opus-5-5"}}
+	cfg := &config.Config{Agent: config.Agent{Model: "claude-sonnet-5-5"}}
+	if err := s.Apply(cfg, &config.Workflow{}); err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Agent
+	if a.ModelFor(config.RoleCoder) != "claude-opus-5-5" || a.ModelFor(config.RoleReviewer) != "claude-opus-5-5" {
 		t.Fatalf("agent = %+v", a)
 	}
 }

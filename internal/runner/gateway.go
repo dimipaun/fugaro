@@ -212,8 +212,9 @@ func gatewayHalt(gh gateway.Halt) runstore.Halt {
 
 // closeGateway stops the gateway, once, and takes the run's model cost from
 // its ledger: the figure includes a call that settled after its stage's
-// wait ran out. It does nothing when the gateway never ran.
+// wait ran out. It also removes the managed settings file the run wrote.
 func (r *run) closeGateway() {
+	defer r.removeManagedSettings()
 	r.mu.Lock()
 	gw, closed := r.gw, r.gwClosed
 	r.gwClosed = true
