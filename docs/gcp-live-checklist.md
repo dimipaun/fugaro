@@ -561,7 +561,19 @@ run. What it showed for each:
 
 ## Results of the fifth live run (M9a)
 
-To be filled in by the live bring-up and migration (gcp-setup.md, "Installations from before M9a"). Record every `FACT` and each plan summary in the same way as the runs above.
+Migration and sandbox run on 2026-10-01 in the dev project. The installation is named `belong` (both repositories, EdgeWeb and the sandbox, are members of it). Check 20 is deferred to a later session; the other items are recorded below.
+
+- **Migrated.** Base `dev-419456d` (built from main at 419456d), then:
+  - `fugaro init --name belong`: plan 1 create, 2 updates, 0 destroys (the `fugaro_project=belong` bucket label, the marker object, and the base registry's cleanup policy set to dry run).
+  - EdgeWeb `init --repo`: 4 updates, 0 destroys (job env and check job env gain `FUGARO_PROJECT=belong` and `FUGARO_GCP_PROJECT`; the daily check unpaused).
+  - Sandbox `init --repo`: 2 updates, 0 destroys.
+  - Before the migration the EdgeWeb image check was paused; the sandbox has no check job (`rebuild: check: off`).
+- **Verified.** `fugaro/project.json` reads `{"gcp_project":"edge-devel-dimi","name":"belong","version":1}`; the runs bucket carries `fugaro_project=belong`; all three jobs (EdgeWeb, sandbox, EdgeWeb's check) carry both variables; the check job is `ENABLED`; `fugaro ls` prints `project: belong (GCP edge-devel-dimi)`; `fugaro validate` passes in both checkouts.
+- **Project selection.** With two project configs (belong and a dummy) and no selector, outside a checkout, `fugaro ls` refuses and lists both; with exactly one it works.
+- **Sandbox run (check 13) on the M9a runner:** `20261001-042234-4b0e` succeeded in about a minute, PR #23 (the sandbox). Model usage $0.33 notional on the subscription (`model_basis: subscription`), compute $0.001. No halt.
+- **EdgeWeb:** its `project: belong` line went in as PR #1774 (merged on the user's instruction). No EdgeWeb run was started.
+
+Still to record (nothing below ran yet): check 20, and the Vertex facts. Record every `FACT` and each plan summary in the same way as the runs above.
 
 - **The migration:** the plan summaries of `fugaro init --name` and of each `fugaro init --repo`; that `fugaro/project.json` shows the name and the GCP project; that the label `fugaro_project` is on the runs bucket; that each job carries `FUGARO_PROJECT` and `FUGARO_GCP_PROJECT`; that each repository's Scheduler job is `ENABLED` again.
 - **Project selection:** outside a checkout with two project configs and no selector, a command refuses and lists them; with exactly one, it works.
