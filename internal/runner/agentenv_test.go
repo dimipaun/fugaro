@@ -12,23 +12,13 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/lock"
-	"github.com/dimipaun/fugaro/internal/runner"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
-
-const (
-	realKey   = "test-key"
-	gwToken   = "gateway-token-abc"
-	gwBaseURL = "http://127.0.0.1:45678"
-)
-
-func onGateway(t *testing.T) {
-	t.Helper()
-	runner.SetGatewayForTest(t, &agent.Gateway{BaseURL: gwBaseURL, Token: gwToken})
-}
 
 // pinnedConfig is the fixture's configuration with models per role.
 func pinnedConfig(t *testing.T) string {
@@ -109,14 +99,14 @@ func TestStagePinsFollowTheModelOverride(t *testing.T) {
 }
 
 func TestManagedSettingsBeforeEveryStage(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, pinnedConfig(t), nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "", anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 1}))
+	h := g.harness
 	var seen []map[string]string
 	read := func(inner step) step {
 		return func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 			env, deny, raw := settingsEnv(t, h)
 			seen = append(seen, env)
-			if strings.Contains(raw, realKey) {
+			if strings.Contains(raw, plantedKey) {
 				t.Errorf("the real key is in the managed settings: %s", raw)
 			}
 			if len(deny) != 2 {
@@ -131,10 +121,11 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 	if len(seen) != 4 {
 		t.Fatalf("%d stages read the settings", len(seen))
 	}
-	for i, model := range []string{"coder-model", "reviewer-model", "coder-model", "reviewer-model"} {
+	for i := range seen {
 		env := seen[i]
-		if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != model || env["ANTHROPIC_BASE_URL"] != gwBaseURL || env["ANTHROPIC_API_KEY"] != gwToken {
-			t.Errorf("stage %d settings env = %v, want the %s pins and the gateway", i, env, model)
+		if env["ANTHROPIC_DEFAULT_SONNET_MODEL"] != sonnet || !strings.HasPrefix(env["ANTHROPIC_BASE_URL"], "http://127.0.0.1:") ||
+			env["ANTHROPIC_API_KEY"] == "" || env["ANTHROPIC_API_KEY"] == plantedKey || env["ANTHROPIC_BASE_URL"] != seen[0]["ANTHROPIC_BASE_URL"] {
+			t.Errorf("stage %d settings env = %v, want the pins and the gateway", i, env)
 		}
 		if !strings.Contains(env["NO_PROXY"], "127.0.0.1") {
 			t.Errorf("stage %d: NO_PROXY = %q", i, env["NO_PROXY"])
@@ -143,18 +134,18 @@ func TestManagedSettingsBeforeEveryStage(t *testing.T) {
 }
 
 func TestGatewayRunKeepsRealKeyFromAgent(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
 	for i, req := range h.agent.calls {
 		for _, kv := range req.Env {
-			if strings.Contains(kv, realKey) {
+			if strings.Contains(kv, plantedKey) {
 				t.Errorf("call %d: the real key is in the agent's env: %s", i, kv)
 			}
 		}
-		if envValue(req.Env, "ANTHROPIC_API_KEY") != gwToken || envValue(req.Env, "ANTHROPIC_BASE_URL") != gwBaseURL {
+		if k := envValue(req.Env, "ANTHROPIC_API_KEY"); k == "" || len(k) != 64 || !strings.HasPrefix(envValue(req.Env, "ANTHROPIC_BASE_URL"), "http://127.0.0.1:") {
 			t.Errorf("call %d: the agent's env lacks the gateway: %v", i, req.Env)
 		}
 	}
@@ -178,13 +169,18 @@ func TestPinsWithoutBudgetWarnOnWriteFailure(t *testing.T) {
 	}
 }
 
-func TestGatewayManagedSettingsWriteFailureFailsStage(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+func TestGatewayManagedDirNotWritableFailsBootstrap(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
-	rec, _ := h.run(t)
-	if rec.Status != runstore.StatusFailed || !strings.Contains(rec.Reason, "writing Claude Code's managed settings") {
-		t.Fatalf("rec = %+v", rec)
+	b := withBucket(h)
+	rec, err := h.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "can't hold Claude Code's managed settings") ||
+		!strings.Contains(rec.Reason, "M9a base image") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
+		t.Fatal("the lock was taken before the settings directory was checked")
 	}
 	if len(h.agent.calls) != 0 {
 		t.Fatal("the agent started without its managed settings")
@@ -209,8 +205,8 @@ func TestRepoSettingsRerouteRefused(t *testing.T) {
 	// writing it is TestSettingsWrittenByImplementRefusedBeforeReview.
 	for _, file := range []string{".claude/settings.json"} {
 		t.Run(file, func(t *testing.T) {
-			onGateway(t)
-			h := newHarnessFiles(t, "", nil, map[string]string{file: rerouting})
+			g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{file: rerouting})
+			h := g.harness
 			// Someone else holds the branch: a refusal that came after the
 			// lock would say "branch busy" instead.
 			b := withBucket(h)
@@ -235,8 +231,8 @@ func TestRepoSettingsRerouteRefused(t *testing.T) {
 }
 
 func TestSettingsWrittenByImplementRefusedBeforeReview(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	writes := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		res, err := implement("feature")(t, ctx, req)
 		shell(t, req, "mkdir -p .claude && printf '%s' '"+rerouting+"' > .claude/settings.local.json")
@@ -252,8 +248,8 @@ func TestSettingsWrittenByImplementRefusedBeforeReview(t *testing.T) {
 }
 
 func TestUserSettingsRerouteRefused(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	home := envValue(h.deps.Env, "HOME")
 	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o755); err != nil {
 		t.Fatal(err)
@@ -268,8 +264,8 @@ func TestUserSettingsRerouteRefused(t *testing.T) {
 }
 
 func TestManagedDirectoryExtraEntryRefused(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	if err := os.WriteFile(filepath.Join(filepath.Dir(h.deps.ManagedSettingsPath), "managed-mcp.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -280,8 +276,8 @@ func TestManagedDirectoryExtraEntryRefused(t *testing.T) {
 }
 
 func TestSettingsNotJSONRefusedWithGateway(t *testing.T) {
-	onGateway(t)
-	h := newHarnessFiles(t, "", nil, map[string]string{".claude/settings.json": "{not json"})
+	g := newGWFiles(t, gwConfig(t, ""), "observe", "", map[string]string{".claude/settings.json": "{not json"})
+	h := g.harness
 	rec, err := h.run(t)
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".claude/settings.json") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -297,8 +293,8 @@ func TestRepoSettingsIgnoredWithoutGateway(t *testing.T) {
 }
 
 func TestStaleManagedTmpFileIgnoredOtherEntriesRefused(t *testing.T) {
-	onGateway(t)
-	h := newHarness(t, "", nil)
+	g := newGW(t, gwConfig(t, ""), "observe", "")
+	h := g.harness
 	dir := filepath.Dir(h.deps.ManagedSettingsPath)
 	stale := filepath.Join(dir, ".managed-settings-123.tmp")
 	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
@@ -310,7 +306,7 @@ func TestStaleManagedTmpFileIgnoredOtherEntriesRefused(t *testing.T) {
 	if _, err := os.Stat(stale); !os.IsNotExist(err) {
 		t.Fatalf("the leftover was not removed: %v", err)
 	}
-	h2 := newHarness(t, "", nil)
+	h2 := newGW(t, gwConfig(t, ""), "observe", "").harness
 	other := filepath.Join(filepath.Dir(h2.deps.ManagedSettingsPath), ".other.tmp")
 	if err := os.WriteFile(other, []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)

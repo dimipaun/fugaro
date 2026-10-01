@@ -72,6 +72,8 @@ type FakeCall struct {
 	Prompt string   `json:"prompt"`
 	Env    []string `json:"env"`
 	Dir    string   `json:"dir"`
+	// API is the status of each model call the invocation made.
+	API []int `json:"api"`
 }
 
 // FakeClaudeCalls returns the invocations the fake at bin has recorded.

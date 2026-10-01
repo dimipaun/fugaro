@@ -145,9 +145,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		if r.Reason != "" {
 			row.Reason = r.Reason
 		}
-		if r.Status == runstore.StatusHalted {
-			row.Halt = r.Halt
-		}
+		// Whatever the status: a halted run whose finalize then failed is
+		// an infra_error that still says what halted it.
+		row.Halt = r.Halt
 		if r.PR != nil {
 			row.PRURL = r.PR.URL
 		}

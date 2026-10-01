@@ -80,7 +80,7 @@ func TestHaltMidImplementOpensDraft(t *testing.T) {
 	if !strings.HasPrefix(lines[0], "### Fugaro run `"+runID+"`") || lines[1] != "" || !strings.HasPrefix(lines[2], "**Halted:** the per-run dollar cap was reached (run spent $5.00 of $5.00) at 2026-09-30 10:00:00 UTC — this run spent $1.00.") {
 		t.Fatalf("report starts:\n%s", strings.Join(lines[:4], "\n"))
 	}
-	if !strings.Contains(lastComment(t, h), "budget.per_run_usd") || !strings.Contains(lastComment(t, h), "fugaro run --pr N") {
+	if !strings.Contains(lastComment(t, h), "budget.per_run_usd") || !strings.Contains(lastComment(t, h), "fugaro run --pr 1") {
 		t.Fatalf("report does not say how to continue:\n%s", lastComment(t, h))
 	}
 	if strings.Contains(lastComment(t, h), "Log tail") {
@@ -380,17 +380,16 @@ func TestTokenCapZeroMeansNone(t *testing.T) {
 }
 
 func TestBootstrapHaltIsHaltedExitZero(t *testing.T) {
-	h := newHarness(t, "", nil)
+	// The real trigger: an api-key run that enforces and has no cap.
+	g := newGW(t, "", "enforce", "")
+	h := g.harness
 	b := withBucket(h)
-	runner.SetBootstrapHaltForTest(t, func() *runstore.Halt {
-		return &runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: runCapHalt.At, Detail: "no per-run cap"}
-	})
 	rec, err := h.run(t) // no stage may run
 	if err != nil {
 		t.Fatalf("a bootstrap halt returned %v, want nil so exec exits 0", err)
 	}
 	if rec.Status != runstore.StatusHalted || rec.Outcome != runstore.OutcomeNone || rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap ||
-		rec.Reason != "halted: no_cap: no per-run cap" || rec.FinishedAt == nil {
+		!strings.HasPrefix(rec.Reason, "halted: no_cap: ") || rec.FinishedAt == nil {
 		t.Fatalf("record = %+v", rec)
 	}
 	stored, err := h.store.ReadRecord(context.Background())
@@ -405,6 +404,38 @@ func TestBootstrapHaltIsHaltedExitZero(t *testing.T) {
 	}
 	if ok, _ := b.Exists(context.Background(), lock.Key("acme-app", "fugaro/"+runID)); ok {
 		t.Fatal("the branch lock was taken")
+	}
+}
+
+func TestHaltDetailIsRedacted(t *testing.T) {
+	b := newHandleBox(t)
+	h := newHarness(t, "", nil)
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		b.h.HaltNow(runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: runCapHalt.At, Detail: "upstream said test-key"})
+		return agent.Result{}, nil
+	}
+	rec, err := h.run(t, leak)
+	if err != nil || rec.Halt == nil || strings.Contains(rec.Halt.Detail, "test-key") || strings.Contains(rec.Reason, "test-key") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+func TestHaltReportAdvice(t *testing.T) {
+	at := runCapHalt.At
+	rec := &runstore.Record{RunID: runID, Status: runstore.StatusHalted, Outcome: runstore.OutcomeNone, CostUSD: 3.5,
+		Halt: &runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: at, Detail: "no cap"}}
+	got := runner.Report(rec, "runs/x/", nil)
+	if strings.Contains(got, "--pr N") || !strings.Contains(got, "start the run again") || !strings.Contains(got, "this run spent $3.50") {
+		t.Fatalf("a bootstrap halt's report:\n%s", got)
+	}
+	// A subscription run's model figure is notional: never "spent".
+	c := runstore.ModelOnlyCost(3.5, runstore.BasisSubscription)
+	rec.Cost = &c
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", At: at, Detail: "run used 9 tokens of 5"}
+	rec.Outcome, rec.PR = runstore.OutcomeDraft, &runstore.PRRef{Number: 42}
+	got = runner.Report(rec, "runs/x/", nil)
+	if strings.Contains(got, "spent") || !strings.Contains(got, "fugaro run --pr 42") {
+		t.Fatalf("a subscription run's report:\n%s", got)
 	}
 }
 

@@ -19,15 +19,19 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/oauth2"
+
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -84,6 +88,20 @@ type Deps struct {
 	// ManagedSettingsPath is where the managed Claude Code settings are
 	// written before each stage; empty means agent.ManagedSettingsPath.
 	ManagedSettingsPath string
+	// Spend is the job's budget, from SpendFromEnv; the zero value is off.
+	Spend Spend
+	// SpendErr is SpendFromEnv's error: bootstrap fails with it once the
+	// run's record is claimed.
+	SpendErr error
+	// GatewayUpstream, for tests only, is http://127.0.0.1:<port>: where the
+	// gateway sends its calls instead of the real API. Empty is the real one.
+	GatewayUpstream string
+	// GatewayStageWait, for tests only, shortens how long the gateway waits
+	// for a stage's calls in flight; zero is 30 seconds.
+	GatewayStageWait time.Duration
+	// VertexTokens is the gateway's Vertex credential; nil is
+	// google.DefaultTokenSource (the metadata server on Cloud Run).
+	VertexTokens oauth2.TokenSource
 }
 
 type run struct {
@@ -114,15 +132,26 @@ type run struct {
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
 	warnedSettings bool // the pins-only managed settings warning was logged
+	warnedKnob     bool // the routing-settings knob's Cloud Run warning was logged
 	stageExtra     func(stage string) (violations []string, tokens int64)
-	provider       gitprov.Provider
-	providerKind   string
-	providerFrom   string          // where providerKind came from, for mismatch errors
-	credURL        string          // scheme://host of an HTTPS origin; "" when git needs no token
-	auth           gitprov.GitAuth // current git credentials
-	authWarned     bool            // whether a mid-run refresh failure has already been logged
-	tail           *LogTail        // output of the first failed stage, for the draft PR
-	lock           *lock.Lock      // the branch lock, while held
+	// The gateway, when the budget is on for an api-key or vertex run, and
+	// what its stages cost; all guarded by mu.
+	gw           *gateway.Server
+	gwAgent      *agent.Gateway
+	gwClosed     bool
+	gwUsed       pricing.Micros
+	lastStage    *gateway.StageReport
+	modelBy      map[string]pricing.Micros
+	unreconciled pricing.Micros
+	unparsed     int
+	provider     gitprov.Provider
+	providerKind string
+	providerFrom string          // where providerKind came from, for mismatch errors
+	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
+	auth         gitprov.GitAuth // current git credentials
+	authWarned   bool            // whether a mid-run refresh failure has already been logged
+	tail         *LogTail        // output of the first failed stage, for the draft PR
+	lock         *lock.Lock      // the branch lock, while held
 	// owned is whether this execution owns result.json: it created the
 	// first record, or found one naming itself. Until then the record is
 	// only ever created if absent, never overwritten (design §4.7).
@@ -207,6 +236,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			rec = nil
 			return
 		}
+		r.closeGateway()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -277,6 +307,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	r.runAgentLoop(runCtx)
+	// Finalize makes no model calls: the gateway is closed first, and the
+	// run's model cost is its ledger's.
+	r.closeGateway()
 	if errors.Is(context.Cause(runCtx), ErrCancelled) {
 		// The cancel may have landed after the last stage already returned
 		// successfully; make sure it still turns into a draft PR, unless a
@@ -648,6 +681,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// always told apart here (design §4.7).
 		return err
 	}
+	if r.d.SpendErr != nil {
+		return fmt.Errorf("the budget in the job's environment: %w", r.d.SpendErr)
+	}
 	// A cancel that landed before the run started is seen now, not only
 	// at the watcher's first poll, before anything is cloned or locked.
 	if ok, err := r.d.Store.CancelRequested(ctx); err != nil {
@@ -735,15 +771,8 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
 	}
-	if r.gatewayOn() {
-		if reason := r.checkSettingsRouting(); reason != "" {
-			return errors.New(reason)
-		}
-	}
-	if bootstrapHalt != nil {
-		if h := bootstrapHalt(); h != nil {
-			return &HaltError{*h}
-		}
+	if err := r.checkBudget(); err != nil {
+		return err
 	}
 	// The lock comes before anything changes remote state: the clone and
 	// checkout above are local, and the provider has only been asked for
@@ -812,6 +841,14 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return fmt.Errorf("building git credentials: %w", err)
 		}
 		maps.Copy(set, agentAuthVars)
+	}
+	if r.gatewayOn() {
+		// After the lock and the provider, so a run that never gets as far
+		// starts nothing; before the agent's environment, which needs the
+		// gateway's URL and token.
+		if err := r.startGateway(ctx); err != nil {
+			return err
+		}
 	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
 		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
@@ -1009,18 +1046,23 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.mu.Unlock()
 		cancelCause(nil)
 	}()
+	var watching sync.WaitGroup
+	stopWatch := func() {}
+	if r.gw != nil {
+		r.beginGatewayStage(name)
+		done := make(chan struct{})
+		watching.Add(1)
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
+	}
 	res, err := r.d.Agent.Run(stageCtx, req)
+	stopWatch()
 	_ = tw.Flush()
 	relay.Flush()
 	_ = sw.Flush()
 	if perr := r.d.Store.PutFile(context.WithoutCancel(ctx), fmt.Sprintf("transcripts/%s-%d.jsonl", name, n), transcript.Bytes(), "application/x-ndjson"); perr != nil {
 		log.Warn("storing transcript failed", "err", perr)
 	}
-	r.rec.CostUSD += res.CostUSD
-	r.updateCost()
-	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
-	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
-
 	// What the gateway saw comes first, whatever the agent reported.
 	var violations []string
 	if extra != nil {
@@ -1030,6 +1072,22 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.gatewayTokens = gw
 		r.mu.Unlock()
 	}
+	if r.gw != nil {
+		// The gateway's figure is the run's cost; Claude Code's is only a
+		// cross-check. A halt it raised after the watcher looked is
+		// recorded now.
+		r.drainHalt()
+		r.crossCheckCost(name, res.CostUSD)
+		r.mu.Lock()
+		r.rec.CostUSD = r.gwUsed.USD()
+		r.mu.Unlock()
+	} else {
+		r.rec.CostUSD += res.CostUSD
+	}
+	r.updateCost()
+	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
+	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
+
 	// A halt recorded first decides the stage, whatever the agent says:
 	// is_error, any subtype (even success) or exit code, a kill by the
 	// halt's own cancel included. No log tail: nothing failed.

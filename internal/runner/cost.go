@@ -21,6 +21,21 @@ func (r *run) updateCost() {
 			c = runstore.NewCost(r.rec.CostUSD, compute, basis)
 		}
 	}
+	r.mu.Lock()
+	gateway := r.gw != nil
+	c.UsageUnparsed = r.unparsed
+	if gateway {
+		c.Unreconciled = r.unreconciled.USD()
+		c.ModelBy = make(map[string]float64, len(r.modelBy))
+		for m, v := range r.modelBy {
+			c.ModelBy[m] = v.USD()
+		}
+	}
+	r.mu.Unlock()
+	c.ModelSource = "claude-code"
+	if gateway {
+		c.ModelSource = "gateway"
+	}
 	r.rec.Cost = &c
 }
 

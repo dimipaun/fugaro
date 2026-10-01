@@ -25,17 +25,6 @@ func strip(repo *gitops.Repo) *gitops.Repo {
 // maxSettingsFile bounds a settings file the routing check reads.
 const maxSettingsFile = 1 << 20
 
-// gatewayForTest, when set, makes every run behave as if the gateway were on
-// and pointing here.
-var gatewayForTest *agent.Gateway
-
-// gateway is where the agent's model calls go, nil when they go straight to
-// the provider.
-func (r *run) gateway() *agent.Gateway { return gatewayForTest }
-
-// gatewayOn reports whether the agent's calls go through the gateway.
-func (r *run) gatewayOn() bool { return r.gateway() != nil }
-
 // managedPath is where the managed settings file goes.
 func (r *run) managedPath() string {
 	if r.d.ManagedSettingsPath != "" {
@@ -106,6 +95,9 @@ func (r *run) writeManagedSettings(pins map[string]string) error {
 // directory. The runner's own managed file is not read. It returns the
 // reason, or "" when all is well.
 func (r *run) checkSettingsRouting() string {
+	if r.routingKnob() {
+		return ""
+	}
 	parent := r.parentEnv()
 	files, err := agent.SettingsFiles(r.d.WorkDir, parent["HOME"], parent["CLAUDE_CONFIG_DIR"], r.managedPath())
 	if err != nil {

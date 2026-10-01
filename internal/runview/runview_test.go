@@ -311,3 +311,15 @@ func TestJoinHalted(t *testing.T) {
 		t.Fatalf("halt = %+v", row.Halt)
 	}
 }
+
+// A halted run whose finalize then failed is an infra_error that still says
+// what halted it: the halt is shown whatever the status.
+func TestJoinInfraErrorKeepsHalt(t *testing.T) {
+	h := &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: now, Detail: "run cap $1.00 reached"}
+	r := rec(runstore.StatusInfraError, nil)
+	r.Halt = h
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Status != "infra_error" || row.Halt == nil || *row.Halt != *h {
+		t.Fatalf("row = %+v", row)
+	}
+}

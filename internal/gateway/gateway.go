@@ -66,6 +66,9 @@ type Options struct {
 	Cap      pricing.Micros // enforce: > 0; observe: 0 accounts only
 	Log      *slog.Logger   // the runner's, which redacts; nil discards
 	Client   *http.Client   // nil: a default with no overall timeout (streams are long)
+	// EndStageWait bounds how long EndStage waits for a stage's calls in
+	// flight; 0 is 30 s. Tests shorten it.
+	EndStageWait time.Duration
 }
 
 // DefaultGeos are the usage.inference_geo values a default request is
@@ -316,7 +319,11 @@ func (s *Server) EndStage() StageReport {
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
-	timer := time.NewTimer(endStageWait)
+	wait := endStageWait
+	if s.o.EndStageWait > 0 {
+		wait = s.o.EndStageWait
+	}
+	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	select {
 	case <-done:

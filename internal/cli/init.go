@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -1419,7 +1420,7 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 
 // vertexBudgetRefusal is the refusal of a Vertex workflow under a budget
 // that enforces: the gateway can't yet be relied on to cap Vertex spend.
-const vertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
+const vertexBudgetRefusal = runner.VertexBudgetRefusal
 
 // checkVertexBudget refuses a repository whose fugaro.yaml authenticates
 // the agent through Vertex AI (agent.auth: vertex) under a project budget

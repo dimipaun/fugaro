@@ -9,9 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -27,6 +30,21 @@ type call struct {
 	Exit       int             `json:"exit"`
 	SleepS     float64         `json:"sleep_s"`
 	NoResult   bool            `json:"no_result"`
+	// API are model calls made after the shell, through the gateway the
+	// environment points at.
+	API []apiCall `json:"api"`
+}
+
+// apiCall is one model call (Parallel > 1: that many at once). It goes to
+// $ANTHROPIC_BASE_URL/v1/messages with x-api-key $ANTHROPIC_API_KEY, or to
+// $ANTHROPIC_VERTEX_BASE_URL's rawPredict path.
+type apiCall struct {
+	Model     string `json:"model"`
+	MaxTokens int64  `json:"max_tokens"`
+	BodyBytes int    `json:"body_bytes"` // padded prompt size
+	CacheTTL  string `json:"cache_ttl"`  // "", "5m", "1h"
+	Stream    bool   `json:"stream"`
+	Parallel  int    `json:"parallel"`
 }
 
 type invocation struct {
@@ -34,6 +52,8 @@ type invocation struct {
 	Prompt string   `json:"prompt"`
 	Env    []string `json:"env"`
 	Dir    string   `json:"dir"`
+	// API is the status of each model call the invocation made, in order.
+	API []int `json:"api,omitempty"`
 }
 
 func main() {
@@ -69,6 +89,19 @@ func main() {
 		cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 		if err := cmd.Run(); err != nil {
 			fmt.Fprintf(os.Stderr, "fakeclaude: shell: %v\n", err)
+		}
+	}
+	if len(c.API) > 0 {
+		statuses, refusal := makeCalls(c.API)
+		recordStatuses(callsPath, statuses)
+		if refusal != "" {
+			// As Claude Code ends when the API refuses with x-should-retry:
+			// false: an error result, exit 1.
+			emit(map[string]any{
+				"type": "result", "subtype": "error_during_execution", "is_error": true, "total_cost_usd": c.Cost,
+				"session_id": sid, "result": refusal,
+			})
+			os.Exit(1)
 		}
 	}
 	if c.SleepS > 0 {
@@ -163,4 +196,114 @@ func appendLine(path string, v any) {
 func fail(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "fakeclaude: "+format+"\n", args...)
 	os.Exit(3)
+}
+
+// makeCalls sends each call (a parallel one, all its copies at once) and
+// returns every status in order. The second result is the body of the first
+// refusal the client may not retry (status >= 400 with x-should-retry:
+// false), or "".
+func makeCalls(calls []apiCall) ([]int, string) {
+	var statuses []int
+	refusal := ""
+	for _, c := range calls {
+		n := max(c.Parallel, 1)
+		type result struct {
+			status int
+			body   string
+			retry  bool
+		}
+		results := make([]result, n)
+		var wg sync.WaitGroup
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[i].status, results[i].body, results[i].retry = send(c)
+			}()
+		}
+		wg.Wait()
+		for _, r := range results {
+			statuses = append(statuses, r.status)
+			if r.status >= 400 && !r.retry && refusal == "" {
+				refusal = r.body
+			}
+		}
+	}
+	return statuses, refusal
+}
+
+// send makes one call and reads the whole response.
+func send(c apiCall) (status int, body string, retry bool) {
+	url, key, payload := request(c)
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(payload))
+	if err != nil {
+		return 0, err.Error(), true
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("anthropic-version", "2023-06-01")
+	if key != "" {
+		req.Header.Set("x-api-key", key)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err.Error(), true
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(b), resp.Header.Get("x-should-retry") != "false"
+}
+
+// request is where a call goes, with which key, and its body.
+func request(c apiCall) (url, key, payload string) {
+	pad := strings.Repeat("x", max(c.BodyBytes-200, 0))
+	block := map[string]any{"type": "text", "text": "hello " + pad}
+	switch c.CacheTTL {
+	case "":
+	case "5m", "1h":
+		block["cache_control"] = map[string]any{"type": "ephemeral", "ttl": c.CacheTTL}
+	default:
+		block["cache_control"] = map[string]any{"type": "ephemeral"}
+	}
+	body := map[string]any{
+		"max_tokens": c.MaxTokens,
+		"messages":   []any{map[string]any{"role": "user", "content": []any{block}}},
+	}
+	if c.Stream {
+		body["stream"] = true
+	}
+	if vb := os.Getenv("ANTHROPIC_VERTEX_BASE_URL"); vb != "" && os.Getenv("ANTHROPIC_BASE_URL") == "" {
+		body["anthropic_version"] = "vertex-2023-10-16"
+		method := "rawPredict"
+		if c.Stream {
+			method = "streamRawPredict"
+		}
+		url = strings.TrimRight(vb, "/") + "/projects/" + os.Getenv("ANTHROPIC_VERTEX_PROJECT_ID") + "/locations/" + os.Getenv("CLOUD_ML_REGION") +
+			"/publishers/anthropic/models/" + c.Model + ":" + method
+	} else {
+		body["model"] = c.Model
+		url = strings.TrimRight(os.Getenv("ANTHROPIC_BASE_URL"), "/") + "/v1/messages"
+		key = os.Getenv("ANTHROPIC_API_KEY")
+	}
+	b, _ := json.Marshal(body)
+	return url, key, string(b)
+}
+
+// recordStatuses adds the calls' statuses to the invocation's own line in
+// calls.jsonl, which is the last.
+func recordStatuses(path string, statuses []int) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		fail("%v", err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	var inv invocation
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &inv); err != nil {
+		fail("%v", err)
+	}
+	inv.API = statuses
+	b, _ := json.Marshal(inv)
+	lines[len(lines)-1] = string(b)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		fail("%v", err)
+	}
 }

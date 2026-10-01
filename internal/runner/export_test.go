@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/cache"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -73,20 +72,11 @@ func OnRun(t *testing.T, f func(*RunHandle)) {
 	t.Cleanup(func() { onNewRun = prev })
 }
 
-// SetBootstrapHaltForTest makes bootstrap ask f, after the project check
-// and before the lock, whether to halt.
-func SetBootstrapHaltForTest(t *testing.T, f func() *runstore.Halt) {
-	prev := bootstrapHalt
-	bootstrapHalt = f
-	t.Cleanup(func() { bootstrapHalt = prev })
-}
-
-// SetGatewayForTest makes every run of t behave as if the gateway were on
-// and at gw.
-func SetGatewayForTest(t *testing.T, gw *agent.Gateway) {
-	prev := gatewayForTest
-	gatewayForTest = gw
-	t.Cleanup(func() { gatewayForTest = prev })
+// SetHaltGrace shortens how long a halted stage's agent gets to exit by itself.
+func SetHaltGrace(t *testing.T, d time.Duration) {
+	prev := haltGrace
+	haltGrace = d
+	t.Cleanup(func() { haltGrace = prev })
 }
 
 // SetStrictHaltCheck makes finalize panic when a halt and a cancel are both recorded.
