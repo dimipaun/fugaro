@@ -40,14 +40,18 @@ type Spend struct {
 // On reports whether the budget accounts for spend (observe or enforce).
 func (s Spend) On() bool { return s.Mode == "observe" || s.Mode == "enforce" }
 
-// SpendFromEnv reads the budget from the job's environment. Unset, or
-// off, is off, whatever else is set. A malformed value is an error, which
-// the runner reports as an infra_error at bootstrap: never a silent off.
-func SpendFromEnv(getenv func(string) string) (Spend, error) {
-	tokens, models, err := policyFromEnv(getenv)
+// SpendFromEnv reads the budget from the job's environment. lookup reports
+// whether a variable is present, because the two policy variables must tell
+// "not set" from "set to nothing": a present-but-empty one is damage to the
+// ceiling and an error, never a silent unset. Unset, or off, is off, whatever
+// else is set. A malformed value is an error, which the runner reports as an
+// infra_error at bootstrap: never a silent off.
+func SpendFromEnv(lookup func(string) (string, bool)) (Spend, error) {
+	tokens, models, err := policyFromEnv(lookup)
 	if err != nil {
 		return Spend{}, err
 	}
+	getenv := func(k string) string { v, _ := lookup(k); return v }
 	s, err := spendFromEnv(getenv)
 	if err != nil {
 		return Spend{}, err
@@ -58,9 +62,9 @@ func SpendFromEnv(getenv func(string) string) (Spend, error) {
 
 // policyFromEnv reads the token cap and the allow-list, which hold whatever
 // the budget mode is.
-func policyFromEnv(getenv func(string) string) (int64, []string, error) {
+func policyFromEnv(lookup func(string) (string, bool)) (int64, []string, error) {
 	var tokens int64
-	if v := getenv(MaxRunTokensEnv); v != "" {
+	if v, ok := lookup(MaxRunTokensEnv); ok {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n <= 0 {
 			return 0, nil, fmt.Errorf("%s %q: it must be a whole number of tokens, more than 0", MaxRunTokensEnv, v)
@@ -68,7 +72,9 @@ func policyFromEnv(getenv func(string) string) (int64, []string, error) {
 		tokens = n
 	}
 	var models []string
-	if v := getenv(AllowedModelsEnv); v != "" {
+	if v, ok := lookup(AllowedModelsEnv); ok {
+		// "" splits to one empty entry, which CheckModelID refuses: a
+		// present-but-empty list is an error, never "no list".
 		for _, m := range strings.Split(v, ",") {
 			if msg := config.CheckModelID(m); msg != "" {
 				return 0, nil, fmt.Errorf("%s %q: model %q %s", AllowedModelsEnv, v, m, msg)

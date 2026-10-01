@@ -8,18 +8,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
-func env(kv ...string) func(string) string {
+func env(kv ...string) func(string) (string, bool) {
 	m := map[string]string{}
 	for i := 0; i < len(kv); i += 2 {
 		m[kv[i]] = kv[i+1]
 	}
-	return func(k string) string { return m[k] }
+	return func(k string) (string, bool) { v, ok := m[k]; return v, ok }
 }
 
 func TestSpendFromEnv(t *testing.T) {
 	const sonnet = `{"claude-sonnet-5-5":{"input_per_m":30,"output_per_m":150}}`
 	for name, tc := range map[string]struct {
-		env     func(string) string
+		env     func(string) (string, bool)
 		mode    string
 		cap     pricing.Micros
 		on      bool
@@ -80,24 +80,27 @@ func TestSpendFromEnv(t *testing.T) {
 
 func TestSpendFromEnvPolicyKeys(t *testing.T) {
 	for name, tc := range map[string]struct {
-		env    func(string) string
+		env    func(string) (string, bool)
 		tokens int64
 		models []string
 		err    string
 	}{
-		"neither":          {env(BudgetModeEnv, "observe"), 0, nil, ""},
-		"tokens":           {env(MaxRunTokensEnv, "250000"), 250000, nil, ""},
-		"both, mode off":   {env(BudgetModeEnv, "off", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1,claude-b-2"), 7, []string{"claude-a-1", "claude-b-2"}, ""},
-		"enforce and both": {env(BudgetModeEnv, "enforce", MaxRunUSDEnv, "5", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1"), 7, []string{"claude-a-1"}, ""},
-		"zero tokens":      {env(MaxRunTokensEnv, "0"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
-		"negative tokens":  {env(MaxRunTokensEnv, "-5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
-		"float tokens":     {env(MaxRunTokensEnv, "1.5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
-		"NaN tokens":       {env(MaxRunTokensEnv, "NaN"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
-		"word tokens":      {env(MaxRunTokensEnv, "lots"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
-		"empty entry":      {env(AllowedModelsEnv, "claude-a-1,,claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
-		"only a comma":     {env(AllowedModelsEnv, ","), 0, nil, "FUGARO_ALLOWED_MODELS"},
-		"alias":            {env(AllowedModelsEnv, "sonnet"), 0, nil, "FUGARO_ALLOWED_MODELS"},
-		"space":            {env(AllowedModelsEnv, "claude-a-1, claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"neither":                {env(BudgetModeEnv, "observe"), 0, nil, ""},
+		"tokens":                 {env(MaxRunTokensEnv, "250000"), 250000, nil, ""},
+		"both, mode off":         {env(BudgetModeEnv, "off", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1,claude-b-2"), 7, []string{"claude-a-1", "claude-b-2"}, ""},
+		"enforce and both":       {env(BudgetModeEnv, "enforce", MaxRunUSDEnv, "5", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1"), 7, []string{"claude-a-1"}, ""},
+		"empty tokens":           {env(MaxRunTokensEnv, ""), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"empty models":           {env(AllowedModelsEnv, ""), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"empty tokens, mode off": {env(BudgetModeEnv, "off", MaxRunTokensEnv, ""), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"zero tokens":            {env(MaxRunTokensEnv, "0"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"negative tokens":        {env(MaxRunTokensEnv, "-5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"float tokens":           {env(MaxRunTokensEnv, "1.5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"NaN tokens":             {env(MaxRunTokensEnv, "NaN"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"word tokens":            {env(MaxRunTokensEnv, "lots"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"empty entry":            {env(AllowedModelsEnv, "claude-a-1,,claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"only a comma":           {env(AllowedModelsEnv, ","), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"alias":                  {env(AllowedModelsEnv, "sonnet"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"space":                  {env(AllowedModelsEnv, "claude-a-1, claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, err := SpendFromEnv(tc.env)

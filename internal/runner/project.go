@@ -28,16 +28,9 @@ func (r *run) checkProject(ctx context.Context, cfg *config.Config) error {
 	if r.follow != nil {
 		return nil
 	}
-	def, err := r.repo.DefaultBranch(ctx)
+	data, def, err := r.defaultBranchFile(ctx)
 	if err != nil {
-		return fmt.Errorf("finding the default branch to read fugaro.yaml from: %w", err)
-	}
-	if err := r.repo.FetchBase(ctx, def); err != nil {
-		return fmt.Errorf("fetching default branch %s: %w", def, err)
-	}
-	data, err := r.repo.ShowFile(ctx, "origin/"+def, "fugaro.yaml")
-	if err != nil {
-		return fmt.Errorf("reading fugaro.yaml at origin/%s: %w", def, err)
+		return err
 	}
 	if err := r.projectOfFile(def, data); err != nil {
 		return err

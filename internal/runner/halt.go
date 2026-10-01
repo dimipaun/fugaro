@@ -114,7 +114,7 @@ func (r *run) countTokens(res agent.Result) {
 // reason, and a cap must not turn it into a halt.
 func (r *run) capReached() bool {
 	r.mu.Lock()
-	tokens, limit := r.tokens, r.cfg.Agent.MaxRunTokens
+	tokens, limit := r.tokens, r.spend.MaxRunTokens
 	r.mu.Unlock()
 	if limit > 0 && tokens >= limit {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", At: r.d.Now().UTC(),

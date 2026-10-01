@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -77,5 +78,34 @@ func TestCheckPinsOverrideTable(t *testing.T) {
 	}
 	if ps := CheckPins(a, tbl); len(ps) != 0 {
 		t.Fatalf("with the override: %v", ps)
+	}
+}
+
+func TestCheckAllowed(t *testing.T) {
+	a := pinnedAgent()
+	all := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{})); ps != nil {
+		t.Fatalf("no list must allow everything: %v", ps)
+	}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all})); len(ps) != 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	e := policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	ps := CheckAllowed(a, e)
+	if paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
+	}
+	if m := ps[0].Message; !strings.Contains(m, "claude-opus-5-5") || !strings.Contains(m, "default-branch") || !strings.Contains(m, "claude-haiku-4-5") {
+		t.Errorf("message %q", m)
+	}
+	// An empty non-nil list denies every model, however it came about.
+	e = policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"other"}})
+	if ps := CheckAllowed(a, e); len(ps) != 3 || !strings.Contains(ps[0].Message, "none") {
+		t.Fatalf("deny-all: %v", ps)
+	}
+	// A role with no model can't be shown to be on the list.
+	a.Models.Reviewer = ""
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all})); paths(ps) != "agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
 	}
 }

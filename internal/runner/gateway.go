@@ -43,7 +43,7 @@ const vertexRegionPrefix = "VERTEX_REGION_"
 // gatewayOn reports whether the agent's calls go through the gateway: the
 // budget is on and the credential is a model API's (an oauth run never is).
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && r.d.Spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
+	return r.cfg != nil && r.spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -52,7 +52,7 @@ func (r *run) gateway() *agent.Gateway { return r.gwAgent }
 // startGateway starts the run's gateway and makes the agent's environment
 // point at it. The real credential stays here.
 func (r *run) startGateway(ctx context.Context) error {
-	s := r.d.Spend
+	s := r.spend
 	o := gateway.Options{Prices: s.Prices, Cap: s.Cap, Log: r.d.Log, EndStageWait: r.d.GatewayStageWait}
 	o.Mode = gateway.Observe
 	if s.Mode == "enforce" {
@@ -284,7 +284,7 @@ func (r *run) checkManagedDirWritable() error {
 // policy, so a halt), and a run through the gateway needs prices for its
 // models and a managed settings directory it can write.
 func (r *run) checkBudget() error {
-	auth, s := r.cfg.Agent.Auth, r.d.Spend
+	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {
 		return errors.New(VertexBudgetRefusal)
 	}
@@ -292,6 +292,14 @@ func (r *run) checkBudget() error {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: r.d.Now().UTC(),
 			Detail: "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"})
 		return &HaltError{*r.haltValue()}
+	}
+	// The allow-list bounds the models whatever the credential or the mode.
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("the models are not all allowed: %s", strings.Join(msgs, "; "))
 	}
 	if !r.gatewayOn() {
 		return nil

@@ -81,7 +81,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	}
 	// The budget, parsed once; a malformed one reaches the runner, which
 	// reports it as the run's infra_error after claiming the record.
-	spend, spendErr := runner.SpendFromEnv(os.Getenv)
+	spend, spendErr := runner.SpendFromEnv(os.LookupEnv)
 	if err := checkTestHooks(o, spend, spendErr); err != nil {
 		return err
 	}

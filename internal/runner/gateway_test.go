@@ -92,7 +92,7 @@ func newGWFiles(t *testing.T, cfg, mode, capUSD string, files map[string]string,
 	fake, up := anthropicfake.New(t, script...)
 	h.deps.Env = append(filterEnv(h.deps.Env, "ANTHROPIC_API_KEY"), "ANTHROPIC_API_KEY="+plantedKey)
 	env := map[string]string{runner.BudgetModeEnv: mode, runner.MaxRunUSDEnv: capUSD}
-	spend, err := runner.SpendFromEnv(func(k string) string { return env[k] })
+	spend, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -726,7 +726,7 @@ func TestTestKnobLocal(t *testing.T) {
 	h := newHarnessFiles(t, gwConfig(t, ""), nil, map[string]string{".claude/settings.json": rerouting})
 	env := map[string]string{runner.BudgetModeEnv: "observe"}
 	var err error
-	if h.deps.Spend, err = runner.SpendFromEnv(func(k string) string { return env[k] }); err != nil {
+	if h.deps.Spend, err = runner.SpendFromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok }); err != nil {
 		t.Fatal(err)
 	}
 	h.deps.Env = append(h.deps.Env, "FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1")

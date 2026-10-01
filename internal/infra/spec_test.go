@@ -888,7 +888,7 @@ model_prices:
 			t.Errorf("%s env = %v", w.Name, got)
 		}
 		// The runner reads exactly what init wrote.
-		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok })
 		if err != nil || s.Mode != "enforce" || s.Cap != 12_500_000 {
 			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
 		}
@@ -937,7 +937,7 @@ func TestWorkflowEnvPolicyKeys(t *testing.T) {
 		if w.Env[MaxRunTokensEnv] != "500000" || w.Env[AllowedModelsEnv] != "claude-sonnet-5-5,claude-haiku-4-5" {
 			t.Errorf("%s env = %v", w.Name, onlyBudgetEnv(w.Env))
 		}
-		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok })
 		if err != nil || s.MaxRunTokens != 500000 || len(s.AllowedModels) != 2 {
 			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
 		}
