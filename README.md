@@ -49,6 +49,7 @@ Each consuming repository carries a small config file describing how to build an
 ```yaml
 # fugaro.yaml (draft, subject to change; see docs/design/v1.md)
 version: 1
+project: aurora           # the Fugaro project this repository belongs to
 git:
   provider: bitbucket       # or github
   base_branch: main

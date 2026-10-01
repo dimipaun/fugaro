@@ -135,3 +135,11 @@ A run can also end `failed` with outcome `none`, without a report on the PR:
 - the PR was closed while the run was finishing, after its push ("the branch was pushed"): the branch has the run's commits, but the PR's draft state and report were left alone.
 
 The report stays in the runs bucket, and `fugaro diagnose <run>` shows it. Launch a new follow-up if there is still work to do.
+
+## 8. A halted PR
+
+A run can end `halted`: a budget cap stopped it (`fugaro ls` shows `halted (run_cap)` or `halted (token_cap)`, and `fugaro diagnose <run>` names the cap and what the run spent). A halted run pushed its work and opened a **draft** PR, so it can be followed up like any other, but only once the cap that stopped it has been raised. Otherwise the follow-up halts at its first call.
+
+- **Raising the cap is the user's decision, never yours.** For a dollar cap it is `budget.per_run_usd` in the project's local config (`~/.config/fugaro/projects/<project>.yaml`); for a token cap it is `agent.max_run_tokens` in the repository's `fugaro.yaml`, on the base branch. The dollar cap reaches the jobs only through `fugaro init --repo`, so the user reruns it from the repository's checkout after changing the config. Say which of these applies, and don't edit either yourself.
+- **Then follow up as usual** (steps 2 to 5). The run continues from the halted run's branch; the PR stays a draft until a run ends with a passing test run and a `ship` review.
+- **A halt at bootstrap** (reason `no_cap`, or a halted follow-up that stopped before its push) opened no PR. There is nothing to follow up: after the user fixes the budget, launch a new run.
