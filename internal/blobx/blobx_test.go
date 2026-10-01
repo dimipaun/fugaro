@@ -2,7 +2,9 @@ package blobx_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/url"
 	"os"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
 	"gocloud.dev/blob/memblob"
 
@@ -165,4 +168,48 @@ func TestReadIsCapped(t *testing.T) {
 	if _, _, err := b.Read(ctx, "huge"); !errors.Is(err, blobx.ErrTooLarge) {
 		t.Fatalf("Read past the cap = %v, want ErrTooLarge", err)
 	}
+}
+
+// TestFileBucketReadsAreNeverTorn: a file:// bucket read while the same
+// key is rewritten returns the old or the new content. With fileblob's
+// default attribute sidecar, a read that lands while the sidecar is being
+// truncated fails with EOF; this was the flaky "reading result.json: EOF"
+// of `fugaro ls` against a run that was still writing its record.
+func TestFileBucketReadsAreNeverTorn(t *testing.T) {
+	ctx := context.Background()
+	b, err := blobx.Open(ctx, "file://"+t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = b.Close() })
+	if err := b.WriteAll(ctx, "result.json", []byte(`{"n":0}`), &blob.WriterOptions{ContentType: "application/json"}); err != nil {
+		t.Fatal(err)
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 1; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if err := b.WriteAll(ctx, "result.json", []byte(fmt.Sprintf(`{"n":%d}`, i)), &blob.WriterOptions{ContentType: "application/json"}); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		data, _, err := b.Read(ctx, "result.json")
+		if err != nil || !json.Valid(data) {
+			close(stop)
+			<-done
+			t.Fatalf("read during a rewrite = %q, %v", data, err)
+		}
+	}
+	close(stop)
+	<-done
 }

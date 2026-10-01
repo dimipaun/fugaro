@@ -161,6 +161,13 @@ func TestReadSecretHiddenPromptCancelled(t *testing.T) {
 	done := startRead(ctx, f, &prompt, "claude-oauth-token", false)
 	f.waitEcho(t, false)
 	_, _ = f.master.WriteString("sk-partial") // typed, no Enter yet
+	// Linux hands what the master writes to the line discipline from a
+	// workqueue, after write returns. Cancelling at once can restore ECHO
+	// before that worker has seen the bytes, and the kernel then echoes them
+	// (CI: "the terminal echoed the value"), which a person's keystrokes,
+	// arriving long before their Ctrl-C, never see. Let the bytes arrive
+	// while ECHO is still off.
+	time.Sleep(200 * time.Millisecond)
 	cancel()
 	f.abandoned = true
 	r := waitRead(t, done)
