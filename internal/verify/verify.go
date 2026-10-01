@@ -60,6 +60,13 @@ func WriteSettings(stateDir string, s Settings) error {
 	return nil
 }
 
+// mtimeSlack is how far before the command's start a report's mtime may fall
+// and still count as fresh. Linux stamps file times from a coarse kernel
+// clock that lags time.Now() by up to a few milliseconds, so a report a fast
+// command writes at once can look older than the start; a report from an
+// earlier run is older than this by far.
+const mtimeSlack = 100 * time.Millisecond
+
 // ClearState removes the settings and records an earlier run left in
 // stateDir, and nothing else there.
 func ClearState(stateDir string) error {
@@ -225,7 +232,7 @@ func Run(ctx context.Context, o Options) (Record, error) {
 		TimedOut: timedOut, StartedAt: start.UTC(), DurationS: now().Sub(start).Seconds(),
 	}
 	if o.Kind == KindTest {
-		cases, err := ReadCases(s.RepoDir, s.Reports, start)
+		cases, err := ReadCases(s.RepoDir, s.Reports, start.Add(-mtimeSlack))
 		if err != nil {
 			return Record{}, err
 		}
