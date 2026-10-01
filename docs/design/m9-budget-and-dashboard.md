@@ -115,7 +115,7 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
 
 ### 2.1 Per-stage models: the minimal config change
 
-The repository's `fugaro.yaml`, which its writers control, says *which* models to use. It can never say *how much* may be spent: caps and prices belong to the owner. Otherwise a repository could lift its own limit.
+The repository's `fugaro.yaml`, which its writers control, says *which* models to use. It can never *loosen* how much may be spent: caps and prices belong to the owner. Otherwise a repository could lift its own limit. (M9a.1 refines this: `fugaro.yaml` on the default branch may *tighten* the owner's ceiling with a `budget:` block, and a run's branch may tighten further; the effective value is the tightest of the three layers. Prices stay owner-only. See v1.md §5.1.)
 
 ```yaml
 agent:
@@ -380,7 +380,7 @@ A refused write is re-read and evaluated locally, which tells a stale read (retr
 ### 5.6 Other ties between the stages and the gateway
 
 - **Per-stage `--max-budget-usd` stays** as defence in depth.
-- **Where the per-run cap is checked.** In M9a it's in-process, against `FUGARO_MAX_RUN_USD` from the local config. From M9b the rules check the minimum of that and the RTDB caps.
+- **Where the per-run cap is checked.** In M9a it's in-process, against `FUGARO_MAX_RUN_USD` from the local config. From M9a.1 it is the lowest positive of that ceiling, the default branch's `fugaro.yaml` `budget.per_run_usd` and the run's branch (a branch can only tighten; a looser value is ignored with a warning and recorded in `result.json` `policy`). From M9b the rules check the minimum of that and the RTDB caps (`min(RTDB, committed policy)`); `budget.per_day_usd` is reserved in `fugaro.yaml` and refused until then.
 - **`fugaro verify` tells the gateway when it starts and ends** (loopback, with the per-run gateway token). The registry then shows `implement · test`. This is cosmetic.
 
 ### 5.7 Budget modes

@@ -64,6 +64,8 @@ workflows:
       - { name: artifactory-token, env: ARTIFACTORY_TOKEN }
 ```
 
+A repository can also commit cost and model policy: an optional `budget:` block (`mode`, `per_run_usd`, `allowed_models`) and `agent.max_run_tokens`. It can only tighten the ceiling the project owner sets in the project config (`fugaro init --repo`): the runner reads it from the default branch, a run's own branch can tighten it further but never loosen it, and the tightest value wins. Prices stay with the owner. See [docs/design/v1.md](docs/design/v1.md) §5.1 and [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
+
 ## Launching a task
 
 A task is a small hand-off spec: what to do, which repo, which branch, and which workflow. It can be launched directly or by your local coding agent, which builds the spec and starts the job through the `fugaro` CLI. Many tasks can run at once, independently.
