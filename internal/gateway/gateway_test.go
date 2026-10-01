@@ -634,13 +634,19 @@ func TestResponseHeadersOfTheOrganizationAreDropped(t *testing.T) {
 		"Anthropic-Organization-Id": {"org-secret"}, "Set-Cookie": {"a=b"}, "Request-Id": {"req_1"},
 	}
 	h := newHarness(t, r, anthropicfake.Reply{Body: `{"input_tokens":1}`, Header: http.Header{"Anthropic-Organization-Id": {"org-secret"}}})
-	for name, do := range map[string]func() *http.Response{
-		"messages": func() *http.Response { resp, _ := h.post(msg(sonnet, 10)); return resp },
-		"count_tokens": func() *http.Response {
+	// Ordered: the fake's replies are scripted, so a random map order would
+	// hand the count_tokens reply to the messages call.
+	for _, tc := range []struct {
+		name string
+		do   func() *http.Response
+	}{
+		{"messages", func() *http.Response { resp, _ := h.post(msg(sonnet, 10)); return resp }},
+		{"count_tokens", func() *http.Response {
 			resp, _ := h.post2("/v1/messages/count_tokens", `{"model":"claude-sonnet-5-5","messages":[]}`)
 			return resp
-		},
+		}},
 	} {
+		name, do := tc.name, tc.do
 		resp := do()
 		for _, k := range []string{"Anthropic-Organization-Id", "Set-Cookie"} {
 			if v := resp.Header.Get(k); v != "" {
