@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptrace"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,6 +31,7 @@ type parsed struct {
 	images    int64  // base64 image blocks
 	pdf       bool   // a base64 document block
 	violation string // the first shape the budget can't bound, if any
+	toolTypes string // the distinct tool types of tools, comma separated, for the log
 }
 
 // maxJSONDepth bounds how deeply a request body may nest.
@@ -100,7 +102,12 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 	if v, has := top["service_tier"]; has && v != "auto" && v != "standard_only" {
 		return "service_tier " + showValue(v) + unpriced
 	}
-	for _, k := range []string{"mcp_servers", "container", "fallbacks", "context_management"} {
+	if cm, has := top["context_management"]; has {
+		if v := contextManagement(cm); v != "" {
+			return v
+		}
+	}
+	for _, k := range []string{"mcp_servers", "container", "fallbacks"} {
 		if _, has := top[k]; has {
 			return k + " is not allowed (the request doesn't bound its cost)"
 		}
@@ -110,6 +117,13 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 		if !ok {
 			return "tools is not a list"
 		}
+		var seen []string
+		note := func(t string) {
+			if !slices.Contains(seen, t) {
+				seen = append(seen, t)
+			}
+			p.toolTypes = strings.Join(seen, ",")
+		}
 		for _, t := range tools {
 			m, ok := t.(map[string]any)
 			if !ok {
@@ -117,12 +131,14 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 			}
 			typ, has := m["type"]
 			if !has || typ == "custom" {
+				note("custom")
 				continue
 			}
 			s, ok := typ.(string)
 			if !ok {
 				return "tool type " + showValue(typ) + " is not a string"
 			}
+			note(logValue(s))
 			return "tool type " + logValue(s) + " is not allowed (the budget allows only client tools)"
 		}
 	}
@@ -148,6 +164,44 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 			}
 		default:
 			return "a message's content is neither text nor a list of blocks"
+		}
+	}
+	return ""
+}
+
+// contextManagementPrefixes are the context edits that only drop input
+// (thinking blocks, old tool results), so they can't add a model pass.
+// Compaction does add one, billed outside the usage the gateway reads.
+var contextManagementPrefixes = []string{"clear_thinking_", "clear_tool_uses_"}
+
+// contextManagement checks a request's context_management: nothing but a
+// list of edits of the input-dropping types.
+func contextManagement(v any) string {
+	const refused = "context_management is not allowed (the request doesn't bound its cost)"
+	if v == nil {
+		return ""
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return refused
+	}
+	for k, ev := range m {
+		if k != "edits" {
+			return "context_management." + logValue(k) + " is not allowed (the request doesn't bound its cost)"
+		}
+		edits, ok := ev.([]any)
+		if !ok {
+			return refused
+		}
+		for _, e := range edits {
+			em, ok := e.(map[string]any)
+			if !ok {
+				return refused
+			}
+			typ, _ := em["type"].(string)
+			if !slices.ContainsFunc(contextManagementPrefixes, func(p string) bool { return strings.HasPrefix(typ, p) }) {
+				return "context_management edit " + showType(em["type"]) + " is not allowed (the request doesn't bound its cost; only clear_thinking_* and clear_tool_uses_* are)"
+			}
 		}
 	}
 	return ""
@@ -406,7 +460,7 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 	p, err := parseRequest(body, rt.pathModel)
-	cl.model, cl.stream = p.model, p.stream
+	cl.model, cl.stream, cl.maxTokens, cl.toolTypes = p.model, p.stream, p.maxTokens, p.toolTypes
 	if err != nil {
 		refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+err.Error())
 		return
@@ -433,8 +487,14 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	w0 := m.WorstCase(pricing.Request{
 		BodyBytes: int64(len(body)), HasPDF: p.pdf, ImageCount: p.images, MaxTokens: p.maxTokens, CacheTTL: p.cacheTTL,
 	})
-	if msg, ok := s.reserve(st, w0); !ok {
-		refuse(http.StatusForbidden, "permission_error", msg)
+	if msg, status := s.reserve(st, w0); status == http.StatusTooManyRequests {
+		// Retryable: Claude Code backs off and asks again once the calls
+		// holding the reservations have settled.
+		w.Header().Set("retry-after", "2")
+		refuse(status, "rate_limit_error", msg)
+		return
+	} else if status != 0 {
+		refuse(status, "permission_error", msg)
 		return
 	}
 	cl.reserved = w0
@@ -645,10 +705,16 @@ var hopByHop = map[string]bool{
 	"Te": true, "Trailer": true, "Transfer-Encoding": true, "Upgrade": true,
 }
 
+// dropResponseHeaders never reach the agent: they identify the
+// organization behind the real key, or set state on the gateway's origin.
+var dropResponseHeaders = map[string]bool{
+	"Anthropic-Organization-Id": true, "Set-Cookie": true, "Set-Cookie2": true,
+}
+
 func copyResponseHeaders(dst, src http.Header, decoded bool) {
 	for k, vs := range src {
 		ck := http.CanonicalHeaderKey(k)
-		if hopByHop[ck] || ck == "Content-Length" || (decoded && ck == "Content-Encoding") {
+		if hopByHop[ck] || dropResponseHeaders[ck] || ck == "Content-Length" || (decoded && ck == "Content-Encoding") {
 			continue
 		}
 		dst[ck] = append([]string(nil), vs...)
@@ -765,8 +831,21 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 	}
 }
 
-// forwardFree forwards a token count: free, no reservation, no log line.
+// maxCountsInFlight bounds the token counts forwarded at once: they are
+// free, but each spends the organization's rate limit with the real key.
+const maxCountsInFlight = 4
+
+// forwardFree forwards a token count: free, no reservation, and a log line
+// with only its status and sizes.
 func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
+	select {
+	case s.countSlots <- struct{}{}:
+		defer func() { <-s.countSlots }()
+	default:
+		writeError(w, http.StatusTooManyRequests, "rate_limit_error", "fugaro: too many token counts in flight; retry shortly")
+		s.log.Info("token count refused", "stage", s.stageName(), "status", http.StatusTooManyRequests)
+		return
+	}
 	body, status, msg := readBody(r)
 	if status != 0 {
 		writeError(w, status, errorTypeFor(status), msg)
@@ -795,7 +874,9 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
-	pump(w, rc, src, func([]byte) {})
+	var n int64
+	pump(w, rc, src, func(b []byte) { n += int64(len(b)) })
+	s.log.Info("token count", "stage", s.stageName(), "status", resp.StatusCode, "request_bytes", len(body), "response_bytes", n)
 }
 
 func errorTypeFor(status int) string {

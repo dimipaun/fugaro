@@ -3,6 +3,8 @@ package gateway
 import (
 	"fmt"
 	"math"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -27,17 +29,21 @@ func (s *Server) haltedMessage() (string, bool) {
 	return s.haltMsg, s.halt != nil
 }
 
-// reserve holds w for a call. In enforce mode a call that doesn't fit
-// under the cap is refused and halts the run: it and every later call
-// get the halt's message. In observe mode it is counted and logged
-// instead, never refused.
-func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, ok bool) {
+// reserve holds w for a call, and returns 0. In enforce mode a call whose
+// worst case can't fit under the cap even with nothing else in flight
+// (used + w > cap) is refused with 403 and halts the run: it and every
+// later call get the halt's message. A call that would fit but for other
+// calls' reservations, which over-count what those calls will cost, is
+// refused with a retryable 429 and no halt: the cap may well hold once
+// they settle. In observe mode a call is counted and logged instead,
+// never refused.
+func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, status int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.halt != nil {
-		return s.haltMsg, false
+		return s.haltMsg, http.StatusForbidden
 	}
-	over := s.o.Cap > 0 && satAdd(satAdd(s.used, s.reserved), w) > s.o.Cap
+	over := s.o.Cap > 0 && satAdd(s.used, w) > s.o.Cap
 	if over || (s.o.Mode == Observe && s.wouldHalted) {
 		if s.o.Mode == Enforce {
 			h := Halt{
@@ -50,16 +56,20 @@ func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, ok b
 			s.haltCh <- h
 			close(s.haltCh)
 			s.log.Warn("budget: halted", "reason", h.Reason, "detail", h.Detail, "stage", st.st.Name)
-			return s.haltMsg, false
+			return s.haltMsg, http.StatusForbidden
 		}
 		s.wouldHalted = true
 		st.rep.WouldHalt++
 		s.log.Warn("budget: would halt (observe)", "stage", st.st.Name,
 			"cap_micros", int64(s.o.Cap), "used_micros", int64(s.used), "reserved_micros", int64(s.reserved), "needed_micros", int64(w))
+	} else if s.o.Mode == Enforce && s.o.Cap > 0 && satAdd(satAdd(s.used, s.reserved), w) > s.o.Cap {
+		s.log.Info("budget: call waits for calls in flight", "stage", st.st.Name,
+			"cap_micros", int64(s.o.Cap), "used_micros", int64(s.used), "reserved_micros", int64(s.reserved), "needed_micros", int64(w))
+		return "fugaro: the run's budget is held by calls still in flight; retry shortly", http.StatusTooManyRequests
 	}
 	s.reserved = satAdd(s.reserved, w)
 	s.checkLocked()
-	return "", true
+	return "", 0
 }
 
 // charge is how a call settles.
@@ -80,6 +90,7 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	defer s.mu.Unlock()
 	s.reserved -= w
 	if s.reserved < 0 { // never: every settle matches one reserve
+		s.log.Error("budget: a settle released more than was reserved", "stage", st.st.Name, "reserved_micros", int64(s.reserved), "released_micros", int64(w))
 		s.reserved = 0
 	}
 	s.used = satAdd(s.used, c.amount)
@@ -127,8 +138,14 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
-// dollars formats µ$ as "$12.34".
-func dollars(m pricing.Micros) string { return fmt.Sprintf("$%.2f", m.USD()) }
+// dollars formats µ$ as "$12.34", with more digits below a cent so a
+// small cap isn't printed as $0.00.
+func dollars(m pricing.Micros) string {
+	if m > 0 && m.USD() < 0.01 {
+		return strings.TrimRight(fmt.Sprintf("$%.6f", m.USD()), "0")
+	}
+	return fmt.Sprintf("$%.2f", m.USD())
+}
 
 // satAdd adds two amounts, saturating at the largest Micros; negative
 // amounts count as 0.

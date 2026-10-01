@@ -133,6 +133,8 @@ type Server struct {
 
 	haltCh chan Halt
 
+	countSlots chan struct{} // bounds the token counts in flight
+
 	// mu guards everything below: one mutex, one ledger.
 	mu          sync.Mutex
 	used        pricing.Micros
@@ -175,6 +177,8 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		client: upstreamClient(o.Client),
 		ln:     ln,
 		haltCh: make(chan Halt, 1),
+
+		countSlots: make(chan struct{}, maxCountsInFlight),
 	}
 	if s.log == nil {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -474,7 +478,7 @@ func trimSlash(s string) string {
 func writeError(w http.ResponseWriter, status int, typ, message string) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
-	if status != http.StatusBadGateway {
+	if status != http.StatusBadGateway && status != http.StatusTooManyRequests {
 		h.Set("x-should-retry", "false")
 	}
 	w.WriteHeader(status)

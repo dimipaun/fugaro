@@ -609,3 +609,94 @@ func closedPort(t *testing.T) string {
 	ln.Close()
 	return "http://" + addr
 }
+
+// The call log says what Claude Code asked for: max_tokens and the tool
+// types, so a live run shows the request shapes without a body in the log.
+func TestCallLogHasMaxTokensAndToolTypes(t *testing.T) {
+	h := newHarness(t, okReplies(2)...)
+	allowed(t, h, msg(sonnet, 777, `"tools":[{"name":"Bash","input_schema":{"type":"object"}},{"type":"custom","name":"x","input_schema":{"type":"object"}}]`), "client tools")
+	c := h.logs.lastCall(t)
+	if num(c["max_tokens"]) != 777 || c["tool_types"] != "custom" {
+		t.Errorf("log line %v", c)
+	}
+	refused(t, h, msg(sonnet, 55, `"tools":[{"type":"web_search_20260209","name":"web_search"}]`), "tool type web_search_20260209")
+	c = h.logs.lastCall(t)
+	if num(c["max_tokens"]) != 55 || c["tool_types"] != "web_search_20260209" {
+		t.Errorf("log line of the refused call %v", c)
+	}
+}
+
+// Headers that name the organization behind the real key, and cookies,
+// stay with the gateway.
+func TestResponseHeadersOfTheOrganizationAreDropped(t *testing.T) {
+	r := anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1, Output: 1})
+	r.Header = http.Header{
+		"Anthropic-Organization-Id": {"org-secret"}, "Set-Cookie": {"a=b"}, "Request-Id": {"req_1"},
+	}
+	h := newHarness(t, r, anthropicfake.Reply{Body: `{"input_tokens":1}`, Header: http.Header{"Anthropic-Organization-Id": {"org-secret"}}})
+	for name, do := range map[string]func() *http.Response{
+		"messages": func() *http.Response { resp, _ := h.post(msg(sonnet, 10)); return resp },
+		"count_tokens": func() *http.Response {
+			resp, _ := h.post2("/v1/messages/count_tokens", `{"model":"claude-sonnet-5-5","messages":[]}`)
+			return resp
+		},
+	} {
+		resp := do()
+		for _, k := range []string{"Anthropic-Organization-Id", "Set-Cookie"} {
+			if v := resp.Header.Get(k); v != "" {
+				t.Errorf("%s: %s = %q reached the agent", name, k, v)
+			}
+		}
+		if name == "messages" && resp.Header.Get("Request-Id") != "req_1" {
+			t.Errorf("request-id was dropped")
+		}
+	}
+}
+
+func TestCountTokensIsLoggedWithoutContent(t *testing.T) {
+	h := newHarness(t, anthropicfake.Reply{Body: `{"input_tokens":42}`})
+	body := `{"model":"claude-sonnet-5-5","messages":[{"role":"user","content":"a-secret-prompt"}]}`
+	h.post2("/v1/messages/count_tokens", body)
+	var found map[string]any
+	for _, l := range h.logs.lines(t) {
+		if l["msg"] == "token count" {
+			found = l
+		}
+	}
+	if found == nil || num(found["status"]) != 200 || num(found["request_bytes"]) != int64(len(body)) || num(found["response_bytes"]) != int64(len(`{"input_tokens":42}`)) {
+		t.Fatalf("token count log line %v in\n%s", found, h.logs.String())
+	}
+	if strings.Contains(h.logs.String(), "a-secret-prompt") {
+		t.Error("the prompt reached the log")
+	}
+}
+
+func TestCountTokensConcurrencyBounded(t *testing.T) {
+	script := make([]anthropicfake.Reply, maxCountsInFlight)
+	for i := range script {
+		script[i] = anthropicfake.Reply{Hold: true}
+	}
+	h := newHarness(t, script...)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	for range maxCountsInFlight {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := http.DefaultClient.Do(h.request(ctx, "/v1/messages/count_tokens", `{"model":"claude-sonnet-5-5","messages":[]}`))
+			if err == nil {
+				resp.Body.Close()
+			}
+		}()
+	}
+	waitFor(t, "the counts to reach the upstream", func() bool { return h.fake.Count() == maxCountsInFlight })
+	resp, b := h.post2("/v1/messages/count_tokens", `{"model":"claude-sonnet-5-5","messages":[]}`)
+	if resp.StatusCode != http.StatusTooManyRequests || resp.Header.Get("X-Should-Retry") == "false" {
+		t.Errorf("an extra count: %d %s (x-should-retry %q), want a retryable 429", resp.StatusCode, b, resp.Header.Get("X-Should-Retry"))
+	}
+	if h.fake.Count() != maxCountsInFlight {
+		t.Errorf("the extra count was forwarded")
+	}
+	cancel()
+	wg.Wait()
+}

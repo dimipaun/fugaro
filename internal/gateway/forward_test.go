@@ -376,7 +376,13 @@ func TestRefusedShapes(t *testing.T) {
 		{"empty mcp_servers", msg(sonnet, 100, `"mcp_servers":[]`), "mcp_servers"},
 		{"container", msg(sonnet, 100, `"container":"container_1"`), "container"},
 		{"fallbacks", msg(sonnet, 100, `"fallbacks":[{"model":"claude-opus-5"}]`), "fallbacks"},
-		{"context_management", msg(sonnet, 100, `"context_management":{"edits":[{"type":"compact_20260112"}]}`), "context_management"},
+		{"compaction", msg(sonnet, 100, `"context_management":{"edits":[{"type":"compact_20260112"}]}`), "context_management edit compact_20260112"},
+		{"unknown edit", msg(sonnet, 100, `"context_management":{"edits":[{"type":"future_edit_20990101"}]}`), "context_management edit future_edit_20990101"},
+		{"a refused edit beside an allowed one", msg(sonnet, 100, `"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"compact_20260112"}]}`), "compact_20260112"},
+		{"edit without a type", msg(sonnet, 100, `"context_management":{"edits":[{}]}`), "context_management edit"},
+		{"other context_management keys", msg(sonnet, 100, `"context_management":{"edits":[],"compaction":{}}`), "context_management.compaction"},
+		{"context_management not an object", msg(sonnet, 100, `"context_management":"auto"`), "context_management"},
+		{"edits not a list", msg(sonnet, 100, `"context_management":{"edits":{"type":"clear_thinking_20251015"}}`), "context_management"},
 		{"max_tokens above the model's maximum", msg(sonnet, 128001), "max_tokens 128001 for model claude-sonnet-5-5 is above the model's maximum 128000"},
 		{"max_tokens above the background model's maximum", msg(haiku, 64001), "above the model's maximum 64000"},
 		{"tools not a list", msg(sonnet, 100, `"tools":{"type":"custom"}`), "tools"},
@@ -386,6 +392,14 @@ func TestRefusedShapes(t *testing.T) {
 			refused(t, newHarness(t), c.body, c.what)
 		})
 	}
+}
+
+func TestContextManagementClearEditsAllowed(t *testing.T) {
+	h := newHarness(t, okReplies(4)...)
+	allowed(t, h, msg(sonnet, 100, `"context_management":{"edits":[{"type":"clear_thinking_20251015","keep":"all"}]}`), "clear_thinking")
+	allowed(t, h, msg(sonnet, 100, `"context_management":{"edits":[{"type":"clear_tool_uses_20250919","trigger":{"type":"input_tokens","value":30000}}]}`), "clear_tool_uses")
+	allowed(t, h, msg(sonnet, 100, `"context_management":{"edits":[{"type":"clear_thinking_20251015"},{"type":"clear_tool_uses_20250919"}]}`), "both")
+	allowed(t, h, msg(sonnet, 100, `"context_management":{"edits":[]}`), "no edits")
 }
 
 func TestToolTypeAllowList(t *testing.T) {

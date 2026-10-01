@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -585,14 +586,16 @@ func TestInFlightCallsFinishAfterHalt(t *testing.T) {
 	slow.EventDelay = 100 * time.Millisecond
 	body := msg(sonnet, 1000, `"stream":true`)
 	w := worst(t, sonnet, body, 1000, "")
-	h := newHarnessWith(t, enforceCap(2*w-1), slow)
+	h := newHarnessWith(t, enforceCap(w), slow)
 	resp, err := http.DefaultClient.Do(h.request(context.Background(), "/v1/messages", body))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r := bufio.NewReader(resp.Body)
 	readEvent(t, r)
-	if resp2, _ := h.post(body); resp2.StatusCode != 403 {
+	// A call whose own worst case exceeds the cap halts the run even
+	// with another call in flight.
+	if resp2, _ := h.post(msg(sonnet, 100000, `"stream":true`)); resp2.StatusCode != 403 {
 		t.Fatalf("second call: %d, want 403", resp2.StatusCode)
 	}
 	<-h.gw.Halted()
@@ -709,7 +712,7 @@ func TestLedgerNeverExceedsGranted(t *testing.T) {
 				}
 				_, _ = io.Copy(io.Discard, resp.Body)
 				resp.Body.Close()
-				if resp.StatusCode != 200 && resp.StatusCode != 403 {
+				if resp.StatusCode != 200 && resp.StatusCode != 403 && resp.StatusCode != 429 {
 					t.Errorf("status %d", resp.StatusCode)
 				}
 			}
@@ -825,5 +828,150 @@ func TestLongContextTierPricedFromUsage(t *testing.T) {
 	w := m.WorstCase(pricing.Request{BodyBytes: int64(len(b)), MaxTokens: 1000})
 	if rep.Used != want || rep.Overrun != want-w {
 		t.Errorf("report %+v, want %d at the tier's rates, overrun %d", rep, want, want-w)
+	}
+}
+
+// A call that fits the cap but not beside the calls in flight (whose
+// reservations over-count their cost) is told to retry, not halted; the
+// retry goes through once they settle.
+func TestReservationsInFlightRetryNotHalt(t *testing.T) {
+	u := pricing.Usage{Input: 100, Output: 100}
+	slow := anthropicfake.StreamOK(sonnet, u)
+	slow.EventDelay = 100 * time.Millisecond
+	body := msg(sonnet, 1000, `"stream":true`)
+	w := worst(t, sonnet, body, 1000, "")
+	h := newHarnessWith(t, enforceCap(2*w-1), slow, anthropicfake.StreamOK(sonnet, u))
+	resp, err := http.DefaultClient.Do(h.request(context.Background(), "/v1/messages", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(resp.Body)
+	readEvent(t, r)
+
+	resp2, b := h.post(body)
+	if resp2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second call: %d %s, want 429", resp2.StatusCode, b)
+	}
+	if v := resp2.Header.Get("X-Should-Retry"); v == "false" {
+		t.Errorf("x-should-retry %q: the 429 must be retryable", v)
+	}
+	if resp2.Header.Get("Retry-After") == "" {
+		t.Error("no retry-after")
+	}
+	if typ, _ := apiError(t, b); typ != "rate_limit_error" {
+		t.Errorf("error type %q", typ)
+	}
+	select {
+	case halt := <-h.gw.Halted():
+		t.Fatalf("a retryable refusal halted the run: %+v", halt)
+	default:
+	}
+	if h.fake.Count() != 1 {
+		t.Errorf("the refused call was forwarded")
+	}
+	_, _ = io.ReadAll(r)
+	resp.Body.Close()
+	waitFor(t, "the first call to settle", func() bool { return h.gw.Ledger().Reserved == 0 })
+	if resp3, b := h.post(body); resp3.StatusCode != 200 {
+		t.Fatalf("the retry: %d %s, want 200", resp3.StatusCode, b)
+	}
+}
+
+// Parallel calls near the cap never halt a run whose spend fits: each is
+// served or told to retry, and retrying them all succeeds. What is used
+// and reserved never passes the cap.
+func TestParallelCallsNearCapRetryWithoutHalt(t *testing.T) {
+	u := pricing.Usage{Input: 100, Output: 100}
+	body := msg(sonnet, 1000, `"stream":true`)
+	w := worst(t, sonnet, body, 1000, "")
+	const workers = 12
+	var mu sync.Mutex
+	var breaches []string
+	h := newHarnessWith(t, enforceCap(3*w+w/2))
+	h.fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		r := anthropicfake.StreamOK(sonnet, u)
+		r.EventDelay = 30 * time.Millisecond
+		return r
+	}
+	h.gw.onLedger = func(l Ledger, overrun pricing.Micros) {
+		mu.Lock()
+		defer mu.Unlock()
+		if l.Used+l.Reserved > l.Granted+overrun {
+			breaches = append(breaches, fmt.Sprintf("%+v", l))
+		}
+	}
+	var wg sync.WaitGroup
+	var retried atomic.Int64
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for try := 0; try < 400; try++ {
+				resp, err := http.DefaultClient.Do(h.request(context.Background(), "/v1/messages", body))
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+				switch resp.StatusCode {
+				case 200:
+					return
+				case 429:
+					retried.Add(1)
+					time.Sleep(5 * time.Millisecond)
+				default:
+					t.Errorf("status %d", resp.StatusCode)
+					return
+				}
+			}
+			t.Error("never served")
+		}()
+	}
+	wg.Wait()
+	select {
+	case halt := <-h.gw.Halted():
+		t.Fatalf("halted with spend far under the cap: %+v", halt)
+	default:
+	}
+	if retried.Load() == 0 {
+		t.Error("no call was told to retry: the cap was not near enough")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(breaches) > 0 {
+		t.Errorf("%d breaches, first %s", len(breaches), breaches[0])
+	}
+	if rep := h.gw.EndStage(); rep.Calls != workers {
+		t.Errorf("%d calls served, want %d", rep.Calls, workers)
+	}
+}
+
+func TestDollarsShowsSubCentAmounts(t *testing.T) {
+	for _, c := range []struct {
+		m    pricing.Micros
+		want string
+	}{{0, "$0.00"}, {2000, "$0.002"}, {9999, "$0.009999"}, {10000, "$0.01"}, {12_340_000, "$12.34"}, {1, "$0.000001"}} {
+		if got := dollars(c.m); got != c.want {
+			t.Errorf("dollars(%d) = %s, want %s", c.m, got, c.want)
+		}
+	}
+}
+
+// A settle that releases more than is reserved is a bug elsewhere; it is
+// clamped, and said loudly.
+func TestSettleBeyondReservedIsLogged(t *testing.T) {
+	h := newHarness(t)
+	st := h.gw.enterStage()
+	defer st.calls.Done()
+	h.gw.settle(st, 5, charge{})
+	var warned bool
+	for _, l := range h.logs.lines(t) {
+		if l["level"] == "ERROR" && l["msg"] == "budget: a settle released more than was reserved" {
+			warned = true
+		}
+	}
+	if !warned || h.gw.Ledger().Reserved != 0 {
+		t.Errorf("warned %v, ledger %+v", warned, h.gw.Ledger())
 	}
 }

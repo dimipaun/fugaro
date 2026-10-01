@@ -10,9 +10,9 @@ import (
 )
 
 var callFields = []string{
-	"agent_id", "cache_read", "cache_write_1h", "cache_write_5m", "charged_micros", "in", "level", "model",
+	"agent_id", "cache_read", "cache_write_1h", "cache_write_5m", "charged_micros", "in", "level", "max_tokens", "model",
 	"msg", "out", "priced_as", "reserved_micros", "serving_model", "session_id", "settled", "stage", "status",
-	"stream", "time", "web_searches",
+	"stream", "time", "tool_types", "web_searches",
 }
 
 func keys(m map[string]any) []string {
@@ -44,6 +44,7 @@ func TestGatewayLogFields(t *testing.T) {
 		"stage": "implement", "model": sonnet, "serving_model": sonnet, "status": 200.0, "stream": true,
 		"in": 10.0, "cache_write_5m": 2.0, "cache_write_1h": 3.0, "cache_read": 4.0, "out": 5.0, "web_searches": 0.0,
 		"priced_as": "table", "settled": "usage", "session_id": "sess-42", "agent_id": "agent-7",
+		"max_tokens": 100.0, "tool_types": "",
 		"charged_micros":  float64(cost(t, sonnet, u)),
 		"reserved_micros": float64(worst(t, sonnet, body, 100, "1h")),
 	}

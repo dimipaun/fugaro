@@ -19,6 +19,8 @@ type callLog struct {
 	pricedAs, settled          string
 	sessionID, agentID         string
 	errorType                  string
+	maxTokens                  int64  // the request's
+	toolTypes                  string // the request's distinct tool types ("custom" for a client tool)
 }
 
 func (s *Server) logCall(c callLog) {
@@ -29,6 +31,8 @@ func (s *Server) logCall(c callLog) {
 		"serving_model", logValue(c.servingModel),
 		"status", c.status,
 		"stream", c.stream,
+		"max_tokens", c.maxTokens,
+		"tool_types", logValue(c.toolTypes),
 		"in", u.Input,
 		"cache_write_5m", u.CacheWrite5m,
 		"cache_write_1h", u.CacheWrite1h,
