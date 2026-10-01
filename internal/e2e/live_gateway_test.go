@@ -53,8 +53,8 @@ const (
 	// after the gateway refuses it (internal/runner's haltGrace).
 	lgwHaltGrace = 60 * time.Second
 
-	lgwRun1 = "20260930-120000-live"
-	lgwRun2 = "20260930-120100-halt"
+	lgwRun1 = "20260930-120000-a1b2"
+	lgwRun2 = "20260930-120100-c3d4"
 )
 
 const lgwConfig = `version: 1
