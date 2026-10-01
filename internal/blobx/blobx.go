@@ -50,6 +50,7 @@ const MaxReadBytes = 1 << 20
 
 // Open opens a gocloud bucket URL (gs://, file://, mem://).
 func Open(ctx context.Context, rawURL string) (*Bucket, error) {
+	rawURL = fileURLWithoutSidecars(rawURL)
 	b, err := blob.OpenBucket(ctx, rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("opening bucket %s: %w", rawURL, err)
@@ -59,6 +60,28 @@ func Open(ctx context.Context, rawURL string) (*Bucket, error) {
 		out.GCSName = u.Host
 	}
 	return out, nil
+}
+
+// fileURLWithoutSidecars adds metadata=skip to a file:// bucket URL that
+// does not set it. By default fileblob keeps each object's attributes in a
+// "<key>.attrs" sidecar that it truncates and rewrites in place before it
+// renames the data file into place, so a reader that opens the object
+// while it is being rewritten finds an empty sidecar and fails with EOF
+// (the data file itself is always whole). A real bucket cannot do that,
+// and nothing Fugaro reads off a file bucket lives in the sidecar, so
+// without it a read sees the old object or the new one, never a torn one.
+func fileURLWithoutSidecars(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme != "file" {
+		return rawURL
+	}
+	q := u.Query()
+	if q.Has("metadata") {
+		return rawURL
+	}
+	q.Set("metadata", "skip")
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // Wrap treats b as a non-GCS bucket. Production code opens buckets with
