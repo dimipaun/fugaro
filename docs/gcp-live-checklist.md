@@ -573,12 +573,22 @@ Migration and sandbox run on 2026-10-01 in the dev project. The installation is 
 - **Sandbox run (check 13) on the M9a runner:** `20261001-042234-4b0e` succeeded in about a minute, PR #23 (the sandbox). Model usage $0.33 notional on the subscription (`model_basis: subscription`), compute $0.001. No halt.
 - **EdgeWeb:** its `project: belong` line went in as PR #1774 (merged on the user's instruction). No EdgeWeb run was started.
 
-Still to record (nothing below ran yet): check 20, and the Vertex facts. Record every `FACT` and each plan summary in the same way as the runs above.
+Check 20 ran on 2026-10-01 and passed (third attempt; the first two stopped on test bugs, fixed in #46 and #49, with no model spend beyond the figures below). Still to record: the Vertex facts. Record every `FACT` and each plan summary in the same way as the runs above.
 
 - **The migration:** the plan summaries of `fugaro init --name` and of each `fugaro init --repo`; that `fugaro/project.json` shows the name and the GCP project; that the label `fugaro_project` is on the runs bucket; that each job carries `FUGARO_PROJECT` and `FUGARO_GCP_PROJECT`; that each repository's Scheduler job is `ENABLED` again.
 - **Project selection:** outside a checkout with two project configs and no selector, a command refuses and lists them; with exactly one, it works.
 - **A sandbox run (check 13) on the M9a runner:** it ends ready; its record has `model_source: claude-code` and no `halt`.
-- **Check 20 (`TestLiveGateway`), or "deferred: no API key":** paste its `FACT:` lines here, one per item above (A6, A-N5, A-N7, A-N6, A10, A11, A9, A-N2, A-N1, R8, the planted key, A-N8, A-N9), with the cost the run reported and the unreconciled and `usage_unparsed` figures.
+- **Check 20 (`TestLiveGateway`), passed 2026-10-01** (Claude Code 2.1.283 in the image, API key, local Docker; the last run took 69 s and cost $0.48 by the gateway's count, the earlier runs $0.42 and $0.41, the first confirmed against the Console invoice at $0.42):
+  - **A6, A-N5, A-N7: true.** Claude Code read `/etc/claude-code/managed-settings.json`; its `env` beat the repository's `ANTHROPIC_BASE_URL`; it accepted a plain `http` loopback base URL (20 calls logged). No default request shape was refused (no `context_management` or block-type refusals).
+  - **A-N6: true.** implement and fix calls all `claude-sonnet-5`, review calls all `claude-sonnet-5-5`, no violations; one `x-claude-code-agent-id` (no subagent calls).
+  - **A-N2: true.** The gateway's tokens equal the result events' per stage (implement 523,632; review 163,684; fix 138,627). A resumed fix stage's `modelUsage` carries the earlier stages' totals (662,259 = 523,632 + 138,627); `usage` and the gateway agree at 138,627.
+  - **A10, A11: the gateway's cost is right.** unreconciled $0.0000, `usage_unparsed` 0. On `claude-sonnet-5` the gateway and Claude Code agree; the gap is `claude-sonnet-5-5`, which Claude Code does not know and prices at its default 2.5x (see the note below).
+  - **A9:** largest output of one call 1,942 tokens (`claude-sonnet-5`) and 201 (`claude-sonnet-5-5`) against role limits of 4,000.
+  - **A-N8:** `usage.service_tier` `standard`, `usage.inference_geo` `global`, `tools[].type` `custom`.
+  - **A-N9:** the largest charge was 30.0% of its reservation across 20 calls, including the one that read `logo.png`.
+  - **R8, A-N1:** the run under a $0.002 cap ended `halted (run_cap)`, outcome draft, exit 0, one call reached the model; `claude` exited 449 ms after the gateway's 403 (grace 60 s).
+  - **The planted key** is in no log, transcript, bucket object or provider state of either run.
+  - **The fix stage** resumed implement's session (three calls); the run still ended `failed` ("review round 2 still has 2 findings"), which the test allows.
 - **Vertex facts (A-N3, A9 Vertex side, A11 Vertex price):** recorded, or "open: Vertex `enforce` stays refused".
 - **Assumptions this run answers:** A6 and A-N5 (the managed settings), A-N7 (the plain http base URL), A-N6 (pins per role), A-N1 (the 403 and the grace), A-N2 (the result event's count against the gateway's), A-N8 (default request shapes), A-N9 (the image ceiling) and A10 and A11 (cost). Each stays open until a `FACT` above answers it.
 
