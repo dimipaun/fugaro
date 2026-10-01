@@ -268,14 +268,9 @@ func TestOAuthNeverProxied(t *testing.T) {
 			if envValue(req.Env, "ANTHROPIC_BASE_URL") != "" || envValue(req.Env, "ANTHROPIC_API_KEY") != "" {
 				t.Errorf("the oauth agent's env routes elsewhere: %v", req.Env)
 			}
-			env, deny, raw := settingsEnv(t, g.harness)
-			for k := range env {
-				if !strings.HasPrefix(k, "ANTHROPIC_DEFAULT_") && k != "CLAUDE_CODE_SUBAGENT_MODEL" && k != "CLAUDE_CODE_MAX_OUTPUT_TOKENS" {
-					t.Errorf("managed settings hold %s, not only pins: %s", k, raw)
-				}
-			}
-			if len(deny) != 0 {
-				t.Errorf("web tools denied without a gateway: %s", raw)
+			// No gateway, so no pins and no managed settings at all.
+			if _, err := os.Stat(g.deps.ManagedSettingsPath); !os.IsNotExist(err) {
+				t.Errorf("an oauth run has managed settings: %v", err)
 			}
 			return inner(t, ctx, req)
 		}
@@ -612,7 +607,11 @@ func TestInFlightCallsFinishAfterHalt(t *testing.T) {
 		if s, _ := post(t, req, sonnet, 4000); s != 200 {
 			t.Errorf("second call = %d", s)
 		}
-		if s, _ := post(t, req, sonnet, 4000); s != 403 {
+		// A call that can't fit the cap even alone halts the run, with the
+		// slow one still in flight.
+		base, key := gwEnv(req)
+		big := fmt.Sprintf(`{"model":%q,"max_tokens":10,"messages":[{"role":"user","content":%q}]}`, sonnet, strings.Repeat("a", 300000))
+		if s, _ := postBody(t, base+"/v1/messages", key, big); s != 403 {
 			t.Errorf("third call = %d, want the cap refusing it", s)
 		}
 		wg.Wait()
@@ -789,8 +788,10 @@ func TestGatewayRunSecretScan(t *testing.T) {
 	if strings.Contains(g.logs.String(), plantedKey) {
 		t.Errorf("a log line holds the real key:\n%s", g.logs.String())
 	}
-	if raw, err := os.ReadFile(g.deps.ManagedSettingsPath); err != nil || strings.Contains(string(raw), plantedKey) {
-		t.Errorf("settings file: %v / %s", err, raw)
+	// The managed settings are removed when the run ends; what they held
+	// was read while the agent ran (TestManagedSettingsBeforeEveryStage).
+	if raw, err := os.ReadFile(g.deps.ManagedSettingsPath); err == nil && strings.Contains(string(raw), plantedKey) {
+		t.Errorf("settings file holds the key: %s", raw)
 	}
 	for _, c := range g.agent.calls {
 		for _, kv := range c.Env {
