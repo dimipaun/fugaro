@@ -20,6 +20,10 @@ const (
 	KeyMode          = "mode"
 	KeyMaxRunTokens  = "max_run_tokens"
 	KeyAllowedModels = "allowed_models"
+	// The per-call output limits of the coder and reviewer roles
+	// (agent.max_output_tokens.*).
+	KeyMaxOutputCoder    = "max_output_tokens.coder"
+	KeyMaxOutputReviewer = "max_output_tokens.reviewer"
 )
 
 // Layer names, as used in Effective.Sources and Ignored.Source.
@@ -38,10 +42,13 @@ const (
 
 // Layer is one source of policy. The zero value of every field means "unset".
 type Layer struct {
-	Mode          string   // "" = unset
-	PerRunUSD     float64  // 0 = unset
-	MaxRunTokens  int64    // 0 = unset
-	AllowedModels []string // nil = unset
+	Mode         string  // "" = unset
+	PerRunUSD    float64 // 0 = unset
+	MaxRunTokens int64   // 0 = unset
+	// Per-call output limits by role; 0 = unset, smaller wins.
+	MaxOutputCoder    int64
+	MaxOutputReviewer int64
+	AllowedModels     []string // nil = unset
 }
 
 // Effective is the merged policy plus where each key came from.

@@ -39,7 +39,7 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 		d.err = fmt.Errorf("fetching default branch %s: %w", def, err)
 		return nil, def, d.err
 	}
-	if d.data, err = r.repo.ShowFile(ctx, "origin/"+def, "fugaro.yaml"); err != nil {
+	if d.data, err = r.repo.ShowFile(ctx, "refs/remotes/origin/"+def, "fugaro.yaml"); err != nil {
 		d.err = fmt.Errorf("reading fugaro.yaml at origin/%s: %w", def, err)
 		d.data = nil
 	}
@@ -58,6 +58,7 @@ func (r *run) defaultBranchFile(ctx context.Context) ([]byte, string, error) {
 // project (a local run) the default branch is not read, as in checkProject.
 func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	c := r.d.Spend
+	// The ceiling sets no output limits (the project config has none).
 	ceiling := policy.Layer{MaxRunTokens: c.MaxRunTokens, AllowedModels: c.AllowedModels}
 	if c.Mode != "" && c.Mode != policy.ModeOff {
 		ceiling.Mode = c.Mode
@@ -78,10 +79,12 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		if err != nil {
 			return fmt.Errorf("fugaro.yaml on the default branch (%s) has an invalid policy, so the run can't tell what the team allows: %w", branch, err)
 		}
-		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels}
+		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels,
+			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
 	}
 
-	branch := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens}
+	branch := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
+		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
 	if b := cfg.Budget; b != nil {
 		branch.Mode, branch.PerRunUSD, branch.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
 	}
@@ -102,10 +105,14 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		}
 	}
 	if s.On() && s.Prices == nil {
-		// The ceiling was off, so the owner set no price overrides; a
-		// committed observe or enforce charges the built-in table.
+		// The ceiling was off with no price overrides (they would have
+		// been loaded); a committed observe or enforce charges the
+		// built-in table.
 		s.Prices = pricing.Embedded()
 	}
+	// The stages read their per-call output limits from the run's
+	// configuration: it carries the merged limits from here on.
+	cfg.Agent.MaxOutputTokens = config.RoleTokens{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	r.spend, r.policy = s, e
 	return nil
 }

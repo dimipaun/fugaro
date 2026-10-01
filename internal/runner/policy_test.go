@@ -161,7 +161,9 @@ func TestDefaultBranchPolicyInvalidFailsClosed(t *testing.T) {
 		"empty list":       {"budget:\n  allowed_models: []\n", "allowed_models"},
 		"negative tokens":  {"agent: {max_run_tokens: -5}\n", "max_run_tokens"},
 		"per day":          {"budget:\n  per_day_usd: 5\n", "per_day_usd"},
-		"not a mapping":    {"budget: 5\n", "cannot unmarshal"},
+		"not a mapping":    {"budget: 5\n", "budget"},
+		"budget typo":      {"budget:\n  per_run_usdd: 2\n", "per_run_usdd"},
+		"allowed typo":     {"budget:\n  allowed_model: [" + sonnet + "]\n", "allowed_model"},
 		"duplicate budget": {"budget: {mode: off}\nbudget: {mode: off}\n", "budget"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -175,6 +177,16 @@ func TestDefaultBranchPolicyInvalidFailsClosed(t *testing.T) {
 			setRef(t, h, task.Spec{Ref: "feature"})
 			refused(t, h, "fugaro.yaml", "default branch", "main", c.key)
 		})
+	}
+}
+
+func TestDefaultBranchAgentKeyTypoFailsClosed(t *testing.T) {
+	for _, kv := range []string{"max_run_token: 5", "max_output_token: { coder: 5 }"} {
+		h := projectHarness(t, "aurora")
+		setMain(t, h, strings.Replace(fixtureYAML(t), "  review_rounds: 2\n", "  review_rounds: 2\n  "+kv+"\n", 1))
+		pushBranch(t, h, "feature", fixtureYAML(t))
+		setRef(t, h, task.Spec{Ref: "feature"})
+		refused(t, h, "fugaro.yaml", "default branch", "main", strings.SplitN(kv, ":", 2)[0])
 	}
 }
 
@@ -282,5 +294,50 @@ func TestPolicyCommittedEnforceWithoutCapHalts(t *testing.T) {
 	rec, err := g.run(t)
 	if err != nil || rec.Status != runstore.StatusHalted || rec.Halt == nil || rec.Halt.Reason != runstore.HaltNoCap {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// The owner's cap holds with the ceiling's mode off: a repository that
+// escalates to enforce with a looser cap runs at the owner's.
+func TestPolicyOffCeilingCapHolds(t *testing.T) {
+	g := newGW(t, gwConfig(t, "")+"budget:\n  mode: enforce\n  per_run_usd: 20\n", "off", "0.10", capScript(3)...)
+	g.deps.Project = "aurora"
+	var st []int
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
+	if err != nil || len(st) != 3 || st[2] != 403 || rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || !strings.Contains(rec.Halt.Detail, "$0.10") {
+		t.Fatalf("statuses %v, rec = %+v, err = %v", st, rec, err)
+	}
+}
+
+// ... and the owner's price overrides, not the built-in table, charge it.
+func TestPolicyOffCeilingPricesHold(t *testing.T) {
+	g := newGW(t, gwConfig(t, "")+"budget:\n  mode: observe\n", "off", "", capScript(1)...)
+	g.deps.Project = "aurora"
+	g.deps.Spend = ceilingOf(t, runner.ModelPricesEnv, `{"`+sonnet+`":{"input_per_m":20,"output_per_m":100}}`)
+	var st []int
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}), review("ship", 0))
+	if err != nil || len(st) != 1 || st[0] != 200 || !near(rec.CostUSD, 0.40) {
+		t.Fatalf("statuses %v, cost %v, err = %v", st, rec.CostUSD, err)
+	}
+}
+
+// agent.max_output_tokens: the default branch's limit is the most a branch's
+// own file can have.
+func TestPolicyOutputLimitMergedWithDefaultBranch(t *testing.T) {
+	cfg := gwConfig(t, "")
+	main := strings.Replace(cfg, "max_output_tokens: { coder: 4096, reviewer: 4096 }", "max_output_tokens: { coder: 1000, reviewer: 4096 }", 1)
+	if main == cfg {
+		t.Fatal("no output limits in the fixture")
+	}
+	g := newGW(t, main, "observe", "", capScript(2)...)
+	g.deps.Project = "aurora"
+	pushBranch(t, g.harness, "feature", strings.Replace(cfg, "coder: 4096", "coder: 8192", 1))
+	setRef(t, g.harness, task.Spec{Ref: "feature"})
+	var st []int
+	if _, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 1000}), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if len(st) != 2 || st[0] == 200 || st[1] != 200 {
+		t.Fatalf("statuses %v: want the 4000-token call refused and the 1000-token one served", st)
 	}
 }

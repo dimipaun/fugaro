@@ -28,7 +28,7 @@ const (
 type Spend struct {
 	Mode   string         // off | observe | enforce
 	Cap    pricing.Micros // 0: none
-	Prices *pricing.Table // the built-in table with the owner's overrides; nil when off
+	Prices *pricing.Table // the built-in table with the owner's overrides; nil when off without overrides
 	// MaxRunTokens is the ceiling's token cap; 0: none. It applies whatever
 	// the mode.
 	MaxRunTokens int64
@@ -86,33 +86,40 @@ func policyFromEnv(lookup func(string) (string, bool)) (int64, []string, error) 
 }
 
 func spendFromEnv(getenv func(string) string) (Spend, error) {
+	var s Spend
 	switch mode := getenv(BudgetModeEnv); mode {
 	case "", "off":
-		return Spend{Mode: "off"}, nil
+		s.Mode = "off"
 	case "observe", "enforce":
-		s := Spend{Mode: mode}
-		if v := getenv(MaxRunUSDEnv); v != "" {
-			usd, err := strconv.ParseFloat(v, 64)
-			if err != nil || math.IsNaN(usd) || usd <= 0 {
-				return Spend{}, fmt.Errorf("%s %q: it must be a number of US dollars, more than 0 and at most %d", MaxRunUSDEnv, v, pricing.MaxUSD)
-			}
-			if s.Cap, err = pricing.FromUSD(usd); err != nil {
-				return Spend{}, fmt.Errorf("%s %q: %w", MaxRunUSDEnv, v, err)
-			}
-			if s.Cap < 1 {
-				// A cap that rounds to 0 would read as no cap at all.
-				return Spend{}, fmt.Errorf("%s %q: it rounds to nothing; the smallest cap is $0.000001", MaxRunUSDEnv, v)
-			}
+		s.Mode = mode
+	default:
+		return Spend{}, fmt.Errorf("%s %q: it must be off, observe or enforce", BudgetModeEnv, mode)
+	}
+	// The cap and the price overrides are the owner's ceiling whatever the
+	// mode: a repository that escalates an off ceiling to enforce runs at
+	// the owner's cap and prices, never at its own.
+	if v := getenv(MaxRunUSDEnv); v != "" {
+		usd, err := strconv.ParseFloat(v, 64)
+		if err != nil || math.IsNaN(usd) || usd <= 0 {
+			return Spend{}, fmt.Errorf("%s %q: it must be a number of US dollars, more than 0 and at most %d", MaxRunUSDEnv, v, pricing.MaxUSD)
 		}
-		o, err := pricing.ParseOverrides(getenv(ModelPricesEnv))
+		if s.Cap, err = pricing.FromUSD(usd); err != nil {
+			return Spend{}, fmt.Errorf("%s %q: %w", MaxRunUSDEnv, v, err)
+		}
+		if s.Cap < 1 {
+			// A cap that rounds to 0 would read as no cap at all.
+			return Spend{}, fmt.Errorf("%s %q: it rounds to nothing; the smallest cap is $0.000001", MaxRunUSDEnv, v)
+		}
+	}
+	raw := getenv(ModelPricesEnv)
+	if s.On() || raw != "" {
+		o, err := pricing.ParseOverrides(raw)
 		if err != nil {
 			return Spend{}, err
 		}
 		if s.Prices, err = pricing.Embedded().With(o); err != nil {
 			return Spend{}, fmt.Errorf("%s: %w", ModelPricesEnv, err)
 		}
-		return s, nil
-	default:
-		return Spend{}, fmt.Errorf("%s %q: it must be off, observe or enforce", BudgetModeEnv, mode)
 	}
+	return s, nil
 }

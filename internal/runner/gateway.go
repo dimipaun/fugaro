@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -290,7 +291,7 @@ func (r *run) checkBudget() error {
 	}
 	if auth == "api-key" && s.Mode == "enforce" && s.Cap <= 0 {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: r.d.Now().UTC(),
-			Detail: "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"})
+			Detail: r.noCapDetail()})
 		return &HaltError{*r.haltValue()}
 	}
 	// The allow-list bounds the models whatever the credential or the mode.
@@ -318,4 +319,15 @@ func (r *run) checkBudget() error {
 		return errors.New(reason)
 	}
 	return nil
+}
+
+// noCapDetail says how to give an enforcing run a cap. Where the owner's
+// ceiling asked for enforce, the cap belongs in the project config; where a
+// repository's fugaro.yaml escalated the mode, either place will do.
+func (r *run) noCapDetail() string {
+	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"
+	if r.policy.Sources[policy.KeyMode] == policy.SourceCeiling {
+		return base
+	}
+	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
 }

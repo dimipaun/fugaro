@@ -36,3 +36,25 @@ func TestDefaultBranchFileReadOnce(t *testing.T) {
 		t.Fatalf("second read differs: %q, %v", second, err)
 	}
 }
+
+// A tag (or local branch) named like the remote-tracking ref must not
+// shadow the default branch's file.
+func TestDefaultBranchFileNotShadowedByTag(t *testing.T) {
+	testutil.IsolateGit(t)
+	files := testutil.FixtureFiles(t)
+	remote := testutil.NewRemote(t, files)
+	dir := filepath.Join(t.TempDir(), "w")
+	repo, err := gitops.OpenOrClone(context.Background(), dir, remote, gitops.WithVars(gitops.IdentityEnv(), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, dir, "checkout", "--quiet", "-b", "evil")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "# evil\n"})
+	testutil.Git(t, dir, "commit", "--quiet", "-am", "evil")
+	testutil.Git(t, dir, "tag", "origin/main")
+	r := &run{repo: repo}
+	got, _, err := r.defaultBranchFile(context.Background())
+	if err != nil || string(got) != files["fugaro.yaml"] {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}

@@ -67,6 +67,9 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 			}
 		}
 
+		e.tightenInt(&e.MaxOutputCoder, l.MaxOutputCoder, KeyMaxOutputCoder, src)
+		e.tightenInt(&e.MaxOutputReviewer, l.MaxOutputReviewer, KeyMaxOutputReviewer, src)
+
 		if r := modeRank(l.Mode); r > 0 {
 			cur := modeRank(e.Mode)
 			switch {
@@ -111,6 +114,21 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		e.Sources = nil
 	}
 	return e
+}
+
+// tightenInt applies a layer's positive limit v to *cur: smaller wins, a
+// larger one is ignored and recorded, 0 and below are unset.
+func (e *Effective) tightenInt(cur *int64, v int64, key, src string) {
+	if v <= 0 {
+		return
+	}
+	switch {
+	case *cur == 0 || v < *cur:
+		*cur, e.Sources[key] = v, src
+	case v > *cur:
+		e.Ignored = append(e.Ignored, Ignored{key, strconv.FormatInt(v, 10),
+			strconv.FormatInt(*cur, 10), e.Sources[key]})
+	}
 }
 
 func toSet(s []string) map[string]bool {

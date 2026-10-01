@@ -115,3 +115,28 @@ func TestPolicyOfInvalidIsError(t *testing.T) {
 		}
 	}
 }
+
+// The policy blocks are decoded strictly: a misspelt key would otherwise be
+// "no policy" and drop the team's limit silently.
+func TestPolicyOfStrictInsideBlocks(t *testing.T) {
+	for name, c := range map[string]struct{ y, key string }{
+		"budget typo":        {"budget: { per_run_usdd: 2 }", "per_run_usdd"},
+		"allowed typo":       {"budget: { allowed_model: [claude-sonnet-5-5] }", "allowed_model"},
+		"model_prices":       {"budget: { model_prices: {} }", "model_prices"},
+		"run tokens typo":    {"agent: { max_run_token: 5 }", "max_run_token"},
+		"output typo":        {"agent: { max_output_token: { coder: 5 } }", "max_output_token"},
+		"output role typo":   {"agent: { max_output_tokens: { coder2: 5 } }", "coder2"},
+		"budget not mapping": {"budget: 5", "budget"},
+		"agent not mapping":  {"agent: [1]", "agent"},
+		"duplicate budget":   {"budget: { mode: off }\nbudget: { mode: off }", "budget"},
+	} {
+		_, err := PolicyOf([]byte(c.y))
+		if err == nil || !strings.Contains(err.Error(), c.key) {
+			t.Errorf("%s: err = %v, want it to name %q", name, err, c.key)
+		}
+	}
+	// Other agent keys, and unknown keys elsewhere, stay lenient.
+	if _, err := PolicyOf([]byte("surprise: 1\nagent: { auth: x, review_rounds: 99, max_run_tokens: 5 }\nbudget: { mode: off }")); err != nil {
+		t.Errorf("lenient parts: %v", err)
+	}
+}

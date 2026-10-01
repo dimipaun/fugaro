@@ -26,7 +26,11 @@ func TestSpendFromEnv(t *testing.T) {
 		wantErr string
 	}{
 		"unset":                {env(), "off", 0, false, ""},
-		"off with the rest":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "5"), "off", 0, false, ""},
+		"off with the rest":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "5"), "off", 5_000_000, false, ""}, // the ceiling holds whatever the mode
+		"cap, mode unset":      {env(MaxRunUSDEnv, "5"), "off", 5_000_000, false, ""},
+		"bad cap, mode off":    {env(BudgetModeEnv, "off", MaxRunUSDEnv, "five"), "", 0, false, "FUGARO_MAX_RUN_USD"},
+		"bad cap, mode unset":  {env(MaxRunUSDEnv, "0"), "", 0, false, "FUGARO_MAX_RUN_USD"},
+		"bad prices, mode off": {env(BudgetModeEnv, "off", ModelPricesEnv, "{nope"), "", 0, false, "FUGARO_MODEL_PRICES"},
 		"enforce and cap":      {env(BudgetModeEnv, "enforce", MaxRunUSDEnv, "12.5"), "enforce", 12_500_000, true, ""},
 		"enforce without cap":  {env(BudgetModeEnv, "enforce"), "enforce", 0, true, ""},
 		"observe":              {env(BudgetModeEnv, "observe"), "observe", 0, true, ""},
@@ -114,5 +118,26 @@ func TestSpendFromEnvPolicyKeys(t *testing.T) {
 				t.Fatalf("spend = %+v, %v", s, err)
 			}
 		})
+	}
+}
+
+// The owner's price overrides hold whatever the mode: a repository that
+// escalates an off ceiling to enforce is charged at the owner's prices.
+func TestSpendFromEnvPricesHoldWhenOff(t *testing.T) {
+	const sonnet = `{"claude-sonnet-5-5":{"input_per_m":30,"output_per_m":150}}`
+	for _, e := range []func(string) (string, bool){
+		env(ModelPricesEnv, sonnet), env(BudgetModeEnv, "off", ModelPricesEnv, sonnet),
+	} {
+		s, err := SpendFromEnv(e)
+		if err != nil || s.On() || s.Prices == nil {
+			t.Fatalf("spend = %+v, %v", s, err)
+		}
+		if m, ok := s.Prices.Lookup("claude-sonnet-5-5"); !ok || m.Rates.InputPerM != 30 {
+			t.Fatalf("sonnet = %+v", m)
+		}
+	}
+	// No keys: exactly M9a's off.
+	if s, err := SpendFromEnv(env()); err != nil || s.Prices != nil || s.Cap != 0 || s.Mode != "off" {
+		t.Fatalf("%+v, %v", s, err)
 	}
 }

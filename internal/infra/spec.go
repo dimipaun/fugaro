@@ -552,31 +552,26 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	return ws, nil
 }
 
-// budgetEnv adds the project's budget to a workflow job's env when it is
-// not off: the mode, the cap when there is one, and the price overrides
-// when there are any. The check job calls no model and gets none of it.
+// budgetEnv adds the project's budget to a workflow job's env: the token
+// cap and the allow-list, the cap when there is one and the price overrides
+// when there are any, whatever the mode (they are the owner's ceiling, which
+// a repository's committed policy is clamped to), and the mode itself when it
+// is not off. The check job calls no model and gets none of it.
 func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	if b := lc.Budget; b != nil {
-		// The token cap and the allow-list hold whatever the mode, oauth's
-		// repositories included.
 		if b.MaxRunTokens > 0 {
 			env[MaxRunTokensEnv] = strconv.FormatInt(b.MaxRunTokens, 10)
 		}
 		if b.AllowedModels != nil {
 			env[AllowedModelsEnv] = strings.Join(b.AllowedModels, ",")
 		}
-	}
-	mode := lc.BudgetMode()
-	if mode == localcfg.BudgetOff {
-		return nil
+		if b.PerRunUSD > 0 {
+			env[MaxRunUSDEnv] = formatPrice(b.PerRunUSD)
+		}
 	}
 	o, err := lc.Overrides()
 	if err != nil {
 		return err
-	}
-	env[BudgetModeEnv] = mode
-	if usd := lc.Budget.PerRunUSD; usd > 0 {
-		env[MaxRunUSDEnv] = formatPrice(usd)
 	}
 	prices, err := o.Env()
 	if err != nil {
@@ -584,6 +579,9 @@ func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	}
 	if prices != "" {
 		env[ModelPricesEnv] = prices
+	}
+	if mode := lc.BudgetMode(); mode != localcfg.BudgetOff {
+		env[BudgetModeEnv] = mode
 	}
 	return nil
 }

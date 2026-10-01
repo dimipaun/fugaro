@@ -223,6 +223,12 @@ func randLayer(r *rand.Rand) Layer {
 	if r.Intn(3) > 0 {
 		l.MaxRunTokens = int64(r.Intn(8) - 2)
 	}
+	if r.Intn(3) > 0 {
+		l.MaxOutputCoder = int64(r.Intn(8) - 2)
+	}
+	if r.Intn(3) > 0 {
+		l.MaxOutputReviewer = int64(r.Intn(8) - 2)
+	}
 	l.Mode = []string{"", "off", "observe", "enforce", "bogus"}[r.Intn(5)]
 	if r.Intn(3) > 0 {
 		l.AllowedModels = []string{}
@@ -263,7 +269,7 @@ func TestMergeNeverLoosens(t *testing.T) {
 
 		// oracle: exactness.
 		var minCap float64
-		var minTok int64
+		var minTok, minOutC, minOutR int64
 		var rank int
 		var set []string
 		haveSet := false
@@ -273,6 +279,12 @@ func TestMergeNeverLoosens(t *testing.T) {
 			}
 			if l.MaxRunTokens > 0 && (minTok == 0 || l.MaxRunTokens < minTok) {
 				minTok = l.MaxRunTokens
+			}
+			if l.MaxOutputCoder > 0 && (minOutC == 0 || l.MaxOutputCoder < minOutC) {
+				minOutC = l.MaxOutputCoder
+			}
+			if l.MaxOutputReviewer > 0 && (minOutR == 0 || l.MaxOutputReviewer < minOutR) {
+				minOutR = l.MaxOutputReviewer
 			}
 			if rk := modeRank(l.Mode); rk > rank {
 				rank = rk
@@ -291,7 +303,7 @@ func TestMergeNeverLoosens(t *testing.T) {
 				}
 			}
 		}
-		if e.PerRunUSD != minCap || e.MaxRunTokens != minTok || modeRank(e.Mode) != rank {
+		if e.PerRunUSD != minCap || e.MaxRunTokens != minTok || e.MaxOutputCoder != minOutC || e.MaxOutputReviewer != minOutR || modeRank(e.Mode) != rank {
 			t.Fatalf("not exact: %+v -> %+v", ls, e)
 		}
 		if haveSet != e.HasAllowList() || (haveSet && !reflect.DeepEqual(set, e.AllowedModels)) {
@@ -305,6 +317,7 @@ func TestMergeNeverLoosens(t *testing.T) {
 		// oracle: Ignored, replayed layer by layer against the running value.
 		var want []Ignored
 		runCap, runTok, runRank := 0.0, int64(0), 0
+		var runOutC, runOutR int64
 		runSet, runHave := []string(nil), false
 		for _, l := range ls {
 			if validCap(l.PerRunUSD) {
@@ -319,6 +332,20 @@ func TestMergeNeverLoosens(t *testing.T) {
 					runTok = l.MaxRunTokens
 				} else if l.MaxRunTokens > runTok {
 					want = append(want, Ignored{Key: KeyMaxRunTokens})
+				}
+			}
+			if l.MaxOutputCoder > 0 {
+				if runOutC == 0 || l.MaxOutputCoder < runOutC {
+					runOutC = l.MaxOutputCoder
+				} else if l.MaxOutputCoder > runOutC {
+					want = append(want, Ignored{Key: KeyMaxOutputCoder})
+				}
+			}
+			if l.MaxOutputReviewer > 0 {
+				if runOutR == 0 || l.MaxOutputReviewer < runOutR {
+					runOutR = l.MaxOutputReviewer
+				} else if l.MaxOutputReviewer > runOutR {
+					want = append(want, Ignored{Key: KeyMaxOutputReviewer})
 				}
 			}
 			if rk := modeRank(l.Mode); rk > 0 {
@@ -371,5 +398,22 @@ func TestMergeNeverLoosens(t *testing.T) {
 	// non-vacuity: the generator must actually exercise ignoring.
 	if ignoredSeen < 1000 || ceilingIgnoredCandidates < 1000 {
 		t.Fatalf("generator too weak: ignored=%d multi=%d", ignoredSeen, ceilingIgnoredCandidates)
+	}
+}
+
+func TestMergeMaxOutputMin(t *testing.T) {
+	// The ceiling has none; the default branch sets coder 4096; the branch tries 8192 and 0.
+	e := Merge(Layer{}, Layer{MaxOutputCoder: 4096, MaxOutputReviewer: 100},
+		Layer{MaxOutputCoder: 8192, MaxOutputReviewer: 50})
+	if e.MaxOutputCoder != 4096 || e.MaxOutputReviewer != 50 ||
+		e.Sources[KeyMaxOutputCoder] != "default-branch" || e.Sources[KeyMaxOutputReviewer] != "branch" {
+		t.Fatalf("%+v", e)
+	}
+	if want := []Ignored{{KeyMaxOutputCoder, "8192", "4096", "default-branch"}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("got %+v", e.Ignored)
+	}
+	// 0 is no value: it can't lift a limit.
+	if e := Merge(Layer{}, Layer{MaxOutputCoder: 4096}, Layer{MaxOutputCoder: 0}); e.MaxOutputCoder != 4096 || len(e.Ignored) != 0 {
+		t.Fatalf("%+v", e)
 	}
 }

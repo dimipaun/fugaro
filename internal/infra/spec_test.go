@@ -851,10 +851,21 @@ func onlyBudgetEnv(env map[string]string) map[string]string {
 	return got
 }
 
+// With the budget off the job gets no mode, but still the owner's cap and
+// price overrides: they are the ceiling a repository's committed policy is
+// clamped to (M9a.1; M9a dropped them when the mode was off).
 func TestWorkflowEnvBudgetOff(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		if got := onlyBudgetEnv(w.Env); len(got) != 0 {
+			t.Errorf("%s has %v with no budget block", w.Name, got)
+		}
+	}
 	for name, block := range map[string]string{
-		"no block":   "",
-		"mode off":   "budget: { mode: off, per_run_usd: 5 }\n",
+		"mode off":   "budget: { mode: off, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
 		"empty mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -863,8 +874,12 @@ func TestWorkflowEnvBudgetOff(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, w := range rs.Workflows {
-				if got := onlyBudgetEnv(w.Env); len(got) != 0 {
-					t.Errorf("%s has %v with the budget off", w.Name, got)
+				got := onlyBudgetEnv(w.Env)
+				if _, ok := got[BudgetModeEnv]; ok || got[MaxRunUSDEnv] != "5" || got[ModelPricesEnv] == "" || len(got) != 2 {
+					t.Errorf("%s env = %v: want the cap and prices, no mode", w.Name, got)
+				}
+				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() || s.Cap != 5_000_000 || s.Prices == nil {
+					t.Errorf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
 				}
 			}
 		})
