@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -93,6 +95,7 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 	} else {
 		fmt.Fprintf(&b, "**Cost:** $%.2f\n\n", rec.CostUSD)
 	}
+	b.WriteString(policyLine(rec.Policy))
 	if fu != nil {
 		b.WriteString(followUpSection(fu, rec.Reason))
 	}
@@ -201,4 +204,51 @@ func followUpSection(fu *FollowUpSection, reason string) string {
 		b.WriteString("The agent wrote no `followup.md`.\n\n")
 	}
 	return b.String()
+}
+
+// policyLine is the report's note that fugaro.yaml values looser than the
+// limits in force were dropped, one entry per key; empty when none were.
+func policyLine(p *runstore.PolicyRecord) string {
+	if p == nil || len(p.Ignored) == 0 {
+		return ""
+	}
+	type entry struct{ first, last runstore.PolicyIgnored }
+	seen, order, fromDefault := map[string]*entry{}, []string{}, false
+	for _, ig := range p.Ignored {
+		fromDefault = fromDefault || ig.From == policy.SourceDefaultBranch
+		if e := seen[ig.Key]; e != nil {
+			e.last = ig
+			continue
+		}
+		seen[ig.Key] = &entry{ig, ig}
+		order = append(order, ig.Key)
+	}
+	parts := make([]string, len(order))
+	for i, k := range order {
+		e := seen[k]
+		parts[i] = fmt.Sprintf("%s %s -> %s", PolicyKeyPath(k), policyValue(k, e.first.Value), policyValue(k, e.last.Effective))
+	}
+	n := len(order)
+	where, limits := " on this branch", "the project's limits"
+	if fromDefault {
+		where, limits = "", "the limits set above them"
+	}
+	were := "were"
+	if n == 1 {
+		were = "was"
+	}
+	return fmt.Sprintf("**Policy:** %s from fugaro.yaml%s %s looser than %s and %s ignored (%s)\n\n",
+		Plural(n, "value"), where, were, limits, were, strings.Join(parts, "; "))
+}
+
+// policyValue is a limit's value for the report. An allow-list's models come
+// from a branch, so they are quoted as code; the numbers and modes are ours.
+func policyValue(key, v string) string {
+	if v == "" {
+		return "none"
+	}
+	if key == policy.KeyAllowedModels {
+		return config.CodeSpan(v)
+	}
+	return v
 }

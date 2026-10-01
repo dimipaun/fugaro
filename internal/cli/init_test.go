@@ -1290,6 +1290,25 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
 	}
+	// A committed enforce is the effective mode under an off ceiling, and
+	// under an observe one (the stricter wins).
+	committed := func(mode string) *config.Config {
+		t.Helper()
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nbudget: { mode: " + mode + ", per_run_usd: 5 }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for name, lc := range map[string]*localcfg.Config{"off ceiling": withBudget(""), "observe ceiling": withBudget("budget: { mode: observe }\n")} {
+		err := checkVertexBudget(lc, committed("enforce"))
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
+			t.Errorf("committed enforce under %s: exit %d, err %v", name, ExitCode(err), err)
+		}
+		if err := checkVertexBudget(lc, committed("observe")); err != nil {
+			t.Errorf("committed observe under %s: %v", name, err)
+		}
+	}
 	for name, tc := range map[string]struct {
 		lc  *localcfg.Config
 		cfg *config.Config
@@ -1405,5 +1424,98 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	}
 	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("a refused repository was planned: %q", r.calls(t))
+	}
+}
+
+// The ceiling's new keys reach the job env that init --repo computes.
+func TestInitRepoPassesPolicyEnv(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, _, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"FUGARO_MAX_RUN_TOKENS", "123456", "FUGARO_ALLOWED_MODELS", "claude-sonnet-5-5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("print-vars output lacks %q:\n%s", want, out)
+		}
+	}
+}
+
+// init --repo says what ceiling it is about to apply and which keys of the
+// checkout's committed budget block it would clamp.
+func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := func(block string) string {
+		return "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" + block +
+			"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	}
+	run := func(block string) (string, string) {
+		t.Helper()
+		root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml(block))
+		testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+		t.Chdir(t.TempDir())
+		out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out, errOut
+	}
+	out, errOut := run("budget: { mode: off, per_run_usd: 20 }\n")
+	want := "Budget ceiling for aurora from project aurora: per_run_usd 5, mode observe, max_run_tokens 1000"
+	if !strings.Contains(errOut, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, errOut)
+	}
+	for _, w := range []string{"budget.per_run_usd: 20 is above the project's ceiling of 5", "budget.mode: off is looser than the project's observe"} {
+		if !strings.Contains(errOut, w) {
+			t.Errorf("stderr lacks %q:\n%s", w, errOut)
+		}
+	}
+	if strings.Contains(out, "ceiling") {
+		t.Errorf("print-vars stdout must stay the tfvars alone:\n%s", out)
+	}
+	// A tighter block clamps nothing.
+	if _, errOut = run("budget: { per_run_usd: 2 }\n"); !strings.Contains(errOut, "Budget ceiling") || strings.Contains(errOut, "above") {
+		t.Errorf("tight block: %s", errOut)
+	}
+}
+
+// A project without a budget has no ceiling to announce.
+func TestInitRepoSilentWithoutCeiling(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
+		"workflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), yaml)
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil || strings.Contains(out+errOut, "Budget ceiling") {
+		t.Fatalf("%v\n%s\n%s", err, out, errOut)
 	}
 }

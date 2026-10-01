@@ -538,3 +538,33 @@ func TestModelPricesDefaults(t *testing.T) {
 		t.Fatalf("round trip overrides = %v, %v", o2, err)
 	}
 }
+
+func TestBudgetTokensAndModelsValidation(t *testing.T) {
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"negative tokens":   {"budget: { max_run_tokens: -1 }\n", "max_run_tokens"},
+		"empty list":        {"budget: { allowed_models: [] }\n", "allowed_models"},
+		"alias":             {"budget: { allowed_models: [sonnet] }\n", "alias"},
+		"latest alias":      {"budget: { allowed_models: [claude-sonnet-latest] }\n", "alias"},
+		"empty entry":       {"budget: { allowed_models: [claude-sonnet-5-5, ''] }\n", "allowed_models[1]"},
+		"space in entry":    {"budget: { allowed_models: ['claude-sonnet-5-5 '] }\n", "whitespace"},
+		"duplicate entry":   {"budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }\n", "listed twice"},
+		"comma in entry":    {"budget: { allowed_models: ['claude-a,claude-b'] }\n", "allowed_models[0]"},
+		"bogus mode":        {"budget: { mode: ENFORCE }\n", "budget.mode"},
+		"tokens not number": {"budget: { max_run_tokens: lots }\n", "lots"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.msg)
+			}
+		})
+	}
+	c, err := Parse([]byte(sample + "budget: { max_run_tokens: 500000, allowed_models: [claude-sonnet-5-5, claude-haiku-4-5@20251001] }\n"))
+	if err != nil || c.Budget.MaxRunTokens != 500000 || len(c.Budget.AllowedModels) != 2 {
+		t.Fatalf("valid: %+v, %v", c.Budget, err)
+	}
+	// The two keys hold with the dollar budget off.
+	if c.BudgetMode() != BudgetOff {
+		t.Errorf("mode = %q", c.BudgetMode())
+	}
+}

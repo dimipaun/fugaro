@@ -22,9 +22,16 @@ agent:
   #   reviewer: claude-sonnet-5-5     # review; same rule
   #   background: claude-haiku-4-5    # Claude Code's small background requests; a budget requires it
   # max_output_tokens: { coder: 64000, reviewer: 32000 }   # per call, 0 to 128000; 0 is no limit
-  # max_run_tokens: 5000000   # the run's total tokens, 0 is none; with a budget the gateway enforces it
+  # max_run_tokens: 5000000   # the run's total tokens, 0 is none; can only tighten the project's ceiling
   # instructions: .fugaro/instructions.md   # appended to the agent's system prompt
   # review: /review           # a skill name, or a repo-relative prompt file
+
+# budget:                     # optional; the repository's cost and model policy. It can only tighten the
+#                             # project's ceiling (fugaro init --repo); the runner reads it from the default branch,
+#                             # a branch's looser value is ignored with a warning (per_day_usd comes with M9b)
+#   mode: enforce             # off | observe | enforce; the strictest of the layers wins
+#   per_run_usd: 5            # a dollar cap per run; the lowest of the layers wins
+#   allowed_models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5]   # explicit IDs, no aliases
 
 # followup:                   # optional; who can steer a follow-up run (fugaro run --pr N)
 #   # A follow-up agent holds the workflow's secrets, so only these accounts' PR comments reach it;

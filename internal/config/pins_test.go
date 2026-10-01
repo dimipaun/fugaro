@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -77,5 +78,46 @@ func TestCheckPinsOverrideTable(t *testing.T) {
 	}
 	if ps := CheckPins(a, tbl); len(ps) != 0 {
 		t.Fatalf("with the override: %v", ps)
+	}
+}
+
+func TestCheckAllowed(t *testing.T) {
+	a := pinnedAgent()
+	all := []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5"}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{}), nil); ps != nil {
+		t.Fatalf("no list must allow everything: %v", ps)
+	}
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all); len(ps) != 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	e := policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}})
+	ps := CheckAllowed(a, e, all)
+	if paths(ps) != "agent.models.coder,agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
+	}
+	if m := ps[0].Message; !strings.Contains(m, "claude-opus-5-5") || !strings.Contains(m, "default-branch") || !strings.Contains(m, "claude-haiku-4-5") {
+		t.Errorf("message %q", m)
+	}
+	// An empty non-nil list denies every model, however it came about.
+	e = policy.Merge(policy.Layer{AllowedModels: all}, policy.Layer{AllowedModels: []string{"other"}})
+	if ps := CheckAllowed(a, e, all); len(ps) != 3 || !strings.Contains(ps[0].Message, "none") || !strings.Contains(ps[0].Message, "the project's allow-list: "+strings.Join(all, ", ")) {
+		t.Fatalf("deny-all: %v", ps)
+	}
+	// A role with no model can't be shown to be on the list.
+	a.Models.Reviewer = ""
+	if ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: all}), all); paths(ps) != "agent.models.reviewer" {
+		t.Fatalf("problems: %v", ps)
+	}
+}
+
+func TestCheckAllowedQuotesModelNames(t *testing.T) {
+	a := pinnedAgent()
+	a.Models.Coder = "[x](http://evil)`@me\n"
+	ps := CheckAllowed(a, policy.Merge(policy.Layer{AllowedModels: []string{"claude-haiku-4-5"}}), nil)
+	if len(ps) == 0 || !strings.Contains(ps[0].Message, "`[x](http://evil)?@me?`") {
+		t.Fatalf("problems: %v", ps)
+	}
+	if got := CodeSpan("a`b\x00c"); got != "`a?b?c`" {
+		t.Fatalf("CodeSpan = %q", got)
 	}
 }

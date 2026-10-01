@@ -112,9 +112,13 @@ Match what the repo's CI gives its build and test steps today. Read the CI machi
 - If CI raises the Node heap with `--max-old-space-size=<MB>` and the test runner uses parallel workers, check workers × heap + 2Gi against that figure.
 - When the estimate exceeds the CI memory, first look for how CI copes (`--maxWorkers=1`, a nightly-only suite) and mirror it. Raise `resources` only if CI really has more memory. Say which you chose and why.
 
+### Optional: a budget block
+
+Offer, don't write unprompted, a `budget:` block for a team that wants its own cost limits committed: `mode` (`off | observe | enforce`), `per_run_usd` and `allowed_models` (explicit model IDs, no aliases). Add it only when the user asks for one, with numbers they give you. It can only tighten the ceiling in the project's config: the runner reads it from the default branch, a branch can only tighten further, and an invalid block there blocks every run. It cannot raise a cap, and it cannot set prices (they are the owner's). Tell the user it takes effect once merged to the default branch, and that a value above the project's ceiling is clamped with a warning (`fugaro validate` shows which). Never invent a cap.
+
 ## 6. Validate until clean
 
-Run `fugaro validate --json`. It prints `{"valid": …, "problems": [{"path": …, "message": …}]}`. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
+Run `fugaro validate --json`. It prints `{"valid": …, "problems": [{"path": …, "message": …}]}`. It may also print `"warnings"`, a list in the same shape as `problems` (a value the project's ceiling would clamp); warnings don't make the file invalid, but tell the user about them. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
 
 ## 7. Build the image until the smoke test passes
 

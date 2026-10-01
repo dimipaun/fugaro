@@ -11,6 +11,9 @@ import (
 	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
+
+	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
@@ -112,6 +115,7 @@ func Validate(c *Config) []Problem {
 		add("agent.max_budget_usd", "must not be negative")
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
+	ps = append(ps, validateBudget(c.Budget)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
@@ -344,6 +348,12 @@ func validateAgentModels(a Agent) []Problem {
 			ps = append(ps, Problem{Path: m.path, Message: "must not contain whitespace"})
 		}
 	}
+	return append(ps, validateAgentTokens(a)...)
+}
+
+// validateAgentTokens checks the token limits, which are policy keys.
+func validateAgentTokens(a Agent) []Problem {
+	var ps []Problem
 	for _, t := range []struct {
 		path string
 		n    int64
@@ -356,4 +366,72 @@ func validateAgentModels(a Agent) []Problem {
 		ps = append(ps, Problem{Path: "agent.max_run_tokens", Message: "must not be negative (0 is none)"})
 	}
 	return ps
+}
+
+// validateBudget checks fugaro.yaml's budget: block. It follows the project
+// config's rules for the mode and the cap's range; whether enforce has a cap
+// is decided after the merge, so a repository may set enforce and leave the
+// cap to the owner.
+func validateBudget(b *Budget) []Problem {
+	if b == nil {
+		return nil
+	}
+	var ps []Problem
+	add := func(path, format string, args ...any) {
+		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
+	}
+	if b.Mode != "" && !policy.ValidMode(b.Mode) {
+		add("budget.mode", "%q must be off, observe or enforce", b.Mode)
+	}
+	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
+		add("budget.per_run_usd", "%v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)
+	} else if b.PerRunUSD > 0 && m < 1 {
+		add("budget.per_run_usd", "%v: it rounds to nothing; the smallest cap is $0.000001", b.PerRunUSD)
+	}
+	if b.PerDayUSD != nil {
+		add("budget.per_day_usd", "is not supported yet (M9b): per-day caps are set by the project owner")
+	}
+	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
+		add("budget.allowed_models", "must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
+	}
+	for i, m := range b.AllowedModels {
+		path := fmt.Sprintf("budget.allowed_models[%d]", i)
+		if msg := CheckModelID(m); msg != "" {
+			add(path, "%s", msg)
+		}
+	}
+	if i, ok := DuplicateModel(b.AllowedModels); ok {
+		add(fmt.Sprintf("budget.allowed_models[%d]", i), "%s is listed twice; list each model once", b.AllowedModels[i])
+	}
+	return ps
+}
+
+// DuplicateModel is the index of the first entry of models that repeats an
+// earlier one. fugaro.yaml and the project config share it.
+func DuplicateModel(models []string) (int, bool) {
+	seen := map[string]bool{}
+	for i, m := range models {
+		if seen[m] {
+			return i, true
+		}
+		seen[m] = true
+	}
+	return 0, false
+}
+
+// CheckModelID is the reason m is not usable in an allow-list of models, or
+// "" when it is: an explicit model ID, not an alias. fugaro.yaml and the
+// project config share it.
+func CheckModelID(m string) string {
+	switch {
+	case m == "":
+		return "must not be empty"
+	case len(m) > 100:
+		return "must be at most 100 characters"
+	case strings.ContainsFunc(m, unicode.IsSpace):
+		return "must not contain whitespace"
+	case pricing.IsAlias(m):
+		return fmt.Sprintf("%s is an alias: name an explicit model ID such as claude-sonnet-5-5", m)
+	}
+	return ""
 }

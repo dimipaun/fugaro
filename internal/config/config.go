@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // Config is a parsed fugaro.yaml.
@@ -22,11 +24,34 @@ type Config struct {
 	// Project is the Fugaro project this repository belongs to
 	// (ProjectNameRE). Validate requires it; the runner refuses a job of
 	// another project.
-	Project   string              `yaml:"project,omitempty"`
-	Git       Git                 `yaml:"git"`
-	Agent     Agent               `yaml:"agent"`
+	Project string `yaml:"project,omitempty"`
+	Git     Git    `yaml:"git"`
+	Agent   Agent  `yaml:"agent"`
+	// Budget is the repository's cost and model policy. It can only
+	// tighten the owner's ceiling (the project config); see Policy.
+	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
+}
+
+// Budget modes, as the project config spells them.
+const (
+	BudgetOff     = policy.ModeOff
+	BudgetObserve = policy.ModeObserve
+	BudgetEnforce = policy.ModeEnforce
+)
+
+// Budget is fugaro.yaml's budget: block. Every key is optional; a key left
+// out sets no policy. The model prices are not settable here (a repository
+// that could set prices could set them to zero).
+type Budget struct {
+	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" sets none
+	PerRunUSD float64 `yaml:"per_run_usd"` // 0 sets none; enforce needs a cap only after the merge
+	// AllowedModels bounds the models the run may choose, explicit IDs
+	// only; nil sets none, and an empty list is invalid.
+	AllowedModels []string `yaml:"allowed_models"`
+	// PerDayUSD is read only to refuse it: per-day caps arrive with M9b.
+	PerDayUSD *float64 `yaml:"per_day_usd,omitempty"`
 }
 
 // Followup says who can steer a follow-up run on a Fugaro pull request
@@ -68,7 +93,8 @@ type Agent struct {
 	Models ModelRoles `yaml:"models"`
 	// MaxOutputTokens limits one call's output per role; 0 is no limit.
 	MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
-	// MaxRunTokens limits a whole run's tokens; 0 is none.
+	// MaxRunTokens limits a whole run's tokens; 0 is none. It can only
+	// tighten the project's ceiling and the default branch's value.
 	MaxRunTokens int64 `yaml:"max_run_tokens"`
 }
 

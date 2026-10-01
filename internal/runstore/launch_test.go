@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -229,4 +230,67 @@ func TestRecordDeadlineRoundTrip(t *testing.T) {
 	if err != nil || got.Deadline == nil || !got.Deadline.Equal(d) {
 		t.Fatalf("ReadRecord = %+v, %v", got, err)
 	}
+}
+
+func TestPolicyRecordRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	s := Open(memblob.OpenBucket(nil), "acme-app", "20260926-221530-a1b2")
+	r := &Record{Version: 1, RunID: "20260926-221530-a1b2", Status: StatusRunning, Outcome: OutcomeNone}
+	write := func() []byte {
+		t.Helper()
+		if err := s.WriteRecord(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := s.ReadFile(ctx, "result.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	if raw := write(); strings.Contains(string(raw), "policy") {
+		t.Fatalf("a nil policy must be omitted: %s", raw)
+	}
+	// An empty non-nil allow-list forbids every model: it is written as
+	// [] and read back non-nil. An omitted one means every model is allowed.
+	r.Policy = &PolicyRecord{
+		Effective: PolicyEffective{PerRunUSD: 5, Mode: "enforce", AllowedModels: []string{}},
+		Sources:   map[string]string{"allowed_models": "ceiling"},
+		Ignored:   []PolicyIgnored{{Key: "allowed_models", Value: "z", Effective: "", Source: "ceiling", From: "branch"}},
+	}
+	if raw := write(); !allowedPresent(t, raw) || !strings.Contains(strings.ReplaceAll(string(raw), " ", ""), `"allowed_models":[]`) {
+		t.Fatalf("an empty allow-list was not written as present: %s", raw)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || got.Policy == nil || got.Policy.Effective.AllowedModels == nil || len(got.Policy.Effective.AllowedModels) != 0 {
+		t.Fatalf("empty allow-list round trip: %+v, %v", got.Policy, err)
+	}
+	if !reflect.DeepEqual(got.Policy, r.Policy) {
+		t.Fatalf("round trip: %+v != %+v", got.Policy, r.Policy)
+	}
+	r.Policy.Effective.AllowedModels = nil
+	if present := allowedPresent(t, write()); present {
+		t.Fatal("an unset allow-list must be omitted")
+	}
+	got, _ = s.ReadRecord(ctx)
+	if got.Policy.Effective.AllowedModels != nil {
+		t.Fatalf("unset allow-list read back as %#v", got.Policy.Effective.AllowedModels)
+	}
+	r.Policy.Effective.AllowedModels = []string{"claude-sonnet-5-5"}
+	if !allowedPresent(t, write()) {
+		t.Fatal("a one-model allow-list was not written")
+	}
+}
+
+func allowedPresent(t *testing.T, raw []byte) bool {
+	t.Helper()
+	var v struct {
+		Policy struct {
+			Effective map[string]json.RawMessage `json:"effective"`
+		} `json:"policy"`
+	}
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	_, ok := v.Policy.Effective["allowed_models"]
+	return ok
 }

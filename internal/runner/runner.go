@@ -31,6 +31,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -105,15 +106,22 @@ type Deps struct {
 }
 
 type run struct {
-	d            Deps
-	rec          *runstore.Record
-	spec         *task.Spec
-	cfg          *config.Config
-	wf           config.Workflow
-	repo         *gitops.Repo
-	env          []string
-	secrets      []string
-	budget       Budget
+	d       Deps
+	rec     *runstore.Record
+	spec    *task.Spec
+	cfg     *config.Config
+	wf      config.Workflow
+	repo    *gitops.Repo
+	env     []string
+	secrets []string
+	budget  Budget
+	// spend and policy are the run's effective budget, merged once at
+	// bootstrap (resolvePolicy) from the ceiling, the default branch and
+	// the run's own fugaro.yaml. Nothing recomputes them, so an edit of
+	// fugaro.yaml during the run changes neither.
+	spend        Spend
+	policy       policy.Effective
+	defFile      defaultBranchData
 	instructions string
 	reviewFile   string
 	stageN       map[string]int
@@ -769,6 +777,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 	}
 	if err := r.checkProject(ctx, cfg); err != nil {
+		return err
+	}
+	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
 	}
 	if err := r.checkBudget(); err != nil {

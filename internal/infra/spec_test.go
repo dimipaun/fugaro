@@ -843,7 +843,7 @@ func budgetInputs(t *testing.T, block string) Inputs {
 
 func onlyBudgetEnv(env map[string]string) map[string]string {
 	got := map[string]string{}
-	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv} {
+	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv, MaxRunTokensEnv, AllowedModelsEnv} {
 		if v, ok := env[k]; ok {
 			got[k] = v
 		}
@@ -851,10 +851,21 @@ func onlyBudgetEnv(env map[string]string) map[string]string {
 	return got
 }
 
+// With the budget off the job gets no mode, but still the owner's cap and
+// price overrides: they are the ceiling a repository's committed policy is
+// clamped to (M9a.1; M9a dropped them when the mode was off).
 func TestWorkflowEnvBudgetOff(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		if got := onlyBudgetEnv(w.Env); len(got) != 0 {
+			t.Errorf("%s has %v with no budget block", w.Name, got)
+		}
+	}
 	for name, block := range map[string]string{
-		"no block":   "",
-		"mode off":   "budget: { mode: off, per_run_usd: 5 }\n",
+		"mode off":   "budget: { mode: off, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
 		"empty mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -863,8 +874,12 @@ func TestWorkflowEnvBudgetOff(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, w := range rs.Workflows {
-				if got := onlyBudgetEnv(w.Env); len(got) != 0 {
-					t.Errorf("%s has %v with the budget off", w.Name, got)
+				got := onlyBudgetEnv(w.Env)
+				if _, ok := got[BudgetModeEnv]; ok || got[MaxRunUSDEnv] != "5" || got[ModelPricesEnv] == "" || len(got) != 2 {
+					t.Errorf("%s env = %v: want the cap and prices, no mode", w.Name, got)
+				}
+				if s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok }); err != nil || s.On() || s.Cap != 5_000_000 || s.Prices == nil {
+					t.Errorf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
 				}
 			}
 		})
@@ -888,7 +903,7 @@ model_prices:
 			t.Errorf("%s env = %v", w.Name, got)
 		}
 		// The runner reads exactly what init wrote.
-		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok })
 		if err != nil || s.Mode != "enforce" || s.Cap != 12_500_000 {
 			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
 		}
@@ -913,7 +928,7 @@ func TestWorkflowEnvBudgetObserveNoCap(t *testing.T) {
 
 // The check job calls no model, so it gets none of the budget.
 func TestCheckJobHasNoBudgetEnv(t *testing.T) {
-	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 9, allowed_models: [claude-sonnet-5-5] }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,5 +937,105 @@ func TestCheckJobHasNoBudgetEnv(t *testing.T) {
 	}
 	if got := onlyBudgetEnv(rs.Check.Env); len(got) != 0 {
 		t.Errorf("check env has %v", got)
+	}
+}
+
+func TestWorkflowEnvPolicyKeys(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 500000, allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		if w.Env[MaxRunTokensEnv] != "500000" || w.Env[AllowedModelsEnv] != "claude-sonnet-5-5,claude-haiku-4-5" {
+			t.Errorf("%s env = %v", w.Name, onlyBudgetEnv(w.Env))
+		}
+		s, err := runner.SpendFromEnv(func(k string) (string, bool) { v, ok := w.Env[k]; return v, ok })
+		if err != nil || s.MaxRunTokens != 500000 || len(s.AllowedModels) != 2 {
+			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+		}
+	}
+	// Left out, left out: no zero token cap, no empty list.
+	rs, err = Repo(budgetInputs(t, "budget: { mode: observe }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		for _, k := range []string{MaxRunTokensEnv, AllowedModelsEnv} {
+			if _, ok := w.Env[k]; ok {
+				t.Errorf("%s sets %s", w.Name, k)
+			}
+		}
+	}
+}
+
+// The token cap and the allow-list hold with the dollar budget off, which
+// is where an oauth repository stays.
+func TestWorkflowEnvOAuthGetsTokenCap(t *testing.T) {
+	in := budgetInputs(t, "budget: { max_run_tokens: 100, allowed_models: [claude-sonnet-5-5] }\n")
+	in.Cfg.Agent.Auth = "oauth"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[MaxRunTokensEnv] != "100" || got[AllowedModelsEnv] != "claude-sonnet-5-5" || got[BudgetModeEnv] != "" {
+			t.Errorf("%s env = %v", w.Name, got)
+		}
+	}
+}
+
+// oauth stays budget-off for dollars, but budgetEnv is unchanged from M9a: a
+// project config that sets a mode still writes FUGARO_BUDGET_MODE (and the
+// cap and token cap) for an oauth workflow. The runner is what keeps oauth
+// off the gateway and free of a dollar cap (runner.TestOAuthStaysBudgetOff).
+func TestOAuthStaysBudgetOff(t *testing.T) {
+	in := budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 100 }\n")
+	in.Cfg.Agent.Auth = "oauth"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[BudgetModeEnv] != "enforce" || got[MaxRunUSDEnv] != "5" || got[MaxRunTokensEnv] != "100" {
+			t.Errorf("%s env = %v: want the mode, cap and token cap", w.Name, got)
+		}
+		if _, ok := w.SecretEnv[config.ReservedSecrets["claude-oauth-token"]]; !ok {
+			t.Errorf("%s is not an oauth workflow: %v", w.Name, w.SecretEnv)
+		}
+	}
+}
+
+// Dropping a key from the project config and planning again removes it from
+// the jobs' environment: nothing lingers from the first plan.
+func TestWorkflowEnvDroppedPolicyKeysDisappear(t *testing.T) {
+	in := budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 500000, allowed_models: [claude-sonnet-5-5] }\n")
+	first, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range first.Workflows {
+		if len(onlyBudgetEnv(w.Env)) < 4 {
+			t.Fatalf("%s env = %v", w.Name, onlyBudgetEnv(w.Env))
+		}
+	}
+	in.LC = budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\n").LC
+	second, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range second.Workflows {
+		for _, k := range []string{MaxRunTokensEnv, AllowedModelsEnv} {
+			if v, ok := w.Env[k]; ok {
+				t.Errorf("%s still sets %s=%q", w.Name, k, v)
+			}
+		}
 	}
 }

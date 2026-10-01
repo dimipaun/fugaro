@@ -88,6 +88,41 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+func TestSchemaBudgetBlock(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"
+	for _, c := range []struct {
+		budget string
+		ok     bool
+	}{
+		{"budget: { mode: enforce, per_run_usd: 2.5, allowed_models: [claude-opus-5-5] }", true},
+		{"budget: { mode: strict }", false},
+		{"budget: { per_run_usd: -1 }", false},
+		{"budget: { per_day_usd: 5 }", false},
+		{"budget: { allowed_models: [] }", false},
+		{"budget: { allowed_models: [\"a b\"] }", false},
+		{"budget: { allowed_models: [sonnet] }", false},
+		{"budget: { allowed_models: [claude-sonnet-latest] }", false},
+		{"budget: { model_prices: {} }", false},
+		// Where Go and the schema once differed: both agree now.
+		{"budget:", true},
+		{"budget: { mode: }", true},
+		{"budget: { per_run_usd: }", true},
+		{"budget: { allowed_models: }", true},
+		{"budget: { per_day_usd: }", true},
+		{"budget: { per_run_usd: 0 }", true},
+		{"budget: { per_run_usd: 0.000001 }", true},
+		{"budget: { per_run_usd: 0.0000001 }", false},
+		{"budget: { per_run_usd: 100001 }", false},
+		{"budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(base+c.budget+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.budget, err, c.ok)
+		}
+	}
+}
+
 func TestTaskSchemaCorpus(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	jsonInstance := func(f string) any {
@@ -411,5 +446,64 @@ func TestResultSchemaHalted(t *testing.T) {
 	}
 	if err := check("other"); err == nil {
 		t.Error(`schema accepts halt reason "other"`)
+	}
+}
+
+func TestPolicyRecordSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	check := func(p *runstore.PolicyRecord) error {
+		t.Helper()
+		rec := runstore.Record{Version: 1, RunID: "20261001-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap",
+			Outcome: runstore.OutcomeNone, StartedAt: at, Policy: p}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	full := &runstore.PolicyRecord{
+		Effective: runstore.PolicyEffective{PerRunUSD: 5, Mode: "enforce", MaxRunTokens: 1000,
+			MaxOutputTokens: &runstore.PolicyOutput{Coder: 4096}, AllowedModels: []string{"claude-sonnet-5-5"}},
+		Sources: map[string]string{"per_run_usd": "ceiling", "mode": "default-branch", "max_run_tokens": "branch"},
+		Ignored: []runstore.PolicyIgnored{{Key: "per_run_usd", Value: "500", Effective: "5", Source: "ceiling", From: "branch"}},
+	}
+	if err := check(full); err != nil {
+		t.Errorf("schema rejects a policy record: %v", err)
+	}
+	if err := check(nil); err != nil {
+		t.Errorf("schema rejects a record without policy: %v", err)
+	}
+	// An empty allow-list (forbid everything) is valid and is written.
+	empty := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{AllowedModels: []string{}}}
+	if err := check(empty); err != nil {
+		t.Errorf("schema rejects an empty allow-list: %v", err)
+	}
+	if data, _ := json.Marshal(empty); !strings.Contains(string(data), `"allowed_models":[]`) {
+		t.Errorf("an empty allow-list is not written: %s", data)
+	}
+	for name, mut := range map[string]func(p *runstore.PolicyRecord){
+		"bad mode":     func(p *runstore.PolicyRecord) { p.Effective.Mode = "loose" },
+		"bad source":   func(p *runstore.PolicyRecord) { p.Sources["mode"] = "repo" },
+		"bad from":     func(p *runstore.PolicyRecord) { p.Ignored[0].From = "ceiling" },
+		"negative cap": func(p *runstore.PolicyRecord) { p.Effective.PerRunUSD = -1 },
+		"empty model":  func(p *runstore.PolicyRecord) { p.Effective.AllowedModels = []string{""} },
+	} {
+		p := *full
+		p.Sources = maps.Clone(full.Sources)
+		p.Ignored = slices.Clone(full.Ignored)
+		mut(&p)
+		if err := check(&p); err == nil {
+			t.Errorf("schema accepts a policy record with %s", name)
+		}
+	}
+	doc := `{"version":1,"run_id":"20261001-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-10-01T10:00:00Z","policy":{"effective":{},"extra":1}}`
+	inst, _ := jsonschema.UnmarshalJSON(strings.NewReader(doc))
+	if err := sch.Validate(inst); err == nil {
+		t.Error("schema accepts an unknown key in policy")
 	}
 }

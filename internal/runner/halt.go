@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -114,7 +115,7 @@ func (r *run) countTokens(res agent.Result) {
 // reason, and a cap must not turn it into a halt.
 func (r *run) capReached() bool {
 	r.mu.Lock()
-	tokens, limit := r.tokens, r.cfg.Agent.MaxRunTokens
+	tokens, limit := r.tokens, r.spend.MaxRunTokens
 	r.mu.Unlock()
 	if limit > 0 && tokens >= limit {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", At: r.d.Now().UTC(),
@@ -169,11 +170,33 @@ func haltLines(rec *runstore.Record) string {
 	}
 	switch h.Reason {
 	case runstore.HaltTokenCap:
-		fmt.Fprintf(&b, "To continue: raise `agent.max_run_tokens` in `fugaro.yaml`, then %s.\n\n", again)
+		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyMaxRunTokens, "`agent.max_run_tokens`"), again)
 	case runstore.HaltRunCap, runstore.HaltNoCap:
-		fmt.Fprintf(&b, "To continue: raise `budget.per_run_usd` in the project config and run `fugaro init --repo`, then %s.\n\n", again)
+		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerRunUSD, "`budget.per_run_usd`"), again)
 	default:
 		fmt.Fprintf(&b, "To continue: once the limit that halted this run is lifted, %s.\n\n", again)
 	}
 	return b.String()
+}
+
+// raiseAdvice says where to raise a limit, by the layer that set it: a value
+// on the run's own branch can only tighten the ceiling and the default
+// branch's file, so raising it there changes nothing.
+func raiseAdvice(rec *runstore.Record, key, name string) string {
+	src := ""
+	if rec.Policy != nil {
+		src = rec.Policy.Sources[key]
+	}
+	switch src {
+	case policy.SourceCeiling:
+		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo` (a raise in any fugaro.yaml is ignored: it can only tighten the ceiling)", name)
+	case policy.SourceDefaultBranch:
+		return fmt.Sprintf("merge a change to %s in `fugaro.yaml` on the default branch (a raise on the run's own branch is ignored)", name)
+	case policy.SourceBranch:
+		return fmt.Sprintf("raise %s in `fugaro.yaml` on this run's branch (it cannot exceed the project config's ceiling or the default branch's value)", name)
+	}
+	if key == policy.KeyPerRunUSD {
+		return fmt.Sprintf("raise %s in the project config and run `fugaro init --repo`", name)
+	}
+	return fmt.Sprintf("raise %s in `fugaro.yaml`", name)
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -72,15 +73,21 @@ type Config struct {
 
 // Budget modes.
 const (
-	BudgetOff     = "off"
-	BudgetObserve = "observe"
-	BudgetEnforce = "enforce"
+	BudgetOff     = policy.ModeOff
+	BudgetObserve = policy.ModeObserve
+	BudgetEnforce = policy.ModeEnforce
 )
 
 // Budget is the project's per-run model spend guard.
 type Budget struct {
 	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" is off
 	PerRunUSD float64 `yaml:"per_run_usd"` // enforce: 0 < x <= 100000; observe: >= 0
+	// MaxRunTokens is the ceiling on a run's total tokens; 0 is none. A
+	// repository's fugaro.yaml may only lower it.
+	MaxRunTokens int64 `yaml:"max_run_tokens,omitempty"`
+	// AllowedModels, when set, are the only models a run may use. Explicit
+	// model IDs; an empty list is refused (it would forbid every model).
+	AllowedModels []string `yaml:"allowed_models,omitempty"`
 }
 
 // ModelPrice is one model's prices, in US dollars per million tokens. A
@@ -170,10 +177,22 @@ func (c *Config) Overrides() (pricing.Overrides, error) {
 // validateBudget checks the budget block and the model prices.
 func (c *Config) validateBudget(bad func(string, ...any)) {
 	if b := c.Budget; b != nil {
-		switch b.Mode {
-		case "", BudgetOff, BudgetObserve, BudgetEnforce:
-		default:
+		if b.Mode != "" && !policy.ValidMode(b.Mode) {
 			bad("budget.mode %q must be off, observe or enforce", b.Mode)
+		}
+		if b.MaxRunTokens < 0 {
+			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
+		}
+		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
+			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
+		}
+		for i, m := range b.AllowedModels {
+			if msg := config.CheckModelID(m); msg != "" {
+				bad("budget.allowed_models[%d]: %s", i, msg)
+			}
+		}
+		if i, ok := config.DuplicateModel(b.AllowedModels); ok {
+			bad("budget.allowed_models[%d]: %s is listed twice; list each model once", i, b.AllowedModels[i])
 		}
 		if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 			bad("budget.per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

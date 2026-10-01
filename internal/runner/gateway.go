@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -43,7 +44,7 @@ const vertexRegionPrefix = "VERTEX_REGION_"
 // gatewayOn reports whether the agent's calls go through the gateway: the
 // budget is on and the credential is a model API's (an oauth run never is).
 func (r *run) gatewayOn() bool {
-	return r.cfg != nil && r.d.Spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
+	return r.cfg != nil && r.spend.On() && (r.cfg.Agent.Auth == "api-key" || r.cfg.Agent.Auth == "vertex")
 }
 
 // gateway is where the agent's model calls go, nil until the gateway runs.
@@ -52,7 +53,7 @@ func (r *run) gateway() *agent.Gateway { return r.gwAgent }
 // startGateway starts the run's gateway and makes the agent's environment
 // point at it. The real credential stays here.
 func (r *run) startGateway(ctx context.Context) error {
-	s := r.d.Spend
+	s := r.spend
 	o := gateway.Options{Prices: s.Prices, Cap: s.Cap, Log: r.d.Log, EndStageWait: r.d.GatewayStageWait}
 	o.Mode = gateway.Observe
 	if s.Mode == "enforce" {
@@ -284,14 +285,22 @@ func (r *run) checkManagedDirWritable() error {
 // policy, so a halt), and a run through the gateway needs prices for its
 // models and a managed settings directory it can write.
 func (r *run) checkBudget() error {
-	auth, s := r.cfg.Agent.Auth, r.d.Spend
+	auth, s := r.cfg.Agent.Auth, r.spend
 	if auth == "vertex" && s.Mode == "enforce" {
 		return errors.New(VertexBudgetRefusal)
 	}
 	if auth == "api-key" && s.Mode == "enforce" && s.Cap <= 0 {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: r.d.Now().UTC(),
-			Detail: "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"})
+			Detail: r.noCapDetail()})
 		return &HaltError{*r.haltValue()}
+	}
+	// The allow-list bounds the models whatever the credential or the mode.
+	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("the models are not all allowed: %s", strings.Join(msgs, "; "))
 	}
 	if !r.gatewayOn() {
 		return nil
@@ -311,3 +320,18 @@ func (r *run) checkBudget() error {
 	}
 	return nil
 }
+
+// noCapDetail says how to give an enforcing run a cap. Where the owner's
+// ceiling asked for enforce, the cap belongs in the project config; where a
+// repository's fugaro.yaml escalated the mode, either place will do.
+func (r *run) noCapDetail() string {
+	const base = "budget.mode is enforce but no per-run cap is set: set budget.per_run_usd in the project config and run fugaro init --repo"
+	if r.policy.Sources[policy.KeyMode] == policy.SourceCeiling {
+		return base
+	}
+	return "budget.mode is enforce (set in fugaro.yaml) but no per-run cap is set: set budget.per_run_usd in fugaro.yaml on the default branch, or in the project config and run fugaro init --repo"
+}
+
+// ceilingAllowed is the owner's allow-list from the job environment, nil when
+// none was set: error messages name it next to the merged one.
+func (r *run) ceilingAllowed() []string { return r.d.Spend.AllowedModels }

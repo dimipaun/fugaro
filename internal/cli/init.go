@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -1276,6 +1278,13 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 			return err
 		}
 	}
+	if !o.forget {
+		w := r.w
+		if o.printVars {
+			w = cmd.ErrOrStderr() // stdout stays the tfvars alone
+		}
+		printCeiling(w, lc, cfg)
+	}
 	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL, GitHubAppID: o.githubAppID}
 	var spec infra.RepoSpec
 	if !o.forget {
@@ -1441,7 +1450,12 @@ const vertexBudgetRefusal = runner.VertexBudgetRefusal
 // the agent through Vertex AI (agent.auth: vertex) under a project budget
 // in enforce mode. observe and off are allowed.
 func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
-	if cfg.Agent.Auth == "vertex" && lc.BudgetMode() == localcfg.BudgetEnforce {
+	if cfg.Agent.Auth != "vertex" {
+		return nil
+	}
+	// The ceiling's mode and the file's, the stricter of the two, as the
+	// runner merges them.
+	if policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode == policy.ModeEnforce {
 		return userErr("%s", vertexBudgetRefusal)
 	}
 	return nil
@@ -1799,4 +1813,21 @@ func (r *initRun) forgetRepo(ctx context.Context, c *infra.Clients, t *tf.TF, ba
 	r.res.Deleted = deleted
 	fmt.Fprintf(r.w, "Terraform no longer manages %s; nothing was destroyed. Its jobs, accounts, secrets and grants stay as they are.\n", repo)
 	return nil
+}
+
+// printCeiling says what init --repo is about to apply as the repository's
+// ceiling (the project config's budget) and, when the checkout's fugaro.yaml
+// has a budget block, which of its keys the ceiling would clamp.
+func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
+	ceiling := ceilingLayer(lc)
+	if !reflect.DeepEqual(ceiling, policy.Layer{}) {
+		fmt.Fprintf(w, "Budget ceiling for %s from project %s: %s\n", cfg.Project, lc.Name, ceilingText(ceiling))
+	}
+	if !setsPolicy(cfg) {
+		return
+	}
+	for _, ig := range policy.Merge(ceiling, runner.FileLayer(cfg)).Ignored {
+		p := clampWarning(ig)
+		fmt.Fprintf(w, "  fugaro.yaml %s: %s\n", p.Path, p.Message)
+	}
 }

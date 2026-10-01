@@ -66,11 +66,33 @@
             "reviewer": { "type": "integer", "minimum": 0, "maximum": 128000 }
           }
         },
-        "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none." },
+        "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none. In a fugaro.yaml it can only tighten the project's ceiling and the default branch's value." },
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }
+      }
+    },
+    "budget": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "description": "The repository's cost and model policy. The runner reads it from the default branch and merges it with the project's ceiling; it can only tighten. Model prices are not settable here. A null block, mode, cap or list is the same as leaving it out.",
+      "properties": {
+        "mode": { "enum": ["off", "observe", "enforce", "", null], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
+        "per_run_usd": {
+          "type": ["number", "null"],
+          "maximum": 100000,
+          "anyOf": [{ "const": 0 }, { "minimum": 0.0000005 }, { "type": "null" }],
+          "description": "A dollar cap per run; the lowest positive cap of the layers wins. 0 sets none. A cap that rounds to less than a millionth of a dollar is refused."
+        },
+        "per_day_usd": { "type": "null", "description": "Not supported yet (M9b): per-day caps are set by the project owner." },
+        "allowed_models": {
+          "type": ["array", "null"],
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^claude-[a-z0-9]+(?:-[a-z0-9]+)*(?:@[0-9]{8})?$", "not": { "pattern": "-latest$" }, "description": "An explicit model ID, not an alias." },
+          "description": "The models the run may use; the intersection of the layers' lists."
+        }
       }
     },
     "followup": {

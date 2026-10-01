@@ -1,0 +1,13 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  auth: api-key
+  model: claude-sonnet-5-5
+  max_run_tokens: 2000000
+budget:
+  mode: enforce
+  per_run_usd: 2.5
+  allowed_models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5]
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }
