@@ -488,8 +488,18 @@ func TestInitRepoWarnsWhenBaseLacksProject(t *testing.T) {
 			}
 		})
 	}
-	// An origin that can't be reached is a warning too, never a refusal.
+	// A base with no fugaro.yaml at all has nothing to disagree about.
 	dir := originWith(t, with, with)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "-q", testutil.Git(t, dir, "remote", "get-url", "origin"), other)
+	testutil.Git(t, other, "rm", "-q", "fugaro.yaml")
+	testutil.Git(t, other, "commit", "-q", "-m", "no config")
+	testutil.Git(t, other, "push", "-q", "origin", "HEAD:refs/heads/main")
+	if got := baseProjectWarning(ctx, dir, "main", "aurora"); got != "" {
+		t.Fatalf("a base with no fugaro.yaml warned: %q", got)
+	}
+	// An origin that can't be reached is a warning too, never a refusal.
+	dir = originWith(t, with, with)
 	testutil.Git(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
 	if got := baseProjectWarning(ctx, dir, "main", "aurora"); !strings.Contains(got, "couldn't check origin/main's fugaro.yaml") {
 		t.Fatalf("warning = %q", got)

@@ -283,7 +283,14 @@ type Problem struct {
 	Path    string `json:"path,omitempty"`
 	Line    int    `json:"line,omitempty"`
 	Message string `json:"message"`
+	// Code names a problem a caller may act on, so it need not read the
+	// message; "" for the rest. It is not part of the JSON output.
+	Code string `json:"-"`
 }
+
+// CodeProjectRequired is the Code of the problem of a fugaro.yaml with no
+// project:.
+const CodeProjectRequired = "project_required"
 
 // String formats a Problem for human-readable output, such as `fugaro validate`'s
 // default (non-JSON) mode.

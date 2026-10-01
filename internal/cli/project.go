@@ -202,13 +202,21 @@ func checkRepoProject(fugaroYAML, installation string) error {
 // origin: the runner reads project: from origin/<base>'s fugaro.yaml, not
 // from the checkout's, so onboarding from a feature branch works only once
 // the base says the same. It fetches the base; any failure to do so is a
-// warning, not a refusal.
+// warning, not a refusal. A base without a fugaro.yaml says nothing.
 func baseProjectWarning(ctx context.Context, root, base, project string) string {
 	repo, err := gitops.Open(root, []string{"GIT_TERMINAL_PROMPT=0"})
 	if err == nil {
 		err = repo.FetchBase(ctx, base)
 	}
 	var data []byte
+	if err == nil {
+		var mode string
+		if mode, err = repo.TreeEntryMode(ctx, "origin/"+base, "fugaro.yaml"); err == nil && mode == "" {
+			// A base with no fugaro.yaml at all (a repository being
+			// onboarded) has no project to disagree about.
+			return ""
+		}
+	}
 	if err == nil {
 		data, err = repo.ShowFile(ctx, "origin/"+base, "fugaro.yaml")
 	}

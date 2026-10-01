@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -1318,5 +1319,91 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	_, _, err = execute(t, "init", "--repo", "--project", "aurora", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
 		t.Fatalf("init --repo: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// Outputs that exist but can't be decoded are an error, not "no
+// installation": the immutable-name check must not be skipped by them.
+func TestInitRefusesUnreadableOutputs(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": 5})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "project_name") {
+		t.Fatalf("err = %v, want the unreadable output named", err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("unreadable outputs were planned over: %q", r.calls(t))
+	}
+}
+
+// A refused rename changes no IAM: the runs bucket's viewers are only
+// touched once the name is known to be the installation's.
+func TestInitNameCheckBeforeViewersRemoval(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err == nil || !strings.Contains(err.Error(), "renaming isn't supported") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(policySets(r.gcs, initRunsBucket)); n != 0 {
+		t.Fatalf("a refused rename changed the runs bucket's IAM %d times", n)
+	}
+}
+
+// A flag's value can't become config syntax: the first config is built as
+// a value and validated like a file.
+func TestNewProjectConfigIsNotYAMLConcatenation(t *testing.T) {
+	lc, err := newProjectConfig("aurora", "proj-1234", "us-east5")
+	if err != nil || lc.Name != "aurora" || lc.GCPProject != "proj-1234" || lc.Region != "us-east5" || lc.RunsBucket != "fugaro-runs-proj-1234" {
+		t.Fatalf("lc = %+v, err = %v", lc, err)
+	}
+	for _, bad := range []string{"proj-1234\nrepos: {x: {}}", "proj: 1234 # x", "Proj"} {
+		if lc, err := newProjectConfig("aurora", bad, "us-east5"); err == nil {
+			t.Errorf("gcp project %q accepted: %+v", bad, lc)
+		}
+	}
+	if _, err := newProjectConfig("aurora", "proj-1234", "us-east5\nuser: x"); err == nil {
+		t.Error("a region with a newline was accepted")
+	}
+}
+
+// init --repo checks the repository's project against the installation's
+// own name, from its outputs, before it plans anything.
+func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
+	r.save(t)
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--project", "aurora", "--github-app-id", "12345", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml names project aurora, but this installation is project borealis") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a refused repository was planned: %q", r.calls(t))
 	}
 }

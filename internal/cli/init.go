@@ -400,8 +400,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 			if o.cloud.gcpProject == "" || o.cloud.region == "" {
 				return nil, "", nil, userErr("there is no project config yet: pass --gcp-project and --region (the project's name comes from the installation), or --name")
 			}
-			gcpProject := o.cloud.gcpProject
-			lc, err = localcfg.Parse([]byte("version: 1\nname: pending\ngcp_project: " + gcpProject + "\nregion: " + o.cloud.region + "\nruns_bucket: fugaro-runs-" + gcpProject + "\n"))
+			lc, err = newProjectConfig("pending", o.cloud.gcpProject, o.cloud.region)
 			if err != nil {
 				return nil, "", nil, userErr("--gcp-project/--region: %v", err)
 			}
@@ -424,8 +423,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 				return nil, "", nil, userErr("%v", err)
 			}
 		}
-		gcpProject := o.cloud.gcpProject
-		lc, err = localcfg.Parse([]byte("version: 1\nname: " + name + "\ngcp_project: " + gcpProject + "\nregion: " + o.cloud.region + "\nruns_bucket: fugaro-runs-" + gcpProject + "\n"))
+		lc, err = newProjectConfig(name, o.cloud.gcpProject, o.cloud.region)
 		if err != nil {
 			return nil, "", nil, userErr("--name/--gcp-project/--region: %v", err)
 		}
@@ -440,6 +438,19 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		}
 	}
 	return lc, path, old, nil
+}
+
+// newProjectConfig is the first project config of a name: built as a
+// value, so nothing a flag holds can become YAML syntax, and then run
+// through the same parse and validation as a file.
+func newProjectConfig(name, gcpProject, region string) (*localcfg.Config, error) {
+	data, err := (&localcfg.Config{
+		Version: 1, Name: name, GCPProject: gcpProject, Region: region, RunsBucket: "fugaro-runs-" + gcpProject,
+	}).Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return localcfg.Parse(data)
 }
 
 // installOptions is the installation's spec from the local config and the
@@ -668,13 +679,6 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		}
 	}
 
-	// 4. The runs bucket's viewers.
-	if im.AdoptsRunsBucket() {
-		if err := r.runsBucketViewers(ctx, c, spec); err != nil {
-			return err
-		}
-	}
-
 	// 5. Plan, show, guard, summary.
 	if err := t.Init(ctx, backend); err != nil {
 		return remote(err)
@@ -684,12 +688,23 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	var prior infra.InstallationOutputs
 	havePrior := false
 	if raw, err := t.Output(ctx); err == nil {
-		if o, err := infra.DecodeOutputs(raw); err == nil {
-			prior, havePrior = o, true
+		// Outputs that exist but can't be read must not pass for "no
+		// installation": the name check below would be skipped.
+		o, err := infra.DecodeOutputs(raw)
+		if err != nil {
+			return remote(fmt.Errorf("reading the installation's outputs: %w", err))
 		}
+		prior, havePrior = o, true
 	}
 	if err := checkInstallationName(r.o.name, lc.Name, prior, havePrior); err != nil {
 		return err
+	}
+	// 4. The runs bucket's viewers: an IAM change, so only once the name
+	// is known to be the installation's.
+	if im.AdoptsRunsBucket() {
+		if err := r.runsBucketViewers(ctx, c, spec); err != nil {
+			return err
+		}
 	}
 	if havePrior && prior.RegistryCleanupDryRun != nil && !*prior.RegistryCleanupDryRun && r.o.registryCleanup == "" {
 		// Nothing records a cleanup that was switched on, so say when the

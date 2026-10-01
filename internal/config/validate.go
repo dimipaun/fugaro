@@ -92,6 +92,7 @@ func Validate(c *Config) []Problem {
 	switch {
 	case c.Project == "":
 		add("project", "is required: the Fugaro project this repository belongs to (fugaro config example shows it)")
+		ps[len(ps)-1].Code = CodeProjectRequired
 	case !ProjectNameRE.MatchString(c.Project):
 		add("project", "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
