@@ -88,6 +88,30 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 	}
 }
 
+func TestSchemaBudgetBlock(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"
+	for _, c := range []struct {
+		budget string
+		ok     bool
+	}{
+		{"budget: { mode: enforce, per_run_usd: 2.5, allowed_models: [claude-opus-5-5] }", true},
+		{"budget: { mode: strict }", false},
+		{"budget: { per_run_usd: -1 }", false},
+		{"budget: { per_day_usd: 5 }", false},
+		{"budget: { allowed_models: [] }", false},
+		{"budget: { allowed_models: [\"a b\"] }", false},
+		{"budget: { allowed_models: [sonnet] }", false},
+		{"budget: { allowed_models: [claude-sonnet-latest] }", false},
+		{"budget: { model_prices: {} }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(base+c.budget+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("%s: schema err = %v, want ok=%v", c.budget, err, c.ok)
+		}
+	}
+}
+
 func TestTaskSchemaCorpus(t *testing.T) {
 	sch := compile(t, "task.schema.json")
 	jsonInstance := func(f string) any {

@@ -73,6 +73,21 @@
         "review": { "type": "string" }
       }
     },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The repository's cost and model policy. The runner reads it from the default branch and merges it with the project's ceiling; it can only tighten. Model prices are not settable here.",
+      "properties": {
+        "mode": { "enum": ["off", "observe", "enforce"], "description": "The strictest mode of the layers wins: enforce, then observe, then off." },
+        "per_run_usd": { "type": "number", "minimum": 0, "maximum": 100000, "description": "A dollar cap per run; the lowest positive cap of the layers wins. 0 sets none." },
+        "allowed_models": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1, "maxLength": 100, "pattern": "^claude-[a-z0-9]+(?:-[a-z0-9]+)*(?:@[0-9]{8})?$", "not": { "pattern": "-latest$" }, "description": "An explicit model ID, not an alias." },
+          "description": "The models the run may use; the intersection of the layers' lists."
+        }
+      }
+    },
     "followup": {
       "type": "object",
       "additionalProperties": false,
