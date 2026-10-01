@@ -24,6 +24,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -114,6 +115,9 @@ type lgwCall struct {
 	Out             int64     `json:"out"`
 	ReservedMicros  int64     `json:"reserved_micros"`
 	ChargedMicros   int64     `json:"charged_micros"`
+	PricedAs        string    `json:"priced_as"`
+	MaxTokens       int64     `json:"max_tokens"`
+	ToolTypes       string    `json:"tool_types"`
 	AgentID         string    `json:"agent_id"`
 	SessionID       string    `json:"session_id"`
 	Message         string    `json:"message"`
@@ -143,6 +147,9 @@ type lgwOutcome struct {
 	geos      map[string]bool      // usage.inference_geo seen in the transcripts
 	provider  fake.State
 	secretHit []string // where the key was found; never the key itself
+	// safeLogs is the run's output with the key blotted out: the only
+	// form of it that is ever printed.
+	safeLogs string
 }
 
 func TestLiveGateway(t *testing.T) {
@@ -170,7 +177,7 @@ func TestLiveGateway(t *testing.T) {
 	o1 := lgwExec(t, base, key, remote, lgwRun1, "2.00", lgwTask)
 	t.Logf("FACT: run 1 ended %s (outcome %s, exit %d), reason %q", o1.rec.Status, o1.rec.Outcome, o1.exit, o1.rec.Reason)
 	if o1.rec.Status == runstore.StatusInfraError || o1.rec.Status == runstore.StatusHalted {
-		t.Fatalf("run 1 ended %s: %s\n%s", o1.rec.Status, o1.rec.Reason, testutil.Tail(string(o1.logs)))
+		t.Fatalf("run 1 ended %s: %s\n%s", o1.rec.Status, o1.rec.Reason, testutil.Tail(o1.safeLogs))
 	}
 	lgwCheckRouting(t, o1)
 	lgwCheckPins(t, o1)
@@ -265,7 +272,7 @@ func lgwExec(t *testing.T, base, key, remote, runID, capUSD, taskText string) lg
 		finished: map[string]time.Time{}, results: map[string]lgwResult{}, tiers: map[string]bool{}, geos: map[string]bool{}}
 	data, err := os.ReadFile(filepath.Join(o.bucket, "runs", acmeSlug, runID, "result.json"))
 	if err != nil {
-		t.Fatalf("run %s left no result.json (exit %d): %v\n%s", runID, exit, err, testutil.Tail(string(logs)))
+		t.Fatalf("run %s left no result.json (exit %d): %v\n%s", runID, exit, err, testutil.Tail(strings.ReplaceAll(string(logs), key, "[the API key]")))
 	}
 	if err := json.Unmarshal(data, &o.rec); err != nil {
 		t.Fatal(err)
@@ -273,9 +280,11 @@ func lgwExec(t *testing.T, base, key, remote, runID, capUSD, taskText string) lg
 	if o.provider, err = fake.Load(filepath.Join(run, "provider.json")); err != nil {
 		t.Logf("no provider state: %v", err)
 	}
+	o.safeLogs = strings.ReplaceAll(string(logs), key, "[the API key]")
 	lgwParseLogs(t, &o)
 	lgwParseTranscripts(t, &o, runID)
-	o.secretHit = lgwScanForKey(t, key, o, run)
+	// The bare remote is where the agent's branch lands: it is scanned too.
+	o.secretHit = lgwScanForKey(t, key, o, run, remoteDir)
 	return o
 }
 
@@ -358,33 +367,71 @@ func lgwParseTranscripts(t *testing.T, o *lgwOutcome, runID string) {
 }
 
 // lgwScanForKey looks for the real key in the run's logs, every file of its
-// bucket and the provider state, and returns where it found it, never the
-// key itself.
-func lgwScanForKey(t *testing.T, key string, o lgwOutcome, run string) []string {
+// bucket and the provider state, and every file of the directories in
+// more (the bare remote, which holds what the agent pushed, objects
+// included), and returns where it found it, never the key itself.
+func lgwScanForKey(t *testing.T, key string, o lgwOutcome, run string, more ...string) []string {
 	t.Helper()
 	var hits []string
 	needle := []byte(key)
 	if bytes.Contains(o.logs, needle) {
 		hits = append(hits, "the run's output")
 	}
-	err := filepath.WalkDir(run, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return err
-		}
-		data, err := os.ReadFile(p)
+	for _, root := range append([]string{run}, more...) {
+		err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			if bytes.Contains(data, needle) {
+				rel, _ := filepath.Rel(root, p)
+				hits = append(hits, filepath.Base(root)+"/"+rel)
+			}
+			return nil
+		})
 		if err != nil {
-			return err
+			t.Fatal(err)
 		}
-		if bytes.Contains(data, needle) {
-			rel, _ := filepath.Rel(run, p)
-			hits = append(hits, rel)
+	}
+	// Git compresses its objects, so a key in a pushed file is not in the
+	// bytes on disk: ask git what every branch of the remote holds. The
+	// key goes to git on stdin, never in argv.
+	for _, root := range more {
+		for _, repo := range lgwBareRepos(root) {
+			refs, err := exec.Command("git", "-C", repo, "for-each-ref", "--format=%(refname)", "refs/heads").Output()
+			if err != nil {
+				t.Fatalf("listing the branches of %s: %v", repo, err)
+			}
+			for _, ref := range strings.Fields(string(refs)) {
+				cmd := exec.Command("git", "-C", repo, "grep", "-I", "-l", "-F", "-f", "-", ref)
+				cmd.Stdin = strings.NewReader(key + "\n")
+				out, err := cmd.Output()
+				var ee *exec.ExitError
+				if err != nil && !(errors.As(err, &ee) && ee.ExitCode() == 1) {
+					t.Fatalf("searching %s %s: %v", filepath.Base(repo), ref, err)
+				}
+				if len(bytes.TrimSpace(out)) > 0 {
+					hits = append(hits, filepath.Base(repo)+" "+ref+" (a pushed file)")
+				}
+			}
 		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 	return hits
+}
+
+// lgwBareRepos are the bare repositories directly under dir.
+func lgwBareRepos(dir string) []string {
+	var out []string
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if e.IsDir() && strings.HasSuffix(e.Name(), ".git") {
+			out = append(out, filepath.Join(dir, e.Name()))
+		}
+	}
+	return out
 }
 
 // A6, A-N5, A-N7: the run reached the model through the gateway, although the
@@ -392,7 +439,7 @@ func lgwScanForKey(t *testing.T, key string, o lgwOutcome, run string) []string 
 func lgwCheckRouting(t *testing.T, o lgwOutcome) {
 	t.Helper()
 	if len(o.calls) == 0 {
-		t.Errorf("A6: the gateway logged no model call; the repository's settings may have won\n%s", testutil.Tail(string(o.logs)))
+		t.Errorf("A6: the gateway logged no model call; the repository's settings may have won\n%s", testutil.Tail(o.safeLogs))
 		return
 	}
 	if bytes.Contains(o.logs, []byte("ECONNREFUSED")) || bytes.Contains(o.logs, []byte("connection refused")) {
@@ -416,6 +463,9 @@ func lgwCheckPins(t *testing.T, o lgwOutcome) {
 			t.Errorf("A-N6: a call in stage %q, which has no role", c.Stage)
 		} else if c.Model != want && c.Model != lgwBackground {
 			t.Errorf("A-N6: stage %s called %s; its pins are %s and %s", c.Stage, c.Model, want, lgwBackground)
+		}
+		if c.PricedAs != "table" {
+			t.Errorf("A-N6: a call to %s in stage %s was priced as %q, not from the table (served by %q): the table lacks the model Anthropic reports, so every call is charged at the highest rates", c.Model, c.Stage, c.PricedAs, c.ServingModel)
 		}
 		if c.Status == 400 || c.Status == 403 || c.Status == 404 {
 			t.Errorf("A-N6: the gateway refused a call in stage %s with status %d (a violation)", c.Stage, c.Status)
@@ -467,22 +517,24 @@ func lgwCheckCost(t *testing.T, o lgwOutcome) {
 	t.Logf("FACT: the run's real spend was $%.2f against a $2.00 cap (expected about $0.30)", gw)
 }
 
-// A9, Anthropic side: output stayed within each role's max_output_tokens.
-// The gateway's call log doesn't carry max_tokens, but it refuses a request
-// above the role's limit (a violation, which fails the stage and shows up
-// as a 400 in lgwCheckPins), so a run without one proves it; the largest
-// output seen per model is recorded next to it.
+// A9, Anthropic side: the max_tokens of every call stayed within each
+// role's max_output_tokens (the call log carries what Claude Code asked
+// for), and so did what came back; the largest of each is recorded.
 func lgwCheckOutput(t *testing.T, o lgwOutcome) {
 	t.Helper()
-	maxOut := map[string]int64{}
+	maxOut, maxAsked := map[string]int64{}, map[string]int64{}
 	for _, c := range o.calls {
 		maxOut[c.Model] = max(maxOut[c.Model], c.Out)
+		maxAsked[c.Model] = max(maxAsked[c.Model], c.MaxTokens)
 	}
 	for _, m := range sortedKeys(maxOut) {
 		if m != lgwBackground && maxOut[m] > lgwMaxOutput {
 			t.Errorf("A9: model %s produced %d output tokens in one call, above its role's %d", m, maxOut[m], lgwMaxOutput)
 		}
-		t.Logf("FACT: A9 model %s: largest output of one call %d tokens (role limit %d; the background model chooses its own)", m, maxOut[m], lgwMaxOutput)
+		if m != lgwBackground && maxAsked[m] > lgwMaxOutput {
+			t.Errorf("A9: a call to %s asked for max_tokens %d, above its role's %d", m, maxAsked[m], lgwMaxOutput)
+		}
+		t.Logf("FACT: A9 model %s: largest max_tokens asked %d, largest output of one call %d tokens (role limit %d; the background model chooses its own)", m, maxAsked[m], maxOut[m], lgwMaxOutput)
 	}
 }
 
@@ -518,7 +570,20 @@ func lgwCheckImage(t *testing.T, o lgwOutcome) {
 	}
 	t.Logf("FACT: A-N9 across %d calls, including the one that read logo.png, the largest charge was %.1f%% of its reservation", len(o.calls), worst*100)
 	t.Logf("FACT: A-N8 usage.service_tier seen: %v; usage.inference_geo seen: %v", sortedKeys(o.tiers), sortedKeys(o.geos))
-	t.Logf("FACT: A-N8 tools[].type: the call log doesn't carry request tools; the gateway refuses every server tool and typed tool as a violation, and the run ended %s with no violation, so every tool Claude Code sent was a custom tool", o.rec.Status)
+	types := map[string]bool{}
+	for _, c := range o.calls {
+		for _, ty := range strings.Split(c.ToolTypes, ",") {
+			if ty != "" {
+				types[ty] = true
+			}
+		}
+	}
+	for ty := range types {
+		if ty != "custom" {
+			t.Errorf("A-N8: Claude Code sent a tool of type %q, which the gateway refuses", ty)
+		}
+	}
+	t.Logf("FACT: A-N8 tools[].type seen in the gateway's call log: %v (the run ended %s)", sortedKeys(types), o.rec.Status)
 }
 
 // A-N1, R8: a cap below any call's worst case halts at the first call, and
