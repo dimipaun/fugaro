@@ -229,7 +229,7 @@ func (s *Spec) Apply(c *config.Config, w *config.Workflow) error {
 		c.Agent.MaxBudgetUSD = *o.MaxBudgetUSD
 	}
 	if o.Model != "" {
-		c.Agent.Model = o.Model
+		c.Agent.Models.Coder = o.Model
 	}
 	if o.TotalTimeout != "" {
 		d, err := time.ParseDuration(o.TotalTimeout)

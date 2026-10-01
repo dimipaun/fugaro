@@ -64,6 +64,63 @@ type Agent struct {
 	MaxBudgetUSD float64 `yaml:"max_budget_usd"`
 	Instructions string  `yaml:"instructions"`
 	Review       string  `yaml:"review"`
+	// Models picks a model per stage role; a role left out uses Model.
+	Models ModelRoles `yaml:"models"`
+	// MaxOutputTokens limits one call's output per role; 0 is no limit.
+	MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
+	// MaxRunTokens limits a whole run's tokens; 0 is none.
+	MaxRunTokens int64 `yaml:"max_run_tokens"`
+}
+
+// ModelRoles are the models of the stage roles.
+type ModelRoles struct {
+	Coder      string `yaml:"coder"`      // implement and fix
+	Reviewer   string `yaml:"reviewer"`   // review
+	Background string `yaml:"background"` // Claude Code's small background requests
+}
+
+// RoleTokens is a per-call output limit for each role.
+type RoleTokens struct {
+	Coder    int64 `yaml:"coder"`
+	Reviewer int64 `yaml:"reviewer"`
+}
+
+// Role is what a stage does, and so which model and limit it gets.
+type Role string
+
+const (
+	RoleCoder    Role = "coder"
+	RoleReviewer Role = "reviewer"
+)
+
+// StageRole is the role of a stage: implement and fix are the coder, review
+// the reviewer. An unknown stage is the coder.
+func StageRole(stage string) Role {
+	if stage == "review" {
+		return RoleReviewer
+	}
+	return RoleCoder
+}
+
+// ModelFor is the model of role r: models.<role>, else agent.model (a task's
+// model override is applied to Models.Coder). "" means Claude Code's default.
+func (a Agent) ModelFor(r Role) string {
+	m := a.Models.Coder
+	if r == RoleReviewer {
+		m = a.Models.Reviewer
+	}
+	if m == "" {
+		return a.Model
+	}
+	return m
+}
+
+// MaxOutputFor is role r's per-call output limit, 0 for none.
+func (a Agent) MaxOutputFor(r Role) int64 {
+	if r == RoleReviewer {
+		return a.MaxOutputTokens.Reviewer
+	}
+	return a.MaxOutputTokens.Coder
 }
 
 // Workflow is one buildable unit of the repository, such as a server or a web app.

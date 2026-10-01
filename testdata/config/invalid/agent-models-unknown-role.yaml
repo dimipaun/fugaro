@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  models: { planner: claude-opus-5-5 }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }

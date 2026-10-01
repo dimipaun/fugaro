@@ -164,9 +164,18 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 // none is selectable. It makes no cloud call and prints nothing: it only
 // lets `validate` and `config example` name the project.
 func selectedProjectName(ctx context.Context) string {
+	if lc := selectedProjectConfig(ctx); lc != nil {
+		return lc.Name
+	}
+	return ""
+}
+
+// selectedProjectConfig is the project config selectedProjectName names, or
+// nil.
+func selectedProjectConfig(ctx context.Context) *localcfg.Config {
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
-		return ""
+		return nil
 	}
 	if co != nil && co.Project == "" {
 		// A checkout without project: would refuse; the file being
@@ -174,10 +183,10 @@ func selectedProjectName(ctx context.Context) string {
 		co = nil
 	}
 	_, lc, err := selectFrom(cloudOptions{}, co, false)
-	if err != nil || lc == nil {
-		return ""
+	if err != nil {
+		return nil
 	}
-	return lc.Name
+	return lc
 }
 
 // checkRepoProject refuses a repository whose fugaro.yaml names another

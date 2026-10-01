@@ -137,3 +137,73 @@ func TestValidateHintNamesProject(t *testing.T) {
 		t.Fatalf("json: out = %q, err = %v", out, err)
 	}
 }
+
+// budgetProject makes aurora's project config with the given budget block
+// and returns a fugaro.yaml with agent as its agent block.
+func budgetProject(t *testing.T, budget, agent string) string {
+	t.Helper()
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if _, err := f.WriteString(budget); err != nil {
+		t.Fatal(err)
+	}
+	return writeConfig(t, strings.Replace(cliMinimalYAML, "workflows:", "agent:\n"+agent+"\nworkflows:", 1))
+}
+
+func validateProblems(t *testing.T, path string) (string, error) {
+	t.Helper()
+	out, _, err := execute(t, "validate", path)
+	return out, err
+}
+
+func TestValidateAppliesPinsWhenBudgetOn(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		path := budgetProject(t, "budget: { mode: "+mode+", per_run_usd: 5 }\n", "  auth: api-key\n  model: sonnet")
+		out, err := validateProblems(t, path)
+		if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") || !strings.Contains(out, "agent.models.background") {
+			t.Fatalf("%s: exit %d, out %q", mode, ExitCode(err), out)
+		}
+	}
+	path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\n", "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }")
+	if out, err := validateProblems(t, path); err != nil {
+		t.Fatalf("pinned config refused: %v %s", err, out)
+	}
+	// An ID only the project's model_prices know passes.
+	path = budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\nmodel_prices:\n  claude-acme-1: { input_per_m: 1, output_per_m: 5 }\n",
+		"  auth: api-key\n  model: claude-acme-1\n  models: { background: claude-haiku-4-5 }")
+	if out, err := validateProblems(t, path); err != nil {
+		t.Fatalf("override ID refused: %v %s", err, out)
+	}
+}
+
+func TestValidateSkipsPinsWhenBudgetOff(t *testing.T) {
+	for _, budget := range []string{"", "budget: { mode: off }\n"} {
+		path := budgetProject(t, budget, "  auth: api-key\n  model: sonnet")
+		if out, err := validateProblems(t, path); err != nil {
+			t.Fatalf("budget %q: %v %s", budget, err, out)
+		}
+	}
+	// No project config at all: nothing to say the budget is on.
+	isolateProjects(t, t.TempDir())
+	if out, err := validateProblems(t, writeConfig(t, cliMinimalYAML)); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+}
+
+func TestValidateRefusesVertexEnforce(t *testing.T) {
+	pinned := "  auth: vertex\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5 }"
+	path := budgetProject(t, "budget: { mode: enforce, per_run_usd: 5 }\n", pinned)
+	out, err := validateProblems(t, path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "Vertex budgets are not supported yet: use budget.mode observe or off") {
+		t.Fatalf("enforce: exit %d, out %q", ExitCode(err), out)
+	}
+	path = budgetProject(t, "budget: { mode: observe }\n", pinned)
+	if out, err := validateProblems(t, path); err != nil {
+		t.Fatalf("observe: %v %s", err, out)
+	}
+}

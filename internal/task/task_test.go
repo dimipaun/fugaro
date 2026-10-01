@@ -200,7 +200,7 @@ func TestApply(t *testing.T) {
 	if err := s.Apply(cfg, w); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Agent.ReviewRounds != 4 || cfg.Agent.MaxBudgetUSD != 10 || cfg.Agent.Model != "m" || w.Timeouts.Total.Duration != 45*time.Minute {
+	if cfg.Agent.ReviewRounds != 4 || cfg.Agent.MaxBudgetUSD != 10 || cfg.Agent.Models.Coder != "m" || w.Timeouts.Total.Duration != 45*time.Minute {
 		t.Fatalf("not applied: %+v %+v", cfg.Agent, w.Timeouts)
 	}
 	s.Overrides = Overrides{TotalTimeout: "4m"}
@@ -264,5 +264,18 @@ func TestBranchRunID(t *testing.T) {
 		if id, ok := BranchRunID(bad); ok || id != "" {
 			t.Errorf("BranchRunID(%q) = %q, %v", bad, id, ok)
 		}
+	}
+}
+
+// overrides.model is the coder's model; the reviewer keeps its own.
+func TestTaskOverrideModelIsCoder(t *testing.T) {
+	s := &Spec{Overrides: Overrides{Model: "claude-opus-5-5"}}
+	cfg := &config.Config{Agent: config.Agent{Model: "claude-sonnet-5-5", Models: config.ModelRoles{Reviewer: "claude-haiku-4-5"}}}
+	if err := s.Apply(cfg, &config.Workflow{}); err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Agent
+	if a.ModelFor(config.RoleCoder) != "claude-opus-5-5" || a.ModelFor(config.RoleReviewer) != "claude-haiku-4-5" || a.Model != "claude-sonnet-5-5" {
+		t.Fatalf("agent = %+v", a)
 	}
 }
