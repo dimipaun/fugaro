@@ -1077,7 +1077,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		// cross-check. A halt it raised after the watcher looked is
 		// recorded now.
 		r.drainHalt()
-		r.crossCheckCost(name, res.CostUSD)
+		r.crossCheckCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
 		r.mu.Lock()
 		r.rec.CostUSD = r.gwUsed.USD()
 		r.mu.Unlock()

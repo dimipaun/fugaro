@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -26,10 +27,7 @@ func (r *run) updateCost() {
 	c.UsageUnparsed = r.unparsed
 	if gateway {
 		c.Unreconciled = r.unreconciled.USD()
-		c.ModelBy = make(map[string]float64, len(r.modelBy))
-		for m, v := range r.modelBy {
-			c.ModelBy[m] = v.USD()
-		}
+		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
 	}
 	r.mu.Unlock()
 	c.ModelSource = "claude-code"
@@ -37,6 +35,27 @@ func (r *run) updateCost() {
 		c.ModelSource = "gateway"
 	}
 	r.rec.Cost = &c
+}
+
+// unattributedModel is the model_by entry for spend no stage report
+// carried: a call that settled after its stage's wait ran out is in the
+// ledger's total but in no stage's split.
+const unattributedModel = "unattributed"
+
+// modelByUSD is the split of total by model in USD, with what the stage
+// reports don't account for under "unattributed", so the split adds up to
+// the model cost.
+func modelByUSD(by map[string]pricing.Micros, total pricing.Micros) map[string]float64 {
+	out := make(map[string]float64, len(by)+1)
+	var sum pricing.Micros
+	for m, v := range by {
+		out[m] = v.USD()
+		sum += v
+	}
+	if rest := total - sum; rest > 0 {
+		out[unattributedModel] = rest.USD()
+	}
+	return out
 }
 
 // CostLine renders a cost breakdown for reports (design §10.1). It keys

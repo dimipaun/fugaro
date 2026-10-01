@@ -46,12 +46,19 @@ type wireTier struct {
 	OutputPerM       *float64 `json:"output_per_m"`
 }
 
+// MaxOverridesBytes bounds FUGARO_MODEL_PRICES: a job's environment is not
+// a place for a large document, and the runner parses it before anything.
+const MaxOverridesBytes = 32 << 10
+
 // ParseOverrides reads FUGARO_MODEL_PRICES: compact JSON, an object keyed
 // by model ID. Empty is no overrides. Unknown fields, alias keys and rates
 // out of range are errors.
 func ParseOverrides(s string) (Overrides, error) {
 	if s == "" {
 		return Overrides{}, nil
+	}
+	if len(s) > MaxOverridesBytes {
+		return nil, fmt.Errorf("%s: %d bytes is over the limit of %d", EnvName, len(s), MaxOverridesBytes)
 	}
 	if err := strict(s); err != nil {
 		return nil, fmt.Errorf("%s: %w", EnvName, err)
@@ -133,6 +140,9 @@ func (o Overrides) Env() (string, error) {
 	b, err := json.Marshal(w) // map keys are sorted
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", EnvName, err)
+	}
+	if len(b) > MaxOverridesBytes {
+		return "", fmt.Errorf("%s: %d bytes is over the limit of %d; the runner would refuse it", EnvName, len(b), MaxOverridesBytes)
 	}
 	return string(b), nil
 }

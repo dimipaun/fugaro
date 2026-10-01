@@ -16,8 +16,10 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 		{"agent.models.background", a.Models.Background},
 	} {
 		switch {
+		case r.model == "" && r.path == "agent.models.background":
+			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: name a model ID such as claude-haiku-4-5"})
 		case r.model == "":
-			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: name a model ID such as claude-sonnet-5-5"})
+			ps = append(ps, Problem{Path: r.path, Message: "is required with a budget: set it, or agent.model, to a model ID such as claude-sonnet-5-5"})
 		case pricing.IsAlias(r.model):
 			ps = append(ps, Problem{Path: r.path, Message: r.model + " is an alias: with a budget, name a model ID such as claude-sonnet-5-5"})
 		default:

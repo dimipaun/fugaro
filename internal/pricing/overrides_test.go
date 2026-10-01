@@ -162,3 +162,10 @@ func TestWithRefusesTwoKeysForOneModel(t *testing.T) {
 		}
 	}
 }
+
+func TestOverridesSizeBounded(t *testing.T) {
+	big := `{"claude-sonnet-5-5":{"input_per_m":1,"output_per_m":2},"` + strings.Repeat("x", MaxOverridesBytes) + `":{}}`
+	if _, err := ParseOverrides(big); err == nil || !strings.Contains(err.Error(), "over the limit") {
+		t.Fatalf("err = %v", err)
+	}
+}

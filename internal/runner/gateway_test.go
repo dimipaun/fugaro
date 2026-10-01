@@ -338,6 +338,22 @@ func TestCostCrossCheckWarns(t *testing.T) {
 	}
 }
 
+// A stage the halt stopped never reported its cost; the figure it left
+// says nothing and raises no cross-check warning.
+func TestCostCrossCheckSkipsAHaltedStage(t *testing.T) {
+	g := newGW(t, gwConfig(t, ""), "enforce", "0.10", capScript(3)...)
+	var st []int
+	// implement() says $1 against the gateway's $0.08, but the third call
+	// is refused and the run halts.
+	rec, err := g.run(t, calling(&st, implement("feature"), call{sonnet, 4000}, call{sonnet, 4000}, call{sonnet, 4000}))
+	if err != nil || rec.Status != runstore.StatusHalted {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if strings.Contains(g.logs.String(), "cost cross-check") {
+		t.Fatalf("a halted stage warned:\n%s", g.logs.String())
+	}
+}
+
 func unparsed2xx() anthropicfake.Reply {
 	return anthropicfake.Reply{Status: 200, Body: "not json at all"}
 }

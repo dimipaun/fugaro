@@ -469,20 +469,21 @@ func TestBudgetDefaultsOff(t *testing.T) {
 
 func TestBudgetValidation(t *testing.T) {
 	for name, tc := range map[string]struct{ yaml, msg string }{
-		"unknown mode":        {"budget: { mode: strict, per_run_usd: 5 }\n", "budget.mode"},
-		"enforce without cap": {"budget: { mode: enforce }\n", "per_run_usd"},
-		"enforce zero cap":    {"budget: { mode: enforce, per_run_usd: 0 }\n", "per_run_usd"},
-		"negative cap":        {"budget: { mode: observe, per_run_usd: -1 }\n", "per_run_usd"},
-		"NaN cap":             {"budget: { mode: enforce, per_run_usd: .nan }\n", "per_run_usd"},
-		"infinite cap":        {"budget: { mode: enforce, per_run_usd: .inf }\n", "per_run_usd"},
-		"cap over 100000":     {"budget: { mode: enforce, per_run_usd: 100000.01 }\n", "per_run_usd"},
-		"unknown field":       {"budget: { mode: off, per_run: 5 }\n", "per_run"},
-		"price without rates": {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
-		"negative price":      {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
-		"alias key":           {"model_prices: { sonnet: { input_per_m: 1, output_per_m: 10 } }\n", "alias"},
-		"unknown price field": {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, tokens: 3 } }\n", "tokens"},
-		"two keys one model":  {"model_prices: { claude-haiku-4-5: { input_per_m: 1, output_per_m: 5 }, 'claude-haiku-4-5@20251001': { input_per_m: 1, output_per_m: 5 } }\n", "both price"},
-		"half a tier":         {"model_prices: { claude-x-1: { input_per_m: 1, output_per_m: 5, long_context: { above_input_tokens: 200000, input_per_m: 2 } } }\n", "long_context"},
+		"unknown mode":          {"budget: { mode: strict, per_run_usd: 5 }\n", "budget.mode"},
+		"enforce without cap":   {"budget: { mode: enforce }\n", "per_run_usd"},
+		"enforce zero cap":      {"budget: { mode: enforce, per_run_usd: 0 }\n", "per_run_usd"},
+		"negative cap":          {"budget: { mode: observe, per_run_usd: -1 }\n", "per_run_usd"},
+		"NaN cap":               {"budget: { mode: enforce, per_run_usd: .nan }\n", "per_run_usd"},
+		"infinite cap":          {"budget: { mode: enforce, per_run_usd: .inf }\n", "per_run_usd"},
+		"cap rounds to nothing": {"budget: { mode: enforce, per_run_usd: 0.0000001 }\n", "rounds to nothing"},
+		"cap over 100000":       {"budget: { mode: enforce, per_run_usd: 100000.01 }\n", "per_run_usd"},
+		"unknown field":         {"budget: { mode: off, per_run: 5 }\n", "per_run"},
+		"price without rates":   {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
+		"negative price":        {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
+		"alias key":             {"model_prices: { sonnet: { input_per_m: 1, output_per_m: 10 } }\n", "alias"},
+		"unknown price field":   {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, tokens: 3 } }\n", "tokens"},
+		"two keys one model":    {"model_prices: { claude-haiku-4-5: { input_per_m: 1, output_per_m: 5 }, 'claude-haiku-4-5@20251001': { input_per_m: 1, output_per_m: 5 } }\n", "both price"},
+		"half a tier":           {"model_prices: { claude-x-1: { input_per_m: 1, output_per_m: 5, long_context: { above_input_tokens: 200000, input_per_m: 2 } } }\n", "long_context"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(sample + tc.yaml))

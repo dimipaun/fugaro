@@ -147,12 +147,14 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 }
 
 // crossCheckCost warns when Claude Code's own figure for a stage and the
-// gateway's differ by more than 5%.
-func (r *run) crossCheckCost(stage string, claude float64) {
+// gateway's differ by more than 5%. A stage that was stopped (by a halt or
+// a cancel or its deadline) never got to report its cost, so its figure
+// says nothing and nothing is compared.
+func (r *run) crossCheckCost(stage string, claude float64, stopped bool) {
 	r.mu.Lock()
 	rep := r.lastStage
 	r.mu.Unlock()
-	if rep == nil {
+	if rep == nil || stopped {
 		return
 	}
 	gw := rep.Used.USD()

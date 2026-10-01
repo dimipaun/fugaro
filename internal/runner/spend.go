@@ -44,6 +44,10 @@ func SpendFromEnv(getenv func(string) string) (Spend, error) {
 			if s.Cap, err = pricing.FromUSD(usd); err != nil {
 				return Spend{}, fmt.Errorf("%s %q: %w", MaxRunUSDEnv, v, err)
 			}
+			if s.Cap < 1 {
+				// A cap that rounds to 0 would read as no cap at all.
+				return Spend{}, fmt.Errorf("%s %q: it rounds to nothing; the smallest cap is $0.000001", MaxRunUSDEnv, v)
+			}
 		}
 		o, err := pricing.ParseOverrides(getenv(ModelPricesEnv))
 		if err != nil {

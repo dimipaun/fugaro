@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 const cliMinimalYAML = `version: 1
@@ -205,5 +206,21 @@ func TestValidateRefusesVertexEnforce(t *testing.T) {
 	path = budgetProject(t, "budget: { mode: observe }\n", pinned)
 	if out, err := validateProblems(t, path); err != nil {
 		t.Fatalf("observe: %v %s", err, out)
+	}
+}
+
+// With unreadable model_prices the one problem is reported; models are not
+// also called unpriced against a table that was never the file's.
+func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
+	one := func(v float64) *float64 { return &v }
+	lc := &localcfg.Config{
+		Name:        "aurora",
+		Budget:      &localcfg.Budget{Mode: localcfg.BudgetObserve},
+		ModelPrices: map[string]localcfg.ModelPrice{"sonnet": {InputPerM: one(1), OutputPerM: one(5)}},
+	}
+	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "api-key", Model: "claude-acme-1", Models: config.ModelRoles{Background: "claude-haiku-4-5"}}}
+	ps := budgetProblems(cfg, lc)
+	if len(ps) != 1 || ps[0].Path != "model_prices" {
+		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
 }

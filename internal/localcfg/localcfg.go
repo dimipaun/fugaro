@@ -175,8 +175,10 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 		default:
 			bad("budget.mode %q must be off, observe or enforce", b.Mode)
 		}
-		if _, err := pricing.FromUSD(b.PerRunUSD); err != nil {
+		if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 			bad("budget.per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)
+		} else if b.PerRunUSD > 0 && m < 1 {
+			bad("budget.per_run_usd %v: it rounds to nothing; the smallest cap is $0.000001", b.PerRunUSD)
 		} else if b.Mode == BudgetEnforce && b.PerRunUSD <= 0 {
 			bad("budget.per_run_usd must be more than 0 with budget.mode enforce (it is the per-run cap)")
 		}
