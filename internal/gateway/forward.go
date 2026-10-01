@@ -124,6 +124,7 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 			}
 			p.toolTypes = strings.Join(seen, ",")
 		}
+		first := "" // the violation to report: the first disallowed tool, all of them logged
 		for _, t := range tools {
 			m, ok := t.(map[string]any)
 			if !ok {
@@ -136,10 +137,18 @@ func (p *parsed) shapes(top map[string]any, msgs []any) string {
 			}
 			s, ok := typ.(string)
 			if !ok {
-				return "tool type " + showValue(typ) + " is not a string"
+				if first == "" {
+					first = "tool type " + showValue(typ) + " is not a string"
+				}
+				continue
 			}
 			note(logValue(s))
-			return "tool type " + logValue(s) + " is not allowed (the budget allows only client tools)"
+			if first == "" {
+				first = "tool type " + logValue(s) + " is not allowed (the budget allows only client tools)"
+			}
+		}
+		if first != "" {
+			return first
 		}
 	}
 	switch sys := top["system"].(type) {

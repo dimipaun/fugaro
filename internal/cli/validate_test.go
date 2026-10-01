@@ -224,3 +224,16 @@ func TestBudgetProblemsSkipPinsWhenPricesAreUnreadable(t *testing.T) {
 		t.Fatalf("problems = %v, want only the model_prices one", ps)
 	}
 }
+
+// An oauth run has no gateway, so the pin rules don't apply to it.
+func TestBudgetProblemsSkipPinsForOAuth(t *testing.T) {
+	lc := &localcfg.Config{Name: "aurora", Budget: &localcfg.Budget{Mode: localcfg.BudgetObserve}}
+	cfg := &config.Config{Project: "aurora", Agent: config.Agent{Auth: "oauth"}}
+	if ps := budgetProblems(cfg, lc); len(ps) != 0 {
+		t.Fatalf("problems = %v", ps)
+	}
+	cfg.Agent.Auth = "api-key"
+	if ps := budgetProblems(cfg, lc); len(ps) == 0 {
+		t.Fatal("api-key with no models passed")
+	}
+}

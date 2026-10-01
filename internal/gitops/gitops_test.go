@@ -607,3 +607,35 @@ func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 		t.Fatalf("an existing checkout's StripEnv = %v", again.StripEnv)
 	}
 }
+
+func TestDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	testutil.IsolateGit(t)
+	open := func(remote string) *Repo {
+		dir := filepath.Join(t.TempDir(), "w")
+		testutil.Git(t, filepath.Dir(dir), "init", "-q", dir)
+		testutil.Git(t, dir, "remote", "add", "origin", remote)
+		return &Repo{Dir: dir, Env: IdentityEnv()}
+	}
+	// A normal remote: its HEAD names main, whatever the files say.
+	remote := testutil.NewRemote(t, map[string]string{"fugaro.yaml": "git: { base_branch: other }\n"})
+	if got, err := open(remote).DefaultBranch(ctx); err != nil || got != "main" {
+		t.Fatalf("DefaultBranch = %q, %v", got, err)
+	}
+	// HEAD on another branch is that branch, slashes included.
+	testutil.Git(t, remote, "branch", "release/1", "main")
+	testutil.Git(t, remote, "symbolic-ref", "HEAD", "refs/heads/release/1")
+	if got, err := open(remote).DefaultBranch(ctx); err != nil || got != "release/1" {
+		t.Fatalf("DefaultBranch = %q, %v", got, err)
+	}
+	// An empty remote has an unborn HEAD and no default to report.
+	empty := filepath.Join(t.TempDir(), "empty.git")
+	testutil.Git(t, filepath.Dir(empty), "init", "-q", "--bare", "-b", "main", empty)
+	if got, err := open(empty).DefaultBranch(ctx); err == nil {
+		t.Fatalf("an empty remote gave %q", got)
+	}
+	// A remote that can't be reached is an error too.
+	if _, err := open(filepath.Join(t.TempDir(), "gone.git")).DefaultBranch(ctx); err == nil {
+		t.Fatal("a missing remote gave a branch")
+	}
+}

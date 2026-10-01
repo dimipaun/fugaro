@@ -700,3 +700,12 @@ func TestCountTokensConcurrencyBounded(t *testing.T) {
 	cancel()
 	wg.Wait()
 }
+
+// Every typed tool is in the log, though the first one names the refusal.
+func TestToolTypesLogAllDisallowedTools(t *testing.T) {
+	h := newHarness(t)
+	refused(t, h, msg(sonnet, 10, `"tools":[{"name":"a","input_schema":{"type":"object"}},{"type":"web_search_20260209","name":"w"},{"type":"bash_20250124","name":"b"}]`), "tool type web_search_20260209")
+	if tt := h.logs.lastCall(t)["tool_types"]; tt != "custom,web_search_20260209,bash_20250124" {
+		t.Errorf("tool_types = %v", tt)
+	}
+}

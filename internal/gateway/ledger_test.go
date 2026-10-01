@@ -975,3 +975,44 @@ func TestSettleBeyondReservedIsLogged(t *testing.T) {
 		t.Errorf("warned %v, ledger %+v", warned, h.gw.Ledger())
 	}
 }
+
+// With nothing spent the cap was not "reached": the call alone is too big.
+func TestHaltWithNothingSpentSaysSo(t *testing.T) {
+	h := newHarnessWith(t, enforceCap(2000), okReplies(1)...)
+	resp, b := h.post(msg(sonnet, 4000))
+	if resp.StatusCode != 403 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	_, m := apiError(t, b)
+	if !strings.Contains(m, "cannot hold a call that needs up to") || strings.Contains(m, "reached") || !strings.Contains(m, "$0.002") {
+		t.Errorf("message %q", m)
+	}
+	halt := <-h.gw.Halted()
+	if !strings.Contains(halt.Detail, "cannot hold a call that needs up to") || strings.Contains(halt.Detail, "reached") {
+		t.Errorf("detail %q", halt.Detail)
+	}
+}
+
+// The 429s a stage's calls got are counted in its report.
+func TestStageReportCountsWaitedCalls(t *testing.T) {
+	u := pricing.Usage{Input: 100, Output: 100}
+	slow := anthropicfake.StreamOK(sonnet, u)
+	slow.EventDelay = 80 * time.Millisecond
+	body := msg(sonnet, 1000, `"stream":true`)
+	w := worst(t, sonnet, body, 1000, "")
+	h := newHarnessWith(t, enforceCap(2*w-1), slow)
+	resp, err := http.DefaultClient.Do(h.request(context.Background(), "/v1/messages", body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(resp.Body)
+	readEvent(t, r)
+	h.post(body)
+	h.post(body)
+	_, _ = io.ReadAll(r)
+	resp.Body.Close()
+	waitFor(t, "settle", func() bool { return h.gw.Ledger().Reserved == 0 })
+	if rep := h.gw.EndStage(); rep.Waited != 2 {
+		t.Errorf("Waited = %d, want 2", rep.Waited)
+	}
+}

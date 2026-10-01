@@ -51,8 +51,14 @@ func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, stat
 				Detail: fmt.Sprintf("run cap %s reached (%s spent, %s needed)", dollars(s.o.Cap), dollars(s.used), dollars(w)),
 				At:     time.Now().UTC(),
 			}
-			s.halt = &h
 			s.haltMsg = fmt.Sprintf("fugaro: budget halted: run cap %s reached (%s spent)", dollars(s.o.Cap), dollars(s.used))
+			if s.used == 0 {
+				// Nothing was spent, so the cap wasn't "reached": the call
+				// alone is bigger than it.
+				h.Detail = fmt.Sprintf("run cap %s cannot hold a call that needs up to %s (nothing spent)", dollars(s.o.Cap), dollars(w))
+				s.haltMsg = fmt.Sprintf("fugaro: budget halted: run cap %s cannot hold a call that needs up to %s", dollars(s.o.Cap), dollars(w))
+			}
+			s.halt = &h
 			s.haltCh <- h
 			close(s.haltCh)
 			s.log.Warn("budget: halted", "reason", h.Reason, "detail", h.Detail, "stage", st.st.Name)
@@ -63,6 +69,7 @@ func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, stat
 		s.log.Warn("budget: would halt (observe)", "stage", st.st.Name,
 			"cap_micros", int64(s.o.Cap), "used_micros", int64(s.used), "reserved_micros", int64(s.reserved), "needed_micros", int64(w))
 	} else if s.o.Mode == Enforce && s.o.Cap > 0 && satAdd(satAdd(s.used, s.reserved), w) > s.o.Cap {
+		st.rep.Waited++
 		s.log.Info("budget: call waits for calls in flight", "stage", st.st.Name,
 			"cap_micros", int64(s.o.Cap), "used_micros", int64(s.used), "reserved_micros", int64(s.reserved), "needed_micros", int64(w))
 		return "fugaro: the run's budget is held by calls still in flight; retry shortly", http.StatusTooManyRequests

@@ -102,12 +102,13 @@ type StageReport struct {
 	UsageUnparsed int                       // 2xx calls settled at their reservation
 	Tokens        int64                     // reported tokens: input, cache writes, cache reads and output
 	Violations    []string                  // what the stage asked for that isn't allowed, first first
+	Waited        int                       // calls told to retry (429) because in-flight calls held the budget
 }
 
 // Halt says why the gateway stopped forwarding calls.
 type Halt struct {
 	Reason string // "run_cap"
-	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"
+	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"; with nothing spent, "cannot hold a call that needs up to"
 	At     time.Time
 }
 

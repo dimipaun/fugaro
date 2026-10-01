@@ -1106,7 +1106,11 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.save(ctx)
 		return res, false, recoveredError{err}
 	case err != nil:
-		r.fail(StageError(name, stageCtx, r.budget, err))
+		reason := StageError(name, stageCtx, r.budget, err)
+		if w := r.lastWaited(); w > 0 && r.gw != nil {
+			reason += fmt.Sprintf(" (the budget gateway told the agent to retry %d call(s) with a 429 because calls in flight held the run's budget; the run cap may be too small for parallel work)", w)
+		}
+		r.fail(reason)
 		if errors.Is(context.Cause(stageCtx), ErrCancelled) {
 			r.markCancelled()
 		}

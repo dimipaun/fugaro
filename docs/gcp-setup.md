@@ -183,7 +183,7 @@ M9a renamed what `project` means (design §1) and added the project name to the 
 
 1. **Snapshot** `config.yaml`, each job's `gcloud run jobs describe --format json`, and the Scheduler job list; with the old binary check that `fugaro ls --since 1d` shows nothing running. **Pause every repository's `fugarochk-` Scheduler job**, so no check rebuilds on the new base or moves `:latest` meanwhile.
 2. **The local config, by hand.** Choose the project's name. `mkdir -p ~/.config/fugaro/projects`, copy `config.yaml` to `projects/<project>.yaml`, rename its `project:` key to `gcp_project:`, add `name: <project>`, and move `config.yaml` to `config.yaml.bak`.
-3. **`project: <project>` in each repository's `fugaro.yaml`,** merged to its base branch (it is required: the runner refuses a repository that names none).
+3. **`project: <project>` in each repository's `fugaro.yaml`,** merged to the repository's **default branch** (it is required: the runner refuses a repository that names none). The runner reads `project:` from the default branch (what `origin`'s HEAD names) even when `git.base_branch` is another branch, so with a base such as `develop` put it on both.
 4. **A base image from M9a** (step 3 above), then `fugaro init --name <project> --base-image <tag>`: the plan stamps the bucket label, writes the marker object and rewrites `base_image`.
 5. **Each repository, from its checkout:** `fugaro image build`, then `fugaro init --repo` (its jobs now carry `FUGARO_PROJECT=<project>` and `FUGARO_GCP_PROJECT=<gcp-project>`), then resume its Scheduler job.
 

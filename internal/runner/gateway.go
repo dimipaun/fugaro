@@ -146,6 +146,17 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	return rep.Violations, rep.Tokens
 }
 
+// lastWaited is how many calls the gateway told to retry in the stage
+// that just ended.
+func (r *run) lastWaited() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.lastStage == nil {
+		return 0
+	}
+	return r.lastStage.Waited
+}
+
 // crossCheckCost warns when Claude Code's own figure for a stage and the
 // gateway's differ by more than 5%. A stage that was stopped (by a halt or
 // a cancel or its deadline) never got to report its cost, so its figure

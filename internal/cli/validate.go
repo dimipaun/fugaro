@@ -32,7 +32,8 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) []config.Problem {
 		// The prices are unreadable, so a model "without a price" would be
 		// the table's fault, not the file's: say only what is wrong.
 		ps = append(ps, config.Problem{Path: "model_prices", Message: err.Error() + " (in the project config)"})
-	} else {
+	} else if cfg.Agent.Auth != "oauth" {
+		// An oauth run has no gateway: nothing is priced or pinned.
 		ps = append(ps, config.CheckPins(cfg.Agent, prices)...)
 	}
 	if err := checkVertexBudget(lc, cfg); err != nil {
