@@ -125,6 +125,63 @@ type Record struct {
 	PushedHead string `json:"pushed_head,omitempty"`
 	// Halt is set when Status is halted.
 	Halt *Halt `json:"halt,omitempty"`
+	// Policy is the budget and model policy the run ran under, set only
+	// when a layer set something (a run with no policy writes none).
+	Policy *PolicyRecord `json:"policy,omitempty"`
+}
+
+// PolicyRecord is the effective budget and model policy of a run, merged
+// from the owner's ceiling, the default branch's fugaro.yaml and the run's
+// own, and what was dropped for being looser.
+type PolicyRecord struct {
+	Effective PolicyEffective `json:"effective"`
+	// Sources maps each key that is set to the layer that set it:
+	// "ceiling", "default-branch" or "branch".
+	Sources map[string]string `json:"sources,omitempty"`
+	Ignored []PolicyIgnored   `json:"ignored,omitempty"`
+}
+
+// PolicyEffective is the merged values. A zero value means unset, except
+// AllowedModels: nil is unset (every model is allowed) and an empty
+// non-nil list is set and forbids every model, so it is written as [] and
+// read back as an empty non-nil slice.
+type PolicyEffective struct {
+	PerRunUSD       float64       `json:"per_run_usd,omitempty"`
+	Mode            string        `json:"mode,omitempty"`
+	MaxRunTokens    int64         `json:"max_run_tokens,omitempty"`
+	MaxOutputTokens *PolicyOutput `json:"max_output_tokens,omitempty"`
+	AllowedModels   []string      `json:"allowed_models"`
+}
+
+// PolicyOutput is the per-call output limits by role.
+type PolicyOutput struct {
+	Coder    int64 `json:"coder,omitempty"`
+	Reviewer int64 `json:"reviewer,omitempty"`
+}
+
+// MarshalJSON omits allowed_models only when it is nil: an empty list is a
+// restriction and must survive the round trip.
+func (e PolicyEffective) MarshalJSON() ([]byte, error) {
+	type plain PolicyEffective
+	aux := struct {
+		plain
+		AllowedModels *[]string `json:"allowed_models,omitempty"`
+	}{plain: plain(e)}
+	if e.AllowedModels != nil {
+		aux.AllowedModels = &e.AllowedModels
+	}
+	return json.Marshal(aux)
+}
+
+// PolicyIgnored is a value a layer set that was looser than the limits in
+// force and was dropped. Value and Effective are text; Source is the layer
+// of the effective value and From the layer that asked for Value.
+type PolicyIgnored struct {
+	Key       string `json:"key"`
+	Value     string `json:"value"`
+	Effective string `json:"effective"`
+	Source    string `json:"source"`
+	From      string `json:"from"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

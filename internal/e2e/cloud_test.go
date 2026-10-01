@@ -1197,3 +1197,64 @@ func TestCloudGatewayRunSecretScan(t *testing.T) {
 	}
 	r.checkNoSecret()
 }
+
+// pushBranch pushes a branch of the rig's repository whose fugaro.yaml has
+// extra appended, as a pull request's author would.
+func (r *cloudRig) pushBranch(branch, extra string) {
+	r.t.Helper()
+	clone := filepath.Join(r.t.TempDir(), "clone")
+	testutil.Git(r.t, filepath.Dir(clone), "clone", "--quiet", "--branch", "main", r.remote, clone)
+	testutil.Git(r.t, clone, "checkout", "--quiet", "-b", branch)
+	path := filepath.Join(clone, "fugaro.yaml")
+	cfg, err := os.ReadFile(path)
+	if err != nil {
+		r.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(cfg, []byte(extra)...), 0o644); err != nil {
+		r.t.Fatal(err)
+	}
+	testutil.Git(r.t, clone, "commit", "--quiet", "-am", "Raise the cap")
+	testutil.Git(r.t, clone, "push", "--quiet", "origin", "HEAD:refs/heads/"+branch)
+}
+
+// TestCloudBranchRaisesCapIsClamped: the owner's ceiling is $5 and the
+// run's branch commits per_run_usd: 500. The run is clamped to the
+// ceiling: after a $6 call the next is refused, the run halts with run_cap
+// and opens a draft, and result.json records the ignored $500.
+func TestCloudBranchRaisesCapIsClamped(t *testing.T) {
+	upstream, srv := anthropicfake.New(t)
+	upstream.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Output: 600000}) // $6
+	}
+	script := `{"calls":[` + implementCalling(t, 2) + `,` + reviewShip + `]}`
+	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), fixedWorkdir)
+	r.pushBranch("feature", "budget:\n  per_run_usd: 500\n")
+	id := newRunID(t)
+	if out, err := r.cli("run", "--repo", "acme/app", "--ref", "feature", "--run-id", id, "--json", "Add a feature"); err != nil {
+		t.Fatalf("run: %s, %v", out, err)
+	}
+	row := r.waitStatus(id, "succeeded", "failed", "infra_error", "cancelled", "halted")
+	if row["status"] != "halted" || row["pr_url"] == nil || row["pr_url"] == "" {
+		t.Fatalf("row = %v", row)
+	}
+	_, rec := r.launched(id)
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || rec.Outcome != runstore.OutcomeDraft ||
+		!strings.Contains(rec.Halt.Detail, "$5.00") || strings.Contains(rec.Halt.Detail, "500") {
+		t.Fatalf("record = %+v, halt = %+v", rec, rec.Halt)
+	}
+	if rec.Policy == nil || rec.Policy.Effective.PerRunUSD != 5 || len(rec.Policy.Ignored) != 1 ||
+		rec.Policy.Ignored[0] != (runstore.PolicyIgnored{Key: "per_run_usd", Value: "500", Effective: "5", Source: "ceiling", From: "branch"}) {
+		t.Fatalf("policy = %+v", rec.Policy)
+	}
+	calls := testutil.FakeClaudeCalls(t, r.claude)
+	if len(calls) != 1 || len(calls[0].API) != 2 || calls[0].API[0] != 200 || calls[0].API[1] != 403 {
+		t.Fatalf("fakeclaude calls = %+v: want the second call refused at $5, not served at $500", calls)
+	}
+	if got := len(upstream.Seen()); got != 1 {
+		t.Fatalf("the upstream saw %d calls: the refused call must never be forwarded", got)
+	}
+	if data := r.readObject(id, "report.md"); !strings.Contains(string(data), "budget.per_run_usd 500 -> 5") {
+		t.Fatalf("report.md: %s", data)
+	}
+	r.checkNoSecret()
+}

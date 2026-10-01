@@ -3,10 +3,14 @@ package runner
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // defaultBranchData is fugaro.yaml as the repository's default branch has
@@ -90,6 +94,9 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	}
 
 	e := policy.Merge(ceiling, def, branch)
+	// Merge lists the default branch's ignored values before the branch's,
+	// so the number the first two layers drop says who asked for each.
+	nDef := len(policy.Merge(ceiling, def).Ignored)
 	s := Spend{Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels, Prices: c.Prices}
 	if s.Mode == "" {
 		s.Mode = policy.ModeOff
@@ -114,5 +121,84 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	// configuration: it carries the merged limits from here on.
 	cfg.Agent.MaxOutputTokens = config.RoleTokens{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	r.spend, r.policy = s, e
+	r.rec.Policy = r.recordPolicy(nDef)
 	return nil
+}
+
+// policyRecord builds result.json's policy object from the merge: nil when
+// no layer set anything that bears on money or models and nothing was
+// ignored, so a repository without policy writes the same record as before.
+// The per-call output limits are not by themselves a policy.
+func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
+	sources := map[string]string{}
+	for k, v := range e.Sources {
+		sources[k] = v
+	}
+	delete(sources, policy.KeyMaxOutputCoder)
+	delete(sources, policy.KeyMaxOutputReviewer)
+	if len(sources) == 0 && len(e.Ignored) == 0 {
+		return nil
+	}
+	rec := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{
+		PerRunUSD: e.PerRunUSD, Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels}}
+	if e.MaxOutputCoder > 0 || e.MaxOutputReviewer > 0 {
+		rec.Effective.MaxOutputTokens = &runstore.PolicyOutput{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
+	}
+	if len(e.Sources) > 0 {
+		rec.Sources = maps.Clone(e.Sources)
+	}
+	for i, ig := range e.Ignored {
+		from := policy.SourceBranch
+		if i < nDef {
+			from = policy.SourceDefaultBranch
+		}
+		rec.Ignored = append(rec.Ignored, runstore.PolicyIgnored{Key: ig.Key, Value: ig.Value, Effective: ig.Effective, Source: ig.Source, From: from})
+	}
+	return rec
+}
+
+// recordPolicy builds the record and, once per run, logs the policy and
+// warns once per key about each value that was dropped.
+func (r *run) recordPolicy(nDef int) *runstore.PolicyRecord {
+	rec := policyRecord(r.policy, nDef)
+	if rec == nil {
+		return nil
+	}
+	e := rec.Effective
+	allowed := "any"
+	if e.AllowedModels != nil {
+		allowed = strings.Join(e.AllowedModels, ",")
+		if allowed == "" {
+			allowed = "none"
+		}
+	}
+	r.d.Log.Info("policy", "per_run_usd", e.PerRunUSD, "mode", e.Mode, "max_run_tokens", e.MaxRunTokens,
+		"allowed_models", allowed, "sources", sourcesText(rec.Sources))
+	warned := map[string]bool{}
+	for _, ig := range rec.Ignored {
+		if warned[ig.Key] {
+			continue
+		}
+		warned[ig.Key] = true
+		r.d.Log.Warn("policy: a looser value in fugaro.yaml was ignored", "key", PolicyKeyPath(ig.Key),
+			"value", ig.Value, "effective", ig.Effective, "from", ig.From, "limit_from", ig.Source)
+	}
+	return rec
+}
+
+func sourcesText(m map[string]string) string {
+	parts := make([]string, 0, len(m))
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		parts = append(parts, k+"="+m[k])
+	}
+	return strings.Join(parts, " ")
+}
+
+// PolicyKeyPath is where a policy key lives in fugaro.yaml.
+func PolicyKeyPath(key string) string {
+	switch key {
+	case policy.KeyMaxRunTokens, policy.KeyMaxOutputCoder, policy.KeyMaxOutputReviewer:
+		return "agent." + key
+	}
+	return "budget." + key
 }

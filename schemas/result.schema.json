@@ -141,6 +141,53 @@
         "detail": { "type": "string" }
       }
     },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["effective"],
+      "description": "The budget and model policy the run ran under, merged from the owner's ceiling, the default branch's fugaro.yaml and the run's own. Absent when no layer set any.",
+      "properties": {
+        "effective": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "per_run_usd": { "type": "number", "exclusiveMinimum": 0 },
+            "mode": { "enum": ["off", "observe", "enforce"] },
+            "max_run_tokens": { "type": "integer", "minimum": 1 },
+            "max_output_tokens": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "coder": { "type": "integer", "minimum": 1 },
+                "reviewer": { "type": "integer", "minimum": 1 }
+              }
+            },
+            "allowed_models": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Present means a restriction: an empty list forbids every model. Absent means every model is allowed." }
+          }
+        },
+        "sources": {
+          "type": "object",
+          "additionalProperties": { "enum": ["ceiling", "default-branch", "branch"] },
+          "description": "Policy key to the layer that set its effective value."
+        },
+        "ignored": {
+          "type": "array",
+          "description": "Values a layer set that were looser than the limits in force and were dropped.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "value", "effective", "source", "from"],
+            "properties": {
+              "key": { "type": "string" },
+              "value": { "type": "string" },
+              "effective": { "type": "string" },
+              "source": { "enum": ["ceiling", "default-branch", "branch"], "description": "The layer of the effective value." },
+              "from": { "enum": ["default-branch", "branch"], "description": "The layer that asked for the dropped value." }
+            }
+          }
+        }
+      }
+    },
     "pushed_head": { "type": "string", "minLength": 1, "description": "The commit the run pushed, set right after a successful push." },
     "finalize_reserve_s": { "type": "number", "exclusiveMinimum": 0, "description": "The workflow's timeouts.finalize_reserve at the task's ref, overrides applied, in seconds; cancel floors its grace with it." }
   }

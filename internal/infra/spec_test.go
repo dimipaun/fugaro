@@ -987,3 +987,28 @@ func TestWorkflowEnvOAuthGetsTokenCap(t *testing.T) {
 		}
 	}
 }
+
+// oauth stays budget-off for dollars, but budgetEnv is unchanged from M9a: a
+// project config that sets a mode still writes FUGARO_BUDGET_MODE (and the
+// cap and token cap) for an oauth workflow. The runner is what keeps oauth
+// off the gateway and free of a dollar cap (runner.TestOAuthStaysBudgetOff).
+func TestOAuthStaysBudgetOff(t *testing.T) {
+	in := budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 100 }\n")
+	in.Cfg.Agent.Auth = "oauth"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[BudgetModeEnv] != "enforce" || got[MaxRunUSDEnv] != "5" || got[MaxRunTokensEnv] != "100" {
+			t.Errorf("%s env = %v: want the mode, cap and token cap", w.Name, got)
+		}
+		if _, ok := w.SecretEnv[config.ReservedSecrets["claude-oauth-token"]]; !ok {
+			t.Errorf("%s is not an oauth workflow: %v", w.Name, w.SecretEnv)
+		}
+	}
+}

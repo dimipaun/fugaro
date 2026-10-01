@@ -437,3 +437,62 @@ func TestResultSchemaHalted(t *testing.T) {
 		t.Error(`schema accepts halt reason "other"`)
 	}
 }
+
+func TestPolicyRecordSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 1, 10, 0, 0, 0, time.UTC)
+	check := func(p *runstore.PolicyRecord) error {
+		t.Helper()
+		rec := runstore.Record{Version: 1, RunID: "20261001-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap",
+			Outcome: runstore.OutcomeNone, StartedAt: at, Policy: p}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	full := &runstore.PolicyRecord{
+		Effective: runstore.PolicyEffective{PerRunUSD: 5, Mode: "enforce", MaxRunTokens: 1000,
+			MaxOutputTokens: &runstore.PolicyOutput{Coder: 4096}, AllowedModels: []string{"claude-sonnet-5-5"}},
+		Sources: map[string]string{"per_run_usd": "ceiling", "mode": "default-branch", "max_run_tokens": "branch"},
+		Ignored: []runstore.PolicyIgnored{{Key: "per_run_usd", Value: "500", Effective: "5", Source: "ceiling", From: "branch"}},
+	}
+	if err := check(full); err != nil {
+		t.Errorf("schema rejects a policy record: %v", err)
+	}
+	if err := check(nil); err != nil {
+		t.Errorf("schema rejects a record without policy: %v", err)
+	}
+	// An empty allow-list (forbid everything) is valid and is written.
+	empty := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{AllowedModels: []string{}}}
+	if err := check(empty); err != nil {
+		t.Errorf("schema rejects an empty allow-list: %v", err)
+	}
+	if data, _ := json.Marshal(empty); !strings.Contains(string(data), `"allowed_models":[]`) {
+		t.Errorf("an empty allow-list is not written: %s", data)
+	}
+	for name, mut := range map[string]func(p *runstore.PolicyRecord){
+		"bad mode":     func(p *runstore.PolicyRecord) { p.Effective.Mode = "loose" },
+		"bad source":   func(p *runstore.PolicyRecord) { p.Sources["mode"] = "repo" },
+		"bad from":     func(p *runstore.PolicyRecord) { p.Ignored[0].From = "ceiling" },
+		"negative cap": func(p *runstore.PolicyRecord) { p.Effective.PerRunUSD = -1 },
+		"empty model":  func(p *runstore.PolicyRecord) { p.Effective.AllowedModels = []string{""} },
+	} {
+		p := *full
+		p.Sources = maps.Clone(full.Sources)
+		p.Ignored = slices.Clone(full.Ignored)
+		mut(&p)
+		if err := check(&p); err == nil {
+			t.Errorf("schema accepts a policy record with %s", name)
+		}
+	}
+	doc := `{"version":1,"run_id":"20261001-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-10-01T10:00:00Z","policy":{"effective":{},"extra":1}}`
+	inst, _ := jsonschema.UnmarshalJSON(strings.NewReader(doc))
+	if err := sch.Validate(inst); err == nil {
+		t.Error("schema accepts an unknown key in policy")
+	}
+}
