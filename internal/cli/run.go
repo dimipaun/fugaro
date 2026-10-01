@@ -49,6 +49,7 @@ var (
 
 // launchResult is what fugaro run reports, and its --json output.
 type launchResult struct {
+	Project   string `json:"project"` // the Fugaro project
 	Run       string `json:"run"`
 	Repo      string `json:"repo"`
 	RunID     string `json:"run_id"`
@@ -209,6 +210,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		fmt.Fprintf(cmd.ErrOrStderr(), "%s launched already; --retry only starts a run that never launched. "+
 			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
 	}
+	res.Project = env.lc.Name
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 

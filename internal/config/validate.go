@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/bmatcuk/doublestar/v4"
 )
@@ -88,6 +89,13 @@ func Validate(c *Config) []Problem {
 	if c.Version != 1 {
 		add("version", "must be 1")
 	}
+	switch {
+	case c.Project == "":
+		add("project", "is required: the Fugaro project this repository belongs to (fugaro config example shows it)")
+		ps[len(ps)-1].Code = CodeProjectRequired
+	case !ProjectNameRE.MatchString(c.Project):
+		add("project", "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
+	}
 	if !slices.Contains(Providers, c.Git.Provider) {
 		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
@@ -103,6 +111,7 @@ func Validate(c *Config) []Problem {
 	if c.Agent.MaxBudgetUSD < 0 {
 		add("agent.max_budget_usd", "must not be negative")
 	}
+	ps = append(ps, validateAgentModels(c.Agent)...)
 	ps = append(ps, validateFollowup(c.Git.Provider, c.Followup)...)
 	if len(c.Workflows) == 0 {
 		add("workflows", "must define at least one workflow")
@@ -312,6 +321,39 @@ func Check(c *Config, root string) []Problem {
 				mustExist(cmd.path, fields[0])
 			}
 		}
+	}
+	return ps
+}
+
+// MaxOutputTokensLimit is the highest per-call output limit fugaro.yaml may
+// set: the most any current model produces.
+const MaxOutputTokensLimit = 128000
+
+// validateAgentModels checks agent.models and the token limits, which hold
+// whether or not a budget is on (the pin rules are CheckPins).
+func validateAgentModels(a Agent) []Problem {
+	var ps []Problem
+	for _, m := range []struct{ path, val string }{
+		{"agent.model", a.Model}, {"agent.models.coder", a.Models.Coder},
+		{"agent.models.reviewer", a.Models.Reviewer}, {"agent.models.background", a.Models.Background},
+	} {
+		switch {
+		case len(m.val) > 100:
+			ps = append(ps, Problem{Path: m.path, Message: "must be at most 100 characters"})
+		case strings.ContainsFunc(m.val, unicode.IsSpace):
+			ps = append(ps, Problem{Path: m.path, Message: "must not contain whitespace"})
+		}
+	}
+	for _, t := range []struct {
+		path string
+		n    int64
+	}{{"agent.max_output_tokens.coder", a.MaxOutputTokens.Coder}, {"agent.max_output_tokens.reviewer", a.MaxOutputTokens.Reviewer}} {
+		if t.n < 0 || t.n > MaxOutputTokensLimit {
+			ps = append(ps, Problem{Path: t.path, Message: fmt.Sprintf("must be between 0 and %d (0 is no limit)", MaxOutputTokensLimit)})
+		}
+	}
+	if a.MaxRunTokens < 0 {
+		ps = append(ps, Problem{Path: "agent.max_run_tokens", Message: "must not be negative (0 is none)"})
 	}
 	return ps
 }

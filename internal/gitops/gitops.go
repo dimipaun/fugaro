@@ -50,10 +50,19 @@ func IdentityEnv() []string {
 	return out
 }
 
+// ModelCredentialVars are the variables the runner keeps out of every git
+// call (Repo.StripEnv): a command an agent-written .git/config makes git
+// run must never see the model credential.
+var ModelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
+
 // Repo is a git checkout. Env is added to the process environment for every git call.
 type Repo struct {
 	Dir string
 	Env []string
+	// StripEnv names variables that never reach git or anything git runs
+	// (a core.fsmonitor command or a filter driver an agent wrote into
+	// .git/config), whether they come from the process or from Env.
+	StripEnv []string
 }
 
 // Open returns the checkout at dir.
@@ -66,8 +75,9 @@ func Open(dir string, env []string) (*Repo, error) {
 
 // OpenOrClone returns the checkout at dir, cloning remote into it first if
 // dir has none. In the container image the checkout is baked in.
-func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, error) {
+func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ...string) (*Repo, error) {
 	if r, err := Open(dir, env); err == nil {
+		r.StripEnv = strip
 		return r, nil
 	}
 	if remote == "" {
@@ -76,11 +86,11 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return nil, err
 	}
-	parent := &Repo{Dir: filepath.Dir(dir), Env: env}
+	parent := &Repo{Dir: filepath.Dir(dir), Env: env, StripEnv: strip}
 	if _, err := parent.git(ctx, "clone", "--quiet", remote, dir); err != nil {
 		return nil, err
 	}
-	return &Repo{Dir: dir, Env: env}, nil
+	return &Repo{Dir: dir, Env: env, StripEnv: strip}, nil
 }
 
 // noHooks is prepended to every runner-owned git invocation. The runner's
@@ -96,11 +106,27 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+// processEnv is the environment of every git call: the process's, then
+// Env, without the variables in StripEnv.
+// Environ is the environment of every git call on r.
+func (r *Repo) Environ() []string { return r.processEnv() }
+
+func (r *Repo) processEnv() []string {
+	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
+	if len(r.StripEnv) == 0 {
+		return env
+	}
+	return slices.DeleteFunc(env, func(kv string) bool {
+		k, _, _ := strings.Cut(kv, "=")
+		return slices.Contains(r.StripEnv, k)
+	})
+}
+
 // gitRaw runs git and returns its stdout exactly as written.
 func (r *Repo) gitRaw(ctx context.Context, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append(slices.Clone(noHooks), args...)...)
 	cmd.Dir = r.Dir
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
+	cmd.Env = r.processEnv()
 	cmd.WaitDelay = gitWaitDelay
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -136,6 +162,23 @@ func (r *Repo) CheckoutNewBranch(ctx context.Context, ref, branch string) error 
 func (r *Repo) FetchBase(ctx context.Context, base string) error {
 	_, err := r.git(ctx, "fetch", "--quiet", "origin", "+refs/heads/"+base+":refs/remotes/origin/"+base)
 	return err
+}
+
+// DefaultBranch asks origin which branch its HEAD names (the repository's
+// default branch), so it is never a name the checked-out files chose.
+func (r *Repo) DefaultBranch(ctx context.Context) (string, error) {
+	out, err := r.git(ctx, "ls-remote", "--symref", "origin", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if ref, ok := strings.CutPrefix(line, "ref: refs/heads/"); ok {
+			if name, _, ok := strings.Cut(ref, "\tHEAD"); ok && name != "" {
+				return name, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("origin does not say which branch is its default")
 }
 
 // HeadSHA returns the commit HEAD points at.

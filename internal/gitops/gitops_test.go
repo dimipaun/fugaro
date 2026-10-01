@@ -557,3 +557,85 @@ func TestPushExistingRaceIsForeignTip(t *testing.T) {
 		}
 	}
 }
+
+// An agent can write .git/config, so a core.fsmonitor command runs under
+// the runner's git at finalize: the model credentials must not be in its env.
+func TestGitEnvStripsModelCredentials(t *testing.T) {
+	repo, _ := setup(t)
+	t.Setenv("ANTHROPIC_API_KEY", "sk-real-key")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oauth-real")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "auth-real")
+	t.Setenv("KEEP_ME", "kept")
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > "+dump+"\nprintf '\\0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "core.fsmonitor", hook)
+	repo.Env = append(repo.Env, "ANTHROPIC_API_KEY=sk-real-key-from-env")
+	repo.StripEnv = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the fsmonitor hook never ran: %v", err)
+	}
+	if !strings.Contains(string(b), "KEEP_ME=kept") {
+		t.Fatalf("the hook's env lost an ordinary variable:\n%s", b)
+	}
+	for _, leaked := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN", "real"} {
+		if strings.Contains(string(b), leaked) {
+			t.Errorf("the hook's env holds %s:\n%s", leaked, b)
+		}
+	}
+}
+
+func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
+	_, remote := setup(t)
+	dir := filepath.Join(t.TempDir(), "w")
+	repo, err := OpenOrClone(ctx, dir, remote, IdentityEnv(), ModelCredentialVars...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.StripEnv) != len(ModelCredentialVars) {
+		t.Fatalf("StripEnv = %v", repo.StripEnv)
+	}
+	again, _ := OpenOrClone(ctx, dir, remote, nil, "X")
+	if len(again.StripEnv) != 1 {
+		t.Fatalf("an existing checkout's StripEnv = %v", again.StripEnv)
+	}
+}
+
+func TestDefaultBranch(t *testing.T) {
+	ctx := context.Background()
+	testutil.IsolateGit(t)
+	open := func(remote string) *Repo {
+		dir := filepath.Join(t.TempDir(), "w")
+		testutil.Git(t, filepath.Dir(dir), "init", "-q", dir)
+		testutil.Git(t, dir, "remote", "add", "origin", remote)
+		return &Repo{Dir: dir, Env: IdentityEnv()}
+	}
+	// A normal remote: its HEAD names main, whatever the files say.
+	remote := testutil.NewRemote(t, map[string]string{"fugaro.yaml": "git: { base_branch: other }\n"})
+	if got, err := open(remote).DefaultBranch(ctx); err != nil || got != "main" {
+		t.Fatalf("DefaultBranch = %q, %v", got, err)
+	}
+	// HEAD on another branch is that branch, slashes included.
+	testutil.Git(t, remote, "branch", "release/1", "main")
+	testutil.Git(t, remote, "symbolic-ref", "HEAD", "refs/heads/release/1")
+	if got, err := open(remote).DefaultBranch(ctx); err != nil || got != "release/1" {
+		t.Fatalf("DefaultBranch = %q, %v", got, err)
+	}
+	// An empty remote has an unborn HEAD and no default to report.
+	empty := filepath.Join(t.TempDir(), "empty.git")
+	testutil.Git(t, filepath.Dir(empty), "init", "-q", "--bare", "-b", "main", empty)
+	if got, err := open(empty).DefaultBranch(ctx); err == nil {
+		t.Fatalf("an empty remote gave %q", got)
+	}
+	// A remote that can't be reached is an error too.
+	if _, err := open(filepath.Join(t.TempDir(), "gone.git")).DefaultBranch(ctx); err == nil {
+		t.Fatal("a missing remote gave a branch")
+	}
+}

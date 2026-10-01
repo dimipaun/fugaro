@@ -1,6 +1,10 @@
 # fugaro init reads these with terraform output -json and passes them to
 # each repository root.
 
+output "project_name" {
+  value = module.installation.project_name
+}
+
 output "runs_bucket" {
   value = module.installation.runs_bucket
 }

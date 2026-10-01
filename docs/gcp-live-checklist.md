@@ -1,24 +1,25 @@
-# GCP live checklist (M4, extended for M5 and M6)
+# GCP live checklist (M4, extended for M5, M6 and M9a)
 
 These checks confirm the facts about Cloud Run, Cloud Logging, Cloud Storage
 and Cloud Build that only a real project can show. The hermetic fakes
 (`internal/gcpfake`) are written from the API documentation. These runs
 confirm that the documentation was read correctly. The checks are the `live`
 build-tag tests in `internal/backend/gcp/live_test.go` and
-`internal/e2e/live_gcp_test.go`. They never run in CI.
+`internal/e2e/live_gcp_test.go`. Check 20 is the one exception that needs no GCP: `internal/e2e/live_gateway_test.go` (build tags `live` and `docker`) runs the gateway against the real Anthropic API from local Docker. None of them run in CI; CI only vets them (`go vet -tags live ./...` and `-tags 'live docker'`).
 
 Each test logs its observations as `FACT:` lines. Paste those lines into the
 PR description and into this checklist's results, at the end.
 
 ## Guardrails the tests enforce
 
-- **Target.** `FUGARO_LIVE_PROJECT` names the live-test GCP project and
+- **Target.** `FUGARO_LIVE_GCP_PROJECT` names the live-test GCP project (its ID, not the Fugaro project's name) and
   `FUGARO_LIVE_REPO` the sandbox repository (`owner/name`), for example
   `my-fugaro-dev` and `acme/fugaro-sandbox`. Both are required. The local
-  config (`$FUGARO_CONFIG`, else `~/.config/fugaro/config.yaml`) must then
-  name all of the following, or every test calls `t.Fatal` before making
-  any call:
-  - the same project
+  project config must then name all of the following, or every test calls
+  `t.Fatal` before making any call. The tests pick the config the way the CLI
+  does (design §5.4): `FUGARO_PROJECT=<name>`, else `FUGARO_CONFIG=<file>`,
+  else the only file in `~/.config/fugaro/projects/`:
+  - the same GCP project (`gcp_project`)
   - a region (the tests run in the local config's region)
   - a `fugaro-runs-*` runs bucket
   - no `bucket_url` or endpoint override
@@ -73,10 +74,12 @@ PR description and into this checklist's results, at the end.
 ## Preconditions
 
 Set these in the shell you run everything from, and keep that shell for the
-whole bring-up:
+whole bring-up. If you have more than one project config, also export
+`FUGARO_PROJECT=<name>` (the Fugaro project of the live-test installation), or
+the tests refuse to choose:
 
 ```bash
-export FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
+export FUGARO_LIVE_GCP_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name>
 export FUGARO=<path to the fugaro binary built from the branch under test>   # jq is needed too
 export SANDBOX=<a checkout of the sandbox repository>
 ```
@@ -84,12 +87,16 @@ export SANDBOX=<a checkout of the sandbox repository>
 Set the project up with `fugaro init` (`docs/gcp-setup.md`), using
 `"$FUGARO"`:
 
-1. The installation (steps 1 to 3 of the runbook). The runs bucket must be
+1. The installation (steps 1 to 3 of the runbook, with `fugaro init --name
+   <project> --gcp-project "$FUGARO_LIVE_GCP_PROJECT"`; its config is
+   `~/.config/fugaro/projects/<project>.yaml`). The runs bucket must be
    named `fugaro-runs-*` (the tests refuse any other runs bucket, and a
    bucket can't be renamed later).
 2. **⚠ CONFIRM** Commit the sandbox fixture, `deploy/sandbox/`, to the
-   sandbox repository's base branch, `master`, as its `fugaro.yaml` says.
-   This pushes to a real repository.
+   sandbox repository's base branch, `master`, as its `fugaro.yaml` says. Its
+   `project:` must be the live-test project's name (the fixture says
+   `sandbox`; change it to match before committing). This pushes to a real
+   repository.
 3. The sandbox, from `$SANDBOX` (step 4 of the runbook): `fugaro init
    --repo`, then store every secret it lists, including `sandbox-probe`
    (any random value), then rerun it for the first image build and the
@@ -106,7 +113,7 @@ Then set up the following:
    `fugaro init` doesn't enable it. Enabling it is free.
 
    ```bash
-   gcloud services enable iamcredentials.googleapis.com --project "$FUGARO_LIVE_PROJECT"
+   gcloud services enable iamcredentials.googleapis.com --project "$FUGARO_LIVE_GCP_PROJECT"
    ```
 
 2. **⚠ CONFIRM** Give yourself the Token Creator role on the sandbox job's
@@ -115,9 +122,9 @@ Then set up the following:
    to stderr):
 
    ```bash
-   SA="$("$FUGARO" init --repo "$SANDBOX" --print-vars | jq -r '.repo.workflows.web.service_account.account_id')@$FUGARO_LIVE_PROJECT.iam.gserviceaccount.com"
+   SA="$("$FUGARO" init --repo "$SANDBOX" --print-vars | jq -r '.repo.workflows.web.service_account.account_id')@$FUGARO_LIVE_GCP_PROJECT.iam.gserviceaccount.com"
    gcloud iam service-accounts add-iam-policy-binding "$SA" \
-     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
+     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_GCP_PROJECT"
    ```
 
    Keep `SA` set in this shell: the run below passes it as
@@ -133,7 +140,7 @@ because it would delete that test's objects.
 the sandbox repository: it launches billable Cloud Run executions (the probe
 and the sandbox run) and a Cloud Build, creates and deletes secrets and
 bucket objects, and opens and declines a PR in the sandbox. Check the
-project with `gcloud config get project` and `echo $FUGARO_LIVE_PROJECT`
+project with `gcloud config get project` and `echo $FUGARO_LIVE_GCP_PROJECT`
 before you start it.
 
 ```bash
@@ -168,7 +175,7 @@ FUGARO_BITBUCKET_TOKEN="$(cat <token file>)" \
 ## Checks
 
 In the commands below, `T` is short for
-`go test -tags live -p 1 -v -timeout 20m`. Set `FUGARO_LIVE_PROJECT` and
+`go test -tags live -p 1 -v -timeout 20m`. Set `FUGARO_LIVE_GCP_PROJECT` and
 `FUGARO_LIVE_REPO` for every check, and `FUGARO_BITBUCKET_TOKEN` and
 `FUGARO_LIVE_JOB_SA` as above wherever a check needs them.
 
@@ -194,6 +201,7 @@ In the commands below, `T` is short for
 | 16 | The daily image check: a skipped check, a back-off after a forced failure, and one forced rebuild | With the sandbox's schedule unpaused (its `rebuild.check` is `daily` and its record exists): `fugaro image check --dry-run` from its checkout; then `gcloud scheduler jobs run <scheduler job> --location <scheduler region>` (from `fugaro init --repo --print-vars`, or `gcloud scheduler jobs list --location <scheduler region>`). To force a failure, temporarily disable the `bitbucket-token` secret's latest version and run the Scheduler job again, then re-enable the version. For the forced rebuild, run `fugaro image build`, which submits the request a fired trigger submits | (a) With nothing changed, the local check prints `skip`. The check job logs `decision: skip` for each workflow, `check.json` appears next to `image.json`, and no build starts. (b) The check job mounts the credential, so with its version disabled the execution fails at container start ("Failed to access secret ... Secret Version ... disabled"), before the check can log a decision or write `check.json`. Cloud Run records that only as an ERROR audit system event (`cloudaudit.googleapis.com%2Fsystem_event`, "Execution ... has failed to complete, 0/1 tasks were a success"), not in its system log, and the "Fugaro image check job failed" alert fires from that entry: the email arrives if one is configured, with log isolation on. A failure after start is covered by the check's own `decision: check-failed` line at ERROR (exit 2, the `fugaro ls` check warning and the "Fugaro image check failed" alert) and by the Cloud Run system log's ERROR lines. After a failed *rebuild* whose inputs haven't changed, the next check logs `rebuild-failed-last` and submits no build. (c) The forced rebuild runs candidate, smoke, gate, promote and record: `latest` moves to the record's `image_digest`, and `fugaro image status` shows the new build time. Moving the existing `latest` needs `artifactregistry.tags.delete`, which the build account holds through `fugaroTagMover` on its own registry; a `PERMISSION_DENIED` on `tags/latest` at `promote` means that grant is missing (gcp-setup.md, "Installations from before the tag mover role"). The untag then removes the `candidate-` tag: after the build only `latest` points at the new version, and the build log has no untag warning. Record each as a `FACT`, and re-enable the secret version. |
 | 17 | The registry cleanup policy's dry run never selects a `latest` or `dev-` version | A day or more after the installation and the first builds exist, read the Artifact Registry audit log (Cloud Logging, `protoPayload.serviceName="artifactregistry.googleapis.com"`) for what the cleanup policies of `fugaro-base` and each repository's registry would delete in dry run, and list each registry's tags with `gcloud artifacts docker tags list` | No version the dry run would delete is tagged `latest` or `dev-`, and none of a registry's three newest versions is. If one is, stop: the keep rules are wrong. Otherwise turn deletion on (gcp-setup.md, "Turning registry cleanup on"). Record a `FACT` naming what the dry run would delete. |
 | 18 | A push to the base branch during an image build does not fail the smoke (Bitbucket fetch-by-SHA of the pinned commit) | From the sandbox's checkout, start `fugaro image build`; while its render step has finished and the build step hasn't cloned yet, push a commit to the base branch (or force-push it back one commit, so the pinned commit is no longer the branch head) | The build clones, resets to the commit the render step read (fetching it by SHA when the clone lacks it), and the smoke, gate, promote and record succeed. The record's `source_commit`, `/etc/fugaro/image.json` and the image's revision label name that same commit, not the new head. If the provider refuses the fetch of an unadvertised commit, the build fails at the clone step: record that as a `FACT`. |
+| 20 | The model gateway against the real Anthropic API, from local Docker: pins per role, cost, tokens, a halt (design §6.1, §4.5) | See "Check 20" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_ANTHROPIC_API_KEY=… FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 60m -run TestLiveGateway -v ./internal/e2e/` | See below. |
 | 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
 
 For check 13, `TestLiveSandboxRun` checks the following:
@@ -329,6 +337,44 @@ again, the same way you added it. An older `fugaro validate` refuses the
 block (strict decoding), so remove it before rolling a checkout's tooling
 back.
 
+## Check 20: the model gateway
+
+`TestLiveGateway` runs `fugaro exec` **locally in a base image** you built from the branch (`docker run`, no GCP), against a `file://` bucket, the fake git provider and a small fixture repository with `auth: api-key`, the budget in `enforce` with a **$2.00 per-run cap**, and a different pinned model per role (coder `claude-sonnet-5`, reviewer `claude-sonnet-5-5`, background `claude-haiku-4-5`, `max_output_tokens` 4,000 each, one review round). The task makes the review ask for one fix, so the fix stage resumes implement's session, invites a subagent, and gives the agent one small PNG to read. The fixture's committed `.claude/settings.json` sets `ANTHROPIC_BASE_URL` to `http://127.0.0.1:9`, with `FUGARO_TEST_ALLOW_ROUTING_SETTINGS=1` set in the container so the bootstrap refusal steps aside and the managed settings' precedence is what is measured. A second run with a $0.002 cap follows.
+
+**Cost:** about $0.30 for the first run (the cap is $2.00; one call's worst case is far below it), and the second run halts at its first call, for nothing. It spends **your** money on **your** key.
+
+**Who runs it, and the key.** You run it, at your own terminal. The key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY` in your shell, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it finds it in the run's output, the bucket or the provider state. The test refuses to run unless `FUGARO_LIVE_SPEND_OK=1` is set, and skips (it does not fail) when any of the three variables is missing. An agent or a controller must not hold the key or run this test; if you have no API key, the check stays open (see "If it can't be run").
+
+**Before it (free):**
+
+1. Docker is running, and you have built the base image from the branch under test: `sh images/build-base.sh web-node fugaro-web-node:m9a-live`. Set `FUGARO_LIVE_BASE_IMAGE` to that tag. (The test uses the image's own `fugaro` and Claude Code, so the base must be from this branch.)
+2. Decide the key's spending limit on the Anthropic console, if you want a second brake.
+
+**It asserts, and logs each answer as a `FACT:` line to paste into the results below:**
+
+1. **A6, A-N5, A-N7.** The run reached the model through the gateway: the gateway logged calls, the run didn't fail on a refused connection, although the repository's own settings pointed Claude Code at a dead port. That shows Claude Code read the managed settings file, that its `env` outranks the repository's, and that a plain `http://127.0.0.1` base URL works.
+2. **A-N6.** Every call the gateway saw used the model pinned for its role in its stage (implement and fix: `claude-sonnet-5`; review: `claude-sonnet-5-5`; Claude Code's background requests: `claude-haiku-4-5`), no call was refused, and a stage never failed on a pin. The distinct `x-claude-code-agent-id` values show whether the subagent made calls.
+3. **A10, A11.** The gateway's settled cost and Claude Code's `total_cost_usd` (summed over the result events) agree within 5%, the record's `model_source` is `gateway`, and the run's real spend is logged against the cap.
+4. **A9 (Anthropic side).** No call's output exceeded its role's `max_output_tokens`, and the largest output per model is recorded. The gateway's own refusal of a larger `max_tokens` is what bounds the request (the call log doesn't carry `max_tokens`), so a refused call would show as a violation in item 2.
+5. **A-N2.** Per stage (implement, review, fix, the resumed one included), the result event's summed `usage`, its summed `modelUsage` and the gateway's own token count are logged side by side. The test fails if the result event's count is more than 5% below the gateway's for any stage: the `oauth` token cap, which rests on the result event, would under-count.
+6. **A-N1, R8.** The second run, with a $0.002 cap, ends `halted` with reason `run_cap` (not `failed`, exit 0), and `claude` ended the stage on its own, within the 60-second grace, after the gateway's 403.
+7. **The planted key.** The real key is in no log, transcript, bucket object or provider-state file of either run.
+8. **A-N8, A-N9.** No call's charge exceeds its reservation (the call that read the PNG included), and the `usage.service_tier` and `usage.inference_geo` Anthropic returned are logged. The call log carries no request tools: the gateway refuses every server or typed tool as a violation, so a run that ended without one proves Claude Code sent only client tools.
+
+**If it fails**, read the failing line first. Known ways it can, and what they mean:
+
+- *No call logged, or a refused connection:* the managed settings did not outrank the repository's (A6 false). The settings refusal is then the only guard for committed settings: keep the budget off for `api-key` and say so in design §6.1.
+- *A stage fails with `context_management is not allowed` or a similar refusal:* Claude Code sent a shape the gateway refuses. The refusal names it. Narrow the refusal to the shapes that are really unbounded (an allow-list with its own test), never remove it. `context_management` is already narrowed: only `clear_thinking_*` and `clear_tool_uses_*` edits pass. The gateway's call log carries `max_tokens` and `tool_types`, so the live run shows what Claude Code sent.
+- *A content block type is refused:* the allow-list lacks a block Claude Code sends; add it with a test.
+- *A cost differing by more than 5%, or `usage_unparsed` above 0:* read the `model call` lines' `settled` and `priced_as` fields; a wrong price is fixed in the table or by `model_prices`.
+- *The review asked for no fix:* the task didn't provoke one; the test fails on purpose, since the resumed stage was not exercised. Adjust `lgwTask` and run again.
+
+**If it can't be run** (no API key, or you don't want to spend): check 20 stays open, and the budget must stay off for `api-key` repositories until someone runs it. Nothing in an `oauth` repository depends on it, since `oauth` never uses the gateway.
+
+**The Vertex facts** are separate: `enforce` with `auth: vertex` stays refused until they are recorded. They need a Vertex-auth workflow in `observe` mode on a project with Vertex AI enabled, and a real run, and answer: that Claude Code with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` sends Vertex-shaped paths to `ANTHROPIC_VERTEX_BASE_URL` with the pinned model and an allowed location in the path (A-N3); that the usage fields come back as documented through `streamRawPredict` (A9, Vertex side); and what Vertex bills compared with the gateway's figure on the regional and the global endpoints, since the embedded prices are the global ones (A11). Record each as a `FACT`; the refusal in `init --repo`, `validate` and the runner is lifted only by a code change that cites them.
+
+**Afterwards:** nothing to clean up in the cloud. `docker image rm` the base tag if you don't need it.
+
 ## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the
@@ -349,12 +395,12 @@ recorded:
 
    ```bash
    gcloud iam service-accounts remove-iam-policy-binding "$SA" \
-     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_PROJECT"
+     --member "user:$(gcloud config get account)" --role roles/iam.serviceAccountTokenCreator --project "$FUGARO_LIVE_GCP_PROJECT"
    ```
 
 2. **⚠ CONFIRM**, optional: disable the IAM Credentials API if nothing
    else uses it: `gcloud services disable iamcredentials.googleapis.com
-   --project "$FUGARO_LIVE_PROJECT"`.
+   --project "$FUGARO_LIVE_GCP_PROJECT"`.
 
 Keep the rest for the next live run: the installation, the sandbox's
 resources, and the sandbox fixture in its repository. Run the sweep (above)
@@ -512,3 +558,14 @@ run. What it showed for each:
   whose membership is private show as `CONTRIBUTOR` to an App without
   `members: read`; and that converting a PR to a draft keeps its requested
   reviewers. These stay open until a GitHub sandbox and App exist.
+
+## Results of the fifth live run (M9a)
+
+To be filled in by the live bring-up and migration (gcp-setup.md, "Installations from before M9a"). Record every `FACT` and each plan summary in the same way as the runs above.
+
+- **The migration:** the plan summaries of `fugaro init --name` and of each `fugaro init --repo`; that `fugaro/project.json` shows the name and the GCP project; that the label `fugaro_project` is on the runs bucket; that each job carries `FUGARO_PROJECT` and `FUGARO_GCP_PROJECT`; that each repository's Scheduler job is `ENABLED` again.
+- **Project selection:** outside a checkout with two project configs and no selector, a command refuses and lists them; with exactly one, it works.
+- **A sandbox run (check 13) on the M9a runner:** it ends ready; its record has `model_source: claude-code` and no `halt`.
+- **Check 20 (`TestLiveGateway`), or "deferred: no API key":** paste its `FACT:` lines here, one per item above (A6, A-N5, A-N7, A-N6, A10, A11, A9, A-N2, A-N1, R8, the planted key, A-N8, A-N9), with the cost the run reported and the unreconciled and `usage_unparsed` figures.
+- **Vertex facts (A-N3, A9 Vertex side, A11 Vertex price):** recorded, or "open: Vertex `enforce` stays refused".
+- **Assumptions this run answers:** A6 and A-N5 (the managed settings), A-N7 (the plain http base URL), A-N6 (pins per role), A-N1 (the 403 and the grace), A-N2 (the result event's count against the gateway's), A-N8 (default request shapes), A-N9 (the image ceiling) and A10 and A11 (cost). Each stays open until a `FACT` above answers it.

@@ -59,7 +59,10 @@ const (
 	// LabelRole marks a repository's image check job, which carries it
 	// (with RoleCheck) in place of LabelWorkflow.
 	LabelRole = "fugaro_role"
-	RoleCheck = "check"
+	// LabelProject names the Fugaro project on the runs bucket (a label
+	// value is a valid project name).
+	LabelProject = "fugaro_project"
+	RoleCheck    = "check"
 )
 
 var unsafeLabelRE = regexp.MustCompile(`[^a-z0-9_-]`)

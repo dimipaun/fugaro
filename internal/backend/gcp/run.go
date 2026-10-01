@@ -23,7 +23,7 @@ var _ backend.Backend = (*Backend)(nil)
 
 // location is projects/<p>/locations/<r>, the parent of the jobs.
 func (b *Backend) location() string {
-	return "projects/" + b.o.Project + "/locations/" + b.o.Region
+	return "projects/" + b.o.GCPProject + "/locations/" + b.o.Region
 }
 
 // JobPath is the full resource name of the Cloud Run job of (slug, workflow).
@@ -49,7 +49,7 @@ func (b *Backend) canonical(name string) (backend.ExecID, error) {
 	if err != nil {
 		return backend.ExecID{}, err
 	}
-	id.Project = b.o.Project
+	id.GCPProject = b.o.GCPProject
 	return id, nil
 }
 
@@ -60,7 +60,7 @@ func parseInRegion(name, region string) (backend.ExecID, error) {
 	if !ok {
 		return backend.ExecID{}, fmt.Errorf("%q is not a Cloud Run execution name (projects/<p>/locations/<r>/jobs/<j>/executions/<e>)", name)
 	}
-	for _, part := range []string{id.Project, id.Region, id.Job, id.Name} {
+	for _, part := range []string{id.GCPProject, id.Region, id.Job, id.Name} {
 		if !nameRE.MatchString(part) {
 			return backend.ExecID{}, fmt.Errorf("execution name %q has a part that is not [a-z0-9-]", name)
 		}

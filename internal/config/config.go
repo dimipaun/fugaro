@@ -18,7 +18,11 @@ import (
 
 // Config is a parsed fugaro.yaml.
 type Config struct {
-	Version   int                 `yaml:"version"`
+	Version int `yaml:"version"`
+	// Project is the Fugaro project this repository belongs to
+	// (ProjectNameRE). Validate requires it; the runner refuses a job of
+	// another project.
+	Project   string              `yaml:"project,omitempty"`
 	Git       Git                 `yaml:"git"`
 	Agent     Agent               `yaml:"agent"`
 	Workflows map[string]Workflow `yaml:"workflows"`
@@ -60,6 +64,63 @@ type Agent struct {
 	MaxBudgetUSD float64 `yaml:"max_budget_usd"`
 	Instructions string  `yaml:"instructions"`
 	Review       string  `yaml:"review"`
+	// Models picks a model per stage role; a role left out uses Model.
+	Models ModelRoles `yaml:"models"`
+	// MaxOutputTokens limits one call's output per role; 0 is no limit.
+	MaxOutputTokens RoleTokens `yaml:"max_output_tokens"`
+	// MaxRunTokens limits a whole run's tokens; 0 is none.
+	MaxRunTokens int64 `yaml:"max_run_tokens"`
+}
+
+// ModelRoles are the models of the stage roles.
+type ModelRoles struct {
+	Coder      string `yaml:"coder"`      // implement and fix
+	Reviewer   string `yaml:"reviewer"`   // review
+	Background string `yaml:"background"` // Claude Code's small background requests
+}
+
+// RoleTokens is a per-call output limit for each role.
+type RoleTokens struct {
+	Coder    int64 `yaml:"coder"`
+	Reviewer int64 `yaml:"reviewer"`
+}
+
+// Role is what a stage does, and so which model and limit it gets.
+type Role string
+
+const (
+	RoleCoder    Role = "coder"
+	RoleReviewer Role = "reviewer"
+)
+
+// StageRole is the role of a stage: implement and fix are the coder, review
+// the reviewer. An unknown stage is the coder.
+func StageRole(stage string) Role {
+	if stage == "review" {
+		return RoleReviewer
+	}
+	return RoleCoder
+}
+
+// ModelFor is the model of role r: models.<role>, else agent.model (a task's
+// model override is applied to Models.Coder). "" means Claude Code's default.
+func (a Agent) ModelFor(r Role) string {
+	m := a.Models.Coder
+	if r == RoleReviewer {
+		m = a.Models.Reviewer
+	}
+	if m == "" {
+		return a.Model
+	}
+	return m
+}
+
+// MaxOutputFor is role r's per-call output limit, 0 for none.
+func (a Agent) MaxOutputFor(r Role) int64 {
+	if r == RoleReviewer {
+		return a.MaxOutputTokens.Reviewer
+	}
+	return a.MaxOutputTokens.Coder
 }
 
 // Workflow is one buildable unit of the repository, such as a server or a web app.
@@ -222,7 +283,14 @@ type Problem struct {
 	Path    string `json:"path,omitempty"`
 	Line    int    `json:"line,omitempty"`
 	Message string `json:"message"`
+	// Code names a problem a caller may act on, so it need not read the
+	// message; "" for the rest. It is not part of the JSON output.
+	Code string `json:"-"`
 }
+
+// CodeProjectRequired is the Code of the problem of a fugaro.yaml with no
+// project:.
+const CodeProjectRequired = "project_required"
 
 // String formats a Problem for human-readable output, such as `fugaro validate`'s
 // default (non-JSON) mode.
@@ -250,6 +318,12 @@ func Parse(data []byte) (*Config, []Problem) {
 			return nil, []Problem{{Message: "file is empty"}}
 		}
 		return nil, yamlProblems(err)
+	}
+	// The strict decode reads 123 or true as the string "123"; a project
+	// name is a YAML string, as ProjectOf (which the runner and the CLI
+	// use) insists, so the two cannot disagree about a file.
+	if _, err := ProjectOf(data); err != nil {
+		return nil, []Problem{problemFromYAML(err.Error())}
 	}
 	applyDefaults(&c)
 	if ps := Validate(&c); len(ps) > 0 {

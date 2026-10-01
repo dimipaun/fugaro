@@ -201,7 +201,7 @@ func TestResultSchemaImageBlock(t *testing.T) {
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(env string) []byte {
-		return []byte("version: 1\ngit: { provider: github }\nworkflows:\n  server:\n    base: server-jvm\n" +
+		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n    base: server-jvm\n" +
 			"    commands: { build: make, test: make test }\n    secrets: [{ name: tok, env: " + env + " }]\n")
 	}
 	if err := sch.Validate(yamlInstance(t, doc("NPM_TOKEN"))); err != nil {
@@ -270,7 +270,7 @@ func TestFugaroSchemaReservesTheSameSecretNames(t *testing.T) {
 // are fugaro's to check.
 func TestFugaroSchemaMaxAgeAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	const base = "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
+	const base = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\n    rebuild: { max_age: "
 	for _, v := range []string{`0`, `"0"`, `0d`, `0s`, `0m`, `0h`, `0h0m`, `"00"`, `1h`, `14d`, `1d12h`, `90d`,
 		`soon`, `""`, `-1h`, `2d-5h`, `"0x"`, `1`, `0d-0h`} {
 		doc := []byte(base + v + " }\n")
@@ -343,7 +343,7 @@ func TestResultSchemaFollowUp(t *testing.T) {
 func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(provider, trusted string) []byte {
-		return []byte("version: 1\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
+		return []byte("version: 1\nproject: aurora\ngit: { provider: " + provider + " }\nworkflows:\n  web:\n    base: web-node\n    commands: { build: npm run build, test: npm test }\nfollowup:\n  trusted: " + trusted + "\n")
 	}
 	looser := map[string]bool{
 		"github " + `[01234567]`:           true,
@@ -377,5 +377,39 @@ func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
 		case !looser[key] && goOK != schemaOK:
 			t.Errorf("%s: fugaro accepts it: %v, the schema: %v (%v)", key, goOK, schemaOK, problems)
 		}
+	}
+}
+
+func TestResultSchemaHalted(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	cost.ModelSource, cost.ModelBy, cost.Unreconciled, cost.UsageUnparsed = "gateway", map[string]float64{"claude-a": 4.12}, 0.5, 1
+	check := func(reason runstore.HaltReason) error {
+		rec := runstore.Record{
+			Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "implement", Outcome: runstore.OutcomeDraft,
+			Reason: "halted: " + string(reason), CostUSD: 4.12, Cost: &cost, StartedAt: at,
+			Halt: &runstore.Halt{Reason: reason, Scope: "run", At: at, Detail: "d"},
+		}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, r := range []runstore.HaltReason{
+		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
+		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
+	} {
+		if err := check(r); err != nil {
+			t.Errorf("schema rejects halt reason %q: %v", r, err)
+		}
+	}
+	if err := check("other"); err == nil {
+		t.Error(`schema accepts halt reason "other"`)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -37,6 +38,7 @@ import (
 
 const (
 	initRepoProject       = "proj-1234"
+	initRepoProjectName   = "aurora"
 	initRepoProjectNumber = 123456789012
 	initRepoRegion        = "us-east5"
 	initRepoRunsBucket    = "fugaro-runs-proj-1234"
@@ -125,8 +127,12 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 
 	// The local config fugaro init leaves: the bootstrap's, plus the
 	// installation's outputs.
-	r.cfg = filepath.Join(r.dir, "config.yaml")
-	r.cfgText = "version: 1\nproject: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
+	// It is the project's config, found by the checkout's project:.
+	r.cfg = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "fugaro", "projects", initRepoProjectName+".yaml")
+	if err := os.MkdirAll(filepath.Dir(r.cfg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.cfgText = "version: 1\nname: " + initRepoProjectName + "\ngcp_project: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
 		"registry: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "/fugaro\n" +
 		"registry_host: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "\n" +
 		"base_image: " + initRepoBaseImage + "\n" +
@@ -139,7 +145,8 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 	if err := os.WriteFile(r.cfg, []byte(r.cfgText), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FUGARO_CONFIG", r.cfg)
+	t.Setenv("FUGARO_CONFIG", "")
+	t.Setenv("FUGARO_PROJECT", "")
 
 	// The checkout: the sandbox fixture, committed, with its origin.
 	r.checkout = filepath.Join(r.dir, "checkout")
@@ -156,6 +163,9 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		}
 		files[e.Name()] = string(b)
 	}
+	// The checkout names this rig's project, which selects its config; the
+	// fixture's own name is the sandbox's.
+	files["fugaro.yaml"] = regexp.MustCompile(`(?m)^project: .*\n`).ReplaceAllString(files["fugaro.yaml"], "project: "+initRepoProjectName+"\n")
 	if edit != nil {
 		files["fugaro.yaml"] = edit(files["fugaro.yaml"])
 	}
@@ -259,6 +269,7 @@ func (r *initRepoRig) script(t *testing.T, root string, n int, s map[string]any)
 func installationOutputs(t *testing.T) string {
 	t.Helper()
 	vals := map[string]any{
+		"project_name":              initRepoProjectName,
 		"runs_bucket":               initRepoRunsBucket,
 		"registry_host":             initRepoRegion + "-docker.pkg.dev/" + initRepoProject,
 		"base_registry":             infra.BaseRegistry,
@@ -1030,6 +1041,29 @@ func TestInitRepoRefusesInstallationWithoutTagMover(t *testing.T) {
 	}
 }
 
+// An installation applied before M9a has no project_name: every job
+// carries the name, so init --repo refuses it and names the fix.
+func TestInitRepoRefusesUnnamedInstallation(t *testing.T) {
+	r := sandboxRig(t)
+	var outs map[string]map[string]any
+	if err := json.Unmarshal([]byte(installationOutputs(t)), &outs); err != nil {
+		t.Fatal(err)
+	}
+	delete(outs, "project_name")
+	b, err := json.Marshal(outs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.script(t, "installation", -1, map[string]any{"output": map[string]any{"stdout": string(b)}, "show": map[string]any{"stdout": installationStateManaged}})
+	res := r.fugaroInit(t, "--repo", r.checkout, "--yes", "--no-build")
+	if res.code != 1 || !strings.Contains(res.stderr, "the installation has no project name") || !strings.Contains(res.stderr, "fugaro init --name "+initRepoProjectName) {
+		t.Fatalf("init --repo on an unnamed installation:\n%s", res)
+	}
+	if calls := r.calls(t); count(calls, "repo plan") != 0 || count(calls, "repo apply") != 0 {
+		t.Errorf("calls = %q, want no plan or apply of the repository", calls)
+	}
+}
+
 func TestInitRepoForget(t *testing.T) {
 	r, state, key := forgetRig(t)
 	// Without a confirmation, nothing is forgotten.
@@ -1265,7 +1299,7 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	if res.code != 0 {
 		t.Fatalf("want exit 0:\n%s", res)
 	}
-	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
 		t.Errorf("no build banner:\n%s", res)
 	}
 	if !strings.Contains(res.stdout, "warning: the first image build of acme/sandbox/web was not confirmed") {
@@ -1309,7 +1343,7 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 	if got := r.su.Enables(); !slices.Equal(got, []string{infra.ServiceResourceManager}) {
 		t.Fatalf("enables = %q, want only Resource Manager", got)
 	}
-	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProject+"): enables the Cloud Resource Manager API") {
+	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): enables the Cloud Resource Manager API") {
 		t.Errorf("no confirmation:\n%s", res)
 	}
 	if _, ok := r.imports(t, 0)["module.repo.google_cloud_scheduler_job.check[0]"]; ok {

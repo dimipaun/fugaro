@@ -297,3 +297,29 @@ func TestPushedWithoutTask(t *testing.T) {
 		t.Fatalf("a follow-up that pushed: %q, %v", h, ok)
 	}
 }
+
+func TestJoinHalted(t *testing.T) {
+	h := &runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", At: now, Detail: "run used 110 tokens of 100"}
+	r := rec(runstore.StatusHalted, nil)
+	r.Halt, r.Reason = h, "halted: token_cap: run used 110 tokens of 100"
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Status != "halted" || !row.Terminal || !row.Settled || row.Halt == nil || *row.Halt != *h || row.Reason != r.Reason {
+		t.Fatalf("row = %+v", row)
+	}
+	// A run that was not halted has no halt.
+	if row := Join(Input{Task: spec, Launch: launch, Record: rec(runstore.StatusFailed, nil), Exec: exec(backend.StateSucceeded)}, prices, now); row.Halt != nil {
+		t.Fatalf("halt = %+v", row.Halt)
+	}
+}
+
+// A halted run whose finalize then failed is an infra_error that still says
+// what halted it: the halt is shown whatever the status.
+func TestJoinInfraErrorKeepsHalt(t *testing.T) {
+	h := &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: now, Detail: "run cap $1.00 reached"}
+	r := rec(runstore.StatusInfraError, nil)
+	r.Halt = h
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.Status != "infra_error" || row.Halt == nil || *row.Halt != *h {
+		t.Fatalf("row = %+v", row)
+	}
+}

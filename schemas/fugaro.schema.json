@@ -5,7 +5,7 @@
   "description": "Per-repository Fugaro configuration. See docs/design/v1.md §5.1.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "git", "workflows"],
+  "required": ["version", "project", "git", "workflows"],
   "allOf": [
     {
       "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "github" } } } } },
@@ -18,6 +18,7 @@
   ],
   "properties": {
     "version": { "const": 1 },
+    "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
     "git": {
       "type": "object",
       "additionalProperties": false,
@@ -45,7 +46,27 @@
       "additionalProperties": false,
       "properties": {
         "auth": { "enum": ["vertex", "api-key", "oauth"] },
-        "model": { "type": "string" },
+        "model": { "$ref": "#/$defs/modelName" },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "A model per stage role; a role left out uses agent.model. With a budget on, each must be an explicit model ID that has a price.",
+          "properties": {
+            "coder": { "$ref": "#/$defs/modelName", "description": "implement and fix" },
+            "reviewer": { "$ref": "#/$defs/modelName", "description": "review" },
+            "background": { "$ref": "#/$defs/modelName", "description": "Claude Code's small background requests" }
+          }
+        },
+        "max_output_tokens": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Per-call output limit by role; 0 is no limit.",
+          "properties": {
+            "coder": { "type": "integer", "minimum": 0, "maximum": 128000 },
+            "reviewer": { "type": "integer", "minimum": 0, "maximum": 128000 }
+          }
+        },
+        "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none." },
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
@@ -74,6 +95,7 @@
     }
   },
   "$defs": {
+    "modelName": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
     "githubUserID": {
       "description": "A GitHub numeric user ID, which a rename doesn't change (gh api users/<login> --jq .id).",
       "anyOf": [

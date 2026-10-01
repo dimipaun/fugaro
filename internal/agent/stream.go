@@ -16,6 +16,18 @@ type resultEvent struct {
 	SessionID        string          `json:"session_id"`
 	Result           string          `json:"result"`
 	StructuredOutput json.RawMessage `json:"structured_output"`
+	Usage            struct {
+		Input         int64 `json:"input_tokens"`
+		CacheCreation int64 `json:"cache_creation_input_tokens"`
+		CacheRead     int64 `json:"cache_read_input_tokens"`
+		Output        int64 `json:"output_tokens"`
+	} `json:"usage"`
+	ModelUsage map[string]struct {
+		Input         int64 `json:"inputTokens"`
+		Output        int64 `json:"outputTokens"`
+		CacheRead     int64 `json:"cacheReadInputTokens"`
+		CacheCreation int64 `json:"cacheCreationInputTokens"`
+	} `json:"modelUsage"`
 }
 
 // ParseStream copies claude's stream-json output to transcript (if not nil)
@@ -50,7 +62,15 @@ func ParseStream(r io.Reader, transcript io.Writer) (res Result, found bool, err
 					id = res.SessionID
 				}
 				res = Result{SessionID: id, Text: ev.Result, Structured: structured,
-					CostUSD: ev.TotalCostUSD, IsError: ev.IsError, Subtype: ev.Subtype}
+					CostUSD: ev.TotalCostUSD, IsError: ev.IsError, Subtype: ev.Subtype,
+					Usage: Usage{Input: ev.Usage.Input, CacheCreation: ev.Usage.CacheCreation,
+						CacheRead: ev.Usage.CacheRead, Output: ev.Usage.Output}}
+				if len(ev.ModelUsage) > 0 {
+					res.ModelUsage = make(map[string]Usage, len(ev.ModelUsage))
+					for m, u := range ev.ModelUsage {
+						res.ModelUsage[m] = Usage{Input: u.Input, CacheCreation: u.CacheCreation, CacheRead: u.CacheRead, Output: u.Output}
+					}
+				}
 				found = true
 			}
 		}

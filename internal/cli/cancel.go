@@ -42,11 +42,12 @@ type cancelOptions struct {
 
 // cancelResult is what cancel reports.
 type cancelResult struct {
-	Run    string `json:"run"`
-	Status string `json:"status"`
-	Marker bool   `json:"marker"`       // the cancel marker was written
-	Hard   bool   `json:"hard"`         // the execution was cancelled through the backend
-	PR     string `json:"pr,omitempty"` // the run's PR URL, when result.json names one
+	Project string `json:"project"` // the Fugaro project
+	Run     string `json:"run"`
+	Status  string `json:"status"`
+	Marker  bool   `json:"marker"`       // the cancel marker was written
+	Hard    bool   `json:"hard"`         // the execution was cancelled through the backend
+	PR      string `json:"pr,omitempty"` // the run's PR URL, when result.json names one
 }
 
 func newCancelCmd() *cobra.Command {
@@ -95,7 +96,10 @@ func newCancelCmd() *cobra.Command {
 
 // cancelRun is cancel's flow (design §4.5) against env.
 func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string, out, errOut io.Writer) error {
-	emit := func(r cancelResult) error { return printCancel(out, r, o) }
+	emit := func(r cancelResult) error {
+		r.Project = env.lc.Name
+		return printCancel(out, r, o)
+	}
 	// Not locateLaunched: a never-launched run is a case cancel handles.
 	slug, id, err := locateRun(ctx, env, arg)
 	if err != nil {

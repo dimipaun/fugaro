@@ -165,7 +165,7 @@ func TestLoadRowsOneRun(t *testing.T) {
 	id := "20200101-000000-dddd" // far outside any --since
 	e := seedRun(t, f, id, "", "someone@example.com", true)
 	f.run.SetState(e, backend.StateRunning)
-	env, err := openCloud(context.Background(), cloudOptions{})
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -547,7 +547,7 @@ func TestLsWarnsInOtherCases(t *testing.T) {
 	testutil.IsolateGit(t)
 	testutil.Git(t, dir, "init", "--quiet", "-b", "main", dir)
 	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/app.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n" +
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    base: web-node\n" +
 		"    commands: { build: make, test: make test }\n    rebuild: { check: \"off\" }\n"})
 	t.Chdir(dir)
 	if ws := warnings(); len(ws) != 0 {
@@ -824,5 +824,26 @@ func TestLsPRColumn(t *testing.T) {
 	}
 	if l := lines[appSlug+"/"+r.plain]; l != "" {
 		t.Fatalf("a run off the PR is listed: %q", l)
+	}
+}
+
+func TestLsShowsHalted(t *testing.T) {
+	f := newCloudFixture(t)
+	f.run.Project, f.run.Region = "proj-1234", "us-east5"
+	id := runIDAt(0, "090000", "aaaa")
+	e := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(e, backend.StateSucceeded)
+	rec := prRecord(id, e, 7, 1)
+	rec.Status, rec.Outcome = runstore.StatusHalted, runstore.OutcomeDraft
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltTokenCap, Scope: "run", At: time.Now().UTC(), Detail: "run used 110 tokens of 100"}
+	rec.Reason = "halted: token_cap: run used 110 tokens of 100"
+	writeRecord(t, f, id, rec)
+	got, _ := lsJSON(t)
+	if len(got.Runs) != 1 || got.Runs[0].Status != "halted" || got.Runs[0].Halt == nil || got.Runs[0].Halt.Reason != runstore.HaltTokenCap || !got.Runs[0].Terminal {
+		t.Fatalf("rows = %+v", got.Runs)
+	}
+	out, _, err := execute(t, "ls")
+	if err != nil || !strings.Contains(out, "halted (token_cap)") {
+		t.Fatalf("ls = %s, %v", out, err)
 	}
 }

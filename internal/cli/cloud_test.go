@@ -1,9 +1,8 @@
 package cli
 
 import (
-	"bytes"
 	"context"
-	"io"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -51,17 +51,62 @@ func newCloudFixture(t *testing.T, extraEndpoints ...string) *cloudFixture {
 		t.Fatal(err)
 	}
 	f.bucket = "file://" + runs
-	cfg := "version: 1\nproject: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: unused-bucket\nbucket_url: " + f.bucket +
 		"\nuser: someone@example.com\nmax_parallel: 2\n" +
 		"endpoints: { run: " + f.run.URL + "/, logging: " + f.logging.URL + "/, " + extra(extraEndpoints) + "no_auth: true }\n" +
 		"repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
-	path := filepath.Join(f.dir, "config.yaml")
+	// The project config is aurora's, in a config directory of the test's
+	// own; FUGARO_CONFIG names it too, as tests append to it.
+	path := isolateProjects(t, f.dir)
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.run.AddJob(gcp.JobName(appSlug, "web"), "4", "8Gi")
+	// The installation names its project in the runs bucket, as its
+	// Terraform does; every cloud command checks it.
+	f.writeMarker(t, "aurora", "proj-1234")
 	return f
+}
+
+// markerPath is where the fixture's runs bucket keeps the project marker.
+func (f *cloudFixture) markerPath() string {
+	return filepath.Join(f.dir, "runs", filepath.FromSlash(infra.ProjectMarkerObject))
+}
+
+// writeMarker makes the fixture's installation name project name in GCP
+// project gcpProject.
+func (f *cloudFixture) writeMarker(t *testing.T, name, gcpProject string) {
+	t.Helper()
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcpProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(f.markerPath()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f.markerPath(), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// isolateProjects points the project configs at a directory under dir,
+// clears FUGARO_PROJECT and FUGARO_CONFIG, and returns where aurora's
+// project config goes.
+func isolateProjects(t *testing.T, dir string) string {
+	t.Helper()
+	xdg := filepath.Join(dir, "xdg")
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	// The project-name check caches its answer here, never in the
+	// developer's own cache.
+	t.Setenv("XDG_CACHE_HOME", filepath.Join(dir, "cache"))
+	t.Setenv("FUGARO_PROJECT", "")
+	t.Setenv("FUGARO_CONFIG", "")
+	projects := filepath.Join(xdg, "fugaro", "projects")
+	if err := os.MkdirAll(projects, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(projects, "aurora.yaml")
 }
 
 // appendConfig adds top-level YAML (such as registry: …) to the local config.
@@ -105,7 +150,7 @@ func envOn(t *testing.T, f *cloudFixture, bucket *blobx.Bucket) *cloudEnv {
 	if err != nil {
 		t.Fatal(err)
 	}
-	be, err := gcp.New(context.Background(), gcp.Options{Project: lc.Project, Region: lc.Region,
+	be, err := gcp.New(context.Background(), gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
 		Endpoints: gcp.Endpoints{Run: f.run.URL + "/", Logging: f.logging.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +217,7 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		t.Fatal("the two regions price the same, so the test cannot tell them apart")
 	}
 	for flag, region := range map[string]string{"": "us-east5", "europe-west2": "europe-west2"} {
-		env, err := openCloud(context.Background(), cloudOptions{region: flag})
+		env, err := openCloud(context.Background(), cloudOptions{region: flag, stderr: discard})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -180,38 +225,6 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 			t.Errorf("--region %q: prices = %+v, want %s's %+v", flag, got, region, want)
 		}
 		env.Close()
-	}
-}
-
-// The local config's log_view is a view of its own project's log bucket:
-// with --project naming another project, logs and diagnose would read the
-// wrong project's view (or be refused), so the view is dropped, with a note,
-// and the project's own logs are read.
-func TestCloudProjectFlagDropsAnotherProjectsLogView(t *testing.T) {
-	f := newCloudFixture(t) // project proj-1234
-	const view = "projects/proj-1234/locations/global/buckets/fugaro/views/fugaro-runs"
-	f.appendConfig(t, "log_view: "+view+"\n")
-	for _, c := range []struct {
-		project, view string
-		note          bool
-	}{{"", view, false}, {"proj-1234", view, false}, {"other-proj-99", "", true}} {
-		var stderr bytes.Buffer
-		env, err := openCloud(context.Background(), cloudOptions{project: c.project, stderr: func() io.Writer { return &stderr }})
-		if err != nil {
-			t.Fatal(err)
-		}
-		env.Close()
-		if env.gcp.LogView != c.view || env.lc.LogView != c.view {
-			t.Errorf("--project %q: log view %q (config %q), want %q", c.project, env.gcp.LogView, env.lc.LogView, c.view)
-		}
-		if got := strings.Contains(stderr.String(), "log_view"); got != c.note {
-			t.Errorf("--project %q: stderr %q, want a note: %v", c.project, stderr.String(), c.note)
-		}
-	}
-	// A command prints the note on its own stderr.
-	_, stderr, err := execute(t, "ls", "--project", "other-proj-99")
-	if err != nil || !strings.Contains(stderr, "log_view") || !strings.Contains(stderr, "other-proj-99") {
-		t.Fatalf("ls --project: stderr %q, %v", stderr, err)
 	}
 }
 

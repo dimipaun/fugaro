@@ -58,7 +58,7 @@ func (r *run) imageInfo(ctx context.Context) *runstore.ImageInfo {
 	// Only an existing checkout says anything: a run that must clone has
 	// no baked commit.
 	if repo, err := gitops.Open(r.d.WorkDir, gitops.IdentityEnv()); err == nil {
-		if sha, err := repo.HeadSHA(ctx); err == nil {
+		if sha, err := strip(repo).HeadSHA(ctx); err == nil {
 			info.BakedCommit = sha
 		} else {
 			r.d.Log.Warn("reading the baked checkout's HEAD failed", "err", r.redact(err.Error()))

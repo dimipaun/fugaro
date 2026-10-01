@@ -57,6 +57,9 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
+	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
+		b.WriteString(haltLines(rec))
+	}
 	switch rec.Outcome {
 	case runstore.OutcomeReady:
 		b.WriteString("**Outcome:** ready for review\n\n")

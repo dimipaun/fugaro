@@ -6,13 +6,13 @@
 // Credentials and the real local config. Run them only after the
 // checklist's setup (docs/gcp-setup.md) has been applied:
 //
-//	FUGARO_LIVE_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
+//	FUGARO_LIVE_GCP_PROJECT=<project> FUGARO_LIVE_REPO=<owner/name> \
 //	FUGARO_LIVE_JOB_SA=<sandbox job SA email> \
 //	  go test -tags live -p 1 -timeout 45m -run 'TestLive' -v ./internal/backend/gcp/
 //
 // Guardrails, enforced before any call:
-//   - FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO name the target (liveTarget).
-//     The local config ($FUGARO_CONFIG or ~/.config/fugaro/config.yaml) must
+//   - FUGARO_LIVE_GCP_PROJECT and FUGARO_LIVE_REPO name the target (liveTarget).
+//     The project config (the one selected as fugaro would: $FUGARO_PROJECT, $FUGARO_CONFIG or the only one) must
 //     name the same project, onboard the same repository, and name a runs
 //     bucket named fugaro-runs-*, no bucket_url override and no endpoint
 //     override. Anything else is t.Fatal. The region is the local config's.
@@ -104,7 +104,7 @@ type liveEnv struct {
 }
 
 // The project, region and sandbox repository the live tests may touch. The
-// project and repository come from FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO
+// project and repository come from FUGARO_LIVE_GCP_PROJECT and FUGARO_LIVE_REPO
 // (for example my-fugaro-dev and acme/fugaro-sandbox), and the region from
 // the local config; liveTarget sets them, and the guard then requires the
 // local config to name the same project and onboard the same repository:
@@ -117,16 +117,16 @@ var (
 	liveRepoRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
 )
 
-// liveTarget reads FUGARO_LIVE_PROJECT and FUGARO_LIVE_REPO, and fails the
+// liveTarget reads FUGARO_LIVE_GCP_PROJECT and FUGARO_LIVE_REPO, and fails the
 // test unless both are set and well formed.
 func liveTarget(t *testing.T) {
 	t.Helper()
-	liveProject, liveRepo = os.Getenv("FUGARO_LIVE_PROJECT"), os.Getenv("FUGARO_LIVE_REPO")
+	liveProject, liveRepo = os.Getenv("FUGARO_LIVE_GCP_PROJECT"), os.Getenv("FUGARO_LIVE_REPO")
 	switch {
 	case liveProject == "" || liveRepo == "":
-		t.Fatal("set FUGARO_LIVE_PROJECT (the live-test GCP project) and FUGARO_LIVE_REPO (the sandbox repository, owner/name); the local config must name the same ones")
+		t.Fatal("set FUGARO_LIVE_GCP_PROJECT (the live-test GCP project) and FUGARO_LIVE_REPO (the sandbox repository, owner/name); the local config must name the same ones")
 	case !liveProjectRE.MatchString(liveProject):
-		t.Fatalf("FUGARO_LIVE_PROJECT=%q is not a GCP project ID", liveProject)
+		t.Fatalf("FUGARO_LIVE_GCP_PROJECT=%q is not a GCP project ID", liveProject)
 	case !liveRepoRE.MatchString(liveRepo):
 		t.Fatalf("FUGARO_LIVE_REPO=%q is not owner/name", liveRepo)
 	}
@@ -150,17 +150,15 @@ func openLive(t *testing.T) *liveEnv {
 			t.Fatalf("%s=%s: the live tests run only against %s", v, p, liveProject)
 		}
 	}
-	path, err := localcfg.Path(os.Getenv)
+	sel, lc, err := localcfg.Select(localcfg.SelectInput{
+		EnvProject: os.Getenv("FUGARO_PROJECT"), EnvConfig: os.Getenv("FUGARO_CONFIG"), Getenv: os.Getenv})
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("the live tests need the real project config: %v", err)
 	}
-	lc, err := localcfg.Load(path)
-	if err != nil {
-		t.Fatalf("the live tests need the real local config: %v", err)
-	}
+	path := sel.Path
 	switch {
-	case lc.Project != liveProject:
-		t.Fatalf("local config %s names project %q; the live tests run only against %s", path, lc.Project, liveProject)
+	case lc.GCPProject != liveProject:
+		t.Fatalf("project config %s names GCP project %q; the live tests run only against %s", path, lc.GCPProject, liveProject)
 	case lc.Region == "":
 		t.Fatalf("local config %s names no region", path)
 	case lc.Bucket != "" && lc.Bucket != "gs://"+lc.RunsBucket:
@@ -186,7 +184,7 @@ func openLive(t *testing.T) *liveEnv {
 	return &liveEnv{
 		lc: lc, slug: slug, bucket: lc.RunsBucket,
 		stamp: time.Now().UTC().Format("20060102-150405") + "-" + hex.EncodeToString(rnd[:]),
-		opts:  Options{Project: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }},
+		opts:  Options{GCPProject: liveProject, Region: liveRegion, Warn: func(m string) { t.Log("backend warning: " + m) }},
 	}
 }
 
@@ -287,7 +285,7 @@ func TestLiveListAndLogs(t *testing.T) {
 		}
 		if i < 3 {
 			form := "project ID"
-			if _, err := strconv.ParseUint(id.Project, 10, 64); err == nil {
+			if _, err := strconv.ParseUint(id.GCPProject, 10, 64); err == nil {
 				form = "project NUMBER"
 			}
 			fact(t, "executions.list returns names with the %s: %s", form, x.Name)
@@ -1021,7 +1019,7 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 	t.Helper()
 	// The registry host as infra.RegistryHost picks it (this package can't
 	// import infra): the local config's, else DefaultRegistryHost.
-	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.Project))
+	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.GCPProject))
 	spec := BuildSpec{
 		Slug: e.slug, GitProvider: liveProvider, RepoURL: "https://bitbucket.org/" + liveRepo + ".git",
 		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage,

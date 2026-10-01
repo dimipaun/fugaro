@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -33,6 +35,9 @@ type execOptions struct {
 	provider, providerState   string
 	claudeBin                 string
 	cancelPoll                time.Duration
+	// Test hooks, hidden: the gateway's upstream (loopback only) and where
+	// the managed Claude Code settings are written.
+	gatewayUpstream, managedSettings string
 }
 
 func newExecCmd() *cobra.Command {
@@ -55,6 +60,11 @@ func newExecCmd() *cobra.Command {
 	f.StringVar(&o.providerState, "provider-state", "", "state file for --provider fake")
 	f.StringVar(&o.claudeBin, "claude", "claude", "claude binary")
 	f.DurationVar(&o.cancelPoll, "cancel-poll", 30*time.Second, "how often to check for a cancel request")
+	f.StringVar(&o.gatewayUpstream, "gateway-upstream", "", "tests only: send the budget gateway's calls to http://127.0.0.1:<port> instead of the model API")
+	f.StringVar(&o.managedSettings, "managed-settings", os.Getenv("FUGARO_MANAGED_SETTINGS"), "tests only: where to write Claude Code's managed settings (needs a loopback --gateway-upstream unless the budget is off)")
+	for _, name := range []string{"gateway-upstream", "managed-settings"} {
+		_ = f.MarkHidden(name)
+	}
 	return cmd
 }
 
@@ -68,6 +78,12 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	}
 	if o.bucket == "" {
 		return errors.New("--bucket (or FUGARO_BUCKET) is required")
+	}
+	// The budget, parsed once; a malformed one reaches the runner, which
+	// reports it as the run's infra_error after claiming the record.
+	spend, spendErr := runner.SpendFromEnv(os.Getenv)
+	if err := checkTestHooks(o, spend, spendErr); err != nil {
+		return err
 	}
 	if o.taskFile != "" && o.run != "" {
 		return errors.New("--task-file and --run (or FUGARO_RUN) are mutually exclusive; pass exactly one")
@@ -85,6 +101,12 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	}
 	providerKind, openProvider, err := providerOptions(o, env, warn)
 	if err != nil {
+		return err
+	}
+	// On Cloud Run the job's own names come first: a job set up before M9a
+	// fails here, cleanly, before anything compares its old FUGARO_PROJECT
+	// (a GCP ID) with a project name.
+	if err := refuseOldJobEnv(ctx, cmd, o, os.Getenv, time.Now); err != nil {
 		return err
 	}
 	// On Cloud Run, the canonical execution name; "" for a local run.
@@ -145,7 +167,11 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
-		Prices: prices,
+		Prices: prices, Spend: spend, SpendErr: spendErr,
+		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
+		// A job belongs to one Fugaro project; on Cloud Run a job that
+		// doesn't say which is refused at bootstrap.
+		Project: os.Getenv("FUGARO_PROJECT"), RequireProject: backend.OnCloudRun(os.Getenv),
 	})
 	var writeErr error
 	if rec != nil {
@@ -160,6 +186,94 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		return fmt.Errorf("writing run record: %w", writeErr)
 	}
 	return nil
+}
+
+// checkTestHooks refuses the hidden test flags where they could take the
+// model's credential somewhere else: the gateway's upstream must be on
+// loopback, and the managed settings path can move only with such an
+// upstream, or when no gateway runs (the budget is off). A malformed
+// budget counts as on, since the runner will fail it anyway.
+func checkTestHooks(o execOptions, spend runner.Spend, spendErr error) error {
+	loopback := false
+	if o.gatewayUpstream != "" {
+		if !loopbackUpstream(o.gatewayUpstream) {
+			return userErr("--gateway-upstream %q: it must be http://127.0.0.1:<port>", o.gatewayUpstream)
+		}
+		loopback = true
+	}
+	if o.managedSettings != "" && !loopback && (spendErr != nil || spend.On()) {
+		return userErr("--managed-settings (or FUGARO_MANAGED_SETTINGS) needs a loopback --gateway-upstream when the budget is on: a job with a real upstream writes Claude Code's real managed settings")
+	}
+	return nil
+}
+
+// loopbackUpstream reports whether s is exactly http://127.0.0.1:<port>.
+func loopbackUpstream(s string) bool {
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "http" || u.User != nil || u.Hostname() != "127.0.0.1" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {
+		return false
+	}
+	port, err := strconv.Atoi(u.Port())
+	return err == nil && port > 0 && port < 65536 && u.Host == "127.0.0.1:"+u.Port()
+}
+
+// oldJobEnvReason says what to do when a Cloud Run job lacks one of the
+// names every job carries since M9a.
+func oldJobEnvReason(missing string) string {
+	if missing == "FUGARO_GCP_PROJECT" {
+		return "job environment lacks FUGARO_GCP_PROJECT (it was set up before M9a): run fugaro init --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+	}
+	return "job environment lacks " + missing + ": run fugaro init --repo from the repository's checkout; see docs/design/m9-budget-and-dashboard.md §13.1"
+}
+
+// refuseOldJobEnv is nil unless this is a Cloud Run execution whose job
+// lacks FUGARO_GCP_PROJECT or FUGARO_PROJECT. Then it records an
+// infra_error for the run (create-if-absent, like the runner's first
+// record, so it never replaces another execution's) and returns the exit-2
+// error. The record carries no execution name: without the GCP project one
+// can't be formed.
+func refuseOldJobEnv(ctx context.Context, cmd *cobra.Command, o execOptions, getenv func(string) string, now func() time.Time) error {
+	if !backend.OnCloudRun(getenv) {
+		return nil
+	}
+	missing := ""
+	for _, k := range []string{"FUGARO_GCP_PROJECT", "FUGARO_PROJECT"} {
+		if getenv(k) == "" {
+			missing = k
+			break
+		}
+	}
+	if missing == "" {
+		return nil
+	}
+	reason := oldJobEnvReason(missing)
+	fail := &ExitError{Code: ExitRemoteError, Err: errors.New(reason)}
+	if o.taskFile != "" {
+		return fail // the later check refuses --task-file on Cloud Run
+	}
+	slug, runID, err := runstore.ParseRef(o.run)
+	if err != nil {
+		return fail
+	}
+	bucket, err := blobx.Open(ctx, o.bucket)
+	if err != nil {
+		return fail
+	}
+	defer bucket.Close()
+	store := runstore.Open(bucket.Bucket, slug, runID)
+	rec := &runstore.Record{Version: 1, RunID: runID, Status: runstore.StatusInfraError, Stage: "bootstrap",
+		Outcome: runstore.OutcomeNone, Reason: reason, StartedAt: now().UTC()}
+	if spec, err := store.ReadTask(ctx); err == nil {
+		rec.Repo, rec.Workflow = spec.Repo, spec.Workflow
+	}
+	finished := rec.StartedAt
+	rec.FinishedAt = &finished
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := store.CreateRecord(wctx, rec); err != nil && !errors.Is(err, runstore.ErrExists) {
+		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro exec: could not record the failure: %v\n", err)
+	}
+	return fail
 }
 
 // fakeSelfID is the account ID `exec --provider fake` posts as.

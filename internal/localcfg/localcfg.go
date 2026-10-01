@@ -1,7 +1,8 @@
-// Package localcfg reads the local CLI config, ~/.config/fugaro/config.yaml
-// (design §5.4): the installation's project, region and buckets, and the
-// onboarded repositories. fugaro init writes it (configs M4's bootstrap
-// script wrote still load).
+// Package localcfg reads the project configs, the local CLI config of each
+// Fugaro project: $XDG_CONFIG_HOME/fugaro/projects/<name>.yaml (else under
+// ~/.config), holding the project's name, its GCP project, region and
+// buckets, and the onboarded repositories (design §2.4 and §5.4). fugaro
+// init writes them; Select picks the one a command acts on.
 package localcfg
 
 import (
@@ -24,19 +25,24 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // Config is the local CLI config.
 type Config struct {
-	Version    int    `yaml:"version"`
-	Project    string `yaml:"project"`
+	Version int `yaml:"version"`
+	// Name is the Fugaro project (config.ProjectNameRE), which the file
+	// is named after.
+	Name string `yaml:"name"`
+	// GCPProject is the GCP project ID the installation lives in.
+	GCPProject string `yaml:"gcp_project"`
 	Region     string `yaml:"region"`
 	RunsBucket string `yaml:"runs_bucket"`
 	Bucket     string `yaml:"bucket_url,omitempty"`
 	// Registry is the legacy shared image registry, which is only read:
 	// to roll back, and to find the images existing jobs still run.
 	Registry string `yaml:"registry,omitempty"`
-	// RegistryHost is <region>-docker.pkg.dev/<project>, the prefix of
+	// RegistryHost is <region>-docker.pkg.dev/<gcp_project>, the prefix of
 	// every image registry of the installation.
 	RegistryHost string    `yaml:"registry_host,omitempty"`
 	BaseImage    string    `yaml:"base_image,omitempty"`
@@ -51,11 +57,135 @@ type Config struct {
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
 	// jobs live, which need not be the region the jobs run in.
-	SchedulerRegion string          `yaml:"scheduler_region,omitempty"`
-	User            string          `yaml:"user,omitempty"`
-	MaxParallel     int             `yaml:"max_parallel"`
-	Endpoints       Endpoints       `yaml:"endpoints,omitempty"`
-	Repos           map[string]Repo `yaml:"repos"`
+	SchedulerRegion string `yaml:"scheduler_region,omitempty"`
+	// Budget is the project's model spend guard (design §5.6); no block
+	// means off.
+	Budget *Budget `yaml:"budget,omitempty"`
+	// ModelPrices replace the built-in price of a model (or add one), by
+	// model ID, for the budget's accounting.
+	ModelPrices map[string]ModelPrice `yaml:"model_prices,omitempty"`
+	User        string                `yaml:"user,omitempty"`
+	MaxParallel int                   `yaml:"max_parallel"`
+	Endpoints   Endpoints             `yaml:"endpoints,omitempty"`
+	Repos       map[string]Repo       `yaml:"repos"`
+}
+
+// Budget modes.
+const (
+	BudgetOff     = "off"
+	BudgetObserve = "observe"
+	BudgetEnforce = "enforce"
+)
+
+// Budget is the project's per-run model spend guard.
+type Budget struct {
+	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" is off
+	PerRunUSD float64 `yaml:"per_run_usd"` // enforce: 0 < x <= 100000; observe: >= 0
+}
+
+// ModelPrice is one model's prices, in US dollars per million tokens. A
+// field left out takes the list default (cache_write_5m 1.25, cache_write_1h
+// 2, cache_read 0.1, web_search_per_1k 10), never 0; input_per_m and
+// output_per_m are required.
+type ModelPrice struct {
+	InputPerM      *float64 `yaml:"input_per_m"`
+	OutputPerM     *float64 `yaml:"output_per_m"`
+	CacheWrite5m   *float64 `yaml:"cache_write_5m,omitempty"`
+	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
+	CacheRead      *float64 `yaml:"cache_read,omitempty"`
+	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	// LongContext is the price of a call whose input passes a threshold,
+	// for a model with a long-context tier; an override without it
+	// replaces the model's tier with none.
+	LongContext *LongContext `yaml:"long_context,omitempty"`
+}
+
+// LongContext is a long-context price tier.
+type LongContext struct {
+	AboveInputTokens int64    `yaml:"above_input_tokens"`
+	InputPerM        *float64 `yaml:"input_per_m"`
+	OutputPerM       *float64 `yaml:"output_per_m"`
+}
+
+// BudgetMode is the budget's mode: "off" when there is no budget block or
+// its mode is empty.
+func (c *Config) BudgetMode() string {
+	if c.Budget == nil || c.Budget.Mode == "" {
+		return BudgetOff
+	}
+	return c.Budget.Mode
+}
+
+// Overrides are the model prices as the pricing package takes them, with
+// the list defaults applied to the fields left out.
+func (c *Config) Overrides() (pricing.Overrides, error) {
+	var errs []error
+	o := pricing.Overrides{}
+	for _, id := range slices.Sorted(maps.Keys(c.ModelPrices)) {
+		mp := c.ModelPrices[id]
+		if pricing.IsAlias(id) {
+			errs = append(errs, fmt.Errorf("model_prices: %q is an alias: key prices by a model ID (such as claude-sonnet-5-5)", id))
+			continue
+		}
+		if mp.InputPerM == nil || mp.OutputPerM == nil {
+			errs = append(errs, fmt.Errorf("model_prices.%s: input_per_m and output_per_m are required", id))
+			continue
+		}
+		or := func(p *float64, def float64) float64 {
+			if p == nil {
+				return def
+			}
+			return *p
+		}
+		r := pricing.Rates{
+			InputPerM: *mp.InputPerM, OutputPerM: *mp.OutputPerM,
+			CacheWrite5m:   or(mp.CacheWrite5m, pricing.DefaultCacheWrite5m),
+			CacheWrite1h:   or(mp.CacheWrite1h, pricing.DefaultCacheWrite1h),
+			CacheRead:      or(mp.CacheRead, pricing.DefaultCacheRead),
+			WebSearchPer1k: or(mp.WebSearchPer1k, pricing.DefaultWebSearchPer1k),
+		}
+		if t := mp.LongContext; t != nil {
+			if t.InputPerM == nil || t.OutputPerM == nil {
+				errs = append(errs, fmt.Errorf("model_prices.%s.long_context: input_per_m and output_per_m are required", id))
+				continue
+			}
+			r.LongContext = &pricing.Tier{AboveInputTokens: t.AboveInputTokens, InputPerM: *t.InputPerM, OutputPerM: *t.OutputPerM}
+		}
+		if err := r.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("model_prices.%s: %w", id, err))
+			continue
+		}
+		o[id] = r
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	// Two keys naming one model, and anything else the table refuses.
+	if _, err := pricing.Embedded().With(o); err != nil {
+		return nil, fmt.Errorf("model_prices: %w", err)
+	}
+	return o, nil
+}
+
+// validateBudget checks the budget block and the model prices.
+func (c *Config) validateBudget(bad func(string, ...any)) {
+	if b := c.Budget; b != nil {
+		switch b.Mode {
+		case "", BudgetOff, BudgetObserve, BudgetEnforce:
+		default:
+			bad("budget.mode %q must be off, observe or enforce", b.Mode)
+		}
+		if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
+			bad("budget.per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)
+		} else if b.PerRunUSD > 0 && m < 1 {
+			bad("budget.per_run_usd %v: it rounds to nothing; the smallest cap is $0.000001", b.PerRunUSD)
+		} else if b.Mode == BudgetEnforce && b.PerRunUSD <= 0 {
+			bad("budget.per_run_usd must be more than 0 with budget.mode enforce (it is the per-run cap)")
+		}
+	}
+	if _, err := c.Overrides(); err != nil {
+		bad("%v", err)
+	}
 }
 
 // Terraform is what fugaro init needs to plan the installation again: its
@@ -153,20 +283,103 @@ var (
 	emailRE        = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 )
 
-// Path is where the config lives: $FUGARO_CONFIG, else
-// $XDG_CONFIG_HOME/fugaro/config.yaml, else ~/.config/fugaro/config.yaml.
-func Path(getenv func(string) string) (string, error) {
-	if p := getenv("FUGARO_CONFIG"); p != "" {
-		return p, nil
-	}
+// configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
+func configDir(getenv func(string) string) (string, error) {
 	if x := getenv("XDG_CONFIG_HOME"); x != "" {
-		return filepath.Join(x, "fugaro", "config.yaml"), nil
+		return filepath.Join(x, "fugaro"), nil
 	}
 	home := getenv("HOME")
 	if home == "" {
-		return "", errors.New("HOME is not set; set FUGARO_CONFIG to the local config file")
+		return "", errors.New("neither XDG_CONFIG_HOME nor HOME is set, so there is no project config directory; pass --config")
 	}
-	return filepath.Join(home, ".config", "fugaro", "config.yaml"), nil
+	return filepath.Join(home, ".config", "fugaro"), nil
+}
+
+// ProjectsDir is where the project configs live:
+// $XDG_CONFIG_HOME/fugaro/projects, else ~/.config/fugaro/projects.
+func ProjectsDir(getenv func(string) string) (string, error) {
+	d, err := configDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, "projects"), nil
+}
+
+// ProjectPath is the project config of project name.
+func ProjectPath(getenv func(string) string, name string) (string, error) {
+	if !config.ProjectNameRE.MatchString(name) {
+		return "", fmt.Errorf("%q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", name)
+	}
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(d, name+".yaml"), nil
+}
+
+// legacyPath is where the local config lived before project configs; it
+// isn't read any more, only mentioned when there is no project config.
+func legacyPath(getenv func(string) string) string {
+	d, err := configDir(getenv)
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(d, "config.yaml")
+}
+
+// Projects are the names of the project configs, sorted: every
+// projects/<name>.yaml file whose <name> is a project name (backups,
+// directories and other files are not project configs; a symlink to a
+// regular file is one).
+func Projects(getenv func(string) string) ([]string, error) {
+	d, err := ProjectsDir(getenv)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := os.ReadDir(d)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		name, ok := strings.CutSuffix(e.Name(), ".yaml")
+		if !ok || !config.ProjectNameRE.MatchString(name) {
+			continue
+		}
+		// A symlink counts when it leads to a regular file, as loading
+		// it would follow it.
+		if e.Type()&os.ModeSymlink != 0 {
+			if fi, err := os.Stat(filepath.Join(d, e.Name())); err != nil || !fi.Mode().IsRegular() {
+				continue
+			}
+		} else if !e.Type().IsRegular() {
+			continue
+		}
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names, nil
+}
+
+// LoadProject loads project name's config and its path. The file must
+// hold name: <name>: a projects/<name>.yaml naming another project is
+// refused rather than loaded as either.
+func LoadProject(getenv func(string) string, name string) (*Config, string, error) {
+	path, err := ProjectPath(getenv, name)
+	if err != nil {
+		return nil, "", err
+	}
+	c, err := Load(path)
+	if err != nil {
+		return nil, path, err
+	}
+	if c.Name != name {
+		return nil, path, fmt.Errorf("%s holds project %s, not %s: a project config's name: must be its file's name", path, c.Name, name)
+	}
+	return c, path, nil
 }
 
 // Load reads and validates the config at path.
@@ -185,8 +398,18 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
+// oldProjectKey is the refusal of a local config of before project
+// configs, whose project: was the GCP project.
+const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
+
 // Parse decodes the config strictly, applies defaults and validates it.
 func Parse(data []byte) (*Config, error) {
+	var top map[string]yaml.Node
+	if yaml.Unmarshal(data, &top) == nil {
+		if _, ok := top["project"]; ok {
+			return nil, errors.New(oldProjectKey)
+		}
+	}
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -208,13 +431,11 @@ func Parse(data []byte) (*Config, error) {
 	return &c, c.checkRegistryHostProject()
 }
 
-// checkRegistryHostProject refuses a registry_host naming another project
-// than the file's own. It is checked on the file only: --project may point
-// a read-only command such as ls at another project, where the registry
-// is not used.
+// checkRegistryHostProject refuses a registry_host naming another GCP
+// project than the file's own gcp_project: the file must be consistent.
 func (c *Config) checkRegistryHostProject() error {
-	if m := registryHostRE.FindStringSubmatch(c.RegistryHost); m != nil && m[1] != c.Project {
-		return fmt.Errorf("local config: registry_host %q names project %s, not %s", c.RegistryHost, m[1], c.Project)
+	if m := registryHostRE.FindStringSubmatch(c.RegistryHost); m != nil && m[1] != c.GCPProject {
+		return fmt.Errorf("local config: registry_host %q names GCP project %s, not %s", c.RegistryHost, m[1], c.GCPProject)
 	}
 	return nil
 }
@@ -225,8 +446,11 @@ func (c *Config) validate() error {
 	if c.Version != 1 {
 		bad("version must be 1")
 	}
-	if !projectRE.MatchString(c.Project) {
-		bad("project %q is not a GCP project ID", c.Project)
+	if !config.ProjectNameRE.MatchString(c.Name) {
+		bad("name %q is not a project name (1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit)", c.Name)
+	}
+	if !projectRE.MatchString(c.GCPProject) {
+		bad("gcp_project %q is not a GCP project ID", c.GCPProject)
 	}
 	if !regionRE.MatchString(c.Region) {
 		bad("region %q is not a region such as us-central1", c.Region)
@@ -262,6 +486,7 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	c.validateBudget(bad)
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)
@@ -310,11 +535,13 @@ func (c *Config) validate() error {
 	return errors.Join(errs...)
 }
 
-// Override applies --project and --region when they are set, and
-// validates the result: both go into resource paths.
-func (c *Config) Override(project, region string) error {
-	if project != "" {
-		c.Project = project
+// Override applies --gcp-project and --region when they are set, and
+// validates the result: both go into resource paths. --gcp-project can
+// only agree with the config's gcp_project: pointing a project's config at
+// another GCP project would act on another project through it.
+func (c *Config) Override(gcpProject, region string) error {
+	if gcpProject != "" && gcpProject != c.GCPProject {
+		return fmt.Errorf("--gcp-project %s is not project %s's GCP project %s; a project config can't be pointed at another GCP project (select that project's config instead)", gcpProject, c.Name, c.GCPProject)
 	}
 	if region != "" {
 		c.Region = region

@@ -77,6 +77,7 @@ func TestDerivedNPMSetupSudoAndSecrets(t *testing.T) {
 	files := testutil.FixtureFiles(t)
 	maps.Copy(files, testutil.NPMFixtureFiles())
 	files["fugaro.yaml"] = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   app:
@@ -284,6 +285,7 @@ func TestPlaywrightChromium(t *testing.T) {
 	maps.Copy(files, untar(t, archive))
 	files["pw-smoke.js"] = playwrightSmoke
 	files["fugaro.yaml"] = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   app:

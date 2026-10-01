@@ -51,7 +51,7 @@ func newSecretsCmd() *cobra.Command {
 	// pflag quotes an unknown flag, and a value pasted in the wrong place
 	// could be one (`-sk-ant-…`); every secrets command gets a fixed message.
 	cmd.SetFlagErrorFunc(func(*cobra.Command, error) error {
-		return userErr("unknown or malformed flag; secrets commands take --repo, --json, --config, --project and --region, and never the value")
+		return userErr("unknown or malformed flag; secrets commands take --repo, --json, --config, --project, --gcp-project and --region, and never the value")
 	})
 	cmd.AddCommand(newSecretsSetCmd(), newSecretsLsCmd())
 	return cmd
@@ -208,7 +208,7 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if o.asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]string{"secret": id, "version": version})
+		return enc.Encode(map[string]string{"project": env.lc.Name, "secret": id, "version": version})
 	}
 	_, err = fmt.Fprintf(w, "stored %s, version %s\n", id, version)
 	return err

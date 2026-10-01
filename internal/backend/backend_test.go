@@ -2,6 +2,7 @@ package backend
 
 import (
 	"math"
+	"strings"
 	"testing"
 	"time"
 )
@@ -50,18 +51,34 @@ func TestParseExecution(t *testing.T) {
 	}
 }
 
-func TestExecutionFromEnv(t *testing.T) {
-	env := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-web-x7k2p", "CLOUD_RUN_JOB": "fugaro-acme-app-web", "FUGARO_PROJECT": "my-proj", "FUGARO_REGION": "us-east5"}
+func TestExecutionFromEnvReadsGCPProject(t *testing.T) {
+	env := map[string]string{"CLOUD_RUN_EXECUTION": "fugaro-acme-app-web-x7k2p", "CLOUD_RUN_JOB": "fugaro-acme-app-web", "FUGARO_GCP_PROJECT": "my-proj", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}
 	name, err := ExecutionFromEnv(func(k string) string { return env[k] })
 	if err != nil || name != "projects/my-proj/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-x7k2p" {
 		t.Fatalf("name = %q, %v", name, err)
 	}
-	delete(env, "FUGARO_PROJECT")
-	if _, err := ExecutionFromEnv(func(k string) string { return env[k] }); err == nil {
-		t.Fatal("a missing FUGARO_PROJECT on Cloud Run was accepted")
+	// The project name is never the GCP ID, and the GCP ID is read only
+	// from FUGARO_GCP_PROJECT.
+	delete(env, "FUGARO_GCP_PROJECT")
+	if _, err := ExecutionFromEnv(func(k string) string { return env[k] }); err == nil || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") {
+		t.Fatalf("a missing FUGARO_GCP_PROJECT on Cloud Run: %v", err)
 	}
 	if name, err := ExecutionFromEnv(func(string) string { return "" }); name != "" || err != nil {
 		t.Fatalf("outside Cloud Run = %q, %v", name, err)
+	}
+}
+
+func TestOnCloudRunOneSignal(t *testing.T) {
+	get := func(m map[string]string) func(string) string { return func(k string) string { return m[k] } }
+	if !OnCloudRun(get(map[string]string{"CLOUD_RUN_EXECUTION": "x"})) {
+		t.Error("CLOUD_RUN_EXECUTION is the signal")
+	}
+	// Neither the job name nor the Fugaro variables say it.
+	if OnCloudRun(get(map[string]string{"CLOUD_RUN_JOB": "j", "FUGARO_BACKEND": "cloud-run", "FUGARO_GCP_PROJECT": "p"})) {
+		t.Error("only CLOUD_RUN_EXECUTION counts")
+	}
+	if OnCloudRun(get(nil)) {
+		t.Error("an empty environment is not Cloud Run")
 	}
 }
 

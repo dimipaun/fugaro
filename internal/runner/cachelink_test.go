@@ -82,6 +82,7 @@ func TestAgentLinkedCacheRootIsNotWrittenBack(t *testing.T) {
 
 // linkCacheYAML caches a checkout directory under vendor/.
 const linkCacheYAML = `version: 1
+project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: api-key, review_rounds: 1 }
 workflows:

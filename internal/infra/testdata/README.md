@@ -10,4 +10,6 @@ names never drift from what M4 created.
 
 The command that printed them was removed after 0828eaa, so they can't be
 regenerated from the current tree: to reproduce them, check out 0828eaa and
-run its `internal/infra/testdata/capture-m4-jobspec.sh`. Never edit them.
+run its `internal/infra/testdata/capture-m4-jobspec.sh`. Never edit them, but for the change below.
+
+One deliberate edit: the env names changed in M9a: FUGARO_PROJECT is the project name, the GCP ID is FUGARO_GCP_PROJECT. So `env` in both files now has `FUGARO_GCP_PROJECT=proj-1234` and `FUGARO_PROJECT=aurora` (the project of the local config in `spec_test.go`) where M4 had only `FUGARO_PROJECT=proj-1234`. Nothing else in them changed.

@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -36,6 +37,10 @@ type EnvSpec struct {
 	Secrets     []string          // declared workflow secret variables, passed through
 	Set         map[string]string // variables Fugaro sets, such as FUGARO_STATE_DIR
 	PathPrepend string            // directory put first on PATH
+	// Gateway, when set, points Claude Code at Fugaro's gateway: the agent
+	// gets the gateway's URL and per-run token, never the real model
+	// credential (see GatewayVars). It is an error with auth: oauth.
+	Gateway *Gateway
 }
 
 // BuildEnv builds the agent's environment from the runner's (parent), keeping
@@ -67,13 +72,37 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 			return nil, nil, fmt.Errorf("vertex auth needs CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID in the runner environment")
 		}
 	case "api-key":
-		secretNames = append([]string{"ANTHROPIC_API_KEY"}, secretNames...)
+		if spec.Gateway == nil {
+			secretNames = append([]string{"ANTHROPIC_API_KEY"}, secretNames...)
+		} else {
+			// The real key is registered for redaction but never put in
+			// the agent's environment: the gateway holds it.
+			realKey := p["ANTHROPIC_API_KEY"]
+			if realKey == "" {
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is not set in the runner environment")
+			}
+			if len(realKey) < 4 {
+				return nil, nil, fmt.Errorf("secret ANTHROPIC_API_KEY is shorter than 4 bytes, so it cannot be redacted safely")
+			}
+			secretValues = append(secretValues, realKey)
+		}
 	case "oauth":
+		if spec.Gateway != nil {
+			return nil, nil, fmt.Errorf("auth: oauth never goes through the gateway")
+		}
 		secretNames = append([]string{"CLAUDE_CODE_OAUTH_TOKEN"}, secretNames...)
 	default:
 		return nil, nil, fmt.Errorf("unknown agent auth %q", spec.Auth)
 	}
 	for _, k := range secretNames {
+		if spec.Gateway != nil && k == "ANTHROPIC_API_KEY" {
+			// A declared secret of the same name would put the real key
+			// back; the gateway's token stands in for it.
+			if v := p[k]; len(v) >= 4 && !slices.Contains(secretValues, v) {
+				secretValues = append(secretValues, v)
+			}
+			continue
+		}
 		v := p[k]
 		if v == "" {
 			return nil, nil, fmt.Errorf("secret %s is not set in the runner environment", k)
@@ -85,6 +114,14 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		secretValues = append(secretValues, v)
 	}
 	maps.Copy(out, spec.Set)
+	if spec.Gateway != nil {
+		// Last, so nothing declared or inherited can override the routing.
+		vars, err := GatewayVars(spec.Auth, *spec.Gateway, p)
+		if err != nil {
+			return nil, nil, err
+		}
+		maps.Copy(out, vars)
+	}
 	if spec.PathPrepend != "" {
 		if out["PATH"] != "" {
 			out["PATH"] = spec.PathPrepend + string(os.PathListSeparator) + out["PATH"]
@@ -96,4 +133,88 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 		env = append(env, k+"="+out[k])
 	}
 	return env, secretValues, nil
+}
+
+// Gateway is where Claude Code sends its model calls instead of the
+// provider: the gateway's loopback URL and its per-run token.
+type Gateway struct{ BaseURL, Token string }
+
+// noProxyLoopback is added to NO_PROXY and no_proxy with a gateway, so a
+// configured proxy never sees the agent's calls to it.
+const noProxyLoopback = "127.0.0.1,localhost"
+
+// GatewayVars are the variables that route Claude Code through g for auth,
+// the same ones BuildEnv puts in the environment and the managed settings
+// file carries. parent is the runner's environment: Vertex's region and
+// project, and any NO_PROXY, are read from it. With api-key the variable
+// ANTHROPIC_API_KEY holds the gateway's token, never the real key; the
+// parent's ANTHROPIC_VERTEX_BASE_URL is never used.
+func GatewayVars(auth string, g Gateway, parent map[string]string) (map[string]string, error) {
+	if g.BaseURL == "" {
+		return nil, fmt.Errorf("the gateway has no URL")
+	}
+	base := strings.TrimRight(g.BaseURL, "/")
+	out := map[string]string{
+		"NO_PROXY": withLoopback(parent["NO_PROXY"]),
+		"no_proxy": withLoopback(parent["no_proxy"]),
+	}
+	switch auth {
+	case "api-key":
+		if g.Token == "" {
+			return nil, fmt.Errorf("the gateway has no token")
+		}
+		out["ANTHROPIC_BASE_URL"] = base
+		out["ANTHROPIC_API_KEY"] = g.Token
+	case "vertex":
+		region, project := parent["CLOUD_ML_REGION"], parent["ANTHROPIC_VERTEX_PROJECT_ID"]
+		if region == "" || project == "" {
+			return nil, fmt.Errorf("vertex auth needs CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID in the runner environment")
+		}
+		out["CLAUDE_CODE_USE_VERTEX"] = "1"
+		out["ANTHROPIC_VERTEX_BASE_URL"] = base + "/v1"
+		out["CLAUDE_CODE_SKIP_VERTEX_AUTH"] = "1"
+		out["CLOUD_ML_REGION"] = region
+		out["ANTHROPIC_VERTEX_PROJECT_ID"] = project
+	case "oauth":
+		return nil, fmt.Errorf("auth: oauth never goes through the gateway")
+	default:
+		return nil, fmt.Errorf("unknown agent auth %q", auth)
+	}
+	return out, nil
+}
+
+// withLoopback appends the loopback hosts to a NO_PROXY list that lacks them.
+func withLoopback(list string) string {
+	var have []string
+	for _, h := range strings.Split(list, ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			have = append(have, h)
+		}
+	}
+	for _, h := range strings.Split(noProxyLoopback, ",") {
+		if !slices.Contains(have, h) {
+			have = append(have, h)
+		}
+	}
+	return strings.Join(have, ",")
+}
+
+// PinVars are a stage's pins (design §2.1): the model for Claude Code's
+// opus, sonnet and subagent roles (when set), the background model for its
+// haiku role (when set), and the output limit per call (when > 0). Each is
+// independent of the others; with nothing set the result is empty.
+func PinVars(model, background string, maxOutput int64) map[string]string {
+	out := map[string]string{}
+	if model != "" {
+		out["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
+		out["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
+		out["CLAUDE_CODE_SUBAGENT_MODEL"] = model
+	}
+	if background != "" {
+		out["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = background
+	}
+	if maxOutput > 0 {
+		out["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = strconv.FormatInt(maxOutput, 10)
+	}
+	return out
 }

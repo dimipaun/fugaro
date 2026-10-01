@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 const minimalYAML = `
 version: 1
+project: aurora
 git:
   provider: github
 workflows:
@@ -64,8 +66,8 @@ func TestParseProblems(t *testing.T) {
 		line                  int
 	}{
 		{"empty", "", "", "file is empty", 0},
-		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 11},
-		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 11},
+		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
+		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
 		{"missing test", strings.Replace(minimalYAML, "      test: ./gradlew test\n", "", 1), "workflows.server.commands.test", "is required", 0},
@@ -343,5 +345,104 @@ func TestFollowupBitbucketUpperCaseHint(t *testing.T) {
 		if !hasProblem(ps, "followup.trusted[0]", "lower case", 0) {
 			t.Errorf("%s: want a lower-case hint, got %v", id, ps)
 		}
+	}
+}
+
+func TestProjectRequired(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/project-missing.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if cfg != nil || len(ps) != 1 || ps[0].Path != "project" ||
+		ps[0].Message != "is required: the Fugaro project this repository belongs to (fugaro config example shows it)" {
+		t.Fatalf("cfg = %v, problems = %v", cfg, ps)
+	}
+}
+
+func TestProjectBadName(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/project-bad-name.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ps := Parse(data)
+	if len(ps) != 1 || ps[0].Path != "project" ||
+		ps[0].Message != "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit" {
+		t.Fatalf("problems = %v", ps)
+	}
+}
+
+func TestExampleForFillsProject(t *testing.T) {
+	got := ExampleFor("borealis")
+	cfg, ps := Parse(got)
+	if len(ps) > 0 || cfg.Project != "borealis" {
+		t.Fatalf("project = %v, problems = %v", cfg, ps)
+	}
+	if bytes.Contains(got, []byte("project: example")) {
+		t.Error("the placeholder survived")
+	}
+	for _, bad := range []string{"", "Not A Name", "a\nversion: 2"} {
+		if !bytes.Equal(ExampleFor(bad), Example) || !bytes.Contains(Example, []byte("\nproject: example\n")) {
+			t.Errorf("ExampleFor(%q) did not fall back to the placeholder", bad)
+		}
+	}
+}
+
+func TestModelForFallsBack(t *testing.T) {
+	a := Agent{Model: "claude-sonnet-5-5"}
+	if a.ModelFor(RoleCoder) != "claude-sonnet-5-5" || a.ModelFor(RoleReviewer) != "claude-sonnet-5-5" {
+		t.Fatalf("no models: %q %q", a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer))
+	}
+	a.Models = ModelRoles{Coder: "claude-opus-5-5"}
+	if a.ModelFor(RoleCoder) != "claude-opus-5-5" || a.ModelFor(RoleReviewer) != "claude-sonnet-5-5" {
+		t.Fatalf("coder only: %q %q", a.ModelFor(RoleCoder), a.ModelFor(RoleReviewer))
+	}
+	if (Agent{}).ModelFor(RoleCoder) != "" {
+		t.Fatal("no model at all must stay empty (Claude Code's default)")
+	}
+}
+
+func TestStageRole(t *testing.T) {
+	for stage, want := range map[string]Role{"implement": RoleCoder, "fix": RoleCoder, "review": RoleReviewer} {
+		if got := StageRole(stage); got != want {
+			t.Errorf("StageRole(%q) = %q, want %q", stage, got, want)
+		}
+	}
+	// An unknown stage costs as the coder, the dearer role in practice.
+	if StageRole("other") != RoleCoder {
+		t.Error("an unknown stage should be the coder")
+	}
+}
+
+func TestMaxOutputFor(t *testing.T) {
+	a := Agent{MaxOutputTokens: RoleTokens{Coder: 64000, Reviewer: 8000}}
+	if a.MaxOutputFor(RoleCoder) != 64000 || a.MaxOutputFor(RoleReviewer) != 8000 {
+		t.Fatalf("got %d %d", a.MaxOutputFor(RoleCoder), a.MaxOutputFor(RoleReviewer))
+	}
+	if (Agent{}).MaxOutputFor(RoleCoder) != 0 {
+		t.Fatal("unset must be 0, no limit")
+	}
+}
+
+func TestAgentModelsValidation(t *testing.T) {
+	for in, want := range map[string]string{
+		"  models: { coder: has space }":                             "agent.models.coder",
+		"  models: { reviewer: \"\" }":                               "",
+		"  models: { background: " + strings.Repeat("x", 101) + " }": "agent.models.background",
+		"  max_output_tokens: { reviewer: 128001 }":                  "agent.max_output_tokens.reviewer",
+		"  max_output_tokens: { coder: -1 }":                         "agent.max_output_tokens.coder",
+		"  max_run_tokens: -1":                                       "agent.max_run_tokens",
+	} {
+		_, ps := Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n"+in+"\nworkflows:", 1)))
+		switch {
+		case want == "" && len(ps) != 0:
+			t.Errorf("%s: problems %v", in, ps)
+		case want != "" && !strings.Contains(paths(ps), want):
+			t.Errorf("%s: problems %v, want one at %s", in, ps, want)
+		}
+	}
+	_, ps := Parse([]byte(strings.Replace(minimalYAML, "workflows:", "agent:\n  max_output_tokens: { coder: 128000, reviewer: 0 }\n  max_run_tokens: 0\nworkflows:", 1)))
+	if len(ps) != 0 {
+		t.Fatalf("limits at the bounds: %v", ps)
 	}
 }

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,12 +16,15 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const (
+	initProjectName   = "aurora"
 	initProject       = "proj-1234"
 	initProjectNumber = 123456789012
 	initRunsBucket    = "fugaro-runs-proj-1234"
@@ -71,7 +75,8 @@ type initRig struct {
 }
 
 const initConfig = `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry: us-east5-docker.pkg.dev/proj-1234/fugaro
@@ -183,6 +188,7 @@ func outputsJSON(t *testing.T) string {
 func outputsJSONWith(t *testing.T, over map[string]any) string {
 	t.Helper()
 	vals := map[string]any{
+		"project_name":              initProjectName,
 		"runs_bucket":               initRunsBucket,
 		"registry_host":             "us-east5-docker.pkg.dev/proj-1234",
 		"base_registry":             infra.BaseRegistry,
@@ -302,7 +308,7 @@ func TestInitRefusesWithoutConfirmation(t *testing.T) {
 	if len(r.ran(t, "plan")) != 1 || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("calls = %q", r.calls(t))
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): applies 0 imports, 1 creates, 0 updates") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): applies 0 imports, 1 creates, 0 updates") {
 		t.Errorf("no confirmation banner:\n%s", out)
 	}
 }
@@ -386,7 +392,7 @@ func TestInitCreatesStateBucketAfterConfirm(t *testing.T) {
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): creates gs://"+initStateBucket+" in us-east5 with versioning, for Terraform state (cents a month)") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): creates gs://"+initStateBucket+" in us-east5 with versioning, for Terraform state (cents a month)") {
 		t.Errorf("no state bucket banner:\n%s", out)
 	}
 	if r.gcs.Inserted(initStateBucket) != nil || len(r.ran(t, "init")) != 0 {
@@ -421,7 +427,7 @@ func TestInitRemovesRunsBucketViewers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
 		t.Errorf("no viewers banner:\n%s", out)
 	}
 	sets := policySets(r.gcs, initRunsBucket)
@@ -459,7 +465,7 @@ func TestInitRunsBucketViewersDeclined(t *testing.T) {
 	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
 	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, "no\n"+initProject+"\n", "init")
+	out, _, err := executeStdin(t, "no\n"+initProjectName+"\n", "init")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,11 +476,11 @@ func TestInitRunsBucketViewersDeclined(t *testing.T) {
 		t.Errorf("the summary doesn't note the declined removal:\n%s", out)
 	}
 	if len(r.ran(t, "apply")) != 1 {
-		t.Fatal("the typed project ID did not confirm the apply")
+		t.Fatal("the typed project name did not confirm the apply")
 	}
 }
 
-// fakeTerminal makes init treat stdin as a terminal, where the project ID
+// fakeTerminal makes init treat stdin as a terminal, where the project name
 // is typed to confirm.
 func fakeTerminal(t *testing.T) {
 	t.Helper()
@@ -483,7 +489,7 @@ func fakeTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = old })
 }
 
-// At a terminal, anything but the project ID declines.
+// At a terminal, anything but the project name declines.
 func TestInitTypedConfirmation(t *testing.T) {
 	r := newInitRig(t)
 	r.stateBucket()
@@ -492,8 +498,8 @@ func TestInitTypedConfirmation(t *testing.T) {
 	if ExitCode(err) != ExitUserError || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
-	if _, _, err := executeStdin(t, initProject+"\n", "init"); err != nil || len(r.ran(t, "apply")) != 1 {
-		t.Fatalf("typed project ID: %v, calls %q", err, r.calls(t))
+	if _, _, err := executeStdin(t, initProjectName+"\n", "init"); err != nil || len(r.ran(t, "apply")) != 1 {
+		t.Fatalf("typed project name: %v, calls %q", err, r.calls(t))
 	}
 }
 
@@ -684,7 +690,7 @@ func TestInitRetriesStateBucketViewers(t *testing.T) {
 	if ExitCode(err) != ExitUserError || len(policySets(r.gcs, initStateBucket)) != 0 || len(r.ran(t, "init")) != 0 {
 		t.Fatalf("unconfirmed: exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initStateBucket) {
 		t.Errorf("no banner:\n%s", out)
 	}
 	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
@@ -846,7 +852,7 @@ func TestInitForgetUndoesExclusionThenStateRm(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(r.root(), infra.ImportsFile)); strings.TrimSpace(string(b)) != "{}" {
 		t.Errorf("the rollback imports: %s", b)
 	}
-	if strings.Count(out, "⚠ CONFIRM (project proj-1234)") != 2 {
+	if strings.Count(out, "⚠ CONFIRM (project aurora, GCP project proj-1234)") != 2 {
 		t.Errorf("want two confirmations:\n%s", out)
 	}
 
@@ -981,16 +987,17 @@ func TestInitJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	var res struct {
-		Project string           `json:"project"`
-		Applied bool             `json:"applied"`
-		Changes infra.PlanCounts `json:"changes"`
-		Outputs map[string]any   `json:"outputs"`
-		Config  string           `json:"config"`
+		Project    string           `json:"project"`
+		GCPProject string           `json:"gcp_project"`
+		Applied    bool             `json:"applied"`
+		Changes    infra.PlanCounts `json:"changes"`
+		Outputs    map[string]any   `json:"outputs"`
+		Config     string           `json:"config"`
 	}
 	if err := json.Unmarshal([]byte(out), &res); err != nil {
 		t.Fatalf("%v:\n%s", err, out)
 	}
-	if res.Project != initProject || !res.Applied || res.Changes.Creates != 1 || res.Outputs["log_view"] != initLogView || res.Config != r.cfg {
+	if res.Project != initProjectName || res.GCPProject != initProject || !res.Applied || res.Changes.Creates != 1 || res.Outputs["log_view"] != initLogView || res.Config != r.cfg {
 		t.Fatalf("result = %+v", res)
 	}
 }
@@ -1031,7 +1038,7 @@ func TestInitRemovesViewersOfCreatedRunsBucket(t *testing.T) {
 	if len(r.ran(t, "apply")) != 1 {
 		t.Fatal("no apply")
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): removes project Viewers' read access to gs://"+initRunsBucket+", which holds transcripts and caches") {
 		t.Errorf("no viewers banner after the apply:\n%s", out)
 	}
 	if hasViewer(r.gcs.BucketPolicy(initRunsBucket)) {
@@ -1054,5 +1061,349 @@ func TestInitPlanOnlyLeavesCreatedBucketAlone(t *testing.T) {
 	}
 	if strings.Contains(out, "gs://"+initRunsBucket+", which holds") || len(policySets(r.gcs, initRunsBucket)) != 0 {
 		t.Errorf("--plan-only offered or changed the runs bucket's IAM:\n%s", out)
+	}
+}
+
+// The project's name never changes once the installation has one: the
+// state's project_name output wins over a project config and --name that
+// say otherwise, and the refusal comes before any plan.
+func TestInitNameImmutable(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	// A second project config for the same GCP project: same file, another name.
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--yes"}, {"init", "--yes", "--name", "borealis"}} {
+		_, _, err := executeStdin(t, "", args...)
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is aurora; renaming isn't supported") {
+			t.Fatalf("%v: exit %d, err %v", args, ExitCode(err), err)
+		}
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a refused rename planned: %q", r.calls(t))
+	}
+	// --name against the config that selected aurora is refused as well.
+	r = newInitRig(t)
+	r.stateBucket()
+	_, _, err = executeStdin(t, "", "init", "--yes", "--name", "borealis")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "renaming") {
+		t.Fatalf("--name against the config: exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 {
+		t.Fatalf("planned: %q", r.calls(t))
+	}
+}
+
+// An installation applied before M9a has no name in its state. Naming it
+// is permanent, so init asks for --name rather than taking the config's.
+func TestInitNameRequiredWhenUnnamed(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no project name yet") || !strings.Contains(err.Error(), "--name aurora") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("an unnamed installation was planned: %q", r.calls(t))
+	}
+	// With --name the apply goes ahead, and it carries the name.
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--name", "aurora"); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.tfvars(t)["fugaro_project"]; got != "aurora" {
+		t.Errorf("fugaro_project = %v", got)
+	}
+	if len(r.ran(t, "apply")) == 0 {
+		t.Errorf("the named apply didn't run: %q", r.calls(t))
+	}
+}
+
+func TestCheckInstallationName(t *testing.T) {
+	named := infra.InstallationOutputs{ProjectName: "aurora"}
+	unnamed := infra.InstallationOutputs{}
+	for name, c := range map[string]struct {
+		flag, config string
+		outs         infra.InstallationOutputs
+		have         bool
+		want         string // "" is accepted
+	}{
+		// With no installation in the state yet there is nothing to
+		// disagree with: the project config's name is the installation's.
+		"no installation yet":     {config: "aurora"},
+		"no installation, --name": {flag: "aurora", config: "aurora"},
+		"named, agreeing":         {config: "aurora", outs: named, have: true},
+		"named, --name agrees":    {flag: "aurora", config: "aurora", outs: named, have: true},
+		"named, config differs":   {config: "borealis", outs: named, have: true, want: "the installation's project name is aurora; renaming isn't supported"},
+		"named, --name differs":   {flag: "borealis", config: "aurora", outs: named, have: true, want: "renaming isn't supported"},
+		"unnamed, no --name":      {config: "aurora", outs: unnamed, have: true, want: "--name aurora"},
+		"unnamed, --name":         {flag: "aurora", config: "aurora", outs: unnamed, have: true},
+	} {
+		err := checkInstallationName(c.flag, c.config, c.outs, c.have)
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: err = %v, want %q", name, err, c.want)
+		case err != nil && ExitCode(err) != ExitUserError:
+			t.Errorf("%s: exit %d", name, ExitCode(err))
+		}
+	}
+}
+
+func TestInitConfigOnlyWithoutProjectName(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": nil})}
+	r.save(t)
+	before, _ := os.ReadFile(r.cfg)
+	_, _, err := executeStdin(t, "", "init", "--config-only", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation has no project name yet") || !strings.Contains(err.Error(), "fugaro init --name") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if after, _ := os.ReadFile(r.cfg); string(after) != string(before) {
+		t.Error("the config was written for an unnamed installation")
+	}
+}
+
+func TestInitConfigOnlyRefusesOtherName(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--config-only", "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "the installation's project name is borealis") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// --config-only with no project config yet (only --gcp-project and
+// --region) learns the name from the installation's outputs and writes
+// projects/<project_name>.yaml. It is exercised below the command because
+// a config that doesn't exist yet has no fake endpoints to reach.
+func TestInitConfigOnlyTakesNameFromOutputs(t *testing.T) {
+	xdg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", xdg)
+	t.Setenv("FUGARO_CONFIG", "")
+	t.Setenv("FUGARO_PROJECT", "")
+	provisional := func() *localcfg.Config {
+		lc, err := localcfg.Parse([]byte("version: 1\nname: pending\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc.Name = ""
+		return lc
+	}
+	lc, path, old, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"})
+	if err != nil || lc.Name != "aurora" || old != nil || filepath.Base(path) != "aurora.yaml" || filepath.Base(filepath.Dir(path)) != "projects" {
+		t.Fatalf("lc %+v, path %q, old %q, err %v", lc, path, old, err)
+	}
+	// No name in the outputs: nothing to call the file.
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{}); err == nil ||
+		!strings.Contains(err.Error(), "the installation has no project name yet; an operator runs fugaro init --name <name>") {
+		t.Fatalf("no project_name: %v", err)
+	}
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "Not A Name"}); err == nil {
+		t.Fatal("a bad name was accepted")
+	}
+	// A file for that name that belongs to another GCP project is refused;
+	// one for the same project is kept and extended.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	other := "version: 1\nname: aurora\ngcp_project: other-proj\nregion: us-east5\nruns_bucket: fugaro-runs-other-proj\n"
+	if err := os.WriteFile(path, []byte(other), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, err := nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"}); err == nil ||
+		!strings.Contains(err.Error(), "other-proj") || !strings.Contains(err.Error(), "proj-1234") {
+		t.Fatalf("a file for another GCP project: %v", err)
+	}
+	same := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nuser: me@example.com\n"
+	if err := os.WriteFile(path, []byte(same), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lc, _, old, err = nameFromOutputs(provisional(), infra.InstallationOutputs{ProjectName: "aurora"})
+	if err != nil || lc.User != "me@example.com" || string(old) != same {
+		t.Fatalf("an existing file for the same project: %+v, %q, %v", lc, old, err)
+	}
+}
+
+// What init writes can't drift from the installation's own name.
+func TestInitWriteConfigChecksName(t *testing.T) {
+	r := newInitRig(t)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := infra.Installation(lc, infra.InstallOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := newInitCmd()
+	cmd.SetOut(io.Discard)
+	ir := newInitRun(cmd, &initOptions{})
+	err = ir.writeConfig(lc, spec, infra.InstallationOutputs{ProjectName: "borealis", RunsBucket: initRunsBucket}, r.cfg, nil, true)
+	if err == nil || !strings.Contains(err.Error(), "borealis") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// A Vertex workflow can't be enforced yet: init --repo refuses before any
+// plan or cloud call, while observe and off pass.
+func TestInitRepoRefusesVertexEnforce(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	cfgFile := func(auth string) *config.Config {
+		t.Helper()
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	withBudget := func(block string) *localcfg.Config {
+		t.Helper()
+		lc, err := localcfg.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := lc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc, err = localcfg.Parse(append(data, block...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lc
+	}
+	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
+	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
+	err := checkVertexBudget(enforce, vertex)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
+		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
+	}
+	for name, tc := range map[string]struct {
+		lc  *localcfg.Config
+		cfg *config.Config
+	}{
+		"vertex + observe":  {withBudget("budget: { mode: observe }\n"), vertex},
+		"vertex + off":      {withBudget("budget: { mode: off }\n"), vertex},
+		"vertex + none":     {withBudget(""), vertex},
+		"api-key + enforce": {enforce, apiKey},
+	} {
+		if err := checkVertexBudget(tc.lc, tc.cfg); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// Through the command, before any cloud call (there is no rig here, so
+	// a call would fail differently).
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { mode: enforce, per_run_usd: 5 }\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	_, _, err = execute(t, "init", "--repo", "--project", "aurora", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
+		t.Fatalf("init --repo: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// Outputs that exist but can't be decoded are an error, not "no
+// installation": the immutable-name check must not be skipped by them.
+func TestInitRefusesUnreadableOutputs(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": 5})}
+	r.save(t)
+	_, _, err := executeStdin(t, "", "init", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "project_name") {
+		t.Fatalf("err = %v, want the unreadable output named", err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("unreadable outputs were planned over: %q", r.calls(t))
+	}
+}
+
+// A refused rename changes no IAM: the runs bucket's viewers are only
+// touched once the name is known to be the installation's.
+func TestInitNameCheckBeforeViewersRemoval(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.gcs.AddBucket(initRunsBucket, initProjectNumber, map[string]string{"fugaro": "managed"})
+	r.gcs.SetBucketPolicy(initRunsBucket, gcpfake.ConvenienceBindings(initProject))
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "name: aurora", "name: borealis", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err == nil || !strings.Contains(err.Error(), "renaming isn't supported") {
+		t.Fatalf("err = %v", err)
+	}
+	if n := len(policySets(r.gcs, initRunsBucket)); n != 0 {
+		t.Fatalf("a refused rename changed the runs bucket's IAM %d times", n)
+	}
+}
+
+// A flag's value can't become config syntax: the first config is built as
+// a value and validated like a file.
+func TestNewProjectConfigIsNotYAMLConcatenation(t *testing.T) {
+	lc, err := newProjectConfig("aurora", "proj-1234", "us-east5")
+	if err != nil || lc.Name != "aurora" || lc.GCPProject != "proj-1234" || lc.Region != "us-east5" || lc.RunsBucket != "fugaro-runs-proj-1234" {
+		t.Fatalf("lc = %+v, err = %v", lc, err)
+	}
+	for _, bad := range []string{"proj-1234\nrepos: {x: {}}", "proj: 1234 # x", "Proj"} {
+		if lc, err := newProjectConfig("aurora", bad, "us-east5"); err == nil {
+			t.Errorf("gcp project %q accepted: %+v", bad, lc)
+		}
+	}
+	if _, err := newProjectConfig("aurora", "proj-1234", "us-east5\nuser: x"); err == nil {
+		t.Error("a region with a newline was accepted")
+	}
+}
+
+// init --repo checks the repository's project against the installation's
+// own name, from its outputs, before it plans anything.
+func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
+	r.save(t)
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--project", "aurora", "--github-app-id", "12345", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml names project aurora, but this installation is project borealis") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.ran(t, "plan")) != 0 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("a refused repository was planned: %q", r.calls(t))
 	}
 }

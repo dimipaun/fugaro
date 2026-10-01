@@ -61,3 +61,44 @@ func SetLockRelease(t *testing.T, f func(l *lock.Lock, ctx context.Context) erro
 
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
+
+// RunHandle reaches a run's halt and cancel hooks from a test's agent.
+type RunHandle struct{ r *run }
+
+// OnRun makes every Run of t hand its run to f as it starts.
+func OnRun(t *testing.T, f func(*RunHandle)) {
+	prev := onNewRun
+	onNewRun = func(r *run) { f(&RunHandle{r}) }
+	t.Cleanup(func() { onNewRun = prev })
+}
+
+// SetHaltGrace shortens how long a halted stage's agent gets to exit by itself.
+func SetHaltGrace(t *testing.T, d time.Duration) {
+	prev := haltGrace
+	haltGrace = d
+	t.Cleanup(func() { haltGrace = prev })
+}
+
+// SetStrictHaltCheck makes finalize panic when a halt and a cancel are both recorded.
+func SetStrictHaltCheck(t *testing.T) {
+	prev := strictHaltCheck
+	strictHaltCheck = true
+	t.Cleanup(func() { strictHaltCheck = prev })
+}
+
+func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
+func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }
+func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancelled() }
+func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
+func (h *RunHandle) SetStageExtra(f func(stage string) ([]string, int64)) {
+	h.r.mu.Lock()
+	h.r.stageExtra = f
+	h.r.mu.Unlock()
+}
+
+// ForceHaltAndCancel records both, which the lock rules out, to test the assertion.
+func (h *RunHandle) ForceHaltAndCancel(hl runstore.Halt) {
+	h.r.mu.Lock()
+	h.r.halt, h.r.cancelled = &hl, true
+	h.r.mu.Unlock()
+}

@@ -18,7 +18,7 @@ import (
 func newTestSecrets(t *testing.T) (*Secrets, *gcpfake.Secrets) {
 	t.Helper()
 	sm := gcpfake.NewSecrets(t)
-	s, err := NewSecrets(context.Background(), Options{Project: "proj-1234", Endpoints: Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
+	s, err := NewSecrets(context.Background(), Options{GCPProject: "proj-1234", Endpoints: Endpoints{SecretManager: sm.URL + "/", NoAuth: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,7 +44,7 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
 	}
-	return &Secrets{svc: svc, project: o.Project}, nil
+	return &Secrets{svc: svc, project: o.GCPProject}, nil
 }
 
 // Set stores value as a new version of secret id, creating the secret with

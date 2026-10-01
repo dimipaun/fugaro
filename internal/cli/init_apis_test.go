@@ -39,7 +39,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 	if got := r.su.Enables(); !slices.Equal(got, []string{infra.ServiceResourceManager}) {
 		t.Fatalf("enables = %q", got)
 	}
-	if !strings.Contains(out, "⚠ CONFIRM (project proj-1234): enables the Cloud Resource Manager API (cloudresourcemanager.googleapis.com)") ||
+	if !strings.Contains(out, "⚠ CONFIRM (project aurora, GCP project proj-1234): enables the Cloud Resource Manager API (cloudresourcemanager.googleapis.com)") ||
 		!strings.Contains(out, "enabled cloudresourcemanager.googleapis.com in proj-1234") {
 		t.Errorf("no confirmation or change line:\n%s", out)
 	}
@@ -99,8 +99,8 @@ func TestInitResourceManagerDisabledNeedsConfirmation(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || len(r.su.Enables()) != 0 {
 		t.Fatalf("declined at a terminal: exit %d, err %v, enables %q", ExitCode(err), err, r.su.Enables())
 	}
-	if _, _, err := executeStdin(t, initProject+"\n", "init", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
-		t.Fatalf("typed project ID: %v, enables %q", err, r.su.Enables())
+	if _, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only"); err != nil || len(r.su.Enables()) != 1 {
+		t.Fatalf("typed project name: %v, enables %q", err, r.su.Enables())
 	}
 }
 

@@ -16,17 +16,22 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -74,6 +79,29 @@ type Deps struct {
 	// ImageInfoPath is the image's build record; empty means
 	// DefaultImageInfoPath.
 	ImageInfoPath string
+	// Project is FUGARO_PROJECT: the Fugaro project this job belongs to.
+	// When set, fugaro.yaml on the base branch must name it.
+	Project string
+	// RequireProject (backend.OnCloudRun) makes a missing Project fail
+	// bootstrap; a local run without one skips the check.
+	RequireProject bool
+	// ManagedSettingsPath is where the managed Claude Code settings are
+	// written before each stage; empty means agent.ManagedSettingsPath.
+	ManagedSettingsPath string
+	// Spend is the job's budget, from SpendFromEnv; the zero value is off.
+	Spend Spend
+	// SpendErr is SpendFromEnv's error: bootstrap fails with it once the
+	// run's record is claimed.
+	SpendErr error
+	// GatewayUpstream, for tests only, is http://127.0.0.1:<port>: where the
+	// gateway sends its calls instead of the real API. Empty is the real one.
+	GatewayUpstream string
+	// GatewayStageWait, for tests only, shortens how long the gateway waits
+	// for a stage's calls in flight; zero is 30 seconds.
+	GatewayStageWait time.Duration
+	// VertexTokens is the gateway's Vertex credential; nil is
+	// google.DefaultTokenSource (the metadata server on Cloud Run).
+	VertexTokens oauth2.TokenSource
 }
 
 type run struct {
@@ -89,8 +117,33 @@ type run struct {
 	instructions string
 	reviewFile   string
 	stageN       map[string]int
-	failReason   string
-	cancelled    bool
+	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
+	// haltStage: the cancel watcher and, with the gateway, its halt
+	// callback record into them from other goroutines. Whichever of a halt
+	// and a cancel is recorded first wins (see haltNow and markCancelled).
+	mu            sync.Mutex
+	failReason    string
+	cancelled     bool
+	halt          *runstore.Halt
+	tokens        int64                   // the stages' tokens so far, for the token cap
+	gatewayTokens int64                   // the last stage's tokens as the gateway counted them
+	haltStage     context.CancelCauseFunc // the running stage's cancel; nil between stages
+	// stageExtra, when set, is called once after each stage's agent
+	// returns, and says what the gateway saw: violations of the stage's
+	// rules (the first fails the stage) and its token count.
+	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
+	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
+	stageExtra   func(stage string) (violations []string, tokens int64)
+	// The gateway, when the budget is on for an api-key or vertex run, and
+	// what its stages cost; all guarded by mu.
+	gw           *gateway.Server
+	gwAgent      *agent.Gateway
+	gwClosed     bool
+	gwUsed       pricing.Micros
+	lastStage    *gateway.StageReport
+	modelBy      map[string]pricing.Micros
+	unreconciled pricing.Micros
+	unparsed     int
 	provider     gitprov.Provider
 	providerKind string
 	providerFrom string          // where providerKind came from, for mismatch errors
@@ -183,6 +236,7 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			rec = nil
 			return
 		}
+		r.closeGateway()
 		rctx, cancelRelease := context.WithTimeout(context.WithoutCancel(ctx), releaseDeferredTimeout)
 		r.releaseLock(rctx)
 		cancelRelease()
@@ -197,6 +251,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, reason
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
+		}
+		if h := r.haltValue(); h != nil && r.rec.Halt == nil {
+			r.rec.Halt = h // kept even when finalize then failed
 		}
 		// The report's figure stops before writeback; the record's covers
 		// the whole run.
@@ -227,20 +284,39 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}()
 
 	r.addMountedSecrets()
-	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
+	if onNewRun != nil {
+		onNewRun(r)
+	}
+	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll, r.markCancelled)
 	defer stopWatch()
 	if err := r.bootstrap(runCtx); err != nil {
-		if errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled) {
-			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+		var halt *HaltError
+		switch {
+		case errors.As(err, &halt):
+			// A policy halt before anything was locked, pushed or opened:
+			// an outcome, not a failure, so there is no error to return.
+			r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, &halt.Halt
+			r.rec.Reason = halt.Error()
+			d.Log.Warn("run halted at bootstrap", "reason", string(halt.Halt.Reason), "detail", halt.Halt.Detail)
+			return r.rec, nil
+		case errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled):
+			if r.markCancelled() {
+				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+			}
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	r.runAgentLoop(runCtx)
+	// Finalize makes no model calls: the gateway is closed first, and the
+	// run's model cost is its ledger's.
+	r.closeGateway()
 	if errors.Is(context.Cause(runCtx), ErrCancelled) {
 		// The cancel may have landed after the last stage already returned
-		// successfully; make sure it still turns into a draft PR.
-		r.cancelled = true
-		r.fail("cancelled")
+		// successfully; make sure it still turns into a draft PR, unless a
+		// halt was recorded first.
+		if r.markCancelled() {
+			r.fail("cancelled")
+		}
 	}
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
@@ -492,7 +568,7 @@ func (r *run) warnAuthRefresh(err error) {
 // cloned from when there is no checkout yet.
 func (r *run) originURL(ctx context.Context) string {
 	if repo, err := gitops.Open(r.d.WorkDir, nil); err == nil {
-		if u, err := repo.OriginURL(ctx); err == nil {
+		if u, err := strip(repo).OriginURL(ctx); err == nil {
 			return u
 		}
 	}
@@ -501,6 +577,13 @@ func (r *run) originURL(ctx context.Context) string {
 
 // fail records the first reason the run cannot produce a ready PR.
 func (r *run) fail(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failLocked(reason)
+}
+
+// failLocked is fail for a caller holding r.mu.
+func (r *run) failLocked(reason string) {
 	if r.failReason == "" {
 		r.failReason = reason
 	}
@@ -598,6 +681,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// always told apart here (design §4.7).
 		return err
 	}
+	if r.d.SpendErr != nil {
+		return fmt.Errorf("the budget in the job's environment: %w", r.d.SpendErr)
+	}
 	// A cancel that landed before the run started is seen now, not only
 	// at the watcher's first poll, before anything is cloned or locked.
 	if ok, err := r.d.Store.CancelRequested(ctx); err != nil {
@@ -635,11 +721,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building git credentials: %w", err)
 	}
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars))
+	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars), modelCredentialVars...)
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}
-	r.repo = repo
+	r.repo = strip(repo)
 	var cfg *config.Config
 	if r.follow != nil {
 		// The pull request's branch, with the configuration of its base.
@@ -675,6 +761,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
+	if r.follow == nil {
+		// A read, so it comes before the lock; a follow-up fetched its
+		// base, and read its configuration from it, above.
+		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
+			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
+		}
+	}
+	if err := r.checkProject(ctx, cfg); err != nil {
+		return err
+	}
+	if err := r.checkBudget(); err != nil {
+		return err
+	}
 	// The lock comes before anything changes remote state: the clone and
 	// checkout above are local, and the provider has only been asked for
 	// credentials.
@@ -697,9 +796,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.restoreCaches(ctx)
 	if r.follow == nil {
 		// A follow-up fetched its base, and read these from it, above.
-		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
-			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
-		}
 		if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
 			return fmt.Errorf("agent.instructions: %w", err)
 		}
@@ -746,8 +842,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 		}
 		maps.Copy(set, agentAuthVars)
 	}
+	if r.gatewayOn() {
+		// After the lock and the provider, so a run that never gets as far
+		// starts nothing; before the agent's environment, which needs the
+		// gateway's URL and token.
+		if err := r.startGateway(ctx); err != nil {
+			return err
+		}
+	}
 	env, secrets, err := agent.BuildEnv(r.d.Env, agent.EnvSpec{
-		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend,
+		Auth: cfg.Agent.Auth, Secrets: secretEnvs, Set: set, PathPrepend: r.d.PathPrepend, Gateway: r.gateway(),
 	})
 	if err != nil {
 		return fmt.Errorf("building agent environment: %w", err)
@@ -807,6 +911,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 	res, ok, err := r.stage(ctx, "implement", req, opts)
 	r.noteSession(req, res)
+	r.countTokens(res)
 	// Only an error stage recovered from, and so recorded nothing about:
 	// one that came with a timeout or a cancel is a failed stage.
 	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
@@ -814,8 +919,9 @@ func (r *run) agentLoop(ctx context.Context) {
 		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
 		r.noteSession(req, res)
+		r.countTokens(res)
 	}
-	if !ok {
+	if !ok || r.capReached() {
 		return
 	}
 	sessionID := req.SessionID
@@ -828,13 +934,14 @@ func (r *run) agentLoop(ctx context.Context) {
 	rounds := r.cfg.Agent.ReviewRounds
 	for round := 1; round <= rounds; round++ {
 		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+		r.countTokens(res)
 		if !ok {
 			return
 		}
 		v := ParseVerdict(res)
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
-		if v.Verdict == "ship" || round == rounds {
+		if r.capReached() || v.Verdict == "ship" || round == rounds {
 			return
 		}
 		if r.sessionID != "" {
@@ -843,7 +950,8 @@ func (r *run) agentLoop(ctx context.Context) {
 		req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
 		res, ok, _ = r.stage(ctx, "fix", req, stageOpts{})
 		r.noteSession(req, res)
-		if !ok {
+		r.countTokens(res)
+		if !ok || r.capReached() {
 			return
 		}
 	}
@@ -870,12 +978,27 @@ type stageOpts struct {
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
-		r.cancelled = errors.Is(context.Cause(ctx), ErrCancelled)
+		if errors.Is(context.Cause(ctx), ErrCancelled) {
+			r.markCancelled()
+		}
 		return agent.Result{}, false, ctx.Err()
 	}
 	if r.budget.Exhausted() {
 		r.fail("time budget exhausted before stage " + name)
 		return agent.Result{}, false, nil
+	}
+	// With the gateway on, nothing the agent or the repository wrote since
+	// the last stage may send Claude Code around it.
+	if r.gatewayOn() {
+		if reason := r.checkSettingsRouting(); reason != "" {
+			r.fail("stage " + name + ": " + reason)
+			return agent.Result{}, false, errors.New(reason)
+		}
+	}
+	pins := r.stagePins(name)
+	if err := r.writeManagedSettings(pins); err != nil {
+		r.fail("stage " + name + ": " + err.Error())
+		return agent.Result{}, false, err
 	}
 	r.stageN[name]++
 	n := r.stageN[name]
@@ -905,30 +1028,92 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	relay := agent.NewRelay(log, r.secrets)
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secrets)
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secrets)
-	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.env, tw, sw
-	req.Model, req.MaxBudgetUSD = r.cfg.Agent.Model, r.cfg.Agent.MaxBudgetUSD
+	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
+	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
-	stageCtx, cancel := r.budget.StageContext(ctx)
-	defer cancel()
+	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
+	defer cancelDeadline()
+	// The halt's way to stop this stage: cancelling with the halt as the
+	// cause, which StageError reads.
+	stageCtx, cancelCause := context.WithCancelCause(deadlineCtx)
+	r.mu.Lock()
+	r.haltStage = cancelCause
+	extra := r.stageExtra
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.haltStage = nil
+		r.mu.Unlock()
+		cancelCause(nil)
+	}()
+	var watching sync.WaitGroup
+	stopWatch := func() {}
+	if r.gw != nil {
+		r.beginGatewayStage(name)
+		done := make(chan struct{})
+		watching.Add(1)
+		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
+		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
+	}
 	res, err := r.d.Agent.Run(stageCtx, req)
+	stopWatch()
 	_ = tw.Flush()
 	relay.Flush()
 	_ = sw.Flush()
 	if perr := r.d.Store.PutFile(context.WithoutCancel(ctx), fmt.Sprintf("transcripts/%s-%d.jsonl", name, n), transcript.Bytes(), "application/x-ndjson"); perr != nil {
 		log.Warn("storing transcript failed", "err", perr)
 	}
-	r.rec.CostUSD += res.CostUSD
+	// What the gateway saw comes first, whatever the agent reported.
+	var violations []string
+	if extra != nil {
+		var gw int64
+		violations, gw = extra(name)
+		r.mu.Lock()
+		r.gatewayTokens = gw
+		r.mu.Unlock()
+	}
+	if r.gw != nil {
+		// The gateway's figure is the run's cost; Claude Code's is only a
+		// cross-check. A halt it raised after the watcher looked is
+		// recorded now.
+		r.drainHalt()
+		r.crossCheckCost(name, res.CostUSD, stageCtx.Err() != nil || r.haltValue() != nil)
+		r.mu.Lock()
+		r.rec.CostUSD = r.gwUsed.USD()
+		r.mu.Unlock()
+	} else {
+		r.rec.CostUSD += res.CostUSD
+	}
 	r.updateCost()
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
 	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
+
+	// A halt recorded first decides the stage, whatever the agent says:
+	// is_error, any subtype (even success) or exit code, a kill by the
+	// halt's own cancel included. No log tail: nothing failed.
+	if h := r.haltValue(); h != nil {
+		r.save(ctx)
+		return res, false, &HaltError{*h}
+	}
+	if len(violations) > 0 {
+		r.fail("stage " + name + ": " + violations[0])
+		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
+		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
 
 	switch {
 	case err != nil && opts.Recoverable != nil && stageCtx.Err() == nil && opts.Recoverable(err):
 		r.save(ctx)
 		return res, false, recoveredError{err}
 	case err != nil:
-		r.fail(StageError(name, stageCtx, r.budget, err))
-		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
+		reason := StageError(name, stageCtx, r.budget, err)
+		if w := r.lastWaited(); w > 0 && r.gw != nil {
+			reason += fmt.Sprintf(" (the budget gateway told the agent to retry %d call(s) with a 429 because calls in flight held the run's budget; the run cap may be too small for parallel work)", w)
+		}
+		r.fail(reason)
+		if errors.Is(context.Cause(stageCtx), ErrCancelled) {
+			r.markCancelled()
+		}
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, err
 	case res.IsError:
@@ -993,7 +1178,20 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
 	r.save(ctx)
 	base := r.cfg.Git.BaseBranch
-	committed, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize")
+	halt := r.haltValue()
+	if halt != nil && r.isCancelled() {
+		// haltNow and markCancelled exclude each other under the lock, so
+		// this is a bug. The halt is kept.
+		r.d.Log.Error("both a halt and a cancel were recorded; keeping the halt")
+		if strictHaltCheck {
+			panic("both a halt and a cancel were recorded")
+		}
+	}
+	leftover := "fugaro: uncommitted work at finalize"
+	if halt != nil {
+		leftover = leftoverHaltMessage
+	}
+	committed, err := r.repo.CommitAll(ctx, leftover)
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
@@ -1007,7 +1205,7 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		if ahead == 0 {
 			r.fail("the agent made no commits")
-			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
+			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
 		}
@@ -1033,8 +1231,12 @@ func (r *run) finalize(ctx context.Context) error {
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
-	if r.failReason != "" {
-		ready, reason = false, r.failReason
+	if fr := r.failure(); fr != "" {
+		ready, reason = false, fr
+	}
+	if halt != nil {
+		// Never ready, and the reason is the halt's, whatever failed first.
+		ready, reason = false, (&HaltError{*halt}).Error()
 	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
@@ -1119,7 +1321,9 @@ func (r *run) finalize(ctx context.Context) error {
 	switch {
 	case ready:
 		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
-	case r.cancelled:
+	case halt != nil:
+		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeDraft, halt
+	case r.isCancelled():
 		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeDraft
 	default:
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft

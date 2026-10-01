@@ -38,6 +38,28 @@ type Result struct {
 	IsError    bool
 	Subtype    string
 	ExitCode   int
+	// Usage is the result event's "usage" and ModelUsage its "modelUsage"
+	// by model, which also covers subagent and background models.
+	Usage      Usage
+	ModelUsage map[string]Usage
+}
+
+// Usage counts tokens by kind.
+type Usage struct{ Input, CacheCreation, CacheRead, Output int64 }
+
+// Total is every kind of token added up.
+func (u Usage) Total() int64 { return u.Input + u.CacheCreation + u.CacheRead + u.Output }
+
+// StageTokens is the stage's token count from its result event: the larger
+// of Usage and the sum over ModelUsage, since a subagent's or a background
+// model's tokens may appear only in the latter.
+func (r Result) StageTokens() int64 {
+	n := r.Usage.Total()
+	var sum int64
+	for _, u := range r.ModelUsage {
+		sum += u.Total()
+	}
+	return max(n, sum)
 }
 
 // Agent runs one stage of agent work.

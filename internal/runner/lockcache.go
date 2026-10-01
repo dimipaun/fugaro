@@ -294,7 +294,7 @@ func (r *run) writeback(ctx context.Context) {
 	wctx, cancel := context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	defer cancel()
 	r.saveSession(wctx)
-	if r.d.Bucket != nil && !r.cancelled {
+	if r.d.Bucket != nil && !r.isCancelled() {
 		store, home := r.cacheStore(), envLookup(r.d.Env, "HOME")
 		for _, s := range r.caches {
 			// Checked again: the agent may have replaced a root, or a

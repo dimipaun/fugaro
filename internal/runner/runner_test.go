@@ -65,10 +65,19 @@ type harness struct {
 // when non-empty) and stores a task spec.
 func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 	t.Helper()
+	return newHarnessFiles(t, cfg, spec, nil)
+}
+
+// newHarnessFiles is newHarness with extra files committed to the remote.
+func newHarnessFiles(t *testing.T, cfg string, spec *task.Spec, extra map[string]string) *harness {
+	t.Helper()
 	testutil.IsolateGit(t)
 	files := testutil.FixtureFiles(t)
 	if cfg != "" {
 		files["fugaro.yaml"] = cfg
+	}
+	for k, v := range extra {
+		files[k] = v
 	}
 	remote := testutil.NewRemote(t, files)
 	bucket := memblob.OpenBucket(nil)
@@ -82,6 +91,11 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 	}
 	tmp := t.TempDir()
 	failsFile := filepath.Join(tmp, "fails")
+	// The managed settings never go to the real /etc/claude-code in a test.
+	managed := filepath.Join(tmp, "claude-code")
+	if err := os.Mkdir(managed, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	a := &scriptedAgent{t: t}
 	p := &fake.Provider{Repo: spec.Repo, Remote: remote}
 	return &harness{
@@ -90,7 +104,7 @@ func newHarness(t *testing.T, cfg string, spec *task.Spec) *harness {
 			Store: store, OpenProvider: gitprov.Static(p), Agent: a,
 			WorkDir: filepath.Join(tmp, "work"), Remote: remote, StateDir: filepath.Join(tmp, "state"),
 			Env:        []string{"PATH=" + os.Getenv("PATH"), "HOME=" + tmp, "ANTHROPIC_API_KEY=test-key", "FIXTURE_FAILS_FILE=" + failsFile},
-			CancelPoll: 20 * time.Millisecond,
+			CancelPoll: 20 * time.Millisecond, ManagedSettingsPath: filepath.Join(managed, "managed-settings.json"),
 		},
 		store: store, bucket: bucket, provider: p, agent: a, remote: remote, failsFile: failsFile,
 	}

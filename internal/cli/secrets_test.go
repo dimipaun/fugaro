@@ -52,7 +52,7 @@ func TestSecretsSetFromPipe(t *testing.T) {
 		t.Fatalf("second version = %q", got)
 	}
 	var js map[string]string
-	if err := json.Unmarshal([]byte(out), &js); err != nil || js["secret"] != claudeSecret || js["version"] != "2" || len(js) != 2 {
+	if err := json.Unmarshal([]byte(out), &js); err != nil || js["secret"] != claudeSecret || js["version"] != "2" || js["project"] != "aurora" || len(js) != 3 {
 		t.Fatalf("json = %s, %v", out, err)
 	}
 	if strings.Contains(out+errOut, "second-value") {
@@ -155,7 +155,7 @@ func appCheckout(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/app.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: main }\nworkflows:\n  web:\n    base: web-node\n" +
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nworkflows:\n  web:\n    base: web-node\n" +
 		"    commands: { build: sh build.sh, test: sh test.sh }\n    secrets: [{ name: npm-token, env: NPM_TOKEN }]\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
@@ -230,7 +230,9 @@ func TestSecretsAndCloudCommandsRefuseHTTP2Debug(t *testing.T) {
 func TestSecretsSetBrokenFugaroYAML(t *testing.T) {
 	secretsFixture(t)
 	appCheckout(t)
-	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nnot_a_key: [\n"), 0o644); err != nil {
+	// It names its project, which still selects the project config, but
+	// has a field fugaro.yaml doesn't know.
+	if err := os.WriteFile("fugaro.yaml", []byte("version: 1\nproject: aurora\nnot_a_key: [\n  x\n]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := executeStdin(t, tokenValue, "secrets", "set", "npm-token", "--repo", "acme/app")

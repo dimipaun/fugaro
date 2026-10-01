@@ -44,6 +44,11 @@ const (
 	// ComputePricesEnv is <vcpu>,<gib> per second, from the local config's
 	// override for the region, so the runner's report agrees with ls.
 	ComputePricesEnv = "FUGARO_COMPUTE_PRICES"
+	// The project's budget, which the runner reads (runner.SpendFromEnv):
+	// the mode, the per-run cap in US dollars, and the price overrides.
+	BudgetModeEnv  = runner.BudgetModeEnv
+	MaxRunUSDEnv   = runner.MaxRunUSDEnv
+	ModelPricesEnv = runner.ModelPricesEnv
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
@@ -66,6 +71,9 @@ type Inputs struct {
 // InstallationOutputs are the installation root's outputs, as `terraform
 // output -json` names them.
 type InstallationOutputs struct {
+	// ProjectName is the Fugaro project's name; empty in the outputs of an
+	// installation applied before M9a.
+	ProjectName             string   `json:"project_name"`
 	RunsBucket              string   `json:"runs_bucket"`
 	RegistryHost            string   `json:"registry_host"`
 	BaseRegistry            string   `json:"base_registry"`
@@ -171,6 +179,9 @@ type CheckJobSpec struct {
 
 // RepoInstallation are the installation values a repository root needs.
 type RepoInstallation struct {
+	// ProjectName comes from the installation's outputs; the repository
+	// root checks every job's FUGARO_PROJECT against it.
+	ProjectName             string      `json:"-"`
 	RunsBucket              string      `json:"runs_bucket"`
 	RegistryHost            string      `json:"registry_host"`
 	BaseRegistry            string      `json:"base_registry"`
@@ -201,7 +212,9 @@ type RepoSpec struct {
 	Check                *CheckSpec              `json:"check"`
 	Workflows            map[string]WorkflowSpec `json:"workflows"`
 
-	Project      string           `json:"-"`
+	// GCPProject is the GCP project ID. It is not in the tfvars under this
+	// name: the root's own variable is "project".
+	GCPProject   string           `json:"-"`
 	Region       string           `json:"-"`
 	Installation RepoInstallation `json:"-"`
 	GitHubAppID  string           `json:"-"` // GitHub only
@@ -253,6 +266,9 @@ func resolve(in Inputs) (*repoCtx, error) {
 		return nil, userErr("%v", err)
 	}
 	c.inst = withDefaults(in.Installation, lc, c.bucket)
+	if c.inst.ProjectName != lc.Name {
+		return nil, userErr("the installation's project name is %s, but the local config's is %s; they must agree (renaming isn't supported)", c.inst.ProjectName, lc.Name)
+	}
 	if c.inst.RunsBucket != c.bucket {
 		return nil, userErr("the installation's runs bucket is %s, but the local config's is %s", c.inst.RunsBucket, c.bucket)
 	}
@@ -262,10 +278,10 @@ func resolve(in Inputs) (*repoCtx, error) {
 	c.inst.RegistryHost = c.registryHost
 	// Role IDs from a stale output of another project's state would grant
 	// that project's roles, so they must be this project's.
-	prefix := "projects/" + lc.Project + "/roles/"
+	prefix := "projects/" + lc.GCPProject + "/roles/"
 	for _, r := range []string{c.inst.RoleIDs.Launcher, c.inst.RoleIDs.JobRunner, c.inst.RoleIDs.BuildSubmitter, c.inst.RoleIDs.TagMover} {
 		if id, ok := strings.CutPrefix(r, prefix); !ok || id == "" || strings.Contains(id, "/") {
-			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.Project)
+			return nil, userErr("the installation's role %s is not a custom role of project %s", r, lc.GCPProject)
 		}
 	}
 
@@ -342,14 +358,14 @@ func registryHost(lc *localcfg.Config, output string) (string, error) {
 		host = output
 	}
 	if host == "" {
-		host = gcp.DefaultRegistryHost(lc.Region, lc.Project)
+		host = gcp.DefaultRegistryHost(lc.Region, lc.GCPProject)
 	}
 	m := registryHostRE.FindStringSubmatch(host)
 	if m == nil {
 		return "", userErr("registry host %q is not <region>-docker.pkg.dev/<project>", host)
 	}
-	if m[2] != lc.Project {
-		return "", userErr("registry host %s names project %s, not %s", host, m[2], lc.Project)
+	if m[2] != lc.GCPProject {
+		return "", userErr("registry host %s names project %s, not %s", host, m[2], lc.GCPProject)
 	}
 	return host, nil
 }
@@ -391,10 +407,11 @@ func withDefaults(o InstallationOutputs, lc *localcfg.Config, bucket string) Ins
 			*v = d
 		}
 	}
-	role := func(id string) string { return "projects/" + lc.Project + "/roles/" + id }
+	role := func(id string) string { return "projects/" + lc.GCPProject + "/roles/" + id }
+	def(&o.ProjectName, lc.Name)
 	def(&o.RunsBucket, bucket)
 	def(&o.BaseRegistry, BaseRegistry)
-	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.Project))
+	def(&o.SchedulerServiceAccount, serviceAccountEmail(SchedulerServiceAccountID, lc.GCPProject))
 	def(&o.RoleIDs.Launcher, role(RoleLauncher))
 	def(&o.RoleIDs.JobRunner, role(RoleJobRunner))
 	def(&o.RoleIDs.BuildSubmitter, role(RoleBuildSubmitter))
@@ -425,10 +442,11 @@ func serviceAccountEmail(id, project string) string {
 // platformEnv is the M4 env every job and the check job get.
 func (c *repoCtx) platformEnv() map[string]string {
 	return map[string]string{
-		"FUGARO_BUCKET":  "gs://" + c.bucket,
-		"FUGARO_BACKEND": backend.CloudRun,
-		"FUGARO_PROJECT": c.lc.Project,
-		"FUGARO_REGION":  c.lc.Region,
+		"FUGARO_BUCKET":      "gs://" + c.bucket,
+		"FUGARO_BACKEND":     backend.CloudRun,
+		"FUGARO_GCP_PROJECT": c.lc.GCPProject,
+		"FUGARO_PROJECT":     c.inst.ProjectName,
+		"FUGARO_REGION":      c.lc.Region,
 	}
 }
 
@@ -471,7 +489,7 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 
 		Name:                name,
 		Slug:                slug,
-		ServiceAccountEmail: serviceAccountEmail(saID, lc.Project),
+		ServiceAccountEmail: serviceAccountEmail(saID, lc.GCPProject),
 		Labels:              map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: c.label, gcp.LabelWorkflow: name},
 		SecretIDs:           map[string]string{},
 		GitSecret:           c.gitSecret,
@@ -481,13 +499,16 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 	if ws.Vertex {
 		ws.Env["CLOUD_ML_REGION"] = lc.Region
-		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.Project
+		ws.Env["ANTHROPIC_VERTEX_PROJECT_ID"] = lc.GCPProject
 	}
 	if c.appID != "" {
 		ws.Env[providers.EnvGitHubAppID] = c.appID
 	}
 	if p, ok := lc.PriceOverride(lc.Region); ok {
 		ws.Env[ComputePricesEnv] = formatPrice(p.VCPUSecondUSD) + "," + formatPrice(p.GiBSecondUSD)
+	}
+	if err := budgetEnv(lc, ws.Env); err != nil {
+		return WorkflowSpec{}, userErr("%v", err)
 	}
 
 	var collisions []string
@@ -527,6 +548,32 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	return ws, nil
 }
 
+// budgetEnv adds the project's budget to a workflow job's env when it is
+// not off: the mode, the cap when there is one, and the price overrides
+// when there are any. The check job calls no model and gets none of it.
+func budgetEnv(lc *localcfg.Config, env map[string]string) error {
+	mode := lc.BudgetMode()
+	if mode == localcfg.BudgetOff {
+		return nil
+	}
+	o, err := lc.Overrides()
+	if err != nil {
+		return err
+	}
+	env[BudgetModeEnv] = mode
+	if usd := lc.Budget.PerRunUSD; usd > 0 {
+		env[MaxRunUSDEnv] = formatPrice(usd)
+	}
+	prices, err := o.Env()
+	if err != nil {
+		return err
+	}
+	if prices != "" {
+		env[ModelPricesEnv] = prices
+	}
+	return nil
+}
+
 // formatPrice is the shortest decimal that parses back to v.
 func formatPrice(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
@@ -553,9 +600,10 @@ func Repo(in Inputs) (RepoSpec, error) {
 		},
 		Workflows: map[string]WorkflowSpec{},
 
-		Project: lc.Project,
-		Region:  lc.Region,
+		GCPProject: lc.GCPProject,
+		Region:     lc.Region,
 		Installation: RepoInstallation{
+			ProjectName:             c.inst.ProjectName,
 			RunsBucket:              c.bucket,
 			RegistryHost:            c.registryHost,
 			BaseRegistry:            c.inst.BaseRegistry,
@@ -568,7 +616,7 @@ func Repo(in Inputs) (RepoSpec, error) {
 		RepoURL:                  c.repoURL,
 		BaseBranch:               c.baseBranch,
 		GitUser:                  c.gitUser,
-		BuildServiceAccountEmail: serviceAccountEmail(buildID, lc.Project),
+		BuildServiceAccountEmail: serviceAccountEmail(buildID, lc.GCPProject),
 		RegistryPath:             c.registryPath(),
 	}
 	var checked []string

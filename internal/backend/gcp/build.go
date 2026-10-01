@@ -313,7 +313,7 @@ func NewBuilder(ctx context.Context, o Options, region string) (*Builder, error)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to Artifact Registry: %w", err)
 	}
-	return &Builder{svc: svc, registries: ar, project: o.Project, region: region}, nil
+	return &Builder{svc: svc, registries: ar, project: o.GCPProject, region: region}, nil
 }
 
 func (b *Builder) parent() string { return "projects/" + b.project + "/locations/" + b.region }

@@ -11,7 +11,7 @@ resource "google_storage_bucket" "runs" {
   uniform_bucket_level_access = true
   public_access_prevention    = "enforced"
   force_destroy               = false
-  labels                      = { fugaro = "managed" }
+  labels                      = { fugaro = "managed", fugaro_project = var.fugaro_project }
 
   lifecycle_rule {
     action {
@@ -50,4 +50,20 @@ resource "google_storage_bucket" "runs" {
   }
 
   depends_on = [google_project_service.this]
+}
+
+# The project marker. Launchers hold objectAdmin on the runs bucket, which
+# can't read a bucket label, so every Fugaro command reads this object to
+# check that its project config points at the project's own installation.
+# No job account can write it (the jobs' grants cover runs/, cache/ and
+# locks/; builds cover builds/). It is a safety label, not a boundary.
+resource "google_storage_bucket_object" "project_marker" {
+  bucket       = google_storage_bucket.runs.name
+  name         = "fugaro/project.json"
+  content_type = "application/json"
+  content = jsonencode({
+    version     = 1
+    name        = var.fugaro_project
+    gcp_project = var.project
+  })
 }

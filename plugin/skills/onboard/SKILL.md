@@ -26,6 +26,8 @@ Run from the repository root (`git rev-parse --show-toplevel`). Check that `fuga
 
 Read `fugaro config example`. It annotates every field. Write `fugaro.yaml` in the same shape, with only the fields you have evidence for.
 
+The example's `project:` line names the Fugaro project this repository belongs to. `fugaro config example` prints the selected project's name there; when it shows `example`, no project is selectable, so ask the user which project this repository belongs to (`fugaro init --config-only` writes a project's config). Never invent a project name: a wrong one makes every run of this repository refuse.
+
 ## 2. Decide the workflows
 
 A workflow is one buildable unit with its own image.
@@ -150,5 +152,6 @@ Tell the user, briefly:
 - the workflows, their commands and report globs, each with the file it came from
 - the image settings with the evidence for each, and anything you couldn't express
 - the secrets to create, by logical name, and where each is used. The user stores each one with `fugaro secrets set <name> --repo <owner/name>`, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. When the user creates the provider credential, tell them to name it (for example `Fugaro`): a Bitbucket repository access token's name, or a GitHub App's name, is shown as the author of every pull request and comment, and a token can't be renamed after it is created. Granting the job access to them is part of provisioning, which is `fugaro init --repo` run from the committed checkout: it creates the repository's jobs, accounts, registry and secret containers with Terraform, shows the plan and asks before applying, offers the first image build, and prints the `fugaro secrets set` commands still needed. Don't run it yourself; the user runs it, after the installation has been set up once (`fugaro init`, docs/gcp-setup.md).
+- the `project:` you wrote, and that `fugaro.yaml` on the base branch must carry it before runs work (every run checks it)
 - that they should commit `fugaro.yaml`, and `.fugaro/*.Dockerfile` if you wrote one, in a pull request, and then run `fugaro init --repo` from the merged checkout
 - any `rebuild.paths` you proposed, with its evidence

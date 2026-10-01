@@ -16,6 +16,7 @@ import (
 )
 
 const localYAML = `version: 1
+project: aurora
 git: { provider: github, base_branch: develop }
 workflows:
   web:

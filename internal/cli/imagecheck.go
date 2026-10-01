@@ -318,8 +318,9 @@ func writeState(ctx context.Context, b *blobx.Bucket, key string, s *imagecheck.
 // jobEnv are the check job's own variables, as the repository's spec
 // sets them.
 type jobEnv struct {
-	spec                    infra.CheckJobSpec
-	project, region, bucket string // bucket: the runs bucket's name
+	spec                       infra.CheckJobSpec
+	name                       string // the Fugaro project, FUGARO_PROJECT
+	gcpProject, region, bucket string // bucket: the runs bucket's name
 }
 
 func readJobEnv() (jobEnv, error) {
@@ -336,13 +337,29 @@ func readJobEnv() (jobEnv, error) {
 		s.Registry == "" || s.BuildServiceAccount == "" || s.BuildRegion == "" || s.BaseImage == "" {
 		return e, fmt.Errorf("%s is incomplete: run fugaro init --repo", infra.CheckSpecEnv)
 	}
-	e.project, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_REGION")
+	e.name, e.gcpProject, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_GCP_PROJECT"), os.Getenv("FUGARO_REGION")
 	u, err := url.Parse(os.Getenv("FUGARO_BUCKET"))
-	if e.project == "" || e.region == "" || err != nil || u.Scheme != "gs" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
-		return e, errors.New("FUGARO_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the check job's spec sets them")
+	if e.name == "" || e.gcpProject == "" || e.region == "" || err != nil || u.Scheme != "gs" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
+		return e, errors.New("FUGARO_PROJECT (the project's name), FUGARO_GCP_PROJECT, FUGARO_REGION and FUGARO_BUCKET (gs://<runs bucket>) must be set, as the check job's spec sets them; run fugaro init --repo")
 	}
 	e.bucket = u.Host
 	return e, nil
+}
+
+// repoSpec is the repository's spec as this job's own environment gives
+// it: the names come from Go, as fugaro init --repo gave them, and the
+// project's name is the job's FUGARO_PROJECT.
+func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, error) {
+	s := e.spec
+	host, _, _ := strings.Cut(s.Registry, "/"+e.gcpProject+"/")
+	lc := &localcfg.Config{
+		Version: 1, Name: e.name, GCPProject: e.gcpProject, Region: e.region, RunsBucket: e.bucket, BaseImage: s.BaseImage,
+		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
+		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
+	}
+	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: s.Repo, Cfg: cfg, RepoURL: s.RepoURL,
+		Installation: infra.InstallationOutputs{RegistryHost: host + "/" + e.gcpProject}})
+	return rs, lc, err
 }
 
 // jobGitEnv is git's environment in the check job: the job's own, less
@@ -460,14 +477,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return failAll(err)
 	}
-	host, _, _ := strings.Cut(s.Registry, "/"+e.project+"/")
-	lc := &localcfg.Config{
-		Version: 1, Project: e.project, Region: e.region, RunsBucket: e.bucket, BaseImage: s.BaseImage,
-		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
-		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
-	}
-	rs, err := infra.Repo(infra.Inputs{LC: lc, Repo: s.Repo, Cfg: cfg, RepoURL: s.RepoURL,
-		Installation: infra.InstallationOutputs{RegistryHost: host + "/" + e.project}})
+	rs, lc, err := e.repoSpec(cfg)
 	if err != nil {
 		return failAll(err)
 	}
@@ -477,7 +487,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 		return failAll(fmt.Errorf("the installed check job names the registry %s and build account %s, but this fugaro names %s and %s: %s",
 			s.Registry, s.BuildServiceAccount, rs.RegistryPath, rs.BuildServiceAccountEmail, notInstalledReason))
 	}
-	builder, err := gcp.NewBuilder(ctx, gcp.Options{Project: e.project, Region: e.region, Endpoints: checkEndpoints}, s.BuildRegion)
+	builder, err := gcp.NewBuilder(ctx, gcp.Options{GCPProject: e.gcpProject, Region: e.region, Endpoints: checkEndpoints}, s.BuildRegion)
 	if err != nil {
 		return failAll(err)
 	}
@@ -511,7 +521,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 		}
 		state := nextState(ev.prev, ev.d, ev.lastStatus, now)
 		if ev.d.Decision == imagecheck.Rebuild && !o.dryRun {
-			id, status, err := submitRebuild(ctx, builder, e.project, rs, cfg, name, s, lc.RecordBucketURL())
+			id, status, err := submitRebuild(ctx, builder, e.gcpProject, rs, cfg, name, s, lc.RecordBucketURL())
 			if err != nil {
 				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, "submitting the rebuild: "+oneLine(err.Error())
 				state = nextState(ev.prev, ev.d, ev.lastStatus, now)
@@ -671,7 +681,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 		enc.SetIndent("", "  ")
 		ds := make([]result, len(results))
 		copy(ds, results)
-		if err := enc.Encode(map[string]any{"repo": repo, "head": tree.Head(), "decisions": ds}); err != nil {
+		if err := enc.Encode(map[string]any{"project": lc.Name, "repo": repo, "head": tree.Head(), "decisions": ds}); err != nil {
 			return err
 		}
 	} else {
@@ -720,6 +730,7 @@ func nonNil(ss []string) []string {
 
 // imageStatusOut is fugaro image status --json.
 type imageStatusOut struct {
+	Project   string           `json:"project"` // the Fugaro project
 	Workflows []imageStatusRow `json:"workflows"`
 }
 
@@ -771,7 +782,7 @@ func runImageStatus(cmd *cobra.Command, o cloudOptions, only string, asJSON bool
 		return remote(err)
 	}
 	now := time.Now().UTC()
-	out := imageStatusOut{Workflows: []imageStatusRow{}}
+	out := imageStatusOut{Project: env.lc.Name, Workflows: []imageStatusRow{}}
 	for _, repo := range repos {
 		local, _ := env.localRepo(repo)
 		slug, err := env.repoSlug(repo, func() *config.Config { return checkoutConfig(ctx, repo) })

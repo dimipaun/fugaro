@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  max_output_tokens: { coder: -1 }
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }

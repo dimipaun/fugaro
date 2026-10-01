@@ -426,6 +426,7 @@ func parseConfig(t *testing.T, yaml string) *config.Config {
 }
 
 const renderYAML = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   web:

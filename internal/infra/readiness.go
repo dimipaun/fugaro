@@ -72,7 +72,7 @@ var errFound = errors.New("found")
 //     image nobody has built on purpose.
 func Readiness(ctx context.Context, c *Clients, spec RepoSpec, ex Existing) (RepoSpec, []Missing, error) {
 	out := cloneRepoSpec(spec)
-	tg := target{project: spec.Project, number: ex.ProjectNumber}
+	tg := target{project: spec.GCPProject, number: ex.ProjectNumber}
 	versions := map[string]bool{} // logical secret → has an enabled version
 	var missing []Missing
 	hasVersion := func(logical string) (bool, error) {
@@ -224,7 +224,7 @@ func hasLatest(ctx context.Context, c *Clients, tg target, spec RepoSpec, image 
 	if !ok || !tagged || pkg == "" || strings.ContainsAny(pkg, "/:@") || m == nil {
 		return false, fmt.Errorf("image %s is not <registry>/<package>:latest in the repository's registry %s", image, spec.RegistryPath)
 	}
-	name := "projects/" + spec.Project + "/locations/" + m[1] + "/repositories/" + spec.Registry.RepositoryID +
+	name := "projects/" + spec.GCPProject + "/locations/" + m[1] + "/repositories/" + spec.Registry.RepositoryID +
 		"/packages/" + pkg + "/tags/latest"
 	_, err := c.AR.Projects.Locations.Repositories.Packages.Tags.Get(name).Context(ctx).Do()
 	switch {

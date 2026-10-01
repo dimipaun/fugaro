@@ -1,3 +1,8 @@
+output "project_name" {
+  description = "The Fugaro project's name. fugaro init --repo copies it to each repository's jobs as FUGARO_PROJECT."
+  value       = var.fugaro_project
+}
+
 output "runs_bucket" {
   description = "The runs bucket's name."
   value       = google_storage_bucket.runs.name

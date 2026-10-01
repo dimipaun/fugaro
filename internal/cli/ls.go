@@ -53,8 +53,9 @@ type lsFilter struct {
 
 // lsDoc is ls --json's document.
 type lsDoc struct {
-	Runs   []runview.Row  `json:"runs"`
-	Totals runview.Totals `json:"totals"`
+	Project string         `json:"project"` // the Fugaro project
+	Runs    []runview.Row  `json:"runs"`
+	Totals  runview.Totals `json:"totals"`
 	// Warnings are the lines a human listing prints before its table.
 	Warnings []string `json:"warnings"`
 }
@@ -150,7 +151,7 @@ func runLs(cmd *cobra.Command, o *lsOptions) error {
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")
 		}
-		if err := printRows(out, rows, warnings, now, o.asJSON); err != nil {
+		if err := printRows(out, env.lc.Name, rows, warnings, now, o.asJSON); err != nil {
 			return err
 		}
 		if !o.watch || allSettled(rows) {
@@ -496,12 +497,12 @@ func allSettled(rows []runview.Row) bool {
 
 // printRows prints rows as a table with a totals line, or as one JSON
 // document. The warnings come before the table, or go into the document.
-func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
+func printRows(w io.Writer, project string, rows []runview.Row, warnings []string, now time.Time, asJSON bool) error {
 	tot := runview.Sum(rows)
 	if asJSON {
 		enc := json.NewEncoder(w)
 		enc.SetIndent("", "  ")
-		return enc.Encode(lsDoc{Runs: rows, Totals: tot, Warnings: warnings})
+		return enc.Encode(lsDoc{Project: project, Runs: rows, Totals: tot, Warnings: warnings})
 	}
 	for _, line := range warnings {
 		fmt.Fprintln(w, line)
@@ -516,7 +517,7 @@ func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -538,6 +539,14 @@ func printRows(w io.Writer, rows []runview.Row, warnings []string, now time.Time
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// statusCell is a row's status; a halted run says which limit halted it.
+func statusCell(r runview.Row) string {
+	if r.Status == string(runstore.StatusHalted) && r.Halt != nil {
+		return r.Status + " (" + string(r.Halt.Reason) + ")"
+	}
+	return r.Status
 }
 
 // prColumn is a row's pull request: "#N <url>", "#N" while the URL is

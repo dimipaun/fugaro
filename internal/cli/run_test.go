@@ -24,7 +24,7 @@ import (
 // appExecution is a full execution name of the fixture's web job.
 func appExecution(short string) string {
 	job := gcp.JobName(appSlug, "web")
-	return backend.ExecID{Project: "proj-1234", Region: "us-east5", Job: job, Name: job + "-" + short}.String()
+	return backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: job, Name: job + "-" + short}.String()
 }
 
 func TestRunLaunches(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRunLaunches(t *testing.T) {
 		t.Fatalf("launch = %+v, %v", l, err)
 	}
 	// launch.json holds the backend's canonical full name, never a short one.
-	if id, ok := backend.ParseExecution(l.Execution); !ok || id.Project != "proj-1234" || id.Job != gcp.JobName(appSlug, "web") || l.Job != id.Job {
+	if id, ok := backend.ParseExecution(l.Execution); !ok || id.GCPProject != "proj-1234" || id.Job != gcp.JobName(appSlug, "web") || l.Job != id.Job {
 		t.Fatalf("launch.json execution %q, job %q", l.Execution, l.Job)
 	}
 }
@@ -410,7 +410,7 @@ func TestRetryBackfillsLaunchFromRecord(t *testing.T) {
 	// Cloud Run's environment.
 	job := gcp.JobName(appSlug, "web")
 	recorded, err := backend.ExecutionFromEnv(func(k string) string {
-		return map[string]string{"CLOUD_RUN_EXECUTION": job + "-x7k2p", "CLOUD_RUN_JOB": job, "FUGARO_PROJECT": "proj-1234", "FUGARO_REGION": "us-east5"}[k]
+		return map[string]string{"CLOUD_RUN_EXECUTION": job + "-x7k2p", "CLOUD_RUN_JOB": job, "FUGARO_GCP_PROJECT": "proj-1234", "FUGARO_PROJECT": "aurora", "FUGARO_REGION": "us-east5"}[k]
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +554,7 @@ func TestRunResolvesFromTheCheckout(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -700,7 +700,7 @@ func TestRunProviderMismatch(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@bitbucket.org:acme/app.git")
-	yaml := "version: 1\ngit: { provider: bitbucket }\nworkflows:\n  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: bitbucket }\nworkflows:\n  web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -719,7 +719,7 @@ func timeoutCheckout(t *testing.T, f *cloudFixture) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\n    timeouts: { total: 2h, finalize_reserve: 5m }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: develop }\nworkflows:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\n    timeouts: { total: 2h, finalize_reserve: 5m }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}

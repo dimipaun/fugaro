@@ -30,7 +30,8 @@ const goldenDir = "../../deploy/terraform/gcp/roots/repo/tests/testdata"
 // m4LocalConfig is the local config the M4 job spec was captured with
 // (testdata/README.md).
 const m4LocalConfig = `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry: us-east5-docker.pkg.dev/proj-1234/fugaro
@@ -71,6 +72,7 @@ func installationOutputs() InstallationOutputs {
 		RunsBucket:              "fugaro-runs-proj-1234",
 		RegistryHost:            "us-east5-docker.pkg.dev/proj-1234",
 		BaseRegistry:            BaseRegistry,
+		ProjectName:             "aurora",
 		SchedulerServiceAccount: SchedulerServiceAccountID + "@proj-1234.iam.gserviceaccount.com",
 		RoleIDs: RoleIDs{
 			Launcher:       "projects/proj-1234/roles/" + RoleLauncher,
@@ -102,6 +104,7 @@ func sandboxInputs(t *testing.T, extraLC string) Inputs {
 }
 
 const webappYAML = `version: 1
+project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:
@@ -122,7 +125,8 @@ workflows:
 func webappInputs(t *testing.T) Inputs {
 	t.Helper()
 	lc := parseLC(t, `version: 1
-project: proj-1234
+name: aurora
+gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
@@ -196,7 +200,7 @@ func TestSpecMatchesM4JobSpec(t *testing.T) {
 	golden, rows := readGolden(t)
 	str := func(k string) string { return golden[k].(string) }
 	for _, c := range []struct{ field, got, want string }{
-		{"project", in.LC.Project, str("project")},
+		{"project", in.LC.GCPProject, str("project")},
 		{"region", in.LC.Region, str("region")},
 		{"slug", ws.Slug, str("slug")},
 		{"job", ws.Job, str("job")},
@@ -373,7 +377,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 	if !equalJSON(t, spec, want) {
 		t.Errorf("check spec = %+v, want %+v", spec, want)
 	}
-	for _, k := range []string{"FUGARO_BACKEND", "FUGARO_BUCKET", "FUGARO_PROJECT", "FUGARO_REGION"} {
+	for _, k := range []string{"FUGARO_BACKEND", "FUGARO_BUCKET", "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION"} {
 		if c.Env[k] != rs.Workflows["web"].Env[k] {
 			t.Errorf("check env %s = %q", k, c.Env[k])
 		}
@@ -659,7 +663,7 @@ func TestTfvarsSortedKeys(t *testing.T) {
 	if !bytes.Equal(buf.Bytes(), vars) {
 		t.Errorf("the tfvars are not in sorted-key form:\n%s", vars)
 	}
-	top := []string{"github_app_id", "installation", "project", "region", "repo"}
+	top := []string{"fugaro_project", "github_app_id", "installation", "project", "region", "repo"}
 	if got := slices.Sorted(maps.Keys(doc.(map[string]any))); !slices.Equal(got, top) {
 		t.Errorf("top-level keys = %v, want %v", got, top)
 	}
@@ -690,7 +694,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launchers", "log_bucket_description", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)
@@ -821,5 +825,102 @@ func TestBucketNameIsRunsBucketName(t *testing.T) {
 		if url := lc.RecordBucketURL(); url != "gs://"+got {
 			t.Errorf("runs_bucket %q, bucket_url %q: records in %q, but the spec's bucket is %q", c.runs, c.bucketURL, url, got)
 		}
+	}
+}
+
+// budgetInputs is the webapp with the budget block (and prices) appended
+// to its project config.
+func budgetInputs(t *testing.T, block string) Inputs {
+	t.Helper()
+	in := webappInputs(t)
+	lc, err := in.LC.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.LC = parseLC(t, string(lc)+block)
+	return in
+}
+
+func onlyBudgetEnv(env map[string]string) map[string]string {
+	got := map[string]string{}
+	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv} {
+		if v, ok := env[k]; ok {
+			got[k] = v
+		}
+	}
+	return got
+}
+
+func TestWorkflowEnvBudgetOff(t *testing.T) {
+	for name, block := range map[string]string{
+		"no block":   "",
+		"mode off":   "budget: { mode: off, per_run_usd: 5 }\n",
+		"empty mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rs, err := Repo(budgetInputs(t, block))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range rs.Workflows {
+				if got := onlyBudgetEnv(w.Env); len(got) != 0 {
+					t.Errorf("%s has %v with the budget off", w.Name, got)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkflowEnvBudgetEnforce(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, `budget: { mode: enforce, per_run_usd: 12.5 }
+model_prices:
+  claude-sonnet-5-5: { input_per_m: 30, output_per_m: 150 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[BudgetModeEnv] != "enforce" || got[MaxRunUSDEnv] != "12.5" || got[ModelPricesEnv] == "" {
+			t.Errorf("%s env = %v", w.Name, got)
+		}
+		// The runner reads exactly what init wrote.
+		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		if err != nil || s.Mode != "enforce" || s.Cap != 12_500_000 {
+			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+		}
+		if m, _ := s.Prices.Lookup("claude-sonnet-5-5"); m.Rates.InputPerM != 30 || m.Rates.CacheWrite5m != 1.25 {
+			t.Errorf("%s: prices = %+v", w.Name, m.Rates)
+		}
+	}
+}
+
+func TestWorkflowEnvBudgetObserveNoCap(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: observe }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if len(got) != 1 || got[BudgetModeEnv] != "observe" {
+			t.Errorf("%s env = %v: want only the mode", w.Name, got)
+		}
+	}
+}
+
+// The check job calls no model, so it gets none of the budget.
+func TestCheckJobHasNoBudgetEnv(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil {
+		t.Fatal("no check job")
+	}
+	if got := onlyBudgetEnv(rs.Check.Env); len(got) != 0 {
+		t.Errorf("check env has %v", got)
 	}
 }

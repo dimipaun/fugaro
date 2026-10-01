@@ -20,7 +20,7 @@ func newTestBackend(t *testing.T) (*Backend, *gcpfake.Run, *gcpfake.Logging) {
 	t.Helper()
 	fr, fl := gcpfake.NewRun(t), gcpfake.NewLogging(t)
 	fr.Project, fr.Region = "proj-1234", "us-east5"
-	b, err := New(context.Background(), Options{Project: "proj-1234", Region: "us-east5",
+	b, err := New(context.Background(), Options{GCPProject: "proj-1234", Region: "us-east5",
 		Endpoints: Endpoints{Run: fr.URL + "/", Logging: fl.URL + "/", NoAuth: true}, LogSettle: 50 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +79,7 @@ func TestNamesAreCanonicalWhateverTheAPISends(t *testing.T) {
 	}
 	// A name spelled with the number is accepted too.
 	id, _ := backend.ParseExecution(ref.Name)
-	id.Project = "123456789"
+	id.GCPProject = "123456789"
 	if e, err := b.Execution(ctx, id.String()); err != nil || e.Name != ref.Name {
 		t.Fatalf("Execution(number form) = %+v, %v", e, err)
 	}
@@ -358,12 +358,12 @@ func TestExecutionNamesArePinnedToTheRegion(t *testing.T) {
 }
 
 func TestCheckRunExecution(t *testing.T) {
-	own := backend.ExecID{Project: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
+	own := backend.ExecID{GCPProject: "proj-1234", Region: "us-east5", Job: webJob, Name: webJob + "-abcde"}
 	if err := CheckRunExecution(own.String(), "us-east5", "acme-app", "web"); err != nil {
 		t.Fatalf("own execution refused: %v", err)
 	}
 	num := own
-	num.Project = "123456789"
+	num.GCPProject = "123456789"
 	if err := CheckRunExecution(num.String(), "us-east5", "acme-app", "web"); err != nil {
 		t.Fatalf("project number refused: %v", err)
 	}

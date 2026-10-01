@@ -12,6 +12,16 @@ variable "project" {
   }
 }
 
+variable "fugaro_project" {
+  description = "The Fugaro project's name (not the GCP project ID, which is `project`). Every job's FUGARO_PROJECT must equal it, and its FUGARO_GCP_PROJECT must equal `project`."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", var.fugaro_project))
+    error_message = "fugaro_project must be a project name: 1-40 characters of a-z, 0-9 and -, starting and ending with a letter or digit."
+  }
+}
+
 variable "region" {
   description = "The installation's region, for the registry and the jobs."
   type        = string

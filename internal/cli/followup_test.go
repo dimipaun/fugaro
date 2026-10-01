@@ -589,3 +589,21 @@ func TestRunPRRecordedHexBaseBranch(t *testing.T) {
 		})
 	}
 }
+
+// A halted run that pushed is a valid previous_run, like any other status;
+// a newer halted run that never pushed is skipped.
+func TestRunPRAfterHaltedRun(t *testing.T) {
+	f := newCloudFixture(t)
+	now := time.Now()
+	seedRoot(t, f, rootID, now.Add(-72*time.Hour))
+	halted := runIDAt(1, "230000", "bbbb")
+	seedFollowUp(t, f, halted, rootID, rootID, now.Add(-10*time.Hour), runstore.StatusHalted, true)
+	early := runIDAt(0, "000100", "dddd")
+	seedFollowUp(t, f, early, rootID, halted, now.Add(-time.Hour), runstore.StatusHalted, false)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID); got.PreviousRun != halted {
+		t.Fatalf("previous_run = %s, want the halted run %s that pushed", got.PreviousRun, halted)
+	}
+}

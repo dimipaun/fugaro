@@ -182,7 +182,7 @@ func TestLoadRowsOneRunFinishingMidRead(t *testing.T) {
 	e := seedRun(t, f, id, "", "someone@example.com", true)
 	f.run.SetState(e, backend.StateRunning)
 	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: e, Status: runstore.StatusRunning, Stage: "finalize"})
-	env, err := openCloud(context.Background(), cloudOptions{})
+	env, err := openCloud(context.Background(), cloudOptions{stderr: discard})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestLsUsesTheCheckoutForAProviderlessRepo(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	yaml := "version: 1\ngit: { provider: github, base_branch: main }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	yaml := "version: 1\nproject: aurora\ngit: { provider: github, base_branch: main }\nworkflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}

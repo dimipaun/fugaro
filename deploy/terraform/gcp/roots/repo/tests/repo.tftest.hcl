@@ -19,11 +19,12 @@ run "root_bitbucket" {
   command = plan
 
   variables {
-    project       = var.bitbucket.project
-    region        = var.bitbucket.region
-    installation  = var.bitbucket.installation
-    github_app_id = var.bitbucket.github_app_id
-    repo          = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    github_app_id  = var.bitbucket.github_app_id
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -48,11 +49,12 @@ run "root_github" {
   command = plan
 
   variables {
-    project       = var.github.project
-    region        = var.github.region
-    installation  = var.github.installation
-    github_app_id = var.github.github_app_id
-    repo          = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    github_app_id  = var.github.github_app_id
+    repo           = var.github.repo
   }
 
   assert {
@@ -72,11 +74,12 @@ run "bad_github_app_id" {
   command = plan
 
   variables {
-    project       = var.github.project
-    region        = var.github.region
-    installation  = var.github.installation
-    github_app_id = "12a"
-    repo          = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    github_app_id  = "12a"
+    repo           = var.github.repo
   }
 
   expect_failures = [var.github_app_id]
@@ -90,10 +93,11 @@ run "names_are_inputs" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -150,10 +154,11 @@ run "labels" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -186,6 +191,7 @@ run "labels_job" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -217,10 +223,11 @@ run "max_retries_zero" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -246,6 +253,7 @@ run "max_retries_zero_job" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -286,7 +294,7 @@ run "max_retries_zero_job" {
   assert {
     condition = [for e in google_cloud_run_v2_job.this[0].template[0].template[0].containers[0].env : e.name] == [
       "CLAUDE_CODE_OAUTH_TOKEN", "FUGARO_BACKEND", "FUGARO_BITBUCKET_TOKEN", "FUGARO_BUCKET",
-      "FUGARO_PROJECT", "FUGARO_REGION", "FUGARO_SECRET_ENVS", "SANDBOX_PROBE",
+      "FUGARO_GCP_PROJECT", "FUGARO_PROJECT", "FUGARO_REGION", "FUGARO_SECRET_ENVS", "SANDBOX_PROBE",
     ]
     error_message = "the env must be exactly the plain and secret variables, sorted by name"
   }
@@ -306,6 +314,7 @@ run "allow_job_delete" {
 
   variables {
     project          = var.bitbucket.project
+    fugaro_project   = var.bitbucket.fugaro_project
     region           = var.bitbucket.region
     installation     = var.bitbucket.installation
     repo             = var.bitbucket.repo
@@ -331,6 +340,7 @@ run "bucket_condition_exact" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -366,10 +376,11 @@ run "build_bucket_condition_exact" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -394,10 +405,11 @@ run "secret_ref_short_form" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -425,6 +437,7 @@ run "secret_ref_short_form_job" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -468,10 +481,11 @@ run "cleanup_keeps_latest" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -519,10 +533,11 @@ run "build_writes_own_registry_only" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
-    repo         = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   assert {
@@ -550,10 +565,11 @@ run "build_role_set_on_own_registry" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
-    repo         = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   override_resource {
@@ -598,10 +614,11 @@ run "build_iam" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
-    repo         = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   override_resource {
@@ -648,10 +665,11 @@ run "operators" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
-    repo         = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   assert {
@@ -680,6 +698,7 @@ run "people_job" {
 
   variables {
     project         = var.github.project
+    fugaro_project  = var.github.fugaro_project
     region          = var.github.region
     name            = "web"
     repo_label      = var.github.repo.label
@@ -720,9 +739,10 @@ run "cleanup_dry_run_from_input" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
     repo = merge(var.github.repo, {
       registry = { repository_id = var.github.repo.registry.repository_id, cleanup_dry_run = false }
     })
@@ -742,10 +762,11 @@ run "cleanup_dry_run_golden" {
   }
 
   variables {
-    project      = var.github.project
-    region       = var.github.region
-    installation = var.github.installation
-    repo         = var.github.repo
+    project        = var.github.project
+    fugaro_project = var.github.fugaro_project
+    region         = var.github.region
+    installation   = var.github.installation
+    repo           = var.github.repo
   }
 
   assert {
@@ -762,10 +783,11 @@ run "scheduler_region_and_paused" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = var.bitbucket.repo
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
   }
 
   assert {
@@ -824,10 +846,11 @@ run "check_not_deployed" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = false }) })
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = false }) })
   }
 
   assert {
@@ -848,10 +871,11 @@ run "check_deployed" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = true, paused = true }) })
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = merge(var.bitbucket.repo, { check = merge(var.bitbucket.repo.check, { deploy_job = true, paused = true }) })
   }
 
   assert {
@@ -872,10 +896,11 @@ run "no_check" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = merge(var.bitbucket.repo, { check = null })
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = merge(var.bitbucket.repo, { check = null })
   }
 
   assert {
@@ -893,6 +918,7 @@ run "vertex_only_when_asked" {
 
   variables {
     project         = var.github.project
+    fugaro_project  = var.github.fugaro_project
     region          = var.github.region
     name            = "api"
     repo_label      = var.github.repo.label
@@ -917,6 +943,7 @@ run "vertex_not_asked" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -941,6 +968,7 @@ run "deploy_job_false" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -978,6 +1006,7 @@ run "bad_account_id" {
 
   variables {
     project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
     region          = var.bitbucket.region
     name            = "web"
     repo_label      = var.bitbucket.repo.label
@@ -998,11 +1027,121 @@ run "unknown_secret" {
   }
 
   variables {
-    project      = var.bitbucket.project
-    region       = var.bitbucket.region
-    installation = var.bitbucket.installation
-    repo         = merge(var.bitbucket.repo, { build_secrets = ["bitbucket-token", "no-such-secret"] })
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = merge(var.bitbucket.repo, { build_secrets = ["bitbucket-token", "no-such-secret"] })
   }
 
   expect_failures = [var.repo]
+}
+
+run "job_env_names_the_project" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  assert {
+    condition     = var.workflow.env["FUGARO_PROJECT"] == "aurora" && var.workflow.env["FUGARO_GCP_PROJECT"] == "proj-1234"
+    error_message = "FUGARO_PROJECT is the project name and FUGARO_GCP_PROJECT the GCP project ID"
+  }
+}
+
+run "job_env_project_mismatch_fails" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = var.bitbucket.project
+    fugaro_project  = "borealis"
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [google_cloud_run_v2_job.this]
+}
+
+run "job_env_gcp_project_mismatch_fails" {
+  command = plan
+
+  module {
+    source = "../../modules/workflow"
+  }
+
+  variables {
+    project         = "other-proj-1"
+    fugaro_project  = var.bitbucket.fugaro_project
+    region          = var.bitbucket.region
+    name            = "web"
+    repo_label      = var.bitbucket.repo.label
+    workflow        = var.bitbucket.repo.workflows.web
+    secrets         = var.bitbucket.repo.secrets
+    runs_bucket     = var.bitbucket.installation.runs_bucket
+    job_runner_role = var.bitbucket.installation.role_ids.job_runner
+  }
+
+  expect_failures = [google_cloud_run_v2_job.this]
+}
+
+run "check_job_env_project_mismatch_fails" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = var.bitbucket.fugaro_project
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo = merge(var.bitbucket.repo, {
+      check = merge(var.bitbucket.repo.check, {
+        env = merge(var.bitbucket.repo.check.env, { FUGARO_PROJECT = "borealis" })
+      })
+    })
+  }
+
+  expect_failures = [google_cloud_run_v2_job.check]
+}
+
+run "bad_fugaro_project" {
+  command = plan
+
+  module {
+    source = "../../modules/repo"
+  }
+
+  variables {
+    project        = var.bitbucket.project
+    fugaro_project = "Not A Name"
+    region         = var.bitbucket.region
+    installation   = var.bitbucket.installation
+    repo           = var.bitbucket.repo
+  }
+
+  expect_failures = [var.fugaro_project]
 }

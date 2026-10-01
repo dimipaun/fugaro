@@ -29,7 +29,30 @@ const (
 	StatusFailed     Status = "failed"    // a draft PR exists
 	StatusInfraError Status = "infra_error"
 	StatusCancelled  Status = "cancelled"
+	StatusHalted     Status = "halted" // a budget or token limit stopped the run
 )
+
+// HaltReason says which limit halted a run.
+type HaltReason string
+
+const (
+	HaltKillSwitch         HaltReason = "kill_switch"
+	HaltRunCap             HaltReason = "run_cap"
+	HaltRepoDailyCap       HaltReason = "repo_daily_cap"
+	HaltGlobalDailyCap     HaltReason = "global_daily_cap"
+	HaltNoCap              HaltReason = "no_cap"
+	HaltTokenCap           HaltReason = "token_cap"
+	HaltBudgetUnavailable  HaltReason = "budget_unavailable"
+	HaltBudgetTokenExpired HaltReason = "budget_token_expired"
+)
+
+// Halt is why and when a run was halted.
+type Halt struct {
+	Reason HaltReason `json:"reason"`
+	Scope  string     `json:"scope"` // run | repo | global
+	At     time.Time  `json:"at"`
+	Detail string     `json:"detail,omitempty"`
+}
 
 // Outcome is the state of the run's pull request.
 type Outcome string
@@ -100,6 +123,8 @@ type Record struct {
 	// successful push (every run) and saved at once, so a run killed
 	// after posting still records that it updated its pull request.
 	PushedHead string `json:"pushed_head,omitempty"`
+	// Halt is set when Status is halted.
+	Halt *Halt `json:"halt,omitempty"`
 }
 
 // FollowUp is what a follow-up run acted on (design §4.4).

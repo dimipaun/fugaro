@@ -22,10 +22,10 @@ type Endpoints struct {
 
 // Options configure a Backend.
 type Options struct {
-	Project, Region string
-	Endpoints       Endpoints
-	HTTPClient      *http.Client  // optional
-	LogSettle       time.Duration // follow's quiet period after the execution ends; zero means 30s
+	GCPProject, Region string
+	Endpoints          Endpoints
+	HTTPClient         *http.Client  // optional
+	LogSettle          time.Duration // follow's quiet period after the execution ends; zero means 30s
 	// LogView, when set, is the log view (projects/<p>/locations/<l>/buckets/<b>/views/<v>)
 	// logs are read through and log URLs open; empty reads the project's
 	// default logs.
@@ -75,10 +75,10 @@ func (o Options) client(endpoint string) []option.ClientOption {
 	if o.HTTPClient != nil {
 		opts = append(opts, option.WithHTTPClient(o.HTTPClient))
 	}
-	if !o.Endpoints.NoAuth && o.Project != "" {
+	if !o.Endpoints.NoAuth && o.GCPProject != "" {
 		// User ADC has no project of its own, and some APIs refuse it
 		// without a quota project.
-		opts = append(opts, option.WithQuotaProject(o.Project))
+		opts = append(opts, option.WithQuotaProject(o.GCPProject))
 	}
 	return opts
 }
