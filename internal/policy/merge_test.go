@@ -417,3 +417,25 @@ func TestMergeMaxOutputMin(t *testing.T) {
 		t.Fatalf("%+v", e)
 	}
 }
+
+// The runner tells who asked for each ignored value by counting: the
+// default branch's ignored entries are exactly the first ones of the
+// three-layer merge. This pins that prefix property against changes to Merge.
+func TestIgnoredDefaultBranchEntriesArePrefix(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	nonEmpty := 0
+	for i := 0; i < 20000; i++ {
+		c, d, b := randLayer(r), randLayer(r), randLayer(r)
+		two := Merge(c, d).Ignored
+		three := Merge(c, d, b).Ignored
+		if len(three) < len(two) || (len(two) > 0 && !reflect.DeepEqual(three[:len(two)], two)) {
+			t.Fatalf("ceiling %+v default %+v branch %+v\ntwo layers:   %+v\nthree layers: %+v", c, d, b, two, three)
+		}
+		if len(two) > 0 {
+			nonEmpty++
+		}
+	}
+	if nonEmpty < 1000 {
+		t.Fatalf("only %d cases had ignored entries: the generator is too tame", nonEmpty)
+	}
+}

@@ -104,6 +104,17 @@ func TestSchemaBudgetBlock(t *testing.T) {
 		{"budget: { allowed_models: [sonnet] }", false},
 		{"budget: { allowed_models: [claude-sonnet-latest] }", false},
 		{"budget: { model_prices: {} }", false},
+		// Where Go and the schema once differed: both agree now.
+		{"budget:", true},
+		{"budget: { mode: }", true},
+		{"budget: { per_run_usd: }", true},
+		{"budget: { allowed_models: }", true},
+		{"budget: { per_day_usd: }", true},
+		{"budget: { per_run_usd: 0 }", true},
+		{"budget: { per_run_usd: 0.000001 }", true},
+		{"budget: { per_run_usd: 0.0000001 }", false},
+		{"budget: { per_run_usd: 100001 }", false},
+		{"budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }", false},
 	} {
 		err := sch.Validate(yamlInstance(t, []byte(base+c.budget+"\n")))
 		if (err == nil) != c.ok {

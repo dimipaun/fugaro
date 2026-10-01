@@ -547,6 +547,7 @@ func TestBudgetTokensAndModelsValidation(t *testing.T) {
 		"latest alias":      {"budget: { allowed_models: [claude-sonnet-latest] }\n", "alias"},
 		"empty entry":       {"budget: { allowed_models: [claude-sonnet-5-5, ''] }\n", "allowed_models[1]"},
 		"space in entry":    {"budget: { allowed_models: ['claude-sonnet-5-5 '] }\n", "whitespace"},
+		"duplicate entry":   {"budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }\n", "listed twice"},
 		"comma in entry":    {"budget: { allowed_models: ['claude-a,claude-b'] }\n", "allowed_models[0]"},
 		"bogus mode":        {"budget: { mode: ENFORCE }\n", "budget.mode"},
 		"tokens not number": {"budget: { max_run_tokens: lots }\n", "lots"},

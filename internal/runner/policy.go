@@ -87,13 +87,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
 	}
 
-	branch := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
-		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
-	if b := cfg.Budget; b != nil {
-		branch.Mode, branch.PerRunUSD, branch.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
-	}
-
-	e := policy.Merge(ceiling, def, branch)
+	e := policy.Merge(ceiling, def, FileLayer(cfg))
 	// Merge lists the default branch's ignored values before the branch's,
 	// so the number the first two layers drop says who asked for each.
 	nDef := len(policy.Merge(ceiling, def).Ignored)
@@ -123,6 +117,17 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 	r.spend, r.policy = s, e
 	r.rec.Policy = r.recordPolicy(nDef)
 	return nil
+}
+
+// FileLayer is what a fugaro.yaml says about policy: the run's own layer,
+// and what `fugaro validate` checks, built in one place so the two agree.
+func FileLayer(cfg *config.Config) policy.Layer {
+	l := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
+		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
+	if b := cfg.Budget; b != nil {
+		l.Mode, l.PerRunUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
+	}
+	return l
 }
 
 // policyRecord builds result.json's policy object from the merge: nil when
@@ -172,8 +177,12 @@ func (r *run) recordPolicy(nDef int) *runstore.PolicyRecord {
 			allowed = "none"
 		}
 	}
-	r.d.Log.Info("policy", "per_run_usd", e.PerRunUSD, "mode", e.Mode, "max_run_tokens", e.MaxRunTokens,
-		"allowed_models", allowed, "sources", sourcesText(rec.Sources))
+	args := []any{"per_run_usd", e.PerRunUSD}
+	if e.Mode != "" {
+		args = append(args, "mode", e.Mode)
+	}
+	args = append(args, "max_run_tokens", e.MaxRunTokens, "allowed_models", allowed, "sources", sourcesText(rec.Sources))
+	r.d.Log.Info("policy", args...)
 	warned := map[string]bool{}
 	for _, ig := range rec.Ignored {
 		if warned[ig.Key] {

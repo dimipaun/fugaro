@@ -1,0 +1,75 @@
+{
+  "base_branch": "main",
+  "branch": "fugaro/20260926-221530-abcd",
+  "cost": {
+    "compute_estimated": false,
+    "compute_usd": 0,
+    "estimate": true,
+    "model_basis": "api-list",
+    "model_source": "claude-code",
+    "model_usd": 1.5,
+    "total_usd": 1.5
+  },
+  "cost_usd": 1.5,
+  "deadline": "<time>",
+  "finalize_reserve_s": 30,
+  "finished_at": "<time>",
+  "head_sha": "<sha>",
+  "outcome": "ready",
+  "policy": {
+    "effective": {
+      "max_run_tokens": 900000,
+      "per_run_usd": 5
+    },
+    "sources": {
+      "max_run_tokens": "ceiling",
+      "per_run_usd": "ceiling"
+    }
+  },
+  "pr": {
+    "number": 1,
+    "url": "https://example.invalid/pr/1"
+  },
+  "pushed_head": "<sha>",
+  "repo": "acme/app",
+  "reviews": [
+    {
+      "findings": 0,
+      "round": 1,
+      "verdict": "ship"
+    }
+  ],
+  "run_id": "20260926-221530-abcd",
+  "stage": "writeback",
+  "stages": [
+    {
+      "duration_s": 0,
+      "name": "implement",
+      "started_at": "<time>"
+    },
+    {
+      "duration_s": 0,
+      "name": "review",
+      "started_at": "<time>"
+    }
+  ],
+  "started_at": "<time>",
+  "status": "succeeded",
+  "verify": [
+    {
+      "clean_tree": true,
+      "duration_s": 0,
+      "exit_code": 0,
+      "failures": 0,
+      "head_sha": "<sha>",
+      "kind": "test",
+      "n": 1,
+      "passed": true,
+      "skipped": 0,
+      "started_at": "<time>",
+      "tests": 3
+    }
+  ],
+  "version": 1,
+  "workflow": "app"
+}

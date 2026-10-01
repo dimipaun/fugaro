@@ -1012,3 +1012,30 @@ func TestOAuthStaysBudgetOff(t *testing.T) {
 		}
 	}
 }
+
+// Dropping a key from the project config and planning again removes it from
+// the jobs' environment: nothing lingers from the first plan.
+func TestWorkflowEnvDroppedPolicyKeysDisappear(t *testing.T) {
+	in := budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 500000, allowed_models: [claude-sonnet-5-5] }\n")
+	first, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range first.Workflows {
+		if len(onlyBudgetEnv(w.Env)) < 4 {
+			t.Fatalf("%s env = %v", w.Name, onlyBudgetEnv(w.Env))
+		}
+	}
+	in.LC = budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\n").LC
+	second, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range second.Workflows {
+		for _, k := range []string{MaxRunTokensEnv, AllowedModelsEnv} {
+			if v, ok := w.Env[k]; ok {
+				t.Errorf("%s still sets %s=%q", w.Name, k, v)
+			}
+		}
+	}
+}

@@ -324,7 +324,9 @@ func TestValidateModelOutsideAllowListIsProblem(t *testing.T) {
 func TestValidateWithoutProjectConfigChecksShapeOnly(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())
-	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: vertex, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
+	// Nothing of the ceiling is known, so nothing is simulated: a clamp, a
+	// missing pin or an allow-list is not judged.
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20, allowed_models: [claude-haiku-4-5] }\nworkflows:", 1)
 	out, errOut, err := execute(t, "validate", writeConfig(t, body))
 	if err != nil || errOut != "" {
 		t.Fatalf("no project config, nothing to simulate: %v %q %q", err, out, errOut)
@@ -374,6 +376,17 @@ func TestValidateNotOnDefaultBranchSaysSo(t *testing.T) {
 		!strings.Contains(errOut, "branch feature, not the default branch (main)") || !strings.Contains(errOut, "can only tighten") {
 		t.Fatalf("%v out %q stderr %q", err, out, errOut)
 	}
+	// The JSON warning names where it is about.
+	out, _, err = execute(t, "validate", "--json", file)
+	var got validateOutput
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || len(got.Warnings) != 1 || got.Warnings[0].Path != "branch" {
+		t.Fatalf("%v %s", err, out)
+	}
+	// A detached HEAD (a CI checkout) is not a branch: no note.
+	testutil.Git(t, root, "checkout", "-q", "--detach")
+	if _, errOut, err := execute(t, "validate", file); err != nil || strings.Contains(errOut, "default branch") {
+		t.Fatalf("detached HEAD: %v %q", err, errOut)
+	}
 }
 
 func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
@@ -392,5 +405,30 @@ func TestValidateRefusesVertexEnforceFromFile(t *testing.T) {
 	path = fileWithBudget(t, "", "budget: { mode: observe }\n", "  auth: api-key\n  model: sonnet")
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.coder") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+// A committed enforce under Vertex is refused by every run (the stricter of
+// the layers is enforce whatever the ceiling), so validate says so from the
+// file alone, with no project config selected, in the runner's words.
+func TestValidateRefusesCommittedVertexEnforceWithoutProjectConfig(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
+	vertex := func(budget string) string {
+		return strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: vertex, model: sonnet }\n"+budget+"workflows:", 1)
+	}
+	out, _, err := execute(t, "validate", writeConfig(t, vertex("budget: { mode: enforce, per_run_usd: 20 }\n")))
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth") || !strings.Contains(out, vertexBudgetRefusal) {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	for _, budget := range []string{"budget: { mode: observe }\n", "budget: { mode: off }\n", ""} {
+		if out, _, err := execute(t, "validate", writeConfig(t, vertex(budget))); err != nil {
+			t.Fatalf("%q: %v %s", budget, err, out)
+		}
+	}
+	// Enforce under another auth is fine.
+	body := strings.Replace(cliMinimalYAML, "workflows:", "agent: { auth: api-key, model: sonnet }\nbudget: { mode: enforce, per_run_usd: 20 }\nworkflows:", 1)
+	if out, _, err := execute(t, "validate", writeConfig(t, body)); err != nil {
+		t.Fatalf("%v %s", err, out)
 	}
 }

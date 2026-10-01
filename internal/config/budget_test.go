@@ -53,6 +53,68 @@ func TestBudgetBlockInvalid(t *testing.T) {
 	}
 }
 
+// Null stands for "not set" wherever the block or a key could be left out;
+// the schema says the same (schemas.TestSchemaBudgetBlock).
+func TestBudgetNullIsUnset(t *testing.T) {
+	for _, b := range []string{"budget:", "budget: ~", "budget: { mode: }", "budget: { per_run_usd: ~ }",
+		"budget: { allowed_models: ~ }", "budget: { per_day_usd: ~ }", "budget: { mode: enforce }"} {
+		y := minimalYAML + b + "\n"
+		if _, ps := Parse([]byte(y)); len(ps) > 0 {
+			t.Errorf("%s: %v", b, ps)
+		}
+		if _, err := PolicyOf([]byte(y)); err != nil {
+			t.Errorf("PolicyOf %s: %v", b, err)
+		}
+	}
+	// A cap of exactly nothing is the same as none.
+	if p, err := PolicyOf([]byte("budget: { per_run_usd: 0 }")); err != nil || p.PerRunUSD != 0 {
+		t.Errorf("zero cap: %+v %v", p, err)
+	}
+}
+
+func TestBudgetAllowedModelsWording(t *testing.T) {
+	cases := map[string]string{
+		"allowed_models: [null]":                               "of only nulls",
+		"allowed_models: [claude-haiku-4-5, claude-haiku-4-5]": "listed twice",
+	}
+	for b, want := range cases {
+		_, ps := Parse([]byte(minimalYAML + "budget: { " + b + " }\n"))
+		if len(ps) != 1 || !strings.Contains(ps[0].Message, want) {
+			t.Errorf("%s: %v", b, ps)
+		}
+	}
+}
+
+// The commented budget block in example.yaml is valid once uncommented, so
+// the documentation can't drift from the rules.
+func TestExampleBudgetBlockIsValid(t *testing.T) {
+	var out []string
+	in := false
+	for _, line := range strings.Split(string(Example), "\n") {
+		switch {
+		case strings.HasPrefix(line, "# budget:"):
+			in = true
+			out = append(out, strings.TrimPrefix(line, "# "))
+		case in && strings.HasPrefix(line, "#   "):
+			out = append(out, strings.TrimPrefix(line, "# "))
+		default:
+			if in {
+				out = append(out, "")
+			}
+			in = false
+			out = append(out, line)
+		}
+	}
+	got := strings.Join(out, "\n")
+	if got == string(Example) {
+		t.Fatal("no commented budget: block found in example.yaml")
+	}
+	cfg, ps := Parse([]byte(got))
+	if len(ps) > 0 || cfg.Budget == nil {
+		t.Fatalf("uncommented budget block: %v %+v", ps, cfg)
+	}
+}
+
 func TestPerDayRefused(t *testing.T) {
 	_, ps := Parse(readCorpus(t, "invalid", "budget-per-day.yaml"))
 	if len(ps) != 1 || ps[0].Path != "budget.per_day_usd" || !strings.Contains(ps[0].Message, "not supported yet (M9b)") {
@@ -99,16 +161,26 @@ workflows: 12
 
 func TestPolicyOfInvalidIsError(t *testing.T) {
 	for name, y := range map[string]string{
-		"mode":         "budget: { mode: strict }",
-		"negative cap": "budget: { per_run_usd: -1 }",
-		"per day":      "budget: { per_day_usd: 4 }",
-		"empty list":   "budget: { allowed_models: [] }",
-		"alias":        "budget: { allowed_models: [opus] }",
-		"not a list":   "budget: { allowed_models: claude-opus-5-5 }",
-		"cap a string": "budget: { per_run_usd: lots }",
-		"neg tokens":   "agent: { max_run_tokens: -1 }",
-		"output limit": "agent: { max_output_tokens: { coder: 999999 } }",
-		"not yaml":     "budget: [",
+		"mode":          "budget: { mode: strict }",
+		"negative cap":  "budget: { per_run_usd: -1 }",
+		"per day":       "budget: { per_day_usd: 4 }",
+		"empty list":    "budget: { allowed_models: [] }",
+		"alias":         "budget: { allowed_models: [opus] }",
+		"not a list":    "budget: { allowed_models: claude-opus-5-5 }",
+		"cap a string":  "budget: { per_run_usd: lots }",
+		"neg tokens":    "agent: { max_run_tokens: -1 }",
+		"output limit":  "agent: { max_output_tokens: { coder: 999999 } }",
+		"not yaml":      "budget: [",
+		"nan cap":       "budget: { per_run_usd: .nan }",
+		"inf cap":       "budget: { per_run_usd: .inf }",
+		"-inf cap":      "budget: { per_run_usd: -.inf }",
+		"over max":      "budget: { per_run_usd: 100001 }",
+		"too small":     "budget: { per_run_usd: 0.0000001 }",
+		"dup key":       "budget: { mode: off, mode: observe }",
+		"dup list":      "budget: { allowed_models: [claude-sonnet-5-5, claude-sonnet-5-5] }",
+		"null entry":    "budget: { allowed_models: [null] }",
+		"budget scalar": "budget: 5",
+		"budget list":   "budget: [mode]",
 	} {
 		if _, err := PolicyOf([]byte(y)); err == nil {
 			t.Errorf("%s: no error", name)

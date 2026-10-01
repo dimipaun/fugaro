@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/runner"
 )
 
 var (
@@ -62,6 +64,24 @@ func normalizeResult(t *testing.T, raw []byte) string {
 // FUGARO_UPDATE_GOLDEN=1.
 func TestNoPolicyIsM9aBehaviour(t *testing.T) {
 	h := newHarness(t, "", nil)
+	checkGolden(t, h, "nopolicy", false)
+}
+
+// TestCeilingOnlyPolicyGolden pins the record of a repository with no policy
+// of its own whose project config sets a ceiling: the policy object is
+// written whenever any key has a source, ceiling included, and the report is
+// unchanged (nothing was ignored).
+func TestCeilingOnlyPolicyGolden(t *testing.T) {
+	h := newHarness(t, "", nil)
+	h.deps.Spend = ceilingOf(t, runner.MaxRunUSDEnv, "5", runner.MaxRunTokensEnv, "900000")
+	checkGolden(t, h, "ceiling", true)
+}
+
+// checkGolden runs the hermetic task and compares the stored result.json and
+// report.md with testdata/<name>_*; withPolicy says whether the record has a
+// policy object.
+func checkGolden(t *testing.T, h *harness, name string, withPolicy bool) {
+	t.Helper()
 	if _, err := h.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +95,8 @@ func TestNoPolicyIsM9aBehaviour(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]string{
-		"nopolicy_result.json": normalizeResult(t, rawResult),
-		"nopolicy_report.md":   normalize(string(rawReport)),
+		name + "_result.json": normalizeResult(t, rawResult),
+		name + "_report.md":   normalize(string(rawReport)),
 	}
 	for name, text := range got {
 		path := filepath.Join("testdata", name)
@@ -98,7 +118,7 @@ func TestNoPolicyIsM9aBehaviour(t *testing.T) {
 	if err := json.Unmarshal(rawResult, &m); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := m["policy"]; ok {
-		t.Errorf("a run with no policy wrote a policy object: %s", m["policy"])
+	if _, ok := m["policy"]; ok != withPolicy {
+		t.Errorf("policy object present = %v, want %v: %s", ok, withPolicy, m["policy"])
 	}
 }

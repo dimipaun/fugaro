@@ -392,7 +392,7 @@ func validateBudget(b *Budget) []Problem {
 		add("budget.per_day_usd", "is not supported yet (M9b): per-day caps are set by the project owner")
 	}
 	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
-		add("budget.allowed_models", "must list at least one model (an empty list would forbid every model); leave it out for no restriction")
+		add("budget.allowed_models", "must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
 	}
 	for i, m := range b.AllowedModels {
 		path := fmt.Sprintf("budget.allowed_models[%d]", i)
@@ -400,7 +400,23 @@ func validateBudget(b *Budget) []Problem {
 			add(path, "%s", msg)
 		}
 	}
+	if i, ok := DuplicateModel(b.AllowedModels); ok {
+		add(fmt.Sprintf("budget.allowed_models[%d]", i), "%s is listed twice; list each model once", b.AllowedModels[i])
+	}
 	return ps
+}
+
+// DuplicateModel is the index of the first entry of models that repeats an
+// earlier one. fugaro.yaml and the project config share it.
+func DuplicateModel(models []string) (int, bool) {
+	seen := map[string]bool{}
+	for i, m := range models {
+		if seen[m] {
+			return i, true
+		}
+		seen[m] = true
+	}
+	return 0, false
 }
 
 // CheckModelID is the reason m is not usable in an allow-list of models, or

@@ -118,7 +118,7 @@ Offer, don't write unprompted, a `budget:` block for a team that wants its own c
 
 ## 6. Validate until clean
 
-Run `fugaro validate --json`. It prints `{"valid": …, "problems": [{"path": …, "message": …}]}`. It may also print `"warnings"` (a value the project's ceiling would clamp); warnings don't make the file invalid, but tell the user about them. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
+Run `fugaro validate --json`. It prints `{"valid": …, "problems": [{"path": …, "message": …}]}`. It may also print `"warnings"`, a list in the same shape as `problems` (a value the project's ceiling would clamp); warnings don't make the file invalid, but tell the user about them. Fix each problem at its `path` and run it again until `valid` is true. Don't silence a problem by deleting something the build needs.
 
 ## 7. Build the image until the smoke test passes
 

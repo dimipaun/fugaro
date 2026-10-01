@@ -3,9 +3,12 @@ package runner
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -56,5 +59,19 @@ func TestDefaultBranchFileNotShadowedByTag(t *testing.T) {
 	got, _, err := r.defaultBranchFile(context.Background())
 	if err != nil || string(got) != files["fugaro.yaml"] {
 		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+// FileLayer is the one construction of a fugaro.yaml's policy that the run
+// and `fugaro validate` share: every policy key is in it.
+func TestFileLayerCarriesEveryPolicyKey(t *testing.T) {
+	cfg, ps := config.Parse([]byte("version: 1\nproject: x\ngit: { provider: github }\nagent:\n  max_run_tokens: 7\n  max_output_tokens: { coder: 11, reviewer: 13 }\n" +
+		"budget: { mode: observe, per_run_usd: 3, allowed_models: [claude-haiku-4-5] }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	want := policy.Layer{Mode: "observe", PerRunUSD: 3, MaxRunTokens: 7, MaxOutputCoder: 11, MaxOutputReviewer: 13, AllowedModels: []string{"claude-haiku-4-5"}}
+	if got := FileLayer(cfg); !reflect.DeepEqual(got, want) {
+		t.Errorf("FileLayer = %+v, want %+v", got, want)
 	}
 }

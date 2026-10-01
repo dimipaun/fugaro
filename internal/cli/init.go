@@ -1454,7 +1454,7 @@ func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
 	}
 	// The ceiling's mode and the file's, the stricter of the two, as the
 	// runner merges them.
-	if policy.Merge(ceilingLayer(lc), fileLayer(cfg)).Mode == policy.ModeEnforce {
+	if policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode == policy.ModeEnforce {
 		return userErr("%s", vertexBudgetRefusal)
 	}
 	return nil
@@ -1823,7 +1823,7 @@ func printCeiling(w io.Writer, lc *localcfg.Config, cfg *config.Config) {
 	if cfg.Budget == nil && cfg.Agent.MaxRunTokens == 0 {
 		return
 	}
-	for _, ig := range policy.Merge(ceiling, fileLayer(cfg)).Ignored {
+	for _, ig := range policy.Merge(ceiling, runner.FileLayer(cfg)).Ignored {
 		p := clampWarning(ig)
 		fmt.Fprintf(w, "  fugaro.yaml %s: %s\n", p.Path, p.Message)
 	}

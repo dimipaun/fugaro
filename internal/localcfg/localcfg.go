@@ -184,12 +184,15 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
 		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
-			bad("budget.allowed_models: it must list at least one model (an empty list would forbid every model); leave it out for no restriction")
+			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
 		}
 		for i, m := range b.AllowedModels {
 			if msg := config.CheckModelID(m); msg != "" {
 				bad("budget.allowed_models[%d]: %s", i, msg)
 			}
+		}
+		if i, ok := config.DuplicateModel(b.AllowedModels); ok {
+			bad("budget.allowed_models[%d]: %s is listed twice; list each model once", i, b.AllowedModels[i])
 		}
 		if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
 			bad("budget.per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)

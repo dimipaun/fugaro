@@ -1290,6 +1290,25 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
 		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
 	}
+	// A committed enforce is the effective mode under an off ceiling, and
+	// under an observe one (the stricter wins).
+	committed := func(mode string) *config.Config {
+		t.Helper()
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nbudget: { mode: " + mode + ", per_run_usd: 5 }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	for name, lc := range map[string]*localcfg.Config{"off ceiling": withBudget(""), "observe ceiling": withBudget("budget: { mode: observe }\n")} {
+		err := checkVertexBudget(lc, committed("enforce"))
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
+			t.Errorf("committed enforce under %s: exit %d, err %v", name, ExitCode(err), err)
+		}
+		if err := checkVertexBudget(lc, committed("observe")); err != nil {
+			t.Errorf("committed observe under %s: %v", name, err)
+		}
+	}
 	for name, tc := range map[string]struct {
 		lc  *localcfg.Config
 		cfg *config.Config

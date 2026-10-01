@@ -2,6 +2,7 @@ package runner_test
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -290,4 +291,45 @@ func TestOAuthStaysBudgetOff(t *testing.T) {
 		tokenHalt(t, rec, err, "run used 500 tokens of 100")
 		noGateway(t, g)
 	})
+}
+
+// A value only the default branch's file asked for (the run's own branch
+// says nothing about it) is reported without "on this branch": the author of
+// the branch didn't write it.
+func TestDefaultBranchOnlyIgnoredWording(t *testing.T) {
+	g := newGW(t, gwConfig(t, "")+"budget:\n  per_run_usd: 20\n", "enforce", "5")
+	g.deps.Project = "aurora"
+	pushBranch(t, g.harness, "feature", gwConfig(t, ""))
+	setRef(t, g.harness, task.Spec{Ref: "feature"})
+	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	p := storedPolicy(t, g.harness)
+	if p == nil || len(p.Ignored) != 1 || p.Ignored[0].From != "default-branch" {
+		t.Fatalf("policy = %+v", p)
+	}
+	want := "**Policy:** 1 value from fugaro.yaml was looser than the limits set above them and was ignored (budget.per_run_usd 20 -> 5)\n"
+	if report := reportOf(t, g.harness); !strings.Contains(report, want) || strings.Contains(report, "on this branch") {
+		t.Errorf("report:\n%s\nwant %q", report, want)
+	}
+}
+
+// The policy log line names a mode only when some layer set one.
+func TestPolicyLogOmitsUnsetMode(t *testing.T) {
+	h := newHarness(t, "", nil)
+	logs := &lockedBuf{}
+	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
+	h.deps.Spend = ceilingOf(t, runner.MaxRunUSDEnv, "5")
+	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "msg=policy ") {
+			line = l
+		}
+	}
+	if line == "" || strings.Contains(line, "mode=") {
+		t.Errorf("policy line %q (logs:\n%s)", line, logs.String())
+	}
 }

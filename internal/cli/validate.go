@@ -34,15 +34,6 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 	return l
 }
 
-// fileLayer is what a fugaro.yaml says about policy, as the runner reads it.
-func fileLayer(cfg *config.Config) policy.Layer {
-	l := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens}
-	if b := cfg.Budget; b != nil {
-		l.Mode, l.PerRunUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
-	}
-	return l
-}
-
 // clampWarning says in words what the runner will do with one value of the
 // file that is looser than what sits above it.
 func clampWarning(ig policy.Ignored) config.Problem {
@@ -93,13 +84,22 @@ func ceilingText(l policy.Layer) string {
 // file's shape (checked by config.Check) applies.
 func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings []config.Problem) {
 	if lc == nil || lc.Name != cfg.Project {
-		return nil, nil
+		// No ceiling to compare with, but a committed enforce is the
+		// effective mode whatever the ceiling says (the stricter layer
+		// wins), so Vertex under it is refused on every run.
+		if cfg.Agent.Auth == "vertex" && cfg.Budget != nil && cfg.Budget.Mode == policy.ModeEnforce {
+			problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
+		}
+		return problems, nil
 	}
-	e := policy.Merge(ceilingLayer(lc), fileLayer(cfg))
+	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
 	}
 	problems = append(problems, config.CheckAllowed(cfg.Agent, e)...)
+	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
+		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
+	}
 	if e.Mode == "" || e.Mode == policy.ModeOff {
 		return problems, warnings
 	}
@@ -116,9 +116,6 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		// An oauth run has no gateway: nothing is priced or pinned.
 		problems = append(problems, config.CheckPins(cfg.Agent, prices)...)
 	}
-	if cfg.Agent.Auth == "vertex" && e.Mode == policy.ModeEnforce {
-		problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
-	}
 	if cfg.Agent.Auth == "api-key" && e.Mode == policy.ModeEnforce && e.PerRunUSD <= 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_run_usd",
 			Message: "the mode is enforce but no per-run cap is set in the project config or here; the run would halt (no_cap)"})
@@ -128,7 +125,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 
 // branchNote says, when the file is a checkout's and its branch isn't the
 // default branch, that the runner reads policy from the default branch's file
-// and this file can only tighten it. "" when the file isn't in a checkout or
+// and this file can only tighten it. "" when the file isn't in a checkout, is on a detached HEAD or
 // the default branch isn't known locally.
 func branchNote(ctx context.Context, path string) string {
 	dir := filepath.Dir(path)
@@ -150,10 +147,10 @@ func branchNote(ctx context.Context, path string) string {
 		return ""
 	}
 	if cur == "" {
-		cur = "a detached HEAD"
-	} else {
-		cur = "branch " + cur
+		// A detached HEAD (a CI checkout) is no branch to speak of.
+		return ""
 	}
+	cur = "branch " + cur
 	return fmt.Sprintf("this is %s, not the default branch (%s): runs read the budget policy from %s's fugaro.yaml, "+
 		"which this validation can't see; this file can only tighten it", cur, def, def)
 }
@@ -190,7 +187,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings = append(problems, bp...), bw
 				if lc != nil && lc.Name == cfg.Project {
 					if n := branchNote(cmd.Context(), path); n != "" {
-						warnings = append(warnings, config.Problem{Message: n})
+						warnings = append(warnings, config.Problem{Path: "branch", Message: n})
 					}
 				}
 			} else if name := selectedProjectName(cmd.Context()); name != "" {
