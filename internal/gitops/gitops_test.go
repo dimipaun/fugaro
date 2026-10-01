@@ -591,3 +591,19 @@ func TestGitEnvStripsModelCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
+	_, remote := setup(t)
+	dir := filepath.Join(t.TempDir(), "w")
+	repo, err := OpenOrClone(ctx, dir, remote, IdentityEnv(), ModelCredentialVars...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.StripEnv) != len(ModelCredentialVars) {
+		t.Fatalf("StripEnv = %v", repo.StripEnv)
+	}
+	again, _ := OpenOrClone(ctx, dir, remote, nil, "X")
+	if len(again.StripEnv) != 1 {
+		t.Fatalf("an existing checkout's StripEnv = %v", again.StripEnv)
+	}
+}

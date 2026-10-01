@@ -15,6 +15,16 @@ import (
 // owned by the agent's user, because the runner is not root.
 const ManagedSettingsPath = "/etc/claude-code/managed-settings.json"
 
+// ManagedSettingsTmpPattern names the temporary file WriteManagedSettings
+// writes beside the settings; a crash can leave one behind.
+const ManagedSettingsTmpPattern = ".managed-settings-*.tmp"
+
+// IsManagedSettingsTmp reports whether name is such a leftover.
+func IsManagedSettingsTmp(name string) bool {
+	ok, _ := filepath.Match(ManagedSettingsTmpPattern, name)
+	return ok
+}
+
 // deniedWebTools are denied in the managed settings with a gateway: their
 // server-side use is billed as input that a request body doesn't bound, so
 // the gateway refuses it anyway; denying them keeps the agent from trying.
@@ -52,7 +62,7 @@ func WriteManagedSettings(path string, env map[string]string, denyWeb bool) erro
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".managed-settings-*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), ManagedSettingsTmpPattern)
 	if err != nil {
 		return err
 	}
@@ -82,14 +92,13 @@ func WriteManagedSettings(path string, env map[string]string, denyWeb bool) erro
 	return nil
 }
 
-// routingEnvKeys are the settings env variables that would send Claude
+// routingEnvKeys (and any CLAUDE_CODE_USE_* key, which picks a provider) are the settings env variables that would send Claude
 // Code's model calls, or its credentials, somewhere other than Fugaro's
 // gateway. They are compared in upper case, so no_proxy is covered too.
 var routingEnvKeys = []string{
 	"ANTHROPIC_BASE_URL", "ANTHROPIC_VERTEX_BASE_URL", "ANTHROPIC_BEDROCK_BASE_URL",
 	"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-	"CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_FOUNDRY",
-	"CLAUDE_CODE_SKIP_VERTEX_AUTH", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+	"CLAUDE_CODE_SKIP_VERTEX_AUTH", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
 }
 
 // RoutingKeys lists what a settings file sets that would reroute Claude
@@ -119,7 +128,7 @@ func RoutingKeys(settings []byte) ([]string, error) {
 			continue // not an object: Claude Code has no env to apply
 		}
 		for name := range env {
-			if up := strings.ToUpper(name); slices.Contains(routingEnvKeys, up) && !slices.Contains(found, up) {
+			if up := strings.ToUpper(name); (slices.Contains(routingEnvKeys, up) || strings.HasPrefix(up, "CLAUDE_CODE_USE_")) && !slices.Contains(found, up) {
 				found = append(found, up)
 			}
 		}

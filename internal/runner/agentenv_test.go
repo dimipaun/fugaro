@@ -295,3 +295,40 @@ func TestRepoSettingsIgnoredWithoutGateway(t *testing.T) {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
+
+func TestStaleManagedTmpFileIgnoredOtherEntriesRefused(t *testing.T) {
+	onGateway(t)
+	h := newHarness(t, "", nil)
+	dir := filepath.Dir(h.deps.ManagedSettingsPath)
+	stale := filepath.Join(dir, ".managed-settings-123.tmp")
+	if err := os.WriteFile(stale, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a leftover temp file refused the run: %+v, %v", rec, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("the leftover was not removed: %v", err)
+	}
+	h2 := newHarness(t, "", nil)
+	other := filepath.Join(filepath.Dir(h2.deps.ManagedSettingsPath), ".other.tmp")
+	if err := os.WriteFile(other, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err := h2.run(t); err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, ".other.tmp") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+func TestPinsWarningLoggedOnce(t *testing.T) {
+	h := newHarness(t, pinnedConfig(t), nil)
+	h.deps.ManagedSettingsPath = filepath.Join(t.TempDir(), "absent", "managed-settings.json")
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	if _, err := h.run(t, implement("feature"), review("revise", 1), idle, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(logs.String(), "managed settings failed"); n != 1 {
+		t.Fatalf("the warning was logged %d times", n)
+	}
+}

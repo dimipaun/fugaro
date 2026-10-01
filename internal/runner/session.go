@@ -197,7 +197,7 @@ type restored struct {
 var sessionGit = func(ctx context.Context, repo *gitops.Repo, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repo.Dir
-	cmd.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), repo.Env...)
+	cmd.Env = repo.Environ()
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

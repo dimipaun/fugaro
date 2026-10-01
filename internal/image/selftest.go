@@ -211,6 +211,7 @@ func checkCheckout(ctx context.Context, spec SelftestSpec, add func(string, bool
 		add("checkout", false, "%v", err)
 		return false
 	}
+	repo.StripEnv = gitops.ModelCredentialVars
 	head, err := repo.HeadSHA(ctx)
 	if err != nil || head != spec.Commit {
 		add("checkout", false, "%s is at %s, want %s (%v)", spec.RepoDir, head, spec.Commit, err)

@@ -50,6 +50,11 @@ func IdentityEnv() []string {
 	return out
 }
 
+// ModelCredentialVars are the variables the runner keeps out of every git
+// call (Repo.StripEnv): a command an agent-written .git/config makes git
+// run must never see the model credential.
+var ModelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
+
 // Repo is a git checkout. Env is added to the process environment for every git call.
 type Repo struct {
 	Dir string
@@ -70,8 +75,9 @@ func Open(dir string, env []string) (*Repo, error) {
 
 // OpenOrClone returns the checkout at dir, cloning remote into it first if
 // dir has none. In the container image the checkout is baked in.
-func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, error) {
+func OpenOrClone(ctx context.Context, dir, remote string, env []string, strip ...string) (*Repo, error) {
 	if r, err := Open(dir, env); err == nil {
+		r.StripEnv = strip
 		return r, nil
 	}
 	if remote == "" {
@@ -80,11 +86,11 @@ func OpenOrClone(ctx context.Context, dir, remote string, env []string) (*Repo, 
 	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 		return nil, err
 	}
-	parent := &Repo{Dir: filepath.Dir(dir), Env: env}
+	parent := &Repo{Dir: filepath.Dir(dir), Env: env, StripEnv: strip}
 	if _, err := parent.git(ctx, "clone", "--quiet", remote, dir); err != nil {
 		return nil, err
 	}
-	return &Repo{Dir: dir, Env: env}, nil
+	return &Repo{Dir: dir, Env: env, StripEnv: strip}, nil
 }
 
 // noHooks is prepended to every runner-owned git invocation. The runner's
@@ -102,6 +108,9 @@ func (r *Repo) git(ctx context.Context, args ...string) (string, error) {
 
 // processEnv is the environment of every git call: the process's, then
 // Env, without the variables in StripEnv.
+// Environ is the environment of every git call on r.
+func (r *Repo) Environ() []string { return r.processEnv() }
+
 func (r *Repo) processEnv() []string {
 	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
 	if len(r.StripEnv) == 0 {

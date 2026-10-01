@@ -14,7 +14,7 @@ import (
 // modelCredentialVars are kept out of the environment of every git call the
 // runner makes, so a command an agent-written .git/config makes git run
 // (core.fsmonitor, a filter driver) never sees the model credential.
-var modelCredentialVars = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_AUTH_TOKEN"}
+var modelCredentialVars = gitops.ModelCredentialVars
 
 // strip keeps the model credentials out of repo's git calls and returns it.
 func strip(repo *gitops.Repo) *gitops.Repo {
@@ -91,6 +91,10 @@ func (r *run) writeManagedSettings(pins map[string]string) error {
 	case gw != nil:
 		return fmt.Errorf("writing Claude Code's managed settings: %w", err)
 	default:
+		if r.warnedSettings {
+			return nil
+		}
+		r.warnedSettings = true
 		r.d.Log.Warn("writing Claude Code's managed settings failed; the model pins apply through the environment only", "err", r.redact(err.Error()))
 		return nil
 	}
@@ -119,6 +123,13 @@ func (r *run) checkSettingsRouting() string {
 		}
 		if err != nil {
 			return fmt.Sprintf("%s can't be checked (%v), so it might route Claude Code around Fugaro's gateway; remove it", name, err)
+		}
+		if filepath.Dir(f) == managedDir && fi.Mode().IsRegular() && agent.IsManagedSettingsTmp(filepath.Base(f)) {
+			// What a crashed write of our own left behind: nothing reads
+			// it, and the next write would not clear it.
+			if os.Remove(f) == nil {
+				continue
+			}
 		}
 		if filepath.Dir(f) == managedDir {
 			return fmt.Sprintf("%s is in Claude Code's managed settings directory, where only Fugaro's own file may be; remove it", name)

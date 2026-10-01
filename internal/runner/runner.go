@@ -113,15 +113,16 @@ type run struct {
 	// stageExtra, when set, is called once after each stage's agent
 	// returns, and says what the gateway saw: violations of the stage's
 	// rules (the first fails the stage) and its token count.
-	stageExtra   func(stage string) (violations []string, tokens int64)
-	provider     gitprov.Provider
-	providerKind string
-	providerFrom string          // where providerKind came from, for mismatch errors
-	credURL      string          // scheme://host of an HTTPS origin; "" when git needs no token
-	auth         gitprov.GitAuth // current git credentials
-	authWarned   bool            // whether a mid-run refresh failure has already been logged
-	tail         *LogTail        // output of the first failed stage, for the draft PR
-	lock         *lock.Lock      // the branch lock, while held
+	warnedSettings bool // the pins-only managed settings warning was logged
+	stageExtra     func(stage string) (violations []string, tokens int64)
+	provider       gitprov.Provider
+	providerKind   string
+	providerFrom   string          // where providerKind came from, for mismatch errors
+	credURL        string          // scheme://host of an HTTPS origin; "" when git needs no token
+	auth           gitprov.GitAuth // current git credentials
+	authWarned     bool            // whether a mid-run refresh failure has already been logged
+	tail           *LogTail        // output of the first failed stage, for the draft PR
+	lock           *lock.Lock      // the branch lock, while held
 	// owned is whether this execution owns result.json: it created the
 	// first record, or found one naming itself. Until then the record is
 	// only ever created if absent, never overwritten (design §4.7).
@@ -684,7 +685,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("building git credentials: %w", err)
 	}
-	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars))
+	repo, err := gitops.OpenOrClone(ctx, r.d.WorkDir, r.d.Remote, gitops.WithVars(gitops.IdentityEnv(), cloneVars), modelCredentialVars...)
 	if err != nil {
 		return fmt.Errorf("opening checkout %s: %w", r.d.WorkDir, err)
 	}

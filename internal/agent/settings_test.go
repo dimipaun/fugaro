@@ -225,3 +225,12 @@ func TestSettingsFiles(t *testing.T) {
 		t.Errorf("no CLAUDE_CONFIG_DIR and no managed directory: %v, %v", got, err)
 	}
 }
+
+func TestRoutingKeysAnyProviderSwitchAndAllProxy(t *testing.T) {
+	for _, k := range []string{"CLAUDE_CODE_USE_MANTLE", "claude_code_use_anything", "ALL_PROXY", "all_proxy"} {
+		got, err := RoutingKeys([]byte(`{"env":{"` + k + `":"1"}}`))
+		if err != nil || len(got) != 1 || got[0] != strings.ToUpper(k) {
+			t.Errorf("%s: %v, %v", k, got, err)
+		}
+	}
+}
