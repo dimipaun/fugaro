@@ -12,6 +12,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 
+	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -379,9 +380,7 @@ func validateBudget(b *Budget) []Problem {
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
-	switch b.Mode {
-	case "", BudgetOff, BudgetObserve, BudgetEnforce:
-	default:
+	if b.Mode != "" && !policy.ValidMode(b.Mode) {
 		add("budget.mode", "%q must be off, observe or enforce", b.Mode)
 	}
 	if m, err := pricing.FromUSD(b.PerRunUSD); err != nil {
@@ -397,16 +396,26 @@ func validateBudget(b *Budget) []Problem {
 	}
 	for i, m := range b.AllowedModels {
 		path := fmt.Sprintf("budget.allowed_models[%d]", i)
-		switch {
-		case m == "":
-			add(path, "must not be empty")
-		case len(m) > 100:
-			add(path, "must be at most 100 characters")
-		case strings.ContainsFunc(m, unicode.IsSpace):
-			add(path, "must not contain whitespace")
-		case pricing.IsAlias(m):
-			add(path, "%s is an alias: name an explicit model ID such as claude-sonnet-5-5", m)
+		if msg := CheckModelID(m); msg != "" {
+			add(path, "%s", msg)
 		}
 	}
 	return ps
+}
+
+// CheckModelID is the reason m is not usable in an allow-list of models, or
+// "" when it is: an explicit model ID, not an alias. fugaro.yaml and the
+// project config share it.
+func CheckModelID(m string) string {
+	switch {
+	case m == "":
+		return "must not be empty"
+	case len(m) > 100:
+		return "must be at most 100 characters"
+	case strings.ContainsFunc(m, unicode.IsSpace):
+		return "must not contain whitespace"
+	case pricing.IsAlias(m):
+		return fmt.Sprintf("%s is an alias: name an explicit model ID such as claude-sonnet-5-5", m)
+	}
+	return ""
 }

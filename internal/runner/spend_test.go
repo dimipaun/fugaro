@@ -1,20 +1,22 @@
 package runner
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
-func TestSpendFromEnv(t *testing.T) {
-	env := func(kv ...string) func(string) string {
-		m := map[string]string{}
-		for i := 0; i < len(kv); i += 2 {
-			m[kv[i]] = kv[i+1]
-		}
-		return func(k string) string { return m[k] }
+func env(kv ...string) func(string) string {
+	m := map[string]string{}
+	for i := 0; i < len(kv); i += 2 {
+		m[kv[i]] = kv[i+1]
 	}
+	return func(k string) string { return m[k] }
+}
+
+func TestSpendFromEnv(t *testing.T) {
 	const sonnet = `{"claude-sonnet-5-5":{"input_per_m":30,"output_per_m":150}}`
 	for name, tc := range map[string]struct {
 		env     func(string) string
@@ -73,5 +75,41 @@ func TestSpendFromEnv(t *testing.T) {
 	}
 	if m, ok := s.Prices.Lookup("claude-haiku-4-5"); !ok || m.Rates.InputPerM != 1 {
 		t.Fatalf("haiku = %+v, %v", m, ok)
+	}
+}
+
+func TestSpendFromEnvPolicyKeys(t *testing.T) {
+	for name, tc := range map[string]struct {
+		env    func(string) string
+		tokens int64
+		models []string
+		err    string
+	}{
+		"neither":          {env(BudgetModeEnv, "observe"), 0, nil, ""},
+		"tokens":           {env(MaxRunTokensEnv, "250000"), 250000, nil, ""},
+		"both, mode off":   {env(BudgetModeEnv, "off", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1,claude-b-2"), 7, []string{"claude-a-1", "claude-b-2"}, ""},
+		"enforce and both": {env(BudgetModeEnv, "enforce", MaxRunUSDEnv, "5", MaxRunTokensEnv, "7", AllowedModelsEnv, "claude-a-1"), 7, []string{"claude-a-1"}, ""},
+		"zero tokens":      {env(MaxRunTokensEnv, "0"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"negative tokens":  {env(MaxRunTokensEnv, "-5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"float tokens":     {env(MaxRunTokensEnv, "1.5"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"NaN tokens":       {env(MaxRunTokensEnv, "NaN"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"word tokens":      {env(MaxRunTokensEnv, "lots"), 0, nil, "FUGARO_MAX_RUN_TOKENS"},
+		"empty entry":      {env(AllowedModelsEnv, "claude-a-1,,claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"only a comma":     {env(AllowedModelsEnv, ","), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"alias":            {env(AllowedModelsEnv, "sonnet"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+		"space":            {env(AllowedModelsEnv, "claude-a-1, claude-b-2"), 0, nil, "FUGARO_ALLOWED_MODELS"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := SpendFromEnv(tc.env)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("err = %v, want %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil || s.MaxRunTokens != tc.tokens || !slices.Equal(s.AllowedModels, tc.models) || (tc.models == nil) != (s.AllowedModels == nil) {
+				t.Fatalf("spend = %+v, %v", s, err)
+			}
+		})
 	}
 }

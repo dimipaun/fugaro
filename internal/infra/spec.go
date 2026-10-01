@@ -49,6 +49,10 @@ const (
 	BudgetModeEnv  = runner.BudgetModeEnv
 	MaxRunUSDEnv   = runner.MaxRunUSDEnv
 	ModelPricesEnv = runner.ModelPricesEnv
+	// The ceiling's token cap and allow-list of models, set on every
+	// workflow job whatever the mode.
+	MaxRunTokensEnv  = runner.MaxRunTokensEnv
+	AllowedModelsEnv = runner.AllowedModelsEnv
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
@@ -552,6 +556,16 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 // not off: the mode, the cap when there is one, and the price overrides
 // when there are any. The check job calls no model and gets none of it.
 func budgetEnv(lc *localcfg.Config, env map[string]string) error {
+	if b := lc.Budget; b != nil {
+		// The token cap and the allow-list hold whatever the mode, oauth's
+		// repositories included.
+		if b.MaxRunTokens > 0 {
+			env[MaxRunTokensEnv] = strconv.FormatInt(b.MaxRunTokens, 10)
+		}
+		if b.AllowedModels != nil {
+			env[AllowedModelsEnv] = strings.Join(b.AllowedModels, ",")
+		}
+	}
 	mode := lc.BudgetMode()
 	if mode == localcfg.BudgetOff {
 		return nil

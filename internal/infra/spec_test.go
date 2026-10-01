@@ -843,7 +843,7 @@ func budgetInputs(t *testing.T, block string) Inputs {
 
 func onlyBudgetEnv(env map[string]string) map[string]string {
 	got := map[string]string{}
-	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv} {
+	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv, MaxRunTokensEnv, AllowedModelsEnv} {
 		if v, ok := env[k]; ok {
 			got[k] = v
 		}
@@ -913,7 +913,7 @@ func TestWorkflowEnvBudgetObserveNoCap(t *testing.T) {
 
 // The check job calls no model, so it gets none of the budget.
 func TestCheckJobHasNoBudgetEnv(t *testing.T) {
-	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 9, allowed_models: [claude-sonnet-5-5] }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -922,5 +922,53 @@ func TestCheckJobHasNoBudgetEnv(t *testing.T) {
 	}
 	if got := onlyBudgetEnv(rs.Check.Env); len(got) != 0 {
 		t.Errorf("check env has %v", got)
+	}
+}
+
+func TestWorkflowEnvPolicyKeys(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5, max_run_tokens: 500000, allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		if w.Env[MaxRunTokensEnv] != "500000" || w.Env[AllowedModelsEnv] != "claude-sonnet-5-5,claude-haiku-4-5" {
+			t.Errorf("%s env = %v", w.Name, onlyBudgetEnv(w.Env))
+		}
+		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		if err != nil || s.MaxRunTokens != 500000 || len(s.AllowedModels) != 2 {
+			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+		}
+	}
+	// Left out, left out: no zero token cap, no empty list.
+	rs, err = Repo(budgetInputs(t, "budget: { mode: observe }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		for _, k := range []string{MaxRunTokensEnv, AllowedModelsEnv} {
+			if _, ok := w.Env[k]; ok {
+				t.Errorf("%s sets %s", w.Name, k)
+			}
+		}
+	}
+}
+
+// The token cap and the allow-list hold with the dollar budget off, which
+// is where an oauth repository stays.
+func TestWorkflowEnvOAuthGetsTokenCap(t *testing.T) {
+	in := budgetInputs(t, "budget: { max_run_tokens: 100, allowed_models: [claude-sonnet-5-5] }\n")
+	in.Cfg.Agent.Auth = "oauth"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[MaxRunTokensEnv] != "100" || got[AllowedModelsEnv] != "claude-sonnet-5-5" || got[BudgetModeEnv] != "" {
+			t.Errorf("%s env = %v", w.Name, got)
+		}
 	}
 }

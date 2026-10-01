@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/dimipaun/fugaro/internal/policy"
 )
 
 // Config is a parsed fugaro.yaml.
@@ -34,9 +36,9 @@ type Config struct {
 
 // Budget modes, as the project config spells them.
 const (
-	BudgetOff     = "off"
-	BudgetObserve = "observe"
-	BudgetEnforce = "enforce"
+	BudgetOff     = policy.ModeOff
+	BudgetObserve = policy.ModeObserve
+	BudgetEnforce = policy.ModeEnforce
 )
 
 // Budget is fugaro.yaml's budget: block. Every key is optional; a key left

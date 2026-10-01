@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
@@ -14,6 +16,11 @@ const (
 	BudgetModeEnv  = "FUGARO_BUDGET_MODE"
 	MaxRunUSDEnv   = "FUGARO_MAX_RUN_USD"
 	ModelPricesEnv = pricing.EnvName
+	// MaxRunTokensEnv is the ceiling on a run's total tokens, and
+	// AllowedModelsEnv the comma-separated models a run may use. Both are
+	// set whatever the budget mode, on every workflow job.
+	MaxRunTokensEnv  = "FUGARO_MAX_RUN_TOKENS"
+	AllowedModelsEnv = "FUGARO_ALLOWED_MODELS"
 )
 
 // Spend is the job's budget: the mode, the per-run cap and the prices the
@@ -22,6 +29,12 @@ type Spend struct {
 	Mode   string         // off | observe | enforce
 	Cap    pricing.Micros // 0: none
 	Prices *pricing.Table // the built-in table with the owner's overrides; nil when off
+	// MaxRunTokens is the ceiling's token cap; 0: none. It applies whatever
+	// the mode.
+	MaxRunTokens int64
+	// AllowedModels is the ceiling's allow-list; nil: none set. A non-nil
+	// list is a restriction even when empty, so test it with != nil.
+	AllowedModels []string
 }
 
 // On reports whether the budget accounts for spend (observe or enforce).
@@ -31,6 +44,42 @@ func (s Spend) On() bool { return s.Mode == "observe" || s.Mode == "enforce" }
 // off, is off, whatever else is set. A malformed value is an error, which
 // the runner reports as an infra_error at bootstrap: never a silent off.
 func SpendFromEnv(getenv func(string) string) (Spend, error) {
+	tokens, models, err := policyFromEnv(getenv)
+	if err != nil {
+		return Spend{}, err
+	}
+	s, err := spendFromEnv(getenv)
+	if err != nil {
+		return Spend{}, err
+	}
+	s.MaxRunTokens, s.AllowedModels = tokens, models
+	return s, nil
+}
+
+// policyFromEnv reads the token cap and the allow-list, which hold whatever
+// the budget mode is.
+func policyFromEnv(getenv func(string) string) (int64, []string, error) {
+	var tokens int64
+	if v := getenv(MaxRunTokensEnv); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, nil, fmt.Errorf("%s %q: it must be a whole number of tokens, more than 0", MaxRunTokensEnv, v)
+		}
+		tokens = n
+	}
+	var models []string
+	if v := getenv(AllowedModelsEnv); v != "" {
+		for _, m := range strings.Split(v, ",") {
+			if msg := config.CheckModelID(m); msg != "" {
+				return 0, nil, fmt.Errorf("%s %q: model %q %s", AllowedModelsEnv, v, m, msg)
+			}
+			models = append(models, m)
+		}
+	}
+	return tokens, models, nil
+}
+
+func spendFromEnv(getenv func(string) string) (Spend, error) {
 	switch mode := getenv(BudgetModeEnv); mode {
 	case "", "off":
 		return Spend{Mode: "off"}, nil

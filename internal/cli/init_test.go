@@ -1407,3 +1407,28 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 		t.Fatalf("a refused repository was planned: %q", r.calls(t))
 	}
 }
+
+// The ceiling's new keys reach the job env that init --repo computes.
+func TestInitRepoPassesPolicyEnv(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	out, _, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"FUGARO_MAX_RUN_TOKENS", "123456", "FUGARO_ALLOWED_MODELS", "claude-sonnet-5-5"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("print-vars output lacks %q:\n%s", want, out)
+		}
+	}
+}
