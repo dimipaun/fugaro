@@ -15,9 +15,11 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 const (
@@ -1249,5 +1251,72 @@ func TestInitWriteConfigChecksName(t *testing.T) {
 	err = ir.writeConfig(lc, spec, infra.InstallationOutputs{ProjectName: "borealis", RunsBucket: initRunsBucket}, r.cfg, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "borealis") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// A Vertex workflow can't be enforced yet: init --repo refuses before any
+// plan or cloud call, while observe and off pass.
+func TestInitRepoRefusesVertexEnforce(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	path := writeProject(t, "aurora", "proj-1234")
+	cfgFile := func(auth string) *config.Config {
+		t.Helper()
+		c, err := config.Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	withBudget := func(block string) *localcfg.Config {
+		t.Helper()
+		lc, err := localcfg.Load(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := lc.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		lc, err = localcfg.Parse(append(data, block...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return lc
+	}
+	vertex, apiKey := cfgFile("vertex"), cfgFile("api-key")
+	enforce := withBudget("budget: { mode: enforce, per_run_usd: 5 }\n")
+	err := checkVertexBudget(enforce, vertex)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet: use budget.mode observe or off") {
+		t.Fatalf("vertex + enforce: exit %d, err %v", ExitCode(err), err)
+	}
+	for name, tc := range map[string]struct {
+		lc  *localcfg.Config
+		cfg *config.Config
+	}{
+		"vertex + observe":  {withBudget("budget: { mode: observe }\n"), vertex},
+		"vertex + off":      {withBudget("budget: { mode: off }\n"), vertex},
+		"vertex + none":     {withBudget(""), vertex},
+		"api-key + enforce": {enforce, apiKey},
+	} {
+		if err := checkVertexBudget(tc.lc, tc.cfg); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+
+	// Through the command, before any cloud call (there is no rig here, so
+	// a call would fail differently).
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(data, "budget: { mode: enforce, per_run_usd: 5 }\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
+	t.Chdir(t.TempDir())
+	_, _, err = execute(t, "init", "--repo", "--project", "aurora", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
+		t.Fatalf("init --repo: exit %d, err %v", ExitCode(err), err)
 	}
 }

@@ -44,6 +44,11 @@ const (
 	// ComputePricesEnv is <vcpu>,<gib> per second, from the local config's
 	// override for the region, so the runner's report agrees with ls.
 	ComputePricesEnv = "FUGARO_COMPUTE_PRICES"
+	// The project's budget, which the runner reads (runner.SpendFromEnv):
+	// the mode, the per-run cap in US dollars, and the price overrides.
+	BudgetModeEnv  = runner.BudgetModeEnv
+	MaxRunUSDEnv   = runner.MaxRunUSDEnv
+	ModelPricesEnv = runner.ModelPricesEnv
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
@@ -502,6 +507,9 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	if p, ok := lc.PriceOverride(lc.Region); ok {
 		ws.Env[ComputePricesEnv] = formatPrice(p.VCPUSecondUSD) + "," + formatPrice(p.GiBSecondUSD)
 	}
+	if err := budgetEnv(lc, ws.Env); err != nil {
+		return WorkflowSpec{}, userErr("%v", err)
+	}
 
 	var collisions []string
 	mount := func(logical, env string) {
@@ -538,6 +546,32 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, userErr("workflow %s: secret env %s collides with a variable the platform sets", name, strings.Join(slices.Compact(collisions), ", "))
 	}
 	return ws, nil
+}
+
+// budgetEnv adds the project's budget to a workflow job's env when it is
+// not off: the mode, the cap when there is one, and the price overrides
+// when there are any. The check job calls no model and gets none of it.
+func budgetEnv(lc *localcfg.Config, env map[string]string) error {
+	mode := lc.BudgetMode()
+	if mode == localcfg.BudgetOff {
+		return nil
+	}
+	o, err := lc.Overrides()
+	if err != nil {
+		return err
+	}
+	env[BudgetModeEnv] = mode
+	if usd := lc.Budget.PerRunUSD; usd > 0 {
+		env[MaxRunUSDEnv] = formatPrice(usd)
+	}
+	prices, err := o.Env()
+	if err != nil {
+		return err
+	}
+	if prices != "" {
+		env[ModelPricesEnv] = prices
+	}
+	return nil
 }
 
 // formatPrice is the shortest decimal that parses back to v.

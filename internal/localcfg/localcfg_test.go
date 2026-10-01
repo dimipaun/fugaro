@@ -439,3 +439,101 @@ func TestRecordBucketURL(t *testing.T) {
 		}
 	}
 }
+
+func TestBudgetDefaultsOff(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.BudgetMode() != "off" || c.Budget != nil {
+		t.Fatalf("no block: mode %q, budget %+v", c.BudgetMode(), c.Budget)
+	}
+	if o, err := c.Overrides(); err != nil || len(o) != 0 {
+		t.Fatalf("overrides = %v, %v", o, err)
+	}
+	c, err = Parse([]byte(sample + "budget: { per_run_usd: 5 }\n"))
+	if err != nil || c.BudgetMode() != "off" {
+		t.Fatalf("empty mode: %q, %v", c.BudgetMode(), err)
+	}
+	for _, mode := range []string{"off", "observe", "enforce"} {
+		c, err := Parse([]byte(sample + "budget: { mode: " + mode + ", per_run_usd: 5 }\n"))
+		if err != nil || c.BudgetMode() != mode || c.Budget.PerRunUSD != 5 {
+			t.Fatalf("%s: %q, %v", mode, c.BudgetMode(), err)
+		}
+	}
+	// observe accounts only without a cap.
+	if _, err := Parse([]byte(sample + "budget: { mode: observe }\n")); err != nil {
+		t.Fatalf("observe without a cap: %v", err)
+	}
+}
+
+func TestBudgetValidation(t *testing.T) {
+	for name, tc := range map[string]struct{ yaml, msg string }{
+		"unknown mode":        {"budget: { mode: strict, per_run_usd: 5 }\n", "budget.mode"},
+		"enforce without cap": {"budget: { mode: enforce }\n", "per_run_usd"},
+		"enforce zero cap":    {"budget: { mode: enforce, per_run_usd: 0 }\n", "per_run_usd"},
+		"negative cap":        {"budget: { mode: observe, per_run_usd: -1 }\n", "per_run_usd"},
+		"NaN cap":             {"budget: { mode: enforce, per_run_usd: .nan }\n", "per_run_usd"},
+		"infinite cap":        {"budget: { mode: enforce, per_run_usd: .inf }\n", "per_run_usd"},
+		"cap over 100000":     {"budget: { mode: enforce, per_run_usd: 100000.01 }\n", "per_run_usd"},
+		"unknown field":       {"budget: { mode: off, per_run: 5 }\n", "per_run"},
+		"price without rates": {"model_prices: { claude-sonnet-5-5: { cache_read: 0.1 } }\n", "input_per_m"},
+		"negative price":      {"model_prices: { claude-sonnet-5-5: { input_per_m: -1, output_per_m: 10 } }\n", "claude-sonnet-5-5"},
+		"alias key":           {"model_prices: { sonnet: { input_per_m: 1, output_per_m: 10 } }\n", "alias"},
+		"unknown price field": {"model_prices: { claude-sonnet-5-5: { input_per_m: 1, output_per_m: 10, tokens: 3 } }\n", "tokens"},
+		"two keys one model":  {"model_prices: { claude-haiku-4-5: { input_per_m: 1, output_per_m: 5 }, 'claude-haiku-4-5@20251001': { input_per_m: 1, output_per_m: 5 } }\n", "both price"},
+		"half a tier":         {"model_prices: { claude-x-1: { input_per_m: 1, output_per_m: 5, long_context: { above_input_tokens: 200000, input_per_m: 2 } } }\n", "long_context"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Parse([]byte(sample + tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.msg) {
+				t.Fatalf("err = %v, want it to mention %q", err, tc.msg)
+			}
+		})
+	}
+	if _, err := Parse([]byte(sample + "budget: { mode: enforce, per_run_usd: 100000 }\n")); err != nil {
+		t.Fatalf("the largest cap: %v", err)
+	}
+}
+
+func TestModelPricesDefaults(t *testing.T) {
+	c, err := Parse([]byte(sample + `model_prices:
+  claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 }
+  claude-mine-1:
+    input_per_m: 1
+    output_per_m: 5
+    cache_write_5m: 1.5
+    cache_read: 0
+    long_context: { above_input_tokens: 200000, input_per_m: 2, output_per_m: 8 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	o, err := c.Overrides()
+	if err != nil || len(o) != 2 {
+		t.Fatalf("overrides = %v, %v", o, err)
+	}
+	r := o["claude-sonnet-5-5"]
+	if r.InputPerM != 3 || r.OutputPerM != 15 || r.CacheWrite5m != 1.25 || r.CacheWrite1h != 2 || r.CacheRead != 0.1 || r.WebSearchPer1k != 10 || r.LongContext != nil {
+		t.Fatalf("defaults = %+v", r)
+	}
+	r = o["claude-mine-1"]
+	if r.CacheWrite5m != 1.5 || r.CacheWrite1h != 2 || r.CacheRead != 0 || r.WebSearchPer1k != 10 {
+		t.Fatalf("explicit values = %+v", r)
+	}
+	if lc := r.LongContext; lc == nil || lc.AboveInputTokens != 200000 || lc.InputPerM != 2 || lc.OutputPerM != 8 {
+		t.Fatalf("long_context = %+v", r.LongContext)
+	}
+	// What the config says survives a write and a read.
+	data, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := Parse(data)
+	if err != nil {
+		t.Fatalf("round trip: %v\n%s", err, data)
+	}
+	if o2, err := back.Overrides(); err != nil || len(o2) != 2 || o2["claude-mine-1"].CacheRead != 0 {
+		t.Fatalf("round trip overrides = %v, %v", o2, err)
+	}
+}

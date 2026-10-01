@@ -827,3 +827,100 @@ func TestBucketNameIsRunsBucketName(t *testing.T) {
 		}
 	}
 }
+
+// budgetInputs is the webapp with the budget block (and prices) appended
+// to its project config.
+func budgetInputs(t *testing.T, block string) Inputs {
+	t.Helper()
+	in := webappInputs(t)
+	lc, err := in.LC.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.LC = parseLC(t, string(lc)+block)
+	return in
+}
+
+func onlyBudgetEnv(env map[string]string) map[string]string {
+	got := map[string]string{}
+	for _, k := range []string{BudgetModeEnv, MaxRunUSDEnv, ModelPricesEnv} {
+		if v, ok := env[k]; ok {
+			got[k] = v
+		}
+	}
+	return got
+}
+
+func TestWorkflowEnvBudgetOff(t *testing.T) {
+	for name, block := range map[string]string{
+		"no block":   "",
+		"mode off":   "budget: { mode: off, per_run_usd: 5 }\n",
+		"empty mode": "budget: { per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rs, err := Repo(budgetInputs(t, block))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range rs.Workflows {
+				if got := onlyBudgetEnv(w.Env); len(got) != 0 {
+					t.Errorf("%s has %v with the budget off", w.Name, got)
+				}
+			}
+		})
+	}
+}
+
+func TestWorkflowEnvBudgetEnforce(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, `budget: { mode: enforce, per_run_usd: 12.5 }
+model_prices:
+  claude-sonnet-5-5: { input_per_m: 30, output_per_m: 150 }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rs.Workflows) == 0 {
+		t.Fatal("no workflows")
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if got[BudgetModeEnv] != "enforce" || got[MaxRunUSDEnv] != "12.5" || got[ModelPricesEnv] == "" {
+			t.Errorf("%s env = %v", w.Name, got)
+		}
+		// The runner reads exactly what init wrote.
+		s, err := runner.SpendFromEnv(func(k string) string { return w.Env[k] })
+		if err != nil || s.Mode != "enforce" || s.Cap != 12_500_000 {
+			t.Fatalf("%s: SpendFromEnv = %+v, %v", w.Name, s, err)
+		}
+		if m, _ := s.Prices.Lookup("claude-sonnet-5-5"); m.Rates.InputPerM != 30 || m.Rates.CacheWrite5m != 1.25 {
+			t.Errorf("%s: prices = %+v", w.Name, m.Rates)
+		}
+	}
+}
+
+func TestWorkflowEnvBudgetObserveNoCap(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: observe }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		got := onlyBudgetEnv(w.Env)
+		if len(got) != 1 || got[BudgetModeEnv] != "observe" {
+			t.Errorf("%s env = %v: want only the mode", w.Name, got)
+		}
+	}
+}
+
+// The check job calls no model, so it gets none of the budget.
+func TestCheckJobHasNoBudgetEnv(t *testing.T) {
+	rs, err := Repo(budgetInputs(t, "budget: { mode: enforce, per_run_usd: 5 }\nmodel_prices: { claude-sonnet-5-5: { input_per_m: 3, output_per_m: 15 } }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil {
+		t.Fatal("no check job")
+	}
+	if got := onlyBudgetEnv(rs.Check.Env); len(got) != 0 {
+		t.Errorf("check env has %v", got)
+	}
+}

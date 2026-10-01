@@ -25,6 +25,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // Config is the local CLI config.
@@ -56,11 +57,133 @@ type Config struct {
 	LogView string `yaml:"log_view,omitempty"`
 	// SchedulerRegion is where the daily image check's Cloud Scheduler
 	// jobs live, which need not be the region the jobs run in.
-	SchedulerRegion string          `yaml:"scheduler_region,omitempty"`
-	User            string          `yaml:"user,omitempty"`
-	MaxParallel     int             `yaml:"max_parallel"`
-	Endpoints       Endpoints       `yaml:"endpoints,omitempty"`
-	Repos           map[string]Repo `yaml:"repos"`
+	SchedulerRegion string `yaml:"scheduler_region,omitempty"`
+	// Budget is the project's model spend guard (design §5.6); no block
+	// means off.
+	Budget *Budget `yaml:"budget,omitempty"`
+	// ModelPrices replace the built-in price of a model (or add one), by
+	// model ID, for the budget's accounting.
+	ModelPrices map[string]ModelPrice `yaml:"model_prices,omitempty"`
+	User        string                `yaml:"user,omitempty"`
+	MaxParallel int                   `yaml:"max_parallel"`
+	Endpoints   Endpoints             `yaml:"endpoints,omitempty"`
+	Repos       map[string]Repo       `yaml:"repos"`
+}
+
+// Budget modes.
+const (
+	BudgetOff     = "off"
+	BudgetObserve = "observe"
+	BudgetEnforce = "enforce"
+)
+
+// Budget is the project's per-run model spend guard.
+type Budget struct {
+	Mode      string  `yaml:"mode"`        // off | observe | enforce; "" is off
+	PerRunUSD float64 `yaml:"per_run_usd"` // enforce: 0 < x <= 100000; observe: >= 0
+}
+
+// ModelPrice is one model's prices, in US dollars per million tokens. A
+// field left out takes the list default (cache_write_5m 1.25, cache_write_1h
+// 2, cache_read 0.1, web_search_per_1k 10), never 0; input_per_m and
+// output_per_m are required.
+type ModelPrice struct {
+	InputPerM      *float64 `yaml:"input_per_m"`
+	OutputPerM     *float64 `yaml:"output_per_m"`
+	CacheWrite5m   *float64 `yaml:"cache_write_5m,omitempty"`
+	CacheWrite1h   *float64 `yaml:"cache_write_1h,omitempty"`
+	CacheRead      *float64 `yaml:"cache_read,omitempty"`
+	WebSearchPer1k *float64 `yaml:"web_search_per_1k,omitempty"`
+	// LongContext is the price of a call whose input passes a threshold,
+	// for a model with a long-context tier; an override without it
+	// replaces the model's tier with none.
+	LongContext *LongContext `yaml:"long_context,omitempty"`
+}
+
+// LongContext is a long-context price tier.
+type LongContext struct {
+	AboveInputTokens int64    `yaml:"above_input_tokens"`
+	InputPerM        *float64 `yaml:"input_per_m"`
+	OutputPerM       *float64 `yaml:"output_per_m"`
+}
+
+// BudgetMode is the budget's mode: "off" when there is no budget block or
+// its mode is empty.
+func (c *Config) BudgetMode() string {
+	if c.Budget == nil || c.Budget.Mode == "" {
+		return BudgetOff
+	}
+	return c.Budget.Mode
+}
+
+// Overrides are the model prices as the pricing package takes them, with
+// the list defaults applied to the fields left out.
+func (c *Config) Overrides() (pricing.Overrides, error) {
+	var errs []error
+	o := pricing.Overrides{}
+	for _, id := range slices.Sorted(maps.Keys(c.ModelPrices)) {
+		mp := c.ModelPrices[id]
+		if pricing.IsAlias(id) {
+			errs = append(errs, fmt.Errorf("model_prices: %q is an alias: key prices by a model ID (such as claude-sonnet-5-5)", id))
+			continue
+		}
+		if mp.InputPerM == nil || mp.OutputPerM == nil {
+			errs = append(errs, fmt.Errorf("model_prices.%s: input_per_m and output_per_m are required", id))
+			continue
+		}
+		or := func(p *float64, def float64) float64 {
+			if p == nil {
+				return def
+			}
+			return *p
+		}
+		r := pricing.Rates{
+			InputPerM: *mp.InputPerM, OutputPerM: *mp.OutputPerM,
+			CacheWrite5m:   or(mp.CacheWrite5m, pricing.DefaultCacheWrite5m),
+			CacheWrite1h:   or(mp.CacheWrite1h, pricing.DefaultCacheWrite1h),
+			CacheRead:      or(mp.CacheRead, pricing.DefaultCacheRead),
+			WebSearchPer1k: or(mp.WebSearchPer1k, pricing.DefaultWebSearchPer1k),
+		}
+		if t := mp.LongContext; t != nil {
+			if t.InputPerM == nil || t.OutputPerM == nil {
+				errs = append(errs, fmt.Errorf("model_prices.%s.long_context: input_per_m and output_per_m are required", id))
+				continue
+			}
+			r.LongContext = &pricing.Tier{AboveInputTokens: t.AboveInputTokens, InputPerM: *t.InputPerM, OutputPerM: *t.OutputPerM}
+		}
+		if err := r.Validate(); err != nil {
+			errs = append(errs, fmt.Errorf("model_prices.%s: %w", id, err))
+			continue
+		}
+		o[id] = r
+	}
+	if err := errors.Join(errs...); err != nil {
+		return nil, err
+	}
+	// Two keys naming one model, and anything else the table refuses.
+	if _, err := pricing.Embedded().With(o); err != nil {
+		return nil, fmt.Errorf("model_prices: %w", err)
+	}
+	return o, nil
+}
+
+// validateBudget checks the budget block and the model prices.
+func (c *Config) validateBudget(bad func(string, ...any)) {
+	if b := c.Budget; b != nil {
+		switch b.Mode {
+		case "", BudgetOff, BudgetObserve, BudgetEnforce:
+		default:
+			bad("budget.mode %q must be off, observe or enforce", b.Mode)
+		}
+		if _, err := pricing.FromUSD(b.PerRunUSD); err != nil {
+			bad("budget.per_run_usd %v: it must be a number from 0 to %d US dollars", b.PerRunUSD, pricing.MaxUSD)
+		} else if b.Mode == BudgetEnforce && b.PerRunUSD <= 0 {
+			bad("budget.per_run_usd must be more than 0 with budget.mode enforce (it is the per-run cap)")
+		}
+	}
+	if _, err := c.Overrides(); err != nil {
+		bad("%v", err)
+	}
 }
 
 // Terraform is what fugaro init needs to plan the installation again: its
@@ -361,6 +484,7 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	c.validateBudget(bad)
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)

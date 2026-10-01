@@ -1255,6 +1255,11 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	r.setProject(lc)
 	r.res.Repo = repo
+	if !o.forget {
+		if err := checkVertexBudget(lc, cfg); err != nil {
+			return err
+		}
+	}
 	in := infra.Inputs{LC: lc, Repo: repo, Cfg: cfg, RepoURL: repoURL, GitHubAppID: o.githubAppID}
 	var spec infra.RepoSpec
 	if !o.forget {
@@ -1410,6 +1415,20 @@ func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) er
 		name = lc.Name
 	}
 	return userErr("fugaro.yaml has no `project:`; add `project: %s` (fugaro config example shows it)", name)
+}
+
+// vertexBudgetRefusal is the refusal of a Vertex workflow under a budget
+// that enforces: the gateway can't yet be relied on to cap Vertex spend.
+const vertexBudgetRefusal = "Vertex budgets are not supported yet: use budget.mode observe or off for this repository (see docs/gcp-live-checklist.md, check 20)"
+
+// checkVertexBudget refuses a repository whose fugaro.yaml authenticates
+// the agent through Vertex AI (agent.auth: vertex) under a project budget
+// in enforce mode. observe and off are allowed.
+func checkVertexBudget(lc *localcfg.Config, cfg *config.Config) error {
+	if cfg.Agent.Auth == "vertex" && lc.BudgetMode() == localcfg.BudgetEnforce {
+		return userErr("%s", vertexBudgetRefusal)
+	}
+	return nil
 }
 
 // printVarsUngated is init --repo --print-vars's warning: the values it
