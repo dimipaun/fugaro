@@ -292,3 +292,38 @@ func TestFollowUpLineCountsAllUntrusted(t *testing.T) {
 		t.Fatalf("line = %q", line)
 	}
 }
+
+func TestDiagnoseHaltBlock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	at := time.Date(2026, 9, 27, 10, 5, 0, 0, time.UTC)
+	rec := prRecord(id, exec, 7, 2)
+	rec.Status = runstore.StatusHalted
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: at, Detail: "run spent $5.00 of $5.00"}
+	rec.Reason = "halted: run_cap: run spent $5.00 of $5.00"
+	writeRecord(t, f, id, rec)
+
+	human, _, err := execute(t, "diagnose", id)
+	want := "Halted:   run_cap (run) at 2026-09-27T10:05:00Z: run spent $5.00 of $5.00"
+	if err != nil || !strings.Contains(human, want) || !strings.Contains(human, "Status:   halted") {
+		t.Fatalf("diagnose lacks %q (%v):\n%s", want, err, human)
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	var d Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || d.Halt == nil || *d.Halt != *rec.Halt {
+		t.Fatalf("json halt = %+v (%v):\n%s", d.Halt, err, out)
+	}
+	if !strings.Contains(out, `"halt": {`) {
+		t.Fatalf("JSON has no halt block:\n%s", out)
+	}
+	// A run that was not halted prints no Halted line.
+	other := "20260927-110000-bbbb"
+	e2 := seedRun(t, f, other, "", "", true)
+	f.run.SetState(e2, backend.StateSucceeded)
+	writeRecord(t, f, other, prRecord(other, e2, 8, 1))
+	if human, _, err := execute(t, "diagnose", other); err != nil || strings.Contains(human, "Halted:") {
+		t.Fatalf("a failed run prints a halt (%v):\n%s", err, human)
+	}
+}

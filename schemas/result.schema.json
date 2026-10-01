@@ -12,7 +12,7 @@
     "repo": { "type": "string" },
     "workflow": { "type": "string" },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
-    "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled"] },
+    "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "implement", "review", "fix", "finalize", "writeback"] },
     "outcome": { "enum": ["ready", "draft", "none"] },
     "reason": { "type": "string" },
@@ -78,7 +78,11 @@
         "compute_estimated": { "type": "boolean", "description": "True only when the backend's prices and the workflow's resources were known." },
         "total_usd": { "type": "number", "minimum": 0, "description": "Billed dollars only: excludes the model figure when model_basis is subscription." },
         "estimate": { "type": "boolean" },
-        "model_basis": { "enum": ["api-list", "subscription"] }
+        "model_basis": { "enum": ["api-list", "subscription"] },
+        "model_source": { "enum": ["gateway", "claude-code"], "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total." },
+        "model_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by model." },
+        "unreconciled": { "type": "number", "minimum": 0, "description": "USD charged from reservations rather than from reported usage." },
+        "usage_unparsed": { "type": "integer", "minimum": 0, "description": "Calls settled at their reservation because their usage could not be read." }
       }
     },
     "stages": {
@@ -123,6 +127,18 @@
         "untrusted_authors": { "type": "array", "maxItems": 20, "items": { "type": "string" }, "description": "Display names whose comments were dropped as untrusted, sorted." },
         "untrusted_author_count": { "type": "integer", "minimum": 0, "description": "How many distinct untrusted authors were dropped, those beyond the 20 named included." },
         "omitted": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Comments left out, by reason." }
+      }
+    },
+    "halt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reason", "scope", "at"],
+      "description": "Why the run was halted; set when status is halted.",
+      "properties": {
+        "reason": { "enum": ["kill_switch", "run_cap", "repo_daily_cap", "global_daily_cap", "no_cap", "token_cap", "budget_unavailable", "budget_token_expired"] },
+        "scope": { "enum": ["run", "repo", "global"] },
+        "at": { "type": "string", "format": "date-time" },
+        "detail": { "type": "string" }
       }
     },
     "pushed_head": { "type": "string", "minLength": 1, "description": "The commit the run pushed, set right after a successful push." },

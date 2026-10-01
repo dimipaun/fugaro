@@ -18,6 +18,17 @@ type Cost struct {
 	TotalUSD         float64 `json:"total_usd"`
 	Estimate         bool    `json:"estimate"`
 	ModelBasis       string  `json:"model_basis"`
+	// ModelSource says where ModelUSD came from: "gateway" (its settled
+	// ledger) or "claude-code" (the agent's own total_cost_usd).
+	ModelSource string `json:"model_source,omitempty"`
+	// ModelBy is the model spend by model, in USD.
+	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// Unreconciled is the USD charged from reservations rather than from
+	// reported usage.
+	Unreconciled float64 `json:"unreconciled,omitempty"`
+	// UsageUnparsed counts calls settled at their reservation because
+	// their usage could not be read.
+	UsageUnparsed int `json:"usage_unparsed,omitempty"`
 }
 
 // ModelBasis is the basis for an agent.auth mode.

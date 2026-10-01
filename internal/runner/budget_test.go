@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 func TestBudget(t *testing.T) {
@@ -40,7 +42,7 @@ func TestBudget(t *testing.T) {
 
 func TestWatchCancel(t *testing.T) {
 	var flag atomic.Bool
-	ctx, stop := WatchCancel(context.Background(), func(context.Context) (bool, error) { return flag.Load(), nil }, 10*time.Millisecond)
+	ctx, stop := WatchCancel(context.Background(), func(context.Context) (bool, error) { return flag.Load(), nil }, 10*time.Millisecond, nil)
 	defer stop()
 	flag.Store(true)
 	select {
@@ -54,7 +56,7 @@ func TestWatchCancel(t *testing.T) {
 }
 
 func TestWatchCancelStop(t *testing.T) {
-	ctx, stop := WatchCancel(context.Background(), func(context.Context) (bool, error) { return false, nil }, time.Hour)
+	ctx, stop := WatchCancel(context.Background(), func(context.Context) (bool, error) { return false, nil }, time.Hour, nil)
 	stop()
 	<-ctx.Done()
 	if errors.Is(context.Cause(ctx), ErrCancelled) {
@@ -111,5 +113,44 @@ func TestLineWriter(t *testing.T) {
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 || !strings.Contains(lines[1], `"message":"two"`) || !strings.Contains(lines[0], `"stream":"agent"`) {
 		t.Fatalf("lines = %q", lines)
+	}
+}
+
+func TestWatchCancelOnCancelHook(t *testing.T) {
+	var flag atomic.Bool
+	var calls atomic.Int32
+	var ctxDoneAtCall atomic.Bool
+	var ctx context.Context
+	ready := make(chan struct{})
+	var stop func()
+	ctx, stop = WatchCancel(context.Background(), func(context.Context) (bool, error) { return flag.Load(), nil }, 10*time.Millisecond,
+		func() bool {
+			<-ready
+			calls.Add(1)
+			ctxDoneAtCall.Store(ctx.Err() != nil)
+			return false // a halt came first: the context is cancelled all the same
+		})
+	defer stop()
+	close(ready)
+	flag.Store(true)
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancel marker not noticed")
+	}
+	if calls.Load() != 1 || ctxDoneAtCall.Load() {
+		t.Fatalf("hook calls = %d, context already done at the call = %v", calls.Load(), ctxDoneAtCall.Load())
+	}
+	if !errors.Is(context.Cause(ctx), ErrCancelled) {
+		t.Fatalf("cause = %v", context.Cause(ctx))
+	}
+}
+
+func TestStageErrorHalted(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(&HaltError{Halt: runstore.Halt{Reason: runstore.HaltRunCap, Detail: "spent $5.00"}})
+	b := Budget{Start: time.Now(), Total: time.Hour, Reserve: time.Minute, Stage: time.Minute, Now: time.Now}
+	if got, want := StageError("fix", ctx, b, context.Canceled), "halted during fix: spent $5.00"; got != want {
+		t.Fatalf("StageError = %q, want %q", got, want)
 	}
 }

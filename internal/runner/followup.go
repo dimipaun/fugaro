@@ -514,6 +514,12 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	if h := r.haltValue(); h != nil {
+		// A halt stays a halt: the run stopped for its limit, and the
+		// pull request was left as it was for the reason given too.
+		r.rec.Status, r.rec.Halt = runstore.StatusHalted, h
+		r.rec.Reason = (&HaltError{*h}).Error() + "; " + reason
+	}
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
 	r.updateCost()
 	fu := r.followUpSection()

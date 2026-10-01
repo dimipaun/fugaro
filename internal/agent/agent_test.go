@@ -513,3 +513,55 @@ func TestNewSessionID(t *testing.T) {
 		t.Fatalf("bad UUIDv4 %q", id)
 	}
 }
+
+func TestParseStreamUsage(t *testing.T) {
+	f, err := os.Open("testdata/stream-success.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	res, found, err := ParseStream(f, nil)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if want := (Usage{Input: 100, CacheCreation: 20, CacheRead: 300, Output: 40}); res.Usage != want {
+		t.Fatalf("usage = %+v, want %+v", res.Usage, want)
+	}
+	if res.Usage.Total() != 460 {
+		t.Fatalf("total = %d", res.Usage.Total())
+	}
+	if len(res.ModelUsage) != 2 {
+		t.Fatalf("modelUsage = %+v", res.ModelUsage)
+	}
+	if got, want := res.ModelUsage["claude-haiku-x"], (Usage{Input: 10, Output: 10, CacheRead: 100}); got != want {
+		t.Fatalf("haiku = %+v, want %+v", got, want)
+	}
+	if got, want := res.ModelUsage["claude-opus-x"], (Usage{Input: 100, Output: 30, CacheRead: 200, CacheCreation: 20}); got != want {
+		t.Fatalf("opus = %+v, want %+v", got, want)
+	}
+}
+
+func TestParseStreamNoUsage(t *testing.T) {
+	res, found, err := ParseStream(strings.NewReader(`{"type":"result","subtype":"success","is_error":false}`+"\n"), nil)
+	if err != nil || !found {
+		t.Fatalf("found=%v err=%v", found, err)
+	}
+	if res.Usage != (Usage{}) || len(res.ModelUsage) != 0 || res.StageTokens() != 0 {
+		t.Fatalf("usage = %+v / %+v", res.Usage, res.ModelUsage)
+	}
+}
+
+func TestStageTokensTakesLarger(t *testing.T) {
+	r := Result{Usage: Usage{Input: 10, Output: 5}}
+	if got := r.StageTokens(); got != 15 {
+		t.Fatalf("usage only = %d", got)
+	}
+	r.ModelUsage = map[string]Usage{"a": {Input: 10, Output: 5}, "b": {CacheRead: 100}}
+	if got := r.StageTokens(); got != 115 {
+		t.Fatalf("modelUsage larger = %d", got)
+	}
+	r.Usage = Usage{Input: 1000}
+	if got := r.StageTokens(); got != 1000 {
+		t.Fatalf("usage larger = %d", got)
+	}
+}

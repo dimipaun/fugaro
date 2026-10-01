@@ -36,7 +36,12 @@ func (b Budget) StageContext(parent context.Context) (context.Context, context.C
 
 // WatchCancel returns a context cancelled with ErrCancelled once check
 // reports a cancel request. The returned stop function ends the watch.
-func WatchCancel(parent context.Context, check func(context.Context) (bool, error), every time.Duration) (context.Context, func()) {
+//
+// onCancel, when not nil, is called just before the cancel, so the run
+// records it the moment the marker is seen. It returns false when a halt
+// was recorded first: the context is still cancelled, but the run's
+// outcome stays the halt.
+func WatchCancel(parent context.Context, check func(context.Context) (bool, error), every time.Duration, onCancel func() bool) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	go func() {
 		t := time.NewTicker(every)
@@ -47,6 +52,9 @@ func WatchCancel(parent context.Context, check func(context.Context) (bool, erro
 				return
 			case <-t.C:
 				if ok, err := check(ctx); err == nil && ok {
+					if onCancel != nil {
+						onCancel()
+					}
 					cancel(ErrCancelled)
 					return
 				}
@@ -58,7 +66,10 @@ func WatchCancel(parent context.Context, check func(context.Context) (bool, erro
 
 // StageError explains why a stage ended early, for the run record and draft PR.
 func StageError(stage string, stageCtx context.Context, b Budget, err error) string {
+	var halt *HaltError
 	switch {
+	case errors.As(context.Cause(stageCtx), &halt):
+		return fmt.Sprintf("halted during %s: %s", stage, halt.Halt.Detail)
 	case errors.Is(context.Cause(stageCtx), ErrCancelled):
 		return "cancelled during " + stage
 	case errors.Is(stageCtx.Err(), context.DeadlineExceeded) && b.Exhausted():

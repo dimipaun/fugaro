@@ -49,20 +49,22 @@ type Input struct {
 
 // Row is one run as ls and diagnose show it.
 type Row struct {
-	Run         string        `json:"run"`
-	Repo        string        `json:"repo"`
-	Workflow    string        `json:"workflow,omitempty"`
-	RunID       string        `json:"run_id"`
-	Status      string        `json:"status"`
-	Stage       string        `json:"stage,omitempty"`
-	Reason      string        `json:"reason,omitempty"`
-	Batch       string        `json:"batch,omitempty"`
-	RequestedBy string        `json:"requested_by,omitempty"`
-	PRURL       string        `json:"pr_url,omitempty"`
-	Execution   string        `json:"execution,omitempty"`
-	LogURL      string        `json:"log_url,omitempty"`
-	Created     time.Time     `json:"created"`
-	Cost        runstore.Cost `json:"cost"`
+	Run      string `json:"run"`
+	Repo     string `json:"repo"`
+	Workflow string `json:"workflow,omitempty"`
+	RunID    string `json:"run_id"`
+	Status   string `json:"status"`
+	Stage    string `json:"stage,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	// Halt is why a halted run was halted.
+	Halt        *runstore.Halt `json:"halt,omitempty"`
+	Batch       string         `json:"batch,omitempty"`
+	RequestedBy string         `json:"requested_by,omitempty"`
+	PRURL       string         `json:"pr_url,omitempty"`
+	Execution   string         `json:"execution,omitempty"`
+	LogURL      string         `json:"log_url,omitempty"`
+	Created     time.Time      `json:"created"`
+	Cost        runstore.Cost  `json:"cost"`
 	// ImageAgeS is how old the run's image was when the run started
 	// (started_at minus built_at), in seconds; absent when either is unknown.
 	ImageAgeS *int64 `json:"image_age_s,omitempty"`
@@ -142,6 +144,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
+		}
+		if r.Status == runstore.StatusHalted {
+			row.Halt = r.Halt
 		}
 		if r.PR != nil {
 			row.PRURL = r.PR.URL

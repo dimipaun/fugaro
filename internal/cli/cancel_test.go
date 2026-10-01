@@ -394,3 +394,20 @@ func TestCancelFollowUp(t *testing.T) {
 		t.Fatal("cancelling the follow-up marked the run that opened the PR")
 	}
 }
+
+func TestCancelHaltedRunAlreadyFinished(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	rec.Status = runstore.StatusHalted
+	rec.Halt = &runstore.Halt{Reason: runstore.HaltRunCap, Scope: "run", At: time.Now().UTC()}
+	writeRecord(t, f, id, rec)
+	out, _, err := execute(t, "cancel", "--json", id)
+	var res cancelResult
+	_ = json.Unmarshal([]byte(out), &res)
+	if err != nil || res.Status != "already-finished" || cancelled(t, f, id) {
+		t.Fatalf("cancel = %+v, %v (%s)", res, err, out)
+	}
+}

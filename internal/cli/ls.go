@@ -517,7 +517,7 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(r.Status), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
@@ -539,6 +539,14 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	_, err := fmt.Fprintln(w, line)
 	return err
+}
+
+// statusCell is a row's status; a halted run says which limit halted it.
+func statusCell(r runview.Row) string {
+	if r.Status == string(runstore.StatusHalted) && r.Halt != nil {
+		return r.Status + " (" + string(r.Halt.Reason) + ")"
+	}
+	return r.Status
 }
 
 // prColumn is a row's pull request: "#N <url>", "#N" while the URL is

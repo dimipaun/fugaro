@@ -379,3 +379,37 @@ func TestFugaroSchemaTrustedAgreesWithGo(t *testing.T) {
 		}
 	}
 }
+
+func TestResultSchemaHalted(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
+	cost.ModelSource, cost.ModelBy, cost.Unreconciled, cost.UsageUnparsed = "gateway", map[string]float64{"claude-a": 4.12}, 0.5, 1
+	check := func(reason runstore.HaltReason) error {
+		rec := runstore.Record{
+			Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "implement", Outcome: runstore.OutcomeDraft,
+			Reason: "halted: " + string(reason), CostUSD: 4.12, Cost: &cost, StartedAt: at,
+			Halt: &runstore.Halt{Reason: reason, Scope: "run", At: at, Detail: "d"},
+		}
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	for _, r := range []runstore.HaltReason{
+		runstore.HaltKillSwitch, runstore.HaltRunCap, runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap,
+		runstore.HaltNoCap, runstore.HaltTokenCap, runstore.HaltBudgetUnavailable, runstore.HaltBudgetTokenExpired,
+	} {
+		if err := check(r); err != nil {
+			t.Errorf("schema rejects halt reason %q: %v", r, err)
+		}
+	}
+	if err := check("other"); err == nil {
+		t.Error(`schema accepts halt reason "other"`)
+	}
+}

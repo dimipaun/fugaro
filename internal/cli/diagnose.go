@@ -37,6 +37,7 @@ const (
 type Diagnosis struct {
 	Project      string           `json:"project"` // the Fugaro project
 	Row          runview.Row      `json:"row"`
+	Halt         *runstore.Halt   `json:"halt,omitempty"`     // why a halted run was halted
 	Verify       []verify.Record  `json:"verify,omitempty"`   // result.json's verify records
 	Failed       []string         `json:"failed,omitempty"`   // the last test record's failed tests
 	Flaky        []string         `json:"flaky,omitempty"`    // the last test record's flaky tests
@@ -134,6 +135,11 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
 	d.Row.Reason = red(d.Row.Reason)
+	if h := d.Row.Halt; h != nil {
+		c := *h
+		c.Detail = red(c.Detail)
+		d.Row.Halt, d.Halt = &c, &c
+	}
 
 	rec, err := absent(s.ReadRecord(ctx))
 	if corruptObject(err) {
@@ -328,6 +334,13 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
+	}
+	if h := d.Halt; h != nil {
+		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))
+		if h.Detail != "" {
+			line += ": " + h.Detail
+		}
+		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
 	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
 	if r.PRURL != "" {

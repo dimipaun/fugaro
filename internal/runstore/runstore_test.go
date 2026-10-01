@@ -185,3 +185,29 @@ func TestSibling(t *testing.T) {
 		t.Fatalf("Sibling changed its receiver: %q", s.RunID())
 	}
 }
+
+func TestRecordHaltRoundTrip(t *testing.T) {
+	s := newStore(t)
+	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	rec := &Record{Version: 1, RunID: runID, Status: StatusHalted, Outcome: OutcomeDraft, StartedAt: at,
+		Halt: &Halt{Reason: HaltRunCap, Scope: "run", At: at, Detail: "run spent $5.00 of $5.00"}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.ReadRecord(ctx)
+	if err != nil || got.Status != StatusHalted || got.Halt == nil || *got.Halt != *rec.Halt {
+		t.Fatalf("ReadRecord = %+v, %v", got, err)
+	}
+	// A record from before halts existed still parses, with no halt.
+	old := `{"version":1,"run_id":"` + runID + `","status":"failed","stage":"fix","outcome":"draft","cost_usd":1,"started_at":"2026-09-30T10:00:00Z"}`
+	if err := s.PutFile(ctx, "result.json", []byte(old), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err = s.ReadRecord(ctx); err != nil || got.Halt != nil || got.Status != StatusFailed {
+		t.Fatalf("old record = %+v, %v", got, err)
+	}
+	data, _ := json.Marshal(&Record{Version: 1})
+	if strings.Contains(string(data), `"halt"`) {
+		t.Fatalf("an unset halt is written: %s", data)
+	}
+}

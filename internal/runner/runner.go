@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -95,8 +96,21 @@ type run struct {
 	instructions string
 	reviewFile   string
 	stageN       map[string]int
-	failReason   string
-	cancelled    bool
+	// mu guards halt, cancelled, failReason, tokens, gatewayTokens and
+	// haltStage: the cancel watcher and, with the gateway, its halt
+	// callback record into them from other goroutines. Whichever of a halt
+	// and a cancel is recorded first wins (see haltNow and markCancelled).
+	mu            sync.Mutex
+	failReason    string
+	cancelled     bool
+	halt          *runstore.Halt
+	tokens        int64                   // the stages' tokens so far, for the token cap
+	gatewayTokens int64                   // the last stage's tokens as the gateway counted them
+	haltStage     context.CancelCauseFunc // the running stage's cancel; nil between stages
+	// stageExtra, when set, is called once after each stage's agent
+	// returns, and says what the gateway saw: violations of the stage's
+	// rules (the first fails the stage) and its token count.
+	stageExtra   func(stage string) (violations []string, tokens int64)
 	provider     gitprov.Provider
 	providerKind string
 	providerFrom string          // where providerKind came from, for mismatch errors
@@ -204,6 +218,9 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 			}
 			d.Log.Error("run failed", "stage", r.rec.Stage, "err", reason)
 		}
+		if h := r.haltValue(); h != nil && r.rec.Halt == nil {
+			r.rec.Halt = h // kept even when finalize then failed
+		}
 		// The report's figure stops before writeback; the record's covers
 		// the whole run.
 		r.updateCost()
@@ -233,20 +250,36 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 	}()
 
 	r.addMountedSecrets()
-	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll)
+	if onNewRun != nil {
+		onNewRun(r)
+	}
+	runCtx, stopWatch := WatchCancel(ctx, d.Store.CancelRequested, d.CancelPoll, r.markCancelled)
 	defer stopWatch()
 	if err := r.bootstrap(runCtx); err != nil {
-		if errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled) {
-			r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+		var halt *HaltError
+		switch {
+		case errors.As(err, &halt):
+			// A policy halt before anything was locked, pushed or opened:
+			// an outcome, not a failure, so there is no error to return.
+			r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeNone, &halt.Halt
+			r.rec.Reason = halt.Error()
+			d.Log.Warn("run halted at bootstrap", "reason", string(halt.Halt.Reason), "detail", halt.Halt.Detail)
+			return r.rec, nil
+		case errors.Is(err, ErrCancelled) || errors.Is(context.Cause(runCtx), ErrCancelled):
+			if r.markCancelled() {
+				r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusCancelled, runstore.OutcomeNone, "cancelled during bootstrap"
+			}
 		}
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	r.runAgentLoop(runCtx)
 	if errors.Is(context.Cause(runCtx), ErrCancelled) {
 		// The cancel may have landed after the last stage already returned
-		// successfully; make sure it still turns into a draft PR.
-		r.cancelled = true
-		r.fail("cancelled")
+		// successfully; make sure it still turns into a draft PR, unless a
+		// halt was recorded first.
+		if r.markCancelled() {
+			r.fail("cancelled")
+		}
 	}
 	finCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.wf.Timeouts.FinalizeReserve.Duration)
 	defer cancel()
@@ -507,6 +540,13 @@ func (r *run) originURL(ctx context.Context) string {
 
 // fail records the first reason the run cannot produce a ready PR.
 func (r *run) fail(reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.failLocked(reason)
+}
+
+// failLocked is fail for a caller holding r.mu.
+func (r *run) failLocked(reason string) {
 	if r.failReason == "" {
 		r.failReason = reason
 	}
@@ -691,6 +731,11 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
 	}
+	if bootstrapHalt != nil {
+		if h := bootstrapHalt(); h != nil {
+			return &HaltError{*h}
+		}
+	}
 	// The lock comes before anything changes remote state: the clone and
 	// checkout above are local, and the provider has only been asked for
 	// credentials.
@@ -820,6 +865,7 @@ func (r *run) agentLoop(ctx context.Context) {
 	}
 	res, ok, err := r.stage(ctx, "implement", req, opts)
 	r.noteSession(req, res)
+	r.countTokens(res)
 	// Only an error stage recovered from, and so recorded nothing about:
 	// one that came with a timeout or a cancel is a failed stage.
 	if rec := (recoveredError{}); !ok && errors.As(err, &rec) {
@@ -827,8 +873,9 @@ func (r *run) agentLoop(ctx context.Context) {
 		req = agent.Request{Prompt: followup.ImplementPrompt(r.promptData(), r.follow.sel), SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 		res, ok, _ = r.stage(ctx, "implement", req, stageOpts{})
 		r.noteSession(req, res)
+		r.countTokens(res)
 	}
-	if !ok {
+	if !ok || r.capReached() {
 		return
 	}
 	sessionID := req.SessionID
@@ -841,13 +888,14 @@ func (r *run) agentLoop(ctx context.Context) {
 	rounds := r.cfg.Agent.ReviewRounds
 	for round := 1; round <= rounds; round++ {
 		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
+		r.countTokens(res)
 		if !ok {
 			return
 		}
 		v := ParseVerdict(res)
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
-		if v.Verdict == "ship" || round == rounds {
+		if r.capReached() || v.Verdict == "ship" || round == rounds {
 			return
 		}
 		if r.sessionID != "" {
@@ -856,7 +904,8 @@ func (r *run) agentLoop(ctx context.Context) {
 		req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
 		res, ok, _ = r.stage(ctx, "fix", req, stageOpts{})
 		r.noteSession(req, res)
-		if !ok {
+		r.countTokens(res)
+		if !ok || r.capReached() {
 			return
 		}
 	}
@@ -883,7 +932,9 @@ type stageOpts struct {
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
 		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
-		r.cancelled = errors.Is(context.Cause(ctx), ErrCancelled)
+		if errors.Is(context.Cause(ctx), ErrCancelled) {
+			r.markCancelled()
+		}
 		return agent.Result{}, false, ctx.Err()
 	}
 	if r.budget.Exhausted() {
@@ -921,8 +972,21 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, r.env, tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
-	stageCtx, cancel := r.budget.StageContext(ctx)
-	defer cancel()
+	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
+	defer cancelDeadline()
+	// The halt's way to stop this stage: cancelling with the halt as the
+	// cause, which StageError reads.
+	stageCtx, cancelCause := context.WithCancelCause(deadlineCtx)
+	r.mu.Lock()
+	r.haltStage = cancelCause
+	extra := r.stageExtra
+	r.mu.Unlock()
+	defer func() {
+		r.mu.Lock()
+		r.haltStage = nil
+		r.mu.Unlock()
+		cancelCause(nil)
+	}()
 	res, err := r.d.Agent.Run(stageCtx, req)
 	_ = tw.Flush()
 	relay.Flush()
@@ -935,13 +999,37 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
 	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
 
+	// What the gateway saw comes first, whatever the agent reported.
+	var violations []string
+	if extra != nil {
+		var gw int64
+		violations, gw = extra(name)
+		r.mu.Lock()
+		r.gatewayTokens = gw
+		r.mu.Unlock()
+	}
+	// A halt recorded first decides the stage, whatever the agent says:
+	// is_error, any subtype (even success) or exit code, a kill by the
+	// halt's own cancel included. No log tail: nothing failed.
+	if h := r.haltValue(); h != nil {
+		r.save(ctx)
+		return res, false, &HaltError{*h}
+	}
+	if len(violations) > 0 {
+		r.fail("stage " + name + ": " + violations[0])
+		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
+		return res, false, fmt.Errorf("stage %s: %s", name, violations[0])
+	}
+
 	switch {
 	case err != nil && opts.Recoverable != nil && stageCtx.Err() == nil && opts.Recoverable(err):
 		r.save(ctx)
 		return res, false, recoveredError{err}
 	case err != nil:
 		r.fail(StageError(name, stageCtx, r.budget, err))
-		r.cancelled = errors.Is(context.Cause(stageCtx), ErrCancelled)
+		if errors.Is(context.Cause(stageCtx), ErrCancelled) {
+			r.markCancelled()
+		}
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, err
 	case res.IsError:
@@ -1006,7 +1094,20 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.Stage = "finalize"
 	r.save(ctx)
 	base := r.cfg.Git.BaseBranch
-	committed, err := r.repo.CommitAll(ctx, "fugaro: uncommitted work at finalize")
+	halt := r.haltValue()
+	if halt != nil && r.isCancelled() {
+		// haltNow and markCancelled exclude each other under the lock, so
+		// this is a bug. The halt is kept.
+		r.d.Log.Error("both a halt and a cancel were recorded; keeping the halt")
+		if strictHaltCheck {
+			panic("both a halt and a cancel were recorded")
+		}
+	}
+	leftover := "fugaro: uncommitted work at finalize"
+	if halt != nil {
+		leftover = leftoverHaltMessage
+	}
+	committed, err := r.repo.CommitAll(ctx, leftover)
 	if err != nil {
 		return fmt.Errorf("committing leftover work: %w", err)
 	}
@@ -1020,7 +1121,7 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		if ahead == 0 {
 			r.fail("the agent made no commits")
-			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failReason); err != nil {
+			if err := r.repo.CommitEmpty(ctx, "fugaro: "+r.failure()); err != nil {
 				return fmt.Errorf("recording an empty commit: %w", err)
 			}
 		}
@@ -1046,8 +1147,12 @@ func (r *run) finalize(ctx context.Context) error {
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}
-	if r.failReason != "" {
-		ready, reason = false, r.failReason
+	if fr := r.failure(); fr != "" {
+		ready, reason = false, fr
+	}
+	if halt != nil {
+		// Never ready, and the reason is the halt's, whatever failed first.
+		ready, reason = false, (&HaltError{*halt}).Error()
 	}
 	// Finalize's push must not outlive its token either; a short reserve
 	// still asks for at least what bootstrap's fetch does.
@@ -1132,7 +1237,9 @@ func (r *run) finalize(ctx context.Context) error {
 	switch {
 	case ready:
 		r.rec.Status, r.rec.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
-	case r.cancelled:
+	case halt != nil:
+		r.rec.Status, r.rec.Outcome, r.rec.Halt = runstore.StatusHalted, runstore.OutcomeDraft, halt
+	case r.isCancelled():
 		r.rec.Status, r.rec.Outcome = runstore.StatusCancelled, runstore.OutcomeDraft
 	default:
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
