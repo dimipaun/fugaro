@@ -5,7 +5,7 @@
   "description": "Per-repository Fugaro configuration. See docs/design/v1.md §5.1.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "git", "workflows"],
+  "required": ["version", "project", "git", "workflows"],
   "allOf": [
     {
       "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "github" } } } } },
@@ -18,6 +18,7 @@
   ],
   "properties": {
     "version": { "const": 1 },
+    "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
     "git": {
       "type": "object",
       "additionalProperties": false,

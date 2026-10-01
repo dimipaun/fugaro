@@ -503,6 +503,7 @@ func TestCheckSudoersUnreadableFileIsFine(t *testing.T) {
 // workflow's build, which would run repository code with its secrets.
 func TestSpecForCloud(t *testing.T) {
 	const yaml = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   web: { base: web-node, image: { node: "24" }, commands: { build: sh build.sh, test: sh test.sh } }

@@ -419,3 +419,79 @@ func TestSelectionNotesFollowHeader(t *testing.T) {
 		t.Fatalf("init: stderr %q", errw.String())
 	}
 }
+
+// init --repo needs project: in the checkout's fugaro.yaml, before any
+// cloud call, and names what to add when a project config is selectable.
+func TestInitRepoRequiresProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1234")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\ngit: { provider: github }\n")
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "init", "--repo", "--project", "aurora", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml has no `project:`; add `project: aurora`") {
+		t.Fatalf("selectable: exit %d, err %v", ExitCode(err), err)
+	}
+	isolateProjects(t, t.TempDir())
+	_, _, err = execute(t, "init", "--repo", root)
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml has no `project:`; add `project: <name>`") {
+		t.Fatalf("not selectable: exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+func TestInitRepoRefusesOtherProject(t *testing.T) {
+	if err := checkRepoProject("aurora", "aurora"); err != nil {
+		t.Fatalf("the same project: %v", err)
+	}
+	err := checkRepoProject("borealis", "aurora")
+	if ExitCode(err) != ExitUserError || err == nil || err.Error() != "fugaro.yaml names project borealis, but this installation is project aurora" {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// originWith makes a checkout whose origin's main holds mainYAML and
+// whose own fugaro.yaml is yaml.
+func originWith(t *testing.T, mainYAML, yaml string) string {
+	t.Helper()
+	root := t.TempDir()
+	bare := filepath.Join(root, "origin.git")
+	testutil.IsolateGit(t)
+	testutil.Git(t, root, "init", "-q", "--bare", "-b", "main", bare)
+	dir := filepath.Join(root, "app")
+	testutil.Git(t, root, "clone", "-q", bare, dir)
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": mainYAML})
+	testutil.Git(t, dir, "add", "-A")
+	testutil.Git(t, dir, "commit", "-q", "-m", "seed")
+	testutil.Git(t, dir, "push", "-q", "origin", "HEAD:refs/heads/main")
+	testutil.Git(t, dir, "checkout", "-q", "-b", "feature")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	return dir
+}
+
+// The runner reads main's fugaro.yaml, so onboarding from a branch that
+// has project: warns when main doesn't.
+func TestInitRepoWarnsWhenBaseLacksProject(t *testing.T) {
+	ctx := context.Background()
+	with := "version: 1\nproject: aurora\n"
+	for name, tc := range map[string]struct {
+		base, want string
+	}{
+		"none":    {"version: 1\n", "origin/main's fugaro.yaml has no `project:`; runs will refuse until main's fugaro.yaml says project: aurora"},
+		"another": {"version: 1\nproject: borealis\n", "origin/main's fugaro.yaml names project borealis; runs will refuse until main's fugaro.yaml says project: aurora"},
+		"same":    {with, ""},
+		// It doesn't have to parse to say which project it belongs to.
+		"unparseable but right": {with + "surprise: true\n", ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := originWith(t, tc.base, with)
+			if got := baseProjectWarning(ctx, dir, "main", "aurora"); got != tc.want {
+				t.Fatalf("warning = %q, want %q", got, tc.want)
+			}
+		})
+	}
+	// An origin that can't be reached is a warning too, never a refusal.
+	dir := originWith(t, with, with)
+	testutil.Git(t, dir, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone.git"))
+	if got := baseProjectWarning(ctx, dir, "main", "aurora"); !strings.Contains(got, "couldn't check origin/main's fugaro.yaml") {
+		t.Fatalf("warning = %q", got)
+	}
+}

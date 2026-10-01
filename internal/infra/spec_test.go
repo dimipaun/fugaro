@@ -104,6 +104,7 @@ func sandboxInputs(t *testing.T, extraLC string) Inputs {
 }
 
 const webappYAML = `version: 1
+project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: vertex }
 workflows:

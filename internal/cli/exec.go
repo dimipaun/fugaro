@@ -152,6 +152,9 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
 		Prices: prices,
+		// A job belongs to one Fugaro project; on Cloud Run a job that
+		// doesn't say which is refused at bootstrap.
+		Project: os.Getenv("FUGARO_PROJECT"), RequireProject: backend.OnCloudRun(os.Getenv),
 	})
 	var writeErr error
 	if rec != nil {

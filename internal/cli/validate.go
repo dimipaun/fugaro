@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -35,6 +36,14 @@ func newValidateCmd() *cobra.Command {
 			cfg, problems := config.Parse(data)
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
+			} else if name := selectedProjectName(cmd.Context()); name != "" {
+				// Name the project a config can be selected for, so the
+				// fix is one line to add.
+				for i, p := range problems {
+					if p.Path == "project" && strings.HasPrefix(p.Message, "is required") {
+						problems[i].Message = fmt.Sprintf("is required: add `project: %s` (the Fugaro project this repository belongs to)", name)
+					}
+				}
 			}
 			out := cmd.OutOrStdout()
 			if asJSON {

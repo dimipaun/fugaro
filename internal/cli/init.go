@@ -1234,6 +1234,9 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if len(args) > 0 {
 		dir = args[0]
 	}
+	if err := o.requireCheckoutProject(ctx, dir); err != nil {
+		return err
+	}
 	root, cfg, err := loadCheckoutConfigAt(ctx, dir)
 	if err != nil {
 		return err
@@ -1332,6 +1335,12 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	}
 	r.res.Outputs = &outs
 	in.Installation = outs
+	if err := checkRepoProject(cfg.Project, outs.ProjectName); err != nil {
+		return err
+	}
+	if w := baseProjectWarning(ctx, root, cfg.Git.BaseBranch, outs.ProjectName); w != "" {
+		r.warn(w)
+	}
 	if w := infra.BaseImageWarning(lc.BaseImage, outs); w != "" {
 		r.warn(w)
 	}
@@ -1386,6 +1395,21 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		return err
 	}
 	return r.printResult()
+}
+
+// requireCheckoutProject refuses, before any cloud call, a checkout whose
+// fugaro.yaml has no project:, naming what to add when a project config is
+// selectable.
+func (o *initOptions) requireCheckoutProject(ctx context.Context, dir string) error {
+	co, err := checkoutProject(ctx, dir)
+	if err != nil || co == nil || co.Project != "" {
+		return err
+	}
+	name := "<name>"
+	if _, lc, err := selectFrom(o.cloud, nil, false); err == nil && lc != nil {
+		name = lc.Name
+	}
+	return userErr("fugaro.yaml has no `project:`; add `project: %s` (fugaro config example shows it)", name)
 }
 
 // printVarsUngated is init --repo --print-vars's warning: the values it

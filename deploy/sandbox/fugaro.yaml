@@ -1,4 +1,5 @@
 version: 1
+project: sandbox
 git: { provider: bitbucket, base_branch: master }   # no reviewers: the sandbox must never notify a person
 agent: { auth: oauth, review_rounds: 1, max_budget_usd: 2 }
 # The follow-up live check (docs/gcp-live-checklist.md, check 19) needs the

@@ -95,6 +95,13 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading fugaro.yaml at %s: %w", rev, err)
 	}
+	if r.d.Project != "" {
+		// Before the strict parse, so a base that names no project is
+		// told so rather than reported as an invalid file.
+		if err := r.projectOfFile(ref, data); err != nil {
+			return nil, err
+		}
+	}
 	cfg, err := parseConfig(data)
 	if err != nil {
 		return nil, err

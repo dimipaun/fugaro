@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 func TestExecNeedsBucket(t *testing.T) {
@@ -288,5 +289,37 @@ func TestExecJobEnvWithoutProjectName(t *testing.T) {
 	_, _, err := execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID)
 	if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "FUGARO_PROJECT") {
 		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+}
+
+// FUGARO_PROJECT reaches the runner: a repository that names another
+// project is refused before the run does anything else.
+func TestExecPassesProject(t *testing.T) {
+	const runID = "20260926-221530-abcd"
+	testutil.IsolateGit(t)
+	setCloudRunEnv(t, "fugaro-acme-app-app-aaaaa")
+	files := testutil.FixtureFiles(t)
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "project: aurora", "project: borealis", 1)
+	remote := testutil.NewRemote(t, files)
+	dir := t.TempDir()
+	b, err := fileblob.OpenBucket(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	ctx := context.Background()
+	store := runstore.Open(b, "acme-app", runID)
+	if err := store.WriteTask(ctx, &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = execute(t, "exec", "--bucket", "file://"+dir, "--run", "acme-app/"+runID, "--remote", remote,
+		"--workdir", filepath.Join(t.TempDir(), "work"), "--state-dir", filepath.Join(t.TempDir(), "state"))
+	if ExitCode(err) != ExitRemoteError || err == nil ||
+		!strings.Contains(err.Error(), "project mismatch: fugaro.yaml on main names project borealis; this job belongs to project aurora") {
+		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+	rec, err := store.ReadRecord(ctx)
+	if err != nil || rec.Status != runstore.StatusInfraError || rec.Outcome != runstore.OutcomeNone {
+		t.Fatalf("record = %+v, %v", rec, err)
 	}
 }

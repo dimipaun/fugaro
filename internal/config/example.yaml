@@ -2,6 +2,8 @@
 # Schema: https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/fugaro.schema.json
 # Check it with: fugaro validate
 version: 1
+# the Fugaro project; fugaro init --config-only writes your project config
+project: example
 
 git:
   provider: github            # github | bitbucket

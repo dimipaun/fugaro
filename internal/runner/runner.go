@@ -74,6 +74,12 @@ type Deps struct {
 	// ImageInfoPath is the image's build record; empty means
 	// DefaultImageInfoPath.
 	ImageInfoPath string
+	// Project is FUGARO_PROJECT: the Fugaro project this job belongs to.
+	// When set, fugaro.yaml on the base branch must name it.
+	Project string
+	// RequireProject (backend.OnCloudRun) makes a missing Project fail
+	// bootstrap; a local run without one skips the check.
+	RequireProject bool
 }
 
 type run struct {
@@ -675,6 +681,16 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
 	r.rec.Deadline = &dl
+	if r.follow == nil {
+		// A read, so it comes before the lock; a follow-up fetched its
+		// base, and read its configuration from it, above.
+		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
+			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
+		}
+	}
+	if err := r.checkProject(ctx, cfg); err != nil {
+		return err
+	}
 	// The lock comes before anything changes remote state: the clone and
 	// checkout above are local, and the provider has only been asked for
 	// credentials.
@@ -697,9 +713,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	r.restoreCaches(ctx)
 	if r.follow == nil {
 		// A follow-up fetched its base, and read these from it, above.
-		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
-			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
-		}
 		if r.instructions, err = r.readRepoFile(cfg.Agent.Instructions); err != nil {
 			return fmt.Errorf("agent.instructions: %w", err)
 		}

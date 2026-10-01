@@ -29,6 +29,7 @@ func gitBlobID(data string) string {
 }
 
 const webYAML = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   web: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }
@@ -117,6 +118,7 @@ func TestImageConfigHashChanges(t *testing.T) {
 	// image: and dockerfile: are exclusive, so each is varied from its own
 	// reference.
 	const withImage = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   web:
@@ -125,6 +127,7 @@ workflows:
     commands: { build: sh build.sh, test: sh test.sh }
 `
 	const withDockerfile = `version: 1
+project: aurora
 git: { provider: github }
 workflows:
   web:

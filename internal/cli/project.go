@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -155,4 +156,64 @@ func checkCloudName(ctx context.Context, b *blobx.Bucket, lc *localcfg.Config, g
 	// Best effort: the next command checks again if this can't be saved.
 	_ = localcfg.SaveNameCheck(getenv, lc.Name, localcfg.NameCheck{GCPProject: lc.GCPProject, RunsBucket: bucketURL, CheckedAt: now})
 	return nil
+}
+
+// selectedProjectName is the name of the project config a command with no
+// cloud flags would act on (from FUGARO_PROJECT, FUGARO_CONFIG, the
+// working directory's checkout, or the one project config), or "" when
+// none is selectable. It makes no cloud call and prints nothing: it only
+// lets `validate` and `config example` name the project.
+func selectedProjectName(ctx context.Context) string {
+	co, err := checkoutProject(ctx, "")
+	if err != nil {
+		return ""
+	}
+	if co != nil && co.Project == "" {
+		// A checkout without project: would refuse; the file being
+		// written is the one that lacks it.
+		co = nil
+	}
+	_, lc, err := selectFrom(cloudOptions{}, co, false)
+	if err != nil || lc == nil {
+		return ""
+	}
+	return lc.Name
+}
+
+// checkRepoProject refuses a repository whose fugaro.yaml names another
+// project than the installation init --repo is adding it to.
+func checkRepoProject(fugaroYAML, installation string) error {
+	if fugaroYAML == installation {
+		return nil
+	}
+	return userErr("fugaro.yaml names project %s, but this installation is project %s", fugaroYAML, installation)
+}
+
+// baseProjectWarning is the warning, or "", about the base branch on
+// origin: the runner reads project: from origin/<base>'s fugaro.yaml, not
+// from the checkout's, so onboarding from a feature branch works only once
+// the base says the same. It fetches the base; any failure to do so is a
+// warning, not a refusal.
+func baseProjectWarning(ctx context.Context, root, base, project string) string {
+	repo, err := gitops.Open(root, []string{"GIT_TERMINAL_PROMPT=0"})
+	if err == nil {
+		err = repo.FetchBase(ctx, base)
+	}
+	var data []byte
+	if err == nil {
+		data, err = repo.ShowFile(ctx, "origin/"+base, "fugaro.yaml")
+	}
+	if err != nil {
+		return fmt.Sprintf("couldn't check origin/%s's fugaro.yaml for project: %s (%v); runs read it from there", base, project, err)
+	}
+	got, err := config.ProjectOf(data)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("origin/%s's fugaro.yaml can't say which project it belongs to (%v); runs will refuse until %s's fugaro.yaml says project: %s", base, err, base, project)
+	case got == project:
+		return ""
+	case got == "":
+		return fmt.Sprintf("origin/%s's fugaro.yaml has no `project:`; runs will refuse until %s's fugaro.yaml says project: %s", base, base, project)
+	}
+	return fmt.Sprintf("origin/%s's fugaro.yaml names project %s; runs will refuse until %s's fugaro.yaml says project: %s", base, got, base, project)
 }

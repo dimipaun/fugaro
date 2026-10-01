@@ -1,8 +1,5 @@
 version: 1
-project: aurora
+project: Aurora_1
 git: { provider: github }
 workflows:
   server: { base: server-jvm, commands: { build: make, test: make test } }
-followup:
-  trusted: [1234567]
-  trust_pr_author: true

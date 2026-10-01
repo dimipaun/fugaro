@@ -7,6 +7,7 @@ import (
 
 const webYAML = `
 version: 1
+project: aurora
 git:
   provider: github
 workflows:

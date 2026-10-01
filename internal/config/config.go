@@ -20,8 +20,8 @@ import (
 type Config struct {
 	Version int `yaml:"version"`
 	// Project is the Fugaro project this repository belongs to
-	// (ProjectNameRE). It is decoded here so a checkout can name its
-	// project; the rules that require it come with the runner's check.
+	// (ProjectNameRE). Validate requires it; the runner refuses a job of
+	// another project.
 	Project   string              `yaml:"project,omitempty"`
 	Git       Git                 `yaml:"git"`
 	Agent     Agent               `yaml:"agent"`

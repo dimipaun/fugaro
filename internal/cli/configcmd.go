@@ -13,7 +13,7 @@ func newConfigCmd() *cobra.Command {
 		Short: "Print an annotated fugaro.yaml template",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			_, err := cmd.OutOrStdout().Write(config.Example)
+			_, err := cmd.OutOrStdout().Write(config.ExampleFor(selectedProjectName(cmd.Context())))
 			return err
 		},
 	})

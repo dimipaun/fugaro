@@ -60,6 +60,8 @@ func TestValidateChecksFiles(t *testing.T) {
 }
 
 func TestConfigExample(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
 	out, _, err := execute(t, "config", "example")
 	if err != nil {
 		t.Fatal(err)
@@ -81,5 +83,57 @@ func TestValidateReportsCloudRunLimits(t *testing.T) {
 	}
 	if len(got.Problems) != 1 || got.Problems[0].Path != "workflows.app.resources.cpu" || !strings.Contains(got.Problems[0].Message, "Cloud Run") {
 		t.Fatalf("problems = %+v", got.Problems)
+	}
+}
+
+// With no project to select, the example carries the placeholder and says
+// where the real name comes from.
+func TestConfigExampleWithoutProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
+	out, _, err := execute(t, "config", "example")
+	if err != nil || !strings.Contains(out, "# the Fugaro project; fugaro init --config-only writes your project config\nproject: example\n") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}
+
+func TestConfigExampleUsesSelectedProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1234")
+	t.Chdir(t.TempDir())
+	t.Setenv("FUGARO_PROJECT", "aurora")
+	out, _, err := execute(t, "config", "example")
+	if err != nil || !strings.Contains(out, "\nproject: aurora\n") || strings.Contains(out, "project: example") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+	if _, ps := config.Parse([]byte(out)); len(ps) > 0 {
+		t.Fatalf("the example is invalid: %v", ps)
+	}
+	// Inside a checkout, the checkout's project selects.
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "borealis", "proj-5678")
+	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: borealis\n")
+	t.Chdir(root)
+	if out, _, err = execute(t, "config", "example"); err != nil || !strings.Contains(out, "\nproject: borealis\n") {
+		t.Fatalf("out = %q, err = %v", out, err)
+	}
+}
+
+func TestValidateHintNamesProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	t.Chdir(t.TempDir())
+	noProject := writeConfig(t, strings.Replace(cliMinimalYAML, "project: aurora\n", "", 1))
+	out, _, err := execute(t, "validate", noProject)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "project: is required") || !strings.Contains(out, "fugaro config example") {
+		t.Fatalf("generic hint: out = %q, err = %v", out, err)
+	}
+	writeProject(t, "aurora", "proj-1234")
+	t.Setenv("FUGARO_PROJECT", "aurora")
+	out, _, err = execute(t, "validate", noProject)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "project: is required") || !strings.Contains(out, "add `project: aurora`") {
+		t.Fatalf("named hint: out = %q, err = %v", out, err)
+	}
+	if out, _, err = execute(t, "validate", "--json", noProject); !strings.Contains(out, "add `project: aurora`") {
+		t.Fatalf("json: out = %q, err = %v", out, err)
 	}
 }

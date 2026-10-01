@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -162,10 +163,9 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 		}
 		files[e.Name()] = string(b)
 	}
-	if p, err := config.ProjectOf([]byte(files["fugaro.yaml"])); err != nil || p == "" {
-		// The checkout names its project, which selects the project config.
-		files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "version: 1\n", "version: 1\nproject: "+initRepoProjectName+"\n", 1)
-	}
+	// The checkout names this rig's project, which selects its config; the
+	// fixture's own name is the sandbox's.
+	files["fugaro.yaml"] = regexp.MustCompile(`(?m)^project: .*\n`).ReplaceAllString(files["fugaro.yaml"], "project: "+initRepoProjectName+"\n")
 	if edit != nil {
 		files["fugaro.yaml"] = edit(files["fugaro.yaml"])
 	}

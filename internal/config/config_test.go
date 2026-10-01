@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 const minimalYAML = `
 version: 1
+project: aurora
 git:
   provider: github
 workflows:
@@ -64,8 +66,8 @@ func TestParseProblems(t *testing.T) {
 		line                  int
 	}{
 		{"empty", "", "", "file is empty", 0},
-		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 11},
-		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 11},
+		{"unknown field", minimalYAML + "    color: blue\n", "", "field color not found", 12},
+		{"bad duration", minimalYAML + "    timeouts: { total: soon }\n", "", "invalid duration", 12},
 		{"version", strings.Replace(minimalYAML, "version: 1", "version: 2", 1), "version", "must be 1", 0},
 		{"provider", strings.Replace(minimalYAML, "github", "gitlab", 1), "git.provider", "must be one of github, bitbucket", 0},
 		{"missing test", strings.Replace(minimalYAML, "      test: ./gradlew test\n", "", 1), "workflows.server.commands.test", "is required", 0},
@@ -342,6 +344,46 @@ func TestFollowupBitbucketUpperCaseHint(t *testing.T) {
 		_, ps := Parse([]byte(bitbucket + "followup: { trusted: [\"" + id + "\"] }\n"))
 		if !hasProblem(ps, "followup.trusted[0]", "lower case", 0) {
 			t.Errorf("%s: want a lower-case hint, got %v", id, ps)
+		}
+	}
+}
+
+func TestProjectRequired(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/project-missing.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, ps := Parse(data)
+	if cfg != nil || len(ps) != 1 || ps[0].Path != "project" ||
+		ps[0].Message != "is required: the Fugaro project this repository belongs to (fugaro config example shows it)" {
+		t.Fatalf("cfg = %v, problems = %v", cfg, ps)
+	}
+}
+
+func TestProjectBadName(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/project-bad-name.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ps := Parse(data)
+	if len(ps) != 1 || ps[0].Path != "project" ||
+		ps[0].Message != "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit" {
+		t.Fatalf("problems = %v", ps)
+	}
+}
+
+func TestExampleForFillsProject(t *testing.T) {
+	got := ExampleFor("borealis")
+	cfg, ps := Parse(got)
+	if len(ps) > 0 || cfg.Project != "borealis" {
+		t.Fatalf("project = %v, problems = %v", cfg, ps)
+	}
+	if bytes.Contains(got, []byte("project: example")) {
+		t.Error("the placeholder survived")
+	}
+	for _, bad := range []string{"", "Not A Name", "a\nversion: 2"} {
+		if !bytes.Equal(ExampleFor(bad), Example) || !bytes.Contains(Example, []byte("\nproject: example\n")) {
+			t.Errorf("ExampleFor(%q) did not fall back to the placeholder", bad)
 		}
 	}
 }

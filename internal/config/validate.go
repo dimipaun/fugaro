@@ -88,6 +88,12 @@ func Validate(c *Config) []Problem {
 	if c.Version != 1 {
 		add("version", "must be 1")
 	}
+	switch {
+	case c.Project == "":
+		add("project", "is required: the Fugaro project this repository belongs to (fugaro config example shows it)")
+	case !ProjectNameRE.MatchString(c.Project):
+		add("project", "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
+	}
 	if !slices.Contains(Providers, c.Git.Provider) {
 		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}

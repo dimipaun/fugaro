@@ -27,6 +27,7 @@ import (
 
 // cacheYAML is the fixture config with one cache entry under HOME.
 const cacheYAML = `version: 1
+project: aurora
 git: { provider: github, base_branch: main }
 agent: { auth: api-key, review_rounds: 1 }
 workflows:
