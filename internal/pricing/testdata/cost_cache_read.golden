@@ -1,0 +1,3 @@
+rates: input_per_m=2 output_per_m=10 cache_write_5m=1.25 cache_write_1h=2 cache_read=0.1 web_search_per_1k=10 long_context=none
+usage: input=50 cache_write_5m=0 cache_write_1h=0 cache_read=100000 output=100 web_searches=0
+cost: 21100 µ$ = $0.021100
