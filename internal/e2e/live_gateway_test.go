@@ -72,7 +72,7 @@ agent:
   max_output_tokens:
     coder: 4000
     reviewer: 4000
-  review_rounds: 1
+  review_rounds: 2
   review: .fugaro/review.md
 workflows:
   app:
@@ -513,7 +513,7 @@ func lgwCheckPins(t *testing.T, o lgwOutcome) {
 	}
 	t.Logf("FACT: A-N6 distinct x-claude-code-agent-id values seen: %d (more than one means a subagent made calls)", len(agents))
 	if _, ok := seen["fix"]; !ok {
-		t.Errorf("the review did not ask for a fix, so the resumed fix stage was not exercised: greet.sh (no shebang, mode 100644) should have been a finding; adjust lgwTask or lgwReview and run again")
+		t.Errorf("no fix stage ran: the review must flag greet.sh (no shebang, mode 100644) in round 1 and review_rounds must be at least 2 so a fix round follows; adjust lgwTask, lgwReview or review_rounds and run again")
 	}
 }
 
