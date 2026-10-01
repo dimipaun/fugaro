@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"math"
 	"math/rand"
 	"reflect"
 	"testing"
@@ -78,7 +79,7 @@ func TestAllowedIntersectionOrderStable(t *testing.T) {
 	if want := []string{"c", "b"}; !reflect.DeepEqual(e.AllowedModels, want) {
 		t.Fatalf("got %v want %v", e.AllowedModels, want)
 	}
-	if e.Sources[KeyAllowedModels] != "default-branch" || len(e.Ignored) != 0 {
+	if e.Sources[KeyAllowedModels] != "default-branch" || len(e.Ignored) != 1 {
 		t.Fatalf("%+v", e)
 	}
 	// nil = unset: passes through, and the first set list is the source.
@@ -123,11 +124,6 @@ func TestMergeIgnoredRecords(t *testing.T) {
 	if e := Merge(Layer{Mode: "off", PerRunUSD: 1}); len(e.Ignored) != 0 || e.Mode != "off" {
 		t.Fatalf("%+v", e)
 	}
-	// a partial-overlap list tightens, so it is applied and not ignored.
-	e = Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b", "z"}})
-	if len(e.Ignored) != 0 || !reflect.DeepEqual(e.AllowedModels, []string{"b"}) {
-		t.Fatalf("%+v", e)
-	}
 }
 
 func TestMergeNoLayersAndNoMutation(t *testing.T) {
@@ -142,18 +138,95 @@ func TestMergeNoLayersAndNoMutation(t *testing.T) {
 	}
 }
 
+func TestAllowedIgnoredPartialAndDisjoint(t *testing.T) {
+	// partial overlap: the intersection applies AND the extra model is recorded.
+	e := Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b", "z"}})
+	if !reflect.DeepEqual(e.AllowedModels, []string{"b"}) || e.Sources[KeyAllowedModels] != "default-branch" {
+		t.Fatalf("%+v", e)
+	}
+	want := []Ignored{{KeyAllowedModels, "b,z", "b", "ceiling"}}
+	if !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("got %+v want %+v", e.Ignored, want)
+	}
+	// disjoint: empty non-nil (deny everything) and recorded.
+	e = Merge(Layer{AllowedModels: []string{"a"}}, Layer{AllowedModels: []string{"z"}})
+	if e.AllowedModels == nil || len(e.AllowedModels) != 0 || !e.HasAllowList() || e.Allows("a") || e.Allows("z") {
+		t.Fatalf("%#v", e)
+	}
+	if want := []Ignored{{KeyAllowedModels, "z", "", "ceiling"}}; !reflect.DeepEqual(e.Ignored, want) {
+		t.Fatalf("got %+v", e.Ignored)
+	}
+	// a subset or equal list is not ignored.
+	e = Merge(Layer{AllowedModels: []string{"a", "b"}}, Layer{AllowedModels: []string{"b"}}, Layer{AllowedModels: []string{"b"}})
+	if len(e.Ignored) != 0 {
+		t.Fatalf("%+v", e.Ignored)
+	}
+}
+
+func TestHasAllowList(t *testing.T) {
+	if e := Merge(Layer{}); e.HasAllowList() || !e.Allows("anything") {
+		t.Fatalf("unset list must allow everything: %+v", e)
+	}
+	e := Merge(Layer{AllowedModels: []string{"a"}})
+	if !e.HasAllowList() || !e.Allows("a") || e.Allows("b") {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestInfCapIsUnset(t *testing.T) {
+	inf := math.Inf(1)
+	e := Merge(Layer{PerRunUSD: inf}, Layer{PerRunUSD: 3}, Layer{PerRunUSD: inf})
+	if e.PerRunUSD != 3 || len(e.Ignored) != 0 || e.Sources[KeyPerRunUSD] != "default-branch" {
+		t.Fatalf("%+v", e)
+	}
+	if e := Merge(Layer{PerRunUSD: inf}); e.PerRunUSD != 0 || e.Sources != nil {
+		t.Fatalf("%+v", e)
+	}
+	nan := math.NaN()
+	if e := Merge(Layer{PerRunUSD: nan}, Layer{PerRunUSD: 2}); e.PerRunUSD != 2 {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func TestValidMode(t *testing.T) {
+	for m, ok := range map[string]bool{"": false, "off": true, "observe": true, "enforce": true, "ENFORCE": false, "bogus": false} {
+		if ValidMode(m) != ok {
+			t.Errorf("ValidMode(%q) != %v", m, ok)
+		}
+	}
+	// an unknown mode is unset: it neither sets nor is ignored.
+	e := Merge(Layer{Mode: "observe"}, Layer{Mode: "bogus"})
+	if e.Mode != "observe" || len(e.Ignored) != 0 {
+		t.Fatalf("%+v", e)
+	}
+}
+
+func randFloat(r *rand.Rand) float64 {
+	switch r.Intn(8) {
+	case 0:
+		return math.NaN()
+	case 1:
+		return math.Inf(1)
+	case 2:
+		return math.Inf(-1)
+	case 3:
+		return -float64(r.Intn(4))
+	case 4:
+		return 0
+	}
+	return float64(1 + r.Intn(5))
+}
+
 func randLayer(r *rand.Rand) Layer {
 	var l Layer
+	l.PerRunUSD = randFloat(r)
 	if r.Intn(3) > 0 {
-		l.PerRunUSD = float64(r.Intn(6))
+		l.MaxRunTokens = int64(r.Intn(8) - 2)
 	}
-	if r.Intn(3) > 0 {
-		l.MaxRunTokens = int64(r.Intn(6))
-	}
-	l.Mode = []string{"", "off", "observe", "enforce"}[r.Intn(4)]
+	l.Mode = []string{"", "off", "observe", "enforce", "bogus"}[r.Intn(5)]
 	if r.Intn(3) > 0 {
 		l.AllowedModels = []string{}
-		for _, m := range []string{"a", "b", "c", "d"} {
+		for _, m := range []string{"a", "b", "c", "d", "a"} {
 			if r.Intn(2) == 0 {
 				l.AllowedModels = append(l.AllowedModels, m)
 			}
@@ -162,49 +235,141 @@ func randLayer(r *rand.Rand) Layer {
 	return l
 }
 
+func validCap(f float64) bool { return f > 0 && !math.IsInf(f, 0) && !math.IsNaN(f) }
+
+func inList(l []string, m string) bool {
+	for _, x := range l {
+		if x == m {
+			return true
+		}
+	}
+	return false
+}
+
+// TestMergeNeverLoosens checks Merge against an independent oracle, including
+// the Ignored records, over random layers (NaN, Inf, negatives, bogus modes,
+// one to five layers).
 func TestMergeNeverLoosens(t *testing.T) {
 	r := rand.New(rand.NewSource(1))
-	for i := 0; i < 5000; i++ {
-		ls := []Layer{randLayer(r), randLayer(r), randLayer(r)}
-		e := Merge(ls[0], ls[1], ls[2])
-		set := map[string]bool{}
+	ignoredSeen := 0
+	ceilingIgnoredCandidates := 0
+	for i := 0; i < 20000; i++ {
+		n := 1 + r.Intn(5)
+		ls := make([]Layer, n)
+		for j := range ls {
+			ls[j] = randLayer(r)
+		}
+		e := Merge(ls[0], ls[1:]...)
+
+		// oracle: exactness.
+		var minCap float64
+		var minTok int64
+		var rank int
+		var set []string
+		haveSet := false
 		for _, l := range ls {
-			if l.PerRunUSD > 0 {
-				if e.PerRunUSD == 0 || e.PerRunUSD > l.PerRunUSD {
-					t.Fatalf("per_run loosened: %+v -> %+v", ls, e)
-				}
+			if validCap(l.PerRunUSD) && (minCap == 0 || l.PerRunUSD < minCap) {
+				minCap = l.PerRunUSD
 			}
-			if l.MaxRunTokens > 0 && (e.MaxRunTokens == 0 || e.MaxRunTokens > l.MaxRunTokens) {
-				t.Fatalf("tokens loosened: %+v -> %+v", ls, e)
+			if l.MaxRunTokens > 0 && (minTok == 0 || l.MaxRunTokens < minTok) {
+				minTok = l.MaxRunTokens
 			}
-			if l.Mode != "" && modeRank(e.Mode) < modeRank(l.Mode) {
-				t.Fatalf("mode loosened: %+v -> %+v", ls, e)
+			if rk := modeRank(l.Mode); rk > rank {
+				rank = rk
 			}
 			if l.AllowedModels != nil {
-				if e.AllowedModels == nil {
-					t.Fatalf("allow-list dropped: %+v -> %+v", ls, e)
-				}
-				for _, m := range e.AllowedModels {
-					found := false
-					for _, x := range l.AllowedModels {
-						found = found || x == m
+				if !haveSet {
+					haveSet, set = true, dedupe(l.AllowedModels)
+				} else {
+					k := []string{}
+					for _, m := range set {
+						if inList(l.AllowedModels, m) {
+							k = append(k, m)
+						}
 					}
-					if !found {
-						t.Fatalf("model %s outside a layer's list: %+v -> %+v", m, ls, e)
+					set = k
+				}
+			}
+		}
+		if e.PerRunUSD != minCap || e.MaxRunTokens != minTok || modeRank(e.Mode) != rank {
+			t.Fatalf("not exact: %+v -> %+v", ls, e)
+		}
+		if haveSet != e.HasAllowList() || (haveSet && !reflect.DeepEqual(set, e.AllowedModels)) {
+			t.Fatalf("allow-list not exact: %+v -> %#v want %#v", ls, e.AllowedModels, set)
+		}
+		if e.Sources[KeyAllowedModels] == "" && haveSet || e.Sources[KeyMode] == "" && rank > 0 ||
+			e.Sources[KeyPerRunUSD] == "" && minCap > 0 || e.Sources[KeyMaxRunTokens] == "" && minTok > 0 {
+			t.Fatalf("missing source: %+v -> %+v", ls, e)
+		}
+
+		// oracle: Ignored, replayed layer by layer against the running value.
+		var want []Ignored
+		runCap, runTok, runRank := 0.0, int64(0), 0
+		runSet, runHave := []string(nil), false
+		for _, l := range ls {
+			if validCap(l.PerRunUSD) {
+				if runCap == 0 || l.PerRunUSD < runCap {
+					runCap = l.PerRunUSD
+				} else if l.PerRunUSD > runCap {
+					want = append(want, Ignored{Key: KeyPerRunUSD})
+				}
+			}
+			if l.MaxRunTokens > 0 {
+				if runTok == 0 || l.MaxRunTokens < runTok {
+					runTok = l.MaxRunTokens
+				} else if l.MaxRunTokens > runTok {
+					want = append(want, Ignored{Key: KeyMaxRunTokens})
+				}
+			}
+			if rk := modeRank(l.Mode); rk > 0 {
+				if rk > runRank {
+					runRank = rk
+				} else if rk < runRank {
+					want = append(want, Ignored{Key: KeyMode})
+				}
+			}
+			if l.AllowedModels != nil {
+				if !runHave {
+					runHave, runSet = true, dedupe(l.AllowedModels)
+				} else {
+					extra := false
+					for _, m := range l.AllowedModels {
+						extra = extra || !inList(runSet, m)
+					}
+					k := []string{}
+					for _, m := range runSet {
+						if inList(l.AllowedModels, m) {
+							k = append(k, m)
+						}
+					}
+					runSet = k
+					if extra {
+						want = append(want, Ignored{Key: KeyAllowedModels})
 					}
 				}
 			}
-			set["x"] = true
 		}
-		// a key set nowhere stays unset
-		if e.PerRunUSD != 0 && ls[0].PerRunUSD == 0 && ls[1].PerRunUSD == 0 && ls[2].PerRunUSD == 0 {
-			t.Fatalf("invented cap")
+		if len(want) != len(e.Ignored) {
+			t.Fatalf("ignored count: %+v -> %+v want keys %+v", ls, e.Ignored, want)
 		}
-		// the ceiling is never in Ignored
-		for _, ig := range e.Ignored {
-			if ig.Source == "" {
-				t.Fatalf("ignored with no source: %+v", ig)
+		for k := range want {
+			if want[k].Key != e.Ignored[k].Key || e.Ignored[k].Source == "" || e.Ignored[k].Value == e.Ignored[k].Effective && e.Ignored[k].Key != KeyAllowedModels {
+				t.Fatalf("ignored[%d]: %+v want key %s", k, e.Ignored[k], want[k].Key)
 			}
 		}
+		ignoredSeen += len(want)
+
+		// the ceiling (layer 0) is never recorded: with only a ceiling, no Ignored.
+		one := Merge(ls[0])
+		if len(one.Ignored) != 0 {
+			t.Fatalf("ceiling ignored: %+v", one)
+		}
+		if n > 1 {
+			ceilingIgnoredCandidates++
+		}
+	}
+	// non-vacuity: the generator must actually exercise ignoring.
+	if ignoredSeen < 1000 || ceilingIgnoredCandidates < 1000 {
+		t.Fatalf("generator too weak: ignored=%d multi=%d", ignoredSeen, ceilingIgnoredCandidates)
 	}
 }

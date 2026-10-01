@@ -1,6 +1,7 @@
 package policy
 
 import (
+	"math"
 	"strconv"
 	"strings"
 )
@@ -42,7 +43,7 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 	for i, l := range layers {
 		src := layerName(i)
 
-		if l.PerRunUSD > 0 {
+		if l.PerRunUSD > 0 && !math.IsInf(l.PerRunUSD, 0) { // NaN fails > 0; +Inf is unset
 			switch {
 			case e.PerRunUSD == 0:
 				e.PerRunUSD, e.Sources[KeyPerRunUSD] = l.PerRunUSD, src
@@ -80,21 +81,28 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 			if e.AllowedModels == nil {
 				e.AllowedModels, e.Sources[KeyAllowedModels] = dedupe(l.AllowedModels), src
 			} else {
-				in := toSet(l.AllowedModels)
+				in, running := toSet(l.AllowedModels), toSet(e.AllowedModels)
 				kept := make([]string, 0, len(e.AllowedModels))
 				for _, m := range e.AllowedModels { // running order is kept
 					if in[m] {
 						kept = append(kept, m)
 					}
 				}
-				switch {
-				case len(kept) < len(e.AllowedModels):
+				extra := false
+				for _, v := range l.AllowedModels {
+					if !running[v] {
+						extra = true
+						break
+					}
+				}
+				prev := e.Sources[KeyAllowedModels]
+				if len(kept) < len(e.AllowedModels) {
 					e.AllowedModels, e.Sources[KeyAllowedModels] = kept, src
-				case len(toSet(l.AllowedModels)) > len(e.AllowedModels):
-					// A strict superset: it narrows nothing and asks for more.
+				}
+				if extra { // asked for a model the earlier layers had excluded
 					e.Ignored = append(e.Ignored, Ignored{KeyAllowedModels,
 						strings.Join(dedupe(l.AllowedModels), ","),
-						strings.Join(e.AllowedModels, ","), e.Sources[KeyAllowedModels]})
+						strings.Join(e.AllowedModels, ","), prev})
 				}
 			}
 		}
