@@ -26,7 +26,46 @@ jobs:
       - run: go vet -tags 'live docker' ./...
       # Type-checks the terraform-tagged tests (the real-terraform ones).
       - run: go vet -tags terraform ./...
+      # Type-checks the emulator tests of the database rules (the rules job runs them).
+      - run: go vet -tags firebase ./...
       - run: go test -race ./...
+  # The budget database rules are the only thing between a compromised run's
+  # token and every shared counter, so their tests run against the Realtime
+  # Database emulator: a firebase-tools pinned by
+  # internal/budget/rules/emulator/package-lock.json, Java 21 and Node 22. No
+  # step has a Firebase account or credential (the project id is a demo- id the
+  # emulator treats as local); the only network use is the package and
+  # emulator-jar downloads. FUGARO_REQUIRE_EMULATOR makes a missing emulator a
+  # failure instead of a skip, so this required check cannot pass vacuously.
+  rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: install the pinned firebase-tools
+        working-directory: internal/budget/rules/emulator
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: cache the emulator jar
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/firebase/emulators
+          key: firebase-emulators-${{ hashFiles('internal/budget/rules/emulator/package-lock.json') }}
+      - name: the generated rules and the emulator suite
+        env:
+          FUGARO_REQUIRE_EMULATOR: "1"
+        run: go test -tags firebase -count=1 -timeout 15m -v ./internal/budget/rules/...
   # Lints and tests the Terraform with a mock provider. No step has cloud
   # credentials: init -backend=false only downloads the provider the lock
   # file pins.
