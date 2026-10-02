@@ -1,6 +1,6 @@
 # Fugaro M9 — Budget guardrails, live dashboard and spend history
 
-*Status: design, all decisions settled 2026-09-30 (§16). Not an implementation plan. Source spec: [m9-spec-source.md](m9-spec-source.md). Base design: [v1.md](v1.md) (sections cited as §n).*
+*Status: design, all decisions settled 2026-09-30 (§16). Not an implementation plan. Source spec: [m9-spec-source.md](m9-spec-source.md) (v2); the user's updated v3 is [m9-spec-source-v3.md](m9-spec-source-v3.md), reconciled in [m9-spec-v3-reconciliation.md](m9-spec-v3-reconciliation.md) (2026-10-01). Base design: [v1.md](v1.md) (sections cited as §n).*
 
 This document maps the source spec onto Fugaro as it stands after M6. The user has made these decisions, and they bind the design:
 
@@ -63,7 +63,9 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
   - **M9b:** Firebase counters, daily caps, kill switches and `fugaro budget`.
   - **M9c:** `fugaro watch`.
   - **M9d:** Firestore history and `fugaro report`.
-  - **M9e (optional):** changes to the task loop.
+  - **M9e:** draft PR at the first push (D15, revised 2026-10-01).
+  - **M9f (optional):** changes to the task loop (the verify gate and structured findings).
+  - **M10 (later, own design):** multi-model work from spec v3.
 
 **The residual risk (D2, accepted).** The container is not a trust boundary against its own agent (§6.1). A prompt-injected agent can read the real credential from the runner's `/proc`, or on Vertex use the metadata server's token, and call the model **around** the gateway. The caps bound a runaway or honest agent absolutely. A compromised one is bounded only by provider-side limits. §11 describes the later hardening: an external gateway.
 
@@ -85,7 +87,7 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
 
 - **Deferred parallelism controls.** The redundant mode and per-batch concurrency are out. `max_parallel` stays.
 - **Non-Claude models** (D10). Anthropic's gateway guide says it doesn't support Claude Code routed to non-Claude models.
-- **Changes to the PR flow.** PRs stay drafts opened at finalize. There are no per-round PR comments (D15).
+- **Per-round PR comments** (D15). The draft PR opens at the first push, in M9e, not in M9a-d.
 - **A web dashboard.**
 - **Dollar caps, or any proxy, for `oauth` runs.**
 - **Capping compute cost** (D7).
@@ -104,9 +106,9 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
 | `maxTokensPerCall` | None | `agent.max_output_tokens` per role, passed as `CLAUDE_CODE_MAX_OUTPUT_TOKENS`. The gateway refuses any request above it |
 | Pinned IDs and a price table | Claude Code's `total_cost_usd` | An embedded price table plus owner overrides. Unpinned or unpriced models are rejected (§5.2) |
 | `maxReviewRounds` | `agent.review_rounds` | Unchanged |
-| Deterministic compile, test and lint | The agent runs `fugaro verify`, and §4.2 gates readiness on it | Kept. An optional verify gate before review is M9e |
+| Deterministic compile, test and lint | The agent runs `fugaro verify`, and §4.2 gates readiness on it | Kept. An optional verify gate before review is M9f |
 | APPROVE / REJECT | `ship` / `changes` | Fugaro's names are kept |
-| Draft PR from the start | PR opened at finalize | **Keep finalize-time PRs** (D15) |
+| Draft PR from the start | PR opened at finalize | **A draft PR after the first verified push, from M9e** (D15, revised). Until then finalize-time PRs |
 | A structured comment per round | Findings go to the fix prompt and the final report | **The spec's structured format goes into the final report**, one section per round (D15) |
 | HALTED | None | New status `halted` (§5.9) |
 | RTDB `budget` / `runs` / `agents` | GCS only | Caps, kill switches, dated counters, run ledgers and the registry (§6.2) |
@@ -147,9 +149,9 @@ Claude Code reports `total_cost_usd` only when a stage ends, and `--max-budget-u
 
 | Spec rule | M9 |
 |---|---|
-| Open the PR as a draft at the start | **Not adopted** (D15). An early PR needs an empty commit and a push at bootstrap, it would leave empty drafts behind when a run crashes, and it reworks finalize and the M6 follow-up paths that were checked live. `fugaro watch` gives the live view instead |
+| Open the PR as a draft at the start | **Adopted in M9e, at the first push** (D15, revised 2026-10-01); not at bootstrap. The original objection (D15, superseded): an early PR needs an empty commit and a push at bootstrap, it would leave empty drafts behind when a run crashes, and it reworks finalize and the M6 follow-up paths that were checked live. `fugaro watch` gives the live view instead. Opening after the first verified push avoids the empty commit and the empty drafts of early crashes; the sweeper marks stale drafts |
 | A structured findings comment per round | **The format is adopted, in the final report**: one section per round, with `<!-- fugaro:findings {...} -->`, and the findings go into `result.json` too |
-| The reviewer never sees code that doesn't compile | Optional M9e: before review, check for a passing, clean `verify test` on HEAD. Without one, run a fix stage that doesn't count as a review round, capped by `agent.verify_retries` (default 3) |
+| The reviewer never sees code that doesn't compile | Optional M9f: before review, check for a passing, clean `verify test` on HEAD. Without one, run a fix stage that doesn't count as a review round, capped by `agent.verify_retries` (default 3) |
 | Give up after the last round: FAILED, draft PR | Already the case (§4.2) |
 | HALTED: draft PR with a halted comment | Adopted (§5.9) |
 
@@ -919,7 +921,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 18. The rollover mode (Firestore writes, lookback, pruning, compute from `result.json`) and its Scheduler job. **M**
 19. `fugaro report`. **M**
 
-**M9e: task loop (optional)**
+**M9f: task loop (optional)**
 
 20. The verify gate before review and `agent.verify_retries`. **M**
 21. Structured findings per round in the final report and `result.json`. **S**
@@ -948,7 +950,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D12 | The registry | **Heartbeats, plus a sweeper cross-checked against Cloud Run executions** | The history job sweeps every 15 minutes |
 | D13 | The TUI library | **Bubble Tea** | The first TUI dependency |
 | D14 | Budget backend unreachable | **Halt after a 3-minute grace, for every auth mode and every budget mode, `observe` included.** Image checks and rebuilds are unaffected | An outage of RTDB or Identity Toolkit stops even `oauth` runs and observe runs. `off` is the only mode that ignores the backend |
-| D15 | The PR flow | **PRs stay opened at finalize. The structured review format goes into the final report** | No draft PR at start, no per-round comments |
+| D15 | The PR flow (**revised 2026-10-01**) | **A DRAFT PR opens after the first implement stage passes verification (the first push); its description is updated at each stage boundary; it flips to ready at the end.** A halt before the branch exists still opens no PR (D9). A halt after the first push leaves the draft with a `halted` comment. The sweeper marks the stale drafts of crashed runs. The structured review format still goes into the final report (no per-round comments) | Milestone M9e touches `internal/runner` (finalize, `EnsurePR` by number) and the `internal/gitprov` adapters. A live test must confirm that a Bitbucket draft does not notify the assigned reviewer. Was: PRs opened at finalize |
 | D16 | Project identity | **Each repository's `fugaro.yaml` names its project (`project: <slug>`)**, required by `init --repo` from M9 on and checked by the runner against the job's `FUGARO_PROJECT`. `fugaro init --name` sets the name once, in the cloud setup; project configs copy it; `fugaro use` is dropped. Renaming is unsupported in M9 | Mistakes can't cross projects. Existing repositories need one PR each, plus `init --repo`. The name is a label, not a boundary |
 | D17 | One word | **"Project" means only the Fugaro project, everywhere.** `--project <name>`, `FUGARO_PROJECT=<name>`, `projects/<name>.yaml` with `name:`; no profiles. The GCP ID becomes `--gcp-project`, `gcp_project:` and `FUGARO_GCP_PROJECT`. Terraform's `project` variable is the one exception | Breaking CLI, config and environment renames, applied directly (D18). `--gcp-project` can't override a selected project |
 | D18 | Compatibility | **None.** The runner and CLI understand only the new shapes, and strict decoding rejects the old ones with a clear message. The two existing installs are migrated once (§13.1) | No dual-shape code, no transition releases. Old configs and jobs fail loudly until migrated. Launches freeze during the migration |
@@ -981,5 +983,6 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 - **Later, read-only: organization-wide roll-up.** Each project's history job exports `spendDaily` to one shared place. There is no shared live state.
 - **M9c: `fugaro watch`.** Only needs M9b's data.
 - **M9d: Firestore history and `fugaro report`.** Independent of M9c.
-- **M9e (optional): the verify gate and structured findings.**
-- **Later:** the external gateway or budget service (D2 hardening), non-Claude coders, drafts at the start and per-round comments, the redundant mode, per-batch concurrency, and letting launchers use the kill switch.
+- **M9e: draft PR at the first push (D15, revised).** Small. Finalize and the provider adapters; see the reconciliation doc.
+- **M9f (optional): the verify gate and structured findings.**
+- **Later:** the external gateway or budget service (D2 hardening), non-Claude coders (M10, [reconciliation](m9-spec-v3-reconciliation.md)), per-round comments, the redundant mode, per-batch concurrency, and letting launchers use the kill switch.
