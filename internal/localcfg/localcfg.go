@@ -88,6 +88,10 @@ type Budget struct {
 	// AllowedModels, when set, are the only models a run may use. Explicit
 	// model IDs; an empty list is refused (it would forbid every model).
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
+	// RTDBURL is the project's Firebase Realtime Database (the budget
+	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
+	// init --firebase; empty means the project has none.
+	RTDBURL string `yaml:"rtdb_url,omitempty"`
 }
 
 // ModelPrice is one model's prices, in US dollars per million tokens. A
