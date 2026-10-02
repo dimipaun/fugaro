@@ -441,3 +441,24 @@ func TestLongestTaskTimeoutIgnoresCheckJobs(t *testing.T) {
 		t.Fatalf("LongestTaskTimeout = %v, %v; want 1h", got, err)
 	}
 }
+
+// An execution reports the run it was launched for (its FUGARO_RUN override),
+// which the history sweeper uses to tell whose execution is alive; one started
+// without the override reports none.
+func TestExecutionReportsRun(t *testing.T) {
+	ctx := context.Background()
+	b, fr, _ := newTestBackend(t)
+	fr.AddJob(webJob, "1", "2Gi")
+	ref, err := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, err := b.Execution(ctx, ref.Name)
+	if err != nil || e.Run != "acme-app/20260927-100000-abcd" {
+		t.Fatalf("Run = %q, %v", e.Run, err)
+	}
+	bare := fr.Start(webJob)
+	if e, err := b.Execution(ctx, bare); err != nil || e.Run != "" {
+		t.Fatalf("a bare execution reports Run %q, %v", e.Run, err)
+	}
+}

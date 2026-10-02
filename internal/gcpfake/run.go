@@ -80,7 +80,8 @@ type runExec struct {
 	key                         execKey
 	seq                         int
 	state                       backend.State
-	timeout                     string // the task timeout override the execution was created with
+	timeout                     string            // the task timeout override the execution was created with
+	env                         map[string]string // the override env the execution was created with
 	created, started, completed time.Time
 }
 
@@ -169,6 +170,16 @@ func (f *Run) Start(job string) string {
 		region = "fake-region"
 	}
 	return f.name(project, region, x.key)
+}
+
+// StartWithEnv is Start with the override env a launch would have set
+// (FUGARO_RUN, say), which the execution then reports in its template.
+func (f *Run) StartWithEnv(job string, env map[string]string) string {
+	name := f.Start(job)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lookup(name, "").env = env
+	return name
 }
 
 // create adds an execution of job; f.mu is held. It is nil for an unknown job.
@@ -307,6 +318,17 @@ func stamp(t time.Time) string {
 // render is the execution's REST form; f.mu is held.
 func (f *Run) render(project, region string, x *runExec) map[string]any {
 	j := f.jobs[x.key.job]
+	container := map[string]any{
+		"image":     "fake/" + x.key.job,
+		"resources": map[string]any{"limits": map[string]string{"cpu": j.cpu, "memory": j.memory}},
+	}
+	if len(x.env) > 0 {
+		var env []map[string]string
+		for k, v := range x.env {
+			env = append(env, map[string]string{"name": k, "value": v})
+		}
+		container["env"] = env
+	}
 	e := map[string]any{
 		"name":       f.name(project, region, x.key),
 		"job":        x.key.job,
@@ -314,10 +336,7 @@ func (f *Run) render(project, region string, x *runExec) map[string]any {
 		"taskCount":  1,
 		"logUri": "https://console.cloud.google.com/run/jobs/executions/details/" + region + "/" + x.key.short +
 			"/tasks?project=" + url.QueryEscape(f.project(project)),
-		"template": map[string]any{"containers": []any{map[string]any{
-			"image":     "fake/" + x.key.job,
-			"resources": map[string]any{"limits": map[string]string{"cpu": j.cpu, "memory": j.memory}},
-		}}},
+		"template": map[string]any{"containers": []any{container}},
 	}
 	if s := stamp(x.started); s != "" {
 		e["startTime"] = s
@@ -482,6 +501,7 @@ func (f *Run) run(w http.ResponseWriter, r *http.Request, jp string, body []byte
 		return
 	}
 	x.timeout = req.Overrides.Timeout
+	x.env = env
 	call.Execution = x.key.short
 	f.requests = append(f.requests, call)
 	if on := f.OnRun; on != nil {

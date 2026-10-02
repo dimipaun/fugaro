@@ -152,6 +152,7 @@
           "additionalProperties": false,
           "properties": {
             "per_run_usd": { "type": "number", "exclusiveMinimum": 0 },
+            "per_day_usd": { "type": "number", "exclusiveMinimum": 0, "description": "The committed daily cap of the repository (fugaro.yaml); the run enforces it client-side against the repository's day counter." },
             "mode": { "enum": ["off", "observe", "enforce"] },
             "max_run_tokens": { "type": "integer", "minimum": 1 },
             "max_output_tokens": {
@@ -186,6 +187,19 @@
             }
           }
         }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["day", "granted_micros", "released_micros", "mode", "backend"],
+      "description": "The run's part in the project's shared budget; absent when the run did not use the budget backend.",
+      "properties": {
+        "day": { "type": "integer", "description": "The UTC day number (days since 1970-01-01) the run started on." },
+        "granted_micros": { "type": "integer", "minimum": 0, "description": "Everything the run's leases granted, in micro-dollars (0 for an oauth run)." },
+        "released_micros": { "type": "integer", "minimum": 0, "description": "What the run gave back unused, in micro-dollars." },
+        "mode": { "enum": ["observe", "enforce"], "description": "The run's merged budget mode." },
+        "backend": { "enum": ["rtdb"] }
       }
     },
     "pushed_head": { "type": "string", "minLength": 1, "description": "The commit the run pushed, set right after a successful push." },

@@ -109,6 +109,33 @@ jobs:
           name: fugaro-${{ matrix.base }}-image
           path: fugaro-${{ matrix.base }}.tar.gz
           retention-days: 1
+  # The history job's image (design D11): built and checked on every run, not
+  # published until M7 publishes images; the operator builds and pushes it by hand (docs/gcp-setup.md, "The history image").
+  history:
+    needs: version
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Checkout the resolved tag
+        if: needs.version.outputs.tag != ''
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+        run: git checkout --quiet "refs/tags/$TAG"
+      - name: Build
+        env:
+          FUGARO_VERSION: ${{ needs.version.outputs.version }}
+        run: images/build-base.sh history fugaro-history:ci
+      - name: Smoke test
+        run: images/smoke-history.sh fugaro-history:ci
+      - name: Scan
+        if: github.event_name != 'pull_request'
+        run: images/scan.sh fugaro-history:ci
   # Only this job ever needs packages:write, and it never runs on
   # pull_request: `version.outputs.publish` is forced false there.
   publish:

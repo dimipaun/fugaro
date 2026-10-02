@@ -30,9 +30,19 @@ type call struct {
 	Exit       int             `json:"exit"`
 	SleepS     float64         `json:"sleep_s"`
 	NoResult   bool            `json:"no_result"`
+	// ModelUsage is the result event's modelUsage, by model: an oauth run
+	// reports its notional spend by model from it.
+	ModelUsage map[string]modelUsage `json:"model_usage,omitempty"`
 	// API are model calls made after the shell, through the gateway the
 	// environment points at.
 	API []apiCall `json:"api"`
+}
+
+type modelUsage struct {
+	Input         int64 `json:"inputTokens"`
+	Output        int64 `json:"outputTokens"`
+	CacheRead     int64 `json:"cacheReadInputTokens"`
+	CacheCreation int64 `json:"cacheCreationInputTokens"`
 }
 
 // apiCall is one model call (Parallel > 1: that many at once). It goes to
@@ -116,10 +126,14 @@ func main() {
 		if len(c.Structured) > 0 {
 			structured = c.Structured
 		}
-		emit(map[string]any{
+		ev := map[string]any{
 			"type": "result", "subtype": subtype, "is_error": c.IsError, "total_cost_usd": c.Cost,
 			"session_id": sid, "result": os.ExpandEnv(c.Text), "structured_output": structured,
-		})
+		}
+		if len(c.ModelUsage) > 0 {
+			ev["modelUsage"] = c.ModelUsage
+		}
+		emit(ev)
 	}
 	os.Exit(c.Exit)
 }

@@ -2,8 +2,10 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -66,12 +68,30 @@ func TestDefaultBranchFileNotShadowedByTag(t *testing.T) {
 // and `fugaro validate` share: every policy key is in it.
 func TestFileLayerCarriesEveryPolicyKey(t *testing.T) {
 	cfg, ps := config.Parse([]byte("version: 1\nproject: x\ngit: { provider: github }\nagent:\n  max_run_tokens: 7\n  max_output_tokens: { coder: 11, reviewer: 13 }\n" +
-		"budget: { mode: observe, per_run_usd: 3, allowed_models: [claude-haiku-4-5] }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"))
+		"budget: { mode: observe, per_run_usd: 3, per_day_usd: 9, allowed_models: [claude-haiku-4-5] }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"))
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}
-	want := policy.Layer{Mode: "observe", PerRunUSD: 3, MaxRunTokens: 7, MaxOutputCoder: 11, MaxOutputReviewer: 13, AllowedModels: []string{"claude-haiku-4-5"}}
+	want := policy.Layer{Mode: "observe", PerRunUSD: 3, PerDayUSD: 9, MaxRunTokens: 7, MaxOutputCoder: 11, MaxOutputReviewer: 13, AllowedModels: []string{"claude-haiku-4-5"}}
 	if got := FileLayer(cfg); !reflect.DeepEqual(got, want) {
 		t.Errorf("FileLayer = %+v, want %+v", got, want)
+	}
+}
+
+// result.json's policy object carries the day cap, and a record without one
+// has no per_day_usd key.
+func TestPolicyRecordCarriesPerDay(t *testing.T) {
+	rec := policyRecord(policy.Effective{Layer: policy.Layer{PerDayUSD: 7.5},
+		Sources: map[string]string{policy.KeyPerDayUSD: policy.SourceDefaultBranch}}, 0)
+	if rec == nil || rec.Effective.PerDayUSD != 7.5 || rec.Sources["per_day_usd"] != "default-branch" {
+		t.Fatalf("record = %+v", rec)
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil || !strings.Contains(string(raw), `"per_day_usd":7.5`) {
+		t.Fatalf("json = %s, %v", raw, err)
+	}
+	other := policyRecord(policy.Effective{Layer: policy.Layer{PerRunUSD: 2}, Sources: map[string]string{policy.KeyPerRunUSD: policy.SourceCeiling}}, 0)
+	if raw, _ := json.Marshal(other); strings.Contains(string(raw), "per_day_usd") {
+		t.Fatalf("json = %s", raw)
 	}
 }

@@ -1,0 +1,186 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "fugaro": {
+      "project": { ".read": false, ".write": false },
+      "mark": { ".read": false, ".write": false }
+    },
+    "config": {
+      "caps": {
+        "global": { ".read": "TOKEN" },
+        "defaults": { ".read": "TOKEN" },
+        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
+      },
+      "limits": { ".read": "TOKEN" },
+      "mode": { ".read": "TOKEN" },
+      "kill": {
+        "global": { ".read": "TOKEN" },
+        "repos": { "$slug": { ".read": "TOKEN && auth.token.fs == $slug" } }
+      }
+    },
+    "runs": {
+      "$slug": {
+        "$run": {
+          ".read": "RUN",
+          "reserved": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && (NEW == OLD || (NEW - OLD <= MAXRES && KILLS_OFF && NEW - OLD == D(spend/TODAY/runs/$slug/$run/reserved) && (!ENFORCE || (NEW - N(runs/$slug/$run/released) <= REPOPERRUN && NEW - N(runs/$slug/$run/released) <= GLOBALPERRUN))))"
+          },
+          "released": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW + N(runs/$slug/$run/spent) <= N(runs/$slug/$run/reserved) && (NEW == OLD || NEW - OLD == D(spend/TODAY/runs/$slug/$run/released) + D(spend/YESTERDAY/runs/$slug/$run/released))"
+          },
+          "spent": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW + N(runs/$slug/$run/released) <= N(runs/$slug/$run/reserved)"
+          },
+          "notional": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+          },
+          "overrun": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+          },
+          "tokens": {
+            ".write": "RUN && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
+          },
+          "exp": {
+            ".write": "RUN && newData.exists() && !data.exists()",
+            ".validate": "AMOUNT"
+          }
+        }
+      }
+    },
+    "spend": {
+      "$day": {
+        "global": {
+          ".read": "TOKEN",
+          "counted": {
+            ".write": "TOKEN && DAYOK && newData.exists()",
+            ".validate": "AMOUNT && D(spend/$day/global/counted) == RUNDELTA && (NEW <= OLD || !ENFORCE || NEW <= GLOBALDAILY)"
+          },
+          "spent": {
+            ".write": "TOKEN && DAYOK && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+          },
+          "notional": {
+            ".write": "TOKEN && DAYOK && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+          },
+          "calls": {
+            ".write": "TOKEN && DAYOK && newData.exists()",
+            ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxCallsPerWrite}}"
+          }
+        },
+        "repos": {
+          "$slug": {
+            ".read": "TOKEN && auth.token.fs == $slug",
+            "counted": {
+              ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+              ".validate": "AMOUNT && D(spend/$day/repos/$slug/counted) == RUNDELTA && (NEW <= OLD || !ENFORCE || NEW <= REPODAILY)"
+            },
+            "spent": {
+              ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+              ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+            },
+            "notional": {
+              ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+              ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+            },
+            "calls": {
+              ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+              ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxCallsPerWrite}}"
+            },
+            "byModel": {
+              "$model": {
+                ".validate": "$model.length <= {{.MaxKeyLength}}",
+                "micros": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
+                "in": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
+                },
+                "out": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
+                },
+                "cr": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
+                },
+                "cw": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"
+                }
+              }
+            }
+          }
+        },
+        "runs": {
+          "$slug": {
+            "$run": {
+              ".read": "RUN",
+              "reserved": {
+                ".write": "RUN && DAYOK && newData.exists()",
+                ".validate": "AMOUNT && NEW >= OLD && (NEW == OLD || ($day == TODAY && NEW - OLD == D(runs/$slug/$run/reserved))) && COUNTERS_FOLLOW"
+              },
+              "released": {
+                ".write": "RUN && DAYOK && newData.exists()",
+                ".validate": "AMOUNT && NEW >= OLD && NEW + N(spend/$day/runs/$slug/$run/spent) <= N(spend/$day/runs/$slug/$run/reserved) && NEW - OLD <= D(runs/$slug/$run/released) && COUNTERS_FOLLOW"
+              },
+              "spent": {
+                ".write": "RUN && DAYOK && newData.exists()",
+                ".validate": "AMOUNT && NEW >= OLD && NEW + N(spend/$day/runs/$slug/$run/released) <= N(spend/$day/runs/$slug/$run/reserved)"
+              }
+            }
+          }
+        }
+      }
+    },
+    "agents": {
+      "$slug": {
+        "$run": {
+          ".read": "RUN",
+          ".write": "RUN",
+          ".validate": "newData.hasChildren(['repo', 'requestedBy'])",
+          "repo": { ".validate": "STR && RBOK" },
+          "workflow": { ".validate": "STR && RBOK" },
+          "title": { ".validate": "STR && RBOK" },
+          "stage": { ".validate": "STR && RBOK" },
+          "verify": { ".validate": "STR && RBOK" },
+          "coder": { ".validate": "STR && RBOK" },
+          "reviewer": { ".validate": "STR && RBOK" },
+          "auth": { ".validate": "STR && RBOK" },
+          "prUrl": { ".validate": "STR && RBOK" },
+          "halted": { ".validate": "STR && RBOK" },
+          "round": { ".validate": "AMOUNT && RBOK" },
+          "startedAt": { ".validate": "AMOUNT && RBOK" },
+          "stageStartedAt": { ".validate": "AMOUNT && RBOK" },
+          "stageDeadline": { ".validate": "AMOUNT && RBOK" },
+          "updatedAt": { ".validate": "AMOUNT && RBOK" },
+          "spent": { ".validate": "AMOUNT && RBOK" },
+          "requestedBy": { ".validate": "STR && RBOK" },
+          "$other": { ".validate": false }
+        }
+      }
+    },
+    "outcomes": {
+      "$day": {
+        "$slug": {
+          "$run": {
+            ".write": "RUN && DAYOK && !data.exists()",
+            ".validate": "newData.hasChildren(['status', 'requestedBy'])",
+            "status": { ".validate": "newData.isString() && (newData.val() == 'succeeded' || newData.val() == 'failed' || newData.val() == 'halted' || newData.val() == 'cancelled' || newData.val() == 'infra_error' || newData.val() == 'none') && RBOK" },
+            "requestedBy": { ".validate": "STR && RBOK" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    }
+  }
+}

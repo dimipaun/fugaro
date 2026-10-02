@@ -174,7 +174,7 @@ func (r *run) readSessionFile(id string) ([]byte, error) {
 
 // redactLines redacts each line of data with the run's secrets.
 func (r *run) redactLines(data []byte) []byte {
-	redact := agent.RedactFunc(r.secrets)
+	redact := agent.RedactFunc(r.secretList())
 	lines := strings.Split(string(data), "\n")
 	for i, l := range lines {
 		lines[i] = redact(l)

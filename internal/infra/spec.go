@@ -53,6 +53,13 @@ const (
 	// workflow job whatever the mode.
 	MaxRunTokensEnv  = runner.MaxRunTokensEnv
 	AllowedModelsEnv = runner.AllowedModelsEnv
+	// The budget backend (M9b R10), on every job whose budget is not off:
+	// the project's Realtime Database, the restricted web API key (not a
+	// secret) that signs a run's token in, and how long the backend may be
+	// unreachable before the run halts (set only when the config sets it).
+	RTDBURLEnv        = runner.RTDBURLEnv
+	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
+	BudgetGraceEnv    = runner.BudgetGraceEnv
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
@@ -88,6 +95,11 @@ type InstallationOutputs struct {
 	Operators               []string `json:"operators"`
 	LogView                 string   `json:"log_view"`
 	RegistryCleanupDryRun   *bool    `json:"registry_cleanup_dry_run"`
+	// HistoryServiceAccount and HistoryJob are null without a budget
+	// backend: the sweeper's account (which the Firebase root grants its
+	// roles) and its Cloud Run job.
+	HistoryServiceAccount string `json:"history_service_account"`
+	HistoryJob            string `json:"history_job"`
 }
 
 // RoleIDs are the custom roles' full names, projects/<p>/roles/<id>.
@@ -582,6 +594,18 @@ func budgetEnv(lc *localcfg.Config, env map[string]string) error {
 	}
 	if mode := lc.BudgetMode(); mode != localcfg.BudgetOff {
 		env[BudgetModeEnv] = mode
+		// Budget off never touches the backend, so no job learns of it.
+		if b := lc.Budget; b != nil {
+			if b.RTDBURL != "" {
+				env[RTDBURLEnv] = b.RTDBURL
+			}
+			if b.FirebaseAPIKey != "" {
+				env[FirebaseAPIKeyEnv] = b.FirebaseAPIKey
+			}
+			if b.Grace > 0 {
+				env[BudgetGraceEnv] = b.Grace.String()
+			}
+		}
 	}
 	return nil
 }

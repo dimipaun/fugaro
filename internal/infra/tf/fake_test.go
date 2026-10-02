@@ -2,6 +2,7 @@ package tf
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -130,4 +131,38 @@ func envMap(env []string) map[string]string {
 		}
 	}
 	return m
+}
+
+// A script key "<subcommand>@<root>" applies to the working directory of
+// that name only, and wins over the plain key there.
+func TestFakeScriptPerRoot(t *testing.T) {
+	r := newRig(t)
+	firebase := filepath.Join(r.dir, "firebase")
+	if err := os.MkdirAll(firebase, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	r.script["output"] = map[string]any{"stdout": `{"installation":{"value":"x"}}`}
+	r.script["output@firebase"] = map[string]any{"stdout": `{"rtdb_url":{"value":"y"}}`}
+	root, err := New(fakeBin, r.dir, r.env(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fb, err := New(fakeBin, firebase, r.env(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := root.Output(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := fb.Output(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := a["installation"]; !ok || len(a) != 1 {
+		t.Errorf("outside the root: %v", a)
+	}
+	if _, ok := b["rtdb_url"]; !ok || len(b) != 1 {
+		t.Errorf("in the root: %v", b)
+	}
 }

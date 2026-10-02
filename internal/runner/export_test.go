@@ -89,6 +89,7 @@ func SetStrictHaltCheck(t *testing.T) {
 func (h *RunHandle) HaltNow(hl runstore.Halt) bool      { return h.r.haltNow(hl) }
 func (h *RunHandle) CancelHaltedStage(hl runstore.Halt) { h.r.cancelHaltedStage(hl) }
 func (h *RunHandle) MarkCancelled() bool                { return h.r.markCancelled() }
+func (h *RunHandle) Stage() string                      { return h.r.rec.Stage }
 func (h *RunHandle) IsCancelled() bool                  { return h.r.isCancelled() }
 func (h *RunHandle) SetStageExtra(f func(stage string) ([]string, int64)) {
 	h.r.mu.Lock()

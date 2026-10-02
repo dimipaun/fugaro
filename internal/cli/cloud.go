@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -21,6 +23,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -56,6 +59,9 @@ type cloudEnv struct {
 	// records is the bucket build records are read from, once opened,
 	// when it isn't bucket (see recordBucket).
 	records *blobx.Bucket
+	// noBudgetCheck is --no-budget-check: fugaro run skips the launch
+	// pre-check of the budget (nothing else).
+	noBudgetCheck bool
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests
@@ -159,6 +165,60 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 		return nil, err
 	}
 	return &cloudEnv{lc: lc, bucket: b, be: be, gcp: opts}, nil
+}
+
+// budgetScopes are the OAuth scopes the Realtime Database REST API takes
+// from a person's Application Default Credentials (plan A2).
+var budgetScopes = []string{"https://www.googleapis.com/auth/firebase.database", "https://www.googleapis.com/auth/userinfo.email"}
+
+// openBudgetDB selects the project config (the header goes to stderr, as in
+// openCloud) and returns a client of the project's budget database, acting as
+// the person (ADC): their IAM roles on the Firebase project decide what the
+// database lets them do (viewer reads, admin writes). The project needs
+// budget.rtdb_url, which fugaro init --firebase writes. A config that sets
+// endpoints.no_auth (fakes only) sends no credentials.
+func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.Client, error) {
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return nil, nil, err
+	}
+	_, lc, err := selectProject(ctx, o)
+	if err != nil {
+		return nil, nil, err
+	}
+	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
+		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
+	}
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lc, db, nil
+}
+
+// newBudgetClient is the client of the budget database at url, acting as the
+// person (ADC with the budget scopes); noAuth (fakes only) sends no
+// credentials. The URL is validated first.
+func newBudgetClient(ctx context.Context, url string, noAuth bool) (*rtdb.Client, error) {
+	if err := rtdb.ValidateURL(url, noAuth); err != nil {
+		return nil, userErr("budget.rtdb_url: %v", err)
+	}
+	auth := rtdb.Auth{IDToken: func() string { return "" }}
+	if !noAuth {
+		ts, err := google.DefaultTokenSource(ctx, budgetScopes...)
+		if err != nil {
+			return nil, userErr("no Google credentials to reach the budget database: run gcloud auth application-default login (%v)", err)
+		}
+		auth = rtdb.Auth{Source: ts}
+	}
+	var opts []rtdb.Option
+	if budgetTransport != nil {
+		opts = append(opts, rtdb.WithHTTPClient(&http.Client{Transport: budgetTransport}))
+	}
+	db, err := rtdb.New(url, auth, opts...)
+	if err != nil {
+		return nil, userErr("budget.rtdb_url: %v", err)
+	}
+	return db, nil
 }
 
 // locateRun resolves "<slug>/<run-id>" or a bare run ID to a run in the

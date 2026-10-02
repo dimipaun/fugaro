@@ -382,7 +382,7 @@ A refused write is re-read and evaluated locally, which tells a stale read (retr
 ### 5.6 Other ties between the stages and the gateway
 
 - **Per-stage `--max-budget-usd` stays** as defence in depth.
-- **Where the per-run cap is checked.** In M9a it's in-process, against `FUGARO_MAX_RUN_USD` from the local config. From M9a.1 it is the lowest positive of that ceiling, the default branch's `fugaro.yaml` `budget.per_run_usd` and the run's branch (a branch can only tighten; a looser value is ignored with a warning and recorded in `result.json` `policy`). From M9b the rules check the minimum of that and the RTDB caps (`min(RTDB, committed policy)`); `budget.per_day_usd` is reserved in `fugaro.yaml` and refused until then.
+- **Where the per-run cap is checked.** In M9a it's in-process, against `FUGARO_MAX_RUN_USD` from the local config. From M9a.1 it is the lowest positive of that ceiling, the default branch's `fugaro.yaml` `budget.per_run_usd` and the run's branch (a branch can only tighten; a looser value is ignored with a warning and recorded in `result.json` `policy`). From M9b the rules check the minimum of that and the RTDB caps (`min(RTDB, committed policy)`); `budget.per_day_usd` is a real `fugaro.yaml` key from M9b: tightening-only, enforced client-side against the repository's own day counter (R1), and the lower RTDB cap wins.
 - **`fugaro verify` tells the gateway when it starts and ends** (loopback, with the per-run gateway token). The registry then shows `implement · test`. This is cosmetic.
 
 ### 5.7 Budget modes
@@ -390,7 +390,7 @@ A refused write is re-read and evaluated locally, which tells a stale read (retr
 The local config's `budget.mode`:
 
 - **`off`**: no gateway, the same as having no `budget:` block;
-- **`observe`**: account and lease in RTDB, but **caps are advisory**. Would-be cap halts are logged and never refused; the observe rules variant drops only the cap checks. **Kill switches and fail-closed still apply:** an observe run halts on a kill, and halts when the backend is unreachable after the 3-minute grace (D14). So observe relaxes caps only, which is why it keeps its name. For behaviour with no budget at all, use `off`.
+- **`observe`** (M9b, correction R2: the mode is **project-wide**, stored at `config/mode` in the database and set by `init --firebase --budget-mode` or `fugaro budget set --global --mode`; the job's `FUGARO_BUDGET_MODE` is only the on/off gate and a committed or ceiling `off` means no backend at all; `budget show` prints both, since an env `observe` under a database `enforce` halts on cap refusals): account and lease in RTDB, but **caps are advisory**. Would-be cap halts are logged and never refused; the observe rules variant drops only the cap checks. **Kill switches and fail-closed still apply:** an observe run halts on a kill, and halts when the backend is unreachable after the 3-minute grace (D14). So observe relaxes caps only, which is why it keeps its name. For behaviour with no budget at all, use `off`.
 - **`enforce`**: everything in this document.
 
 ### 5.8 What `oauth` runs get (A1: the user accepted the risk)
@@ -428,6 +428,21 @@ The local config's `budget.mode`:
 - **Listening.** The runner holds one REST event stream on `config/kill` (its rules allow reading `kill/global` and its own repository's switch), authenticated with the run's ID token. It reconnects when it sees `auth_revoked` or when the token expires, about hourly.
 - **Stopping.** On `on: true`, the runner halts the stage and the gateway cancels its in-flight streams. Latency is seconds, plus the 10-second SIGTERM grace.
 - **Polling as a backstop.** The heartbeat write re-reads the switch every 15 s, in case the stream is silently stale.
+
+
+### 5.11 What M9b built (implementation notes)
+
+These record where the build settled something the design left open. The authoritative description of the trust model is v1.md §6.1 ("The shared budget").
+
+- **The budget session** (`internal/budget`) is one object per run: it exchanges the token, reads the caps and kill switches, creates the registry entry, runs the heartbeat (15 s, carrying the usage report in the same multi-path write) and the two kill streams, and provides the gateway's `Lease` source (`Grant`, `Report`, `Release`). Leases are tops-ups of the run's ledger and both day counters in one atomic multi-path `PATCH`; the rules are the compare-and-set and `Evaluate` classifies a denial (stale: retry up to 8 times, otherwise a refusal with the local predicate's reason).
+- **Grace per source.** A source's clock starts at its first failure. Any successful database call stops every database source's clock ("any success proves the database reachable"); the Firebase Auth sources (`exchange`, `refresh`) stop only by their own success. A kill stream's error counts only while the REST poll also fails. The window is 3 minutes, shortened only by `FUGARO_BUDGET_GRACE` (5 s to 3 m).
+- **Two kill streams**, `config/kill/global` and `config/kill/repos/<slug>`, each reconnecting on `auth_revoked` and token expiry; the heartbeat re-reads both.
+- **Rules** are generated, leaf-only for writes, and tie the run's ledger and the counters to each other in both directions (see v1.md §6.1). Cap comparisons read `config/mode`; everything else is enforced in every mode.
+- **Committed `budget.per_day_usd`** is client-enforced and repository-scoped (R1): `Evaluate` takes the effective repository cap; the project's day cap is the database's alone.
+- **`oauth`** records `notional` only (R7) and is bound by the kill switches, the token cap and the grace.
+- **`fugaro budget`** (`show`, `set`, `kill`, `resume`, `prices`): admins write caps with ETag-guarded single-node `PUT`s that show the old and new value; raising a cap, setting one that was unset, lowering the mode to observe and `resume` ask for the project's name (or `--yes`); `kill --all` asks for it too. `show` needs the Viewer role only. `--repo` is `owner/name`.
+- **`init --firebase <id>`** adopts a Firebase project the user created and linked to billing. It refuses a project that is missing, has no billing, or whose database holds data but no Fugaro mark; it runs three confirmed applies, deploys the rules, the mark, the project name, the mode and `maxReserve` over REST, and **refuses `--budget-mode enforce` unless the global daily and per-run caps exist** (an enforcing budget with no global caps would refuse every lease). Data is kept on a rollback (`prevent_destroy`).
+- **Sweeper** (`fugaro budget history --sweep`) as in v1.md §6.1; the rollover (`--rollover`) is M9d.
 
 ---
 
@@ -471,7 +486,7 @@ The local config's `budget.mode`:
 |---|---|
 | `fugaro-token-signer` (a new account in the FP, display name `Fugaro token signer`) | **No roles at all.** It exists only as the key that signs custom tokens |
 | Launchers and operators | `roles/firebasedatabase.viewer` and `roles/datastore.viewer` on the FP, plus the custom role **`fugaroTokenMinter`** (`iam.serviceAccounts.signJwt` only) **on the signer account**. That is narrower than `serviceAccountTokenCreator`, which would also let them mint access tokens |
-| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the project's GCP project, `fugaroLauncher` (`run.executions.list`, for the cross-check) |
+| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the project's GCP project, its own narrow custom role `fugaroHistory` (`run.executions.list` and `get`, `run.jobs.get` and `list`, `run.operations.get`, for the cross-check) |
 | `fugaro-scheduler` | `roles/run.invoker` on the history job |
 | Job accounts | **Nothing on the FP.** They hold a Firebase ID token, which is not an IAM identity |
 | Budget admins (D6) | `roles/firebasedatabase.admin` and `roles/datastore.viewer` on the FP, granted by the Firebase root to: the GCP project's `roles/owner` and `roles/editor` members, which `init --firebase` reads from the GCP project's IAM policy and passes as tfvars; and `terraform.budget_admins`. The FP's own owners and editors (at least the person who created it) hold admin implicitly |
@@ -639,13 +654,13 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - the signer account, the `fugaroTokenMinter` role and its grants;
   - the history job's account, its job (its own image, D11) and two Scheduler jobs (`30 0 * * *` for the rollover, `*/15 * * * *` for the sweep), running as `fugaro-scheduler`;
   - the grants in §6.1;
-  - in the repository module, the jobs' environment: `FUGARO_BUDGET_MODE`, `FUGARO_RTDB_URL`, `FUGARO_FIREBASE_API_KEY`, `FUGARO_MODEL_PRICES` and `FUGARO_MAX_RUN_USD`.
+  - ~~in the repository module, the jobs' environment~~ (correction R10, M9b): the jobs' environment is plain env set by `fugaro init --repo` from `internal/infra/spec.go` (`FUGARO_RTDB_URL`, `FUGARO_FIREBASE_API_KEY`, with `FUGARO_BUDGET_MODE`, `FUGARO_MODEL_PRICES` and `FUGARO_MAX_RUN_USD` as in M9a), not Terraform variables. The history job's environment is the one Terraform-defined environment. M9b creates no Firestore database and no rollover Scheduler job (M9d).
 - **Marks.** The instance can't carry labels, so `init` writes `/fugaro/mark` into the database and discovery checks it. Everything else carries `fugaro=managed`, or its account display name.
 - **A third Terraform root, `roots/firebase`,** with its state at `fugaro/firebase` in the installation's state bucket, which is operator-only as in §8.1.
   - **Providers.** Its providers (`google` and `google-beta`, pinned) target the FP, with `project`, `billing_project` and `user_project_override`.
   - **Inputs.** It receives, as tfvars, the installation's outputs: launchers, operators, `budget_admins`, the discovered owners and editors, the history account's email and the FP ID. There is no remote-state coupling, as in §8.1.
   - **What it holds.** Everything that lives in the FP: the APIs, the Firebase project, RTDB, Firestore, Firestore rules, the signer and the minter role, and every grant onto the FP.
-- **The installation root** (gated by `enable_budget`) holds the history account, the history job and its two Scheduler jobs, and the history account's `fugaroLauncher` grant. Its inputs include the Firebase root's outputs (`rtdb_url`, `firebase_api_key`, `token_signer`, `firestore_database`).
+- **The installation root** (gated by `enable_budget`) holds the history account, the history job and its two Scheduler jobs, and the history account's `fugaroHistory` role and its grant. Its inputs include the Firebase root's outputs (`rtdb_url`, `firebase_api_key`, `token_signer`, `firestore_database`).
 - **The repository root** passes the jobs' budget environment from the same outputs. Job accounts get **no** grant on the FP.
 
 ### 6.7 `fugaro init`
@@ -675,11 +690,9 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
     mode: enforce                    # off | observe | enforce
     firebase_project: my-fugaro-fp   # the installation's dedicated Firebase project (D3)
     rtdb_url: https://<instance>.firebaseio.com
-    firestore_database: "(default)"
     firebase_api_key: <web-api-key>  # not a secret; restricted to identitytoolkit and securetoken
     token_signer: fugaro-token-signer@<fp>.iam.gserviceaccount.com
-    heartbeat: 15s
-    unreachable_grace: 3m
+    unreachable_grace: 3m            # 5s to 3m: it can only shorten the default
     per_run_usd: 20                  # M9a in-process cap; with M9b the effective cap is min(this, RTDB caps)
   model_prices: {}
   ```

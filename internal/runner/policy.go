@@ -83,7 +83,7 @@ func (r *run) resolvePolicy(ctx context.Context, cfg *config.Config) error {
 		if err != nil {
 			return fmt.Errorf("fugaro.yaml on the default branch (%s) has an invalid policy, so the run can't tell what the team allows: %w", branch, err)
 		}
-		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels,
+		def = policy.Layer{Mode: p.Mode, PerRunUSD: p.PerRunUSD, PerDayUSD: p.PerDayUSD, MaxRunTokens: p.MaxRunTokens, AllowedModels: p.AllowedModels,
 			MaxOutputCoder: p.MaxOutputTokens.Coder, MaxOutputReviewer: p.MaxOutputTokens.Reviewer}
 	}
 
@@ -125,7 +125,7 @@ func FileLayer(cfg *config.Config) policy.Layer {
 	l := policy.Layer{MaxRunTokens: cfg.Agent.MaxRunTokens,
 		MaxOutputCoder: cfg.Agent.MaxOutputTokens.Coder, MaxOutputReviewer: cfg.Agent.MaxOutputTokens.Reviewer}
 	if b := cfg.Budget; b != nil {
-		l.Mode, l.PerRunUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
+		l.Mode, l.PerRunUSD, l.PerDayUSD, l.AllowedModels = b.Mode, b.PerRunUSD, b.PerDayUSD, b.AllowedModels
 	}
 	return l
 }
@@ -145,7 +145,7 @@ func policyRecord(e policy.Effective, nDef int) *runstore.PolicyRecord {
 		return nil
 	}
 	rec := &runstore.PolicyRecord{Effective: runstore.PolicyEffective{
-		PerRunUSD: e.PerRunUSD, Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels}}
+		PerRunUSD: e.PerRunUSD, PerDayUSD: e.PerDayUSD, Mode: e.Mode, MaxRunTokens: e.MaxRunTokens, AllowedModels: e.AllowedModels}}
 	if e.MaxOutputCoder > 0 || e.MaxOutputReviewer > 0 {
 		rec.Effective.MaxOutputTokens = &runstore.PolicyOutput{Coder: e.MaxOutputCoder, Reviewer: e.MaxOutputReviewer}
 	}
@@ -178,6 +178,9 @@ func (r *run) recordPolicy(nDef int) *runstore.PolicyRecord {
 		}
 	}
 	args := []any{"per_run_usd", e.PerRunUSD}
+	if e.PerDayUSD > 0 {
+		args = append(args, "per_day_usd", e.PerDayUSD)
+	}
 	if e.Mode != "" {
 		args = append(args, "mode", e.Mode)
 	}

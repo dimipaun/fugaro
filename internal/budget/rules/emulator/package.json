@@ -1,0 +1,11 @@
+{
+  "name": "fugaro-rules-emulator",
+  "private": true,
+  "description": "Pins the firebase-tools whose Realtime Database emulator the rules tests run against (go test -tags firebase ./internal/budget/rules/...). Bump on purpose, with the rules tests.",
+  "devDependencies": {
+    "firebase-tools": "15.19.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

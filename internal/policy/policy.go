@@ -17,6 +17,7 @@ package policy
 // Policy keys, as used in Effective.Sources and Ignored.Key.
 const (
 	KeyPerRunUSD     = "per_run_usd"
+	KeyPerDayUSD     = "per_day_usd"
 	KeyMode          = "mode"
 	KeyMaxRunTokens  = "max_run_tokens"
 	KeyAllowedModels = "allowed_models"
@@ -42,9 +43,12 @@ const (
 
 // Layer is one source of policy. The zero value of every field means "unset".
 type Layer struct {
-	Mode         string  // "" = unset
-	PerRunUSD    float64 // 0 = unset
-	MaxRunTokens int64   // 0 = unset
+	Mode      string  // "" = unset
+	PerRunUSD float64 // 0 = unset
+	// PerDayUSD is the day cap of the repository, enforced by the runner
+	// (the database enforces the owner's own cap); 0 = unset.
+	PerDayUSD    float64
+	MaxRunTokens int64 // 0 = unset
 	// Per-call output limits by role; 0 = unset, smaller wins.
 	MaxOutputCoder    int64
 	MaxOutputReviewer int64

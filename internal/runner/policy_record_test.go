@@ -333,3 +333,42 @@ func TestPolicyLogOmitsUnsetMode(t *testing.T) {
 		t.Errorf("policy line %q (logs:\n%s)", line, logs.String())
 	}
 }
+
+// The committed per-day cap merges like the per-run one: the default branch
+// sets it, a branch can only tighten it, and a looser value is recorded.
+func TestPerDayBranchLooserIgnoredRecorded(t *testing.T) {
+	g := newGW(t, gwConfig(t, "")+"budget:\n  per_day_usd: 20\n", "enforce", "5")
+	g.deps.Project = "aurora"
+	pushBranch(t, g.harness, "feature", gwConfig(t, "")+"budget:\n  per_day_usd: 500\n")
+	setRef(t, g.harness, task.Spec{Ref: "feature"})
+	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	p := storedPolicy(t, g.harness)
+	if p == nil || p.Effective.PerDayUSD != 20 || p.Sources["per_day_usd"] != "default-branch" ||
+		len(p.Ignored) != 1 || p.Ignored[0] != (runstore.PolicyIgnored{Key: "per_day_usd", Value: "500", Effective: "20", Source: "default-branch", From: "branch"}) {
+		t.Fatalf("policy = %+v", p)
+	}
+	if n := warnCount(g.logs.String(), "budget.per_day_usd"); n != 1 {
+		t.Errorf("%d warnings, want 1:\n%s", n, g.logs.String())
+	}
+	want := "(budget.per_day_usd 500 -> 20)"
+	if report := reportOf(t, g.harness); !strings.Contains(report, want) {
+		t.Errorf("report lacks %q:\n%s", want, report)
+	}
+}
+
+// A tighter branch value wins and is attributed to the branch.
+func TestPerDayBranchTighterWins(t *testing.T) {
+	g := newGW(t, gwConfig(t, "")+"budget:\n  per_day_usd: 20\n", "enforce", "5")
+	g.deps.Project = "aurora"
+	pushBranch(t, g.harness, "feature", gwConfig(t, "")+"budget:\n  per_day_usd: 3\n")
+	setRef(t, g.harness, task.Spec{Ref: "feature"})
+	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	p := storedPolicy(t, g.harness)
+	if p == nil || p.Effective.PerDayUSD != 3 || p.Sources["per_day_usd"] != "branch" || len(p.Ignored) != 0 {
+		t.Fatalf("policy = %+v", p)
+	}
+}

@@ -56,6 +56,8 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 			}
 		}
 
+		e.tightenCap(&e.PerDayUSD, l.PerDayUSD, KeyPerDayUSD, src)
+
 		if l.MaxRunTokens > 0 {
 			switch {
 			case e.MaxRunTokens == 0 || l.MaxRunTokens < e.MaxRunTokens:
@@ -114,6 +116,21 @@ func Merge(ceiling Layer, tighten ...Layer) Effective {
 		e.Sources = nil
 	}
 	return e
+}
+
+// tightenCap is tightenInt for a dollar cap: NaN, +Inf, zero and negatives are
+// unset.
+func (e *Effective) tightenCap(cur *float64, v float64, key, src string) {
+	if !(v > 0) || math.IsInf(v, 0) {
+		return
+	}
+	switch {
+	case *cur == 0 || v < *cur:
+		*cur, e.Sources[key] = v, src
+	case v > *cur:
+		e.Ignored = append(e.Ignored, Ignored{key, strconv.FormatFloat(v, 'f', -1, 64),
+			strconv.FormatFloat(*cur, 'f', -1, 64), e.Sources[key]})
+	}
 }
 
 // tightenInt applies a layer's positive limit v to *cur: smaller wins, a

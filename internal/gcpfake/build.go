@@ -118,6 +118,22 @@ func (f *Build) SetTag(image, tag, digest string) {
 	f.tags[image+":"+tag] = digest
 }
 
+// SetStep installs (nil removes) the hook of step id while the fake runs: a
+// test that changes hooks after the build server started must use it, since
+// the server reads Steps under the fake's lock.
+func (f *Build) SetStep(id string, hook func(dir string) error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.Steps == nil {
+		f.Steps = map[string]func(dir string) error{}
+	}
+	if hook == nil {
+		delete(f.Steps, id)
+		return
+	}
+	f.Steps[id] = hook
+}
+
 // Workspace is build id's workspace directory (/workspace/out).
 func (f *Build) Workspace(id string) string { return filepath.Join(f.root, id) }
 

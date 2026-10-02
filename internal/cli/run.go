@@ -85,6 +85,7 @@ type runOptions struct {
 	totalTimeout                          string
 	pr                                    int
 	asJSON                                bool
+	noBudgetCheck                         bool
 }
 
 func newRunCmd() *cobra.Command {
@@ -114,6 +115,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -164,6 +166,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		return err
 	}
 	defer env.Close()
+	env.noBudgetCheck = o.noBudgetCheck
 
 	var (
 		spec   *task.Spec
@@ -194,6 +197,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if prior == nil {
 		if err := checkMaxParallel(ctx, env); err != nil {
+			return err
+		}
+		if err := env.budgetPrecheck(ctx, slug, spec, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
@@ -619,6 +625,16 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 		rcancel()
 		return res, userErr("run %s was cancelled; start a new one", res.Run)
 	}
+	// The run's budget identity: minted and left in the bucket before the
+	// execution can start, by the one CLI that holds the claim. A failure
+	// here means nothing started, so the claim goes back.
+	minted, err := env.mintBudgetToken(hctx, slug, spec)
+	if err != nil {
+		rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		releaseClaim(rctx, env, s, holder)
+		rcancel()
+		return res, err
+	}
 	lctx, cancel := context.WithTimeout(hctx, launchTimeout)
 	ref, err := env.be.Launch(lctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: spec.Repo, Slug: slug}, Workflow: spec.Workflow, RunID: spec.RunID, Timeout: launchTimeoutOf(spec)})
 	cancel()
@@ -628,13 +644,17 @@ func launchRun(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec,
 			// claim so a corrected retry can go at once.
 			rctx, rcancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			releaseClaim(rctx, env, s, holder)
+			if minted {
+				env.dropBudgetToken(rctx, slug, spec.RunID) // nothing started, so nothing will take it
+			}
 			rcancel()
 			// A GCP API error is a remote failure (exit 2); %w keeps
 			// ErrRejected and ErrNotFound visible to errors.Is.
 			return res, remote(fmt.Errorf("the launch of %s was refused, so nothing started; fix the cause, then fugaro run --retry %s: %w", res.Run, res.Run, err))
 		}
 		// Ambiguous (timeout, 5xx, dropped connection, unreadable reply): the
-		// execution may exist. Keep the claim; the runner's result.json tells
+		// execution may exist. Keep the claim, and the token object: an
+		// execution that did start needs it (a --retry mints another); the runner's result.json tells
 		// the truth, and --retry reads it.
 		return res, remote(fmt.Errorf("launching %s: the outcome is unknown (%w); don't relaunch before %s: fugaro run --retry %s then reports the execution if it started, or launches it",
 			res.Run, err, now.Add(claimTTL).UTC().Format(time.RFC3339), res.Run))

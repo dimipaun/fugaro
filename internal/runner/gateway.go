@@ -59,6 +59,17 @@ func (r *run) startGateway(ctx context.Context) error {
 	if s.Mode == "enforce" {
 		o.Mode = gateway.Enforce
 	}
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess != nil {
+		// The lease is the judge: it refuses a cap only when the project's
+		// mode, or this run's own, enforces it, and it never refuses one in
+		// observe. The gateway enforces whatever the lease refuses, so a
+		// project switched to enforce mid-run stops this run too, rather
+		// than leaving its calls waiting.
+		o.Mode, o.Lease = gateway.Enforce, sess.Lease()
+	}
 	up := gateway.Upstream{BaseURL: r.d.GatewayUpstream}
 	switch r.cfg.Agent.Auth {
 	case "api-key":
@@ -90,6 +101,9 @@ func (r *run) startGateway(ctx context.Context) error {
 		return fmt.Errorf("starting the gateway: %s", r.redact(err.Error()))
 	}
 	r.addSecret(gw.Token())
+	if sess != nil {
+		sess.SetUsage(func() pricing.Micros { return gw.Ledger().Used })
+	}
 	r.mu.Lock()
 	r.gw = gw
 	r.gwAgent = &agent.Gateway{BaseURL: gw.URL(), Token: gw.Token()}
@@ -221,7 +235,11 @@ func (r *run) drainHalt() {
 }
 
 func gatewayHalt(gh gateway.Halt) runstore.Halt {
-	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: "run", At: gh.At.UTC(), Detail: gh.Detail}
+	scope := gh.Scope
+	if scope == "" {
+		scope = "run"
+	}
+	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail}
 }
 
 // closeGateway stops the gateway, once, and takes the run's model cost from
@@ -289,7 +307,9 @@ func (r *run) checkBudget() error {
 	if auth == "vertex" && s.Mode == "enforce" {
 		return errors.New(VertexBudgetRefusal)
 	}
-	if auth == "api-key" && s.Mode == "enforce" && s.Cap <= 0 {
+	// With the backend the caps are the database's too, and the session has
+	// already judged them (Admit): an enforcing run with none halted there.
+	if auth == "api-key" && s.Mode == "enforce" && s.Cap <= 0 && r.sess == nil {
 		r.haltNow(runstore.Halt{Reason: runstore.HaltNoCap, Scope: "run", At: r.d.Now().UTC(),
 			Detail: r.noCapDetail()})
 		return &HaltError{*r.haltValue()}

@@ -37,7 +37,7 @@ func TestBudgetBlockInvalid(t *testing.T) {
 	for name, want := range map[string]string{
 		"budget-mode.yaml":             "budget.mode",
 		"budget-per-run-negative.yaml": "budget.per_run_usd",
-		"budget-per-day.yaml":          "budget.per_day_usd",
+		"budget-per-day-negative.yaml": "budget.per_day_usd",
 		"budget-allowed-empty.yaml":    "budget.allowed_models",
 		"budget-allowed-alias.yaml":    "budget.allowed_models[0]",
 		"budget-prices.yaml":           "model_prices",
@@ -115,10 +115,29 @@ func TestExampleBudgetBlockIsValid(t *testing.T) {
 	}
 }
 
-func TestPerDayRefused(t *testing.T) {
-	_, ps := Parse(readCorpus(t, "invalid", "budget-per-day.yaml"))
-	if len(ps) != 1 || ps[0].Path != "budget.per_day_usd" || !strings.Contains(ps[0].Message, "not supported yet (M9b)") {
-		t.Fatalf("problems = %v", ps)
+// M9a.1 refused per_day_usd as "not supported yet (M9b)"; it is a real key now.
+func TestPerDayKeyNoLongerRefused(t *testing.T) {
+	cfg, ps := Parse(readCorpus(t, "valid", "budget-per-day.yaml"))
+	if len(ps) > 0 || cfg == nil || cfg.Budget == nil || cfg.Budget.PerDayUSD != 10 {
+		t.Fatalf("cfg = %+v, problems = %v", cfg, ps)
+	}
+	p, err := PolicyOf(readCorpus(t, "valid", "budget-per-day.yaml"))
+	if err != nil || p.PerDayUSD != 10 {
+		t.Fatalf("PolicyOf = %+v, %v", p, err)
+	}
+	// Same range rules as per_run_usd.
+	for _, v := range []string{"-1", "100001", "0.0000001", ".nan", ".inf"} {
+		y := minimalYAML + "agent:\n  auth: api-key\nbudget: { per_day_usd: " + v + " }\n"
+		if cfg, ps := Parse([]byte(y)); cfg != nil || len(ps) == 0 || ps[0].Path != "budget.per_day_usd" {
+			t.Errorf("per_day_usd %s: cfg %v, problems %v", v, cfg != nil, ps)
+		}
+	}
+	if cfg, ps := Parse([]byte(minimalYAML + "agent:\n  auth: api-key\nbudget: { per_day_usd: lots }\n")); cfg != nil || len(ps) == 0 {
+		t.Errorf("a string cap parsed: %v", ps)
+	}
+	// Zero is unset.
+	if p, err := PolicyOf([]byte("budget: { per_day_usd: 0 }")); err != nil || p.PerDayUSD != 0 {
+		t.Errorf("zero: %+v %v", p, err)
 	}
 }
 
@@ -163,7 +182,8 @@ func TestPolicyOfInvalidIsError(t *testing.T) {
 	for name, y := range map[string]string{
 		"mode":          "budget: { mode: strict }",
 		"negative cap":  "budget: { per_run_usd: -1 }",
-		"per day":       "budget: { per_day_usd: 4 }",
+		"negative day":  "budget: { per_day_usd: -4 }",
+		"day too small": "budget: { per_day_usd: 0.0000001 }",
 		"empty list":    "budget: { allowed_models: [] }",
 		"alias":         "budget: { allowed_models: [opus] }",
 		"not a list":    "budget: { allowed_models: claude-opus-5-5 }",
@@ -193,6 +213,7 @@ func TestPolicyOfInvalidIsError(t *testing.T) {
 func TestPolicyOfStrictInsideBlocks(t *testing.T) {
 	for name, c := range map[string]struct{ y, key string }{
 		"budget typo":        {"budget: { per_run_usdd: 2 }", "per_run_usdd"},
+		"per day typo":       {"budget: { per_day_usdd: 2 }", "per_day_usdd"},
 		"allowed typo":       {"budget: { allowed_model: [claude-sonnet-5-5] }", "allowed_model"},
 		"model_prices":       {"budget: { model_prices: {} }", "model_prices"},
 		"run tokens typo":    {"agent: { max_run_token: 5 }", "max_run_token"},

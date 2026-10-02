@@ -1039,3 +1039,76 @@ func TestWorkflowEnvDroppedPolicyKeysDisappear(t *testing.T) {
 		}
 	}
 }
+
+const backendBlock = `  firebase_project: aurora-fp
+  rtdb_url: https://aurora-fp-default-rtdb.firebaseio.com
+  firebase_api_key: AIzaSyA0123456789abcdefghijklmnopqrstu
+  token_signer: fugaro-token-signer@aurora-fp.iam.gserviceaccount.com
+`
+
+func backendEnv(env map[string]string) map[string]string {
+	got := map[string]string{}
+	for _, k := range []string{RTDBURLEnv, FirebaseAPIKeyEnv, BudgetGraceEnv} {
+		if v, ok := env[k]; ok {
+			got[k] = v
+		}
+	}
+	return got
+}
+
+// Every workflow job whose budget is not off gets the backend's address and
+// its web key (R10), and the grace when the config sets one. The signer and
+// the Firebase project's ID stay out: a job never mints.
+func TestInitRepoPassesRTDBEnv(t *testing.T) {
+	for _, mode := range []string{"observe", "enforce"} {
+		rs, err := Repo(budgetInputs(t, "budget:\n  mode: "+mode+"\n  per_run_usd: 5\n"+backendBlock+"  unreachable_grace: 90s\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rs.Workflows) == 0 {
+			t.Fatal("no workflows")
+		}
+		for _, w := range rs.Workflows {
+			want := map[string]string{RTDBURLEnv: "https://aurora-fp-default-rtdb.firebaseio.com", FirebaseAPIKeyEnv: "AIzaSyA0123456789abcdefghijklmnopqrstu", BudgetGraceEnv: "1m30s"}
+			if got := backendEnv(w.Env); !maps.Equal(got, want) {
+				t.Errorf("%s/%s: env = %v, want %v", mode, w.Name, got, want)
+			}
+			for k, v := range w.Env {
+				if strings.Contains(v, "token-signer") || v == "aurora-fp" {
+					t.Errorf("%s: %s=%s leaks the signer or the Firebase project into a job", w.Name, k, v)
+				}
+			}
+		}
+	}
+	rs, err := Repo(budgetInputs(t, "budget:\n  mode: observe\n"+backendBlock))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range rs.Workflows {
+		if _, ok := w.Env[BudgetGraceEnv]; ok {
+			t.Errorf("%s: a grace nobody set: %v", w.Name, w.Env)
+		}
+	}
+}
+
+// With the budget off no job learns of the backend, whatever the config
+// holds: off never touches it.
+func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
+	for name, block := range map[string]string{
+		"mode off":   "budget:\n  mode: off\n" + backendBlock + "  unreachable_grace: 90s\n",
+		"empty mode": "budget:\n  per_run_usd: 5\n" + backendBlock,
+	} {
+		rs, err := Repo(budgetInputs(t, block))
+		if err != nil {
+			t.Fatal(name, err)
+		}
+		for _, w := range rs.Workflows {
+			if got := backendEnv(w.Env); len(got) != 0 {
+				t.Errorf("%s: %s has %v with the budget off", name, w.Name, got)
+			}
+		}
+		if rs.Check != nil && len(backendEnv(rs.Check.Env)) != 0 {
+			t.Errorf("%s: the check job has %v", name, backendEnv(rs.Check.Env))
+		}
+	}
+}
