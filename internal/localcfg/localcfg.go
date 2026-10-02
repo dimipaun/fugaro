@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // Config is the local CLI config.
@@ -88,6 +89,10 @@ type Budget struct {
 	// AllowedModels, when set, are the only models a run may use. Explicit
 	// model IDs; an empty list is refused (it would forbid every model).
 	AllowedModels []string `yaml:"allowed_models,omitempty"`
+	// RTDBURL is the project's Firebase Realtime Database (the budget
+	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
+	// init --firebase; empty means the project has none.
+	RTDBURL string `yaml:"rtdb_url,omitempty"`
 }
 
 // ModelPrice is one model's prices, in US dollars per million tokens. A
@@ -182,6 +187,11 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 		}
 		if b.MaxRunTokens < 0 {
 			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
+		}
+		if b.RTDBURL != "" {
+			if err := rtdb.ValidateURL(b.RTDBURL, c.Endpoints.NoAuth); err != nil {
+				bad("budget.rtdb_url: %v", err)
+			}
 		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")

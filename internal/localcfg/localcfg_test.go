@@ -3,6 +3,7 @@ package localcfg
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -567,4 +568,23 @@ func TestBudgetTokensAndModelsValidation(t *testing.T) {
 	if c.BudgetMode() != BudgetOff {
 		t.Errorf("mode = %q", c.BudgetMode())
 	}
+}
+
+func TestBudgetRTDBURLValidated(t *testing.T) {
+	for url, ok := range map[string]bool{
+		"https://aurora-fp-default-rtdb.firebaseio.com": true,
+		"http://aurora.firebaseio.com":                  false,
+		"https://evil.example.com":                      false,
+		"https://user@x.firebaseio.com":                 false,
+		"http://127.0.0.1:9":                            false, // loopback only with no_auth
+	} {
+		c := &Config{Budget: &Budget{RTDBURL: url}}
+		var problems []string
+		c.validateBudget(func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) })
+		if got := len(problems) == 0; got != ok {
+			t.Errorf("%s: ok=%v, problems %v", url, got, problems)
+		}
+	}
+	c := &Config{Budget: &Budget{RTDBURL: "http://127.0.0.1:9"}, Endpoints: Endpoints{NoAuth: true}}
+	c.validateBudget(func(f string, a ...any) { t.Errorf("loopback with no_auth refused: "+f, a...) })
 }

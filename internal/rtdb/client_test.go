@@ -567,3 +567,43 @@ func TestRTDBStreamRevokeLoopEmitsError(t *testing.T) {
 		t.Fatal("repeated immediate auth_revoked never produced an error event")
 	}
 }
+
+func TestValidateURL(t *testing.T) {
+	good := []string{"https://aurora-fp-default-rtdb.firebaseio.com", "https://aurora-fp-default-rtdb.firebaseio.com/",
+		"https://x.europe-west1.firebasedatabase.app", "HTTPS://X.firebaseio.com"}
+	for _, u := range good {
+		if err := rtdb.ValidateURL(u, false); err != nil {
+			t.Errorf("%s: %v", u, err)
+		}
+	}
+	bad := []string{"http://x.firebaseio.com", "https://evil.example.com", "https://x.firebaseio.com.evil.com",
+		"https://evil.com/x.firebaseio.com", "https://user:pw@x.firebaseio.com", "https://x.firebaseio.com:8443",
+		"https://x.firebaseio.com/?a=b", "https://x.firebaseio.com/#f", "https://x.firebaseio.com/path", "https://firebaseio.com",
+		"https://x.firebaseio.com.", "ftp://x.firebaseio.com", "", "http://127.0.0.1:9", "https://localhost"}
+	for _, u := range bad {
+		if err := rtdb.ValidateURL(u, false); err == nil {
+			t.Errorf("%q was accepted", u)
+		}
+	}
+	for _, u := range []string{"http://127.0.0.1:9", "http://localhost:8080", "https://127.0.0.1:1"} {
+		if err := rtdb.ValidateURL(u, true); err != nil {
+			t.Errorf("loopback %s: %v", u, err)
+		}
+	}
+	if err := rtdb.ValidateURL("http://evil.example.com", true); err == nil {
+		t.Error("a remote http host passed with loopbackOK")
+	}
+}
+
+func TestNewRefusesCleartextForOAuth(t *testing.T) {
+	src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"})
+	if _, err := rtdb.New("http://db.example.com", rtdb.Auth{Source: src}); err == nil {
+		t.Fatal("an OAuth token source was allowed over cleartext http to a remote host")
+	}
+	if _, err := rtdb.New("http://127.0.0.1:9", rtdb.Auth{Source: src}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rtdb.New("https://db.example.com", rtdb.Auth{Source: src}); err != nil {
+		t.Fatal(err)
+	}
+}
