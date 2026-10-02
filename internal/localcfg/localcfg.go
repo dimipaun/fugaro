@@ -306,7 +306,9 @@ type Endpoints struct {
 	// CloudBilling is read by fugaro init --firebase to check that the
 	// Firebase project has billing.
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
-	NoAuth       bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
+	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
+	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
+	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
 // Repo is an onboarded repository.
@@ -590,7 +592,7 @@ func (c *Config) validate() error {
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
 		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
-		{"cloud_billing", c.Endpoints.CloudBilling},
+		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase},
 	} {
 		if ep.url == "" {
 			continue

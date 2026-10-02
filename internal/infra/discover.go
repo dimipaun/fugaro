@@ -15,6 +15,7 @@ import (
 	billing "google.golang.org/api/cloudbilling/v1"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	scheduler "google.golang.org/api/cloudscheduler/v1"
+	firebasedatabase "google.golang.org/api/firebasedatabase/v1beta"
 	"google.golang.org/api/googleapi"
 	iam "google.golang.org/api/iam/v1"
 	logging "google.golang.org/api/logging/v2"
@@ -52,6 +53,9 @@ type Clients struct {
 	// Billing reads whether the Firebase project has billing; nil without
 	// credentials and without its endpoint.
 	Billing *billing.APIService
+	// FirebaseDB lists the Firebase project's databases (init --firebase
+	// checks them before anything is granted on the project); nil like Billing.
+	FirebaseDB *firebasedatabase.Service
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -66,6 +70,8 @@ type Endpoints struct {
 	// reads the Firebase project's billing through. Without credentials and
 	// without it, there is no Billing client.
 	Billing string
+	// FirebaseDatabase is the Firebase Realtime Database management API's.
+	FirebaseDatabase string
 }
 
 // discardLogger keeps the clients from logging requests (and their
@@ -138,6 +144,11 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	if !o.Endpoints.NoAuth || e.Billing != "" {
 		if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
+		}
+	}
+	if !o.Endpoints.NoAuth || e.FirebaseDatabase != "" {
+		if c.FirebaseDB, err = firebasedatabase.NewService(ctx, opts(e.FirebaseDatabase)...); err != nil {
+			return nil, fmt.Errorf("connecting to Firebase Realtime Database management: %w", err)
 		}
 	}
 	return &c, nil

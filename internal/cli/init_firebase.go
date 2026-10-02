@@ -151,6 +151,22 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		return initErr(err)
 	}
 
+	// The Firebase project's databases are checked now, before anything is
+	// applied or granted on it: a database that holds unmarked data, or the
+	// mark of another project or installation, is refused on a first run too.
+	urls, err := infra.DatabaseURLs(ctx, c, fp)
+	if err != nil {
+		return initErr(err)
+	}
+	for _, u := range urls {
+		if err := r.checkDatabase(ctx, lc, u, mode); err != nil {
+			return err
+		}
+	}
+	if mode == "enforce" && len(urls) == 0 {
+		return initErr(infra.NoCapsForEnforce())
+	}
+
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
 	if err != nil || stop {
@@ -187,15 +203,6 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err := ft.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	// A database that exists already (a rerun) is checked before the plan:
-	// unmarked data is refused before anything is applied.
-	if raw, err := ft.Output(ctx); err == nil {
-		if prior, err := infra.DecodeFirebaseOutputs(raw); err == nil {
-			if err := r.checkDatabase(ctx, lc, prior.RTDBURL, mode); err != nil {
-				return err
-			}
-		}
-	}
 	applied, stop, err := r.applyRoot(ctx, ft, fwd, "firebase", fmt.Sprintf("to the Firebase project %s (the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp))
 	if err != nil || stop {
 		return err
@@ -223,6 +230,9 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	confirmed, err := r.deployDatabase(ctx, db, fp)
 	if err != nil {
 		return err
+	}
+	if mode == "off" {
+		r.warn("--budget-mode off still deployed the database (its rules, mark and project name): jobs just don't use it, and the mode stored in it is unchanged by off")
 	}
 	r.mutate = func(next *localcfg.Config) {
 		b := localcfg.Budget{}
@@ -266,11 +276,12 @@ func (r *initRun) openDatabase(ctx context.Context, lc *localcfg.Config, url, mo
 	if m == "off" {
 		m = ""
 	}
-	return infra.NewDB(cl, lc.Name, m), nil
+	return infra.NewDB(cl, lc.Name, lc.GCPProject, m), nil
 }
 
 // checkDatabase refuses a database of the Firebase project that holds
-// unmarked data (or another project's mark), before the second apply.
+// unmarked data or another project's or installation's mark, and enforce on
+// one without global caps, before the first apply.
 func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, mode string) error {
 	db, err := r.openDatabase(ctx, lc, url, mode)
 	if err != nil {
@@ -279,7 +290,7 @@ func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, m
 	if _, err := db.Check(ctx); err != nil {
 		return initErr(err)
 	}
-	return nil
+	return initErr(db.RequireCapsForEnforce(ctx))
 }
 
 // deployDatabase shows what it would write into the database (the mark, the

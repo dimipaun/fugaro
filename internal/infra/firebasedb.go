@@ -25,10 +25,17 @@ const (
 	DefaultMaxReserveMicros budget.Micros = 5_000_000
 )
 
+// dbMark names the Fugaro project and the GCP project it lives in, so two
+// installations with the same Fugaro name in different GCP projects don't
+// share one Firebase project. The mark is a safety label, not a boundary:
+// anyone who can write the database can forge it. The guard is that only
+// owners, editors and budget admins (IAM) can write outside a run's own
+// subtree, and the rules make /fugaro admin-only.
 type dbMark struct {
-	By      string `json:"managed_by"`
-	Project string `json:"project"`
-	Version int    `json:"version"`
+	By         string `json:"managed_by"`
+	Project    string `json:"project"`
+	GCPProject string `json:"gcp_project"`
+	Version    int    `json:"version"`
 }
 
 // DB is what init does to the project's database: the mark check, then the
@@ -37,8 +44,9 @@ type dbMark struct {
 // operator confirms (Apply); a database already in the wanted state needs no
 // confirmation and no write.
 type DB struct {
-	c       *rtdb.Client
-	project string
+	c          *rtdb.Client
+	project    string
+	gcpProject string
 	// mode is the mode the operator asked for ("" = none: an absent mode is
 	// seeded observe and a present one kept).
 	mode string
@@ -56,8 +64,35 @@ type DBAction struct {
 
 // NewDB is the database client c of Fugaro project name project; mode is
 // "", observe or enforce.
-func NewDB(c *rtdb.Client, project, mode string) *DB {
-	return &DB{c: c, project: project, mode: mode}
+func NewDB(c *rtdb.Client, project, gcpProject, mode string) *DB {
+	return &DB{c: c, project: project, gcpProject: gcpProject, mode: mode}
+}
+
+// RequireCapsForEnforce refuses mode enforce on a database without global
+// per-run and daily caps: the rules read an absent cap as a refusal, so
+// every run would halt. Enforce is for a database whose caps are set (first
+// init with observe, then fugaro budget set --global, then --mode enforce).
+// Other modes pass. A missing database counts as having no caps.
+func (d *DB) RequireCapsForEnforce(ctx context.Context) error {
+	if d.mode != budget.ModeEnforce {
+		return nil
+	}
+	var g budget.GlobalCaps
+	found, err := d.c.Get(ctx, budget.PathCapsGlobal, &g)
+	if err != nil {
+		return dbErr("reading "+budget.PathCapsGlobal, err)
+	}
+	if !found || g.DailyMicros == nil || g.PerRunMicros == nil {
+		return noCapsErr()
+	}
+	return nil
+}
+
+// NoCapsForEnforce is the refusal's text, for a database that doesn't exist yet.
+func NoCapsForEnforce() error { return noCapsErr() }
+
+func noCapsErr() error {
+	return userErr("--budget-mode enforce needs the database's global caps (%s: dailyMicros and perRunMicros), and there are none: the rules read an absent cap as a refusal, so every run would halt. Run init with --budget-mode observe first, set the caps with fugaro budget set --global --daily <usd> --per-run <usd>, then switch with fugaro budget set --global --mode enforce", budget.PathCapsGlobal)
 }
 
 // dbErr turns a refused or failed read into the operator's words.
@@ -92,8 +127,8 @@ func (d *DB) Check(ctx context.Context) (marked bool, err error) {
 		return false, nil
 	case !found:
 		return false, userErr("the database holds data (%s) and no Fugaro mark (%s): it is not ours, and init writes into databases that are empty or carry our mark", strings.Join(clipKeys(keys), ", "), budget.PathMark)
-	case m.By != markBy || m.Version != markVersion || m.Project != d.project:
-		return false, userErr("the database carries the Fugaro mark of project %q (managed_by %q, version %d), not project %s: one Firebase project serves one Fugaro project (design D3)", m.Project, m.By, m.Version, d.project)
+	case m.By != markBy || m.Version != markVersion || m.Project != d.project || m.GCPProject != d.gcpProject:
+		return false, userErr("the database carries the Fugaro mark of project %q in GCP project %q (managed_by %q, version %d), not project %s in %s: one Firebase project serves one installation (design D3)", m.Project, m.GCPProject, m.By, m.Version, d.project, d.gcpProject)
 	}
 	return true, nil
 }
@@ -111,9 +146,12 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	if _, err := d.Check(ctx); err != nil {
 		return nil, nil, err
 	}
+	if err := d.RequireCapsForEnforce(ctx); err != nil {
+		return nil, nil, err
+	}
 	d.acts = nil
 	var warnings []string
-	mark := dbMark{By: markBy, Project: d.project, Version: markVersion}
+	mark := dbMark{By: markBy, Project: d.project, GCPProject: d.gcpProject, Version: markVersion}
 
 	// The mark, then the project name: a database stays recognisable even if
 	// a later write fails.
@@ -150,9 +188,6 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 	case cur != want:
 		d.put(budget.PathMode, etag, want, fmt.Sprintf("changes the mode: %s -> %s", cur, want))
 	}
-	if want == budget.ModeEnforce {
-		warnings = append(warnings, d.capsWarning(ctx)...)
-	}
 
 	// The limit the rules need to grant any lease at all: absent denies.
 	var lim map[string]json.RawMessage
@@ -185,17 +220,6 @@ func (d *DB) Plan(ctx context.Context) ([]DBAction, []string, error) {
 		}})
 	}
 	return d.acts, warnings, nil
-}
-
-// capsWarning says when enforce has no global caps to enforce: the rules
-// read an absent cap as a refusal, so every lease would be denied.
-func (d *DB) capsWarning(ctx context.Context) []string {
-	var g budget.GlobalCaps
-	found, err := d.c.Get(ctx, budget.PathCapsGlobal, &g)
-	if err == nil && found && g.DailyMicros != nil && g.PerRunMicros != nil {
-		return nil
-	}
-	return []string{"the mode is enforce but the global caps (" + budget.PathCapsGlobal + ") are not both set: the rules read an absent cap as a refusal, so every run halts until you set them: fugaro budget set --global --daily <usd> --per-run <usd>"}
 }
 
 // create plans writing v at path when the node is absent.

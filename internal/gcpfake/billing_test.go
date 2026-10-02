@@ -52,3 +52,17 @@ func TestRTDBRulesAndShallow(t *testing.T) {
 		t.Error("rules before any deployment")
 	}
 }
+
+func TestFirebaseDBInstances(t *testing.T) {
+	f := NewFirebaseDB(t)
+	_, body := getJSON(t, f.URL+"/v1beta/projects/aurora-fp/locations/-/instances")
+	if l, _ := body["instances"].([]any); len(l) != 0 {
+		t.Errorf("a project without a database: %v", body)
+	}
+	f.AddInstance("aurora-fp", "https://aurora-fp-default-rtdb.firebaseio.com")
+	_, body = getJSON(t, f.URL+"/v1beta/projects/aurora-fp/locations/-/instances")
+	l, _ := body["instances"].([]any)
+	if len(l) != 1 || l[0].(map[string]any)["databaseUrl"] != "https://aurora-fp-default-rtdb.firebaseio.com" {
+		t.Errorf("instances = %v", body)
+	}
+}

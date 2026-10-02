@@ -30,11 +30,13 @@ type fbRig struct {
 	*initRig
 	billing *gcpfake.Billing
 	db      *gcpfake.RTDB
+	fbdb    *gcpfake.FirebaseDB
 }
 
 func newFBRig(t *testing.T) *fbRig {
 	t.Helper()
-	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t)}
+	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t)}
+	r.fbdb.AddInstance(fpID, r.db.URL)
 	r.stateBucket()
 	r.crm.AddProject(fpID, 987654321098)
 	r.billing.SetBilling(fpID, true)
@@ -48,7 +50,7 @@ func newFBRig(t *testing.T) *fbRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, no_auth: true }", 1)
+	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +251,8 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no Fugaro mark") || !strings.Contains(err.Error(), "somebody") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	if got := r.applies(t); !slices.Equal(got, []string{"installation"}) {
-		t.Errorf("applies = %v: the Firebase root must not be applied over unmarked data", got)
+	if got := r.applies(t); len(got) != 0 {
+		t.Errorf("applies = %v: nothing may be applied (not even the first, and no grant on the Firebase project) over unmarked data", got)
 	}
 	if r.db.RulePuts() != 0 || r.db.Value("fugaro") != nil || r.db.Value("config") != nil {
 		t.Errorf("the database was written: %v", r.db.Value(""))
@@ -258,15 +260,23 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 
 	// Another Fugaro project's mark.
 	r2 := newFBRig(t)
-	r2.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "version": 1})
+	r2.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "gcp_project": "proj-1234", "version": 1})
 	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `mark of project "other"`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 
+	// The same Fugaro name in another GCP project is another installation.
+	r4 := newFBRig(t)
+	r4.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": "other-gcp-project", "version": 1})
+	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-gcp-project") || len(r4.applies(t)) != 0 {
+		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r4.applies(t))
+	}
+
 	// A database whose project name is another's, though marked as ours.
 	r3 := newFBRig(t)
-	r3.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "version": 1})
+	r3.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r3.db.Set("fugaro/project", "other")
 	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "belongs to another Fugaro project") {
@@ -385,7 +395,7 @@ func TestMarkAndProjectWritten(t *testing.T) {
 		t.Fatal(err)
 	}
 	mark, _ := r.db.Value("fugaro/mark").(map[string]any)
-	if mark["managed_by"] != "fugaro" || mark["project"] != initProjectName || len(mark) != 3 {
+	if mark["managed_by"] != "fugaro" || mark["project"] != initProjectName || mark["gcp_project"] != initProject || len(mark) != 4 {
 		t.Errorf("mark = %v", mark)
 	}
 	if got, ok := r.db.Value("fugaro/project").(string); !ok || got != initProjectName {
@@ -442,9 +452,25 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "per_run_usd") || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
-	// With it, enforce is written, and with no global caps said so: the
-	// rules read an absent cap as a refusal.
+	// With it, enforce is still REFUSED while the database has no global
+	// caps (an absent cap is a refusal in the rules: every run would halt),
+	// before anything is applied or written, and says what to do instead.
 	r.appendConfig(t, "budget: { per_run_usd: 5 }\n")
+	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set --global") || !strings.Contains(err.Error(), "--budget-mode observe") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(r.applies(t)) != 0 || r.db.Value("config/mode") != nil || r.db.RulePuts() != 0 {
+		t.Errorf("enforce without caps changed something: applies %v, mode %v", r.applies(t), r.db.Value("config/mode"))
+	}
+	// Half the caps is no caps (on a database that is ours: marked).
+	r.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
+	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000})
+	if _, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce"); ExitCode(err) != ExitUserError {
+		t.Fatalf("daily cap alone: exit %d, err %v", ExitCode(err), err)
+	}
+	// Both caps: enforce is allowed and written.
+	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
 	out, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
 	if err != nil {
 		t.Fatal(err)
@@ -452,20 +478,41 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	if mode(r) != "enforce" || r.localConfig(t).BudgetMode() != localcfg.BudgetEnforce {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
 	}
-	if !strings.Contains(out, "every run halts until you set them") {
-		t.Errorf("no warning that enforce has no caps:\n%s", out)
-	}
-	if r.db.Value("config/caps") != nil {
-		t.Errorf("init made up caps: %v", r.db.Value("config/caps"))
+	if strings.Contains(out, "every run halts") {
+		t.Errorf("a warning about missing caps with caps set:\n%s", out)
 	}
 
 	// off turns the jobs' backend off in the config and leaves the database's
-	// mode as it is.
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "off"); err != nil {
+	// mode as it is; it still deploys the database, and says so.
+	out, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "off")
+	if err != nil {
 		t.Fatal(err)
 	}
 	if r.localConfig(t).BudgetMode() != localcfg.BudgetOff || mode(r) != "enforce" {
 		t.Errorf("mode %v, local %s", mode(r), r.localConfig(t).BudgetMode())
+	}
+	if !strings.Contains(out, "still deployed the database") || !strings.Contains(out, "unchanged by off") {
+		t.Errorf("off doesn't say the database is still written:\n%s", out)
+	}
+}
+
+// A first run with no database yet refuses enforce before any apply.
+func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
+	r := newFBRig(t)
+	r.appendConfig(t, "budget: { per_run_usd: 5 }\n")
+	// Point the probe at a fake that lists no database.
+	empty := gcpfake.NewFirebaseDB(t)
+	b, _ := os.ReadFile(r.cfg)
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), "firebase_database: "+r.fbdb.URL, "firebase_database: "+empty.URL, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget-mode observe") || len(r.applies(t)) != 0 {
+		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r.applies(t))
+	}
+	// Observe is fine, and the post-apply path would check the new database.
+	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -223,7 +223,7 @@ func newDB(t *testing.T, mode string) (*DB, *gcpfake.RTDB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewDB(c, "aurora", mode), f
+	return NewDB(c, "aurora", "proj-1234", mode), f
 }
 
 func deploy(t *testing.T, d *DB) []DBAction {
@@ -255,20 +255,28 @@ func TestDBDeploysAndThenChangesNothing(t *testing.T) {
 	if !sameJSON(f.Rules(), want) {
 		t.Error("the deployed rules are not the generated ones")
 	}
-	d2 := NewDB(d.c, "aurora", "")
+	d2 := NewDB(d.c, "aurora", "proj-1234", "")
 	if acts, _, err := d2.Plan(context.Background()); err != nil || len(acts) != 0 {
 		t.Fatalf("a second plan: %v, %v", acts, err)
 	}
 }
 
 func TestDBModeIsChangedOnlyOnRequest(t *testing.T) {
+	// Enforce on a database without both global caps is refused, writing nothing.
 	d, f := newDB(t, "enforce")
-	acts, warnings, err := d.Plan(context.Background())
+	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 1})
+	for _, seed := range []any{nil, map[string]any{"dailyMicros": 150_000_000}, map[string]any{"perRunMicros": 20_000_000}} {
+		f.Set("config/caps/global", seed)
+		_, _, err := d.Plan(context.Background())
+		var ue *UserError
+		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "fugaro budget set --global") || f.Value("fugaro/project") != nil || f.RulePuts() != 0 {
+			t.Fatalf("caps %v: err %v; the refusal must come before any write", seed, err)
+		}
+	}
+	f.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
+	acts, _, err := d.Plan(context.Background())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(warnings) != 1 || !strings.Contains(warnings[0], "global caps") {
-		t.Errorf("warnings = %v: enforce without caps must say every run halts", warnings)
 	}
 	if !slices.ContainsFunc(acts, func(a DBAction) bool { return a.Path == "config/mode" && strings.Contains(a.Text, "enforce") }) {
 		t.Errorf("actions = %v", acts)
@@ -276,16 +284,15 @@ func TestDBModeIsChangedOnlyOnRequest(t *testing.T) {
 	if err := d.Apply(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	// Caps set: no warning. A run without a mode keeps enforce; asking for
-	// observe changes it, and says old -> new.
-	f.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
-	if _, w, err := NewDB(d.c, "aurora", "").Plan(context.Background()); err != nil || len(w) != 0 {
-		t.Errorf("keeps: %v, %v", w, err)
+	// A run without a mode keeps enforce; asking for observe changes it, and
+	// says old -> new.
+	if _, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background()); err != nil {
+		t.Errorf("keeps: %v", err)
 	}
 	if f.Value("config/mode") != "enforce" {
 		t.Errorf("mode = %v", f.Value("config/mode"))
 	}
-	acts, _, err = NewDB(d.c, "aurora", "observe").Plan(context.Background())
+	acts, _, err = NewDB(d.c, "aurora", "proj-1234", "observe").Plan(context.Background())
 	if err != nil || len(acts) != 1 || !strings.Contains(acts[0].Text, "enforce -> observe") {
 		t.Errorf("acts %v, err %v", acts, err)
 	}
@@ -295,7 +302,7 @@ func TestDBModeIsChangedOnlyOnRequest(t *testing.T) {
 // not touched.
 func TestDBLimitsKeepOwnerValues(t *testing.T) {
 	d, f := newDB(t, "")
-	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "version": 1})
+	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 1})
 	f.Set("config/limits", map[string]any{"other": 7})
 	deploy(t, d)
 	lim, _ := f.Value("config/limits").(map[string]any)
@@ -303,7 +310,7 @@ func TestDBLimitsKeepOwnerValues(t *testing.T) {
 		t.Errorf("limits = %v", lim)
 	}
 	f.Set("config/limits", map[string]any{"maxReserveMicros": 1_000_000})
-	acts, _, err := NewDB(d.c, "aurora", "").Plan(context.Background())
+	acts, _, err := NewDB(d.c, "aurora", "proj-1234", "").Plan(context.Background())
 	if err != nil || slices.ContainsFunc(acts, func(a DBAction) bool { return a.Path == "config/limits" }) {
 		t.Errorf("the owner's max reserve would be rewritten: %v, %v", acts, err)
 	}
@@ -314,17 +321,23 @@ func TestDBRefusals(t *testing.T) {
 		"unmarked data":    func(f *gcpfake.RTDB) { f.Set("data", "x") },
 		"unmarked project": func(f *gcpfake.RTDB) { f.Set("fugaro/project", "aurora") },
 		"another's mark": func(f *gcpfake.RTDB) {
-			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "version": 1})
+			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "gcp_project": "proj-1234", "version": 1})
 		},
 		"someone else's": func(f *gcpfake.RTDB) {
-			f.Set("fugaro/mark", map[string]any{"managed_by": "someone", "project": "aurora", "version": 1})
+			f.Set("fugaro/mark", map[string]any{"managed_by": "someone", "project": "aurora", "gcp_project": "proj-1234", "version": 1})
 		},
 		"a mark of a future": func(f *gcpfake.RTDB) {
-			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "version": 2})
+			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 2})
+		},
+		"same name, other GCP project": func(f *gcpfake.RTDB) {
+			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "elsewhere", "version": 1})
+		},
+		"a mark without a GCP project": func(f *gcpfake.RTDB) {
+			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "version": 1})
 		},
 		"a string mark": func(f *gcpfake.RTDB) { f.Set("fugaro/mark", "yes") },
 		"foreign name": func(f *gcpfake.RTDB) {
-			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "version": 1})
+			f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 1})
 			f.Set("fugaro/project", "other")
 		},
 	} {
@@ -351,7 +364,7 @@ func TestDBApplyStopsOnAChangedNode(t *testing.T) {
 	if _, _, err := d.Plan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "version": 1, "extra": true})
+	f.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "aurora", "gcp_project": "proj-1234", "version": 1, "extra": true})
 	err := d.Apply(context.Background())
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "changed while init was running") {

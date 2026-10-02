@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
+	firebasedatabase "google.golang.org/api/firebasedatabase/v1beta"
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -311,6 +312,33 @@ func CheckFirebaseProject(ctx context.Context, c *Clients, gcpProject, fp string
 		return userErr("project %s has no billing. Link a billing account (Blaze: the Spark plan's 100 connection limit would make a busy fleet fail closed); fugaro init never enables billing", fp)
 	}
 	return nil
+}
+
+// DatabaseURLs lists the URLs of the Firebase project's Realtime Databases
+// (none when the project has no Firebase yet, or its management API is not
+// enabled). init checks each before anything is granted or created on the
+// project, so a database that is not ours is refused on a first run too.
+func DatabaseURLs(ctx context.Context, c *Clients, fp string) ([]string, error) {
+	if c.FirebaseDB == nil {
+		return nil, errors.New("no Realtime Database management client (endpoints.firebase_database is not set)")
+	}
+	var urls []string
+	call := c.FirebaseDB.Projects.Locations.Instances.List("projects/" + fp + "/locations/-").Context(ctx)
+	err := call.Pages(ctx, func(r *firebasedatabase.ListDatabaseInstancesResponse) error {
+		for _, i := range r.Instances {
+			if i.DatabaseUrl != "" {
+				urls = append(urls, i.DatabaseUrl)
+			}
+		}
+		return nil
+	})
+	switch {
+	case absent(err, "firebasedatabase.googleapis.com", target{project: fp}):
+		return nil, nil
+	case err != nil:
+		return nil, fmt.Errorf("listing project %s's databases: %w", fp, err)
+	}
+	return urls, nil
 }
 
 // ErrNoFirebaseOutputs means the Firebase root's state holds no outputs.
