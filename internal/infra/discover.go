@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	artifactregistry "google.golang.org/api/artifactregistry/v1"
+	billing "google.golang.org/api/cloudbilling/v1"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	scheduler "google.golang.org/api/cloudscheduler/v1"
 	"google.golang.org/api/googleapi"
@@ -48,6 +49,9 @@ type Clients struct {
 	Scheduler *scheduler.Service
 	// ServiceUsage is nil without credentials and without its endpoint.
 	ServiceUsage *serviceusage.Service
+	// Billing reads whether the Firebase project has billing; nil without
+	// credentials and without its endpoint.
+	Billing *billing.APIService
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -58,6 +62,10 @@ type Endpoints struct {
 	// enables Cloud Resource Manager. Without credentials and without it,
 	// there is no Service Usage client.
 	ServiceUsage string
+	// Billing is the Cloud Billing API's, which fugaro init --firebase
+	// reads the Firebase project's billing through. Without credentials and
+	// without it, there is no Billing client.
+	Billing string
 }
 
 // discardLogger keeps the clients from logging requests (and their
@@ -124,6 +132,12 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	if !o.Endpoints.NoAuth || e.ServiceUsage != "" {
 		if c.ServiceUsage, err = serviceusage.NewService(ctx, opts(e.ServiceUsage)...); err != nil {
 			return nil, fmt.Errorf("connecting to Service Usage: %w", err)
+		}
+	}
+	// Only init --firebase calls it.
+	if !o.Endpoints.NoAuth || e.Billing != "" {
+		if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
+			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
 		}
 	}
 	return &c, nil

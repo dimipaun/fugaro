@@ -103,6 +103,10 @@ var flagHints = []struct {
 	{[]string{"module.installation.google_project_iam_member.", "module.installation.google_storage_bucket_iam_member.",
 		"module.installation.google_artifact_registry_repository_iam_member.", "module.installation.google_service_account_iam_member."},
 		"launchers' and operators' grants are declared by --launcher and --operator (or terraform.launchers and terraform.operators in the local config): pass every member again"},
+	{[]string{"module.firebase.google_project_iam_member.admin[", "module.firebase.google_project_iam_member.viewer[", "module.firebase.google_service_account_iam_member.minter["},
+		"the Firebase project's grants follow the GCP project's owners and editors (read from its IAM policy when init runs) and the launchers, operators and budget admins you pass: a removed grant is a removed owner or editor, or a member left out of --launcher, --operator or --budget-admin (terraform.budget_admins); pass them again, or name the address in --allow-delete if the removal is intended"},
+	{[]string{"module.installation.google_service_account.history", "module.installation.google_cloud_run_v2_job.history", "module.installation.google_cloud_scheduler_job.history_sweep", "module.installation.google_project_iam_member.history_launcher"},
+		"the history account, job and sweep schedule are declared by fugaro init --firebase and by a project config that records budget.firebase_project; run it that way"},
 	{[]string{"module.installation.google_project_service."},
 		"two APIs are declared by what this run was given: the Vertex AI API by a repository the local config records as using it (repos.<repo>.vertex, which fugaro init --repo writes), so run from a local config that records every Vertex repository; the Billing Budgets API by --budget, --budget-currency and --billing-account, so pass them again. A deleted API is never disabled, but its management would be dropped"},
 }

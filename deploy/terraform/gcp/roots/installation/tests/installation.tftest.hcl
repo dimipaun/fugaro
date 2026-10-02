@@ -685,6 +685,61 @@ run "budget_off_has_no_history" {
   }
 }
 
+run "budget_token_objects_expire" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition     = length(google_storage_bucket.runs.lifecycle_rule) == 4
+    error_message = "with enable_budget the runs bucket has the bootstrap's three lifecycle rules and one for untaken budget tokens"
+  }
+  assert {
+    condition = anytrue([for r in google_storage_bucket.runs.lifecycle_rule :
+      one(r.action).type == "Delete" && one(r.condition).age == 1 &&
+      one(r.condition).matches_prefix == tolist(["runs/"]) &&
+    one(r.condition).matches_suffix == tolist(["/budget-token"])])
+    error_message = "runs/*/*/budget-token must be deleted after a day, and only that suffix"
+  }
+  assert {
+    condition = length([for r in google_storage_bucket.runs.lifecycle_rule :
+    r if one(r.condition).age == 90 && length(coalesce(one(r.condition).matches_suffix, [])) == 0]) == 1
+    error_message = "the 90-day runs/ rule keeps matching every object under runs/"
+  }
+}
+
 run "history_account_first" {
   command = plan
 
@@ -908,6 +963,11 @@ run "history_job" {
   assert {
     condition     = one(one(google_cloud_run_v2_job.history[0].template).template).service_account == "fugaro-history@proj-1234.iam.gserviceaccount.com"
     error_message = "the history job runs as the history account"
+  }
+  assert {
+    condition = (one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).command == tolist(["/usr/local/bin/fugaro"]) &&
+    one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).args == tolist(["budget", "history", "--sweep"]))
+    error_message = "command replaces the image's ENTRYPOINT: it must be the binary's absolute path, not a PATH lookup"
   }
   assert {
     condition     = one(one(google_cloud_run_v2_job.history[0].template).template).max_retries == 0

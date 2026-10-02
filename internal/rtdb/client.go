@@ -35,6 +35,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -447,4 +448,49 @@ func ValidateURL(raw string, loopbackOK bool) error {
 		return fmt.Errorf("%q must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app", raw)
 	}
 	return nil
+}
+
+// RootKeys lists the keys at the database root without downloading its data
+// (a shallow read). An empty database has none.
+func (c *Client) RootKeys(ctx context.Context) ([]string, error) {
+	res, err := c.do(ctx, http.MethodGet, "", url.Values{"shallow": {"true"}}, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	body := bytes.TrimSpace(res.body)
+	if len(body) == 0 || string(body) == "null" {
+		return nil, nil
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(body, &m); err != nil {
+		return nil, fmt.Errorf("rtdb: GET /: decoding the root's keys: %w", err)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+// settingsRules is where a database's security rules live.
+const settingsRules = ".settings/rules"
+
+// Rules reads the deployed security rules document.
+func (c *Client) Rules(ctx context.Context) ([]byte, error) {
+	res, err := c.do(ctx, http.MethodGet, settingsRules, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	return res.body, nil
+}
+
+// PutRules deploys rules (a {"rules": {...}} document), replacing the
+// database's security rules. It needs an admin credential.
+func (c *Client) PutRules(ctx context.Context, rules []byte) error {
+	if !json.Valid(rules) {
+		return errors.New("rtdb: PUT /.settings/rules: the rules are not JSON")
+	}
+	_, err := c.do(ctx, http.MethodPut, settingsRules, url.Values{"print": {"silent"}}, rules, nil)
+	return err
 }

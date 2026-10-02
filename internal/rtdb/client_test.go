@@ -607,3 +607,37 @@ func TestNewRefusesCleartextForOAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestRootKeysAndRules(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	keys, err := c.RootKeys(ctx(t))
+	if err != nil || len(keys) != 0 {
+		t.Fatalf("empty database: %v, %v", keys, err)
+	}
+	f.Set("fugaro/mark", map[string]any{"a": 1})
+	f.Set("config/mode", "observe")
+	keys, err = c.RootKeys(ctx(t))
+	if err != nil || len(keys) != 2 || keys[0] != "config" || keys[1] != "fugaro" {
+		t.Fatalf("keys = %v, %v (a shallow read lists the root's keys, sorted)", keys, err)
+	}
+	if reqs := f.Requests(); !strings.Contains(reqs[len(reqs)-1].Query, "shallow=true") {
+		t.Errorf("the root was read whole: %v", reqs[len(reqs)-1])
+	}
+
+	rules := []byte(`{"rules":{".read":false,".write":false}}`)
+	if err := c.PutRules(ctx(t), rules); err != nil {
+		t.Fatal(err)
+	}
+	got, err := c.Rules(ctx(t))
+	if err != nil || string(got) != string(rules) || f.RulePuts() != 1 {
+		t.Fatalf("rules = %s, %v", got, err)
+	}
+	if err := c.PutRules(ctx(t), []byte("{not json")); err == nil {
+		t.Error("rules that are not JSON were sent")
+	}
+	f.DenyNext(1)
+	if err := c.PutRules(ctx(t), rules); !errors.Is(err, rtdb.ErrPermission) {
+		t.Errorf("a denied deployment: %v", err)
+	}
+}

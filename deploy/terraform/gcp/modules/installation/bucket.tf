@@ -43,6 +43,23 @@ resource "google_storage_bucket" "runs" {
     }
   }
 
+  # A run's Firebase token object (runs/<slug>/<run>/budget-token) is deleted
+  # by the job when it starts, and dead after an hour. One a job never took
+  # (a run that never started) would otherwise stay as long as its run.
+  dynamic "lifecycle_rule" {
+    for_each = var.enable_budget ? [1] : []
+    content {
+      action {
+        type = "Delete"
+      }
+      condition {
+        age            = 1
+        matches_prefix = ["runs/"]
+        matches_suffix = ["/budget-token"]
+      }
+    }
+  }
+
   # builds/ has no rule: a build record must outlive any age.
 
   lifecycle {

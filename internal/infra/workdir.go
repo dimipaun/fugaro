@@ -17,15 +17,18 @@ const (
 	// StatePrefixInstallation is where the installation's state lives in
 	// the state bucket; each repository's is under StatePrefixRepos.
 	StatePrefixInstallation = "fugaro/installation"
-	StatePrefixRepos        = "fugaro/repos/"
-	VarsFile                = "terraform.tfvars.json"
-	BackendFile             = "backend.hcl"
+	// StatePrefixFirebase is the Firebase root's state (operator-only, like
+	// the installation's).
+	StatePrefixFirebase = "fugaro/firebase"
+	StatePrefixRepos    = "fugaro/repos/"
+	VarsFile            = "terraform.tfvars.json"
+	BackendFile         = "backend.hcl"
 	// PlanFile is the saved plan that is shown, guarded and applied.
 	PlanFile = "fugaro.tfplan"
 )
 
 // The roots the embedded tree holds.
-var roots = map[string]bool{"installation": true, "repo": true}
+var roots = map[string]bool{"installation": true, "repo": true, "firebase": true}
 
 var projectIDRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 
@@ -54,6 +57,18 @@ func InstallationWorkdir(getenv func(string) string, project string) (string, er
 		return "", err
 	}
 	return filepath.Join(state, "fugaro", "terraform", project, "installation"), nil
+}
+
+// FirebaseWorkdir is where fugaro init --firebase plans the Firebase root of
+// project: $XDG_STATE_HOME/fugaro/terraform/<project>/firebase. It is a
+// workdir of its own, so the installation's tfvars and saved plan are never
+// overwritten by the Firebase root's.
+func FirebaseWorkdir(getenv func(string) string, project string) (string, error) {
+	dir, err := InstallationWorkdir(getenv, project)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(dir), "firebase"), nil
 }
 
 // InstallationOutputsWorkdir is where fugaro init --repo reads the

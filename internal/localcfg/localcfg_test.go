@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -587,4 +590,52 @@ func TestBudgetRTDBURLValidated(t *testing.T) {
 	}
 	c := &Config{Budget: &Budget{RTDBURL: "http://127.0.0.1:9"}, Endpoints: Endpoints{NoAuth: true}}
 	c.validateBudget(func(f string, a ...any) { t.Errorf("loopback with no_auth refused: "+f, a...) })
+}
+
+const firebaseBudget = `budget:
+  mode: observe
+  firebase_project: aurora-fp
+  rtdb_url: https://aurora-fp-default-rtdb.firebaseio.com
+  firebase_api_key: AIzaSyA0123456789abcdefghijklmnopqrstu
+  token_signer: fugaro-token-signer@aurora-fp.iam.gserviceaccount.com
+  unreachable_grace: 3m
+  heartbeat: 15s
+`
+
+func TestLocalConfigBudgetFirebaseKeys(t *testing.T) {
+	c, err := Parse([]byte(sample + firebaseBudget + "terraform: { budget_admins: [\"user:boss@example.com\"] }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := c.Budget
+	if b.FirebaseProject != "aurora-fp" || b.RTDBURL != "https://aurora-fp-default-rtdb.firebaseio.com" ||
+		b.FirebaseAPIKey != "AIzaSyA0123456789abcdefghijklmnopqrstu" || b.TokenSigner != "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com" ||
+		b.Grace != 3*time.Minute || b.Heartbeat != 15*time.Second || !slices.Equal(c.Terraform.BudgetAdmins, []string{"user:boss@example.com"}) {
+		t.Fatalf("budget = %+v, admins %v", b, c.Terraform.BudgetAdmins)
+	}
+	// It writes back and reads again unchanged.
+	out, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := Parse(out)
+	if err != nil || !reflect.DeepEqual(again.Budget, c.Budget) || !slices.Equal(again.Terraform.BudgetAdmins, c.Terraform.BudgetAdmins) {
+		t.Fatalf("round trip: %v\n%s\n%+v", err, out, again.Budget)
+	}
+	for name, body := range map[string]string{
+		"unknown key":     "budget: { mode: observe, firebase_projct: x }\n",
+		"project":         "budget: { firebase_project: NOT-A-PROJECT }\n",
+		"api key":         "budget: { firebase_api_key: \"has space\" }\n",
+		"signer":          "budget: { token_signer: someone@example.com }\n",
+		"grace too small": "budget: { unreachable_grace: 1s }\n",
+		"grace too large": "budget: { unreachable_grace: 24h }\n",
+		"heartbeat":       "budget: { heartbeat: 10m }\n",
+		"admin domain":    "terraform: { budget_admins: [\"domain:example.com\"] }\n",
+		"admin wildcard":  "terraform: { budget_admins: [\"user:*@example.com\"] }\n",
+		"admin bare":      "terraform: { budget_admins: [boss@example.com] }\n",
+	} {
+		if _, err := Parse([]byte(sample + body)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
 }
