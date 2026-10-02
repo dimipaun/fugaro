@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net/http"
@@ -37,7 +38,10 @@ func (s *Server) haltedMessage() (string, bool) {
 // refused with a retryable 429 and no halt: the cap may well hold once
 // they settle. In observe mode a call is counted and logged instead,
 // never refused.
-func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, status int) {
+func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) (refusal string, status int) {
+	if s.o.Lease != nil {
+		return s.reserveLease(ctx, st, w)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.halt != nil {
@@ -58,10 +62,7 @@ func (s *Server) reserve(st *stageState, w pricing.Micros) (refusal string, stat
 				h.Detail = fmt.Sprintf("run cap %s cannot hold a call that needs up to %s (nothing spent)", dollars(s.o.Cap), dollars(w))
 				s.haltMsg = fmt.Sprintf("fugaro: budget halted: run cap %s cannot hold a call that needs up to %s", dollars(s.o.Cap), dollars(w))
 			}
-			s.halt = &h
-			s.haltCh <- h
-			close(s.haltCh)
-			s.log.Warn("budget: halted", "reason", h.Reason, "detail", h.Detail, "stage", st.st.Name)
+			s.haltLocked(h, s.haltMsg, st.st.Name, true)
 			return s.haltMsg, http.StatusForbidden
 		}
 		s.wouldHalted = true

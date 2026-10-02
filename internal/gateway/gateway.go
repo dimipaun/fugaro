@@ -66,6 +66,13 @@ type Options struct {
 	Cap      pricing.Micros // enforce: > 0; observe: 0 accounts only
 	Log      *slog.Logger   // the runner's, which redacts; nil discards
 	Client   *http.Client   // nil: a default with no overall timeout (streams are long)
+	// Lease, when set, is where the gateway's budget comes from: it holds
+	// only what the lease granted, asks for more when a call doesn't fit,
+	// and releases what is unused at Close. Cap is then ignored (the lease
+	// owns every cap), and Mode only decides whether a cap refusal may
+	// halt the run (enforce) or never does (observe). nil is M9a's static
+	// Cap, unchanged.
+	Lease Lease
 	// EndStageWait bounds how long EndStage waits for a stage's calls in
 	// flight; 0 is 30 s. Tests shorten it.
 	EndStageWait time.Duration
@@ -107,7 +114,8 @@ type StageReport struct {
 
 // Halt says why the gateway stopped forwarding calls.
 type Halt struct {
-	Reason string // "run_cap"
+	Reason string // "run_cap"; with a lease also repo_daily_cap, global_daily_cap, no_cap, kill_switch
+	Scope  string // "run", "repo" or "global"; "" is "run"
 	Detail string // "run cap $20.00 reached ($19.84 spent, $1.30 needed)"; with nothing spent, "cannot hold a call that needs up to"
 	At     time.Time
 }
@@ -134,6 +142,18 @@ type Server struct {
 
 	haltCh chan Halt
 
+	// hctx ends when HaltExternal runs: it cancels the upstream calls in
+	// flight. A halt the gateway decides itself never does: calls already
+	// holding a reservation finish.
+	hctx  context.Context
+	hstop context.CancelFunc
+	// gctx is the lease's context: it ends only when Close's own wait
+	// runs out, so a grant already in flight isn't cut off and lost.
+	gctx  context.Context
+	gstop context.CancelFunc
+
+	grants sync.WaitGroup // the top-up goroutine, so Close sees its grant land
+
 	countSlots chan struct{} // bounds the token counts in flight
 
 	// mu guards everything below: one mutex, one ledger.
@@ -143,7 +163,9 @@ type Server struct {
 	overrun     pricing.Micros // all calls', for the invariant check
 	halt        *Halt
 	haltMsg     string
-	wouldHalted bool // observe: enforce would have halted by now
+	wouldHalted bool           // observe: enforce would have halted by now
+	granted     pricing.Micros // lease: the sum of what the lease granted, less what was released
+	flight      *topUp         // lease: the top-up in flight, if any
 	stage       *stageState
 	onLedger    func(Ledger, pricing.Micros) // tests: called after every ledger change
 }
@@ -185,6 +207,8 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 		s.log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	s.base, s.cancelBase = context.WithCancel(context.WithoutCancel(ctx))
+	s.hctx, s.hstop = context.WithCancel(s.base)
+	s.gctx, s.gstop = context.WithCancel(context.WithoutCancel(ctx))
 	s.srv = &http.Server{
 		Handler:           s,
 		ReadHeaderTimeout: 30 * time.Second,
@@ -204,7 +228,7 @@ func (o Options) validate() error {
 			return fmt.Errorf("gateway: cap %d µ$ is negative", o.Cap)
 		}
 	case Enforce:
-		if o.Cap <= 0 {
+		if o.Cap <= 0 && o.Lease == nil {
 			return errors.New("gateway: enforce needs a cap above 0")
 		}
 	default:
@@ -287,8 +311,9 @@ func (s *Server) Token() string { return s.token }
 // Halted delivers the halt once, then is closed.
 func (s *Server) Halted() <-chan Halt { return s.haltCh }
 
-// Ledger is a snapshot of the run's money. In observe mode Granted is
-// unbounded (the largest Micros).
+// Ledger is a snapshot of the run's money. With a lease Granted is what
+// the lease granted (less what Close released); with a static cap in
+// observe mode it is unbounded (the largest Micros).
 func (s *Server) Ledger() Ledger {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -296,6 +321,9 @@ func (s *Server) Ledger() Ledger {
 }
 
 func (s *Server) ledgerLocked() Ledger {
+	if s.o.Lease != nil {
+		return Ledger{Granted: s.granted, Used: s.used, Reserved: s.reserved}
+	}
 	g := pricing.Micros(math.MaxInt64)
 	if s.o.Mode == Enforce {
 		g = s.o.Cap
@@ -335,6 +363,12 @@ func (s *Server) EndStage() StageReport {
 	case <-timer.C:
 		s.log.Warn("budget: stage ended with calls still in flight", "stage", st.st.Name)
 	}
+	rep := s.stageReport(st)
+	s.reportStage(rep)
+	return rep
+}
+
+func (s *Server) stageReport(st *stageState) StageReport {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rep := st.rep
@@ -366,7 +400,8 @@ func (s *Server) violation(st *stageState, v string) {
 }
 
 // Close cancels every upstream request in flight (each settles as its
-// state says), then stops listening and waits for the handlers.
+// state says), then stops listening and waits for the handlers. With a
+// lease it then releases what the run granted and didn't use, once.
 func (s *Server) Close(ctx context.Context) error {
 	s.closeOnce.Do(func() {
 		s.cancelBase()
@@ -375,13 +410,18 @@ func (s *Server) Close(ctx context.Context) error {
 			s.closeErr = fmt.Errorf("gateway: close: %w", err)
 		}
 		done := make(chan struct{})
-		go func() { s.handlers.Wait(); close(done) }()
+		go func() { s.handlers.Wait(); s.grants.Wait(); close(done) }()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			s.gstop() // give up on a grant still in flight
 			if s.closeErr == nil {
 				s.closeErr = fmt.Errorf("gateway: close: %w", ctx.Err())
 			}
+		}
+		defer s.gstop()
+		if err := s.releaseUnused(ctx); err != nil && s.closeErr == nil {
+			s.closeErr = err
 		}
 	})
 	return s.closeErr
@@ -474,12 +514,13 @@ func trimSlash(s string) string {
 }
 
 // writeError answers with an API error body the gateway made itself.
-// Only a gateway-made error the client may retry (an upstream failure)
+// Only a gateway-made error the client may retry (an upstream failure,
+// a busy budget, an unreachable budget backend)
 // leaves out x-should-retry: false.
 func writeError(w http.ResponseWriter, status int, typ, message string) {
 	h := w.Header()
 	h.Set("Content-Type", "application/json")
-	if status != http.StatusBadGateway && status != http.StatusTooManyRequests {
+	if status != http.StatusBadGateway && status != http.StatusTooManyRequests && status != http.StatusServiceUnavailable {
 		h.Set("x-should-retry", "false")
 	}
 	w.WriteHeader(status)
