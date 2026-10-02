@@ -59,6 +59,9 @@ type cloudEnv struct {
 	// records is the bucket build records are read from, once opened,
 	// when it isn't bucket (see recordBucket).
 	records *blobx.Bucket
+	// noBudgetCheck is --no-budget-check: fugaro run skips the launch
+	// pre-check of the budget (nothing else).
+	noBudgetCheck bool
 }
 
 // openRecordBucket opens the bucket build records are read from. Tests

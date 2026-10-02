@@ -308,7 +308,9 @@ type Endpoints struct {
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
 	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
-	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
+	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
+	IAMCredentials string `yaml:"iam_credentials,omitempty"`
+	NoAuth         bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
 // Repo is an onboarded repository.
@@ -593,6 +595,7 @@ func (c *Config) validate() error {
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
 		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
 		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase},
+		{"iam_credentials", c.Endpoints.IAMCredentials},
 	} {
 		if ep.url == "" {
 			continue
