@@ -598,16 +598,16 @@ func readEvent(t *testing.T, r *bufio.Reader) string {
 	}
 }
 
-// closedPort is an address nothing listens on.
+// closedPort is an address nothing listens on. It is a fixed well-known port
+// below the ephemeral range: a port taken from a closed listener can be
+// handed to another test's server before the connection arrives (a CI flake).
 func closedPort(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	if c, err := net.DialTimeout("tcp", "127.0.0.1:1", 200*time.Millisecond); err == nil {
+		c.Close()
+		t.Skip("something listens on 127.0.0.1:1")
 	}
-	addr := ln.Addr().String()
-	ln.Close()
-	return "http://" + addr
+	return "http://127.0.0.1:1"
 }
 
 // The call log says what Claude Code asked for: max_tokens and the tool
