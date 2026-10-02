@@ -217,6 +217,12 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid data; couldn't parse JSON object, array, or value."})
 		return
 	}
+	// A PATCH keeps its nulls: each key is a path and null deletes it, as in
+	// the real database; the value is normalised per path below.
+	var patch map[string]any
+	if r.Method == http.MethodPatch {
+		patch, _ = in.(map[string]any)
+	}
 	in = normalise(in)
 	for _, seg := range path {
 		if !validKey(seg) {
@@ -224,7 +230,11 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 			return
 		}
 	}
-	if k, bad := firstBadKey(in, r.Method == http.MethodPatch); bad {
+	check := in
+	if patch != nil {
+		check = patch
+	}
+	if k, bad := firstBadKey(check, r.Method == http.MethodPatch); bad {
 		badKey(w, k)
 		return
 	}
@@ -241,10 +251,10 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 	if r.Method == http.MethodPut {
 		changes = []change{{path, in}}
 	} else {
-		m, ok := in.(map[string]any)
-		if !ok {
+		m := patch
+		if m == nil {
 			// PATCH null is a no-op for an absent node.
-			if in != nil {
+			if _, isObj := in.(map[string]any); !isObj && in != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid data; must be an object."})
 				return
 			}

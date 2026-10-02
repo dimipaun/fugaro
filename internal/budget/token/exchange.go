@@ -188,6 +188,18 @@ func (s *Session) Expiry() time.Time {
 // UID is the run's Firebase uid.
 func (s *Session) UID() string { return s.uid }
 
+// Claims are the run's claims as the custom token carried them (and the
+// ID token was checked to carry): the budget session needs rb to stamp its
+// registry entry and outcome, which the rules compare with the token's.
+func (s *Session) Claims() Claims {
+	extra, _ := s.want["claims"].(map[string]any)
+	c := Claims{Slug: claimString(extra, "fs"), Run: claimString(extra, "fr"), FP: claimString(extra, "fp"), RB: claimString(extra, "rb")}
+	if fx, ok := claimInt(extra, "fx"); ok {
+		c.FX = time.UnixMilli(fx).UTC()
+	}
+	return c
+}
+
 // String and GoString keep tokens out of %v and %#v.
 func (s *Session) String() string   { return "token.Session{uid: " + s.uid + ", tokens redacted}" }
 func (s *Session) GoString() string { return s.String() }

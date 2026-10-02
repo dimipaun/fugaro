@@ -332,3 +332,22 @@ func TestRTDBFakeSlowStreamConsumerDoesNotBlockWrites(t *testing.T) {
 		t.Fatalf("get = %d", code)
 	}
 }
+
+// A PATCH with a null deletes that path, atomically with its other keys.
+func TestRTDBFakePatchNullDeletes(t *testing.T) {
+	f := NewRTDB(t)
+	f.Set("agents/s/r", map[string]any{"repo": "acme/app", "stage": "implement"})
+	f.Set("keep/x", 1)
+	if code, _, _ := rtdbDo(t, "PATCH", f.URL+"/.json", `{"agents/s/r":null,"keep/y":2}`, nil); code != 200 {
+		t.Fatalf("patch = %d", code)
+	}
+	if f.Value("agents") != nil {
+		t.Fatalf("the entry survived a null: %v", f.Value("agents"))
+	}
+	if f.Value("keep/y") == nil || f.Value("keep/x") == nil {
+		t.Fatal("the other keys of the update were lost")
+	}
+	if code, _, _ := rtdbDo(t, "PATCH", f.URL+"/.json", `{"agents/a.b/r":null}`, nil); code != 400 {
+		t.Fatalf("a bad key in a null update = %d, want 400", code)
+	}
+}

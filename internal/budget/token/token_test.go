@@ -194,12 +194,12 @@ func TestMintSignsAsSigner(t *testing.T) {
 func TestMintNotMinterIsTyped(t *testing.T) {
 	e := newEnv(t)
 	e.iam.Refuse(403, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission 'iam.serviceAccounts.signJwt' denied")
-	_, err := token.Mint(context.Background(), e.signer, claims())
+	_, err := token.MintAt(context.Background(), e.signer, claims(), t0) // not Mint: claims() fixes fx at t0+3h, which the wall clock passes
 	if !errors.Is(err, token.ErrNotMinter) {
 		t.Fatalf("err = %v", err)
 	}
 	e.iam.Refuse(503, "UNAVAILABLE", "", "later")
-	if _, err := token.Mint(context.Background(), e.signer, claims()); !errors.Is(err, token.ErrUnavailable) {
+	if _, err := token.MintAt(context.Background(), e.signer, claims(), t0); !errors.Is(err, token.ErrUnavailable) {
 		t.Fatalf("503: err = %v", err)
 	}
 }
