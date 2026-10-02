@@ -106,14 +106,17 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	if err != nil {
 		return false, err
 	}
-	longest, err := e.be.LongestTaskTimeout(ctx)
+	// The identity window is the target job's own timeout (a long job
+	// elsewhere must not lengthen it).
+	jobTimeout, err := e.be.TaskTimeout(ctx, slug, spec.Workflow)
 	if err != nil {
 		return false, remote(err)
 	}
-	jobTimeout := longest
 	if o := launchTimeoutOf(spec); o > 0 {
 		jobTimeout = max(jobTimeout, o+backend.TaskTimeoutSlack)
 	}
+	// RB is the launcher's own, self-asserted name (config user or git
+	// email): attribution only, nothing in the rules trusts it.
 	claims := token.Claims{Slug: budget.Key(slug), Run: budget.Key(run), FX: token.ExpiryFX(time.Now(), jobTimeout), FP: e.lc.Name, RB: me}
 	tok, err := token.Mint(ctx, signer, claims)
 	switch {
@@ -130,6 +133,11 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 		return false, remote(err)
 	}
 	if err := token.PutObject(ctx, e.bucket, slug, run, tok); err != nil {
+		// A put that failed after writing leaves an untaken token valid
+		// for an hour: remove it, best effort.
+		if !errors.Is(err, token.ErrObjectExists) {
+			e.dropBudgetToken(ctx, slug, run)
+		}
 		return false, remote(err)
 	}
 	return true, nil

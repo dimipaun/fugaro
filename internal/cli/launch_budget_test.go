@@ -11,6 +11,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/budget/token"
@@ -418,5 +419,51 @@ func TestPrecheckSkippedForAnAlreadyLaunchedRun(t *testing.T) {
 	}
 	if n := len(f.iam.SignCalls()); n != 1 {
 		t.Fatalf("a repeated run id minted again: %d", n)
+	}
+}
+
+// fxOf is the token's fx claim as a time.
+func fxOf(t *testing.T, f *launchBudgetFixture) time.Time {
+	t.Helper()
+	c := claimsOf(t, f, readToken(t, f.cloudFixture, budgetRun))
+	fx, _ := c["fx"].(json.Number)
+	ms, err := fx.Int64()
+	if err != nil {
+		t.Fatalf("fx = %v", c["fx"])
+	}
+	return time.UnixMilli(ms)
+}
+
+// The token's identity window follows the TARGET job's task timeout, not the
+// longest of every Fugaro job.
+func TestRunFXFollowsTargetJobTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target time.Duration
+		other  time.Duration
+		want   time.Duration // fx - launch, before queueing and slack
+	}{
+		{"short target, long other job", 30 * time.Minute, 30 * time.Hour, 30 * time.Minute},
+		{"long target, short other job", 6 * time.Hour, 20 * time.Minute, 6 * time.Hour},
+		{"no timeout on the job: Cloud Run's 10m default", 0, 30 * time.Hour, 10 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLaunchBudget(t, "enforce")
+			other := gcp.JobName("github--acme-other", "svc")
+			f.run.AddJob(other, "1", "512Mi")
+			f.run.SetJobTimeout(other, tc.other)
+			if tc.target > 0 {
+				f.run.SetJobTimeout(gcp.JobName(appSlug, "web"), tc.target)
+			}
+			start := time.Now()
+			if _, _, err := runBudget(t); err != nil {
+				t.Fatal(err)
+			}
+			got := fxOf(t, f).Sub(start)
+			lo := tc.want + time.Hour + 5*time.Minute
+			if got < lo || got > lo+2*time.Minute {
+				t.Fatalf("fx - launch = %v, want about %v", got, lo)
+			}
+		})
 	}
 }

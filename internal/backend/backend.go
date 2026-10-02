@@ -180,7 +180,14 @@ type Backend interface {
 	// workflow jobs, zero when there are none. No run of them can be active
 	// for longer, so it bounds how far back an active-only List must look.
 	LongestTaskTimeout(ctx context.Context) (time.Duration, error)
+	// TaskTimeout is the task timeout of the repository's workflow job
+	// (DefaultTaskTimeout when the job sets none). ErrNotFound when the job
+	// does not exist.
+	TaskTimeout(ctx context.Context, slug, workflow string) (time.Duration, error)
 }
+
+// DefaultTaskTimeout is Cloud Run's task timeout for a job that sets none.
+const DefaultTaskTimeout = 10 * time.Minute
 
 // ErrNotFound means the execution (or job) does not exist.
 var ErrNotFound = errors.New("not found")

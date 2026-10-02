@@ -270,6 +270,23 @@ func (b *Backend) LongestTaskTimeout(ctx context.Context) (time.Duration, error)
 	}
 }
 
+// TaskTimeout is the task timeout of the workflow's job, Cloud Run's default
+// (backend.DefaultTaskTimeout) when the job sets none.
+func (b *Backend) TaskTimeout(ctx context.Context, slug, workflow string) (time.Duration, error) {
+	j, err := b.run.Projects.Locations.Jobs.Get(b.JobPath(slug, workflow)).Context(ctx).Do()
+	if err != nil {
+		return 0, apiError("reading job "+JobName(slug, workflow), err)
+	}
+	if j.Template == nil || j.Template.Template == nil || j.Template.Template.Timeout == "" {
+		return backend.DefaultTaskTimeout, nil
+	}
+	d, err := time.ParseDuration(j.Template.Template.Timeout)
+	if err != nil {
+		return 0, fmt.Errorf("job %s: task timeout %q: %w", j.Name, j.Template.Template.Timeout, err)
+	}
+	return d, nil
+}
+
 // JobEnv reads job (a job name in the backend's region) and returns the
 // value of its container's env variable name, and whether the job exists.
 // A job without the variable gives "", true.
