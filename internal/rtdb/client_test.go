@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -480,5 +481,89 @@ func TestRTDBStreamStopsOnContext(t *testing.T) {
 		case <-deadline:
 			t.Fatal("channel not closed after cancel")
 		}
+	}
+}
+
+func TestTokenSourceFailuresAreClassified(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	for _, tc := range []struct {
+		name string
+		err  error
+		want error
+	}{
+		{"revoked refresh token", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 400}, Body: []byte(`{"error":"invalid_grant"}`)}, rtdb.ErrPermission},
+		{"unauthorized", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 401}}, rtdb.ErrPermission},
+		{"token endpoint down", &oauth2.RetrieveError{Response: &http.Response{StatusCode: 503}}, rtdb.ErrUnavailable},
+		{"network failure", errors.New("dial tcp: i/o timeout"), rtdb.ErrUnavailable},
+	} {
+		c, _ := rtdb.New(f.URL, rtdb.Auth{Source: errSource{tc.err}}, rtdb.WithStreamBackoff(5*time.Millisecond, 10*time.Millisecond))
+		if _, err := c.Get(ctx(t), "a", new(int)); !errors.Is(err, tc.want) {
+			t.Errorf("%s: Get = %v, want %v", tc.name, err, tc.want)
+		}
+		ev := recv(t, c.Stream(ctx(t), "a"))
+		if ev.Type != "error" || !errors.Is(ev.Err, tc.want) {
+			t.Errorf("%s: stream event = %+v, want %v", tc.name, ev, tc.want)
+		}
+	}
+	if n := len(f.Requests()); n != 0 {
+		t.Errorf("%d requests went out without a credential", n)
+	}
+}
+
+type errSource struct{ err error }
+
+func (e errSource) Token() (*oauth2.Token, error) { return nil, e.err }
+
+func TestPutAndPatchValidateArguments(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	if err := c.PutIfMatch(ctx(t), "a", "", 1); err == nil {
+		t.Error("an empty etag means no precondition and must be refused")
+	}
+	for _, bad := range []string{"a//b", "a/../b", "a/./b", "a.b/c", "a/$x", "a/b#", "a/[0]", "a/\x01", "/lead", "trail/"} {
+		if err := c.PutIfMatch(ctx(t), bad, "null_etag", 1); err == nil && bad != "/lead" && bad != "trail/" {
+			t.Errorf("PutIfMatch path %q accepted", bad)
+		}
+		if err := c.Patch(ctx(t), "", map[string]any{bad: 1}); err == nil {
+			t.Errorf("Patch key %q accepted", bad)
+		}
+		if err := c.Patch(ctx(t), bad, map[string]any{"ok": 1}); err == nil && bad != "/lead" && bad != "trail/" {
+			t.Errorf("Patch root %q accepted", bad)
+		}
+		if _, err := c.Get(ctx(t), bad, new(int)); err == nil && bad != "/lead" && bad != "trail/" {
+			t.Errorf("Get path %q accepted", bad)
+		}
+	}
+	if n := len(f.Requests()); n != 6 { // only the tolerated "/lead" and "trail/" paths of Put, Patch root and Get
+		t.Errorf("%d calls reached the server, want the 6 tolerated ones", n)
+	}
+	// Escaped keys and the root are fine.
+	if err := c.Patch(ctx(t), "", map[string]any{"runs/a%2Eb/r1/x": 1}); err != nil {
+		t.Error(err)
+	}
+}
+
+// A server that accepts the credential and revokes it at once, over and over,
+// must show up as errors so the caller's grace clock starts.
+func TestRTDBStreamRevokeLoopEmitsError(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f, rtdb.WithStreamBackoff(5*time.Millisecond, 20*time.Millisecond))
+	ch := c.Stream(ctx(t), "config/kill")
+	var sawErr bool
+	for i := 0; i < 40 && !sawErr; i++ {
+		ev := recv(t, ch)
+		switch ev.Type {
+		case "put":
+			waitStreams(t, f, 1)
+			f.SendAuthRevoked()
+		case "error":
+			if !errors.Is(ev.Err, rtdb.ErrPermission) {
+				t.Fatalf("error = %v", ev.Err)
+			}
+			sawErr = true
+		}
+	}
+	if !sawErr {
+		t.Fatal("repeated immediate auth_revoked never produced an error event")
 	}
 }

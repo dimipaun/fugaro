@@ -188,3 +188,51 @@ func TestEffectiveCaps(t *testing.T) {
 		t.Error("no global cap is no cap")
 	}
 }
+
+func TestPathsRejectEmptySegments(t *testing.T) {
+	for name, f := range map[string]func(){
+		"PathCapsRepo":  func() { PathCapsRepo("") },
+		"PathKillRepo":  func() { PathKillRepo("") },
+		"PathRun slug":  func() { PathRun("", "r") },
+		"PathRun run":   func() { PathRun("s", "") },
+		"PathSpendRepo": func() { PathSpendRepo(1, "") },
+		"PathSpendRun":  func() { PathSpendRun(1, "s", "") },
+		"PathAgent":     func() { PathAgent("", "r") },
+		"PathOutcome":   func() { PathOutcome(1, "s", "") },
+		"PathByModel":   func() { PathByModel(1, "s", "") },
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s accepted an empty segment (it would collapse onto another node)", name)
+				}
+			}()
+			f()
+		}()
+	}
+}
+
+func TestByModelKeysAreEscaped(t *testing.T) {
+	if got := ModelKey("claude-3.5-sonnet"); got != "claude-3%2E5-sonnet" {
+		t.Fatalf("ModelKey = %q", got)
+	}
+	if got := PathByModel(20728, "a.b", "gemini-2.5-pro"); got != "spend/20728/repos/a%2Eb/byModel/gemini-2%2E5-pro" {
+		t.Fatalf("PathByModel = %q", got)
+	}
+	// Models("") reads the wire form back to model names; dotted and
+	// percent-bearing names stay distinct.
+	c := Counters{ByModel: map[string]ModelUse{
+		ModelKey("claude-3.5"):   {Micros: 1},
+		ModelKey("claude-3%2E5"): {Micros: 2},
+		ModelKey("vertex@2025"):  {Micros: 3},
+	}}
+	got := c.Models()
+	if len(got) != 3 || got["claude-3.5"].Micros != 1 || got["claude-3%2E5"].Micros != 2 || got["vertex@2025"].Micros != 3 {
+		t.Fatalf("Models = %+v", got)
+	}
+	for _, m := range []string{"x", "a.b", "a/b", "a$b", "a[1]"} {
+		if strings.ContainsAny(ModelKey(m), "./$#[]") {
+			t.Errorf("ModelKey(%q) = %q has a forbidden character", m, ModelKey(m))
+		}
+	}
+}

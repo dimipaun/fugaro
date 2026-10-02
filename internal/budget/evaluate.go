@@ -2,6 +2,7 @@ package budget
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
 
@@ -74,6 +75,14 @@ type Write struct {
 	// repository's day counter alone (ruling R1). It never applies to a
 	// release, and is advisory in observe like every cap.
 	CommittedDaily Micros
+	// CommittedEnforce makes the committed cap bite even when the project's
+	// RTDB mode is observe or absent: set it when the run's effective mode
+	// (the strictest of the project's config/mode and the repository's own
+	// merged mode, M9a.1) is enforce. The committed cap is the repository's
+	// own guardrail, so the repository's enforce is enough to make it bite;
+	// RTDB-side caps follow the RTDB mode alone. When RTDB mode is enforce
+	// the committed cap bites regardless.
+	CommittedEnforce bool
 }
 
 // Decision is Evaluate's verdict.
@@ -94,10 +103,18 @@ type Decision struct {
 // the database and are not part of the state predicate, and the run's
 // identity and fx deadline are authentication, not state.
 //
+// Arithmetic saturates, so a huge or corrupt counter can never wrap into
+// headroom, and a negative ledger or counter value (RTDB can store one) is
+// refused as ReasonInvalid rather than read as headroom. A lease naming a day
+// other than today (ReasonNotToday) is a retry with the fresh day, not a
+// refusal: the database's Date header has one-second resolution, so near
+// midnight the client's day can lag by a moment.
+//
 // A lease is refused when, in this order: a switch is on (global, then the
 // repository's; honoured in every mode); the day is not today; the amount is
 // over maxReserve (a missing limit refuses); and, only when caps.Mode is
-// "enforce" (anything else, absent included, is observe), the run's lifetime
+// "enforce" (anything else, absent included, is observe; the committed cap
+// also bites when w.CommittedEnforce), the run's lifetime
 // reservation (reserved - released) would pass min(repository per-run cap or
 // default, global per-run cap), the repository's day counter would pass its
 // cap (or default) or the committed daily cap, or the global day counter
@@ -112,6 +129,9 @@ type Decision struct {
 func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision {
 	if w.Amount <= 0 || (w.Op != OpLease && w.Op != OpRelease) {
 		return deny(ReasonInvalid, ScopeRun, "amount %s must be positive and the operation a lease or a release", dollars(w.Amount))
+	}
+	if d, bad := negativeState(st); bad {
+		return d
 	}
 	today := Day(now)
 	if w.Op == OpRelease {
@@ -144,43 +164,80 @@ func Evaluate(st State, w Write, caps Caps, kills Kills, now time.Time) Decision
 		return deny(ReasonMaxReserve, ScopeRun, "lease %s is over the largest single lease, %s", dollars(w.Amount), dollars(maxReserve))
 	}
 
-	var refusal *Decision
-	check := func(d Decision) {
-		if refusal == nil {
-			refusal = &d
+	// A refusal is binding when its cap applies in the run's mode; the first
+	// binding one denies, else the first non-binding one is advisory.
+	var binding, advisory *Decision
+	check := func(d Decision, applies bool) {
+		switch {
+		case applies && binding == nil:
+			binding = &d
+		case !applies && advisory == nil:
+			advisory = &d
 		}
 	}
+	enforcing := caps.Enforcing()
 	// Per-run: the lifetime outstanding after the lease.
 	switch perRun, ok := caps.PerRun(); {
 	case !ok:
-		check(noCap(caps, "per-run"))
-	case st.Run.Outstanding()+w.Amount > perRun:
-		check(deny(ReasonRunCap, ScopeRun, "run cap %s reached (%s held, %s needed)", dollars(perRun), dollars(st.Run.Outstanding()), dollars(w.Amount)))
+		check(noCap(caps, "per-run"), enforcing)
+	case add(st.Run.Outstanding(), w.Amount) > perRun:
+		check(deny(ReasonRunCap, ScopeRun, "run cap %s reached (%s held, %s needed)", dollars(perRun), dollars(st.Run.Outstanding()), dollars(w.Amount)), enforcing)
 	}
 	// The repository's day counter, against the database cap, then the
 	// committed one.
 	switch cap, ok := caps.RepoDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"})
-	case st.Repo.Counted+w.Amount > cap:
-		check(deny(ReasonRepoDailyCap, ScopeRepo, "this repository's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Repo.Counted), dollars(w.Amount)))
+		check(Decision{Reason: ReasonNoCap, Scope: ScopeRepo, Detail: "no daily cap is set for this repository and there is no default (fugaro budget set --defaults --repo-daily)"}, enforcing)
+	case add(st.Repo.Counted, w.Amount) > cap:
+		check(deny(ReasonRepoDailyCap, ScopeRepo, "this repository's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Repo.Counted), dollars(w.Amount)), enforcing)
 	}
-	if w.CommittedDaily > 0 && st.Repo.Counted+w.Amount > w.CommittedDaily {
-		check(deny(ReasonRepoDailyCap, ScopeRepo, "per_day_usd %s of fugaro.yaml reached (%s counted today, %s needed)", dollars(w.CommittedDaily), dollars(st.Repo.Counted), dollars(w.Amount)))
+	if w.CommittedDaily > 0 && add(st.Repo.Counted, w.Amount) > w.CommittedDaily {
+		check(deny(ReasonRepoDailyCap, ScopeRepo, "per_day_usd %s of fugaro.yaml reached (%s counted today, %s needed)", dollars(w.CommittedDaily), dollars(st.Repo.Counted), dollars(w.Amount)), enforcing || w.CommittedEnforce)
 	}
 	switch cap, ok := caps.GlobalDaily(); {
 	case !ok:
-		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"})
-	case st.Global.Counted+w.Amount > cap:
-		check(deny(ReasonGlobalDailyCap, ScopeGlobal, "the project's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Global.Counted), dollars(w.Amount)))
+		check(Decision{Reason: ReasonNoCap, Scope: ScopeGlobal, Detail: "no global daily cap is set (fugaro budget set --global --daily)"}, enforcing)
+	case add(st.Global.Counted, w.Amount) > cap:
+		check(deny(ReasonGlobalDailyCap, ScopeGlobal, "the project's daily cap %s reached (%s counted, %s needed)", dollars(cap), dollars(st.Global.Counted), dollars(w.Amount)), enforcing)
 	}
-	if refusal == nil {
-		return Decision{Allow: true}
+	switch {
+	case binding != nil:
+		return *binding
+	case advisory != nil:
+		return Decision{Allow: true, Advisory: advisory}
 	}
-	if caps.Enforcing() {
-		return *refusal
+	return Decision{Allow: true}
+}
+
+// add is a saturating sum of non-negative amounts.
+func add(a, b Micros) Micros {
+	if a > math.MaxInt64-b {
+		return math.MaxInt64
 	}
-	return Decision{Allow: true, Advisory: refusal}
+	return a + b
+}
+
+// negativeState refuses a state holding a negative amount: RTDB can store
+// one, and reading it as headroom would fail open.
+func negativeState(st State) (Decision, bool) {
+	for _, l := range []struct {
+		name string
+		v    Micros
+	}{
+		{"run reserved", st.Run.Reserved}, {"run released", st.Run.Released}, {"run spent", st.Run.Spent},
+		{"day share reserved", st.DayRun.Reserved}, {"day share released", st.DayRun.Released}, {"day share spent", st.DayRun.Spent},
+	} {
+		if l.v < 0 {
+			return deny(ReasonInvalid, ScopeRun, "%s is negative in the database (%d micro-dollars)", l.name, l.v), true
+		}
+	}
+	if st.Repo.Counted < 0 {
+		return deny(ReasonInvalid, ScopeRepo, "the repository's day counter is negative in the database (%d micro-dollars)", st.Repo.Counted), true
+	}
+	if st.Global.Counted < 0 {
+		return deny(ReasonInvalid, ScopeGlobal, "the project's day counter is negative in the database (%d micro-dollars)", st.Global.Counted), true
+	}
+	return Decision{}, false
 }
 
 // noCap names which side of the per-run cap is missing.

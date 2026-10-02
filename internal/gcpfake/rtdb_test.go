@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -107,7 +108,7 @@ func TestRTDBFakeMultiPathAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			rtdbDo(t, "PATCH", f.URL+"/.json?print=silent", `{"counters/a":1,"counters/b":1,"log/`+time.Now().Format("150405.000000000")+`":true}`, nil)
+			rtdbDo(t, "PATCH", f.URL+"/.json?print=silent", `{"counters/a":1,"counters/b":1,"log/`+strconv.FormatInt(time.Now().UnixNano(), 10)+`":true}`, nil)
 		}()
 	}
 	wg.Wait()
@@ -265,5 +266,69 @@ func TestRTDBFakeUnhandledMethodFails(t *testing.T) {
 	}
 	if failed == "" {
 		t.Fatal("POST did not fail the test")
+	}
+}
+
+func TestRTDBFakeRejectsKeysRealRTDBRejects(t *testing.T) {
+	f := NewRTDB(t)
+	long := strings.Repeat("k", 769)
+	for _, tc := range []struct{ name, method, path, body string }{
+		{"dot in a value key", "PUT", "/a.json", `{"gemini-2.5":1}`},
+		{"dollar", "PUT", "/a.json", `{"a$b":1}`},
+		{"hash", "PUT", "/a.json", `{"a#b":1}`},
+		{"brackets", "PUT", "/a.json", `{"a[0]":1}`},
+		{"slash in a value key", "PUT", "/a.json", `{"a/b":1}`},
+		{"control char", "PUT", "/a.json", `{"a\u0001b":1}`},
+		{"empty key", "PUT", "/a.json", `{"":1}`},
+		{"over-long key", "PUT", "/a.json", `{"` + long + `":1}`},
+		{"nested bad key", "PUT", "/a.json", `{"x":{"y":{"a.b":1}}}`},
+		{"bad key in a patch value", "PATCH", "/.json", `{"runs/x":{"a.b":1}}`},
+		{"dot in a patch path segment", "PATCH", "/.json", `{"runs/a.b/r":1}`},
+		{"empty segment in a patch path", "PATCH", "/.json", `{"runs//r":1}`},
+		{"bad URL path segment", "PUT", "/runs/a.b.json", `1`},
+		{"dollar in a patch path", "PATCH", "/.json", `{"runs/$x":1}`},
+	} {
+		code, body, _ := rtdbDo(t, tc.method, f.URL+tc.path, tc.body, nil)
+		if code != 400 {
+			t.Errorf("%s: %d %s, want 400", tc.name, code, body)
+		}
+	}
+	if f.Value("") != nil {
+		t.Fatalf("a rejected write changed the tree: %#v", f.Value(""))
+	}
+	// An escaped key is fine, and so is a key of exactly 768 bytes.
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/a.json", `{"gemini-2%2E5":1,"`+strings.Repeat("k", 768)+`":2}`, nil); code != 200 {
+		t.Fatalf("valid keys = %d", code)
+	}
+}
+
+func TestRTDBFakeSlowStreamConsumerDoesNotBlockWrites(t *testing.T) {
+	f := NewRTDB(t)
+	// A stream whose client never reads.
+	req, _ := http.NewRequest("GET", f.URL+"/big.json", nil)
+	req.Header.Set("Accept", "text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	waitStreams(t, f, 1)
+	blob := strings.Repeat("x", 256<<10)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 400; i++ {
+			rtdbDo(t, "PUT", f.URL+"/big/v.json?print=silent", `"`+blob+`"`, nil)
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("writes blocked behind a stalled stream consumer")
+	}
+	waitStreams(t, f, 0) // the slow consumer was cut off
+	// Other calls still work.
+	if code, _, _ := rtdbDo(t, "GET", f.URL+"/x.json", "", nil); code != 200 {
+		t.Fatalf("get = %d", code)
 	}
 }

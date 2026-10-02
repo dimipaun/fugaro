@@ -37,30 +37,53 @@ const (
 	PathProject      = "fugaro/project"
 )
 
-func PathCapsRepo(slug string) string { return "config/caps/repos/" + Key(slug) }
-func PathKillRepo(slug string) string { return "config/kill/repos/" + Key(slug) }
+// seg escapes one slug, run id or model name for a path and panics on an
+// empty one: an empty segment would collapse the path onto a different node
+// (runs//r1 is runs/r1 after URL cleaning). Slugs and run ids are validated
+// long before a path is built, so an empty one is a programming error.
+func seg(what, v string) string {
+	if v == "" {
+		panic("budget: empty " + what + " in a database path")
+	}
+	return Key(v)
+}
+
+func PathCapsRepo(slug string) string { return "config/caps/repos/" + seg("slug", slug) }
+func PathKillRepo(slug string) string { return "config/kill/repos/" + seg("slug", slug) }
 
 // PathRun is a run's lifetime ledger.
-func PathRun(slug, run string) string { return "runs/" + Key(slug) + "/" + Key(run) }
+func PathRun(slug, run string) string { return "runs/" + seg("slug", slug) + "/" + seg("run id", run) }
 
 func PathSpendGlobal(day int64) string { return "spend/" + DayKey(day) + "/global" }
 func PathSpendRepo(day int64, slug string) string {
-	return "spend/" + DayKey(day) + "/repos/" + Key(slug)
+	return "spend/" + DayKey(day) + "/repos/" + seg("slug", slug)
+}
+
+// PathByModel is one model's usage under a repository's day counter. Model
+// names are keys too (claude-3.5, gemini-2.5-pro contain dots): see ModelKey.
+func PathByModel(day int64, slug, model string) string {
+	return PathSpendRepo(day, slug) + "/byModel/" + seg("model", model)
 }
 
 // PathSpendRun is the run's share of one day.
 func PathSpendRun(day int64, slug, run string) string {
-	return "spend/" + DayKey(day) + "/runs/" + Key(slug) + "/" + Key(run)
+	return "spend/" + DayKey(day) + "/runs/" + seg("slug", slug) + "/" + seg("run id", run)
 }
 func PathSpendMeta(day int64) string { return "spend/" + DayKey(day) + "/meta" }
 
 // PathAgent is a run's registry entry.
-func PathAgent(slug, run string) string { return "agents/" + Key(slug) + "/" + Key(run) }
+func PathAgent(slug, run string) string {
+	return "agents/" + seg("slug", slug) + "/" + seg("run id", run)
+}
 
 // PathOutcome is the run's outcome, written once at its end.
 func PathOutcome(day int64, slug, run string) string {
-	return "outcomes/" + DayKey(day) + "/" + Key(slug) + "/" + Key(run)
+	return "outcomes/" + DayKey(day) + "/" + seg("slug", slug) + "/" + seg("run id", run)
 }
+
+// ModelKey is the key a model name has under Counters.ByModel on the wire.
+// Write byModel entries only under ModelKey(name) (or PathByModel).
+func ModelKey(model string) string { return seg("model", model) }
 
 // Mode values of PathMode.
 const (
@@ -223,7 +246,7 @@ type Kill struct {
 // off.
 type Kills struct{ Global, Repo *Kill }
 
-// RunLedger is /runs/<slug>/<run> (the lifetime ledger) and, with only
+// RunLedger (see the note on Counters: never write it whole) is /runs/<slug>/<run> (the lifetime ledger) and, with only
 // Reserved, Released and Spent used, /spend/<day>/runs/<slug>/<run> (the
 // run's share of one day).
 type RunLedger struct {
@@ -256,13 +279,27 @@ type ModelUse struct {
 
 // Counters is /spend/<day>/global or /spend/<day>/repos/<slug>. Counted is
 // what is reserved by runs and not released (a ceiling on spend); Spent is
-// what was reported.
+// what was reported. ByModel's keys are ModelKey-escaped on the wire; read
+// them through Models. Like RunLedger, never write a Counters whole (zero
+// fields are omitted, so a whole-struct write would leave old values in
+// place): write single fields by path in a Patch.
 type Counters struct {
 	Counted  Micros              `json:"counted,omitempty"`
 	Spent    Micros              `json:"spent,omitempty"`
 	Notional Micros              `json:"notional,omitempty"`
 	Calls    int64               `json:"calls,omitempty"`
 	ByModel  map[string]ModelUse `json:"byModel,omitempty"`
+}
+
+// Models returns ByModel with the model names unescaped.
+func (c Counters) Models() map[string]ModelUse {
+	out := make(map[string]ModelUse, len(c.ByModel))
+	for k, v := range c.ByModel {
+		if name, err := Unkey(k); err == nil && name != "" {
+			out[name] = v
+		}
+	}
+	return out
 }
 
 // AgentEntry is /agents/<slug>/<run>, the live registry; every string is

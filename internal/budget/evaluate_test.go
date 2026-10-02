@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -151,6 +152,35 @@ func TestEvaluateTable(t *testing.T) {
 			c.Mode = ModeObserve
 			w.Day = today - 1
 		}, false, ReasonNotToday, ScopeRun, ""},
+
+		// Overflow and corrupt state: never fail open.
+		{"counter near MaxInt64 does not wrap", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Repo.Counted = math.MaxInt64 - 1 }, false, ReasonRepoDailyCap, ScopeRepo, ""},
+		{"global counter near MaxInt64", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Global.Counted = math.MaxInt64 }, false, ReasonGlobalDailyCap, ScopeGlobal, ""},
+		{"run reserved near MaxInt64", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Run.Reserved = math.MaxInt64 - 1 }, false, ReasonRunCap, ScopeRun, ""},
+		{"huge amount cannot wrap a counter", func(s *State, w *Write, c *Caps, _ *Kills) {
+			c.Limits.MaxReserveMicros = mp(math.MaxInt64)
+			w.Amount = math.MaxInt64
+			s.Repo.Counted = 10
+		}, false, ReasonRunCap, ScopeRun, ""},
+		{"negative repo counter grants no headroom", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Repo.Counted = -100 * usd }, false, ReasonInvalid, ScopeRepo, ""},
+		{"negative global counter", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Global.Counted = -1 }, false, ReasonInvalid, ScopeGlobal, ""},
+		{"negative reserved", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Run.Reserved = -usd }, false, ReasonInvalid, ScopeRun, ""},
+		{"negative released", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.Run = RunLedger{Reserved: 10 * usd, Released: -5 * usd} }, false, ReasonInvalid, ScopeRun, ""},
+		{"negative day share spent", func(s *State, _ *Write, _ *Caps, _ *Kills) { s.DayRun.Spent = -1 }, false, ReasonInvalid, ScopeRun, ""},
+		{"negative state in observe still denies", func(s *State, _ *Write, c *Caps, _ *Kills) {
+			c.Mode = ModeObserve
+			s.Repo.Counted = -1
+		}, false, ReasonInvalid, ScopeRepo, ""},
+		{"release with a negative spent", func(s *State, w *Write, _ *Caps, _ *Kills) {
+			w.Op, w.Amount = OpRelease, 3*usd
+			s.Run = RunLedger{Reserved: 1 * usd, Spent: -2 * usd}
+			s.DayRun = s.Run
+		}, false, ReasonInvalid, ScopeRun, ""},
+		{"release near MaxInt64 reserved", func(s *State, w *Write, _ *Caps, _ *Kills) {
+			w.Op, w.Amount = OpRelease, 3*usd
+			s.Run = RunLedger{Reserved: math.MaxInt64, Released: 0, Spent: math.MaxInt64}
+			s.DayRun = s.Run
+		}, false, ReasonOverRelease, ScopeRun, ""},
 
 		// Amount.
 		{"zero lease", func(_ *State, w *Write, _ *Caps, _ *Kills) { w.Amount = 0 }, false, ReasonInvalid, ScopeRun, ""},
@@ -322,5 +352,54 @@ func TestEvaluateNeverExceedsEnforcedCaps(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// The committed cap is the repository's own guardrail: it bites when the run's
+// effective mode (strictest of the project's RTDB mode and the repository's
+// own) is enforce, while RTDB-side caps follow the RTDB mode alone.
+func TestEvaluateCommittedEnforceFollowsEffectiveMode(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		rtdbMode     string
+		repoEnforce  bool
+		counted      Micros
+		wantAllow    bool
+		wantAdvisory Reason
+	}{
+		{"both enforce", ModeEnforce, true, 9 * usd, false, ""},
+		{"repo enforces under an observe project: committed bites", ModeObserve, true, 9 * usd, false, ""},
+		{"repo enforces, project mode absent", "", true, 9 * usd, false, ""},
+		{"neither enforces: advisory", ModeObserve, false, 9 * usd, true, ReasonRepoDailyCap},
+		{"project enforces, repo observes: committed still bites", ModeEnforce, false, 9 * usd, false, ""},
+		{"repo enforces and the cap holds", ModeObserve, true, 8 * usd, true, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, w, c, k := base()
+			c.Mode = tc.rtdbMode
+			w.CommittedDaily, w.CommittedEnforce = 10*usd, tc.repoEnforce
+			s.Repo.Counted = tc.counted
+			d := Evaluate(s, w, c, k, evalNow)
+			if d.Allow != tc.wantAllow {
+				t.Fatalf("%+v", d)
+			}
+			if !d.Allow && (d.Reason != ReasonRepoDailyCap || !strings.Contains(d.Detail, "fugaro.yaml")) {
+				t.Errorf("refusal = %+v", d)
+			}
+			if tc.wantAdvisory != "" && (d.Advisory == nil || d.Advisory.Reason != tc.wantAdvisory) {
+				t.Errorf("advisory = %+v", d.Advisory)
+			}
+		})
+	}
+	// An RTDB-side cap stays advisory under an observe project even when the
+	// repository enforces its own committed cap.
+	s, w, c, k := base()
+	c.Mode = ModeObserve
+	w.CommittedDaily, w.CommittedEnforce = 100*usd, true
+	s.Repo.Counted = 100 * usd // over the RTDB repo cap of $60, under the committed $100? no: 102 > 100
+	s.Repo.Counted = 90 * usd
+	d := Evaluate(s, w, c, k, evalNow)
+	if !d.Allow || d.Advisory == nil || d.Advisory.Reason != ReasonRepoDailyCap {
+		t.Fatalf("RTDB cap must stay advisory: %+v", d)
 	}
 }

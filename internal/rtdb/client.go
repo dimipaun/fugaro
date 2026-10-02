@@ -8,11 +8,21 @@
 // database root, already key-escaped (see budget.Key); they are URL-encoded
 // here exactly once. Credentials never appear in an error or log line.
 //
+// Non-stream calls make one attempt (bounded by 30 s) with no retry or
+// backoff: the caller owns retry, jitter and its outage clock. Update keys and
+// paths must be built from budget.Path* (escaped keys); the client refuses
+// empty, dotted or otherwise unescaped segments before sending. A database
+// Date header has one-second resolution, so ServerNow can lag the true day by
+// a moment near midnight: a lease refused as not_today is a retry with the
+// fresh day, not a refusal.
+//
 // Errors wrap one of three sentinels, so a caller can tell a refusal from a
 // stale write from an outage: ErrPermission (401, 403: a rule denied the
 // write, or the credential is bad), ErrPrecondition (412: the ETag moved) and
 // ErrUnavailable (the network, a 5xx or a 429). A cancelled context is
-// returned as the context's own error.
+// returned as the context's own error. Any other error (a decode failure, a
+// 4xx other than 401/403/412, an argument refused locally) is not an outage
+// and not a refusal: callers must treat it as fail-closed.
 package rtdb
 
 import (
@@ -150,6 +160,9 @@ func (c *Client) GetETag(ctx context.Context, path string, out any) (etag string
 }
 
 func (c *Client) get(ctx context.Context, path string, out any, wantETag bool) (string, bool, error) {
+	if err := validPath(path); err != nil {
+		return "", false, err
+	}
 	hdr := http.Header{}
 	if wantETag {
 		hdr.Set("X-Firebase-ETag", "true")
@@ -174,6 +187,12 @@ func (c *Client) get(ctx context.Context, path string, out any, wantETag bool) (
 // etag; otherwise it returns ErrPrecondition. ETags work on one location: this
 // is for single-node admin writes.
 func (c *Client) PutIfMatch(ctx context.Context, path, etag string, v any) error {
+	if etag == "" {
+		return fmt.Errorf("rtdb: PUT /%s: an empty etag is no precondition; read the node with GetETag first", path)
+	}
+	if err := validPath(path); err != nil {
+		return err
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("rtdb: PUT /%s: %w", path, err)
@@ -192,9 +211,15 @@ func (c *Client) Patch(ctx context.Context, root string, updates map[string]any)
 	if len(updates) == 0 {
 		return nil
 	}
+	if err := validPath(root); err != nil {
+		return err
+	}
 	for k := range updates {
 		if k == "" || strings.HasPrefix(k, "/") || strings.HasSuffix(k, "/") {
 			return fmt.Errorf("rtdb: PATCH /%s: update path %q must be relative and non-empty", root, k)
+		}
+		if err := validPath(k); err != nil {
+			return err
 		}
 	}
 	b, err := json.Marshal(updates)
@@ -227,7 +252,7 @@ func (c *Client) request(ctx context.Context, method, path string, q url.Values,
 	default:
 		tok, terr := c.auth.Source.Token()
 		if terr != nil {
-			return nil, "", fmt.Errorf("rtdb: %s /%s: getting an access token: %w", method, path, terr)
+			return nil, "", tokenErr(method, path, terr)
 		}
 		secret = tok.AccessToken
 		hd.Set("Authorization", "Bearer "+tok.AccessToken)
@@ -251,6 +276,41 @@ func (c *Client) request(ctx context.Context, method, path string, q url.Values,
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, secret, nil
+}
+
+// tokenErr classifies a failed Source.Token(): the token endpoint refusing the
+// credential (400, 401, 403: a revoked or expired grant) is ErrPermission;
+// anything else (network, 5xx) is ErrUnavailable.
+func tokenErr(method, path string, err error) error {
+	e := &Error{Op: method, Path: path, Msg: "getting an access token: " + clip(err.Error()), kind: ErrUnavailable}
+	var re *oauth2.RetrieveError
+	if errors.As(err, &re) && re.Response != nil {
+		e.Status = 0
+		switch re.Response.StatusCode {
+		case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden:
+			e.kind = ErrPermission
+		}
+	}
+	return e
+}
+
+// validPath checks a node path: segments non-empty and free of the characters
+// RTDB forbids in keys (. $ # [ ] and control characters; / separates). One
+// leading or trailing slash is tolerated and ignored; the empty path is the
+// root.
+func validPath(path string) error {
+	p := strings.Trim(path, "/")
+	if p == "" {
+		return nil
+	}
+	for _, sg := range strings.Split(p, "/") {
+		if sg == "" || len(sg) > 768 || strings.ContainsFunc(sg, func(r rune) bool {
+			return r < 0x20 || r == 0x7f || strings.ContainsRune(".$#[]", r)
+		}) {
+			return fmt.Errorf("rtdb: path %q has an empty or unescaped key (build it with budget.Path*)", path)
+		}
+	}
+	return nil
 }
 
 func cloneValues(q url.Values) url.Values {

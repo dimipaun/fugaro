@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,7 +34,9 @@ type Event struct {
 // The stream outlives failures: when the connection fails or goes silent for
 // the idle timeout it sends an "error" event, waits (WithStreamBackoff) and
 // reconnects with a fresh credential; "auth_revoked" is delivered and followed
-// by an immediate reconnect. Any event of the server counts as proof of life,
+// by a reconnect after the minimum delay; three such revocations in a row,
+// each within ten seconds of connecting, also send an "error" (ErrPermission)
+// and back off, so a caller's outage clock starts instead of looping silently. Any event of the server counts as proof of life,
 // so a caller measuring an outage starts its clock at the first "error" and
 // stops it at the next event of any other type. "cancel" (the server withdrew
 // the listen, e.g. a rule no longer allows it) is delivered and ends the
@@ -49,6 +52,7 @@ func (c *Client) Stream(ctx context.Context, path string) <-chan Event {
 
 func (c *Client) runStream(ctx context.Context, path string, ch chan<- Event) {
 	backoff := c.backMin
+	quickRevokes := 0
 	send := func(ev Event) bool {
 		select {
 		case ch <- ev:
@@ -62,13 +66,27 @@ func (c *Client) runStream(ctx context.Context, path string, ch chan<- Event) {
 		if out.stop {
 			return
 		}
-		if out.progressed {
+		if out.progressed && !out.revoked {
 			backoff = c.backMin
 		}
 		wait := backoff
-		if out.revoked {
+		switch {
+		case out.revoked && out.lived < revokeLoopWindow:
+			quickRevokes++
+			if quickRevokes >= 3 {
+				err := &Error{Op: "STREAM", Path: path, Msg: "the credential was revoked " + strconv.Itoa(quickRevokes) + " times in a row", kind: ErrPermission}
+				if !send(Event{Type: "error", Err: err}) {
+					return
+				}
+				backoff = min(backoff*2, c.backMax)
+			} else {
+				wait = c.backMin
+			}
+		case out.revoked:
+			quickRevokes = 0
 			wait = c.backMin
-		} else {
+		default:
+			quickRevokes = 0
 			backoff = min(backoff*2, c.backMax)
 		}
 		select {
@@ -79,15 +97,22 @@ func (c *Client) runStream(ctx context.Context, path string, ch chan<- Event) {
 	}
 }
 
+// revokeLoopWindow is how soon after connecting an auth_revoked counts as a
+// revoke loop.
+const revokeLoopWindow = 10 * time.Second
+
 type streamOutcome struct {
-	stop       bool // the context ended, or the server cancelled
-	progressed bool // the connection delivered at least one event
+	lived      time.Duration // how long the connection lasted
+	stop       bool          // the context ended, or the server cancelled
+	progressed bool          // the connection delivered at least one event
 	revoked    bool
 }
 
 func (c *Client) streamOnce(parent context.Context, path string, send func(Event) bool) (out streamOutcome) {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	started := time.Now()
+	defer func() { out.lived = time.Since(started) }()
 	req, secret, err := c.request(ctx, http.MethodGet, path, nil, nil, http.Header{"Accept": {"text/event-stream"}, "Cache-Control": {"no-cache"}})
 	if err != nil {
 		out.stop = !send(Event{Type: "error", Err: err})

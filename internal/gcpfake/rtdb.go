@@ -43,6 +43,19 @@ type rtdbStream struct {
 
 func (s *rtdbStream) close() { s.once.Do(func() { close(s.done) }) }
 
+// push queues a message without blocking; a consumer that has fallen a full
+// buffer behind is cut off (its connection closes and the client reconnects),
+// so a stalled stream never blocks the fake's writes.
+func (s *rtdbStream) push(m string) bool {
+	select {
+	case s.ch <- m:
+		return true
+	default:
+		s.close()
+		return false
+	}
+}
+
 // NewRTDB starts a Realtime Database fake that lives until the test ends.
 func NewRTDB(t *testing.T) *RTDB {
 	t.Helper()
@@ -131,13 +144,23 @@ func (f *RTDB) DropStreams() {
 	}
 }
 
+// send pushes to a stream (f.mu held), dropping it from the set if it is cut off.
+func (f *RTDB) send(s *rtdbStream, m string) {
+	if !s.push(m) {
+		delete(f.streams, s)
+	}
+}
+
 func (f *RTDB) broadcast(event, data string, closeAfter bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for s := range f.streams {
-		s.ch <- sse(event, data)
-		if closeAfter {
-			s.ch <- ""
+		ok := s.push(sse(event, data))
+		if ok && closeAfter {
+			ok = s.push("")
+		}
+		if !ok {
+			delete(f.streams, s)
 		}
 	}
 }
@@ -195,6 +218,16 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 		return
 	}
 	in = normalise(in)
+	for _, seg := range path {
+		if !validKey(seg) {
+			badKey(w, seg)
+			return
+		}
+	}
+	if k, bad := firstBadKey(in, r.Method == http.MethodPatch); bad {
+		badKey(w, k)
+		return
+	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -254,16 +287,16 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 	for s := range f.streams {
 		sp := split(s.path)
 		if r.Method == http.MethodPatch && hasPrefix(path, sp) && !hasSlash(in) {
-			s.ch <- sse("patch", mustJSON(sseData{rel(path, sp), in}))
+			f.send(s, sse("patch", mustJSON(sseData{rel(path, sp), in})))
 			continue
 		}
 		for _, c := range changes {
 			switch {
 			case hasPrefix(c.path, sp):
-				s.ch <- sse("put", mustJSON(sseData{rel(c.path, sp), c.v}))
+				f.send(s, sse("put", mustJSON(sseData{rel(c.path, sp), c.v})))
 			case hasPrefix(sp, c.path):
 				if mustJSON(getAt(before, sp)) != mustJSON(getAt(f.root, sp)) {
-					s.ch <- sse("put", mustJSON(sseData{"/", getAt(f.root, sp)}))
+					f.send(s, sse("put", mustJSON(sseData{"/", getAt(f.root, sp)})))
 				}
 			}
 		}
@@ -292,6 +325,7 @@ func (f *RTDB) serveStream(w http.ResponseWriter, r *http.Request, path []string
 		delete(f.streams, s)
 		f.mu.Unlock()
 	}()
+	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -303,6 +337,7 @@ func (f *RTDB) serveStream(w http.ResponseWriter, r *http.Request, path []string
 			if m == "" {
 				return
 			}
+			_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Second))
 			fmt.Fprint(w, m)
 			fl.Flush()
 		case <-s.done:
@@ -311,6 +346,49 @@ func (f *RTDB) serveStream(w http.ResponseWriter, r *http.Request, path []string
 			return
 		}
 	}
+}
+
+// validKey is RTDB's key rule: non-empty, at most 768 bytes, none of . $ # [ ]
+// / and no ASCII control characters.
+func validKey(k string) bool {
+	if k == "" || len(k) > 768 {
+		return false
+	}
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if c < 0x20 || c == 0x7f || strings.IndexByte(".$#[]/", c) >= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// firstBadKey finds a key of a written value that real RTDB rejects. At the
+// top level of a PATCH the keys are paths: each of their segments is checked.
+func firstBadKey(v any, patchTop bool) (string, bool) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	for k, c := range m {
+		if patchTop {
+			for _, sg := range strings.Split(k, "/") {
+				if !validKey(sg) {
+					return k, true
+				}
+			}
+		} else if !validKey(k) {
+			return k, true
+		}
+		if bk, bad := firstBadKey(c, false); bad {
+			return bk, true
+		}
+	}
+	return "", false
+}
+
+func badKey(w http.ResponseWriter, k string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{"error": fmt.Sprintf("Invalid data; key %q is empty, too long or contains . $ # [ ] / or a control character", k)})
 }
 
 // Tree helpers. Nodes are map[string]any, json.Number, string, bool or nil.
