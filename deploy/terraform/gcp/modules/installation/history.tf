@@ -69,7 +69,7 @@ resource "google_cloud_run_v2_job" "history" {
 
       containers {
         image   = var.history.image
-        command = ["fugaro"]
+        command = ["/usr/local/bin/fugaro"]
         args    = ["budget", "history", "--sweep"]
 
         resources {

@@ -62,6 +62,14 @@ type initOptions struct {
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
 
+	// --firebase adopts the project's own Firebase project (its ID) and
+	// builds the budget backend in it; --budget-mode seeds the mode and
+	// --budget-admin adds admins to the owners and editors.
+	firebase            string
+	budgetMode          string
+	budgetAdmins        []string
+	budgetAdminsChanged bool
+
 	// name is the project's name, for a project config fugaro init
 	// creates; with one, it must be that config's name.
 	name string
@@ -95,6 +103,20 @@ refused unless --allow-delete names the address.
 with a guarded apply, then removes every address from Terraform's state,
 destroying nothing else.
 
+init --firebase <firebase-project-id> builds the project's budget backend in a
+Firebase project you created and linked to billing (init never creates a
+project or enables billing, and refuses one that is missing, has no billing,
+or whose database holds data and no Fugaro mark). It runs three applies, each
+with its own plan and confirmation: the installation (the history account),
+the Firebase root (the database, a restricted sign-in key, the token signer,
+and the budget admins: the GCP project's owners and editors who are users or
+groups, plus --budget-admin), and the installation again (the history job,
+once its image exists). Between the last two it deploys the database's rules,
+mark, project name, mode (--budget-mode; an absent one is seeded observe) and
+largest lease, after a confirmation of their own, then writes the local
+config. --plan-only stops after the installation's plan. Each repository then
+needs fugaro init --repo to pick up the jobs' environment.
+
 init --repo [PATH] onboards the repository of the checkout at PATH (default:
 the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro init applied. It adopts what the bootstrap made for it
@@ -110,6 +132,7 @@ Terraform's state, destroying nothing.`,
 			f := cmd.Flags()
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
+			o.budgetAdminsChanged = f.Changed("budget-admin")
 			if o.repo {
 				return runInitRepo(cmd, o, args)
 			}
@@ -134,6 +157,9 @@ Terraform's state, destroying nothing.`,
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
+	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing; init never creates it) and build the budget backend in it: three confirmed applies, the database's rules and mark, and the config")
+	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
+	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -158,6 +184,15 @@ type initRun struct {
 	// projectName is the project's name, shown and typed to confirm.
 	gcpProject, projectName string
 	res                     initResult
+
+	// init --firebase: the Firebase root's outputs once known (the history
+	// job's environment), a change to the local config the run makes, the
+	// text appended to the installation apply's confirmation, and whether
+	// the history job's missing image has been said.
+	fb           *infra.FirebaseOutputs
+	mutate       func(*localcfg.Config)
+	installLabel string
+	historyNoted bool
 }
 
 // initResult is what --json prints.
@@ -178,6 +213,9 @@ type initResult struct {
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
 	Warnings   []string                   `json:"warnings,omitempty"`
+	// Firebase and RTDBURL are set by init --firebase.
+	Firebase string `json:"firebase_project,omitempty"`
+	RTDBURL  string `json:"rtdb_url,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -216,6 +254,12 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 		// Printed without a cloud call, so without discovery: stdout stays
 		// the tfvars alone.
 		fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedInstallation)
+		if o.firebase != "" {
+			if data, err = r.firebaseVars(data, spec, lc); err != nil {
+				return err
+			}
+			fmt.Fprintln(cmd.ErrOrStderr(), "warning: "+printVarsUngatedFirebase)
+		}
 		_, err = cmd.OutOrStdout().Write(data)
 		return err
 	}
@@ -247,6 +291,8 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 	}
 
 	switch {
+	case o.firebase != "":
+		err = r.initFirebase(ctx, c, t, wd, bin, lc, spec, path, old)
 	case o.forget:
 		err = r.forget(ctx, c, t, wd, spec)
 	case o.configOnly:
@@ -320,7 +366,7 @@ func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, e
 	c, err := infra.NewClients(ctx, gcpOptions(lc),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
 			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler,
-			ServiceUsage: lc.Endpoints.ServiceUsage})
+			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase})
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -343,6 +389,19 @@ func (o *initOptions) check() error {
 	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
+	}
+	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
+		return userErr("--budget-mode and --budget-admin are for fugaro init --firebase <firebase-project-id>")
+	}
+	if o.firebase != "" {
+		switch {
+		case o.forget || o.configOnly:
+			return userErr("--firebase builds the budget backend; it excludes --forget and --config-only")
+		case !infra.ValidProjectID(o.firebase):
+			return userErr("--firebase %q is not a project ID (6 to 30 of a-z, 0-9 and '-', starting with a letter)", o.firebase)
+		case o.budgetMode != "" && !slices.Contains([]string{"off", "observe", "enforce"}, o.budgetMode):
+			return userErr("--budget-mode %q must be off, observe or enforce", o.budgetMode)
+		}
 	}
 	if (o.budget != 0 || o.budgetCurrency != "" || o.billingAccount != "") && (o.budget <= 0 || o.budgetCurrency == "" || o.billingAccount == "") {
 		return userErr("a budget needs --budget (more than 0), --budget-currency and --billing-account together")
@@ -470,6 +529,10 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	if o.operatorsChanged {
 		opts.Operators = append([]string{}, o.operators...)
 	}
+	// The installation carries the history account (and, once it can, the
+	// sweeper's job) from the first --firebase on, and a plain fugaro init
+	// keeps them while the config records the Firebase project.
+	opts.BudgetBackend = o.firebase != "" || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
@@ -631,9 +694,25 @@ func prepare(wd *infra.Workdir, spec infra.InstallationSpec, im infra.Imports) (
 // bucket, the runs bucket's viewers, then plan, guard, confirm and apply,
 // and the local config.
 func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec, path string, old []byte) error {
+	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
+	if err != nil || stop {
+		return err
+	}
+	// 8. The local config.
+	return r.writeConfig(lc, spec, outs, path, old, r.res.Applied)
+}
+
+// installRoot is the installation root's discovery, plan, guard, confirmation
+// and apply, and its outputs. stop means the run ends here (--plan-only).
+// fugaro init --firebase runs it twice more, as the first and third of its
+// applies.
+func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) (outs infra.InstallationOutputs, stop bool, err error) {
+	if spec, err = r.historyJob(ctx, c, lc, spec); err != nil {
+		return outs, false, err
+	}
 	im, err := infra.DiscoverInstallation(ctx, c, spec)
 	if err != nil {
-		return initErr(err)
+		return outs, false, initErr(err)
 	}
 	spec.AdoptLegacyRegistry = im.AdoptLegacyRegistry
 	for _, n := range im.Notes {
@@ -641,21 +720,21 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	}
 	backend, err := prepare(wd, spec, im)
 	if err != nil {
-		return err
+		return outs, false, err
 	}
 
 	// 3. The state bucket.
 	exists, err := infra.CheckStateBucket(ctx, c, spec.Project, spec.StateBucket)
 	if err != nil {
-		return initErr(err)
+		return outs, false, initErr(err)
 	}
 	if !exists {
 		if err := r.confirm(fmt.Sprintf("creates gs://%s in %s with versioning, for Terraform state (cents a month)", spec.StateBucket, spec.Region),
 			"nothing was created or applied"); err != nil {
-			return err
+			return outs, false, err
 		}
 		if err := infra.CreateStateBucket(ctx, c, spec.Project, spec.Region, spec.StateBucket); err != nil {
-			return initErr(err)
+			return outs, false, initErr(err)
 		}
 		fmt.Fprintf(r.w, "created gs://%s; project Viewers can't read it\n", spec.StateBucket)
 	} else {
@@ -663,7 +742,7 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		// since the state holds every name, account and condition.
 		p, err := infra.BucketPolicy(ctx, c, spec.StateBucket)
 		if err != nil {
-			return initErr(err)
+			return outs, false, initErr(err)
 		}
 		if grants := infra.ProjectViewerGrants(p); len(grants) > 0 {
 			what := fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds the Terraform state (%s)", spec.StateBucket, strings.Join(grants, ", "))
@@ -671,10 +750,10 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 				r.warn("--plan-only changes no IAM; without it, fugaro init " + what)
 			} else {
 				if err := r.confirm(what, "nothing was applied"); err != nil {
-					return err
+					return outs, false, err
 				}
 				if err := infra.RemoveProjectViewers(ctx, c, spec.StateBucket, p); err != nil {
-					return initErr(err)
+					return outs, false, initErr(err)
 				}
 				fmt.Fprintf(r.w, "removed project Viewers' read access to gs://%s\n", spec.StateBucket)
 			}
@@ -683,7 +762,7 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 
 	// 5. Plan, show, guard, summary.
 	if err := t.Init(ctx, backend); err != nil {
-		return remote(err)
+		return outs, false, remote(err)
 	}
 	// What the installation already is: its name may not change, and an
 	// unnamed one is named only on request. Before any plan.
@@ -694,18 +773,18 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		// installation": the name check below would be skipped.
 		o, err := infra.DecodeOutputs(raw)
 		if err != nil {
-			return remote(fmt.Errorf("reading the installation's outputs: %w", err))
+			return outs, false, remote(fmt.Errorf("reading the installation's outputs: %w", err))
 		}
 		prior, havePrior = o, true
 	}
 	if err := checkInstallationName(r.o.name, lc.Name, prior, havePrior); err != nil {
-		return err
+		return outs, false, err
 	}
 	// 4. The runs bucket's viewers: an IAM change, so only once the name
 	// is known to be the installation's.
 	if im.AdoptsRunsBucket() {
 		if err := r.runsBucketViewers(ctx, c, spec); err != nil {
-			return err
+			return outs, false, err
 		}
 	}
 	if havePrior && prior.RegistryCleanupDryRun != nil && !*prior.RegistryCleanupDryRun && r.o.registryCleanup == "" {
@@ -715,29 +794,29 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 	}
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
-		return remote(err)
+		return outs, false, remote(err)
 	}
 	if changed {
 		plan, err := t.Show(ctx, infra.PlanFile)
 		if err != nil {
-			return remote(err)
+			return outs, false, remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
 		if err := guard(plan, r.o.allowDelete); err != nil {
-			return err
+			return outs, false, err
 		}
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
 		if r.o.planOnly {
 			fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
-			return nil
+			return outs, true, nil
 		}
 		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirm("applies "+counts.String(), "nothing was applied"); err != nil {
-			return err
+		if err := r.confirm("applies "+counts.String()+r.installLabel, "nothing was applied"); err != nil {
+			return outs, false, err
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
-			return remote(err)
+			return outs, false, remote(err)
 		}
 		r.res.Applied = true
 		if !im.AdoptsRunsBucket() {
@@ -745,11 +824,11 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 			// project Viewer access; it is ours only if discovery says so.
 			after, err := infra.DiscoverInstallation(ctx, c, spec)
 			if err != nil {
-				return initErr(err)
+				return outs, false, initErr(err)
 			}
 			if after.AdoptsRunsBucket() {
 				if err := r.runsBucketViewers(ctx, c, spec); err != nil {
-					return err
+					return outs, false, err
 				}
 			}
 		}
@@ -757,19 +836,17 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		r.res.Changes = &infra.PlanCounts{}
 		fmt.Fprintln(r.w, "No changes: the installation matches the plan.")
 		if r.o.planOnly {
-			return nil
+			return outs, true, nil
 		}
 	}
 	raw, err := t.Output(ctx)
 	if err != nil {
-		return remote(err)
+		return outs, false, remote(err)
 	}
-	outs, err := infra.DecodeOutputs(raw)
-	if err != nil {
-		return remote(err)
+	if outs, err = infra.DecodeOutputs(raw); err != nil {
+		return outs, false, remote(err)
 	}
-	// 8. The local config.
-	return r.writeConfig(lc, spec, outs, path, old, r.res.Applied)
+	return outs, false, nil
 }
 
 // runsBucketViewers offers to remove project Viewers' read access to the
@@ -949,6 +1026,9 @@ func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, 
 		next.BaseImage = r.o.baseImage
 	}
 	next.Build.ServiceAccount = ""
+	if r.mutate != nil {
+		r.mutate(&next)
+	}
 	switch {
 	case r.o.schedulerRegion != "":
 		next.SchedulerRegion = r.o.schedulerRegion
@@ -1219,6 +1299,7 @@ func (o *initOptions) checkRepo() error {
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
+		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {

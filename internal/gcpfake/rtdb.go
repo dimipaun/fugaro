@@ -32,6 +32,8 @@ type RTDB struct {
 	clock    func() time.Time
 	creds    []string
 	streams  map[*rtdbStream]struct{}
+	rules    []byte
+	rulePuts int
 }
 
 type rtdbStream struct {
@@ -172,12 +174,31 @@ type sseData struct {
 
 func sse(event, data string) string { return "event: " + event + "\ndata: " + data + "\n\n" }
 
+// Rules is the security rules last deployed with PUT /.settings/rules (nil
+// when none), and RulePuts how many times they were deployed.
+func (f *RTDB) Rules() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]byte(nil), f.rules...)
+}
+
+// RulePuts is the number of rules deployments.
+func (f *RTDB) RulePuts() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rulePuts
+}
+
 func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	if !strings.HasSuffix(r.URL.Path, ".json") {
 		f.unhandled(w, r)
 		return
 	}
 	path := split(strings.TrimSuffix(r.URL.Path, ".json"))
+	if len(path) == 2 && path[0] == ".settings" && path[1] == "rules" {
+		f.settingsRules(w, r, body)
+		return
+	}
 	f.mu.Lock()
 	cred := ""
 	if a := r.URL.Query().Get("auth"); a != "" {
@@ -198,6 +219,15 @@ func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.mu.Lock()
 		v := getAt(f.root, path)
 		f.mu.Unlock()
+		if r.URL.Query().Get("shallow") == "true" {
+			if m, ok := v.(map[string]any); ok {
+				shallow := map[string]any{}
+				for k := range m {
+					shallow[k] = true
+				}
+				v = shallow
+			}
+		}
 		if r.Header.Get("X-Firebase-ETag") == "true" {
 			w.Header().Set("ETag", etagOf(v))
 		}
@@ -538,4 +568,39 @@ func etagOf(v any) string {
 	}
 	sum := sha1.Sum([]byte(mustJSON(v)))
 	return base64.StdEncoding.EncodeToString(sum[:])
+}
+
+// settingsRules serves /.settings/rules: GET the deployed document, PUT to
+// deploy one (any JSON; the fake does not interpret rules).
+func (f *RTDB) settingsRules(w http.ResponseWriter, r *http.Request, body []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch r.Method {
+	case http.MethodGet:
+		if f.rules == nil {
+			writeJSON(w, http.StatusOK, map[string]any{"rules": map[string]any{".read": false, ".write": false}})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(f.rules)
+	case http.MethodPut:
+		if !json.Valid(body) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid rules"})
+			return
+		}
+		if f.denyNext > 0 {
+			f.denyNext--
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "Permission denied"})
+			return
+		}
+		f.rules = append([]byte(nil), body...)
+		f.rulePuts++
+		if r.URL.Query().Get("print") == "silent" {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeJSON(w, http.StatusOK, json.RawMessage(body))
+	default:
+		f.unhandled(w, r)
+	}
 }

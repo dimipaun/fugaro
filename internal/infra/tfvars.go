@@ -57,6 +57,11 @@ type InstallOptions struct {
 	// NoLogIsolation turns log isolation off; it is on (the module's
 	// default) otherwise.
 	NoLogIsolation bool
+	// BudgetBackend gives the installation the history account and, once
+	// the Firebase root's outputs are known and its image exists, the
+	// history job and its sweep Scheduler job. It is set by --firebase and
+	// by a project config that records a Firebase project.
+	BudgetBackend bool
 }
 
 // Budget is an optional budget on the project, in whole units of currency.
@@ -91,6 +96,11 @@ type InstallationSpec struct {
 	// LogIsolation is nil for the module's default, which is on; only
 	// --no-log-isolation and the rollback turn it off.
 	LogIsolation *bool `json:"log_isolation,omitempty"`
+	// EnableBudget and History give the installation the history account
+	// and, with History.DeployJob, the sweeper's job (M9b); both are left
+	// out of an installation without a budget backend.
+	EnableBudget bool         `json:"enable_budget,omitempty"`
+	History      *HistorySpec `json:"history,omitempty"`
 }
 
 // InstallationNames are the installation's singleton names.
@@ -165,6 +175,13 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 	}
 	if o.NoLogIsolation {
 		s.LogIsolation = new(false)
+	}
+	if o.BudgetBackend {
+		h, err := History(lc)
+		if err != nil {
+			return InstallationSpec{}, err
+		}
+		s.EnableBudget, s.History = true, &h
 	}
 	if e := firstOf(o.AlertEmail, lc.Terraform.AlertEmail); e != "" {
 		s.AlertEmail = &e

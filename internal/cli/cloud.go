@@ -185,14 +185,25 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
-	if err := rtdb.ValidateURL(lc.Budget.RTDBURL, lc.Endpoints.NoAuth); err != nil {
-		return nil, nil, userErr("budget.rtdb_url: %v", err)
+	db, err := newBudgetClient(ctx, lc.Budget.RTDBURL, lc.Endpoints.NoAuth)
+	if err != nil {
+		return nil, nil, err
+	}
+	return lc, db, nil
+}
+
+// newBudgetClient is the client of the budget database at url, acting as the
+// person (ADC with the budget scopes); noAuth (fakes only) sends no
+// credentials. The URL is validated first.
+func newBudgetClient(ctx context.Context, url string, noAuth bool) (*rtdb.Client, error) {
+	if err := rtdb.ValidateURL(url, noAuth); err != nil {
+		return nil, userErr("budget.rtdb_url: %v", err)
 	}
 	auth := rtdb.Auth{IDToken: func() string { return "" }}
-	if !lc.Endpoints.NoAuth {
+	if !noAuth {
 		ts, err := google.DefaultTokenSource(ctx, budgetScopes...)
 		if err != nil {
-			return nil, nil, userErr("no Google credentials to reach the budget database: run gcloud auth application-default login (%v)", err)
+			return nil, userErr("no Google credentials to reach the budget database: run gcloud auth application-default login (%v)", err)
 		}
 		auth = rtdb.Auth{Source: ts}
 	}
@@ -200,11 +211,11 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 	if budgetTransport != nil {
 		opts = append(opts, rtdb.WithHTTPClient(&http.Client{Transport: budgetTransport}))
 	}
-	db, err := rtdb.New(lc.Budget.RTDBURL, auth, opts...)
+	db, err := rtdb.New(url, auth, opts...)
 	if err != nil {
-		return nil, nil, userErr("budget.rtdb_url: %v", err)
+		return nil, userErr("budget.rtdb_url: %v", err)
 	}
-	return lc, db, nil
+	return db, nil
 }
 
 // locateRun resolves "<slug>/<run-id>" or a bare run ID to a run in the

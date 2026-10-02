@@ -5,7 +5,9 @@
 // "init", "plan", "show", "apply", "output", "state rm"); each value gives the
 // exit code, the stdout and stderr to print, and files to write (relative to
 // the working directory). A subcommand the script doesn't name exits 0 with no
-// output, except "version", which reports 1.16.4.
+// output, except "version", which reports 1.16.4. A key "<subcommand>@<root>"
+// (such as "output@firebase") applies to the working directory of that name
+// only and wins over the plain key there.
 //
 // Every invocation appends one JSON line (argv, environment and working
 // directory) to FAKE_TERRAFORM_LOG, and an -out=<file> argument makes it write
@@ -16,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -68,7 +71,12 @@ func run(args []string) int {
 	if key == "state" && len(args) > 1 {
 		key = "state " + args[1]
 	}
-	st, ok := script[key]
+	// A step may be scripted for one root only: "output@firebase" wins over
+	// "output" in a working directory named firebase.
+	st, ok := script[key+"@"+filepath.Base(dir)]
+	if !ok {
+		st, ok = script[key]
+	}
 	if !ok && key == "version" {
 		st = step{Stdout: `{"terraform_version":"1.16.4","platform":"linux_amd64","provider_selections":{},"terraform_outdated":false}`}
 	}

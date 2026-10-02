@@ -93,7 +93,28 @@ type Budget struct {
 	// backend of M9b), which fugaro budget reads and writes. Set by fugaro
 	// init --firebase; empty means the project has none.
 	RTDBURL string `yaml:"rtdb_url,omitempty"`
+	// FirebaseProject is the project's own Firebase project (the FP) and
+	// FirebaseAPIKey its restricted web API key (not a secret: it may call
+	// only Identity Toolkit and Secure Token). TokenSigner is the signer
+	// account the launcher mints run tokens as. All four are written by
+	// fugaro init --firebase from the Firebase root's outputs.
+	FirebaseProject string `yaml:"firebase_project,omitempty"`
+	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
+	TokenSigner     string `yaml:"token_signer,omitempty"`
+	// Grace is how long a run keeps going when the backend is unreachable
+	// before it halts (D14); 0 is the default, 3m. Heartbeat is how often a
+	// run reports to the registry; 0 is the default, 15s.
+	Grace     time.Duration `yaml:"unreachable_grace,omitempty"`
+	Heartbeat time.Duration `yaml:"heartbeat,omitempty"`
 }
+
+// The bounds of Budget.Grace and Budget.Heartbeat.
+const (
+	MinBudgetGrace     = 5 * time.Second
+	MaxBudgetGrace     = 30 * time.Minute
+	MinBudgetHeartbeat = 5 * time.Second
+	MaxBudgetHeartbeat = time.Minute
+)
 
 // ModelPrice is one model's prices, in US dollars per million tokens. A
 // field left out takes the list default (cache_write_5m 1.25, cache_write_1h
@@ -193,6 +214,21 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 				bad("budget.rtdb_url: %v", err)
 			}
 		}
+		if b.FirebaseProject != "" && !projectRE.MatchString(b.FirebaseProject) {
+			bad("budget.firebase_project %q is not a GCP project ID", b.FirebaseProject)
+		}
+		if b.FirebaseAPIKey != "" && !apiKeyRE.MatchString(b.FirebaseAPIKey) {
+			bad("budget.firebase_api_key is not a Google API key (20 to 128 letters, digits, - and _)")
+		}
+		if b.TokenSigner != "" && !signerRE.MatchString(b.TokenSigner) {
+			bad("budget.token_signer %q is not a service account email (<id>@<project>.iam.gserviceaccount.com)", b.TokenSigner)
+		}
+		if b.Grace != 0 && (b.Grace < MinBudgetGrace || b.Grace > MaxBudgetGrace) {
+			bad("budget.unreachable_grace %v: it must be from %v to %v (leave it out for 3m)", b.Grace, MinBudgetGrace, MaxBudgetGrace)
+		}
+		if b.Heartbeat != 0 && (b.Heartbeat < MinBudgetHeartbeat || b.Heartbeat > MaxBudgetHeartbeat) {
+			bad("budget.heartbeat %v: it must be from %v to %v (leave it out for 15s)", b.Heartbeat, MinBudgetHeartbeat, MaxBudgetHeartbeat)
+		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")
 		}
@@ -224,6 +260,10 @@ type Terraform struct {
 	AlertEmail  string   `yaml:"alert_email,omitempty"`
 	Launchers   []string `yaml:"launchers,omitempty"` // IAM members, such as user:a@example.com
 	Operators   []string `yaml:"operators,omitempty"`
+	// BudgetAdmins are further budget admins on the Firebase project, IAM
+	// members (user:, group: or serviceAccount:); the GCP project's owners
+	// and editors are admins too, read when fugaro init --firebase runs.
+	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
 }
 
 // Price is a region's compute price per second, in US dollars.
@@ -263,6 +303,11 @@ type Endpoints struct {
 	ResourceManager  string `yaml:"resource_manager,omitempty"`
 	CloudScheduler   string `yaml:"cloud_scheduler,omitempty"`
 	ServiceUsage     string `yaml:"service_usage,omitempty"`
+	// CloudBilling is read by fugaro init --firebase to check that the
+	// Firebase project has billing.
+	CloudBilling string `yaml:"cloud_billing,omitempty"`
+	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
+	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
 	NoAuth           bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
 }
 
@@ -310,6 +355,11 @@ var (
 	appIDRE        = regexp.MustCompile(`^[0-9]{1,20}$`)
 	memberRE       = regexp.MustCompile(`^(user|group|serviceAccount|domain):[^\s]+$`)
 	emailRE        = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+	// budgetAdminRE is a member that may hold roles on the Firebase
+	// project: no domain: and no wildcard.
+	budgetAdminRE = regexp.MustCompile(`^(user|group|serviceAccount):[^\s*]+$`)
+	apiKeyRE      = regexp.MustCompile(`^[A-Za-z0-9_-]{20,128}$`)
+	signerRE      = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$`)
 )
 
 // configDir is $XDG_CONFIG_HOME/fugaro, else ~/.config/fugaro.
@@ -515,6 +565,11 @@ func (c *Config) validate() error {
 			}
 		}
 	}
+	for _, m := range c.Terraform.BudgetAdmins {
+		if !budgetAdminRE.MatchString(m) {
+			bad("terraform.budget_admins: %q is not an IAM member (user:, group: or serviceAccount: and one address; no domain: and no wildcards)", m)
+		}
+	}
 	c.validateBudget(bad)
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
@@ -537,6 +592,7 @@ func (c *Config) validate() error {
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
 		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
+		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase},
 	} {
 		if ep.url == "" {
 			continue

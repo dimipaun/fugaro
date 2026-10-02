@@ -132,3 +132,30 @@ func TestPrepareWorkdir(t *testing.T) {
 		t.Fatalf("tfvars: %v, %v", st, err)
 	}
 }
+
+// The Firebase root has a workdir of its own beside the installation's, and
+// the state prefix the design names.
+func TestFirebaseWorkdir(t *testing.T) {
+	getenv := env(map[string]string{"XDG_STATE_HOME": "/s"})
+	got, err := FirebaseWorkdir(getenv, "proj-1234")
+	if err != nil || got != "/s/fugaro/terraform/proj-1234/firebase" {
+		t.Fatalf("workdir = %q, %v", got, err)
+	}
+	if _, err := FirebaseWorkdir(getenv, "../x"); err == nil {
+		t.Fatal("a project that is not an ID made a path")
+	}
+	w, err := PrepareWorkdir(filepath.Join(t.TempDir(), "firebase"), "firebase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(w.Root, "main.tf")); err != nil || !strings.HasSuffix(w.Root, "roots/firebase") {
+		t.Errorf("root %s: %v", w.Root, err)
+	}
+	b, err := w.WriteBackend("fugaro-tfstate-proj-1234", StatePrefixFirebase)
+	if err != nil || b["prefix"] != "fugaro/firebase" {
+		t.Errorf("backend = %v, %v", b, err)
+	}
+	if StatePrefixFirebase == StatePrefixInstallation || strings.HasPrefix(StatePrefixFirebase, StatePrefixRepos) {
+		t.Error("the Firebase state shares a prefix with another root's")
+	}
+}

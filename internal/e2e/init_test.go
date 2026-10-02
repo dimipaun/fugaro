@@ -767,7 +767,7 @@ func TestInitRepoLeavesInstallationWorkdir(t *testing.T) {
 func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
-	r.build.Steps["build"] = func(string) error { return errors.New("the build broke") }
+	r.build.SetStep("build", func(string) error { return errors.New("the build broke") })
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
 	if res.code != 2 {
 		t.Fatalf("want exit 2:\n%s", res)
