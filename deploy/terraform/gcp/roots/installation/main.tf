@@ -43,4 +43,6 @@ module "installation" {
   registry_cleanup       = var.registry_cleanup
   adopt_legacy_registry  = var.adopt_legacy_registry
   log_isolation          = var.log_isolation
+  enable_budget          = var.enable_budget
+  history                = var.history
 }

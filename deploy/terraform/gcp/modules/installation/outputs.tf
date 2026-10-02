@@ -57,3 +57,13 @@ output "registry_cleanup_dry_run" {
   description = "Whether registry cleanup only logs what it would delete. fugaro init --repo copies it to each repository's registry."
   value       = var.registry_cleanup.dry_run
 }
+
+output "history_service_account" {
+  description = "The history job's account email, or null without enable_budget. fugaro init --firebase passes it to the Firebase root, which grants it its roles on the FP."
+  value       = var.enable_budget ? google_service_account.history[0].email : null
+}
+
+output "history_job" {
+  description = "The history job's name, or null while it isn't deployed."
+  value       = local.deploy_history ? google_cloud_run_v2_job.history[0].name : null
+}

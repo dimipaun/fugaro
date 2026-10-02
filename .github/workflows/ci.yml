@@ -53,7 +53,7 @@ jobs:
       # would end up in the Go test binary of the last step.
       - name: validate and test the roots
         run: |
-          for r in installation repo; do
+          for r in installation firebase repo; do
             [ -d "deploy/terraform/gcp/roots/$r" ] || { echo "no Terraform root $r" >&2; exit 1; }
             export TF_DATA_DIR="$RUNNER_TEMP/tf-$r"
             terraform -chdir=deploy/terraform/gcp/roots/$r init -backend=false -lockfile=readonly -input=false

@@ -223,3 +223,45 @@ variable "log_isolation" {
   default     = true
   nullable    = false
 }
+
+variable "enable_budget" {
+  description = "Whether the installation has budget enforcement: the history account, which exists before the Firebase root grants it anything, and, once history.deploy_job is set, the history job and its sweep Scheduler job."
+  type        = bool
+  default     = false
+  nullable    = false
+}
+
+variable "history" {
+  description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    deploy_job       = optional(bool, false)
+    firebase_project = optional(string)
+    rtdb_url         = optional(string)
+  })
+  default = null
+
+  validation {
+    condition = var.history == null ? true : (
+      can(regex("^[a-z][a-z0-9-]{4,28}[a-z0-9]$", var.history.account_id)) &&
+      can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.history.job)) &&
+      !startswith(var.history.job, "fugaro-") &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.history.scheduler_job)) &&
+      can(regex("^[a-z]+-[a-z]+[0-9]+$", var.history.scheduler_region)) &&
+      length(var.history.image) > 0
+    )
+    error_message = "history needs a service account ID, a job name that doesn't start with fugaro- (ls counts those), a Scheduler job name and region, and an image."
+  }
+
+  validation {
+    condition = var.history == null ? true : (!var.history.deploy_job || (
+      try(var.history.firebase_project, null) != null && try(var.history.rtdb_url, null) != null &&
+      can(regex("^https://[a-z0-9.-]+$", coalesce(var.history.rtdb_url, "-")))
+    ))
+    error_message = "history.deploy_job needs the Firebase root's firebase_project and rtdb_url (an https://<instance>.firebasedatabase.app or .firebaseio.com URL, without a path)."
+  }
+}

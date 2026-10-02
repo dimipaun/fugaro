@@ -44,6 +44,18 @@ func TestEmbeddedTree(t *testing.T) {
 		"gcp/roots/repo/tests/repo.tftest.hcl",
 		"gcp/roots/repo/tests/testdata/bitbucket-oauth.tfvars.json",
 		"gcp/roots/repo/tests/testdata/github-vertex.tfvars.json",
+		"gcp/modules/installation/history.tf",
+		"gcp/modules/firebase/versions.tf",
+		"gcp/modules/firebase/variables.tf",
+		"gcp/modules/firebase/apis.tf",
+		"gcp/modules/firebase/firebase.tf",
+		"gcp/modules/firebase/iam.tf",
+		"gcp/modules/firebase/outputs.tf",
+		"gcp/roots/firebase/main.tf",
+		"gcp/roots/firebase/variables.tf",
+		"gcp/roots/firebase/outputs.tf",
+		"gcp/roots/firebase/.terraform.lock.hcl",
+		"gcp/roots/firebase/tests/firebase.tftest.hcl",
 	} {
 		if _, err := fs.Stat(FS, p); err != nil {
 			t.Errorf("embedded tree lacks %s: %v", p, err)
@@ -176,6 +188,38 @@ func TestPreventDestroy(t *testing.T) {
 		if counts[typ] == 0 {
 			t.Errorf("no %s block found", typ)
 		}
+	}
+}
+
+// The token signer holds no roles, and no job or build account is granted
+// anything on the Firebase project. The plan assertions check the values;
+// this text check catches a grant written to either by reference, which no
+// input could ever reveal.
+func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+			return
+		}
+		n++
+		code := stripComments(string(b))
+		for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member", "google_project_iam_custom_role"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				for _, bad := range []string{"google_service_account.signer.member", "google_service_account.signer.email", "serviceAccount:", "roles/storage", "roles/run."} {
+					if strings.Contains(blk.body, bad) && !(strings.Contains(blk.name, "history_") && bad == "serviceAccount:") {
+						t.Errorf("%s: %s mentions %s", path, blk.name, bad)
+					}
+				}
+			}
+		}
+		for _, bad := range []string{"fugaro-b-", "google_service_account.job", "google_service_account.build", "google_service_account.scheduler"} {
+			if strings.Contains(code, bad) {
+				t.Errorf("%s mentions %s: job, build and scheduler accounts hold nothing on the FP", path, bad)
+			}
+		}
+	})
+	if n == 0 {
+		t.Error("no file under gcp/modules/firebase")
 	}
 }
 

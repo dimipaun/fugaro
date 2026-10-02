@@ -44,3 +44,11 @@ output "log_view" {
 output "registry_cleanup_dry_run" {
   value = module.installation.registry_cleanup_dry_run
 }
+
+output "history_service_account" {
+  value = module.installation.history_service_account
+}
+
+output "history_job" {
+  value = module.installation.history_job
+}

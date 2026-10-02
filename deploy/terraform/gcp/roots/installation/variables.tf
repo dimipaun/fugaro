@@ -116,3 +116,23 @@ variable "log_isolation" {
   default  = true
   nullable = false
 }
+
+variable "enable_budget" {
+  type     = bool
+  default  = false
+  nullable = false
+}
+
+variable "history" {
+  type = object({
+    account_id       = string
+    job              = string
+    image            = string
+    scheduler_job    = string
+    scheduler_region = string
+    deploy_job       = optional(bool, false)
+    firebase_project = optional(string)
+    rtdb_url         = optional(string)
+  })
+  default = null
+}
