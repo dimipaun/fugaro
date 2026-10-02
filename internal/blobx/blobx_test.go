@@ -213,3 +213,32 @@ func TestFileBucketReadsAreNeverTorn(t *testing.T) {
 	close(stop)
 	<-done
 }
+
+func TestDeleteExistingIsStrict(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	g.AddBucket("b", 1, nil)
+	for name, b := range map[string]*blobx.Bucket{"gcs": g.Bucket(t, "b"), "mem": blobx.Wrap(memblob.OpenBucket(nil))} {
+		if _, err := b.Create(ctx, "k", []byte("v"), "text/plain"); err != nil {
+			t.Fatal(err)
+		}
+		data, gen, err := b.Read(ctx, "k")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if name == "mem" { // prev is compared off GCS only
+			if err := b.DeleteExisting(ctx, "k", gen, []byte("other")); !errors.Is(err, blobx.ErrConflict) {
+				t.Fatalf("changed object: %v", err)
+			}
+		}
+		if err := b.DeleteExisting(ctx, "k", gen, data); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := b.DeleteExisting(ctx, "k", gen, data); !errors.Is(err, blobx.ErrNotExist) {
+			t.Fatalf("%s: an already deleted object must be ErrNotExist, got %v", name, err)
+		}
+		if err := b.DeleteIf(ctx, "k", gen, data); err != nil {
+			t.Fatalf("%s: DeleteIf must stay idempotent: %v", name, err)
+		}
+	}
+}

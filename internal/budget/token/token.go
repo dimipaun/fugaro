@@ -38,6 +38,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -97,7 +98,7 @@ func UID(slug, run string) string { return "r~" + slug + "~" + run }
 // object path: non-empty, no '~' (the uid separator: slug "a~b" with run "c"
 // must not collide with slug "a" and run "b~c"), no '/', no control or space.
 func validSegment(s string) bool {
-	if s == "" || len(s) > maxFieldLen || s == "." || s == ".." {
+	if s == "" || len(s) > maxFieldLen || s == "." || s == ".." || !utf8.ValidString(s) {
 		return false
 	}
 	for _, r := range s {
@@ -110,6 +111,8 @@ func validSegment(s string) bool {
 
 func (c Claims) validate(now time.Time) error {
 	switch {
+	case !utf8.ValidString(c.Slug) || !utf8.ValidString(c.Run) || !utf8.ValidString(c.FP) || !utf8.ValidString(c.RB):
+		return errors.New("budget token: a claim is not valid UTF-8")
 	case !validSegment(c.Slug):
 		return errors.New("budget token: invalid slug")
 	case !validSegment(c.Run):
@@ -166,7 +169,10 @@ func sameIdentity(got, want map[string]any) bool {
 	if uid == "" {
 		return false
 	}
-	if claimString(got, "user_id") != uid && claimString(got, "sub") != uid {
+	// Whichever of user_id and sub the token carries must be the uid, and at
+	// least one must be there.
+	uidGot, subGot := claimString(got, "user_id"), claimString(got, "sub")
+	if (uidGot == "" && subGot == "") || (uidGot != "" && uidGot != uid) || (subGot != "" && subGot != uid) {
 		return false
 	}
 	extra, _ := want["claims"].(map[string]any)
@@ -265,7 +271,7 @@ func statusError(op string, status int, body []byte, sentinel error) error {
 	if code != "" {
 		suffix += " " + code
 	}
-	if status == http.StatusTooManyRequests || status >= 500 {
+	if status == http.StatusTooManyRequests || status == http.StatusRequestTimeout || status == 425 || status >= 500 {
 		return fmt.Errorf("%w: %s", ErrUnavailable, suffix)
 	}
 	if sentinel == nil {
@@ -276,4 +282,40 @@ func statusError(op string, status int, body []byte, sentinel error) error {
 
 func keyURL(base, path, key string) string {
 	return strings.TrimRight(base, "/") + path + "?key=" + url.QueryEscape(key)
+}
+
+// expiredAnswer reports whether a Google error body says a token expired
+// (only the fact is used; the text is never copied anywhere).
+func expiredAnswer(body []byte) bool {
+	var e struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	return json.Unmarshal(body, &e) == nil && strings.Contains(strings.ToLower(e.Error.Message), "expired")
+}
+
+// checkURL requires a URL that will carry credentials to be https, or plain
+// http to a loopback host (test fakes), with no userinfo, query or fragment.
+func checkURL(what, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("budget token: %s is not a valid URL", what)
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || strings.Contains(raw, "#") || strings.Contains(raw, "?") {
+		return fmt.Errorf("budget token: %s must not carry userinfo, a query or a fragment", what)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		h := u.Hostname()
+		if h == "localhost" {
+			return nil
+		}
+		if ip := net.ParseIP(h); ip != nil && ip.IsLoopback() {
+			return nil
+		}
+	}
+	return fmt.Errorf("budget token: %s must be https (http is allowed only to a loopback host)", what)
 }

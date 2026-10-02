@@ -590,6 +590,7 @@ func TestKeepRefreshesAndRetries(t *testing.T) {
 	cfg.Now = time.Now
 	cfg.RefreshBefore = time.Minute // capped to half the 2 s lifetime
 	cfg.RetryEvery = 20 * time.Millisecond
+	cfg.MinRefreshInterval = 10 * time.Millisecond
 	cfg.OnResult = func(op string, err error) { mu.Lock(); results = append(results, err); mu.Unlock() }
 	s, err := token.Exchange(context.Background(), cfg, e.mint(t, c, time.Now()))
 	if err != nil {

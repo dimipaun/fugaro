@@ -27,7 +27,7 @@ func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string) erro
 		if errors.Is(err, blobx.ErrExists) {
 			return ErrObjectExists
 		}
-		return fmt.Errorf("budget token: writing the token object failed: %s", scrubErr(err))
+		return fmt.Errorf("budget token: writing the token object failed: %s", errText(err))
 	}
 	return nil
 }
@@ -39,11 +39,20 @@ func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error 
 		return errors.New("budget token: invalid slug or run id")
 	}
 	if err := b.Delete(ctx, ObjectKey(slug, run)); err != nil && !isNotExist(err) {
-		return fmt.Errorf("budget token: deleting the token object failed: %s", scrubErr(err))
+		return fmt.Errorf("budget token: deleting the token object failed: %s", errText(err))
 	}
 	return nil
 }
 
+// Untaken objects: a token nobody takes is dead after an hour but the object
+// stays; the runs bucket needs a lifecycle rule that deletes
+// runs/*/*/budget-token objects after a day (T9/T10), and the launcher deletes
+// the object when a launch fails (DeleteObject).
+//
+// TakeObject consumes the token: a second call finds nothing. A caller whose
+// Exchange fails must retry Exchange with the token it already holds in
+// memory, never call TakeObject again.
+//
 // TakeObject reads the run's token object and deletes it, then returns the
 // token. A delete that fails is fatal: the token is NOT returned, because a
 // token left behind could be read by any other run of the repository and
@@ -60,10 +69,15 @@ func TakeObject(ctx context.Context, b *blobx.Bucket, slug, run string) (string,
 	case errors.Is(err, blobx.ErrNotExist):
 		return "", ErrNoToken
 	case err != nil:
-		return "", fmt.Errorf("budget token: reading the token object failed: %s", scrubErr(err))
+		return "", fmt.Errorf("budget token: reading the token object failed: %s", errText(err))
 	}
-	if err := b.DeleteIf(ctx, key, gen, data); err != nil {
-		return "", fmt.Errorf("budget token: the token object could not be deleted, so it is not used: %s", scrubErr(err))
+	switch err := b.DeleteExisting(ctx, key, gen, data); {
+	case errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrConflict):
+		// Someone else deleted or replaced it between our read and our delete:
+		// they took the token, we did not.
+		return "", ErrNoToken
+	case err != nil:
+		return "", fmt.Errorf("budget token: the token object could not be deleted, so it is not used: %s", errText(err))
 	}
 	tok := string(data)
 	if err := checkNames(tok, slug, run); err != nil {
@@ -87,6 +101,6 @@ func checkNames(tok, slug, run string) error {
 
 func isNotExist(err error) bool { return gcerrors.Code(err) == gcerrors.NotFound }
 
-// scrubErr returns err's text; bucket errors carry object names and status,
-// never the object body.
-func scrubErr(err error) string { return err.Error() }
+// errText returns err's text. Bucket errors carry the object name and a
+// status, never the object body, so the text is safe to include.
+func errText(err error) string { return err.Error() }

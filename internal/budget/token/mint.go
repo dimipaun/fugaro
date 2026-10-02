@@ -116,6 +116,9 @@ func NewIAMSigner(email string, ts oauth2.TokenSource, opts ...IAMOption) (*IAMS
 	for _, o := range opts {
 		o(s)
 	}
+	if err := checkURL("the IAM Credentials endpoint", s.endpoint); err != nil {
+		return nil, err
+	}
 	s.hc = newHTTPClient(s.hc)
 	return s, nil
 }

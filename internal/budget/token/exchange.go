@@ -37,6 +37,9 @@ type Config struct {
 	RefreshBefore time.Duration
 	// RetryEvery is Keep's wait after a failed refresh (default 10 s).
 	RetryEvery time.Duration
+	// MinRefreshInterval is the least Keep waits between refreshes (default
+	// 30 s), so a tiny expires_in cannot make it hammer Secure Token.
+	MinRefreshInterval time.Duration
 }
 
 func (c *Config) defaults() {
@@ -54,6 +57,9 @@ func (c *Config) defaults() {
 	}
 	if c.RetryEvery == 0 {
 		c.RetryEvery = 10 * time.Second
+	}
+	if c.MinRefreshInterval == 0 {
+		c.MinRefreshInterval = 30 * time.Second
 	}
 	c.HTTP = newHTTPClient(c.HTTP)
 }
@@ -90,6 +96,12 @@ func Exchange(ctx context.Context, cfg Config, custom string) (*Session, error) 
 	// Redaction first: before any code path can print or send them.
 	cfg.Register(custom)
 	cfg.Register(cfg.APIKey)
+	if err := checkURL("the Identity Toolkit URL", cfg.IdentityURL); err != nil {
+		return nil, err
+	}
+	if err := checkURL("the Secure Token URL", cfg.SecureTokenURL); err != nil {
+		return nil, err
+	}
 	want, err := parseJWT(custom)
 	if err != nil {
 		return nil, report(cfg, "exchange", err)
@@ -103,7 +115,11 @@ func Exchange(ctx context.Context, cfg Config, custom string) (*Session, error) 
 		return nil, report(cfg, "exchange", err)
 	}
 	if status/100 != 2 {
-		return nil, report(cfg, "exchange", statusError("signInWithCustomToken", status, resp, ErrTokenInvalid))
+		sentinel := ErrTokenInvalid
+		if expiredAnswer(resp) {
+			sentinel = ErrTokenExpired
+		}
+		return nil, report(cfg, "exchange", statusError("signInWithCustomToken", status, resp, sentinel))
 	}
 	var out struct {
 		IDToken      string `json:"idToken"`
@@ -123,8 +139,10 @@ func Exchange(ctx context.Context, cfg Config, custom string) (*Session, error) 
 	return s, nil
 }
 
+// report tells OnResult the outcome and returns err. A cancelled or timed-out
+// caller context is not a backend failure and is not reported.
 func report(cfg Config, op string, err error) error {
-	if cfg.OnResult != nil {
+	if cfg.OnResult != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		cfg.OnResult(op, err)
 	}
 	return err
@@ -216,7 +234,7 @@ func (s *Session) Keep(ctx context.Context) error {
 		if half := s.lifetime / 2; before > half {
 			before = half
 		}
-		wait := s.expiry.Add(-before).Sub(s.cfg.Now())
+		wait := max(s.expiry.Add(-before).Sub(s.cfg.Now()), s.cfg.MinRefreshInterval)
 		s.mu.Unlock()
 		for {
 			if err := sleep(ctx, max(wait, 0)); err != nil {
@@ -229,7 +247,7 @@ func (s *Session) Keep(ctx context.Context) error {
 			if errors.Is(err, ErrRevoked) || errors.Is(err, ErrTokenMismatch) {
 				return err
 			}
-			wait = s.cfg.RetryEvery
+			wait = max(s.cfg.RetryEvery, 0)
 		}
 	}
 }
