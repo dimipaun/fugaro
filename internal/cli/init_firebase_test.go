@@ -225,6 +225,25 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	}
 }
 
+// The billing read failing because the Cloud Billing API is disabled on the
+// credentials' quota project must say so, not blame permissions (found live).
+func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
+	r := newFBRig(t)
+	r.su.Disable("cloudbilling.googleapis.com", r.billing.Server)
+	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || err == nil {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	for _, want := range []string{"Cloud Billing API", "cloudbilling.googleapis.com", "quota project", "gcloud services enable cloudbilling.googleapis.com --project 123456789012"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "resourceAssociations") {
+		t.Errorf("error blames permissions: %v", err)
+	}
+}
+
 func TestInitFirebaseNoBilling(t *testing.T) {
 	r := newFBRig(t)
 	r.billing.SetBilling(fpID, false)
