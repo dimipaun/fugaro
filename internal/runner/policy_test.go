@@ -160,7 +160,7 @@ func TestDefaultBranchPolicyInvalidFailsClosed(t *testing.T) {
 		"alias":            {"budget:\n  allowed_models: [sonnet]\n", "allowed_models"},
 		"empty list":       {"budget:\n  allowed_models: []\n", "allowed_models"},
 		"negative tokens":  {"agent: {max_run_tokens: -5}\n", "max_run_tokens"},
-		"per day":          {"budget:\n  per_day_usd: 5\n", "per_day_usd"},
+		"negative per day": {"budget:\n  per_day_usd: -5\n", "per_day_usd"},
 		"not a mapping":    {"budget: 5\n", "budget"},
 		"budget typo":      {"budget:\n  per_run_usdd: 2\n", "per_run_usdd"},
 		"allowed typo":     {"budget:\n  allowed_model: [" + sonnet + "]\n", "allowed_model"},

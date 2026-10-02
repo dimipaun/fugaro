@@ -147,6 +147,7 @@ type PolicyRecord struct {
 // read back as an empty non-nil slice.
 type PolicyEffective struct {
 	PerRunUSD       float64       `json:"per_run_usd,omitempty"`
+	PerDayUSD       float64       `json:"per_day_usd,omitempty"`
 	Mode            string        `json:"mode,omitempty"`
 	MaxRunTokens    int64         `json:"max_run_tokens,omitempty"`
 	MaxOutputTokens *PolicyOutput `json:"max_output_tokens,omitempty"`

@@ -85,7 +85,12 @@
           "anyOf": [{ "const": 0 }, { "minimum": 0.0000005 }, { "type": "null" }],
           "description": "A dollar cap per run; the lowest positive cap of the layers wins. 0 sets none. A cap that rounds to less than a millionth of a dollar is refused."
         },
-        "per_day_usd": { "type": "null", "description": "Not supported yet (M9b): per-day caps are set by the project owner." },
+        "per_day_usd": {
+          "type": ["number", "null"],
+          "maximum": 100000,
+          "anyOf": [{ "const": 0 }, { "minimum": 0.0000005 }, { "type": "null" }],
+          "description": "A dollar cap per UTC day for this repository, enforced by the runner (not the database); the lowest positive cap of the layers wins, and a lower cap the owner set in the database wins over it. 0 sets none."
+        },
         "allowed_models": {
           "type": ["array", "null"],
           "minItems": 1,

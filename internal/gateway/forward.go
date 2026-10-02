@@ -496,11 +496,17 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	w0 := m.WorstCase(pricing.Request{
 		BodyBytes: int64(len(body)), HasPDF: p.pdf, ImageCount: p.images, MaxTokens: p.maxTokens, CacheTTL: p.cacheTTL,
 	})
-	if msg, status := s.reserve(st, w0); status == http.StatusTooManyRequests {
+	if msg, status := s.reserve(r.Context(), st, w0); status == http.StatusTooManyRequests {
 		// Retryable: Claude Code backs off and asks again once the calls
 		// holding the reservations have settled.
 		w.Header().Set("retry-after", "2")
 		refuse(status, "rate_limit_error", msg)
+		return
+	} else if status == http.StatusServiceUnavailable {
+		// The budget backend is unreachable (or the lease is short): not a
+		// halt; the session's grace decides, the call is retried.
+		w.Header().Set("retry-after", "5")
+		refuse(status, "api_error", msg)
 		return
 	} else if status != 0 {
 		refuse(status, "permission_error", msg)
@@ -543,6 +549,8 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	defer cancel()
 	stop := context.AfterFunc(s.base, cancel) // Close cancels every call
 	defer stop()
+	stopHalt := context.AfterFunc(s.hctx, cancel) // so does an external halt
+	defer stopHalt()
 
 	up, sent, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
@@ -555,7 +563,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		// Anything did: the upstream may be generating, so the whole
 		// reservation.
 		if r.Context().Err() == nil && s.base.Err() == nil {
-			writeError(w, http.StatusBadGateway, "api_error", "fugaro: the upstream request failed")
+			if msg, halted := s.haltedMessage(); halted && s.hctx.Err() != nil {
+				writeHalt(w, msg) // cut short by an external halt
+			} else {
+				writeError(w, http.StatusBadGateway, "api_error", "fugaro: the upstream request failed")
+			}
 		}
 		if !sent.Load() {
 			return zeroOutcome(p.model, false)
@@ -864,6 +876,8 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	defer cancel()
 	stop := context.AfterFunc(s.base, cancel)
 	defer stop()
+	stopHalt := context.AfterFunc(s.hctx, cancel)
+	defer stopHalt()
 	up, _, err := s.upstreamRequest(ctx, r, rt, body)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "api_error", "fugaro: "+err.Error())

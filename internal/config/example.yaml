@@ -28,9 +28,11 @@ agent:
 
 # budget:                     # optional; the repository's cost and model policy. It can only tighten the
 #                             # project's ceiling (fugaro init --repo); the runner reads it from the default branch,
-#                             # a branch's looser value is ignored with a warning (per_day_usd comes with M9b)
+#                             # a branch's looser value is ignored with a warning
 #   mode: enforce             # off | observe | enforce; the strictest of the layers wins
 #   per_run_usd: 5            # a dollar cap per run; the lowest of the layers wins
+#   per_day_usd: 20           # this repository's dollars per UTC day, enforced by the runner; the lowest of the layers wins,
+#                             # and a lower cap the owner set with `fugaro budget set` wins over it
 #   allowed_models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5]   # explicit IDs, no aliases
 
 # followup:                   # optional; who can steer a follow-up run (fugaro run --pr N)

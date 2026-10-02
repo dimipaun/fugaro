@@ -17,6 +17,7 @@ import (
 type Policy struct {
 	Mode            string
 	PerRunUSD       float64
+	PerDayUSD       float64
 	MaxRunTokens    int64
 	MaxOutputTokens RoleTokens
 	AllowedModels   []string
@@ -122,7 +123,7 @@ func PolicyOf(data []byte) (Policy, error) {
 	}
 	p := Policy{MaxRunTokens: a.MaxRunTokens, MaxOutputTokens: a.MaxOutputTokens}
 	if b := budget; b != nil {
-		p.Mode, p.PerRunUSD, p.AllowedModels = b.Mode, b.PerRunUSD, b.AllowedModels
+		p.Mode, p.PerRunUSD, p.PerDayUSD, p.AllowedModels = b.Mode, b.PerRunUSD, b.PerDayUSD, b.AllowedModels
 	}
 	return p, nil
 }
