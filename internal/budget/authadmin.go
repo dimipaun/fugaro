@@ -127,19 +127,43 @@ func (a *AuthAdmin) ListUsers(ctx context.Context) ([]AuthUser, error) {
 	return nil, errors.New("auth admin: the user list did not end")
 }
 
-// DeleteUsers deletes the users in batches. It stops at the first failure.
-func (a *AuthAdmin) DeleteUsers(ctx context.Context, uids []string) error {
+// UserFailure is a user the Identity Toolkit reported it did not delete.
+type UserFailure struct{ UID, Message string }
+
+// DeleteUsers deletes the users in batches and returns the users the API
+// answered it could not delete (a 200 can carry per-user errors). It stops at
+// the first failed request.
+func (a *AuthAdmin) DeleteUsers(ctx context.Context, uids []string) ([]UserFailure, error) {
+	var failed []UserFailure
 	for len(uids) > 0 {
 		n := min(len(uids), authDeleteBatch)
-		body, _ := json.Marshal(map[string]any{"localIds": uids[:n], "force": true})
+		batch := uids[:n]
+		body, _ := json.Marshal(map[string]any{"localIds": batch, "force": true})
 		u, err := a.url("batchDelete", nil)
 		if err != nil {
-			return err
+			return failed, err
 		}
-		if _, err := a.do(ctx, http.MethodPost, u, body); err != nil {
-			return err
+		resp, err := a.do(ctx, http.MethodPost, u, body)
+		if err != nil {
+			return failed, err
+		}
+		var res struct {
+			Errors []struct {
+				Index   int    `json:"index"`
+				LocalID string `json:"localId"`
+				Message string `json:"message"`
+			} `json:"errors"`
+		}
+		if json.Unmarshal(resp, &res) == nil {
+			for _, e := range res.Errors {
+				uid := e.LocalID
+				if uid == "" && e.Index >= 0 && e.Index < len(batch) {
+					uid = batch[e.Index]
+				}
+				failed = append(failed, UserFailure{UID: uid, Message: e.Message})
+			}
 		}
 		uids = uids[n:]
 	}
-	return nil
+	return failed, nil
 }

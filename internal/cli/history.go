@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -86,6 +89,10 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 		return userErr("%s: %v", envRTDBURL, err)
 	}
 
+	if err := checkDatabaseHost(env[envRTDBURL], env[envFirebaseFP]); err != nil {
+		return userErr("%v", err)
+	}
+
 	var (
 		dbAuth   rtdb.Auth
 		runOpts  = gcp.Options{GCPProject: env[envGCPProject], Region: env[envRegion]}
@@ -146,4 +153,24 @@ func runHistorySweep(ctx context.Context, cmd *cobra.Command, getenv func(string
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "sweep: %d removed, %d kept, %d run users deleted\n", len(rep.Removed), rep.Kept, rep.UsersDeleted)
 	return remote(err)
+}
+
+// checkDatabaseHost refuses a database URL that is not the Firebase project's
+// own: the sweeper deletes users in the project FUGARO_FIREBASE_PROJECT names
+// and writes to the database FUGARO_RTDB_URL names, so the two must agree. A
+// project's default database is <project>-default-rtdb (Terraform's
+// instance_id). Loopback hosts (the fakes) are exempt.
+func checkDatabaseHost(rawURL, firebaseProject string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("%s: %v", envRTDBURL, err)
+	}
+	host := u.Hostname()
+	if ip := net.ParseIP(host); host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		return nil
+	}
+	if label, _, _ := strings.Cut(host, "."); label != firebaseProject+"-default-rtdb" {
+		return fmt.Errorf("%s names the database %q, which is not Firebase project %s's (%s); nothing was swept", envRTDBURL, oneLine(label), oneLine(firebaseProject), envFirebaseFP)
+	}
+	return nil
 }

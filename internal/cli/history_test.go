@@ -124,3 +124,36 @@ func TestHistoryIsHidden(t *testing.T) {
 		t.Fatalf("budget --help lists history:\n%s", out)
 	}
 }
+
+func TestHistoryRefusesDatabaseOfAnotherFirebaseProject(t *testing.T) {
+	f := newHistoryFixture(t)
+	f.entry("20261002-090000-aaaa", time.Hour)
+	t.Setenv("FUGARO_RTDB_URL", "https://other-fp-default-rtdb.firebaseio.com")
+	_, _, err := execute(t, "budget", "history", "--sweep")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not Firebase project aurora-fp's") {
+		t.Fatalf("err = %v, want a refusal naming the project", err)
+	}
+	if f.db.Value("agents/"+appSlug+"/20261002-090000-aaaa") == nil {
+		t.Fatal("the sweep ran anyway")
+	}
+	if err := checkDatabaseHost("https://aurora-fp-default-rtdb.us-central1.firebasedatabase.app", "aurora-fp"); err != nil {
+		t.Fatalf("the project's own database was refused: %v", err)
+	}
+}
+
+// A database that can't be read is a remote error (exit 2), and nothing is
+// written.
+func TestHistoryRegistryUnreadableIsExit2(t *testing.T) {
+	f := newHistoryFixture(t)
+	f.entry("20261002-090000-aaaa", time.Hour)
+	f.db.Refuse(http.StatusServiceUnavailable, "UNAVAILABLE", "", "down")
+	_, _, err := execute(t, "budget", "history", "--sweep")
+	if err == nil || ExitCode(err) != ExitRemoteError {
+		t.Fatalf("err = %v, want exit 2", err)
+	}
+	for _, r := range f.db.Requests() {
+		if r.Method == http.MethodPatch || r.Method == http.MethodPut {
+			t.Fatalf("wrote %s %s", r.Method, r.Path)
+		}
+	}
+}

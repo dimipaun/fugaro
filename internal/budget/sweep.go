@@ -45,6 +45,9 @@ const (
 	// futureSkew is how far ahead of the sweeper's clock a heartbeat may be
 	// and still count as fresh.
 	futureSkew = time.Minute
+	// wrongTypedAfter is how old an entry whose fields have the wrong types
+	// must be before it is swept: runs last at most a day.
+	wrongTypedAfter = 26 * time.Hour
 	// StatusInfraError is the outcome the sweeper records for a run that
 	// vanished.
 	StatusInfraError = "infra_error"
@@ -58,7 +61,8 @@ type Executions interface {
 // Users is the Firebase user directory; *AuthAdmin is the real one.
 type Users interface {
 	ListUsers(ctx context.Context) ([]AuthUser, error)
-	DeleteUsers(ctx context.Context, uids []string) error
+	// DeleteUsers returns the users it was told were not deleted.
+	DeleteUsers(ctx context.Context, uids []string) ([]UserFailure, error)
 }
 
 // Sweeper is one sweep's wiring.
@@ -135,13 +139,25 @@ func (s *Sweeper) Sweep(ctx context.Context) (SweepReport, error) {
 		for _, rk := range runs {
 			slug, err1 := Unkey(sk)
 			run, err2 := Unkey(rk)
-			var e AgentEntry
-			if err1 != nil || err2 != nil || slug == "" || run == "" || json.Unmarshal(tree[sk][rk], &e) != nil {
+			if err1 != nil || err2 != nil || slug == "" || run == "" {
 				s.warnf("skipping registry entry %s/%s: not a run's entry", sk, rk)
 				rep.Kept++
 				continue
 			}
-			if s.isLive(live, slug, run, e, now, stale) {
+			var e AgentEntry
+			entryStale := stale
+			if json.Unmarshal(tree[sk][rk], &e) != nil {
+				// A run wrote fields of the wrong types. Read what can be
+				// read, and sweep it once it is old enough that no run can
+				// still be using it.
+				e = looseEntry(tree[sk][rk])
+				if e.UpdatedAt == 0 && e.StartedAt == 0 {
+					e.StartedAt = runIDTime(run).UnixMilli()
+				}
+				entryStale = wrongTypedAfter
+				s.warnf("registry entry %s/%s has fields of the wrong types", sk, rk)
+			}
+			if s.isLive(live, slug, run, e, now, entryStale) {
 				keep[RunUID(slug, run)] = true
 				rep.Kept++
 				continue
@@ -213,6 +229,33 @@ func (s *Sweeper) isLive(ix executionIndex, slug, run string, e AgentEntry, now 
 	return age < stale && age > -futureSkew
 }
 
+// looseEntry reads the fields of an entry one by one, ignoring those of the
+// wrong type.
+func looseEntry(raw json.RawMessage) AgentEntry {
+	var m map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &m)
+	var e AgentEntry
+	get := func(k string, v any) { _ = json.Unmarshal(m[k], v) }
+	get("workflow", &e.Workflow)
+	get("requestedBy", &e.RequestedBy)
+	get("startedAt", &e.StartedAt)
+	get("updatedAt", &e.UpdatedAt)
+	return e
+}
+
+// runIDTime is the time a run id (20060102-150405-xxxx) was made, the zero
+// time when it is not that shape: a zero time reads as stale.
+func runIDTime(run string) time.Time {
+	if len(run) < 15 {
+		return time.Time{}
+	}
+	t, err := time.Parse("20060102-150405", run[:15])
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 // remove records the run's crash and drops its entry in one atomic update.
 func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, now time.Time) error {
 	ledger := PathRun(slug, run)
@@ -229,20 +272,29 @@ func (s *Sweeper) remove(ctx context.Context, slug, run string, e AgentEntry, no
 	}
 	oc := PathOutcome(day, slug, run)
 	var existing json.RawMessage
-	haveOutcome, err := s.DB.Get(ctx, oc, &existing)
+	etag, haveOutcome, err := s.DB.GetETag(ctx, oc, &existing)
 	if err != nil {
 		return err
 	}
-	updates := map[string]any{PathAgent(slug, run): nil}
-	if haveLedger && string(raw) != "null" {
-		updates[ledger+"/crashed"] = true
-	}
+	created := false
 	if !haveOutcome {
 		by := strings.TrimSpace(e.RequestedBy)
 		if by == "" {
 			by = "unknown"
 		}
-		updates[oc] = Outcome{Status: StatusInfraError, RequestedBy: clip(by, 200)}
+		// Only if still absent: a run's own outcome, written meanwhile, wins.
+		switch err := s.DB.PutIfMatch(ctx, oc, etag, Outcome{Status: StatusInfraError, RequestedBy: clip(by, 200)}); {
+		case err == nil:
+			created = true
+		case !errors.Is(err, rtdb.ErrPrecondition):
+			return err
+		}
+	}
+	updates := map[string]any{PathAgent(slug, run): nil}
+	// A run that already has an outcome ended in a way it recorded: the
+	// sweeper does not call it crashed.
+	if created && haveLedger && string(raw) != "null" {
+		updates[ledger+"/crashed"] = true
 	}
 	return s.DB.Patch(ctx, "", updates)
 }
@@ -270,8 +322,12 @@ func (s *Sweeper) deleteUsers(ctx context.Context, now time.Time, maxAge time.Du
 	if len(del) == 0 {
 		return 0, nil
 	}
-	if err := s.Auth.DeleteUsers(ctx, del); err != nil {
+	failed, err := s.Auth.DeleteUsers(ctx, del)
+	for _, f := range failed {
+		s.warnf("Firebase user %s was not deleted: %s", f.UID, f.Message)
+	}
+	if err != nil {
 		return 0, fmt.Errorf("deleting Firebase users: %w", err)
 	}
-	return len(del), nil
+	return max(len(del)-len(failed), 0), nil
 }

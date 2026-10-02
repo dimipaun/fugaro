@@ -206,8 +206,11 @@ func TestSweepDoesNotTrustRunWrittenOutcomeOrExp(t *testing.T) {
 	e.db.Set("runs/"+sweepSlug+"/"+runA+"/exp", sweepNow.Add(72*time.Hour).UnixMilli())
 	e.db.Set(outcomePath(runA), map[string]any{"status": "ok", "requestedBy": "dimi@example.invalid"})
 	e.sweep()
-	if e.has("agents/"+sweepSlug+"/"+runA) || e.db.Value("runs/"+sweepSlug+"/"+runA+"/crashed") != true {
+	if e.has("agents/" + sweepSlug + "/" + runA) {
 		t.Fatal("a claimed outcome or a far expiry kept a dead run out of the sweep")
+	}
+	if e.db.Value("runs/"+sweepSlug+"/"+runA+"/crashed") != nil {
+		t.Fatal("a run that already has an outcome was labelled crashed")
 	}
 	if got := e.db.Value(outcomePath(runA) + "/status"); got != "ok" {
 		t.Fatalf("the sweeper overwrote an existing outcome: %v", got)
@@ -404,7 +407,80 @@ func TestAuthAdminPagesAndBatches(t *testing.T) {
 	for i, u := range users {
 		uids[i] = u.UID
 	}
-	if err := a.DeleteUsers(context.Background(), uids); err != nil || len(e.idt.Users()) != 0 {
+	if _, err := a.DeleteUsers(context.Background(), uids); err != nil || len(e.idt.Users()) != 0 {
 		t.Fatalf("DeleteUsers: %v, %d left", err, len(e.idt.Users()))
+	}
+}
+
+// The outcome is created conditionally (a PUT that only matches an absent
+// node), so a run that writes its own outcome in the meantime wins.
+func TestSweepCreatesOutcomeConditionally(t *testing.T) {
+	e := newSweepEnv(t)
+	e.entry(runA, 30*time.Minute)
+	e.sweep()
+	found := false
+	for _, r := range e.db.Requests() {
+		if r.Method == http.MethodPut && strings.Contains(r.Path, strings.TrimPrefix(outcomePath(runA), "")) {
+			found = true
+		}
+		if r.Method == http.MethodPatch && strings.Contains(string(r.Body), "outcomes/") {
+			t.Fatalf("outcome written by an unconditional PATCH: %s", r.Body)
+		}
+	}
+	if !found {
+		t.Fatal("no conditional PUT of the outcome")
+	}
+	if e.db.Value(outcomePath(runA)+"/status") != "infra_error" {
+		t.Fatal("outcome missing")
+	}
+}
+
+// An entry of the wrong types cannot be read, but a run cannot keep itself
+// registered that way for ever: past a day it is swept like any dead one.
+func TestSweepRemovesWrongTypedEntriesWhenOld(t *testing.T) {
+	e := newSweepEnv(t)
+	oldRun, youngRun, liveRun := "20260930-100000-aaaa", "20261002-110000-bbbb", "20260930-100100-cccc"
+	for _, r := range []string{oldRun, youngRun, liveRun} {
+		e.db.Set("agents/"+sweepSlug+"/"+r, map[string]any{"repo": 7, "workflow": "web", "startedAt": "soon", "updatedAt": []int{1}})
+	}
+	e.exec(liveRun, backend.StateRunning)
+	e.sweep()
+	if e.has("agents/" + sweepSlug + "/" + oldRun) {
+		t.Error("an old wrong-typed entry was kept for ever")
+	}
+	if !e.has("agents/"+sweepSlug+"/"+youngRun) || !e.has("agents/"+sweepSlug+"/"+liveRun) {
+		t.Error("a young or live wrong-typed entry was removed")
+	}
+}
+
+// If the registry can't be read nothing is written and no user is deleted.
+func TestSweepRegistryReadFailureWritesNothing(t *testing.T) {
+	e := newSweepEnv(t)
+	e.entry(runA, 30*time.Minute)
+	e.idt.AddUser(budgetUID(runB), sweepNow.Add(-72*time.Hour))
+	e.db.Refuse(http.StatusServiceUnavailable, "UNAVAILABLE", "", "down")
+	if _, err := e.sw.Sweep(context.Background()); err == nil {
+		t.Fatal("Sweep succeeded without the registry")
+	}
+	if countWrites(e.db.Requests()) != 0 || len(e.idt.Users()) != 1 {
+		t.Fatal("a failed registry read changed state")
+	}
+}
+
+// A 200 from batchDelete can still list users it did not delete: they are
+// reported and not counted.
+func TestSweepReportsPerUserDeleteErrors(t *testing.T) {
+	e := newSweepEnv(t)
+	e.idt.AddUser(budgetUID(runA), sweepNow.Add(-72*time.Hour))
+	e.idt.AddUser(budgetUID(runB), sweepNow.Add(-72*time.Hour))
+	e.idt.FailDelete(budgetUID(runB), "USER_NOT_FOUND_LOCKED")
+	var warns []string
+	e.sw.Warn = func(s string) { warns = append(warns, s) }
+	rep := e.sweep()
+	if rep.UsersDeleted != 1 {
+		t.Fatalf("UsersDeleted = %d, want 1", rep.UsersDeleted)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], budgetUID(runB)) || !strings.Contains(warns[0], "USER_NOT_FOUND_LOCKED") {
+		t.Fatalf("warnings = %q", warns)
 	}
 }

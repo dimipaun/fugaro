@@ -42,6 +42,7 @@ type IdentityToolkit struct {
 	lifetime  time.Duration
 	rotate    bool
 	users     map[string]*fbUser
+	delFail   map[string]string // uid → per-user batchDelete error message
 	refresh   map[string]string // refresh token → uid
 	exchanges int
 	refreshes int
@@ -316,6 +317,17 @@ func (f *IdentityToolkit) AddUser(uid string, created time.Time) {
 	f.users[uid] = &fbUser{claims: map[string]any{}, created: created}
 }
 
+// FailDelete makes accounts:batchDelete answer 200 with a per-user error for
+// uid, and leave the user, as the real API does for a user it cannot delete.
+func (f *IdentityToolkit) FailDelete(uid, message string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.delFail == nil {
+		f.delFail = map[string]string{}
+	}
+	f.delFail[uid] = message
+}
+
 // admin serves the project-scoped admin calls the sweeper makes with an
 // OAuth token (no API key): accounts:batchGet (paged, createdAt in epoch
 // milliseconds as a string) and accounts:batchDelete (at most 1000 ids; force
@@ -373,10 +385,19 @@ func (f *IdentityToolkit) admin(w http.ResponseWriter, r *http.Request, body []b
 			writeFirebaseError(w, http.StatusBadRequest, "INVALID_REQUEST : 1 to 1000 localIds and force=true are required")
 			return
 		}
-		for _, uid := range req.LocalIDs {
+		var failed []map[string]any
+		for i, uid := range req.LocalIDs {
+			if msg, bad := f.delFail[uid]; bad {
+				failed = append(failed, map[string]any{"index": i, "localId": uid, "message": msg})
+				continue
+			}
 			delete(f.users, uid)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{})
+		out := map[string]any{}
+		if failed != nil {
+			out["errors"] = failed
+		}
+		writeJSON(w, http.StatusOK, out)
 	default:
 		f.unhandled(w, r)
 	}
