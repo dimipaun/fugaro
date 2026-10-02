@@ -124,6 +124,12 @@ type Execution struct {
 	Created, Started, Completed time.Time
 	CPU, MemoryGiB              float64 // the task's limits, for compute cost
 	LogURL                      string
+	// Run is "<slug>/<run id>", the FUGARO_RUN the execution was launched
+	// with, when the platform reports the execution's environment; empty
+	// when it does not (the sweeper then treats the execution as possibly
+	// anyone's of its job). Anyone who can start the job can set it, so
+	// it is a hint to keep a registry entry, never evidence to act on.
+	Run string
 }
 
 // Billed is how long the execution has run: start to completion, or to now

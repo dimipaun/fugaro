@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +51,7 @@ type IdentityToolkit struct {
 type fbUser struct {
 	claims   map[string]any
 	disabled bool
+	created  time.Time
 }
 
 // IdentityToolkitAudience is the aud a custom token must carry.
@@ -157,6 +159,10 @@ func (f *IdentityToolkit) sign(input string) string {
 }
 
 func (f *IdentityToolkit) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if strings.HasPrefix(r.URL.Path, "/v1/projects/") {
+		f.admin(w, r, body)
+		return
+	}
 	if r.Method != http.MethodPost {
 		f.unhandled(w, r)
 		return
@@ -237,7 +243,7 @@ func (f *IdentityToolkit) signIn(w http.ResponseWriter, body []byte) {
 			}
 		}
 		f.exchanges++
-		f.users[uid] = &fbUser{claims: extra}
+		f.users[uid] = &fbUser{claims: extra, created: now}
 		f.nextID++
 		rt := "rt-" + strconv.Itoa(f.nextID) + "-" + uid
 		f.refresh[rt] = uid
@@ -300,4 +306,78 @@ func (f *IdentityToolkit) refreshToken(w http.ResponseWriter, body []byte) {
 	id := f.idToken(uid, u.claims, f.now())
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": id, "expires_in": strconv.Itoa(int(f.lifetime / time.Second)),
 		"token_type": "Bearer", "refresh_token": out, "id_token": id, "user_id": uid, "project_id": "123456789012"})
+}
+
+// AddUser seeds a user created at the given time, as a sign-in at that time
+// would have.
+func (f *IdentityToolkit) AddUser(uid string, created time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.users[uid] = &fbUser{claims: map[string]any{}, created: created}
+}
+
+// admin serves the project-scoped admin calls the sweeper makes with an
+// OAuth token (no API key): accounts:batchGet (paged, createdAt in epoch
+// milliseconds as a string) and accounts:batchDelete (at most 1000 ids; force
+// is required to delete enabled users, as live).
+func (f *IdentityToolkit) admin(w http.ResponseWriter, r *http.Request, body []byte) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/projects/")
+	project, op, ok := strings.Cut(rest, "/")
+	if !ok || project != f.project {
+		writeFirebaseError(w, http.StatusForbidden, "PROJECT_MISMATCH")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	switch {
+	case op == "accounts:batchGet" && r.Method == http.MethodGet:
+		max, _ := strconv.Atoi(r.URL.Query().Get("maxResults"))
+		if max <= 0 || max > 1000 {
+			max = 1000
+		}
+		var uids []string
+		for uid := range f.users {
+			uids = append(uids, uid)
+		}
+		sort.Strings(uids)
+		if after := r.URL.Query().Get("nextPageToken"); after != "" {
+			i := sort.SearchStrings(uids, after)
+			if i < len(uids) && uids[i] == after {
+				i++
+			}
+			uids = uids[i:]
+		}
+		next := ""
+		if len(uids) > max {
+			next = uids[max-1]
+			uids = uids[:max]
+		}
+		users := []map[string]any{}
+		for _, uid := range uids {
+			users = append(users, map[string]any{"localId": uid, "createdAt": strconv.FormatInt(f.users[uid].created.UnixMilli(), 10)})
+		}
+		out := map[string]any{"kind": "identitytoolkit#DownloadAccountResponse"}
+		if len(users) > 0 {
+			out["users"] = users
+		}
+		if next != "" {
+			out["nextPageToken"] = next
+		}
+		writeJSON(w, http.StatusOK, out)
+	case op == "accounts:batchDelete" && r.Method == http.MethodPost:
+		var req struct {
+			LocalIDs []string `json:"localIds"`
+			Force    bool     `json:"force"`
+		}
+		if err := json.Unmarshal(body, &req); err != nil || len(req.LocalIDs) == 0 || len(req.LocalIDs) > 1000 || !req.Force {
+			writeFirebaseError(w, http.StatusBadRequest, "INVALID_REQUEST : 1 to 1000 localIds and force=true are required")
+			return
+		}
+		for _, uid := range req.LocalIDs {
+			delete(f.users, uid)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{})
+	default:
+		f.unhandled(w, r)
+	}
 }

@@ -346,6 +346,13 @@ func (b *Backend) toExecution(e *run.GoogleCloudRunV2Execution) (backend.Executi
 		}
 	}
 	x.LogURL = b.logURL(id, e.LogUri, x.Created)
+	if e.Template != nil && len(e.Template.Containers) > 0 {
+		for _, ev := range e.Template.Containers[0].Env {
+			if ev.Name == "FUGARO_RUN" {
+				x.Run = ev.Value
+			}
+		}
+	}
 	if e.Template != nil && len(e.Template.Containers) > 0 && e.Template.Containers[0].Resources != nil {
 		limits := e.Template.Containers[0].Resources.Limits
 		cpu, cerr := parseLimit(limits["cpu"], parseCPU)
