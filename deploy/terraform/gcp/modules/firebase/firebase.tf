@@ -51,3 +51,19 @@ resource "google_apikeys_key" "web" {
 
   depends_on = [google_project_service.this]
 }
+
+# Identity Toolkit answers CONFIGURATION_NOT_FOUND (to the sweeper's
+# accounts:batchGet and to the run-token sign-in) until Identity Platform is
+# initialized in the project, which enabling the API doesn't do (found live).
+# This is the initialization, and nothing more: no sign-in provider, nothing
+# that enables public sign-up (anonymous, email). The runs sign in with
+# custom tokens, which need no provider. On a project where it was
+# initialized by hand the resource adopts the existing configuration without
+# changing it.
+resource "google_identity_platform_config" "this" {
+  provider = google-beta
+
+  project = var.project
+
+  depends_on = [google_project_service.this]
+}

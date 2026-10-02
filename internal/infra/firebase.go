@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"regexp"
 	"slices"
 	"strings"
@@ -303,6 +304,10 @@ func CheckFirebaseProject(ctx context.Context, c *Clients, gcpProject, fp string
 		return errors.New("no Cloud Billing client (endpoints.cloud_billing is not set)")
 	}
 	bi, err := c.Billing.Projects.GetBillingInfo("projects/" + fp).Context(ctx).Do()
+	if consumer, ok := disabledConsumer(err, "cloudbilling.googleapis.com"); ok {
+		quota := strings.TrimPrefix(consumer, "projects/")
+		return userErr("the Cloud Billing API (cloudbilling.googleapis.com) is disabled on %s, the quota project of your credentials, so project %s's billing can't be read. Enable it there and rerun: gcloud services enable cloudbilling.googleapis.com --project %s", quota, fp, quota)
+	}
 	switch {
 	case errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404):
 		return userErr("you can't read project %s's billing; it needs a linked billing account (Blaze), and you need billing.resourceAssociations.list or Owner on the project", fp)
@@ -312,6 +317,27 @@ func CheckFirebaseProject(ctx context.Context, c *Clients, gcpProject, fp string
 		return userErr("project %s has no billing. Link a billing account (Blaze: the Spark plan's 100 connection limit would make a busy fleet fail closed); fugaro init never enables billing", fp)
 	}
 	return nil
+}
+
+// disabledConsumer reports whether err is a 403 SERVICE_DISABLED for service,
+// and the consumer (the credentials' quota project, projects/<number>) it
+// names.
+func disabledConsumer(err error, service string) (string, bool) {
+	var ae *googleapi.Error
+	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
+		return "", false
+	}
+	for _, d := range ae.Details {
+		m, ok := d.(map[string]any)
+		if !ok || m["@type"] != "type.googleapis.com/google.rpc.ErrorInfo" || m["reason"] != "SERVICE_DISABLED" {
+			continue
+		}
+		md, _ := m["metadata"].(map[string]any)
+		if consumer, _ := md["consumer"].(string); md["service"] == service && consumer != "" {
+			return consumer, true
+		}
+	}
+	return "", false
 }
 
 // DatabaseURLs lists the URLs of the Firebase project's Realtime Databases

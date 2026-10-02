@@ -668,3 +668,38 @@ Fill in at your own terminal. Date, base image, Firebase project, who ran it.
 | `createdAt` of custom-token users; Secure Token error codes | |
 | `null_etag` of a never-written node | |
 | `batchGet` / `batchDelete` shapes | |
+
+### Results of the M9b live bring-up (2026-10-02)
+
+Facts from the first live `init --firebase` and the first budget runs. The table above (check 21 proper) is still to be filled in.
+
+**Setup**
+
+- The Firebase project `fugaro-belong` was created with the firebase CLI under organization 1064073734839, with billing linked (`billingAccounts/001DFB-EE5A8F-3E8BE1`, the same account as `edge-devel-dimi`).
+- `init --firebase`, apply 1: 3 create, 1 update, 0 destroy. Apply 2: 18 create, 0 destroy.
+- The first database write (`PUT /fugaro/mark` with `If-Match` and `print=silent`) answered 400 "Mixing 'shallow', querying parameters or 'print=silent' and if-match or if-none-match requests is not supported". Fixed in PR #57; the fake now enforces it.
+- The database afterwards: mark `{gcp_project, managed_by: fugaro, project: belong, version: 1}`, `/fugaro/project` "belong", `config/mode` observe, `config/limits/maxReserveMicros` 5000000. The rules (37001 bytes) are deployed; an anonymous read is denied.
+- Identity Platform was not initialized: Identity Toolkit answered CONFIGURATION_NOT_FOUND. The firebase Terraform module now initializes it (`google_identity_platform_config`, no sign-in providers).
+- The history image was built and pushed by hand (`history:latest`). The history job `fugarohist` and the Scheduler job `fugaro-history-sweep` (every 15 minutes) were applied (3 creates).
+- The sweeper's first run failed on CONFIGURATION_NOT_FOUND. After Identity Platform was initialized it ran: `sweep: 0 removed, 0 kept, 0 run users deleted`, exit 0. This confirms that the sweep execution runs and that the registry sweep and the executions listing work.
+- The base image `dev-ab8e41a` (main at ab8e41a) was pushed and set in the local config. The sandbox image was rebuilt and `init --repo` applied (job env `FUGARO_BUDGET_MODE=observe`, `FUGARO_RTDB_URL`, `FUGARO_FIREBASE_API_KEY`).
+
+**Runs (sandbox repository, observe mode)**
+
+- Run `20261002-225752-61b8` succeeded (PR #24). Notional $0.300232 was recorded on the project and repository counters. Its registry entry was present while it ran (first seen 13 s after launch, stage bootstrap) and removed at the end. No halt.
+- A second run (`63d3`, PR #25) succeeded; the notional total is $0.494762.
+- Kill test: `fugaro budget kill --repo edgeappinc/fugarosandbox` while run `20261002-230356-0515` was running. The run halted at 23:04:20.44 (the kill instant) with reason `kill_switch`, scope repo, outcome draft (PR #26); the halt detail names who and why.
+- A launch while killed was refused (`kill_switch`, repo; `--no-budget-check` was named). `fugaro budget resume --repo` restored it.
+
+**Still open for check 21**
+
+- SSE kill-stream survival over Cloud Run egress. The halt came within a fraction of a second, which suggests the stream or the poll works; which of the two is unconfirmed.
+- The rules at real size under api-key enforce, with a lease and release against the real rules.
+- signJwt and the exchange worked (the token was minted and exchanged on every run); the lease give-up rate is still unmeasured.
+- A Vertex run, and an API-key enforce run.
+- EdgeWeb has not been migrated to the new base and budget (still the M9a runner, budget off).
+
+**What cost time**
+
+- The Cloud Billing API (`cloudbilling.googleapis.com`) was disabled on the quota project of the credentials. `init --firebase` blamed missing permissions; it now names the API and the project and prints the `gcloud services enable` command.
+- The `!`-prefix shell is not a TTY, so `init` confirmations must be typed in a real terminal.
