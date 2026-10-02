@@ -307,6 +307,16 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 			}
 		}
 	}
+	// The real database refuses a conditional request that also asks for
+	// print=silent or shallow (found live on 2026-10-02: PUT with If-Match and
+	// print=silent answers 400).
+	if r.Header.Get("If-Match") != "" || r.Header.Get("If-None-Match") != "" {
+		q := r.URL.Query()
+		if q.Get("print") == "silent" || q.Get("shallow") != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Mixing 'shallow', querying parameters or 'print=silent' and if-match or if-none-match requests is not supported"})
+			return
+		}
+	}
 	if m := r.Header.Get("If-Match"); m != "" && r.Method == http.MethodPut {
 		cur := getAt(f.root, path)
 		if m != etagOf(cur) {
