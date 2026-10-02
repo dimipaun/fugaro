@@ -109,6 +109,10 @@ func (e *cloudEnv) mintBudgetToken(ctx context.Context, slug string, spec *task.
 	// The identity window is the target job's own timeout (a long job
 	// elsewhere must not lengthen it).
 	jobTimeout, err := e.be.TaskTimeout(ctx, slug, spec.Workflow)
+	if errors.Is(err, backend.ErrNotFound) {
+		// No such job: the launch itself reports that, after the mint.
+		jobTimeout, err = backend.DefaultTaskTimeout, nil
+	}
 	if err != nil {
 		return false, remote(err)
 	}
