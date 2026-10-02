@@ -129,8 +129,12 @@ func dbErr(lc *localcfg.Config, err error, write bool) error {
 // /fugaro/project must be the project's name (plan R-9: a wrong project's
 // backend). An unmarked database is refused too.
 func checkDBProject(ctx context.Context, db *rtdb.Client, lc *localcfg.Config) error {
+	var raw json.RawMessage
+	found, err := db.Get(ctx, budget.PathProject, &raw)
 	var name string
-	found, err := db.Get(ctx, budget.PathProject, &name)
+	if err == nil && found && json.Unmarshal(raw, &name) != nil {
+		return userErr("the database at budget.rtdb_url has a /fugaro/project that is not a project name: it is not project %s's budget database; fix budget.rtdb_url in its config", lc.Name)
+	}
 	switch {
 	case err != nil:
 		return dbErr(lc, err, false)
@@ -297,6 +301,13 @@ type dbConfig struct {
 		Global *budget.Kill           `json:"global"`
 		Repos  map[string]budget.Kill `json:"repos"`
 	} `json:"kill"`
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func ms(t int64) string {
@@ -842,6 +853,25 @@ func buildEdits(ctx context.Context, db *rtdb.Client, p *setPlan, slug string) (
 		if p.clear {
 			e.newVal = nil
 			e.noop = !found
+			if found && p.scope == "repo" {
+				// The repository falls back to the defaults: a higher
+				// default, or none, is a loosening to confirm.
+				var def map[string]json.RawMessage
+				if _, _, err := read(budget.PathCapsDefaults, &def); err != nil {
+					return nil, err
+				}
+				for _, pair := range [][2]string{{"dailyMicros", "repoDailyMicros"}, {"perRunMicros", "repoPerRunMicros"}} {
+					own, err1 := microsOf(old[pair[0]])
+					dv, err2 := microsOf(def[pair[1]])
+					if err1 != nil || err2 != nil {
+						e.raise = true // unreadable: be careful
+						continue
+					}
+					if own != nil && (dv == nil || *dv > *own) {
+						e.raise = true
+					}
+				}
+			}
 			if found {
 				e.lines = []string{label + ": removed"}
 				for _, f := range []struct{ k, n string }{{dk, "daily"}, {pk, "per-run"}} {
@@ -918,7 +948,16 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 				return err
 			}
 		}
+		// Tightening first, loosening last: a failure half way never
+		// leaves a loosened budget behind a tightened one.
+		slices.SortStableFunc(edits, func(a, b *nodeEdit) int { return btoi(a.raise) - btoi(b.raise) })
 		stale := false
+		var written, pending []string
+		for _, e := range edits {
+			if !e.noop {
+				pending = append(pending, e.path)
+			}
+		}
 		for _, e := range edits {
 			if e.noop {
 				continue
@@ -929,8 +968,14 @@ func runBudgetSet(cmd *cobra.Command, o *budgetSetOptions) error {
 				break
 			}
 			if err != nil {
-				return dbErr(lc, err, true)
+				err = dbErr(lc, err, true)
+				if len(written) > 0 {
+					err = fmt.Errorf("%w\nthe update was only partly applied. written: %s; not written: %s", err, strings.Join(written, ", "), strings.Join(pending, ", "))
+				}
+				return err
 			}
+			written = append(written, e.path)
+			pending = pending[1:]
 			fmt.Fprintf(out, "set %s\n", e.path)
 		}
 		if !stale {
@@ -1039,6 +1084,12 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 			fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
 		} else {
 			fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+			if !o.all {
+				var g budget.Kill
+				if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
+					fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
+				}
+			}
 		}
 		return nil
 	}

@@ -27,6 +27,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // Config is the local CLI config.
@@ -186,6 +187,11 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 		}
 		if b.MaxRunTokens < 0 {
 			bad("budget.max_run_tokens %d: it must not be negative (0 is none)", b.MaxRunTokens)
+		}
+		if b.RTDBURL != "" {
+			if err := rtdb.ValidateURL(b.RTDBURL, c.Endpoints.NoAuth); err != nil {
+				bad("budget.rtdb_url: %v", err)
+			}
 		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")

@@ -514,3 +514,67 @@ func TestBudgetRefusesWithoutFirebaseConfig(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+func TestSetClearRepoFallingBackToHigherDefaultConfirms(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set(budget.PathCapsRepo(appSlug), map[string]any{"dailyMicros": 5 * usd1, "repo": "acme/app"})
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 60 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err == nil || !strings.Contains(err.Error(), "confirmation") {
+		t.Fatalf("err = %v", err)
+	}
+	if f.db.Value(budget.PathCapsRepo(appSlug)) == nil {
+		t.Fatal("the cap was removed unconfirmed")
+	}
+	// No default at all is confirmed too; a default that is lower is not.
+	f.db.Set(budget.PathCapsDefaults, nil)
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err == nil {
+		t.Fatal("clearing to no cap needed no confirmation")
+	}
+	f.db.Set(budget.PathCapsDefaults, map[string]any{"repoDailyMicros": 2 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--repo", "acme/app", "--clear"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value(budget.PathCapsRepo(appSlug)) != nil {
+		t.Fatal("not cleared")
+	}
+}
+
+func TestShowRefusesNonStringProjectMark(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set("fugaro/project", map[string]any{"name": "aurora"})
+	_, _, err := execute(t, "budget", "show")
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestBudgetRefusesBadRTDBURL(t *testing.T) {
+	// A config that loads (no_auth lifts the loopback rule) is still
+	// checked at open time when it has credentials.
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: \"https://evil.example.com\" }\n")
+	if _, _, err := execute(t, "budget", "show"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestResumeRepoWarnsWhileGlobalKillOn(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set(budget.PathKillGlobal, map[string]any{"on": true, "by": "boss@example.com", "at": int64(1)})
+	f.db.Set(budget.PathKillRepo(appSlug), map[string]any{"on": true, "by": "x", "at": int64(1)})
+	out, _, err := execute(t, "budget", "resume", "--repo", "acme/app", "--yes")
+	if err != nil || !strings.Contains(out, "project-wide kill switch is still on") {
+		t.Fatalf("err = %v, out = %q", err, out)
+	}
+}
+
+func TestSetPartialFailureNamesWhatWasWritten(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set("config/mode", "enforce")
+	seedCaps(f, 100, 20)
+	f.db.Deny("config/mode")
+	// Tightening (the daily cap) goes first; the mode loosening then fails.
+	_, _, err := execute(t, "budget", "set", "--global", "--daily", "50", "--mode", "observe", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "partly applied") || !strings.Contains(err.Error(), nodeCG) || !strings.Contains(err.Error(), "config/mode") {
+		t.Fatalf("err = %v", err)
+	}
+}

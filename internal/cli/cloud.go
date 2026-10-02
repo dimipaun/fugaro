@@ -185,6 +185,9 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}
+	if err := rtdb.ValidateURL(lc.Budget.RTDBURL, lc.Endpoints.NoAuth); err != nil {
+		return nil, nil, userErr("budget.rtdb_url: %v", err)
+	}
 	auth := rtdb.Auth{IDToken: func() string { return "" }}
 	if !lc.Endpoints.NoAuth {
 		ts, err := google.DefaultTokenSource(ctx, budgetScopes...)

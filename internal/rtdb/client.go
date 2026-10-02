@@ -34,6 +34,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -126,6 +127,11 @@ func New(baseURL string, auth Auth, opts ...Option) (*Client, error) {
 	}
 	if (auth.IDToken == nil) == (auth.Source == nil) {
 		return nil, errors.New("rtdb: set exactly one of Auth.IDToken and Auth.Source")
+	}
+	// A person's OAuth token must never travel in cleartext to a remote
+	// host: with a token source, plain http is for loopback fakes only.
+	if auth.Source != nil && u.Scheme != "https" && !isLoopback(u.Hostname()) {
+		return nil, fmt.Errorf("rtdb: %q: an OAuth token is only sent over https (or to a loopback address)", u.Host)
 	}
 	u.Path, u.RawPath, u.RawQuery, u.Fragment = strings.TrimRight(u.Path, "/"), "", "", ""
 	c := &Client{base: u, auth: auth, hc: &http.Client{}, backMin: time.Second, backMax: 30 * time.Second, idle: 90 * time.Second}
@@ -410,4 +416,35 @@ func (c *Client) observe(resp *http.Response) {
 			c.clock.Store(&serverClock{server: t, local: time.Now()})
 		}
 	}
+}
+
+var (
+	hostLegacy = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.firebaseio\.com$`)
+	hostRegion = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*\.[a-z0-9-]+\.firebasedatabase\.app$`)
+)
+
+func isLoopback(host string) bool {
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+// ValidateURL checks that raw names a Firebase Realtime Database
+// (https://<db>.firebaseio.com or https://<db>.<region>.firebasedatabase.app),
+// with no userinfo, port, query, fragment or path. loopbackOK also admits
+// http(s) to a loopback address, for fakes and emulators.
+func ValidateURL(raw string, loopbackOK bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("%q is not a URL", raw)
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (u.Path != "" && u.Path != "/") || u.Opaque != "" {
+		return fmt.Errorf("%q must be just the database's address, with no credentials, path, query or fragment", u.Host)
+	}
+	if loopbackOK && isLoopback(u.Hostname()) && (u.Scheme == "http" || u.Scheme == "https") {
+		return nil
+	}
+	host := strings.ToLower(u.Host)
+	if u.Scheme != "https" || (!hostLegacy.MatchString(host) && !hostRegion.MatchString(host)) {
+		return fmt.Errorf("%q must be https://<database>.firebaseio.com or https://<database>.<region>.firebasedatabase.app", raw)
+	}
+	return nil
 }
