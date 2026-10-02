@@ -542,3 +542,15 @@ func logMatchViolations(blk block) []string {
 	}
 	return out
 }
+
+// The history account gets its own narrow role, never fugaroLauncher (which
+// can cancel executions and list secret metadata).
+func TestHistoryAccountDoesNotHoldTheLauncherRole(t *testing.T) {
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if strings.Contains(blk.body, "google_service_account.history") && strings.Contains(blk.body, "custom_role.launcher") {
+				t.Errorf("%s: %s grants the launcher role to the history account", path, blk.name)
+			}
+		}
+	})
+}

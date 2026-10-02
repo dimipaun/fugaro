@@ -599,7 +599,6 @@ const firebaseBudget = `budget:
   firebase_api_key: AIzaSyA0123456789abcdefghijklmnopqrstu
   token_signer: fugaro-token-signer@aurora-fp.iam.gserviceaccount.com
   unreachable_grace: 3m
-  heartbeat: 15s
 `
 
 func TestLocalConfigBudgetFirebaseKeys(t *testing.T) {
@@ -610,7 +609,7 @@ func TestLocalConfigBudgetFirebaseKeys(t *testing.T) {
 	b := c.Budget
 	if b.FirebaseProject != "aurora-fp" || b.RTDBURL != "https://aurora-fp-default-rtdb.firebaseio.com" ||
 		b.FirebaseAPIKey != "AIzaSyA0123456789abcdefghijklmnopqrstu" || b.TokenSigner != "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com" ||
-		b.Grace != 3*time.Minute || b.Heartbeat != 15*time.Second || !slices.Equal(c.Terraform.BudgetAdmins, []string{"user:boss@example.com"}) {
+		b.Grace != 3*time.Minute || !slices.Equal(c.Terraform.BudgetAdmins, []string{"user:boss@example.com"}) {
 		t.Fatalf("budget = %+v, admins %v", b, c.Terraform.BudgetAdmins)
 	}
 	// It writes back and reads again unchanged.
@@ -629,7 +628,8 @@ func TestLocalConfigBudgetFirebaseKeys(t *testing.T) {
 		"signer":          "budget: { token_signer: someone@example.com }\n",
 		"grace too small": "budget: { unreachable_grace: 1s }\n",
 		"grace too large": "budget: { unreachable_grace: 24h }\n",
-		"heartbeat":       "budget: { heartbeat: 10m }\n",
+		"grace above 3m":  "budget: { unreachable_grace: 10m }\n",
+		"heartbeat":       "budget: { heartbeat: 15s }\n",
 		"admin domain":    "terraform: { budget_admins: [\"domain:example.com\"] }\n",
 		"admin wildcard":  "terraform: { budget_admins: [\"user:*@example.com\"] }\n",
 		"admin bare":      "terraform: { budget_admins: [boss@example.com] }\n",

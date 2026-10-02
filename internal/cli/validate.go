@@ -86,7 +86,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
-			Message: "per_day_usd is enforced by the runner against this repository's day counter only, not by the database; a lower RTDB cap wins"})
+			Message: "per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (init --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"})
 	}
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the

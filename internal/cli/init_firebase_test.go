@@ -731,3 +731,19 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 		}
 	}
 }
+
+// With no history image the operator is told the exact commands that build
+// and push it: nothing else does.
+func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
+	r := newFBRig(t)
+	_ = r
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	for _, want := range []string{"sh images/build-base.sh history " + historyImagePath, "docker push " + historyImagePath, "gcloud auth configure-docker us-east5-docker.pkg.dev"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}

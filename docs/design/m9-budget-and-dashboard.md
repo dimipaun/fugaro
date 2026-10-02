@@ -486,7 +486,7 @@ These record where the build settled something the design left open. The authori
 |---|---|
 | `fugaro-token-signer` (a new account in the FP, display name `Fugaro token signer`) | **No roles at all.** It exists only as the key that signs custom tokens |
 | Launchers and operators | `roles/firebasedatabase.viewer` and `roles/datastore.viewer` on the FP, plus the custom role **`fugaroTokenMinter`** (`iam.serviceAccounts.signJwt` only) **on the signer account**. That is narrower than `serviceAccountTokenCreator`, which would also let them mint access tokens |
-| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the project's GCP project, `fugaroLauncher` (`run.executions.list`, for the cross-check) |
+| `fugaro-history` (the history job's account) | `roles/firebasedatabase.admin`, `roles/datastore.user` and `roles/firebaseauth.admin` (to delete expired run users) on the FP. In the project's GCP project, its own narrow custom role `fugaroHistory` (`run.executions.list` and `get`, `run.jobs.get` and `list`, `run.operations.get`, for the cross-check) |
 | `fugaro-scheduler` | `roles/run.invoker` on the history job |
 | Job accounts | **Nothing on the FP.** They hold a Firebase ID token, which is not an IAM identity |
 | Budget admins (D6) | `roles/firebasedatabase.admin` and `roles/datastore.viewer` on the FP, granted by the Firebase root to: the GCP project's `roles/owner` and `roles/editor` members, which `init --firebase` reads from the GCP project's IAM policy and passes as tfvars; and `terraform.budget_admins`. The FP's own owners and editors (at least the person who created it) hold admin implicitly |
@@ -660,7 +660,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   - **Providers.** Its providers (`google` and `google-beta`, pinned) target the FP, with `project`, `billing_project` and `user_project_override`.
   - **Inputs.** It receives, as tfvars, the installation's outputs: launchers, operators, `budget_admins`, the discovered owners and editors, the history account's email and the FP ID. There is no remote-state coupling, as in §8.1.
   - **What it holds.** Everything that lives in the FP: the APIs, the Firebase project, RTDB, Firestore, Firestore rules, the signer and the minter role, and every grant onto the FP.
-- **The installation root** (gated by `enable_budget`) holds the history account, the history job and its two Scheduler jobs, and the history account's `fugaroLauncher` grant. Its inputs include the Firebase root's outputs (`rtdb_url`, `firebase_api_key`, `token_signer`, `firestore_database`).
+- **The installation root** (gated by `enable_budget`) holds the history account, the history job and its two Scheduler jobs, and the history account's `fugaroHistory` role and its grant. Its inputs include the Firebase root's outputs (`rtdb_url`, `firebase_api_key`, `token_signer`, `firestore_database`).
 - **The repository root** passes the jobs' budget environment from the same outputs. Job accounts get **no** grant on the FP.
 
 ### 6.7 `fugaro init`
@@ -690,11 +690,9 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
     mode: enforce                    # off | observe | enforce
     firebase_project: my-fugaro-fp   # the installation's dedicated Firebase project (D3)
     rtdb_url: https://<instance>.firebaseio.com
-    firestore_database: "(default)"
     firebase_api_key: <web-api-key>  # not a secret; restricted to identitytoolkit and securetoken
     token_signer: fugaro-token-signer@<fp>.iam.gserviceaccount.com
-    heartbeat: 15s
-    unreachable_grace: 3m
+    unreachable_grace: 3m            # 5s to 3m: it can only shorten the default
     per_run_usd: 20                  # M9a in-process cap; with M9b the effective cap is min(this, RTDB caps)
   model_prices: {}
   ```

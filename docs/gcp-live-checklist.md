@@ -344,7 +344,7 @@ back.
 
 **Cost:** about $0.30 for the first run (the cap is $2.00; one call's worst case is far below it), and the second run halts at its first call, for nothing. It spends **your** money on **your** key.
 
-**Who runs it, and the key.** You run it, at your own terminal. The key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY` in your shell, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it finds it in the run's output, the bucket or the provider state. The test refuses to run unless `FUGARO_LIVE_SPEND_OK=1` is set, and skips (it does not fail) when any of the three variables is missing. An agent or a controller must not hold the key or run this test; if you have no API key, the check stays open (see "If it can't be run").
+**Who runs it, and the key.** You run it, at your own terminal. The key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY` in your shell, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it finds it in the run's output, the bucket or the provider state. The test skips (it does not fail) unless all three variables are set, `FUGARO_LIVE_SPEND_OK=1` included. An agent or a controller must not hold the key or run this test; if you have no API key, the check stays open (see "If it can't be run").
 
 **Before it (free):**
 
@@ -382,7 +382,7 @@ back.
 
 **Cost:** about $0.50 on your key: a full run at about $0.30 (the lease and release run), a run that a **$0.25 repository daily cap** halts part-way, a run a **$0.002 per-run cap** halts at its first call (free), and a run killed a few seconds after it registers. The token-expiry and grace checks cost nothing.
 
-**Who runs it, and the key.** As for check 20: you, at your own terminal; the Anthropic key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY`, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it, or a minted custom token, appears in a run's output, bucket or pushed files. The test refuses to run unless `FUGARO_LIVE_SPEND_OK=1`, and skips when any variable is missing. An agent or a controller must not hold the key, the signer rights or run this test.
+**Who runs it, and the key.** As for check 20: you, at your own terminal; the Anthropic key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY`, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it, or a minted custom token, appears in a run's output, bucket or pushed files. The test skips (it does not fail) unless all six variables are set, `FUGARO_LIVE_SPEND_OK=1` included. `FUGARO_LIVE_REQUESTED_BY` is optional (default `live-budget-test`): it is the `rb` claim of the tokens the test mints. An agent or a controller must not hold the key, the signer rights or run this test.
 
 **Before it (free):**
 
@@ -405,7 +405,8 @@ back.
 
 - **SSE over Cloud Run egress for an hour** (A-F2): the kill stream survives a long run on default egress and `auth_revoked` arrives on token refresh; otherwise the 15-second poll is the only kill path.
 - **The history job's sweep actually runs:** a Scheduler execution of `fugarohist` ends `succeeded`, and **Cloud Run reports the overridden env in `execution.template.containers[0].env`** (the sweeper's execution lookup relies on it); the sweep finds a leaked entry and a deleted run's execution as missing.
-- **The first CI run of the history image job** (the image is built and pushed by CI).
+- **The first CI run of the history image job** (CI builds, smoke-tests and scans the image but does not push it: the push is manual, `sh images/build-base.sh history <registry>/fugaro-base/history:latest` then `docker push`, as `init --firebase` prints, gcp-setup.md "The history image").
+- **The third apply as a plain operator:** nobody holds `actAs` on the history account, so record whether creating the history job succeeds for an operator who is neither owner nor editor (it needs them to be able to act as the account by other means).
 - **`createdAt` of a custom-token user** (the sweeper deletes users older than 2 days by it) and **Secure Token's error codes** on a revoked or expired refresh (`TOKEN_EXPIRED`, `USER_NOT_FOUND`, `INVALID_REFRESH_TOKEN`): the runner classifies them as expired, revoked or invalid.
 - **`ETag` of a never-written node:** `null_etag`, as the cap writes assume for an unset cap.
 - **The real `batchGet`/`batchDelete` shapes** of Identity Toolkit used by the sweeper.

@@ -60,3 +60,19 @@ func TestKillStreamErrorsCountOnlyWithAFailingPoll(t *testing.T) {
 		t.Fatal("a stream error with a failing poll did not count")
 	}
 }
+
+// A successful call that is not a kill read must not end the kill-poll clock.
+func TestOtherSuccessesDoNotClearTheKillPollClock(t *testing.T) {
+	g := NewGrace(time.Hour)
+	s := &Session{grace: g, log: discardLog()}
+	g.Fail("kill-poll", errors.New("decode"))
+	g.Fail("heartbeat", errors.New("503"))
+	s.dbOK()
+	if !g.FailingSource("kill-poll") || g.FailingSource("heartbeat") {
+		t.Fatal("dbOK must end the database clocks but not kill-poll")
+	}
+	g.OK("kill-poll")
+	if g.FailingSource("kill-poll") {
+		t.Fatal("a kill read must end its clock")
+	}
+}

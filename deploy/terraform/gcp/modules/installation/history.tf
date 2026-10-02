@@ -27,13 +27,32 @@ resource "google_service_account" "history" {
 }
 
 # The sweep's cross-check lists the project's Cloud Run executions, as fugaro
-# ls does: fugaroLauncher holds run.executions.list and read access to jobs.
-# On the project, nothing on the FP (the Firebase root grants those).
+# ls does. It gets a role of its own with just that (and the job reads the
+# listing joins), not fugaroLauncher, which also cancels executions and reads
+# secret metadata. On the project, nothing on the FP (the Firebase root
+# grants those).
+resource "google_project_iam_custom_role" "history" {
+  count = var.enable_budget ? 1 : 0
+
+  project = var.project
+  role_id = "fugaroHistory"
+  title   = "Fugaro history sweeper"
+  permissions = [
+    "run.executions.list",
+    "run.executions.get",
+    "run.jobs.get",
+    "run.jobs.list",
+    "run.operations.get",
+  ]
+
+  depends_on = [google_project_service.this]
+}
+
 resource "google_project_iam_member" "history_launcher" {
   count = var.enable_budget ? 1 : 0
 
   project = var.project
-  role    = google_project_iam_custom_role.launcher.name
+  role    = google_project_iam_custom_role.history[0].name
   member  = google_service_account.history[0].member
 }
 

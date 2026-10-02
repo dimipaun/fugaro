@@ -2,14 +2,32 @@ package budget
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
 
+// killNode decodes a kill switch for a running run: a node that exists but
+// does not decode (a wrong type, a stray scalar) counts as ON, because the
+// reason an admin wrote it is lost but the intent to stop is not. A switch
+// nobody can read must not be one nobody honours.
+type killNode struct{ Kill }
+
+func (k *killNode) UnmarshalJSON(b []byte) error {
+	type plain Kill
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		k.Kill = Kill{On: true, Reason: "unreadable switch"}
+		return nil
+	}
+	k.Kill = Kill(p)
+	return nil
+}
+
 // checkKills reads the two switches this run honours and halts the run if one
 // is on. Its outcome feeds the grace under source.
 func (s *Session) checkKills(ctx context.Context, source string) {
-	var kg, kr Kill
+	var kg, kr killNode
 	fg, err1 := s.db.Get(ctx, PathKillGlobal, &kg)
 	fr, err2 := s.db.Get(ctx, PathKillRepo(s.cfg.Slug), &kr)
 	if err := errors.Join(err1, err2); err != nil {
@@ -17,12 +35,13 @@ func (s *Session) checkKills(ctx context.Context, source string) {
 		return
 	}
 	s.dbOK()
+	s.grace.OK("kill-poll") // only a successful kill read ends this clock
 	var k Kills
 	if fg {
-		k.Global = &kg
+		k.Global = &kg.Kill
 	}
 	if fr {
-		k.Repo = &kr
+		k.Repo = &kr.Kill
 	}
 	if h := killHalt(k); h != nil {
 		s.halt(*h)

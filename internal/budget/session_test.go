@@ -317,6 +317,21 @@ func TestKillPollIsABackstop(t *testing.T) {
 	}
 }
 
+// A switch that exists but cannot be decoded counts as on: the run halts.
+func TestMalformedKillSwitchHalts(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.KillRestart = time.Hour
+	f.started(budget.AgentEntry{})
+	waitFor(t, "the streams", func() bool { return f.db.Streams() == 2 })
+	f.db.SendCancel()
+	waitFor(t, "the streams to close", func() bool { return f.db.Streams() == 0 })
+	f.db.Set(budget.PathKillRepo(slug), map[string]any{"on": "yes please"}) // a string where a bool belongs
+	h, ok := f.nextHalt(3 * time.Second)
+	if !ok || h.Reason != budget.ReasonKillSwitch || h.Scope != budget.ScopeRepo {
+		t.Fatalf("halt = %+v, %v", h, ok)
+	}
+}
+
 func TestAdmitKillAndNoCap(t *testing.T) {
 	cases := []struct {
 		name   string

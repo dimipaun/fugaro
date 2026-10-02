@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -62,7 +63,7 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 		h.DeployJob = ok
 		if !ok && !r.historyNoted {
 			r.historyNoted = true
-			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed: its image %s is not built yet; run fugaro init --firebase again once it exists", h.Image))
+			r.warn(fmt.Sprintf("the history job (the sweeper of crashed runs) is not deployed, so crashed runs are not cleaned up and old run users are not deleted: its image %s does not exist, and nothing builds it for you (like the dev base image until M7). From a checkout of this repository run\n  sh images/build-base.sh history %s\n  docker push %s\nthen run fugaro init --firebase again (gcloud auth configure-docker %s lets docker push there)", h.Image, h.Image, h.Image, strings.SplitN(h.Image, "/", 2)[0]))
 		}
 	}
 	spec.History = &h

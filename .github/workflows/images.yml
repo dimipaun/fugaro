@@ -110,7 +110,7 @@ jobs:
           path: fugaro-${{ matrix.base }}.tar.gz
           retention-days: 1
   # The history job's image (design D11): built and checked on every run, not
-  # published until M7 publishes images; fugaro init builds it for the project.
+  # published until M7 publishes images; the operator builds and pushes it by hand (docs/gcp-setup.md, "The history image").
   history:
     needs: version
     permissions:

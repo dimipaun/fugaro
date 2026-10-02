@@ -31,9 +31,6 @@ const (
 	BudgetGraceEnv = "FUGARO_BUDGET_GRACE"
 )
 
-// minGrace is the shortest grace the environment may ask for.
-const minGrace = 5 * time.Second
-
 // Backend is how the run reaches the project's budget database. The zero
 // value is no backend.
 type Backend struct {
@@ -71,8 +68,8 @@ func BackendFromEnv(lookup func(string) (string, bool), loopbackOK bool) (Backen
 	}
 	if v, ok := lookup(BudgetGraceEnv); ok {
 		d, err := time.ParseDuration(v)
-		if err != nil || d < minGrace || d > budget.DefaultGrace {
-			return Backend{}, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, v, minGrace, budget.DefaultGrace)
+		if err != nil || d < budget.MinGrace || d > budget.MaxGrace {
+			return Backend{}, fmt.Errorf("%s %q: it must be a duration between %s and %s", BudgetGraceEnv, v, budget.MinGrace, budget.MaxGrace)
 		}
 		b.Grace = d
 	}
@@ -118,6 +115,27 @@ func (r *run) haltExternal(h runstore.Halt) bool {
 	return r.recordHaltLocked(h)
 }
 
+// refuseStrayToken ends a budget-on run that has no backend in its job
+// environment but was launched with a budget token: the job was not
+// re-applied after the shared budget was turned on, and the run would
+// otherwise go on outside the shared caps without a word. One bucket read,
+// only for budget-on runs without a backend; with no token object (every
+// install that never turned the shared budget on) it changes nothing.
+func (r *run) refuseStrayToken(ctx context.Context) error {
+	slug, runID := r.d.Store.Slug(), r.d.Store.RunID()
+	if r.d.Bucket == nil || budget.Key(slug) != slug || budget.Key(runID) != runID || slug == "" || runID == "" {
+		return nil
+	}
+	_, err := token.TakeObject(ctx, r.d.Bucket, slug, runID) // also deletes it
+	if errors.Is(err, token.ErrNoToken) {
+		return nil
+	}
+	if err != nil && !errors.Is(err, token.ErrTokenMismatch) {
+		return fmt.Errorf("checking for a budget token in the runs bucket: %s", r.redact(err.Error()))
+	}
+	return fmt.Errorf("the run was launched with a budget token but this job has no budget backend (%s is not set in its environment): run fugaro init --repo for this repository, then launch the run again", RTDBURLEnv)
+}
+
 // freezeHalts is called when the agent loop is over: nothing the backend says
 // can stop a stage any more.
 func (r *run) freezeHalts() {
@@ -147,7 +165,7 @@ func (r *run) startBudgetBackend(ctx context.Context) error {
 		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
 	}
 	if !r.backendOn() {
-		return nil
+		return r.refuseStrayToken(ctx)
 	}
 	b := r.d.Backend
 	if b.APIKey == "" {

@@ -463,7 +463,7 @@ func TestValidateAllowListProblemLabelsLayers(t *testing.T) {
 // The committed day cap is client-enforced: validate says so, and that an
 // RTDB cap lower than it wins. A file without one says nothing about it.
 func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
-	const want = "warning: budget.per_day_usd: per_day_usd is enforced by the runner against this repository's day counter only, not by the database; a lower RTDB cap wins"
+	const want = "warning: budget.per_day_usd: per_day_usd is enforced by the runner against this repository's day counter only while the project has the shared budget (init --firebase, mode observe or enforce); on a project without it nothing enforces it. A lower RTDB cap wins"
 	path := fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_day_usd: 10 }\n", pinnedAgent)
 	out, errOut, err := execute(t, "validate", path)
 	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, want) {

@@ -786,6 +786,10 @@ run "history_account_first" {
     error_message = "the history account's email is an output, for the Firebase root"
   }
   assert {
+    condition     = length(google_project_iam_custom_role.history) == 1 && !contains(google_project_iam_custom_role.history[0].permissions, "run.executions.cancel") && contains(google_project_iam_custom_role.history[0].permissions, "run.executions.list")
+    error_message = "the history account has its own narrow role: it lists executions and cannot cancel them"
+  }
+  assert {
     condition     = length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0 && length(google_cloud_run_v2_job_iam_member.history_invoker) == 0
     error_message = "the first apply deploys only the account: the job and its Scheduler job wait for deploy_job"
   }
@@ -818,10 +822,10 @@ run "TestHistoryAccountGrants" {
   }
 
   override_resource {
-    target          = google_project_iam_custom_role.launcher
+    target          = google_project_iam_custom_role.history[0]
     override_during = plan
     values = {
-      name = "projects/proj-1234/roles/fugaroLauncher"
+      name = "projects/proj-1234/roles/fugaroHistory"
     }
   }
 
@@ -837,8 +841,8 @@ run "TestHistoryAccountGrants" {
   }
 
   assert {
-    condition     = google_project_iam_member.history_launcher[0].role == "projects/proj-1234/roles/fugaroLauncher" && google_project_iam_member.history_launcher[0].member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
-    error_message = "the history account holds fugaroLauncher on the project, for run.executions.list"
+    condition     = google_project_iam_member.history_launcher[0].role == "projects/proj-1234/roles/fugaroHistory" && google_project_iam_member.history_launcher[0].member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    error_message = "the history account holds its own narrow fugaroHistory role on the project, for run.executions.list"
   }
   assert {
     condition     = length(google_service_account_iam_member.scheduler_user) == 1 && !contains(keys(google_service_account_iam_member.scheduler_user), "user:launcher@example.com")

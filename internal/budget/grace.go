@@ -9,6 +9,14 @@ import (
 // (decision D14).
 const DefaultGrace = 3 * time.Minute
 
+// The grace a project may configure (budget.unreachable_grace, carried to the
+// job as FUGARO_BUDGET_GRACE) is MinGrace to MaxGrace: it can only shorten
+// the default. localcfg and the runner both use these.
+const (
+	MinGrace = 5 * time.Second
+	MaxGrace = DefaultGrace
+)
+
 // Grace is the run's outage clock (design R6). Every call to the backend
 // reports its outcome under a source name ("lease", "heartbeat", "kill",
 // "exchange", ...). A source starts a clock at its first failure; the clock

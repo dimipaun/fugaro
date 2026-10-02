@@ -578,3 +578,27 @@ func TestSetPartialFailureNamesWhatWasWritten(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestSetEnforceNeedsGlobalCaps(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	f.db.Set("config/mode", "observe")
+	_, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes")
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "global caps") {
+		t.Fatalf("err = %v, want a refusal naming the caps", err)
+	}
+	if f.db.Value("config/mode") != "observe" {
+		t.Fatal("the mode was written")
+	}
+	// Only a daily cap in the database: still refused; giving the per-run
+	// cap in the same command is enough.
+	f.db.Set(nodeCG, map[string]any{"dailyMicros": 100 * usd1})
+	if _, _, err := execute(t, "budget", "set", "--global", "--mode", "enforce", "--yes"); err == nil {
+		t.Fatal("enforce was accepted with no per-run cap")
+	}
+	if _, _, err := execute(t, "budget", "set", "--global", "--per-run", "20", "--mode", "enforce", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if f.db.Value("config/mode") != "enforce" {
+		t.Fatal("the mode was not written")
+	}
+}

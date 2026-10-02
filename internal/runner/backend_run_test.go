@@ -779,6 +779,20 @@ func TestBackendErrIsInfraError(t *testing.T) {
 	}
 }
 
+// A token object but no backend in the job's environment: the job was not
+// re-applied after the budget was turned on. The run must not go on unbudgeted.
+func TestTokenWithoutBackendIsInfraError(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "5")
+	b.deps.Backend = runner.Backend{}
+	rec, err := b.run(t)
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "fugaro init --repo") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !b.tokenObjectGone() {
+		t.Fatal("the unused token object was left behind")
+	}
+}
+
 func TestBackendWithoutAPIKeyIsInfraError(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
 	b.deps.Backend.APIKey = ""

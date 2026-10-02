@@ -270,9 +270,14 @@ func outage(err error) bool {
 // are a different backend and are not cleared by the database.
 var dbSources = []string{"config", "registry", "lease", "report", "heartbeat", "kill-poll"}
 
-// dbOK records a successful call to the database.
+// dbOK records a successful call to the database. It does not end the
+// kill-poll clock: only a successful kill read does (checkKills), so a
+// kill read that keeps failing cannot be hidden by the heartbeat's writes.
 func (s *Session) dbOK() {
 	for _, k := range dbSources {
+		if k == "kill-poll" {
+			continue
+		}
 		s.grace.OK(k)
 	}
 }
@@ -340,8 +345,8 @@ func (s *Session) readConfig(ctx context.Context) (Snapshot, error) {
 		rc  RepoCaps
 		lim Limits
 		mod string
-		kg  Kill
-		kr  Kill
+		kg  killNode
+		kr  killNode
 	)
 	var gg, gd, gr, gl, gm, gkg, gkr bool
 	jobs := []struct {
@@ -383,10 +388,10 @@ func (s *Session) readConfig(ctx context.Context) (Snapshot, error) {
 		sn.Caps.Mode = mod
 	}
 	if gkg {
-		sn.Kills.Global = &kg
+		sn.Kills.Global = &kg.Kill
 	}
 	if gkr {
-		sn.Kills.Repo = &kr
+		sn.Kills.Repo = &kr.Kill
 	}
 	s.mu.Lock()
 	s.caps = sn.Caps

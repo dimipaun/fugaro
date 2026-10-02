@@ -24,6 +24,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -102,19 +103,10 @@ type Budget struct {
 	FirebaseAPIKey  string `yaml:"firebase_api_key,omitempty"`
 	TokenSigner     string `yaml:"token_signer,omitempty"`
 	// Grace is how long a run keeps going when the backend is unreachable
-	// before it halts (D14); 0 is the default, 3m. Heartbeat is how often a
-	// run reports to the registry; 0 is the default, 15s.
-	Grace     time.Duration `yaml:"unreachable_grace,omitempty"`
-	Heartbeat time.Duration `yaml:"heartbeat,omitempty"`
+	// before it halts (D14); 0 is the default, 3m, and it may only shorten
+	// it (budget.MinGrace to budget.MaxGrace, the bounds the job enforces).
+	Grace time.Duration `yaml:"unreachable_grace,omitempty"`
 }
-
-// The bounds of Budget.Grace and Budget.Heartbeat.
-const (
-	MinBudgetGrace     = 5 * time.Second
-	MaxBudgetGrace     = 30 * time.Minute
-	MinBudgetHeartbeat = 5 * time.Second
-	MaxBudgetHeartbeat = time.Minute
-)
 
 // ModelPrice is one model's prices, in US dollars per million tokens. A
 // field left out takes the list default (cache_write_5m 1.25, cache_write_1h
@@ -223,11 +215,8 @@ func (c *Config) validateBudget(bad func(string, ...any)) {
 		if b.TokenSigner != "" && !signerRE.MatchString(b.TokenSigner) {
 			bad("budget.token_signer %q is not a service account email (<id>@<project>.iam.gserviceaccount.com)", b.TokenSigner)
 		}
-		if b.Grace != 0 && (b.Grace < MinBudgetGrace || b.Grace > MaxBudgetGrace) {
-			bad("budget.unreachable_grace %v: it must be from %v to %v (leave it out for 3m)", b.Grace, MinBudgetGrace, MaxBudgetGrace)
-		}
-		if b.Heartbeat != 0 && (b.Heartbeat < MinBudgetHeartbeat || b.Heartbeat > MaxBudgetHeartbeat) {
-			bad("budget.heartbeat %v: it must be from %v to %v (leave it out for 15s)", b.Heartbeat, MinBudgetHeartbeat, MaxBudgetHeartbeat)
+		if b.Grace != 0 && (b.Grace < budget.MinGrace || b.Grace > budget.MaxGrace) {
+			bad("budget.unreachable_grace %v: it must be from %v to %v (leave it out for 3m)", b.Grace, budget.MinGrace, budget.MaxGrace)
 		}
 		if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 			bad("budget.allowed_models: it must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")

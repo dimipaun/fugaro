@@ -4,9 +4,10 @@
 # history --sweep). It holds firebasedatabase.admin and firebaseauth.admin on
 # the Firebase project, so it carries no shell, no package manager, no git, no
 # model CLI and no credential: its identity is the job's service account.
-# `fugaro init` builds it from this directory until M7 publishes images
-# (D11); build it by hand from the repository root with
-# images/build-base.sh history. The syntax pin above, like the one in
+# Nothing builds or publishes it for the project until M7 publishes images
+# (D11): build it by hand from the repository root with
+# images/build-base.sh history <registry>/fugaro-base/history:latest and
+# docker push it (fugaro init --firebase prints the commands). The syntax pin above, like the one in
 # images/web-node/Dockerfile, is bumped by hand monthly.
 
 FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS fugaro
@@ -26,7 +27,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
       -o /out/fugaro ./cmd/fugaro
 
 # static-debian12:nonroot has CA certificates, tzdata and uid 65532 and
-# nothing else. Pin it by digest when it is first built in CI
+# nothing else. Pinned by tag only: pin it by digest when the digest is known
 # (docker buildx imagetools inspect gcr.io/distroless/static-debian12:nonroot).
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=fugaro /out/fugaro /usr/local/bin/fugaro

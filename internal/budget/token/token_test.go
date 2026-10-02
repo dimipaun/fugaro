@@ -600,10 +600,9 @@ func TestKeepRefreshesAndRetries(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- s.Keep(ctx) }()
-	waitFor(t, func() bool { return e.itk.Refreshes() >= 1 }, "a background refresh")
-	if s.Token() == first {
-		t.Fatal("Keep refreshed but the token did not change")
-	}
+	// The fake counts a refresh before the client swaps the token in, so wait
+	// for the token itself.
+	waitFor(t, func() bool { return e.itk.Refreshes() >= 1 && s.Token() != first }, "a background refresh that changed the token")
 	// An outage: refreshes fail and are retried, then succeed.
 	e.itk.Refuse(503, "UNAVAILABLE", "", "later")
 	waitFor(t, func() bool {
