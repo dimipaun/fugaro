@@ -128,6 +128,20 @@ type Record struct {
 	// Policy is the budget and model policy the run ran under, set only
 	// when a layer set something (a run with no policy writes none).
 	Policy *PolicyRecord `json:"policy,omitempty"`
+	// Budget is the run's part in the project's shared budget, set only
+	// when the run used the budget backend (M9b).
+	Budget *BudgetRecord `json:"budget,omitempty"`
+}
+
+// BudgetRecord says how the run used the shared budget: the UTC day number
+// it started on, what its leases granted and gave back in micro-dollars, the
+// effective mode and the backend's kind.
+type BudgetRecord struct {
+	Day            int64  `json:"day"`
+	GrantedMicros  int64  `json:"granted_micros"`
+	ReleasedMicros int64  `json:"released_micros"`
+	Mode           string `json:"mode"`
+	Backend        string `json:"backend"`
 }
 
 // PolicyRecord is the effective budget and model policy of a run, merged

@@ -512,3 +512,53 @@ func TestPolicyRecordSchema(t *testing.T) {
 		t.Error("schema accepts an unknown key in policy")
 	}
 }
+
+func TestBudgetRecordSchema(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 2, 10, 0, 0, 0, time.UTC)
+	check := func(mut func(*runstore.Record)) error {
+		t.Helper()
+		rec := runstore.Record{Version: 1, RunID: "20261002-100000-abcd", Status: runstore.StatusRunning, Stage: "bootstrap",
+			Outcome: runstore.OutcomeNone, StartedAt: at}
+		mut(&rec)
+		data, err := json.Marshal(rec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return sch.Validate(inst)
+	}
+	good := runstore.BudgetRecord{Day: 20729, GrantedMicros: 2_000_000, ReleasedMicros: 750_000, Mode: "enforce", Backend: "rtdb"}
+	if err := check(func(r *runstore.Record) { r.Budget = &good }); err != nil {
+		t.Errorf("schema rejects a budget record: %v", err)
+	}
+	if err := check(func(r *runstore.Record) {}); err != nil {
+		t.Errorf("schema rejects a record without a budget: %v", err)
+	}
+	// The committed day cap is part of the effective policy.
+	if err := check(func(r *runstore.Record) {
+		r.Policy = &runstore.PolicyRecord{Effective: runstore.PolicyEffective{PerRunUSD: 5, PerDayUSD: 20, Mode: "enforce"}}
+	}); err != nil {
+		t.Errorf("schema rejects per_day_usd in the effective policy: %v", err)
+	}
+	for name, mut := range map[string]func(*runstore.BudgetRecord){
+		"bad mode":      func(b *runstore.BudgetRecord) { b.Mode = "loose" },
+		"bad backend":   func(b *runstore.BudgetRecord) { b.Backend = "sql" },
+		"negative":      func(b *runstore.BudgetRecord) { b.GrantedMicros = -1 },
+		"negative rel.": func(b *runstore.BudgetRecord) { b.ReleasedMicros = -1 },
+	} {
+		b := good
+		mut(&b)
+		if err := check(func(r *runstore.Record) { r.Budget = &b }); err == nil {
+			t.Errorf("schema accepts a budget record with %s", name)
+		}
+	}
+	doc := `{"version":1,"run_id":"20261002-100000-abcd","status":"running","stage":"bootstrap","outcome":"none","cost_usd":0,"started_at":"2026-10-02T10:00:00Z","budget":{"day":1,"granted_micros":0,"released_micros":0,"mode":"observe","backend":"rtdb","extra":1}}`
+	inst, _ := jsonschema.UnmarshalJSON(strings.NewReader(doc))
+	if err := sch.Validate(inst); err == nil {
+		t.Error("schema accepts an unknown key in budget")
+	}
+}
