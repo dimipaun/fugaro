@@ -217,7 +217,17 @@ func (f *RTDB) write(w http.ResponseWriter, r *http.Request, path []string, body
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Invalid data; couldn't parse JSON object, array, or value."})
 		return
 	}
-	in = normalise(in)
+	if m, ok := in.(map[string]any); ok && r.Method == http.MethodPatch {
+		// A multi-path update's null deletes that location: keep the
+		// top-level nulls normalise would prune.
+		kept := make(map[string]any, len(m))
+		for k, v := range m {
+			kept[k] = normalise(v)
+		}
+		in = kept
+	} else {
+		in = normalise(in)
+	}
 	for _, seg := range path {
 		if !validKey(seg) {
 			badKey(w, seg)

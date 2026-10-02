@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -155,5 +156,43 @@ func TestIdentityToolkitRefresh(t *testing.T) {
 	}
 	if _, err := itk.IDTokenClaims("a.b.c"); err == nil {
 		t.Fatal("garbage verified")
+	}
+}
+
+func TestIdentityToolkitAdminListAndDelete(t *testing.T) {
+	f := NewIdentityToolkit(t, NewIAMCredentials(t), "key", "aurora-fp")
+	old := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	for _, u := range []string{"r~a~1", "r~a~2", "r~a~3"} {
+		f.AddUser(u, old)
+	}
+	get := func(q string) map[string]any {
+		resp, err := http.Get(f.URL + "/v1/projects/aurora-fp/accounts:batchGet" + q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var m map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&m)
+		return m
+	}
+	p1 := get("?maxResults=2")
+	users := p1["users"].([]any)
+	if len(users) != 2 || p1["nextPageToken"] == nil || users[0].(map[string]any)["createdAt"] != strconv.FormatInt(old.UnixMilli(), 10) {
+		t.Fatalf("page 1 = %v", p1)
+	}
+	if p2 := get("?maxResults=2&nextPageToken=" + p1["nextPageToken"].(string)); len(p2["users"].([]any)) != 1 || p2["nextPageToken"] != nil {
+		t.Fatalf("page 2 = %v", p2)
+	}
+	if code, _ := post(t, f.URL+"/v1/projects/aurora-fp/accounts:batchDelete", "application/json", "Bearer x", []byte(`{"localIds":["r~a~1"]}`)); code != 400 {
+		t.Fatalf("delete without force = %d", code)
+	}
+	if code, _ := post(t, f.URL+"/v1/projects/aurora-fp/accounts:batchDelete", "application/json", "Bearer x", []byte(`{"localIds":["r~a~1","r~a~2"],"force":true}`)); code != 200 {
+		t.Fatalf("delete = %d", code)
+	}
+	if got := f.Users(); len(got) != 1 || got[0] != "r~a~3" {
+		t.Fatalf("users = %v", got)
+	}
+	if code, _ := post(t, f.URL+"/v1/projects/other-fp/accounts:batchDelete", "application/json", "Bearer x", []byte(`{"localIds":["r~a~3"],"force":true}`)); code != 403 {
+		t.Fatalf("another project = %d", code)
 	}
 }

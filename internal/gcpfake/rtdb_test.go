@@ -332,3 +332,18 @@ func TestRTDBFakeSlowStreamConsumerDoesNotBlockWrites(t *testing.T) {
 		t.Fatalf("get = %d", code)
 	}
 }
+
+// A multi-path PATCH's null deletes that location, as in the real database
+// (the sweeper deletes a registry entry in the same update that records the
+// outcome).
+func TestRTDBFakePatchNullDeletes(t *testing.T) {
+	f := NewRTDB(t)
+	f.Set("a/b", map[string]any{"x": 1})
+	f.Set("c", 2)
+	if code, _, _ := rtdbDo(t, "PATCH", f.URL+"/.json", `{"a/b":null,"d/e":{"y":3}}`, nil); code != 200 {
+		t.Fatalf("patch = %d", code)
+	}
+	if f.Value("a") != nil || f.Value("c") == nil || f.Value("d/e/y") == nil {
+		t.Fatalf("root = %v", f.Value(""))
+	}
+}
