@@ -46,6 +46,12 @@ func (r *run) haltNow(h runstore.Halt) bool {
 	h.Detail = r.redact(h.Detail)
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.recordHaltLocked(h)
+}
+
+// recordHaltLocked is haltNow's decision for a caller holding r.mu and
+// having redacted h.
+func (r *run) recordHaltLocked(h runstore.Halt) bool {
 	if r.cancelled || r.halt != nil {
 		return false
 	}
@@ -128,7 +134,10 @@ func (r *run) capReached() bool {
 func haltReasonText(h runstore.Halt) string {
 	switch h.Reason {
 	case runstore.HaltKillSwitch:
-		return "the budget kill switch was on"
+		if h.Scope == "global" {
+			return "the project's kill switch was on"
+		}
+		return "the repository's kill switch was on"
 	case runstore.HaltRunCap:
 		return "the per-run dollar cap was reached"
 	case runstore.HaltRepoDailyCap:
@@ -140,9 +149,9 @@ func haltReasonText(h runstore.Halt) string {
 	case runstore.HaltTokenCap:
 		return "the run's token cap was reached"
 	case runstore.HaltBudgetUnavailable:
-		return "the budget could not be read"
+		return "the budget backend could not be reached for the whole grace period of 3 minutes"
 	case runstore.HaltBudgetTokenExpired:
-		return "the budget token expired"
+		return "the run's budget token had expired"
 	}
 	return string(h.Reason)
 }
@@ -171,7 +180,23 @@ func haltLines(rec *runstore.Record) string {
 	switch h.Reason {
 	case runstore.HaltTokenCap:
 		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyMaxRunTokens, "`agent.max_run_tokens`"), again)
+	case runstore.HaltKillSwitch:
+		fmt.Fprintf(&b, "To continue: an admin turns the switch off with `fugaro budget resume`, then %s.\n\n", again)
+	case runstore.HaltRepoDailyCap, runstore.HaltGlobalDailyCap:
+		if strings.Contains(h.Detail, "fugaro.yaml") {
+			fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerDayUSD, "`budget.per_day_usd`"), again)
+		} else {
+			fmt.Fprintf(&b, "To continue: an admin raises the cap with `fugaro budget set` (or wait for the next UTC day), then %s.\n\n", again)
+		}
+	case runstore.HaltBudgetUnavailable:
+		fmt.Fprintf(&b, "To continue: once the budget backend is reachable again, %s.\n\n", again)
+	case runstore.HaltBudgetTokenExpired:
+		b.WriteString("To continue: start the run again (the run's budget token is minted at launch and lasts an hour; a run that queues longer cannot start).\n\n")
 	case runstore.HaltRunCap, runstore.HaltNoCap:
+		if rec.Budget != nil && h.Reason == runstore.HaltNoCap {
+			fmt.Fprintf(&b, "To continue: an admin sets the missing cap with `fugaro budget set`, then %s.\n\n", again)
+			break
+		}
 		fmt.Fprintf(&b, "To continue: %s, then %s.\n\n", raiseAdvice(rec, policy.KeyPerRunUSD, "`budget.per_run_usd`"), again)
 	default:
 		fmt.Fprintf(&b, "To continue: once the limit that halted this run is lifted, %s.\n\n", again)

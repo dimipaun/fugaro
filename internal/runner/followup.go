@@ -55,7 +55,7 @@ const maxAnswerRead = 1 << 20
 
 // redactor is a redactor for every secret the run knows now. It is built
 // on each use: the list grows when git credentials are refreshed.
-func (r *run) redactor() func(string) string { return agent.RedactFunc(r.secrets) }
+func (r *run) redactor() func(string) string { return agent.RedactFunc(r.secretList()) }
 
 // checkoutFollowUp checks out the pull request's branch as it is on
 // origin, refusing when origin no longer has it.
@@ -483,7 +483,7 @@ func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Rec
 	rec := *r.rec
 	rec.Status, rec.Outcome, rec.Reason = runstore.StatusInfraError, runstore.OutcomeNone, r.redact(err.Error())
 	fu := r.followUpSection()
-	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secrets)
+	report := agent.Redact(FollowUpReport(&rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)
 }
 
@@ -523,7 +523,7 @@ func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
 	r.updateCost()
 	fu := r.followUpSection()
-	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secrets)
+	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)
 }
 

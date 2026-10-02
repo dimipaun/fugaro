@@ -335,6 +335,12 @@ func localExec(t *testing.T, env map[string]string, flags ...string) (string, er
 	for _, k := range []string{"FUGARO_RUN", "FUGARO_GIT_PROVIDER", "FUGARO_PROJECT", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD", "FUGARO_MODEL_PRICES", "FUGARO_MANAGED_SETTINGS", "CLOUD_RUN_EXECUTION"} {
 		t.Setenv(k, "")
 	}
+	// The backend's variables must be absent, not empty: an empty one is a
+	// malformed setting (TestExecPassesBackendErr).
+	for _, k := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
@@ -384,6 +390,25 @@ func TestExecPassesSpendErr(t *testing.T) {
 	}
 	if !strings.Contains(out, `"infra_error"`) {
 		t.Fatalf("the runner's record was not printed: %s", out)
+	}
+}
+
+// A malformed backend (a database URL that is no Firebase database) is the
+// same: the runner's infra_error, never a silent run without the backend.
+func TestExecPassesBackendErr(t *testing.T) {
+	for _, env := range []map[string]string{
+		{"FUGARO_RTDB_URL": "https://evil.example.invalid"},
+		{"FUGARO_BUDGET_GRACE": "an hour"},
+	} {
+		env["FUGARO_BUDGET_MODE"] = "observe"
+		_, err, store := localExec(t, env)
+		if ExitCode(err) != ExitRemoteError || err == nil || !strings.Contains(err.Error(), "the budget backend in the job's environment") {
+			t.Fatalf("%v: err = %v (exit %d)", env, err, ExitCode(err))
+		}
+		rec, rerr := store.ReadRecord(context.Background())
+		if rerr != nil || rec.Status != runstore.StatusInfraError {
+			t.Fatalf("record = %+v, %v", rec, rerr)
+		}
 	}
 }
 
@@ -452,5 +477,17 @@ func TestExecManagedSettingsFlag(t *testing.T) {
 	_, err, _ := localExec(t, map[string]string{"FUGARO_BUDGET_MODE": "observe", "FUGARO_MANAGED_SETTINGS": filepath.Join(t.TempDir(), "m.json")})
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--managed-settings") {
 		t.Fatalf("err = %v (exit %d)", err, ExitCode(err))
+	}
+}
+
+// The budget backend's Firebase Auth URL moves only to a loopback address.
+func TestExecIdentityURLFlag(t *testing.T) {
+	for _, bad := range []string{"https://identitytoolkit.googleapis.com", "http://example.invalid:80", "http://127.0.0.1:8080/x", "http://localhost:80"} {
+		if err := checkTestHooks(execOptions{identityURL: bad}, runner.Spend{}, nil, ""); err == nil || ExitCode(err) != ExitUserError {
+			t.Errorf("%s: err = %v", bad, err)
+		}
+	}
+	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}, runner.Spend{}, nil, ""); err != nil {
+		t.Errorf("a loopback URL was refused: %v", err)
 	}
 }

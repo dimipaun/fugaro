@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
@@ -40,6 +41,9 @@ type execOptions struct {
 	// Test hooks, hidden: the gateway's upstream (loopback only) and where
 	// the managed Claude Code settings are written.
 	gatewayUpstream, managedSettings string
+	// identityURL, hidden, is where Identity Toolkit and Secure Token calls
+	// go instead of Google's (loopback only): the budget backend's fakes.
+	identityURL string
 }
 
 func newExecCmd() *cobra.Command {
@@ -64,7 +68,8 @@ func newExecCmd() *cobra.Command {
 	f.DurationVar(&o.cancelPoll, "cancel-poll", 30*time.Second, "how often to check for a cancel request")
 	f.StringVar(&o.gatewayUpstream, "gateway-upstream", "", "tests only: send the budget gateway's calls to http://127.0.0.1:<port> instead of the model API")
 	f.StringVar(&o.managedSettings, "managed-settings", os.Getenv("FUGARO_MANAGED_SETTINGS"), "tests only: where to write Claude Code's managed settings (needs a loopback --gateway-upstream unless the budget is off)")
-	for _, name := range []string{"gateway-upstream", "managed-settings"} {
+	f.StringVar(&o.identityURL, "budget-identity-url", "", "tests only: send the budget backend's Firebase Auth calls to http://127.0.0.1:<port>")
+	for _, name := range []string{"gateway-upstream", "managed-settings", "budget-identity-url"} {
 		_ = f.MarkHidden(name)
 	}
 	return cmd
@@ -84,6 +89,12 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	// The budget, parsed once; a malformed one reaches the runner, which
 	// reports it as the run's infra_error after claiming the record.
 	spend, spendErr := runner.SpendFromEnv(os.LookupEnv)
+	// The budget backend (the project's Firebase database): a local run may
+	// point it at a loopback database, a job on Cloud Run never.
+	be, beErr := runner.BackendFromEnv(os.LookupEnv, !backend.OnCloudRun(os.Getenv))
+	if o.identityURL != "" {
+		be.Tune = func(c *budget.Config) { c.IdentityURL, c.SecureTokenURL = o.identityURL, o.identityURL }
+	}
 	if err := checkTestHooks(o, spend, spendErr, localFileMode(o.workDir)); err != nil {
 		return err
 	}
@@ -169,7 +180,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
-		Prices: prices, Spend: spend, SpendErr: spendErr,
+		Prices: prices, Spend: spend, SpendErr: spendErr, Backend: be, BackendErr: beErr,
 		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
 		// A job belongs to one Fugaro project; on Cloud Run a job that
 		// doesn't say which is refused at bootstrap.
@@ -200,6 +211,9 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 // fugaro.yaml asks for, counts with the ceiling's.
 func checkTestHooks(o execOptions, spend runner.Spend, spendErr error, fileMode string) error {
 	on := runner.Spend{Mode: policy.Merge(policy.Layer{Mode: spend.Mode}, policy.Layer{Mode: fileMode}).Mode}.On()
+	if o.identityURL != "" && !loopbackUpstream(o.identityURL) {
+		return userErr("--budget-identity-url %q: it must be http://127.0.0.1:<port>", o.identityURL)
+	}
 	loopback := false
 	if o.gatewayUpstream != "" {
 		if !loopbackUpstream(o.gatewayUpstream) {

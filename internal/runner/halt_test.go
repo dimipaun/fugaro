@@ -511,3 +511,35 @@ func TestPolicyLineQuotesIgnoredModels(t *testing.T) {
 		t.Fatalf("report:\n%s", got)
 	}
 }
+
+// TestHaltBeforeTheStageIsRegisteredStopsIt: a halt recorded while the stage
+// is being set up (here during its credential refresh) finds no running stage
+// to cancel; the stage must not then run on until its timeout, and an oauth
+// run has no gateway to refuse its calls.
+func TestHaltBeforeTheStageIsRegisteredStopsIt(t *testing.T) {
+	b := newHandleBox(t)
+	h := newHarness(t, "", nil)
+	h.provider.Auth = func(time.Duration) gitprov.GitAuth {
+		if b.h != nil && b.h.Stage() == "implement" {
+			b.h.HaltNow(runCapHalt)
+		}
+		return gitprov.GitAuth{}
+	}
+	stopped := false
+	step := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo partial > partial.txt && git add -A && git commit -qm partial")
+		select {
+		case <-ctx.Done():
+			stopped = true
+		case <-time.After(10 * time.Second):
+		}
+		return agent.Result{}, ctx.Err()
+	}
+	rec, err := h.run(t, step)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stopped || rec.Status != runstore.StatusHalted || rec.Halt == nil {
+		t.Fatalf("stopped = %v, record = %+v", stopped, rec)
+	}
+}

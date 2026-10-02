@@ -24,6 +24,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/followup"
 	"github.com/dimipaun/fugaro/internal/gateway"
@@ -103,6 +104,13 @@ type Deps struct {
 	// VertexTokens is the gateway's Vertex credential; nil is
 	// google.DefaultTokenSource (the metadata server on Cloud Run).
 	VertexTokens oauth2.TokenSource
+	// Backend is the project's budget database (BackendFromEnv); the zero
+	// value is none, and the run is M9a's. It is used only when the merged
+	// budget mode is observe or enforce.
+	Backend Backend
+	// BackendErr is BackendFromEnv's error: bootstrap fails with it once the
+	// run's record is claimed.
+	BackendErr error
 }
 
 type run struct {
@@ -115,6 +123,9 @@ type run struct {
 	env     []string
 	secrets []string
 	budget  Budget
+	// secMu guards secrets: the budget session registers a refreshed ID
+	// token from its own goroutine.
+	secMu sync.RWMutex
 	// spend and policy are the run's effective budget, merged once at
 	// bootstrap (resolvePolicy) from the ceiling, the default branch and
 	// the run's own fugaro.yaml. Nothing recomputes them, so an edit of
@@ -142,6 +153,11 @@ type run struct {
 	wroteManaged bool // this run wrote the managed settings file (guarded by mu)
 	warnedKnob   bool // the routing-settings knob's Cloud Run warning was logged
 	stageExtra   func(stage string) (violations []string, tokens int64)
+	// sess is the run's session with the budget backend; nil when the run
+	// has none. frozen is set when the agent loop is over, after which a
+	// halt from the backend changes nothing. Both guarded by mu.
+	sess   *budget.Session
+	frozen bool
 	// The gateway, when the budget is on for an api-key or vertex run, and
 	// what its stages cost; all guarded by mu.
 	gw           *gateway.Server
@@ -263,6 +279,10 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		if h := r.haltValue(); h != nil && r.rec.Halt == nil {
 			r.rec.Halt = h // kept even when finalize then failed
 		}
+		// The shared budget hears how the run ended: the outcome, once, and
+		// the registry entry goes.
+		r.freezeHalts()
+		r.finishBudget(ctx)
 		// The report's figure stops before writeback; the record's covers
 		// the whole run.
 		r.updateCost()
@@ -315,6 +335,8 @@ func Run(ctx context.Context, d Deps) (rec *runstore.Record, err error) {
 		return nil, fmt.Errorf("bootstrap: %w", err)
 	}
 	r.runAgentLoop(runCtx)
+	// From here nothing the backend says can stop a stage.
+	r.freezeHalts()
 	// Finalize makes no model calls: the gateway is closed first, and the
 	// run's model cost is its ledger's.
 	r.closeGateway()
@@ -422,10 +444,19 @@ func (r *run) claimRecord(ctx context.Context) error {
 }
 
 // redact removes every known secret value from s.
-func (r *run) redact(s string) string { return agent.Redact(s, r.secrets) }
+func (r *run) redact(s string) string { return agent.Redact(s, r.secretList()) }
+
+// secretList is a snapshot of the secrets known now.
+func (r *run) secretList() []string {
+	r.secMu.RLock()
+	defer r.secMu.RUnlock()
+	return slices.Clone(r.secrets)
+}
 
 // addSecret adds v to the values redacted from everything the run publishes.
 func (r *run) addSecret(v string) {
+	r.secMu.Lock()
+	defer r.secMu.Unlock()
 	if v != "" && !slices.Contains(r.secrets, v) {
 		r.secrets = append(r.secrets, v)
 	}
@@ -692,6 +723,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if r.d.SpendErr != nil {
 		return fmt.Errorf("the budget in the job's environment: %w", r.d.SpendErr)
 	}
+	if r.d.BackendErr != nil {
+		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
+	}
 	// A cancel that landed before the run started is seen now, not only
 	// at the watcher's first poll, before anything is cloned or locked.
 	if ok, err := r.d.Store.CancelRequested(ctx); err != nil {
@@ -782,7 +816,15 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := r.resolvePolicy(ctx, cfg); err != nil {
 		return err
 	}
+	// The run's Firebase identity, the shared caps and the kill switches:
+	// a halt here is outcome none (nothing is locked, pushed or opened).
+	if err := r.startBudgetBackend(ctx); err != nil {
+		return err
+	}
 	if err := r.checkBudget(); err != nil {
+		return err
+	}
+	if err := r.haltedErr(); err != nil {
 		return err
 	}
 	// The lock comes before anything changes remote state: the clone and
@@ -878,7 +920,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return err
 		}
 	}
+	// A kill switch or the grace may have halted the run while bootstrap
+	// was busy: nothing is pushed yet, so it ends as a bootstrap halt.
+	if err := r.haltedErr(); err != nil {
+		return err
+	}
 	r.save(ctx)
+	return nil
+}
+
+// haltedErr is the HaltError of a halt recorded so far, or nil.
+func (r *run) haltedErr() error {
+	if h := r.haltValue(); h != nil {
+		return &HaltError{*h}
+	}
 	return nil
 }
 
@@ -994,6 +1049,11 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 		return agent.Result{}, false, ctx.Err()
 	}
+	// A kill switch or the grace may have halted the run between stages.
+	if h := r.haltValue(); h != nil {
+		r.save(ctx)
+		return agent.Result{}, false, &HaltError{*h}
+	}
 	if r.budget.Exhausted() {
 		r.fail("time budget exhausted before stage " + name)
 		return agent.Result{}, false, nil
@@ -1036,21 +1096,30 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// synchronously in the agent's stdout path on purpose, as the stderr
 	// LineWriter does: a stalled log stalls the agent rather than dropping
 	// events or buffering without bound.
-	relay := agent.NewRelay(log, r.secrets)
-	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secrets)
-	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secrets)
+	relay := agent.NewRelay(log, r.secretList())
+	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
+	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
 	req.Model, req.MaxBudgetUSD = r.cfg.Agent.ModelFor(config.StageRole(name)), r.cfg.Agent.MaxBudgetUSD
 
 	deadlineCtx, cancelDeadline := r.budget.StageContext(ctx)
 	defer cancelDeadline()
+	if dl, ok := deadlineCtx.Deadline(); ok {
+		r.beginBudgetStage(name, n, dl)
+	}
 	// The halt's way to stop this stage: cancelling with the halt as the
 	// cause, which StageError reads.
 	stageCtx, cancelCause := context.WithCancelCause(deadlineCtx)
 	r.mu.Lock()
 	r.haltStage = cancelCause
 	extra := r.stageExtra
+	early := r.halt
 	r.mu.Unlock()
+	if early != nil {
+		// A halt recorded between the check above and now found no stage to
+		// stop: stop this one before the agent starts.
+		cancelCause(&HaltError{*early})
+	}
 	defer func() {
 		r.mu.Lock()
 		r.haltStage = nil
@@ -1068,6 +1137,9 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	}
 	res, err := r.d.Agent.Run(stageCtx, req)
 	stopWatch()
+	// An oauth run has no gateway: its stage's own cost figure is its
+	// notional spend, reported whatever became of the stage.
+	r.reportNotional(ctx, res)
 	_ = tw.Flush()
 	relay.Flush()
 	_ = sw.Flush()
@@ -1345,7 +1417,7 @@ func (r *run) finalize(ctx context.Context) error {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu), r.secrets)
+	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
@@ -1430,7 +1502,7 @@ func (r *run) uploadVerifyRecords(ctx context.Context, records []verify.Record) 
 // published.
 func (r *run) rawPRText() (string, string) {
 	if data, err := os.ReadFile(filepath.Join(r.d.StateDir, prFile)); err == nil {
-		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secrets)), "\n")
+		title, body, _ := strings.Cut(strings.TrimSpace(agent.Redact(string(data), r.secretList())), "\n")
 		title = strings.TrimSpace(strings.TrimLeft(title, "# "))
 		if title != "" {
 			return title, strings.TrimSpace(body)
