@@ -667,3 +667,389 @@ run "bad_project_name" {
 
   expect_failures = [var.fugaro_project]
 }
+
+run "budget_off_has_no_history" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  assert {
+    condition     = length(google_service_account.history) == 0 && length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0
+    error_message = "without enable_budget there is no history account, job or Scheduler job"
+  }
+  assert {
+    condition     = output.history_service_account == null && output.history_job == null
+    error_message = "without enable_budget the history outputs are null"
+  }
+}
+
+run "history_account_first" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition     = google_service_account.history[0].email == "fugaro-history@proj-1234.iam.gserviceaccount.com" && google_service_account.history[0].display_name == "Fugaro history"
+    error_message = "the history account's ID is the input and its display name is the mark"
+  }
+  assert {
+    condition     = output.history_service_account == "fugaro-history@proj-1234.iam.gserviceaccount.com"
+    error_message = "the history account's email is an output, for the Firebase root"
+  }
+  assert {
+    condition     = length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0 && length(google_cloud_run_v2_job_iam_member.history_invoker) == 0
+    error_message = "the first apply deploys only the account: the job and its Scheduler job wait for deploy_job"
+  }
+}
+
+run "TestHistoryAccountGrants" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = google_project_iam_custom_role.launcher
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroLauncher"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition     = google_project_iam_member.history_launcher[0].role == "projects/proj-1234/roles/fugaroLauncher" && google_project_iam_member.history_launcher[0].member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    error_message = "the history account holds fugaroLauncher on the project, for run.executions.list"
+  }
+  assert {
+    condition     = length(google_service_account_iam_member.scheduler_user) == 1 && !contains(keys(google_service_account_iam_member.scheduler_user), "user:launcher@example.com")
+    error_message = "the only actAs grants are the scheduler account's, to operators"
+  }
+  assert {
+    condition     = !contains(keys(google_storage_bucket_iam_member.runs), "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
+    error_message = "the history account has no access to the runs bucket"
+  }
+}
+
+run "TestOnlySweepSchedulerJob" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_scheduler_job.history_sweep) == 1
+    error_message = "there is exactly one history Scheduler job: the sweep (the rollover is M9d)"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_sweep[0].schedule == "*/15 * * * *" && google_cloud_scheduler_job.history_sweep[0].time_zone == "Etc/UTC"
+    error_message = "the sweep runs every 15 minutes"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_sweep[0].region == "us-east1" && google_cloud_scheduler_job.history_sweep[0].name == "fugaro-history-sweep"
+    error_message = "the sweep's region and name are the inputs"
+  }
+  assert {
+    condition     = one(google_cloud_scheduler_job.history_sweep[0].http_target).uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugarohist:run"
+    error_message = "the sweep starts the history job, in the job's own region"
+  }
+  assert {
+    condition     = one(one(google_cloud_scheduler_job.history_sweep[0].http_target).oauth_token).service_account_email == "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    error_message = "the sweep runs as fugaro-scheduler"
+  }
+  assert {
+    condition     = google_cloud_run_v2_job_iam_member.history_invoker[0].role == "roles/run.invoker" && google_cloud_run_v2_job_iam_member.history_invoker[0].member == "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com" && google_cloud_run_v2_job_iam_member.history_invoker[0].name == "fugarohist"
+    error_message = "fugaro-scheduler holds run.invoker on the history job only"
+  }
+}
+
+run "history_job" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition     = google_cloud_run_v2_job.history[0].name == "fugarohist" && !startswith(google_cloud_run_v2_job.history[0].name, "fugaro-")
+    error_message = "the history job's name must not start with fugaro-, which ls and max_parallel count as workflow jobs"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_job.history[0].template).template).service_account == "fugaro-history@proj-1234.iam.gserviceaccount.com"
+    error_message = "the history job runs as the history account"
+  }
+  assert {
+    condition     = one(one(google_cloud_run_v2_job.history[0].template).template).max_retries == 0
+    error_message = "the history job is never retried behind the Scheduler's back"
+  }
+  assert {
+    condition = (toset([for e in one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).env : "${e.name}=${e.value}"]) == toset([
+      "FUGARO_PROJECT=aurora", "FUGARO_GCP_PROJECT=proj-1234", "FUGARO_REGION=us-east5",
+      "FUGARO_FIREBASE_PROJECT=fp-1234", "FUGARO_RTDB_URL=https://fp-1234-default-rtdb.firebaseio.com",
+    ]))
+    error_message = "the history job's environment is exactly the project, the region and the FP's identifiers, and holds no credential"
+  }
+  assert {
+    condition     = one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).args == tolist(["budget", "history", "--sweep"])
+    error_message = "the job runs fugaro budget history --sweep"
+  }
+  assert {
+    condition     = output.history_job == "fugarohist"
+    error_message = "the history job's name is an output"
+  }
+}
+
+run "history_job_name_must_not_be_a_workflow_job" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugaro-history"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  expect_failures = [var.history]
+}
+
+run "history_deploy_needs_firebase_outputs" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+    }
+  }
+
+  expect_failures = [var.history]
+}
+
+run "enable_budget_needs_history" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+  }
+
+  expect_failures = [google_service_account.history]
+}
+
+# The history account holds firebasedatabase.admin on the FP: granting anyone
+# actAs on it would let them deploy a job as it and lift caps (design D6).
+# The module has no resource that could grant it, which the Go text check
+# also pins; this plan asserts the grants that do exist.
+run "history_account_has_no_actas_grants" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition = alltrue([for m in google_service_account_iam_member.scheduler_user :
+    m.service_account_id != "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"])
+    error_message = "no operator or launcher may act as the history account"
+  }
+}
+
+run "bad_history_account_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "X"
+      job              = "fugarohist"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  expect_failures = [var.history]
+}
