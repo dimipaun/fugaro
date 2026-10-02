@@ -203,6 +203,7 @@ In the commands below, `T` is short for
 | 18 | A push to the base branch during an image build does not fail the smoke (Bitbucket fetch-by-SHA of the pinned commit) | From the sandbox's checkout, start `fugaro image build`; while its render step has finished and the build step hasn't cloned yet, push a commit to the base branch (or force-push it back one commit, so the pinned commit is no longer the branch head) | The build clones, resets to the commit the render step read (fetching it by SHA when the clone lacks it), and the smoke, gate, promote and record succeed. The record's `source_commit`, `/etc/fugaro/image.json` and the image's revision label name that same commit, not the new head. If the provider refuses the fetch of an unadvertised commit, the build fails at the clone step: record that as a `FACT`. |
 | 20 | The model gateway against the real Anthropic API, from local Docker: pins per role, cost, tokens, a halt (design §6.1, §4.5) | See "Check 20" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_ANTHROPIC_API_KEY=… FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 60m -run TestLiveGateway -v ./internal/e2e/` | See below. |
 | 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
+| 21 | The shared budget against the real Firebase project: tokens, rules, leases and releases, a repository daily cap, a kill, token expiry, the grace (design §5, §6.4) | See "Check 21" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_RTDB_URL=<url> FUGARO_LIVE_FIREBASE_API_KEY=<key> FUGARO_LIVE_TOKEN_SIGNER=<account> FUGARO_LIVE_ANTHROPIC_API_KEY=<key> FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 90m -run TestLiveBudget -v ./internal/e2e/` | About $0.50. Every answer is a `FACT:` line; the run, cap and kill halts are the assertions. |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -374,6 +375,46 @@ back.
 **The Vertex facts** are separate: `enforce` with `auth: vertex` stays refused until they are recorded. They need a Vertex-auth workflow in `observe` mode on a project with Vertex AI enabled, and a real run, and answer: that Claude Code with `CLAUDE_CODE_SKIP_VERTEX_AUTH=1` sends Vertex-shaped paths to `ANTHROPIC_VERTEX_BASE_URL` with the pinned model and an allowed location in the path (A-N3); that the usage fields come back as documented through `streamRawPredict` (A9, Vertex side); and what Vertex bills compared with the gateway's figure on the regional and the global endpoints, since the embedded prices are the global ones (A11). Record each as a `FACT`; the refusal in `init --repo`, `validate` and the runner is lifted only by a code change that cites them.
 
 **Afterwards:** nothing to clean up in the cloud. `docker image rm` the base tag if you don't need it.
+
+## Check 21: the shared budget
+
+`TestLiveBudget` runs `fugaro exec` **locally in a base image** you built from the branch (`docker run`), against the project's **real** Realtime Database, Identity Toolkit and Secure Token and the real Anthropic API (`auth: api-key`, a different pinned model per role, as in check 20). The harness plays the launcher: it mints each run's custom token with **your** Application Default Credentials (`signJwt` as the token-signer account) and leaves it in a `file://` bucket. Every run uses a scratch repository name (`live21-<hex>/...`), so no real repository's counters or caps move. The test does change two project-wide nodes for its duration, `config/mode` (set to `enforce`) and `config/caps/global` (daily $5.00, per run $2.00), **and restores both**; it also removes its caps, kill switches and registry entries. Use a project nobody else is launching into (the scratch Firebase project of the bring-up is ideal).
+
+**Cost:** about $0.50 on your key: a full run at about $0.30 (the lease and release run), a run that a **$0.25 repository daily cap** halts part-way, a run a **$0.002 per-run cap** halts at its first call (free), and a run killed a few seconds after it registers. The token-expiry and grace checks cost nothing.
+
+**Who runs it, and the key.** As for check 20: you, at your own terminal; the Anthropic key is read from `FUGARO_LIVE_ANTHROPIC_API_KEY`, reaches the container through the `docker` process's environment (never an argument), is never logged, and the test fails if it, or a minted custom token, appears in a run's output, bucket or pushed files. The test refuses to run unless `FUGARO_LIVE_SPEND_OK=1`, and skips when any variable is missing. An agent or a controller must not hold the key, the signer rights or run this test.
+
+**Before it (free):**
+
+1. The Firebase project exists, billing is linked and `fugaro init --firebase <id> --budget-mode observe` has run (docs/gcp-setup.md, "Turning the shared budget on"). The rules (about 37 KB) were deployed by it: **if that deploy failed on size or syntax, record it** (A13).
+2. `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/cloud-platform,https://www.googleapis.com/auth/firebase.database,https://www.googleapis.com/auth/userinfo.email`, and your user holds `fugaroTokenMinter` on the signer (the Firebase root grants it to launchers).
+3. Build the base image from this branch (`FUGARO_LIVE_BASE_IMAGE`); the web API key is the Firebase root's `firebase_api_key` output (also the jobs' `FUGARO_FIREBASE_API_KEY`); the database URL is `budget.rtdb_url` in the project config; the signer is `budget.token_signer`.
+
+**What it asserts and records** (each a `FACT:` line to paste below):
+
+- *Free identity probe* (A2, A4, A12, A13, A15, A-F4): the person's ADC is accepted by the REST API; `signJwt` as the signer with the `cloud-platform` scope mints a token; the exchange works with **no sign-in provider enabled** and the restricted web key; the ID token carries `fs`, `fr`, `fx`, `fp`, `rb` at the top level; the refresh token produces a new ID token; the deployed rules deny a write into another repository's run ledger, deny a run identity writing `config/mode`, and allow it to read `config/mode`.
+- *Run 1, lease and release* (R3, A4, A14, A-F1): the run ends other than `halted`/`infra_error`; its lifetime ledger has nothing unsettled and its `spent` matches the gateway's cost to $0.001; the repository's day counter under `spend/<epoch day>/` has `counted == spent` (the plain decimal day, A14) and shows the models; the registry entry is gone at the end; the log's lease grants and **lease give-ups** (8 stale denials in a row) are counted (the plan's risk: contention).
+- *Run 2*: the repository's $0.25 daily cap halts a run with `repo_daily_cap`, exit 0.
+- *Run 3*: a $0.002 per-run cap halts it with `run_cap`.
+- *Run 4, a kill mid-run* (R6, A-F2): after the registry entry appears, the repository's kill switch is written; the run ends `halted` with `kill_switch` within 60 seconds, and the time is recorded.
+- *Run 5, token expiry* (R5): a token minted two hours earlier halts the run `budget_token_expired`.
+- *Run 6, the grace* (D14): `FUGARO_RTDB_URL` points at a dead local port with `FUGARO_BUDGET_GRACE=5s`; the run halts `budget_unavailable`, outcome `none`, exit 0.
+- No secret (the Anthropic key, a minted token) in any output, bucket object or pushed file.
+
+**Only a live run on Cloud Run can confirm** (the local test cannot; record each as a `FACT`, from step 7 of the migration runbook or a sandbox run):
+
+- **SSE over Cloud Run egress for an hour** (A-F2): the kill stream survives a long run on default egress and `auth_revoked` arrives on token refresh; otherwise the 15-second poll is the only kill path.
+- **The history job's sweep actually runs:** a Scheduler execution of `fugarohist` ends `succeeded`, and **Cloud Run reports the overridden env in `execution.template.containers[0].env`** (the sweeper's execution lookup relies on it); the sweep finds a leaked entry and a deleted run's execution as missing.
+- **The first CI run of the history image job** (the image is built and pushed by CI).
+- **`createdAt` of a custom-token user** (the sweeper deletes users older than 2 days by it) and **Secure Token's error codes** on a revoked or expired refresh (`TOKEN_EXPIRED`, `USER_NOT_FOUND`, `INVALID_REFRESH_TOKEN`): the runner classifies them as expired, revoked or invalid.
+- **`ETag` of a never-written node:** `null_etag`, as the cap writes assume for an unset cap.
+- **The real `batchGet`/`batchDelete` shapes** of Identity Toolkit used by the sweeper.
+- **The rules at about 37 KB deploy to the real project** and, with a minted real token, a legitimate lease is allowed and released (the emulator proves it, production must agree: A4, A13, A14).
+- **Contention:** the lease give-up rate with several runs at once.
+
+**If it can't be run** (no API key): the leases are verified for `oauth` (notional) only, and the `api-key` budget behaviour stays documented as unverified.
+
+**Afterwards:** the test removes what it made. `fugaro budget show --all` should show no `live21-*` repository; `docker image rm` the base tag if you don't need it.
 
 ## Not covered by these tests (manual)
 
@@ -601,3 +642,28 @@ The first real run settled $0.4232 at the gateway while Claude Code's `total_cos
 - Claude Code also multiplies by 1.1 for `inference_geo: us`; this run reported `global`, so it did not apply.
 
 So Claude Code's cost estimate is not the arbiter for any model newer than its catalog; the gateway's table, checked against the Console, is. `TestLiveGateway` now records the gap per model and recomputes the gateway's tokens at Claude Code's prices instead of failing on it.
+
+## Results of the sixth live run (M9b, check 21)
+
+Fill in at your own terminal. Date, base image, Firebase project, who ran it.
+
+| Item | Result |
+|---|---|
+| A2 ADC token accepted by the RTDB REST API | |
+| A12/A15 signJwt, custom token, no provider enabled, claims at top level, refresh | |
+| A13 rules at ~37 KB deployed; denials (another run's ledger, `config/mode`) | |
+| A4/A14 lease, release, counters under the plain decimal day | |
+| A-F1 lease give-ups / stale denials (count, of leases) | |
+| Run 1 cost (gateway) and the Console's charge | |
+| Run 2 `repo_daily_cap` halt | |
+| Run 3 `run_cap` halt | |
+| Run 4 kill: seconds from write to halt; stream or poll | |
+| Run 5 `budget_token_expired` | |
+| Run 6 `budget_unavailable` (D14) | |
+| Secrets scan | |
+| A-F2 SSE over Cloud Run egress for 1 h; `auth_revoked` on refresh | |
+| Sweeper execution, `execution.template.containers[0].env` override | |
+| First CI run of the history image job | |
+| `createdAt` of custom-token users; Secure Token error codes | |
+| `null_etag` of a never-written node | |
+| `batchGet` / `batchDelete` shapes | |
