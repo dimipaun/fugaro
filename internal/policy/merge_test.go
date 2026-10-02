@@ -439,3 +439,60 @@ func TestIgnoredDefaultBranchEntriesArePrefix(t *testing.T) {
 		t.Fatalf("only %d cases had ignored entries: the generator is too tame", nonEmpty)
 	}
 }
+
+// TestPerDayMergeNeverLoosens checks the per-day cap against an oracle over
+// random layers: the smallest valid cap wins, a later larger one is ignored
+// and recorded, and no other key's layers change it.
+func TestPerDayMergeNeverLoosens(t *testing.T) {
+	r := rand.New(rand.NewSource(7))
+	ignoredSeen := 0
+	for i := 0; i < 20000; i++ {
+		n := 1 + r.Intn(5)
+		ls := make([]Layer, n)
+		for j := range ls {
+			ls[j] = randLayer(r)
+			ls[j].PerDayUSD = randFloat(r)
+		}
+		e := Merge(ls[0], ls[1:]...)
+		var min, running float64
+		var want []int // layer index of each ignored value
+		for j, l := range ls {
+			if !validCap(l.PerDayUSD) {
+				continue
+			}
+			if min == 0 || l.PerDayUSD < min {
+				min = l.PerDayUSD
+			}
+			if running == 0 || l.PerDayUSD < running {
+				running = l.PerDayUSD
+			} else if l.PerDayUSD > running {
+				want = append(want, j)
+			}
+		}
+		if e.PerDayUSD != min || (min > 0) != (e.Sources[KeyPerDayUSD] != "") {
+			t.Fatalf("not exact: %+v -> %+v want %v", ls, e, min)
+		}
+		got := 0
+		for _, ig := range e.Ignored {
+			if ig.Key == KeyPerDayUSD {
+				if ig.Source == "" || ig.Value == ig.Effective {
+					t.Fatalf("bad ignored record %+v", ig)
+				}
+				got++
+			}
+		}
+		if got != len(want) {
+			t.Fatalf("ignored %d, want %d: %+v -> %+v", got, len(want), ls, e.Ignored)
+		}
+		ignoredSeen += got
+	}
+	if ignoredSeen < 1000 {
+		t.Fatalf("generator too weak: %d", ignoredSeen)
+	}
+	// A branch cannot lift the default branch's cap, and 0 is no value.
+	e := Merge(Layer{}, Layer{PerDayUSD: 20}, Layer{PerDayUSD: 500}, Layer{PerDayUSD: 0})
+	if e.PerDayUSD != 20 || e.Sources[KeyPerDayUSD] != SourceDefaultBranch ||
+		!reflect.DeepEqual(e.Ignored, []Ignored{{KeyPerDayUSD, "500", "20", SourceDefaultBranch}}) {
+		t.Fatalf("%+v", e)
+	}
+}

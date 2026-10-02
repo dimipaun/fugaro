@@ -50,8 +50,10 @@ type Budget struct {
 	// AllowedModels bounds the models the run may choose, explicit IDs
 	// only; nil sets none, and an empty list is invalid.
 	AllowedModels []string `yaml:"allowed_models"`
-	// PerDayUSD is read only to refuse it: per-day caps arrive with M9b.
-	PerDayUSD *float64 `yaml:"per_day_usd,omitempty"`
+	// PerDayUSD is the repository's cap per UTC day, in dollars; 0 sets
+	// none. The runner enforces it client-side against the repository's day
+	// counter; the owner's database cap is separate and lower values win.
+	PerDayUSD float64 `yaml:"per_day_usd"`
 }
 
 // Followup says who can steer a follow-up run on a Fugaro pull request

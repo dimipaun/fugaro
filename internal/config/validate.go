@@ -388,8 +388,10 @@ func validateBudget(b *Budget) []Problem {
 	} else if b.PerRunUSD > 0 && m < 1 {
 		add("budget.per_run_usd", "%v: it rounds to nothing; the smallest cap is $0.000001", b.PerRunUSD)
 	}
-	if b.PerDayUSD != nil {
-		add("budget.per_day_usd", "is not supported yet (M9b): per-day caps are set by the project owner")
+	if m, err := pricing.FromUSD(b.PerDayUSD); err != nil {
+		add("budget.per_day_usd", "%v: it must be a number from 0 to %d US dollars", b.PerDayUSD, pricing.MaxUSD)
+	} else if b.PerDayUSD > 0 && m < 1 {
+		add("budget.per_day_usd", "%v: it rounds to nothing; the smallest cap is $0.000001", b.PerDayUSD)
 	}
 	if b.AllowedModels != nil && len(b.AllowedModels) == 0 {
 		add("budget.allowed_models", "must list at least one model (an empty list, or one of only nulls, would forbid every model); leave it out for no restriction")

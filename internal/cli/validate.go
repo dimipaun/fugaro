@@ -39,6 +39,8 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 func clampWarning(ig policy.Ignored) config.Problem {
 	var msg string
 	switch ig.Key {
+	case policy.KeyPerDayUSD:
+		msg = fmt.Sprintf("%s is above the cap set above this file (%s); the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	case policy.KeyPerRunUSD, policy.KeyMaxRunTokens:
 		msg = fmt.Sprintf("%s is above the project's ceiling of %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	case policy.KeyMode:
@@ -83,6 +85,11 @@ func ceilingText(l policy.Layer) string {
 // halt no_cap). With no project config, or one for another project, only the
 // file's shape (checked by config.Check) applies.
 func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings []config.Problem) {
+	// The day cap is the runner's to enforce; the database never sees it.
+	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
+		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
+			Message: "per_day_usd is enforced by the runner, not the database; an RTDB cap lower than this wins"})
+	}
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the
 		// effective mode whatever the ceiling says (the stricter layer
@@ -90,7 +97,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		if cfg.Agent.Auth == "vertex" && cfg.Budget != nil && cfg.Budget.Mode == policy.ModeEnforce {
 			problems = append(problems, config.Problem{Path: "agent.auth", Message: vertexBudgetRefusal})
 		}
-		return problems, nil
+		return problems, warnings
 	}
 	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
