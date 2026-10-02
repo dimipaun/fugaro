@@ -39,8 +39,6 @@ func ceilingLayer(lc *localcfg.Config) policy.Layer {
 func clampWarning(ig policy.Ignored) config.Problem {
 	var msg string
 	switch ig.Key {
-	case policy.KeyPerDayUSD:
-		msg = fmt.Sprintf("%s is above the cap set above this file (%s); the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	case policy.KeyPerRunUSD, policy.KeyMaxRunTokens:
 		msg = fmt.Sprintf("%s is above the project's ceiling of %s; the runner will use %s", ig.Value, ig.Effective, ig.Effective)
 	case policy.KeyMode:
@@ -88,7 +86,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	// The day cap is the runner's to enforce; the database never sees it.
 	if cfg.Budget != nil && cfg.Budget.PerDayUSD > 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_day_usd",
-			Message: "per_day_usd is enforced by the runner, not the database; an RTDB cap lower than this wins"})
+			Message: "per_day_usd is enforced by the runner against this repository's day counter only, not by the database; a lower RTDB cap wins"})
 	}
 	if lc == nil || lc.Name != cfg.Project {
 		// No ceiling to compare with, but a committed enforce is the
