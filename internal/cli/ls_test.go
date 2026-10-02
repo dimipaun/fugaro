@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"math"
@@ -184,11 +185,7 @@ func TestLsWatchStopsWhenSettled(t *testing.T) {
 	e := seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", true)
 	seedRun(t, f, today+"-091000-bbbb", "", "someone@example.com", false) // unlaunched: settled
 	f.run.SetState(e, backend.StateRunning)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		f.run.SetState(e, backend.StateFailed)
-	}()
-	out, _, err := execute(t, "ls", "--watch", "--json", "--interval", "10ms")
+	out, err := executeWatch(t, 1, func() { f.run.SetState(e, backend.StateFailed) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,16 +204,42 @@ func TestLsWatchStopsWhenSettled(t *testing.T) {
 	}
 }
 
+// afterWrites calls fn once, synchronously, after the nth write to w. A
+// watch test uses it to change the world between two redraws: a wall-clock
+// sleep races the first listing, whose duration varies with machine load.
+type afterWrites struct {
+	buf bytes.Buffer
+	n   int
+	fn  func()
+}
+
+func (w *afterWrites) Write(p []byte) (int, error) {
+	n, err := w.buf.Write(p)
+	if w.n--; w.n == 0 {
+		w.fn()
+	}
+	return n, err
+}
+
+// executeWatch runs "ls --watch --json" and calls fn right after its nth
+// redraw is written, so exactly n redraws see the state before fn.
+func executeWatch(t *testing.T, n int, fn func()) (string, error) {
+	t.Helper()
+	cmd := NewRootCmd()
+	out := &afterWrites{n: n, fn: fn}
+	cmd.SetOut(out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"ls", "--watch", "--json", "--interval", "10ms"})
+	err := cmd.Execute()
+	return out.buf.String(), err
+}
+
 // --watch reads the image status once per invocation, not on every redraw.
 func TestLsWatchReadsImageStatusOnce(t *testing.T) {
 	f := newCloudFixture(t)
 	today := time.Now().UTC().Format("20060102")
 	e := seedRun(t, f, today+"-090000-aaaa", "", "someone@example.com", true)
 	f.run.SetState(e, backend.StateRunning)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		f.run.SetState(e, backend.StateFailed)
-	}()
 	var reads atomic.Int32
 	prev := readImageStatus
 	readImageStatus = func(ctx context.Context, b *blobx.Bucket, slug, workflow string, now time.Time) (imagecheck.Status, error) {
@@ -224,7 +247,7 @@ func TestLsWatchReadsImageStatusOnce(t *testing.T) {
 		return prev(ctx, b, slug, workflow, now)
 	}
 	t.Cleanup(func() { readImageStatus = prev })
-	out, _, err := execute(t, "ls", "--watch", "--json", "--interval", "10ms")
+	out, err := executeWatch(t, 3, func() { f.run.SetState(e, backend.StateFailed) })
 	if err != nil {
 		t.Fatal(err)
 	}
