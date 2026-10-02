@@ -695,3 +695,31 @@ func TestLedgerGrantedWithLeaseIsGrants(t *testing.T) {
 		t.Errorf("observe+lease granted %d before a grant (not unbounded)", led.Granted)
 	}
 }
+
+func TestGrantPanicIsAnErrorNotAHang(t *testing.T) {
+	l := &fakeLease{err: func(pricing.Micros) error { panic("boom") }}
+	h := newHarnessWith(t, withLease(l, Enforce), okReplies(1)...)
+	done := make(chan *http.Response, 1)
+	var body string
+	go func() { resp, b := h.post(leaseBody); body = b; done <- resp }()
+	select {
+	case resp := <-done:
+		if resp.StatusCode != http.StatusServiceUnavailable || strings.Contains(body, "boom") {
+			t.Errorf("status %d %s, want the fixed 503", resp.StatusCode, body)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the call hung on a panicking Grant")
+	}
+	noHalt(t, h)
+}
+
+func TestRefusalWithEmptyReasonDefaults(t *testing.T) {
+	l := &fakeLease{err: func(pricing.Micros) error { return &Refusal{Detail: "no"} }}
+	h := newHarnessWith(t, withLease(l, Enforce), okReplies(1)...)
+	if resp, _ := h.post(leaseBody); resp.StatusCode != 403 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	if halt := haltOf(t, h); halt.Reason != "halted" || halt.Scope != "run" {
+		t.Errorf("halt %+v, want reason halted, scope run", halt)
+	}
+}

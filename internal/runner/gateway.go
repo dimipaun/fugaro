@@ -221,7 +221,11 @@ func (r *run) drainHalt() {
 }
 
 func gatewayHalt(gh gateway.Halt) runstore.Halt {
-	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: "run", At: gh.At.UTC(), Detail: gh.Detail}
+	scope := gh.Scope
+	if scope == "" {
+		scope = "run"
+	}
+	return runstore.Halt{Reason: runstore.HaltReason(gh.Reason), Scope: scope, At: gh.At.UTC(), Detail: gh.Detail}
 }
 
 // closeGateway stops the gateway, once, and takes the run's model cost from

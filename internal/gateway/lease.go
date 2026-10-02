@@ -140,7 +140,7 @@ func (s *Server) reserveLease(ctx context.Context, st *stageState, w pricing.Mic
 // result always lands in the ledger, even when every caller left.
 func (s *Server) runTopUp(f *topUp, need pricing.Micros) {
 	defer s.grants.Done()
-	g, err := s.o.Lease.Grant(s.gctx, need)
+	g, err := s.grant(need)
 	s.mu.Lock()
 	switch {
 	case err != nil:
@@ -156,6 +156,17 @@ func (s *Server) runTopUp(f *topUp, need pricing.Micros) {
 	close(f.done)
 }
 
+// grant calls the lease, turning a panic into an error: the top-up must
+// complete, or every call waiting on it would hang.
+func (s *Server) grant(need pricing.Micros) (g pricing.Micros, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			g, err = 0, fmt.Errorf("the lease panicked: %v", r)
+		}
+	}()
+	return s.o.Lease.Grant(s.gctx, need)
+}
+
 // leaseFailure turns a failed grant into what the call is told. Only a
 // *Refusal can halt; anything else is the backend being unavailable, a
 // retryable 503 that never halts here (the session's grace decides).
@@ -169,6 +180,10 @@ func (s *Server) leaseFailure(st *stageState, w pricing.Micros, err error) (stri
 	if !errors.As(err, &ref) {
 		s.log.Warn("budget: the lease is unavailable", "stage", st.st.Name, "error", logValue(err.Error()))
 		return unavailableMsg, http.StatusServiceUnavailable
+	}
+	if ref.Reason == "" {
+		r := *ref
+		r.Reason, ref = "halted", &r
 	}
 	capR := capReason(ref.Reason)
 	switch {

@@ -6,6 +6,10 @@
 //
 // It never rewrites a body, never buffers a stream, never retries, and
 // never logs a header or a body. Money is integer micro-dollars throughout.
+//
+// A halt's Detail (a Refusal's, or HaltExternal's) is shown to the agent in
+// the 403 every later call gets, as one line clipped to 300 bytes. The
+// gateway does not redact it: callers must keep it free of secrets.
 package gateway
 
 import (
