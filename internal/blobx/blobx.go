@@ -217,6 +217,45 @@ func (b *Bucket) DeleteIf(ctx context.Context, key string, gen int64, prev []byt
 	return b.Delete(ctx, key)
 }
 
+// DeleteExisting is DeleteIf for a caller that must be the one who deleted
+// the object (a single-use token): an object already gone is ErrNotExist,
+// not success, and a changed object is ErrConflict. Of several callers that
+// each read the object and then call DeleteExisting, exactly one gets nil
+// (atomic on GCS; on file:// and mem:// the final delete of a missing object
+// still fails, so a race there is lost by all but one as well).
+func (b *Bucket) DeleteExisting(ctx context.Context, key string, gen int64, prev []byte) error {
+	if c := b.client(); c != nil {
+		if gen == 0 {
+			return fmt.Errorf("deleting %s: no generation to match", key)
+		}
+		err := c.Bucket(b.GCSName).Object(key).If(storage.Conditions{GenerationMatch: gen}).Delete(ctx)
+		var ae *googleapi.Error
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, storage.ErrObjectNotExist):
+			return ErrNotExist
+		case errors.As(err, &ae) && ae.Code == http.StatusPreconditionFailed:
+			return ErrConflict
+		}
+		return err
+	}
+	cur, _, err := b.Read(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(cur, prev) {
+		return ErrConflict
+	}
+	if err := b.Delete(ctx, key); err != nil {
+		if gcerrors.Code(err) == gcerrors.NotFound {
+			return ErrNotExist
+		}
+		return err
+	}
+	return nil
+}
+
 // Touch sets the object's GCS custom time, which the bucket's lifecycle
 // rule reads as "last used" (design §3.3). No-op on other drivers.
 func (b *Bucket) Touch(ctx context.Context, key string, t time.Time) error {
