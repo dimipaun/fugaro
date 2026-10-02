@@ -88,6 +88,14 @@ func (g *Grace) OK(source string) {
 	}
 }
 
+// FailingSource reports whether source is in an outage.
+func (g *Grace) FailingSource(source string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.failing[source]
+	return ok
+}
+
 // Failing reports whether any source is in an outage.
 func (g *Grace) Failing() bool {
 	g.mu.Lock()

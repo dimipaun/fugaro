@@ -830,3 +830,14 @@ func TestWrongDatabaseIsAnInfraError(t *testing.T) {
 		t.Fatal("the run went on")
 	}
 }
+
+// M2: a run whose budget is off ignores the budget's environment, malformed
+// or not.
+func TestOffIgnoresMalformedBackendEnv(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "off", "")
+	b.deps.BackendErr = errors.New("FUGARO_RTDB_URL: not a database URL")
+	rec, err := b.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}

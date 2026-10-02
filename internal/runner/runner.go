@@ -723,9 +723,6 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if r.d.SpendErr != nil {
 		return fmt.Errorf("the budget in the job's environment: %w", r.d.SpendErr)
 	}
-	if r.d.BackendErr != nil {
-		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
-	}
 	// A cancel that landed before the run started is seen now, not only
 	// at the watcher's first poll, before anything is cloned or locked.
 	if ok, err := r.d.Store.CancelRequested(ctx); err != nil {

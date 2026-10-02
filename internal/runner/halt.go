@@ -149,7 +149,7 @@ func haltReasonText(h runstore.Halt) string {
 	case runstore.HaltTokenCap:
 		return "the run's token cap was reached"
 	case runstore.HaltBudgetUnavailable:
-		return "the budget backend could not be reached for the whole grace period of 3 minutes"
+		return "the budget backend could not be reached for the whole grace period"
 	case runstore.HaltBudgetTokenExpired:
 		return "the run's budget token had expired"
 	}

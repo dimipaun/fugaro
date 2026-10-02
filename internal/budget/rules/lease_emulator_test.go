@@ -230,8 +230,14 @@ func TestConcurrentSessionsNeverExceedCaps(t *testing.T) {
 				mine += int64(got)
 				// Keep and spend half, give half back.
 				if j%3 == 2 {
-					if err := s.Lease().Release(ctx, got/2); err != nil {
-						t.Errorf("release: %v", err)
+					var rerr error
+					for try := 0; try < 10; try++ { // a release also loses races
+						if rerr = s.Lease().Release(ctx, got/2); rerr == nil {
+							break
+						}
+					}
+					if rerr != nil {
+						t.Errorf("release: %v", rerr)
 						return
 					}
 					mine -= int64(got / 2)

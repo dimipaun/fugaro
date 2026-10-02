@@ -139,6 +139,13 @@ func (r *run) bootstrapHalt(reason runstore.HaltReason, scope, detail string) er
 // creates the registry entry and starts the heartbeat and the kill watch.
 // A halt here has outcome none and exit 0: nothing was locked or pushed.
 func (r *run) startBudgetBackend(ctx context.Context) error {
+	// A run whose budget is off ignores the budget's environment entirely.
+	if !r.spend.On() {
+		return nil
+	}
+	if r.d.BackendErr != nil {
+		return fmt.Errorf("the budget backend in the job's environment: %w", r.d.BackendErr)
+	}
 	if !r.backendOn() {
 		return nil
 	}
@@ -312,8 +319,11 @@ func (r *run) finishBudget(ctx context.Context) {
 	}
 }
 
-// budgetFinishTimeout bounds everything the session does at the end.
-const budgetFinishTimeout = 30 * time.Second
+// budgetFinishTimeout bounds everything the session does at the end, inside
+// Cloud Run's ~10 s SIGTERM window. Finish orders its writes by importance:
+// the release first, then the last usage, the outcome, the entry; what a
+// kill cuts short stays for the sweeper.
+const budgetFinishTimeout = 8 * time.Second
 
 // redactHandler redacts every string the session logs, so a credential can
 // never reach the job's log through an error text.

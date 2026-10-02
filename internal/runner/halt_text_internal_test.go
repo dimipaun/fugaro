@@ -29,7 +29,7 @@ func TestHaltedReportNamesCauseAndRemedy(t *testing.T) {
 		{"global day cap", runstore.Halt{Reason: runstore.HaltGlobalDailyCap, Scope: "global", Detail: "the project's daily cap $150.00 reached"},
 			true, []string{"project's daily dollar cap", "fugaro budget set"}},
 		{"unavailable", runstore.Halt{Reason: runstore.HaltBudgetUnavailable, Scope: "run", Detail: "the budget backend could not be reached for 3m0s (lease)"},
-			true, []string{"budget backend", "3 minutes", "reachable again"}},
+			true, []string{"budget backend", "whole grace period", "reachable again"}},
 		{"token expired", runstore.Halt{Reason: runstore.HaltBudgetTokenExpired, Scope: "run", Detail: "launch it again"},
 			true, []string{"budget token", "start the run again"}},
 		{"no cap in the database", runstore.Halt{Reason: runstore.HaltNoCap, Scope: "repo", Detail: "no daily cap is set for this repository"},

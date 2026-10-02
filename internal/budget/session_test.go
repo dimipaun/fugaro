@@ -356,7 +356,6 @@ func TestAdmitObserveAndOAuth(t *testing.T) {
 	f2 := newFixture(t)
 	f2.db.Set(budget.PathCapsRepo(slug), nil)
 	f2.db.Set(budget.PathCapsGlobal, nil)
-	f2.db.Set(budget.PathLimits, nil)
 	if h, err := f2.open().Admit(context.Background(), budget.AdmitOptions{Gateway: false}); h != nil || err != nil {
 		t.Fatalf("oauth with no caps: %+v, %v (oauth is uncapped for dollars)", h, err)
 	}
@@ -395,13 +394,11 @@ func TestStaleRetriesThenGrace(t *testing.T) {
 	if errors.As(err, &r) {
 		t.Fatalf("stale denials were reported as a refusal: %v", err)
 	}
-	if !s.Grace().Failing() {
-		t.Fatal("the grace clock did not start")
-	}
+	// Reads still work, so the backend is reachable and the grace does not
+	// run (I1): the run keeps its held lease and the agent retries.
 	f.db.DenyNext(0)
-	h, ok := f.nextHalt(3 * time.Second)
-	if !ok || h.Reason != budget.ReasonBudgetUnavailable {
-		t.Fatalf("halt = %+v, %v", h, ok)
+	if h, ok := f.nextHalt(400 * time.Millisecond); ok {
+		t.Fatalf("a reachable backend halted the run: %+v", h)
 	}
 }
 
@@ -536,34 +533,6 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
-}
-
-// An oauth run is admitted without limits or caps and must still be able to
-// heartbeat: a missing maxReserveMicros is no reason to count the backend as
-// down.
-func TestOAuthHeartbeatNeedsNoLimits(t *testing.T) {
-	f := newFixture(t)
-	f.cfg.Grace = 300 * time.Millisecond
-	f.db.Set(budget.PathLimits, nil)
-	f.db.Set(budget.PathCapsGlobal, nil)
-	f.db.Set(budget.PathCapsRepo(slug), nil)
-	s := f.open()
-	if h, err := s.Admit(context.Background(), budget.AdmitOptions{}); h != nil || err != nil {
-		t.Fatal(h, err)
-	}
-	if err := s.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Auth: "oauth", Stage: "implement"}); err != nil {
-		t.Fatal(err)
-	}
-	defer s.Finish(context.Background(), "succeeded")
-	s.Update(func(e *budget.AgentEntry) { e.Stage = "review" })
-	waitFor(t, "a heartbeat", func() bool {
-		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
-		return e != nil && e["stage"] == "review"
-	})
-	time.Sleep(500 * time.Millisecond) // longer than the grace
-	if h, ok := f.nextHalt(50 * time.Millisecond); ok {
-		t.Fatalf("heartbeats without limits started the grace: %+v", h)
-	}
 }
 
 func TestOutageStartsTheGraceAndHaltsRun(t *testing.T) {
@@ -864,5 +833,76 @@ func TestBootstrapPermissionDeniedIsNotAnOutage(t *testing.T) {
 	}
 	if time.Since(start) > 400*time.Millisecond {
 		t.Fatalf("a refused credential was waited out for %s", time.Since(start))
+	}
+}
+
+// I1: a lease or report that failed once must not leave a clock running that
+// only another lease or report can stop. After the backend recovers, the
+// heartbeat and every other successful call prove it reachable, and a long
+// gap before the next model call (verify, an agent that gave up) is no outage.
+func TestOneFailedGrantDoesNotHaltAHealthyRun(t *testing.T) {
+	f := newFixture(t)
+	f.cfg.Grace = 300 * time.Millisecond
+	s := f.started(budget.AgentEntry{})
+	f.db.Refuse(503, "UNAVAILABLE", "", "blip")
+	if _, err := s.Lease().Grant(context.Background(), 100_000); err == nil {
+		t.Fatal("granted during an outage")
+	}
+	if err := s.Lease().Report(context.Background(), gateway.StageReport{Calls: 1}); err == nil {
+		t.Fatal("reported during an outage")
+	}
+	f.db.Refuse(0, "", "", "")
+	time.Sleep(900 * time.Millisecond) // three graces of healthy heartbeats
+	if h, ok := f.nextHalt(50 * time.Millisecond); ok {
+		t.Fatalf("a healthy backend halted the run: %+v", h)
+	}
+}
+
+// ... and a total outage still halts at the window (TestOutageStartsTheGraceAndHaltsRun).
+
+// I3: the committed per-run cap follows the strictest of the project's mode
+// and the run's, like the committed daily cap.
+func TestPolicyRunCapFollowsTheStrictestMode(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		projectMode  string
+		localEnforce bool
+		refused      bool
+	}{
+		{"project enforces, run observes", "enforce", false, true},
+		{"project observes, run enforces", "observe", true, true},
+		{"both observe", "observe", false, false},
+		{"both enforce", "enforce", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.db.Set(budget.PathMode, c.projectMode)
+			f.cfg.PolicyCap, f.cfg.LocalEnforce = 300_000, c.localEnforce
+			s := f.started(budget.AgentEntry{})
+			if _, err := s.Lease().Grant(context.Background(), 250_000); err != nil {
+				t.Fatal(err)
+			}
+			_, err := s.Lease().Grant(context.Background(), 250_000)
+			if c.refused {
+				if r := refusalOf(t, err); r.Reason != "run_cap" {
+					t.Fatalf("refusal = %+v", r)
+				}
+			} else if err != nil {
+				t.Fatalf("an advisory cap refused: %v", err)
+			}
+		})
+	}
+}
+
+// M1: without limits.maxReserveMicros nothing can be reported, oauth included:
+// said at bootstrap, not after three minutes of failing heartbeats.
+func TestAdmitNeedsMaxReserveInEveryMode(t *testing.T) {
+	for _, gw := range []bool{true, false} {
+		f := newFixture(t)
+		f.db.Set(budget.PathLimits, nil)
+		h, err := f.open().Admit(context.Background(), budget.AdmitOptions{Gateway: gw})
+		if err != nil || h == nil || h.Reason != budget.ReasonNoCap || !strings.Contains(h.Detail, "maxReserveMicros") {
+			t.Fatalf("gateway=%v: halt = %+v, %v", gw, h, err)
+		}
 	}
 }

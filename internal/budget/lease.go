@@ -68,6 +68,12 @@ func (s *Session) jitter(n int) time.Duration {
 	return base/2 + time.Duration(rand.Int64N(int64(base)+1))
 }
 
+// policyBinds reports whether the committed caps of fugaro.yaml (per run and
+// per day) bind: when the run's own merged mode or the project's is enforce.
+// A job-level observe must not loosen what the repository committed under an
+// enforcing project.
+func (s *Session) policyBinds(c Caps) bool { return s.cfg.LocalEnforce || c.Enforcing() }
+
 // leaseSize picks the size of the next lease: clamp(5% of the smallest
 // headroom, $0.25, $2.00), never less than need, never more than the largest
 // single lease; when that size fits no cap but need does, need itself.
@@ -89,7 +95,7 @@ func (s *Session) leaseSize(need Micros, sn Snapshot, st State) Micros {
 			use(v - st.Global.Counted)
 		}
 	}
-	if s.cfg.LocalEnforce {
+	if s.policyBinds(sn.Caps) {
 		if s.cfg.CommittedDaily > 0 {
 			use(s.cfg.CommittedDaily - st.Repo.Counted)
 		}
@@ -134,7 +140,7 @@ func (s *Session) grant(ctx context.Context, need Micros) (Micros, error) {
 			return 0, s.observe("lease", err)
 		case rf != nil:
 			// A refusal is the budget answering, not an outage.
-			s.grace.OK("lease")
+			s.dbOK()
 			return 0, rf
 		case again == retryWait:
 			if err := s.sleep(ctx, s.cfg.CapRetryWait); err != nil {
@@ -151,7 +157,7 @@ func (s *Session) grant(ctx context.Context, need Micros) (Micros, error) {
 			}
 			continue
 		}
-		s.grace.OK("lease")
+		s.dbOK()
 		return amount, nil
 	}
 }
@@ -202,7 +208,7 @@ func (s *Session) tryGrant(ctx context.Context, need Micros, sn Snapshot, day in
 	// cannot see.
 	if c := s.cfg.PolicyCap; c > 0 && add(st.Run.Outstanding(), amount) > c {
 		msg := fmt.Sprintf("run cap %s reached (%s held, %s needed)", dollars(c), dollars(st.Run.Outstanding()), dollars(amount))
-		if s.cfg.LocalEnforce {
+		if s.policyBinds(sn.Caps) {
 			return 0, &gateway.Refusal{Reason: string(ReasonRunCap), Scope: string(ScopeRun), Detail: msg}, noRetry, nil
 		}
 		s.advise(&Decision{Reason: ReasonRunCap, Scope: ScopeRun, Detail: msg})
@@ -554,14 +560,14 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 			merged[k] = v
 		}
 		if len(merged) == 0 {
-			s.grace.OK(source)
+			s.dbOK()
 			return nil
 		}
 		err = s.db.Patch(ctx, "", merged)
 		switch {
 		case err == nil:
 			s.commit(took)
-			s.grace.OK(source)
+			s.dbOK()
 			extra = nil
 			rounds++
 			if !more {
@@ -572,7 +578,7 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 			if stale >= maxStale {
 				if len(extra) > 0 {
 					if perr := s.db.Patch(ctx, "", extra); perr == nil {
-						s.grace.OK("heartbeat")
+						s.dbOK()
 					}
 				}
 				return s.observe(source, fmt.Errorf("budget: %d usage writes in a row were denied", stale))
@@ -638,7 +644,7 @@ func (s *Session) release(ctx context.Context, unused Micros) error {
 				s.mu.Lock()
 				s.released = add(s.released, amt)
 				s.mu.Unlock()
-				s.grace.OK("lease")
+				s.dbOK()
 			case errors.Is(err, rtdb.ErrPermission):
 				if stale++; stale >= maxStale {
 					return s.fail(unused, remaining, s.observe("lease", fmt.Errorf("budget: %d release writes in a row were denied", stale)))
@@ -652,7 +658,7 @@ func (s *Session) release(ctx context.Context, unused Micros) error {
 		}
 	}
 	if remaining > 0 {
-		return s.fail(unused, remaining, fmt.Errorf("budget: %s of the lease could not be released and stays counted", dollars(remaining)))
+		return s.fail(unused, remaining, fmt.Errorf("budget: %s of the lease could not be released and stays counted (it errs high until the day ends)", dollars(remaining)))
 	}
 	return nil
 }

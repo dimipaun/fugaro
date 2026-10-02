@@ -16,7 +16,7 @@ func (s *Session) checkKills(ctx context.Context, source string) {
 		s.observe(source, firstClassified([]error{err1, err2}))
 		return
 	}
-	s.grace.OK(source)
+	s.dbOK()
 	var k Kills
 	if fg {
 		k.Global = &kg
@@ -49,11 +49,11 @@ func (s *Session) watchKill(ctx context.Context, path, source string) {
 			switch ev.Type {
 			case "error":
 				if ev.Err != nil {
-					s.grace.Fail(source, ev.Err)
+					s.streamFailed(source, ev.Err)
 				}
 			case "put", "patch":
 				s.grace.OK(source)
-				s.safely(source, func() { s.checkKills(ctx, source+"-read") })
+				s.safely(source, func() { s.checkKills(ctx, "kill-poll") })
 			default: // keep-alive, auth_revoked: the server is there
 				s.grace.OK(source)
 			}

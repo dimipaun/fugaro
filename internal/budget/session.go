@@ -135,7 +135,7 @@ type Session struct {
 // out (ErrGraceExpired); a token minted more than an hour ago is
 // token.ErrTokenExpired; anything else is not an outage and returns at once.
 // The custom token is registered with cfg.Register before its first use.
-func Open(ctx context.Context, cfg Config, custom string) (*Session, error) {
+func Open(ctx context.Context, cfg Config, custom string) (_ *Session, rerr error) {
 	if cfg.Slug == "" || cfg.Run == "" || Key(cfg.Slug) != cfg.Slug || Key(cfg.Run) != cfg.Run {
 		return nil, fmt.Errorf("budget: the repository slug %q or run id %q is not a valid database key", cfg.Slug, cfg.Run)
 	}
@@ -163,6 +163,11 @@ func Open(ctx context.Context, cfg Config, custom string) (*Session, error) {
 	}
 	g := NewGrace(cfg.Grace)
 	s := &Session{cfg: cfg, grace: g, log: log, leased: map[int64]bool{}}
+	defer func() {
+		if rerr != nil {
+			g.Stop()
+		}
+	}()
 	tcfg := token.Config{
 		APIKey: cfg.APIKey, IdentityURL: cfg.IdentityURL, SecureTokenURL: cfg.SecureTokenURL, HTTP: cfg.HTTP,
 		Now: cfg.Now, Register: cfg.Register,
@@ -256,11 +261,38 @@ func outage(err error) bool {
 	return err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
 }
 
+// dbSources are the outage clocks of calls to the database. Any call that
+// succeeds proves the database reachable, and so ends all of them: a lease
+// that failed once must not keep a clock running that only another lease
+// could stop, or a long quiet gap (verify, an agent that gave up) on a
+// healthy backend would halt the run. A total outage fails every source and
+// still halts at the window. The Firebase Auth sources (exchange, refresh)
+// are a different backend and are not cleared by the database.
+var dbSources = []string{"config", "registry", "lease", "report", "heartbeat", "kill-poll"}
+
+// dbOK records a successful call to the database.
+func (s *Session) dbOK() {
+	for _, k := range dbSources {
+		s.grace.OK(k)
+	}
+}
+
+// streamFailed is a kill stream's error. SSE surviving Cloud Run egress is
+// unverified (A-F2), and the heartbeat's REST poll backstops the stream, so a
+// stream error counts toward the grace only while the poll fails as well.
+func (s *Session) streamFailed(source string, err error) {
+	if s.grace.FailingSource("kill-poll") {
+		s.grace.Fail(source, err)
+		return
+	}
+	s.log.Warn("budget: a kill stream failed; the poll covers it", "source", source, "error", err.Error())
+}
+
 // observe reports a backend call's outcome to the grace and returns err.
 func (s *Session) observe(source string, err error) error {
 	switch {
 	case err == nil:
-		s.grace.OK(source)
+		s.dbOK()
 	case outage(err):
 		s.grace.Fail(source, err)
 	}
@@ -274,7 +306,7 @@ func (s *Session) retryBoot(ctx context.Context, source string, fn func() error)
 	for {
 		err := fn()
 		if err == nil {
-			s.grace.OK(source)
+			s.dbOK()
 			return nil
 		}
 		if ctx.Err() != nil {
@@ -440,14 +472,15 @@ func (s *Session) Admit(ctx context.Context, o AdmitOptions) (*Halt, error) {
 	if h := killHalt(sn.Kills); h != nil {
 		return h, nil
 	}
-	if !o.Gateway {
-		return nil, nil
-	}
-	// Rules refuse every lease when the largest single lease is unset, in
-	// every mode.
+	// Rules refuse every lease, and every spend or notional report is bounded
+	// by it, when the largest single lease is unset: in every mode and for
+	// every auth, oauth included.
 	if _, ok := sn.Caps.MaxReserve(); !ok {
 		return &Halt{Reason: ReasonNoCap, Scope: ScopeGlobal,
-			Detail: "limits.maxReserveMicros is not set in the budget database, so no lease can be granted (an operator runs fugaro init --firebase again)"}, nil
+			Detail: "limits.maxReserveMicros is not set in the budget database, so nothing can be leased or reported (an operator runs fugaro init --firebase again)"}, nil
+	}
+	if !o.Gateway {
+		return nil, nil
 	}
 	if sn.Caps.Enforcing() {
 		// The rules compare all three caps on every lease.

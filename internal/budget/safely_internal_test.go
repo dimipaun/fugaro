@@ -1,8 +1,10 @@
 package budget
 
 import (
+	"errors"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 func discardLog() *slog.Logger { return slog.New(slog.DiscardHandler) }
@@ -40,5 +42,21 @@ func TestPathBuildersPanicOnEmptySegments(t *testing.T) {
 			}()
 			f()
 		}()
+	}
+}
+
+// I2: a kill stream that fails counts toward the grace only while the REST
+// poll fails too.
+func TestKillStreamErrorsCountOnlyWithAFailingPoll(t *testing.T) {
+	g := NewGrace(time.Hour)
+	s := &Session{grace: g, log: discardLog()}
+	s.streamFailed("kill-global", errors.New("sse cut"))
+	if g.Failing() {
+		t.Fatal("a stream error alone started the grace")
+	}
+	g.Fail("kill-poll", errors.New("503"))
+	s.streamFailed("kill-global", errors.New("sse cut"))
+	if !g.FailingSource("kill-global") {
+		t.Fatal("a stream error with a failing poll did not count")
 	}
 }

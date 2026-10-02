@@ -167,7 +167,7 @@ func (s *Session) Finish(ctx context.Context, status string) {
 		s.mu.Unlock()
 		if again > 0 {
 			if err := s.release(ctx, again); err != nil {
-				s.log.Warn("budget: the lease could not be released; it stays counted until the sweeper", "error", err.Error())
+				s.log.Warn("budget: the lease could not be released; it stays counted, which errs high, until the day ends", "error", err.Error())
 			}
 		}
 		if err := s.flush(ctx, nil, "report"); err != nil && ctx.Err() == nil {
