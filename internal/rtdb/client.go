@@ -206,7 +206,11 @@ func (c *Client) PutIfMatch(ctx context.Context, path, etag string, v any) error
 	}
 	hdr := http.Header{}
 	hdr.Set("If-Match", etag)
-	_, err = c.do(ctx, http.MethodPut, path, url.Values{"print": {"silent"}}, b, hdr)
+	// No print=silent: the real database refuses it together with If-Match
+	// (400 "Mixing 'shallow', querying parameters or 'print=silent' and
+	// if-match or if-none-match requests is not supported"); the response
+	// body is the written value and is ignored.
+	_, err = c.do(ctx, http.MethodPut, path, nil, b, hdr)
 	return err
 }
 

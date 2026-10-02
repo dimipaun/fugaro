@@ -351,3 +351,21 @@ func TestRTDBFakePatchNullDeletes(t *testing.T) {
 		t.Fatalf("a bad key in a null update = %d, want 400", code)
 	}
 }
+
+// The real database refuses a conditional request together with
+// print=silent or shallow (found live): the fake does too.
+func TestRTDBFakeRefusesConditionalWithSilentOrShallow(t *testing.T) {
+	f := NewRTDB(t)
+	f.Set("x", 1)
+	for _, q := range []string{"?print=silent", "?shallow=true"} {
+		for _, h := range []string{"If-Match", "If-None-Match"} {
+			if code, _, _ := rtdbDo(t, "PUT", f.URL+"/x.json"+q, "2", map[string]string{h: "null_etag"}); code != 400 {
+				t.Errorf("PUT %s with %s = %d, want 400", q, h, code)
+			}
+		}
+	}
+	// Without the extra parameter a conditional write is fine.
+	if code, _, _ := rtdbDo(t, "PUT", f.URL+"/y.json", "2", map[string]string{"If-Match": "null_etag"}); code != 200 {
+		t.Errorf("plain conditional PUT = %d, want 200", code)
+	}
+}
