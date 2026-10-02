@@ -60,8 +60,8 @@ variable "launchers" {
   nullable    = false
 
   validation {
-    condition     = alltrue([for m in var.launchers : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
-    error_message = "launchers must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
+    condition     = alltrue([for m in var.launchers : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "launchers must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
   }
 }
 
@@ -72,8 +72,8 @@ variable "operators" {
   nullable    = false
 
   validation {
-    condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
-    error_message = "operators must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
+    condition     = alltrue([for m in var.operators : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "operators must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
   }
 }
 
@@ -84,8 +84,8 @@ variable "admins" {
   nullable    = false
 
   validation {
-    condition     = alltrue([for m in var.admins : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
-    error_message = "admins must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
+    condition     = alltrue([for m in var.admins : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "admins must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
   }
 }
 
@@ -96,8 +96,8 @@ variable "budget_admins" {
   nullable    = false
 
   validation {
-    condition     = alltrue([for m in var.budget_admins : can(regex("^(user|group|serviceAccount|domain):[^ ]+$", m))])
-    error_message = "budget_admins must be IAM members: user:, group:, serviceAccount: or domain: followed by the address."
+    condition     = alltrue([for m in var.budget_admins : can(regex("^(user|group|serviceAccount):[^ *]+$", m))])
+    error_message = "budget_admins must be IAM members: user:, group: or serviceAccount: followed by one address (no domain: and no wildcard: these members get roles on the FP)."
   }
 }
 

@@ -37,14 +37,10 @@ resource "google_project_iam_member" "history_launcher" {
   member  = google_service_account.history[0].member
 }
 
-# Deploying the job acts as its account.
-resource "google_service_account_iam_member" "history_user" {
-  for_each = var.enable_budget ? toset(var.operators) : toset([])
-
-  service_account_id = google_service_account.history[0].name
-  role               = "roles/iam.serviceAccountUser"
-  member             = each.value
-}
+# Nobody is granted actAs on this account, operators included: it holds
+# firebasedatabase.admin on the FP, so anyone who could deploy a job as it
+# could lift caps and kill switches (design D6). Executing the existing job
+# needs no actAs; only the applier that creates or updates the job acts as it.
 
 resource "google_cloud_run_v2_job" "history" {
   count = local.deploy_history ? 1 : 0

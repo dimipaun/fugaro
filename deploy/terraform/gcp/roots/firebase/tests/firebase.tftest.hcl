@@ -89,6 +89,9 @@ run "TestSignerHasNoRoles" {
   }
 
   # Every member the module grants roles to, project-wide or on the signer.
+  # This checks the grant set the plan produces; the structural guarantee
+  # (no resource can name the signer as a member) is the Go text check
+  # TestFirebaseModuleGrantsNothingToSignerOrJobs.
   assert {
     condition = alltrue(flatten([
       [for m in google_project_iam_member.viewer : m.member != google_service_account.signer.member],
@@ -166,45 +169,23 @@ run "TestLauncherHasViewerAndMinterOnly" {
   }
 }
 
-run "TestJobAccountsHaveNoFPGrant" {
+# There is no firebase-module test for "job accounts hold nothing on the FP":
+# the module takes no job account and has no resource that could grant one,
+# so a plan assertion would only compare inputs. That invariant is pinned by
+# the Go text check TestFirebaseModuleGrantsNothingToSignerOrJobs.
+run "service_account_grants_are_the_history_account_only" {
   command = plan
 
   module {
     source = "../../modules/firebase"
   }
 
-  override_resource {
-    target          = google_service_account.signer
-    override_during = plan
-    values = {
-      name   = "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-      email  = "fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-      member = "serviceAccount:fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-    }
-  }
-  override_resource {
-    target          = google_project_iam_custom_role.token_minter
-    override_during = plan
-    values = {
-      name = "projects/fp-1234/roles/fugaroTokenMinter"
-    }
-  }
-
-  # The module takes no job account at all: nothing to grant. Its only
-  # service-account members are the history account (below) and the signer
-  # (which holds nothing). A run holds an ID token, which isn't an IAM identity.
   assert {
     condition = alltrue(concat(
       [for m in google_project_iam_member.viewer : !startswith(m.member, "serviceAccount:")],
       [for m in google_project_iam_member.admin : !startswith(m.member, "serviceAccount:")],
-      [for m in google_service_account_iam_member.minter : !startswith(m.member, "serviceAccount:")],
     ))
-    error_message = "no service account is granted anything on the FP, except the history account's own grants"
-  }
-  assert {
-    condition = alltrue([for m in [google_project_iam_member.history_database, google_project_iam_member.history_auth] :
-    m.member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"])
-    error_message = "the history account's grants are the only service-account grants besides the signer's own existence"
+    error_message = "with these inputs, no service account holds a viewer or admin role except the history account's own grants"
   }
 }
 
@@ -475,4 +456,170 @@ run "bad_member" {
   }
 
   expect_failures = [var.admins]
+}
+
+run "domain_admin_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    budget_admins = ["domain:example.com"]
+  }
+
+  expect_failures = [var.budget_admins]
+}
+
+run "domain_owner_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    admins = ["domain:example.com"]
+  }
+
+  expect_failures = [var.admins]
+}
+
+run "wildcard_admin_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    budget_admins = ["user:*@example.com"]
+  }
+
+  expect_failures = [var.budget_admins]
+}
+
+run "all_users_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    launchers = ["allUsers"]
+  }
+
+  expect_failures = [var.launchers]
+}
+
+run "domain_launcher_rejected" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    launchers = ["domain:example.com"]
+  }
+
+  expect_failures = [var.launchers]
+}
+
+run "bad_operator_member" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    operators = ["operator@example.com"]
+  }
+
+  expect_failures = [var.operators]
+}
+
+run "bad_project_id" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    project = "Bad_Project"
+  }
+
+  expect_failures = [var.project]
+}
+
+run "bad_fugaro_project" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    fugaro_project = "-bad"
+  }
+
+  expect_failures = [var.fugaro_project]
+}
+
+run "bad_signer_account_id" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    names = {
+      signer_account_id = "X"
+      minter_role_id    = "fugaroTokenMinter"
+      api_key           = "fugaro-run-signin"
+    }
+  }
+
+  expect_failures = [var.names]
+}
+
+run "bad_minter_role_id" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    names = {
+      signer_account_id = "fugaro-token-signer"
+      minter_role_id    = "bad role"
+      api_key           = "fugaro-run-signin"
+    }
+  }
+
+  expect_failures = [var.names]
+}
+
+run "bad_api_key_name" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    names = {
+      signer_account_id = "fugaro-token-signer"
+      minter_role_id    = "fugaroTokenMinter"
+      api_key           = "Bad Key"
+    }
+  }
+
+  expect_failures = [var.names]
 }

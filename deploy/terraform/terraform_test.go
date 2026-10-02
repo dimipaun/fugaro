@@ -223,6 +223,26 @@ func TestFirebaseModuleGrantsNothingToSignerOrJobs(t *testing.T) {
 	}
 }
 
+// Nobody may act as the history account (it holds firebasedatabase.admin on
+// the FP): no iam member in the installation module names it, and none grants
+// serviceAccountUser or serviceAccountTokenCreator on it.
+func TestNoActAsOnHistoryAccount(t *testing.T) {
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+			if strings.Contains(blk.body, "google_service_account.history") || strings.Contains(blk.name, "history") {
+				t.Errorf("%s: %s grants on the history account", path, blk.name)
+			}
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			for _, bad := range []string{"serviceAccountUser", "serviceAccountTokenCreator"} {
+				if strings.Contains(blk.body, bad) {
+					t.Errorf("%s: %s grants %s on the project", path, blk.name, bad)
+				}
+			}
+		}
+	})
+}
+
 func TestResourceBlocks(t *testing.T) {
 	src := `
 # resource "google_storage_bucket" "commented" { }

@@ -786,8 +786,8 @@ run "TestHistoryAccountGrants" {
     error_message = "the history account holds fugaroLauncher on the project, for run.executions.list"
   }
   assert {
-    condition     = keys(google_service_account_iam_member.history_user) == ["user:operator@example.com"]
-    error_message = "operators may act as the history account, which deploying its job needs"
+    condition     = length(google_service_account_iam_member.scheduler_user) == 1 && !contains(keys(google_service_account_iam_member.scheduler_user), "user:launcher@example.com")
+    error_message = "the only actAs grants are the scheduler account's, to operators"
   }
   assert {
     condition     = !contains(keys(google_storage_bucket_iam_member.runs), "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
@@ -985,4 +985,71 @@ run "enable_budget_needs_history" {
   }
 
   expect_failures = [google_service_account.history]
+}
+
+# The history account holds firebasedatabase.admin on the FP: granting anyone
+# actAs on it would let them deploy a job as it and lift caps (design D6).
+# The module has no resource that could grant it, which the Go text check
+# also pins; this plan asserts the grants that do exist.
+run "history_account_has_no_actas_grants" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition = alltrue([for m in google_service_account_iam_member.scheduler_user :
+    m.service_account_id != "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"])
+    error_message = "no operator or launcher may act as the history account"
+  }
+}
+
+run "bad_history_account_id" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "X"
+      job              = "fugarohist"
+      image            = "x"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  expect_failures = [var.history]
 }
