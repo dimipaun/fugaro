@@ -1,6 +1,7 @@
 // Package gcpfake serves minimal, stateful httptest fakes of the Google
 // Cloud REST APIs Fugaro calls: GCS (JSON API), Cloud Run Admin v2, Cloud
-// Logging v2, Secret Manager v1 and Cloud Build v1. Each fake implements
+// Logging v2, Secret Manager v1, Cloud Build v1 and a Firebase Realtime
+// Database (RTDB, without security rules). Each fake implements
 // only the calls Fugaro makes, and fails the test on anything else, so a
 // client change that sends a new call is noticed.
 package gcpfake
