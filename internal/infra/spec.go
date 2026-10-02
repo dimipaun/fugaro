@@ -57,9 +57,9 @@ const (
 	// the project's Realtime Database, the restricted web API key (not a
 	// secret) that signs a run's token in, and how long the backend may be
 	// unreachable before the run halts (set only when the config sets it).
-	RTDBURLEnv        = "FUGARO_RTDB_URL"
-	FirebaseAPIKeyEnv = "FUGARO_FIREBASE_API_KEY"
-	BudgetGraceEnv    = "FUGARO_BUDGET_GRACE"
+	RTDBURLEnv        = runner.RTDBURLEnv
+	FirebaseAPIKeyEnv = runner.FirebaseAPIKeyEnv
+	BudgetGraceEnv    = runner.BudgetGraceEnv
 )
 
 // githubGitUser is the HTTPS username of a GitHub App installation token.
