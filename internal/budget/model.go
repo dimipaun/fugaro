@@ -321,9 +321,14 @@ type AgentEntry struct {
 	UpdatedAt      int64  `json:"updatedAt,omitempty"`
 	Spent          Micros `json:"spent,omitempty"`
 	Halted         string `json:"halted,omitempty"`
+	// RequestedBy must equal the token's rb claim (the launcher's identity),
+	// or the rules refuse the write.
+	RequestedBy string `json:"requestedBy"`
 }
 
 // Outcome is /outcomes/<day>/<slug>/<run>, written once.
 type Outcome struct {
 	Status string `json:"status"`
+	// RequestedBy must equal the token's rb claim, as for AgentEntry.
+	RequestedBy string `json:"requestedBy"`
 }
