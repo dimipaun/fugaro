@@ -22,7 +22,7 @@ Neither workflow runs the test suite; CI already did on main. `release.yml` refu
 2. Bump the plugin and commit it through a PR to main:
 
    ```sh
-   scripts/bump-plugin-version.sh X.Y.Z   # plugin/.claude-plugin/plugin.json and .claude-plugin/marketplace.json
+   scripts/bump-plugin-version.sh X.Y.Z   # plugin/.claude-plugin/plugin.json; the marketplace entry carries no version and the plugin test rejects one
    ```
 
    `go test ./plugin/` only requires a non-empty version; the release workflow enforces `version == tag` (`scripts/bump-plugin-version.sh --check X.Y.Z`).
