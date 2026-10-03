@@ -1,17 +1,21 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // budgetFixture is a project config whose budget backend is the RTDB fake.
@@ -600,5 +604,56 @@ func TestSetEnforceNeedsGlobalCaps(t *testing.T) {
 	}
 	if f.db.Value("config/mode") != "enforce" {
 		t.Fatal("the mode was not written")
+	}
+}
+
+// TestTUIAndCLIShareSetKill: the watch TUI and `budget kill|resume` write the
+// same nodes with the same fields, because both go through budget.SetKill.
+func TestTUIAndCLIShareSetKill(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	db, err := rtdb.New(f.db.URL, rtdb.Auth{IDToken: func() string { return "" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	shape := func(path string) map[string]any {
+		m, _ := f.db.Value(path).(map[string]any)
+		out := map[string]any{}
+		for k, v := range m {
+			out[k] = v
+		}
+		if out["at"] == nil {
+			t.Fatalf("%s has no timestamp: %v", path, m)
+		}
+		out["at"] = "<at>"
+		return out
+	}
+	// CLI kill, then reset, then the TUI's executor on the same node.
+	if _, _, err := execute(t, "budget", "kill", "--repo", "acme/app", "--reason", "looping"); err != nil {
+		t.Fatal(err)
+	}
+	viaCLI := shape(budget.PathKillRepo(appSlug))
+	f.db.Set(budget.PathKillRepo(appSlug), nil)
+	o := watch.Execute(context.Background(), db, watch.Request{Kind: watch.KillRepo, Project: "aurora", Target: watch.Target{Slug: appSlug, Name: "acme/app"}, Reason: "looping"}, "someone@example.com")
+	if !o.Written {
+		t.Fatalf("%+v", o)
+	}
+	if viaTUI := shape(budget.PathKillRepo(appSlug)); !reflect.DeepEqual(viaCLI, viaTUI) {
+		t.Fatalf("CLI wrote %v, TUI wrote %v", viaCLI, viaTUI)
+	}
+	// Resume, both ways, ends in the same node too.
+	if _, _, err := execute(t, "budget", "resume", "--repo", "acme/app", "--yes", "--reason", "ok"); err != nil {
+		t.Fatal(err)
+	}
+	viaCLI = shape(budget.PathKillRepo(appSlug))
+	f.db.Set(budget.PathKillRepo(appSlug), map[string]any{"on": true, "by": "x", "at": 1})
+	watch.Execute(context.Background(), db, watch.Request{Kind: watch.ResumeRepo, Project: "aurora", Target: watch.Target{Slug: appSlug, Name: "acme/app"}, Reason: "ok"}, "someone@example.com")
+	if viaTUI := shape(budget.PathKillRepo(appSlug)); !reflect.DeepEqual(viaCLI, viaTUI) {
+		t.Fatalf("resume: CLI wrote %v, TUI wrote %v", viaCLI, viaTUI)
+	}
+	// And the refusal is the same text.
+	f.db.DenyNext(1)
+	o = watch.Execute(context.Background(), db, watch.Request{Kind: watch.KillAll, Project: "aurora", Reason: "r"}, "me")
+	if o.Notice != budget.AdminDeniedText("aurora") {
+		t.Fatalf("%q", o.Notice)
 	}
 }
