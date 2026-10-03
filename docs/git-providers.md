@@ -28,7 +28,7 @@ Git uses it with the username `x-token-auth`. The token is scoped to its reposit
 
 **Name the token when you create it.** Pick a name you want people to see, for example `Fugaro`. Bitbucket shows the token's name as the author of every pull request and comment Fugaro creates, and a token can't be renamed or edited after creation (it can be rotated or revoked, which keeps the name). To change the name, create a new token, store it as a new version of the repository's `bitbucket-token` secret (`fugaro secrets set bitbucket-token --repo <owner/name> < <token file>`), and then revoke the old one. Use the same name for every repository, so pull requests look the same everywhere. Commits are authored as `Fugaro` whatever the token is called.
 
-- **Reviewers** (`git.pr.reviewers`) are account UUIDs (`{…}`) or account IDs, not usernames. If Bitbucket rejects one, the PR is opened without reviewers and the run logs a warning. Bitbucket answers an unknown but well-formed UUID with HTTP 400 `reviewers: Malformed reviewers list`, so the message does not distinguish an unknown reviewer from a malformed one.
+- **Reviewers** (`git.pr.reviewers`) are requested only when the PR becomes ready (see "Early draft PRs" below). They are account UUIDs (`{…}`) or account IDs, not usernames. If Bitbucket rejects one, the PR stays ready without reviewers and the run's report says so. Bitbucket answers an unknown but well-formed UUID with HTTP 400 `reviewers: Malformed reviewers list`, so the message does not distinguish an unknown reviewer from a malformed one.
 - **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The run logs a warning about this once, to its stderr log.
 - **Repository names** are matched in lowercase when finding an existing pull request, since Bitbucket stores workspace and repository slugs in lowercase.
 
@@ -70,6 +70,14 @@ The agent's environment carries a short-lived, repository-scoped token. For Bitb
 The token is never written to `.git/config`, to a remote URL, or to a command line.
 
 **A follow-up's agent gets none of this** (design §6.1): no `FUGARO_GIT_*` or `GIT_CONFIG_*` variables and no `GH_TOKEN`. The runner fetches the pull request's branch at bootstrap and pushes it at finalize with its own git environment, and the review comments reach the agent in its prompt. This is defense in depth only: the agent runs as the same user as the runner, so it could still read the token from the runner's `/proc`.
+
+## Early draft PRs (`git.pr.early_draft`)
+
+A run opens a **draft** pull request at its first verified push (a passing test run on a clean tree), not when it finishes, keeps a **Fugaro status** section in the description current (stage, verify state, model cost, update time) and marks the PR ready at the end only when it is (design §4.2a).
+
+**Reviewers are now added when the PR becomes ready, not when it is created.** Before this change, `git.pr.reviewers` were requested at creation, so a reviewer was notified as soon as the draft appeared, whether or not the run would succeed. Now a draft carries no reviewers and no labels. They are requested by the same run when it flips the PR to ready, and a run that ends as a draft (failed, halted, cancelled) never notifies them. Anyone you want to see work in progress can watch the draft; nobody is paged by it. A follow-up requests them again only when it flips a draft to ready.
+
+`git.pr.early_draft` (default `true`; `false` for a repository whose host has no draft pull requests, or when you want the PR to appear only at the end) keeps the old flow: the PR opens at finalize and the reviewers are requested then, if it is ready. On GitHub plans that refuse drafts, Fugaro opens a normal PR titled `[DRAFT] …` (recorded as `draft_fallback`, shown by `fugaro diagnose`); a normal PR may auto-request CODEOWNERS reviewers, which Fugaro cannot prevent. The status section sits between two `[//]: # (fugaro:status begin|end)` lines, which Markdown renders as nothing; a human edit outside them is kept. If a run dies, its draft keeps saying `Running` with an old time: `fugaro ls` shows `(draft, stale)` and `fugaro diagnose` says so.
 
 ## Pushing and draft pull requests
 

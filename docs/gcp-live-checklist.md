@@ -541,6 +541,72 @@ M9d merged with **no live apply**. Everything below is the live bring-up of the 
 | Scheduler job body and 00:30 execution args (A4) | |
 | Rollover duration vs the 1800 s timeout (A18) | |
 
+## Check 24: early draft PR (sandbox only)
+
+M9e (design §4.2a) opens a draft PR at a run's first verified push, keeps a status section in its description, and requests reviewers and labels only when the PR becomes ready. The hermetic tests (fake provider, recorded fixtures, the Bitbucket stand-in in `internal/e2e`) cannot show how a real host renders or notifies, so this check runs on the **Bitbucket sandbox** only. **Every step is a ⚠ CONFIRM: you run it, or approve it before it runs.** Nothing here is automated.
+
+**Rules.**
+- **EdgeWeb is never used for these checks, and nothing on EdgeWeb is ever merged.** Use the sandbox repository (for example `edgeappinc/fugarosandbox`) with its own repository access token, and nowhere else.
+- GitHub is **not** live-tested: there is no GitHub sandbox. See "Not verified" below.
+- Each run needs your go-ahead and your task text. Budget: at most about $5 for the whole check (the sandbox's per-run cap of $2 applies; seven short runs on a small task fit).
+- The `live`-tag tests' guard (a sandbox with no reviewers) does not cover this check, which is manual. Step 4 adds a throwaway reviewer account that **you** own to the sandbox config, and removes it again in step 9.
+
+**Before it (free).**
+1. The unit and fake runs are green on the branch under test, and the binary and the sandbox's image are built from it: `fugaro init --repo <owner/name>` so the job carries the new runner (an older runner never opens an early draft; check `git.pr.early_draft` is absent or `true` in the sandbox's `fugaro.yaml`).
+2. `export FUGARO=<path to the binary>` and `export SANDBOX=<owner/name>`; the rest uses `$FUGARO run --repo $SANDBOX ...`.
+3. Know the sandbox token's one-line way to read a PR (`GET /2.0/repositories/<ws>/<repo>/pullrequests/<id>`) for the read-backs below, with the token out of argv (as in git-providers.md).
+
+**Steps.**
+1. **⚠ CONFIRM, a passing run.** Launch a task the sandbox's verify passes. While it runs, `fugaro ls --repo $SANDBOX` shows the PR column with `(draft)` once the first verified push happened, and not before. Record `FACT:` lines for: the delay from the run start to the draft; the PR is a real draft (`draft: true` on read-back); the status section updates at each stage boundary (note the latency, and that two boundaries under 20 s apart coalesce); at the end the PR is ready, the description before the status section is the agent's `pr.md`, and the section says `Ready for review`.
+2. **⚠ CONFIRM, the marker rendering (A2).** Open the PR in the Bitbucket web UI at each stage: **do the `[//]: # (fugaro:status begin)` and `end)` lines render as nothing?** Expected: only the `### Fugaro status` block shows. If the markers are visible, stop here: record it and switch the runner's Bitbucket form to HTML comments (`gitprov.StatusHTML`) before merging.
+3. **⚠ CONFIRM, a human edit survives.** While a run is in a later stage, add a sentence above the status section in the web UI. After the next update and after finalize, the sentence is still there (finalize replaces the title and description from `pr.md` only if you did not touch them: then it must leave your edit; record which happened).
+4. **⚠ CONFIRM, reviewers appear only at ready (A1, A3).** Add a throwaway reviewer account you own to the sandbox's `git.pr.reviewers` (an account UUID, git-providers.md), merged to the default branch. Run a passing task and read the PR back: **no reviewers on the draft**; the reviewer list contains the account after the flip to ready; the draft-to-ready request kept the description and the draft state in that one `PUT` (A3: the description is intact, `draft` is false). Check the reviewer's inbox: the notification arrives at ready, not at creation. `FACT:` the time of each.
+5. **⚠ CONFIRM, a failing task.** A task the verify cannot pass (your text). Expected: no early PR; at finalize a **draft** with the failure explanation; no reviewers; the run ends `failed`.
+6. **⚠ CONFIRM, a budget halt after the first push.** Set a small `budget.per_run_usd` in the project config that the implement stage fits under and the review does not (tune it; check with `fugaro budget show`), run a passing task. Expected: the draft stays a draft, its section says `Halted: run_cap`, the report comment starts `Halted:`, no reviewers; `fugaro diagnose` shows the halt and `PR: <url> (draft)`. Restore the cap afterwards.
+7. **⚠ CONFIRM, `fugaro cancel` and `cancel --now`.** On a run that has opened its draft, `fugaro cancel <run>`: it finalizes; the draft stays with `Cancelled` in the section and the report comment. On a second run, `fugaro cancel --now <run>` after its draft appeared: finalize is skipped; the draft keeps saying `Running`; once the execution is gone `fugaro ls` shows `(draft, stale)` and `fugaro diagnose` says `draft PR #N last updated <age> ago; the run may have crashed` (this uses `pr.status_at` and the gone execution, not the sweeper's flag: record what `ls` and `diagnose` actually print).
+8. **⚠ CONFIRM, a follow-up.** `fugaro run --repo $SANDBOX --pr N "..."` on a **ready** PR from step 1 and on a **draft** one from step 5: each updates the same PR (no second PR), keeps the status section (rewritten), requests reviewers only for the draft that became ready, and posts its report. Also a follow-up of a PR whose description has no status section (a PR from before M9e, or one whose section you deleted): it changes nothing but the draft state.
+9. **Clean up** (below), and remove the throwaway reviewer from the sandbox config.
+
+**Not verified (GitHub, and what only a real host can say).** No GitHub sandbox exists, so these stay assumptions, recorded in the plan (`docs/plans/2026-10-03-m9e-early-draft-pr.md`) and design §4.2a:
+- **A1** GitHub requests and notifies reviewers only when a PR is ready: Fugaro applies them at ready by its own call and never relies on this, but the claim "a draft notifies nobody" is untested on GitHub.
+- **A3** (Bitbucket, step 4 settles it) and **A4** GitHub `PATCH /pulls/N` with only `body` leaves title, draft and reviewers alone.
+- **A6** the GitHub 422 refusal of `draft` on a private repository without drafts has the shape the adapter detects (HTTP 422 whose body mentions "draft"; for the GraphQL convert a message with "draft" and "not supported").
+- **CODEOWNERS:** a normal PR (the `[DRAFT]` fallback) may auto-request code owners; Fugaro cannot prevent it.
+- The GitHub adapter's reads of `requested_reviewers`, `requested_teams` and `labels` (used to skip what is already applied) are from the documentation.
+
+**Clean up.** Decline every sandbox PR this check opened, with the sandbox token (never your own), and delete its branch:
+
+```bash
+# for each PR id: decline, then delete the branch fugaro/<run-id>
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X POST \
+  "https://api.bitbucket.org/2.0/repositories/<ws>/<repo>/pullrequests/<id>/decline"
+curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <token-file>)") -X DELETE \
+  "https://api.bitbucket.org/2.0/repositories/<ws>/<repo>/refs/branches/fugaro/<run-id>"
+```
+
+(`<token-file>` holds the sandbox token; `printf` is a builtin, so the token stays out of every process's command line. Declining a PR also works in the web UI.) Never merge a sandbox PR. List what is left with `fugaro ls --repo $SANDBOX --since 1d`.
+
+**Results template**
+
+| Item | Result |
+|---|---|
+| Run id, PR id, cost of each run | |
+| Delay: run start to the draft appearing (`FACT`) | |
+| Draft is a real draft (read-back) | |
+| Status update latency; coalescing (`FACT`) | |
+| Ready at the end; description kept; section says `Ready for review` | |
+| A2: markers render as nothing on Bitbucket | |
+| Human edit outside the section survives | |
+| A1/A3: no reviewers on the draft; added at ready; description and draft kept by one PUT | |
+| Reviewer notification time vs creation and ready (`FACT`) | |
+| Failing task: no early PR; draft at finalize; no reviewers | |
+| Budget halt: draft stays, `Halted: run_cap` in the section and comment | |
+| `cancel`: draft with `Cancelled` | |
+| `cancel --now`: stale draft; what `ls` and `diagnose` print | |
+| Follow-up on a ready PR, on a draft, on a PR without a section | |
+| Sandbox PRs declined, branches deleted | |
+| Unverified (GitHub): A1, A4, A6, CODEOWNERS | still unverified |
+
 ## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the

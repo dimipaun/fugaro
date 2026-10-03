@@ -56,10 +56,10 @@ fugaro run "add a --verbose flag to the export command"
 fugaro ls                      # runs, newest first; --watch redraws until they settle
 fugaro logs -f <run>           # <repo-slug>/<run-id>, or a bare run ID
 fugaro diagnose <run>          # status, failed tests, review findings, last message, cost, PR
-fugaro cancel <run>            # the runner opens a draft PR first
+fugaro cancel <run>            # the runner finalizes first; the draft PR stays
 ```
 
-Every run ends in a pull request, a draft one if it failed. To act on review comments, continue it with `fugaro run --pr N` (optionally with extra instructions as TEXT); it reads the comments of the accounts `fugaro.yaml`'s `followup.trusted` lists.
+Every run that pushed ends in a pull request, a draft one if it failed. The draft appears at the first verified push and shows the run's progress, and the configured reviewers are requested only when it becomes ready (`git.pr.early_draft`, [docs/git-providers.md](docs/git-providers.md)). To act on review comments, continue it with `fugaro run --pr N` (optionally with extra instructions as TEXT); it reads the comments of the accounts `fugaro.yaml`'s `followup.trusted` lists.
 
 ### 6. Optional: the shared budget
 

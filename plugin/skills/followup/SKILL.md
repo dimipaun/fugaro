@@ -5,7 +5,7 @@ description: Continue a pull request Fugaro opened, with a follow-up run in the 
 
 # Follow up a Fugaro pull request
 
-You are launching `fugaro run --pr N`: a cloud run that checks out the branch of pull request N, which an earlier Fugaro run opened, and continues it. The run reads the PR's review comments and the configuration of the PR's base branch. It adds commits to the same branch, marks the PR ready or draft again, and posts a new report on it. It never opens a second PR.
+You are launching `fugaro run --pr N`: a cloud run that checks out the branch of pull request N, which an earlier Fugaro run opened, and continues it. The run reads the PR's review comments and the configuration of the PR's base branch. It adds commits to the same branch, marks the PR ready or draft again, and posts a new report on it. Reviewers are requested again only if the run turns a draft PR ready; a PR that was already ready is not re-requested. It never opens a second PR.
 
 You are done when the launch printed `launched` (or `already-launched`) and you have told the user the run, the branch and how to watch it.
 
