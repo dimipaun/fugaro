@@ -238,20 +238,15 @@ func TestWatchTUIHook(t *testing.T) {
 	oldTTY, oldRun := watchStdoutTTY, runTUI
 	watchStdoutTTY = func(io.Writer) bool { return true }
 	t.Cleanup(func() { watchStdoutTTY, runTUI = oldTTY, oldRun })
-	// The stub says what is missing and points at --plain.
-	_, _, err := execute(t, "watch")
-	if err == nil || !strings.Contains(err.Error(), "use --plain") {
-		t.Fatalf("stub err = %v", err)
-	}
 	var got *WatchDeps
 	runTUI = func(ctx context.Context, d *WatchDeps) error { got = d; return nil }
-	if _, _, err = execute(t, "watch", "--repo", "acme/app"); err != nil || got == nil || got.Sup == nil || got.DB == nil || got.RepoKey == "" || got.LC.Name != "aurora" {
+	if _, _, err := execute(t, "watch", "--repo", "acme/app"); err != nil || got == nil || got.Sup == nil || got.DB == nil || got.RepoKey == "" || got.LC.Name != "aurora" {
 		t.Fatalf("err %v deps %+v", err, got)
 	}
 	// --once and --json never reach it, even at a terminal.
 	got = nil
 	for _, a := range []string{"--once", "--json"} {
-		if _, _, err = execute(t, "watch", "--once", a); err != nil {
+		if _, _, err := execute(t, "watch", "--once", a); err != nil {
 			t.Fatal(err)
 		}
 	}

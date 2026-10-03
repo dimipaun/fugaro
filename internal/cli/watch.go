@@ -56,10 +56,23 @@ type WatchDeps struct {
 // watchStdoutTTY says whether w is a terminal; tests replace it.
 var watchStdoutTTY = isTTY
 
-// runTUI runs the interactive screen. M9c T4 replaces it by assignment; until
-// then the command refuses and points at the plain output.
+// runTUI runs the interactive screen (internal/watch's Bubble Tea model). A
+// variable so tests can replace it.
 var runTUI = func(ctx context.Context, d *WatchDeps) error {
-	return userErr("the interactive screen arrives with M9c T4; use --plain")
+	by, err := d.LC.Me(ctx) // who a kill is recorded as, before the screen takes the terminal
+	if err != nil {
+		return userErr("%v", err)
+	}
+	return watch.RunTUI(ctx, watch.TUIOptions{
+		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
+		RepoKey: d.RepoKey, Repo: d.Repo,
+		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
+		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
+		Exec: func(ctx context.Context, req watch.Request) watch.Outcome {
+			return watch.Execute(ctx, d.DB, req, by)
+		},
+		AltScreen: true,
+	})
 }
 
 type watchOptions struct {
