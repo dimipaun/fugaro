@@ -64,6 +64,8 @@ type Fake struct {
 	seen   []*http.Request
 	bodies [][]byte
 	ended  []chan struct{}
+
+	authName, authValue string // RequireAuth
 }
 
 // New starts a fake upstream answering with script; it is closed when the
@@ -122,6 +124,9 @@ func (f *Fake) serve(w http.ResponseWriter, r *http.Request) {
 	f.ended = append(f.ended, ended)
 	var rep Reply
 	switch {
+	case f.authName != "" && f.authFailsLocked(r):
+		f.mu.Unlock()
+		rep = Error(http.StatusUnauthorized, "authentication_error", "invalid x-api-key")
 	case f.Func != nil:
 		f.mu.Unlock()
 		rep = f.Func(r, body)

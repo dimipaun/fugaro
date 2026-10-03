@@ -149,3 +149,78 @@ func TestHoldEndsWithCaller(t *testing.T) {
 		t.Error("a held request answered")
 	}
 }
+
+func TestFakeRecordsAuthHeader(t *testing.T) {
+	f, srv := New(t, MessageOK("m", pricing.Usage{Input: 1, Output: 1}), MessageOK("m", pricing.Usage{Input: 1, Output: 1}))
+	f.RequireAuth("Authorization", "Bearer sk-or-key")
+	for i, auth := range []string{"Bearer wrong", "Bearer sk-or-key"} {
+		req, _ := http.NewRequest("POST", srv.URL+"/v1/messages", strings.NewReader("{}"))
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("x-api-key", "gateway-token")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		want := []int{401, 200}[i]
+		if resp.StatusCode != want {
+			t.Errorf("request %d: status %d, want %d", i, resp.StatusCode, want)
+		}
+	}
+	if got := f.Header(0, "Authorization"); got != "Bearer wrong" {
+		t.Errorf("recorded Authorization = %q", got)
+	}
+	if got := f.Header(1, "x-api-key"); got != "gateway-token" {
+		t.Errorf("recorded x-api-key = %q", got)
+	}
+}
+
+func TestFakeOmitsUsage(t *testing.T) {
+	rep := Compat{OmitUsage: true}.StreamOK("deepseek/x", pricing.Usage{Input: 9, Output: 9})
+	for _, ev := range rep.Events {
+		if strings.Contains(ev.Data, "usage") {
+			t.Errorf("event %s carries usage: %s", ev.Name, ev.Data)
+		}
+		if !json.Valid([]byte(ev.Data)) {
+			t.Errorf("event %s: invalid JSON %s", ev.Name, ev.Data)
+		}
+	}
+	if body := (Compat{OmitUsage: true}).MessageOK("m", pricing.Usage{}).Body; strings.Contains(body, "usage") {
+		t.Errorf("message carries usage: %s", body)
+	}
+}
+
+func TestFakeCompatShapes(t *testing.T) {
+	u := pricing.Usage{Input: 10, CacheRead: 4, Output: 5}
+	rep := Compat{OmitCacheFields: true, Cost: 0.0123, ServedBy: "other/model"}.StreamOK("deepseek/x", u)
+	start, delta := rep.Events[0].Data, rep.Events[len(rep.Events)-2].Data
+	for _, d := range []string{start, delta} {
+		if strings.Contains(d, "cache_") {
+			t.Errorf("cache fields present: %s", d)
+		}
+	}
+	if !strings.Contains(start, `"model":"other/model"`) {
+		t.Errorf("serving model not renamed: %s", start)
+	}
+	if !strings.Contains(delta, `"cost":0.0123`) || !strings.Contains(delta, `"input_tokens":10`) {
+		t.Errorf("delta usage = %s", delta)
+	}
+}
+
+func TestFakeCutsStream(t *testing.T) {
+	rep := Compat{}.StreamOK("deepseek/x", pricing.Usage{Input: 1, Output: 1})
+	rep.CutAfter = 3
+	_, srv := New(t, rep)
+	resp, err := post(t, srv.URL, "{}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, err := io.ReadAll(resp.Body)
+	if err == nil {
+		t.Errorf("read the whole body (%q); want the connection dropped", b)
+	}
+	if !strings.Contains(string(b), "message_start") || strings.Contains(string(b), "message_stop") {
+		t.Errorf("body = %q", b)
+	}
+}
