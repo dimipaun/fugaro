@@ -6,11 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // Route sends the models it claims to a non-Anthropic endpoint that
@@ -58,29 +59,14 @@ const MaxFeePct = 50
 var routeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
 
 func (r Route) matches(model string) bool {
-	for _, pat := range r.Models {
-		if pre, ok := strings.CutSuffix(pat, "*"); ok {
-			if strings.HasPrefix(model, pre) {
-				return true
-			}
-		} else if pat == model {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(r.Models, func(pat string) bool { return config.PatternMatches(pat, model) })
 }
 
 // overlaps reports whether some model ID is claimed by both routes.
 func (r Route) overlaps(o Route) bool {
 	for _, a := range r.Models {
 		for _, b := range o.Models {
-			pa, ga := strings.CutSuffix(a, "*")
-			pb, gb := strings.CutSuffix(b, "*")
-			switch {
-			case ga && gb && (strings.HasPrefix(pa, pb) || strings.HasPrefix(pb, pa)),
-				ga && !gb && strings.HasPrefix(b, pa),
-				gb && !ga && strings.HasPrefix(a, pb),
-				!ga && !gb && a == b:
+			if config.PatternsOverlap(a, b) {
 				return true
 			}
 		}
@@ -130,16 +116,8 @@ func validateRoutes(u Upstream, routes []Route) error {
 			return err
 		}
 		for _, m := range r.Models {
-			if m == "" || strings.Count(m, "*") > 1 || (strings.Contains(m, "*") && !strings.HasSuffix(m, "*")) {
-				return fmt.Errorf("%s: %q must be a model ID or a prefix ending in *", at, m)
-			}
-			for _, c := range []string{"claude-*", "anthropic/*"} {
-				if (Route{Models: []string{m}}).overlaps(Route{Models: []string{c}}) {
-					return fmt.Errorf("%s: %q would claim Claude models, which go direct to Anthropic", at, m)
-				}
-			}
-			if pre, wild := strings.CutSuffix(m, "*"); wild && len(pre) < 2 {
-				return fmt.Errorf("%s: %q is too broad", at, m)
+			if msg := config.CheckModelPattern(m); msg != "" {
+				return fmt.Errorf("%s: %s", at, msg)
 			}
 		}
 		for _, o := range routes[:i] {
@@ -155,27 +133,10 @@ func validateRoutes(u Upstream, routes []Route) error {
 // loopback host, and a path prefix is allowed ("https://openrouter.ai/api");
 // no credentials, query or fragment, and no path that could climb out.
 func checkRouteBaseURL(s string) error {
-	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return fmt.Errorf("gateway: route base %q must be a scheme, a host and at most a path", s)
+	if err := config.CheckProviderBaseURL(s); err != nil {
+		return fmt.Errorf("gateway: route base %w", err)
 	}
-	if u.RawPath != "" || strings.ContainsAny(u.Path, "\\%") {
-		return fmt.Errorf("gateway: route base %q has an escaped path", s)
-	}
-	for _, seg := range strings.Split(strings.Trim(u.Path, "/"), "/") {
-		if seg == "." || seg == ".." {
-			return fmt.Errorf("gateway: route base %q has a dot segment", s)
-		}
-	}
-	switch u.Scheme {
-	case "https":
-		return nil
-	case "http":
-		if ip := net.ParseIP(u.Hostname()); (ip != nil && ip.IsLoopback()) || u.Hostname() == "localhost" {
-			return nil
-		}
-	}
-	return fmt.Errorf("gateway: route base %q must be https, or http on a loopback address", s)
+	return nil
 }
 
 // routeFor is the route that claims model, or nil: Claude and any model no

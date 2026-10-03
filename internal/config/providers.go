@@ -54,7 +54,7 @@ var (
 
 // Matches reports whether the provider serves model.
 func (p ModelProvider) Matches(model string) bool {
-	return slices.ContainsFunc(p.Models, func(pat string) bool { return patternMatches(pat, model) })
+	return slices.ContainsFunc(p.Models, func(pat string) bool { return PatternMatches(pat, model) })
 }
 
 // AllowsData reports whether repo (owner/name) may send code to p. Git hosts
@@ -63,15 +63,17 @@ func (p ModelProvider) AllowsData(repo string) bool {
 	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
 }
 
-func patternMatches(pat, model string) bool {
+// PatternMatches reports whether the model pattern (an exact ID, or a prefix
+// ending in *) claims model. The gateway's routes use the same function.
+func PatternMatches(pat, model string) bool {
 	if pre, ok := strings.CutSuffix(pat, "*"); ok {
 		return strings.HasPrefix(model, pre)
 	}
 	return pat == model
 }
 
-// patternsOverlap reports whether some model ID matches both patterns.
-func patternsOverlap(a, b string) bool {
+// PatternsOverlap reports whether some model ID matches both patterns.
+func PatternsOverlap(a, b string) bool {
 	pa, ga := strings.CutSuffix(a, "*")
 	pb, gb := strings.CutSuffix(b, "*")
 	switch {
@@ -138,13 +140,8 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 			add(at+".models", "must list the model IDs the provider serves, such as deepseek/*")
 		}
 		for _, m := range p.Models {
-			switch {
-			case !modelPatternRE.MatchString(m) || len(m) > 100:
-				add(at+".models", "%q must be a model ID, or a prefix ending in * such as deepseek/*", m)
-			case patternsOverlap(m, "claude-*"):
-				add(at+".models", "%q would claim Claude models, which go direct to Anthropic", m)
-			case strings.Count(m, "*") == 1 && len(m) < 3:
-				add(at+".models", "%q is too broad: name a prefix such as deepseek/*", m)
+			if msg := CheckModelPattern(m); msg != "" {
+				add(at+".models", "%s", msg)
 			}
 		}
 		for _, r := range p.AllowDataTo {
@@ -157,7 +154,7 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 		for _, b := range names[i+1:] {
 			for _, pa := range providers[a].Models {
 				for _, pb := range providers[b].Models {
-					if patternsOverlap(pa, pb) {
+					if PatternsOverlap(pa, pb) {
 						add("providers."+b+".models", "%q overlaps %q of provider %s: a model must belong to one provider", pb, pa, a)
 					}
 				}
@@ -203,10 +200,48 @@ func ProviderBySecret(providers map[string]ModelProvider, secret string) (name s
 
 func reservedSecretName(s string) bool { _, ok := ReservedSecrets[s]; return ok }
 
+// ClaudePatterns are the model patterns no provider may claim: Claude goes
+// direct to Anthropic, also under the "anthropic/" vendor prefix.
+var ClaudePatterns = []string{"claude-*", "anthropic/*"}
+
+// CheckModelPattern is the rule for one entry of a provider's models: a
+// model ID, or a prefix ending in *, that claims no Claude model and is not
+// too broad. It returns the problem, or "" when the pattern is fine. The
+// gateway's routes apply the same rule, so a config that validates here
+// always starts there.
+func CheckModelPattern(m string) string {
+	if !modelPatternRE.MatchString(m) || len(m) > 100 {
+		return fmt.Sprintf("%q must be a model ID, or a prefix ending in * such as deepseek/*", m)
+	}
+	for _, c := range ClaudePatterns {
+		if PatternsOverlap(m, c) {
+			return fmt.Sprintf("%q would claim Claude models, which go direct to Anthropic", m)
+		}
+	}
+	if strings.Count(m, "*") == 1 && len(m) < 3 {
+		return fmt.Sprintf("%q is too broad: name a prefix such as deepseek/*", m)
+	}
+	return ""
+}
+
+// CheckProviderBaseURL is the rule for a provider's base URL, shared with
+// the gateway: https, or http on a loopback host (tests); a path prefix is
+// allowed ("https://openrouter.ai/api"); no credentials, query (not even an
+// empty "?"), fragment, escaped path or dot segment.
+func CheckProviderBaseURL(s string) error { return checkProviderURL(s) }
+
 func checkProviderURL(s string) error {
 	u, err := url.Parse(s)
-	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
 		return fmt.Errorf("%q must be a URL with a scheme and a host, no credentials, query or fragment", s)
+	}
+	if u.RawPath != "" || strings.ContainsAny(u.Path, "\\%") {
+		return fmt.Errorf("%q has an escaped path", s)
+	}
+	for _, seg := range strings.Split(strings.Trim(u.Path, "/"), "/") {
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%q has a dot segment", s)
+		}
 	}
 	switch u.Scheme {
 	case "https":

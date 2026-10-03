@@ -712,3 +712,56 @@ func TestMaxFeePctMatchesConfig(t *testing.T) {
 		t.Errorf("gateway.MaxFeePct = %d, config.MaxRouteFeePct = %d", MaxFeePct, config.MaxRouteFeePct)
 	}
 }
+
+// The owner's config (config.ValidateModelProviders) and the gateway's routes
+// must accept and refuse the same base URLs and model patterns: a config that
+// validates must start, and what the gateway refuses must not validate.
+func TestRouteAndConfigAgreeOnBaseURLsAndPatterns(t *testing.T) {
+	cred := func() (string, error) { return "k", nil }
+	anth := Upstream{Kind: "anthropic", APIKey: testKey}
+	for _, u := range []string{
+		"https://openrouter.ai/api", "https://openrouter.ai", "https://openrouter.ai/api/", "http://127.0.0.1:9/v1", "http://localhost:9",
+		"http://openrouter.ai/api", "https://openrouter.ai/api?", "https://openrouter.ai/api?x=1", "https://openrouter.ai/api#f",
+		"https://u:p@openrouter.ai/api", "https://openrouter.ai/a%2Fb", "https://openrouter.ai/a%2e%2e/b", "https://openrouter.ai/api/../x",
+		"https://openrouter.ai/./api", "https://openrouter.ai/a\\b", "ftp://openrouter.ai", "openrouter.ai/api", "",
+	} {
+		_, gerr := Start(context.Background(), Options{Upstream: anth, Prices: pricing.Embedded(), Mode: Observe,
+			Routes: []Route{{Name: "p", Models: []string{"deepseek/*"}, BaseURL: u, Auth: "bearer", Credential: cred}}})
+		p := config.ModelProvider{Kind: config.ModelProviderKind, BaseURL: u, Auth: "bearer", Secret: "p-key", Models: []string{"deepseek/*"}}
+		cerr := len(config.ValidateModelProviders(map[string]config.ModelProvider{"p": p})) > 0
+		if (gerr != nil) != cerr {
+			t.Errorf("base URL %q: gateway refuses=%v (%v), config refuses=%v", u, gerr != nil, gerr, cerr)
+		}
+	}
+	for _, m := range []string{
+		"deepseek/*", "deepseek/deepseek-v4-flash", "x/y", "claude-*", "claude-sonnet-5-5", "cl*", "anthropic/*", "anthropic/claude-sonnet-4", "anth*",
+		"*", "a*b", "a*", "", "has space/*", "-lead/*", strings.Repeat("a", 101), "d**",
+	} {
+		_, gerr := Start(context.Background(), Options{Upstream: anth, Prices: pricing.Embedded(), Mode: Observe,
+			Routes: []Route{{Name: "p", Models: []string{m}, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Credential: cred}}})
+		p := config.ModelProvider{Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "p-key", Models: []string{m}}
+		cerr := len(config.ValidateModelProviders(map[string]config.ModelProvider{"p": p})) > 0
+		if (gerr != nil) != cerr {
+			t.Errorf("model %q: gateway refuses=%v (%v), config refuses=%v", m, gerr != nil, gerr, cerr)
+		}
+	}
+	// Match and overlap are one function; pin a table anyway.
+	for _, c := range []struct {
+		a, b    string
+		overlap bool
+	}{
+		{"deepseek/*", "deepseek/deepseek-v4-flash", true},
+		{"deepseek/*", "deep*", true},
+		{"deepseek/a", "deepseek/b", false},
+		{"x/*", "y/*", false},
+		{"a", "a", true},
+	} {
+		if got := config.PatternsOverlap(c.a, c.b); got != c.overlap {
+			t.Errorf("PatternsOverlap(%q, %q) = %v", c.a, c.b, got)
+		}
+		r, o := Route{Models: []string{c.a}}, Route{Models: []string{c.b}}
+		if r.overlaps(o) != c.overlap || r.matches(c.b) != config.PatternMatches(c.a, c.b) {
+			t.Errorf("route and config disagree on %q / %q", c.a, c.b)
+		}
+	}
+}
