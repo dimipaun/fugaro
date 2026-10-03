@@ -221,7 +221,7 @@ func TestReadyPR(t *testing.T) {
 		t.Fatalf("record = %+v", rec)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Draft || pr.Spec.Title != "Add feature" || pr.Spec.Body != "Adds feature.txt." || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
+	if pr.Draft || pr.Title != "Add feature" || gitprov.StripStatus(pr.Body) != "Adds feature.txt." || pr.Spec.Base != "main" || pr.Spec.Branch != "fugaro/"+runID {
 		t.Fatalf("PR = %+v", pr)
 	}
 	if len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "ready for review") {
@@ -545,8 +545,8 @@ func TestPRTextIsRedacted(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := onlyPR(t, h.provider)
-	if pr.Spec.Title != "Add feature [REDACTED]" || pr.Spec.Body != "The key is [REDACTED]." {
-		t.Fatalf("PR text is not redacted: title %q, body %q", pr.Spec.Title, pr.Spec.Body)
+	if pr.Title != "Add feature [REDACTED]" || gitprov.StripStatus(pr.Body) != "The key is [REDACTED]." {
+		t.Fatalf("PR text is not redacted: title %q, body %q", pr.Title, pr.Body)
 	}
 }
 

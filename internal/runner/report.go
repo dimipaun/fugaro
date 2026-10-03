@@ -57,6 +57,13 @@ func Report(rec *runstore.Record, location string, tail *LogTail) string {
 
 // FollowUpReport is Report with a follow-up's section, when fu is non-nil.
 func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection) string {
+	return followUpReport(rec, location, tail, fu, nil)
+}
+
+// followUpReport is FollowUpReport with notes about the pull request itself
+// (reviewers that could not be requested, a host without drafts), each
+// shown as a line after the outcome.
+func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *FollowUpSection, notes []string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "### Fugaro run `%s`\n\n", rec.RunID)
 	if rec.Status == runstore.StatusHalted && rec.Halt != nil {
@@ -69,6 +76,9 @@ func FollowUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		fmt.Fprintf(&b, "**Outcome:** stopped — %s\n\n", rec.Reason)
 	default:
 		fmt.Fprintf(&b, "**Outcome:** draft — %s\n\n", rec.Reason)
+	}
+	for _, n := range notes {
+		fmt.Fprintf(&b, "**Note:** %s\n\n", n)
 	}
 	if len(rec.Stages) > 0 {
 		b.WriteString("| Stage | Duration |\n|---|---|\n")

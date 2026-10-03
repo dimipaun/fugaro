@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -104,10 +105,13 @@ func TestLongPRTextIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	pr := onlyPR(t, h.provider)
-	if title := []rune(pr.Spec.Title); len(title) != 200 || title[199] != '…' {
+	if title := []rune(pr.Title); len(title) != 200 || title[199] != '…' {
 		t.Fatalf("title has %d runes, ends %q", len(title), string(title[len(title)-1]))
 	}
-	body := pr.Spec.Body
+	if len(pr.Body) > gitprov.GitHubBodyLimit {
+		t.Fatalf("body with its status section is %d bytes, over the limit", len(pr.Body))
+	}
+	body := gitprov.StripStatus(pr.Body)
 	if len(body) > 60000 || !strings.HasSuffix(body, "longer than a pull request allows.)*") || !strings.HasPrefix(body, "éé") {
 		t.Fatalf("body is %d bytes, ends %q", len(body), body[len(body)-40:])
 	}
