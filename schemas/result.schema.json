@@ -13,7 +13,7 @@
     "workflow": { "type": "string" },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
-    "stage": { "enum": ["bootstrap", "implement", "review", "fix", "finalize", "writeback"] },
+    "stage": { "enum": ["bootstrap", "implement", "review_first", "review", "fix", "finalize", "writeback"] },
     "outcome": { "enum": ["", "ready", "draft", "none"], "description": "Empty while the run is in progress." },
     "reason": { "type": "string" },
     "branch": { "type": "string" },

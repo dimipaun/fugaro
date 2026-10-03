@@ -589,3 +589,22 @@ func TestSchemaAcceptsPRDesc(t *testing.T) {
 		t.Fatal("schema accepts an unknown pr key")
 	}
 }
+
+func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(runstore.Record{
+		Version: 1, RunID: "20261003-100000-abcd", Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "review_first", Branch: "fugaro/x", StartedAt: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects stage review_first: %v\n%s", err, data)
+	}
+}
