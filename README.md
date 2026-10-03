@@ -70,7 +70,10 @@ fugaro init --firebase <firebase-project-id>
 fugaro budget show             # caps, today's counters, kill switches
 fugaro budget set ...          # after a while in observe mode; see --help
 fugaro watch                   # live dashboard
+fugaro report --by week        # spend history: by day, week, month, year, repo, model or person
 ```
+
+`fugaro report` reads the spend history that a daily job copies into Firestore (created by `init --firebase`; its `us-east5` location is permanent), with the last days computed live and marked `(partial)`. Model dollars, notional (subscription list-price) and compute are always separate columns. It needs the Firebase project's `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`; see [docs/gcp-setup.md](docs/gcp-setup.md#spend-history-and-reports-m9d).
 
 ### The Claude Code plugin
 
