@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -114,6 +115,11 @@ func (f *Flow) Start(kind Kind, t Target, live bool) string {
 	case !kind.all() && (t.Slug == "" || t.Name == ""):
 		return f.refuse("no repository is selected")
 	}
+	// The name compared is the name shown: one with unprintable characters
+	// would be compared as something other than what the user reads.
+	if CleanLine(f.project, 0) != f.project || (!kind.all() && CleanLine(t.Name, 0) != t.Name) {
+		return f.refuse("the name contains unprintable characters; use fugaro budget kill|resume instead")
+	}
 	f.kind, f.target, f.input = kind, Target{}, ""
 	if !kind.all() {
 		f.target = t
@@ -150,11 +156,16 @@ func (f *Flow) Prompt() string {
 	return ""
 }
 
-// Type adds typed or pasted text to the open prompt. Control characters,
+// Type adds typed (live as for Enter: a y while the view is not live cancels) or pasted text to the open prompt. Control characters,
 // newlines and invisible format characters are dropped, so a paste cannot
 // submit or smuggle. In the y/n prompt it answers: y confirms (returned as a
 // Request), n cancels, anything else is ignored.
-func (f *Flow) Type(s string) *Request {
+func (f *Flow) Type(s string, live bool) *Request {
+	if f.ph == askYes && !live && (s == "y" || s == "Y") {
+		f.Esc()
+		f.notice = "cancelled: the data went offline or stale; nothing changed"
+		return nil
+	}
 	switch f.ph {
 	case askYes:
 		// One keystroke only: a paste that happens to contain a y answers nothing.
@@ -256,6 +267,10 @@ type Outcome struct {
 	Err     error // set for anything that did not end in a clean answer
 }
 
+// ExecuteTimeout bounds one Execute, so a hung database call cannot keep the
+// flow in flight forever: Execute always returns and the caller calls Done.
+var ExecuteTimeout = 15 * time.Second
+
 // Execute runs a confirmed request through budget.SetKill, the writer the
 // CLI uses too. by is the signed-in identity. There is no client-side check
 // of rights: the database decides, and a refusal says so.
@@ -263,6 +278,8 @@ func Execute(ctx context.Context, db interface {
 	budget.KillDB
 	Get(ctx context.Context, path string, out any) (bool, error)
 }, req Request, by string) Outcome {
+	ctx, cancel := context.WithTimeout(ctx, ExecuteTimeout)
+	defer cancel()
 	path, what := budget.PathKillGlobal, "project "+CleanLine(req.Project, 80)
 	if !req.Kind.all() {
 		path, what = budget.PathKillRepo(req.Target.Slug), "repository "+CleanLine(req.Target.Name, 80)

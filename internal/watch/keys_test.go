@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -28,7 +29,7 @@ func run(f *Flow, steps []step) (reqs []*Request) {
 		case "bs":
 			f.Backspace()
 		default:
-			r = f.Type(s.typ)
+			r = f.Type(s.typ, true)
 		}
 		if r != nil {
 			reqs = append(reqs, r)
@@ -203,7 +204,7 @@ func TestKeysDisabledWhenOffline(t *testing.T) {
 		t.Fatalf("submitted while offline: %v", r)
 	}
 	f.Start(ResumeRepo, repoT, true)
-	f.Type("acme/app")
+	f.Type("acme/app", true)
 	if r := f.Enter(false); r != nil || f.Active() {
 		t.Fatal("typed resume went through while offline")
 	}
@@ -233,7 +234,7 @@ func TestSecondKeyWaitsForWrite(t *testing.T) {
 		t.Fatal("no request")
 	}
 	// Double submit: nothing more comes out of the closed prompt.
-	if f.Enter(true) != nil || f.Type("y") != nil {
+	if f.Enter(true) != nil || f.Type("y", true) != nil {
 		t.Fatal("a second submit produced a request")
 	}
 	if n := f.Start(KillAll, Target{}, true); n == "" || f.Active() {
@@ -421,5 +422,51 @@ func TestExecuteKeepsJSONShape(t *testing.T) {
 	var k budget.Kill
 	if err := json.Unmarshal(b, &k); err != nil || !k.On || k.By != "me@x" || k.Reason != "why" || k.At == 0 {
 		t.Fatalf("%s %v", b, err)
+	}
+}
+
+func TestYWhileStaleCancels(t *testing.T) {
+	f := NewFlow("aurora")
+	f.Start(KillRepo, repoT, true)
+	if r := f.Type("y", false); r != nil || f.Active() || f.InFlight() {
+		t.Fatalf("y submitted while not live: %v", r)
+	}
+}
+
+func TestUnprintableNamesRefused(t *testing.T) {
+	if NewFlow("au\u202erora").Start(KillAll, Target{}, true) == "" {
+		t.Error("project name with a BiDi control accepted")
+	}
+	if NewFlow("aurora").Start(ResumeRepo, Target{Slug: "x", Name: "a\x1b[2Jb"}, true) == "" {
+		t.Error("repo name with an escape accepted")
+	}
+}
+
+type hungDB struct{ budget.KillDB }
+
+func (hungDB) GetETag(ctx context.Context, _ string, _ any) (string, bool, error) {
+	<-ctx.Done()
+	return "", false, ctx.Err()
+}
+func (hungDB) Get(ctx context.Context, _ string, _ any) (bool, error) {
+	<-ctx.Done()
+	return false, ctx.Err()
+}
+
+func TestExecuteBoundedByTimeout(t *testing.T) {
+	old := ExecuteTimeout
+	ExecuteTimeout = 50 * time.Millisecond
+	defer func() { ExecuteTimeout = old }()
+	done := make(chan Outcome, 1)
+	go func() {
+		done <- Execute(context.Background(), hungDB{}, Request{Kind: KillAll, Project: "aurora", Reason: "r"}, "me")
+	}()
+	select {
+	case o := <-done:
+		if o.Err == nil || o.Written {
+			t.Fatalf("%+v", o)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("Execute did not return on a hung database")
 	}
 }
