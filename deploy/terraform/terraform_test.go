@@ -652,3 +652,28 @@ func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
 		t.Errorf("want exactly usage_consumer and history_usage, got %v", seen)
 	}
 }
+
+// The rollover Scheduler job is created paused and Terraform never touches
+// that again, so an apply neither pauses nor resumes it behind a person's back
+// (the first rollover prunes RTDB days). ignore_changes is not visible in a
+// plan test, so the source is pinned.
+func TestRolloverJobPausedAndIgnored(t *testing.T) {
+	found := false
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_cloud_scheduler_job") {
+			if blk.name != "google_cloud_scheduler_job.history_rollover" {
+				continue
+			}
+			found = true
+			if !regexp.MustCompile(`paused\s*=\s*true`).MatchString(blk.body) {
+				t.Errorf("%s: the rollover job is not created paused", path)
+			}
+			if !regexp.MustCompile(`ignore_changes\s*=\s*\[\s*paused\s*\]`).MatchString(blk.body) {
+				t.Errorf("%s: the rollover job does not ignore changes to paused", path)
+			}
+		}
+	})
+	if !found {
+		t.Fatal("no rollover scheduler job found")
+	}
+}

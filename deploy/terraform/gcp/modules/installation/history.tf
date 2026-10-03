@@ -201,7 +201,14 @@ resource "google_cloud_scheduler_job" "history_sweep" {
 # sweep stays liveness only. Unverified assumption A4: that jobs.run accepts
 # overrides.containerOverrides[].args; the test asserts exactly this body, and
 # the live runbook proves it. Overrides replace the container's args whole,
-# so they repeat "budget history". The job's timeout (600s) applies. Retry
+# so they repeat "budget history". overrides.timeout gives this execution
+# 1800s (the first pass reads a whole window of run records); the sweep keeps
+# the job's 600s, and the code stops starting new days after 25 minutes.
+#
+# The job is created PAUSED and Terraform never changes that again
+# (ignore_changes): the first rollover prunes RTDB days, so a person runs it by
+# hand, verifies, and then resumes the job (gcloud scheduler jobs resume; the
+# live runbook's check 23). Retry
 # 0: a failed rollover logs, and the next day's run (idempotent, with its
 # backfill window) covers the gap.
 resource "google_cloud_scheduler_job" "history_rollover" {
@@ -212,6 +219,11 @@ resource "google_cloud_scheduler_job" "history_rollover" {
   name      = var.history.rollover_scheduler_job
   schedule  = "30 0 * * *"
   time_zone = "Etc/UTC"
+  paused    = true
+
+  lifecycle {
+    ignore_changes = [paused]
+  }
 
   retry_config {
     retry_count = 0
@@ -224,6 +236,7 @@ resource "google_cloud_scheduler_job" "history_rollover" {
     body = base64encode(jsonencode({
       overrides = {
         containerOverrides = [{ args = ["budget", "history", "--rollover"] }]
+        timeout            = "1800s"
       }
     }))
 

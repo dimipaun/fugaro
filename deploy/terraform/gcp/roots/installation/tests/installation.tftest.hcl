@@ -1174,8 +1174,12 @@ run "TestRolloverSchedulerJob" {
   # Unverified assumption A4: jobs.run honours overrides.containerOverrides[].args.
   # This pins exactly what is sent, so the live runbook has one body to prove.
   assert {
-    condition     = jsondecode(base64decode(one(google_cloud_scheduler_job.history_rollover[0].http_target).body)) == { overrides = { containerOverrides = [{ args = ["budget", "history", "--rollover"] }] } }
-    error_message = "the rollover body is exactly {overrides:{containerOverrides:[{args:[budget,history,--rollover]}]}}"
+    condition     = jsondecode(base64decode(one(google_cloud_scheduler_job.history_rollover[0].http_target).body)) == { overrides = { containerOverrides = [{ args = ["budget", "history", "--rollover"] }], timeout = "1800s" } }
+    error_message = "the rollover body is exactly {overrides:{containerOverrides:[{args:[budget,history,--rollover]}],timeout:1800s}}"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_rollover[0].paused == true
+    error_message = "the rollover job is created paused: the first prune is a person's decision (resume after the manual run)"
   }
   assert {
     condition     = one(google_cloud_scheduler_job.history_rollover[0].http_target).headers["Content-Type"] == "application/json"
