@@ -95,7 +95,8 @@ COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/final
 # sha256 per architecture, taken on 2026-10-03 from go.dev/dl/?mode=json and
 # https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_SHA256SUMS
 # (both over TLS). GOTOOLCHAIN=local keeps `go` from downloading some other
-# toolchain at run time.
+# toolchain at run time. The version checks run with HOME=/root so they leave
+# no root-owned state under fugaro's home.
 RUN set -eu; \
     case "$(dpkg --print-architecture)" in \
       amd64) arch=amd64; gosum=63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445; tfsum=dc94af0eef1147718ad7c8daea792ed199e3e0492eec180d0adafa2a65a879df ;; \
@@ -110,7 +111,7 @@ RUN set -eu; \
     echo "$tfsum  $tmp/tf.zip" | sha256sum -c -; \
     unzip -q "$tmp/tf.zip" terraform -d /usr/local/bin; \
     rm -rf "$tmp"; \
-    go version; terraform version
+    HOME=/root CHECKPOINT_DISABLE=1 go version; HOME=/root CHECKPOINT_DISABLE=1 terraform version
 USER fugaro
 # Claude Code (native build, pinned), downloaded directly (no curl | bash)
 # and verified against a per-arch sha256 taken from that release's own

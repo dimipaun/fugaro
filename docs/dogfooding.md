@@ -19,7 +19,7 @@ The merge gate stays GitHub CI: `go test -race ./...`, the docker-tests job, the
    fugaro init --name fugaro --gcp-project fugaro-dev --region us-east5
    ```
 
-4. **The base image into `fugaro-base`.** There is no published `fugaro-go` image before the first release tag, so build it from this checkout and push it, as [gcp-setup.md](gcp-setup.md) step 3 does for `web-node`:
+4. **The base image into `fugaro-base`.** `fugaro-go` is published only from the first release tag after the one that adds it (v0.1.0 predates it), so until then build it from this checkout and push it, as [gcp-setup.md](gcp-setup.md) step 3 does for `web-node`:
 
    ```bash
    gcloud auth configure-docker us-east5-docker.pkg.dev
