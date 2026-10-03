@@ -521,9 +521,11 @@ These record where the build settled something the design left open. The authori
 
 **Firestore** (the `(default)` database):
 
-`spendDaily/<YYYY-MM-DD>_<slug>` holds `{repo, slug, date, spentUsd, notionalUsd, computeUsd, unreconciledUsd, overrunUsd, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{…}, byPerson{<requested_by>: usd}, capDailyUsd, archivedAt, version: 1}`.
+`spendDaily/<YYYY-MM-DD>_<slug>` holds one repository's day (no project prefix: the Firebase project is the Fugaro project's own, D3): `{repo, slug, date, spentMicros, notionalMicros, computeMicros, unreconciledMicros, overrunMicros, runHours, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{<escaped model>: {micros, in, out, cr, cw}}, byPerson{<escaped requested_by>: {micros, notionalMicros, runs}}, capDailyMicros, final, version: 1, archivedAt, writtenAt}`. Amounts are the RTDB's integer µ$ (USD is formatting; the earlier `...Usd` floats are dropped), map keys use the RTDB's `Key` escaping, and `meta/installation {project, version}` is the Firestore mark. A day is written provisionally after it ends and **final** once `now >= start(D+2)`, because a run may still write to the previous day until then (rules `DAYOK`); a final document is never rewritten without `--day D --force`. Plan: [2026-10-03-m9d-history-and-report.md](../plans/2026-10-03-m9d-history-and-report.md).
 
-The global figure is computed on read. There is no composite index: queries use document-ID ranges.
+The Firestore database is created by an idempotent REST step in `init --firebase`, not by Terraform: its location is permanent and a Terraform create does not adopt an existing database. Its rules deny everything; only IAM principals read or write. The history account also needs `roles/storage.objectViewer` on the runs bucket (for `compute_usd`).
+
+The global figure is computed on read. There is no composite index: `report` queries the `date` field with a range and filters repository, person and model client-side.
 
 ### 6.3 Transactions over REST
 
@@ -744,6 +746,7 @@ Caps must be finite, non-negative and at most $100,000, and a per-run cap can't 
 ## 9. History and `fugaro report`
 
 - **The daily rollover** runs at 00:30 UTC. For each day in the last 7 days that isn't archived, the history job:
+  (It runs as its own Scheduler job at 00:30 UTC; the 15-minute job stays the sweep. Days are written provisionally, then final at D+2, and day nodes are pruned only when final, older than 8 days and read back equal.)
   1. counts `outcomes/<day>`;
   2. reads `spend/<day>`;
   3. adds `computeUsd` from the runs' `result.json` records, since the job can read the runs bucket;
