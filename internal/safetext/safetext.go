@@ -99,6 +99,13 @@ func spoofing(r rune) bool {
 		return true
 	case r >= 0x200b && r <= 0x200d, r == 0x2060, r == 0xfeff: // zero-width space, non-joiner, joiner; word joiner; BOM
 		return true
+	case r == 0x00ad, r == 0x034f, r == 0x061c, r == 0x115f || r == 0x1160, r == 0x17b4 || r == 0x17b5, r == 0x180e,
+		r >= 0x2061 && r <= 0x2064, r == 0x3164, r == 0xffa0: // soft hyphen, grapheme joiner, Hangul fillers, invisible operators
+		return true
+	case r >= 0xfe00 && r <= 0xfe0f, r >= 0xe0100 && r <= 0xe01ef: // variation selectors
+		return true
+	case r >= 0xe0000 && r <= 0xe007f: // tag characters (invisible ASCII smuggling)
+		return true
 	}
 	return false
 }

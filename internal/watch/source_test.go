@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -353,5 +354,40 @@ func TestNoGoroutineLeak(t *testing.T) {
 			t.Fatalf("goroutines %d -> %d\n%s", before, runtime.NumGoroutine(), buf[:runtime.Stack(buf, true)])
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A panic in the supervisor goroutine must surface as an offline state, never
+// crash the process (and with it the terminal).
+func TestSupervisorPanicSurfacesOffline(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	db, err := rtdb.New(f.URL, rtdb.Auth{IDToken: func() string { return "tok" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var n atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sup := Start(ctx, db, Options{Tick: 5 * time.Millisecond, Now: func() time.Time {
+		if n.Add(1) == 3 {
+			panic("boom")
+		}
+		return t0
+	}})
+	st := NewState()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case u, ok := <-sup.Updates():
+			if !ok {
+				t.Fatal("updates closed without an error state")
+			}
+			st.Handle(u)
+			if c := Build(st, t0, Config{}).Conn; c.Kind == ConnOffline && strings.Contains(c.Reason, "internal error") {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no offline state: %+v", Build(st, t0, Config{}).Conn)
+		}
 	}
 }

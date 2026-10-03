@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -60,8 +61,8 @@ func (x *tm) seed() {
 		Update{Kind: UpdDay, Day: budget.Day(at), Now: at},
 		ev(SrcConfig, "/", `{"mode":"enforce","caps":{"global":{"dailyMicros":50000000}}}`, at),
 		ev(SrcGlobal, "/", `{"spent":9000000,"counted":9000000}`, at),
-		ev(SrcRepos, "/", `{"acme__app":{"spent":6000000,"counted":6000000},"acme__lib":{"spent":3000000,"counted":3000000}}`, at),
-		ev(SrcAgents, "/", `{"acme__app":{"r1":`+agent("acme/app", "build the", "")+`},"acme__lib":{"r2":`+agent("acme/lib", "fix the o", "")+`}}`, at),
+		ev(SrcRepos, "/", `{"acme%2Fapp":{"spent":6000000,"counted":6000000},"acme%2Flib":{"spent":3000000,"counted":3000000}}`, at),
+		ev(SrcAgents, "/", `{"acme%2Fapp":{"r1":`+agent("acme/app", "build the", "")+`},"acme%2Flib":{"r2":`+agent("acme/lib", "fix the o", "")+`}}`, at),
 	)
 }
 
@@ -192,7 +193,7 @@ func TestKillRepoThroughTheModel(t *testing.T) {
 		t.Fatalf("no killing line:\n%s", x.screen())
 	}
 	msg := cmd()
-	if len(x.execs) != 1 || x.execs[0].Kind != KillRepo || x.execs[0].Target.Slug != "acme__lib" || x.execs[0].Project != "aurora" {
+	if len(x.execs) != 1 || x.execs[0].Kind != KillRepo || x.execs[0].Target.Slug != "acme%2Flib" || x.execs[0].Project != "aurora" {
 		t.Fatalf("exec %+v", x.execs)
 	}
 	x.m.Update(msg)
@@ -203,7 +204,7 @@ func TestKillRepoThroughTheModel(t *testing.T) {
 		t.Fatalf("killing line stays until the stream shows it:\n%s", s)
 	}
 	// The stream delivers the switch: the line goes, the banner appears.
-	x.upd(ev(SrcConfig, "/kill", `{"repos":{"acme__lib":{"on":true,"by":"me","at":1,"reason":"from fugaro watch"}}}`, x.now))
+	x.upd(ev(SrcConfig, "/kill", `{"repos":{"acme%2Flib":{"on":true,"by":"me","at":1,"reason":"from fugaro watch"}}}`, x.now))
 	s := x.screen()
 	if strings.Contains(s, "killing…") || !strings.Contains(s, "KILLED by me") {
 		t.Fatalf("after the stream:\n%s", s)
@@ -269,13 +270,13 @@ func TestSelectionSurvivesResortTUI(t *testing.T) {
 	x.key("down") // acme/lib
 	x.key("k")
 	// While the prompt is open lib overtakes app in spend: it moves to the top.
-	x.upd(ev(SrcRepos, "/", `{"acme__app":{"spent":6000000},"acme__lib":{"spent":90000000}}`, x.now))
-	if x.m.view.Repos[0].Slug != "acme__lib" {
+	x.upd(ev(SrcRepos, "/", `{"acme%2Fapp":{"spent":6000000},"acme%2Flib":{"spent":90000000}}`, x.now))
+	if x.m.view.Repos[0].Slug != "acme%2Flib" {
 		t.Fatal("expected a re-sort")
 	}
 	cmd := x.key("y")
 	cmd()
-	if len(x.execs) != 1 || x.execs[0].Target.Slug != "acme__lib" {
+	if len(x.execs) != 1 || x.execs[0].Target.Slug != "acme%2Flib" {
 		t.Fatalf("the key acted on %+v, not the repository selected when it was pressed", x.execs)
 	}
 	// And the cursor itself followed the repository, not the row.
@@ -383,7 +384,7 @@ func TestWindowResizeAndTooNarrow(t *testing.T) {
 
 func TestRepoNarrowing(t *testing.T) {
 	x := newTM(t)
-	x.m.o.RepoKey, x.m.o.Repo = "acme__lib", "acme/lib"
+	x.m.o.RepoKey, x.m.o.Repo = "acme%2Flib", "acme/lib"
 	x.seed()
 	s := x.screen()
 	if strings.Contains(s, "acme/app") || !strings.Contains(s, "narrowed to repository acme/lib") {
@@ -399,7 +400,7 @@ func TestHostileTextNeverReachesScreen(t *testing.T) {
 	x.upd(
 		Update{Kind: UpdDay, Day: budget.Day(at), Now: at},
 		ev(SrcConfig, "/", `{}`, at), ev(SrcGlobal, "/", `{}`, at), ev(SrcRepos, "/", `{}`, at),
-		ev(SrcAgents, "/", `{"x":{"r1":`+string(hostile)+`}}`, at))
+		ev(SrcAgents, "/", `{`+strconv.Quote(budget.Key("evil\x1b[2Jrepo"))+`:{"r1":`+string(hostile)+`}}`, at))
 	s := x.screen()
 	if strings.ContainsAny(s, "\x1b\x07\u202e\u200b") || !strings.Contains(s, "evilrepo") {
 		t.Fatalf("%q", s)

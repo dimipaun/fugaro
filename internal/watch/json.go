@@ -116,7 +116,7 @@ func BuildJSON(project string, v View) JSONDoc {
 		Burn: jsonBurn(p.Burn), Kill: jsonKill(p.Kill), Runs: p.Runs, RunHours: p.RunHours}
 	d.Total.DailyCapUSD, d.Total.Percent = usdPtr(p.Bar)
 	for _, r := range v.Repos {
-		jr := JSONRepo{Slug: safetext.OneLine(r.Slug), Repo: r.Name, CountedUSD: r.Counted.USD(), SpentUSD: r.Spent.USD(),
+		jr := JSONRepo{Slug: safetext.Strip(r.Slug), Repo: r.Name, CountedUSD: r.Counted.USD(), SpentUSD: r.Spent.USD(),
 			NotionalUSD: r.Notional.USD(), Burn: jsonBurn(r.Burn), Kill: jsonKill(r.Kill)}
 		jr.DailyCapUSD, jr.Percent = usdPtr(r.Bar)
 		d.Repos = append(d.Repos, jr)

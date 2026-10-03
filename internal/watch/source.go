@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -49,7 +50,7 @@ func Start(ctx context.Context, db *rtdb.Client, o Options) *Supervisor {
 	s := &Supervisor{db: db, o: o, out: make(chan Update, 64), ctx: ctx}
 	go func() {
 		defer close(s.out)
-		s.run()
+		s.runGuarded()
 	}()
 	return s
 }
@@ -87,6 +88,25 @@ const (
 	phaseHalt // refused or withdrawn: no more retries, the clock keeps running
 	phaseDone
 )
+
+// runGuarded runs the supervisor; a panic must never take the terminal down
+// with it. It is surfaced as an error on every stream (the screen goes
+// offline, kill keys off) and the clock keeps running until cancel.
+func (s *Supervisor) runGuarded() {
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("internal error in the watch supervisor: %v", r)
+			for src := SrcConfig; src <= SrcAgents; src++ {
+				if !s.emit(Update{Kind: UpdEvent, Src: src, Ev: rtdb.Event{Type: "error", Err: err}}) {
+					return
+				}
+			}
+			day := budget.Day(s.now())
+			s.haltPhase(&day)
+		}
+	}()
+	s.run()
+}
 
 func (s *Supervisor) run() {
 	day := budget.Day(s.now())

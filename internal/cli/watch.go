@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/dimipaun/fugaro/internal/safetext"
 	"io"
 	"os"
 	"time"
@@ -59,9 +60,11 @@ var watchStdoutTTY = isTTY
 // runTUI runs the interactive screen (internal/watch's Bubble Tea model). A
 // variable so tests can replace it.
 var runTUI = func(ctx context.Context, d *WatchDeps) error {
-	by, err := d.LC.Me(ctx) // who a kill is recorded as, before the screen takes the terminal
-	if err != nil {
-		return userErr("%v", err)
+	// Who a kill is recorded as, asked before the screen takes the terminal.
+	// A failure must not block the screen: the identity then reads "unknown".
+	by, err := d.LC.Me(ctx)
+	if err != nil || by == "" {
+		by = "unknown"
 	}
 	return watch.RunTUI(ctx, watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
@@ -328,7 +331,20 @@ func runWatchDegraded(cmd *cobra.Command, o *watchOptions, lc *localcfg.Config) 
 		f.since = now.Add(-degradedSince)
 		rows, err := loadRows(ctx, env, f, now)
 		if err != nil {
-			return err
+			if o.once || ctx.Err() != nil {
+				return err
+			}
+			// A transient failure is ridden out like live mode does: show it, retry.
+			if clear {
+				fmt.Fprint(out, "\x1b[H\x1b[2J")
+			}
+			fmt.Fprintf(out, "%s\nrun records unavailable (retrying): %s\n", degradedNotice, safetext.Strip(err.Error()))
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-time.After(interval):
+			}
+			continue
 		}
 		if clear {
 			fmt.Fprint(out, "\x1b[H\x1b[2J")

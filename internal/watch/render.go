@@ -285,6 +285,22 @@ func Render(v View, o RenderOptions) Frame {
 	}
 	foot = append(foot, r.line(seg{r.keyLine(tier, o.Keys, live), cFaint}))
 
+	// A terminal too short for the header, a body of three rows and the footer
+	// would have the renderer cut the top lines, exactly the connection line
+	// and the project kill banner: pin those first and drop the rest.
+	if o.Height > 0 && o.Height < len(top)+len(foot)+3 {
+		pinned := []string{top[1]}
+		if k := v.Project.Kill; k.On {
+			pinned = append(pinned, r.line(seg{killText(k, r.g.warn, "PROJECT KILLED"), cBanner}))
+		}
+		pinned = append(pinned, foot...)
+		pinned = append(pinned, r.line(seg{fmt.Sprintf("terminal too short (%d rows): enlarge it for the full view", o.Height), cFaint}))
+		if len(pinned) > o.Height {
+			pinned = pinned[:o.Height]
+		}
+		return Frame{Lines: pinned}
+	}
+
 	// Viewport.
 	bodyH := len(body)
 	if o.Height > 0 {

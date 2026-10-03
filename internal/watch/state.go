@@ -60,9 +60,10 @@ type State struct {
 	// Polling is set by the supervisor while it reads by GET instead of SSE.
 	Polling bool
 
-	lastEvent time.Time // any event, keep-alives included
-	err       error     // set by an error event, cleared by any other
-	cancelled bool
+	// Health is tracked per stream: a keep-alive on one stream must never
+	// vouch for another that has gone quiet or failed.
+	lastEvent [4]time.Time // per source: any event, keep-alives included
+	errs      [4]error     // per source: set by an error event, cleared by that source's next one
 
 	burn map[string][]sample // "" is the project, otherwise the wire slug
 	seen [4]bool             // per source: a put of "/" has arrived
@@ -75,19 +76,25 @@ func NewState() *State { return &State{burn: map[string][]sample{}} }
 // returned and leaves the tree as it was; the event still counts as proof of
 // life.
 func (s *State) Apply(src Source, ev rtdb.Event, now time.Time) error {
+	if src < 0 || int(src) >= len(s.errs) {
+		return nil
+	}
 	switch ev.Type {
 	case "error":
-		s.err = ev.Err
-		if s.err == nil {
-			s.err = errors.New("connection error")
+		s.errs[src] = ev.Err
+		if s.errs[src] == nil {
+			s.errs[src] = errors.New("connection error")
 		}
 		return nil
 	case "cancel":
-		s.cancelled = true
-		s.err = errors.New("the server withdrew the listen")
+		s.errs[src] = errors.New("the server withdrew the listen")
+		return nil
+	case "auth_revoked":
+		// Not proof of life: a revoke loop must end in offline, not live.
+		s.errs[src] = errors.New("credentials revoked, reconnecting")
 		return nil
 	}
-	s.lastEvent, s.err, s.cancelled = now, nil, false
+	s.lastEvent[src], s.errs[src] = now, nil
 	switch ev.Type {
 	case "put", "patch":
 		if err := s.tree(src).Apply(ev.Path, ev.Data, ev.Type == "patch"); err != nil {
@@ -186,23 +193,43 @@ func (s *State) Burn(key string, now time.Time) (perMin budget.Micros, ok bool) 
 	return budget.Micros(float64(last.v-first.v) * float64(time.Minute) / float64(span)), true
 }
 
-// Conn is the connection as of now.
+// conn is the connection as of now: the worst of the four streams.
 func (s *State) conn(now time.Time) Connection {
 	c := Connection{Kind: ConnLive}
+	var oldest time.Time // the longest-silent heard stream
+	heardAll, anyHeard := true, false
+	var permErr, otherErr error
+	for i := range s.errs {
+		if e := s.errs[i]; e != nil {
+			if errors.Is(e, rtdb.ErrPermission) {
+				permErr = e
+			} else if otherErr == nil {
+				otherErr = e
+			}
+		}
+		if s.lastEvent[i].IsZero() {
+			heardAll = false
+			continue
+		}
+		anyHeard = true
+		if oldest.IsZero() || s.lastEvent[i].Before(oldest) {
+			oldest = s.lastEvent[i]
+		}
+	}
 	switch {
-	case s.err != nil && errors.Is(s.err, rtdb.ErrPermission):
+	case permErr != nil:
 		c.Kind, c.Reason = ConnRefused, "access refused"
-	case s.err != nil:
-		c.Kind, c.Reason = ConnOffline, clip(oneLine(s.err.Error()))
-	case s.lastEvent.IsZero():
+	case otherErr != nil:
+		c.Kind, c.Reason = ConnOffline, clip(oneLine(otherErr.Error()))
+	case !heardAll:
 		c.Kind, c.Reason = ConnOffline, "connecting"
-	case now.Sub(s.lastEvent) > StaleAfter:
+	case now.Sub(oldest) > StaleAfter:
 		c.Kind = ConnStale
 	case s.Polling:
 		c.Kind = ConnPolling
 	}
-	if !s.lastEvent.IsZero() {
-		c.Age = max(now.Sub(s.lastEvent), 0)
+	if anyHeard {
+		c.Age = max(now.Sub(oldest), 0)
 	}
 	return c
 }
@@ -240,7 +267,7 @@ func (s *State) Handle(u Update) error {
 		s.Polling = u.On
 	case UpdEvent:
 		if u.Ev.Type == "put" && u.Ev.Path == "/" {
-			if s.seen[u.Src] {
+			if s.seen[u.Src] && !s.Polling { // a poll is a full tree every time: not a reconnect
 				s.Reconnected()
 			}
 			s.seen[u.Src] = true

@@ -296,3 +296,25 @@ func TestSlugNeverRendered(t *testing.T) {
 		t.Fatal("the wire slug was drawn")
 	}
 }
+
+// On a short terminal the connection line and the project kill banner come
+// first, so the renderer can never cut them.
+func TestFrameShortTerminalPinsStatusAndBanner(t *testing.T) {
+	v := fixture()
+	v.Conn = Connection{Kind: ConnOffline, Reason: "connection lost", Age: 50 * time.Second}
+	v.Project.Kill = KillState{On: true, By: "ops@x.io", At: t0.Add(-time.Hour), Reason: "budget review"}
+	got := frame(v, 100, 6)
+	if n := strings.Count(got, "\n") + 1; n > 6 {
+		t.Fatalf("%d lines for 6 rows:\n%s", n, got)
+	}
+	lines := strings.Split(got, "\n")
+	if !strings.Contains(lines[0], "OFFLINE") && !strings.Contains(strings.ToLower(lines[0]), "offline") || !strings.Contains(lines[1], "PROJECT KILLED") {
+		t.Fatalf("status and banner must lead:\n%s", got)
+	}
+	golden(t, "short_6_killed_100", got)
+	for h := 1; h <= 12; h++ {
+		if n := strings.Count(frame(v, 100, h), "\n") + 1; n > h {
+			t.Fatalf("height %d: %d lines", h, n)
+		}
+	}
+}

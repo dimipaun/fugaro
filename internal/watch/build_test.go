@@ -328,7 +328,7 @@ func TestConnection(t *testing.T) {
 	if c := Build(s, t0, Config{}).Conn; c.Kind != ConnOffline || c.Reason != "connecting" {
 		t.Fatalf("before first event: %+v", c)
 	}
-	s.Apply(SrcAgents, rtdb.Event{Type: "keep-alive"}, t0)
+	alive(s, t0)
 	if c := Build(s, t0.Add(45*time.Second), Config{}).Conn; c.Kind != ConnLive || c.Age != 45*time.Second {
 		t.Fatalf("%+v", c)
 	}
@@ -336,7 +336,7 @@ func TestConnection(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 	s.Polling = true
-	s.Apply(SrcAgents, rtdb.Event{Type: "keep-alive"}, t0.Add(time.Minute))
+	alive(s, t0.Add(time.Minute))
 	if c := Build(s, t0.Add(time.Minute), Config{}).Conn; c.Kind != ConnPolling {
 		t.Fatalf("%+v", c)
 	}
@@ -349,7 +349,7 @@ func TestConnection(t *testing.T) {
 		t.Fatalf("%+v", c)
 	}
 	// Any later event clears it; the first put rebuilds the tree.
-	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`}}`, t0.Add(2*time.Minute))
+	alive(s, t0.Add(2*time.Minute))
 	if c := Build(s, t0.Add(2*time.Minute), Config{}).Conn; c.Kind != ConnPolling {
 		t.Fatalf("%+v", c)
 	}
@@ -370,5 +370,104 @@ func TestBadEventDataIsReturned(t *testing.T) {
 	s := newState(t)
 	if err := s.Apply(SrcAgents, rtdb.Event{Type: "put", Path: "/", Data: json.RawMessage(`{`)}, t0); err == nil {
 		t.Fatal("want an error")
+	}
+}
+
+func alive(s *State, at time.Time) {
+	for src := SrcConfig; src <= SrcAgents; src++ {
+		s.Apply(src, rtdb.Event{Type: "keep-alive"}, at)
+	}
+}
+
+// A keep-alive on one stream must not hide a dead one.
+func TestHealthIsPerSource(t *testing.T) {
+	s := newState(t)
+	alive(s, t0)
+	s.Apply(SrcAgents, rtdb.Event{Type: "error", Err: rtdb.ErrUnavailable}, t0.Add(10*time.Second))
+	for i := 0; i < 5; i++ { // config keeps sending keep-alives
+		at := t0.Add(time.Duration(11+i) * time.Second)
+		s.Apply(SrcConfig, rtdb.Event{Type: "keep-alive"}, at)
+		if c := Build(s, at, Config{}).Conn; c.Kind != ConnOffline {
+			t.Fatalf("agents errored, config alive: %+v", c)
+		}
+	}
+	// A silent stream goes stale although the others keep talking.
+	s = newState(t)
+	alive(s, t0)
+	for _, src := range []Source{SrcConfig, SrcGlobal, SrcRepos} {
+		s.Apply(src, rtdb.Event{Type: "keep-alive"}, t0.Add(40*time.Second))
+	}
+	if c := Build(s, t0.Add(50*time.Second), Config{}).Conn; c.Kind != ConnStale {
+		t.Fatalf("agents silent 50s: %+v", c)
+	}
+	// Only that source's own event clears its error.
+	s.Apply(SrcAgents, rtdb.Event{Type: "error", Err: rtdb.ErrUnavailable}, t0.Add(51*time.Second))
+	s.Apply(SrcAgents, rtdb.Event{Type: "put", Path: "/", Data: json.RawMessage("null")}, t0.Add(52*time.Second))
+	alive(s, t0.Add(52*time.Second))
+	if c := Build(s, t0.Add(52*time.Second), Config{}).Conn; c.Kind != ConnLive {
+		t.Fatalf("%+v", c)
+	}
+}
+
+func TestAuthRevokedIsNotProofOfLife(t *testing.T) {
+	s := newState(t)
+	alive(s, t0)
+	s.Apply(SrcAgents, rtdb.Event{Type: "auth_revoked"}, t0.Add(time.Second))
+	c := Build(s, t0.Add(time.Second), Config{}).Conn
+	if c.Kind != ConnOffline || !strings.Contains(c.Reason, "revoked") {
+		t.Fatalf("%+v", c)
+	}
+}
+
+// The block's name is the wire key decoded, never the job-written repo field.
+func TestRepoNameIgnoresJobWrittenField(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"acme%2Fa":{"r1":`+agent("acme/prod", "t", "")+`}}`, t0)
+	v := Build(s, t0, Config{})
+	if len(v.Repos) != 1 || v.Repos[0].Name != "acme/a" {
+		t.Fatalf("%+v", v.Repos)
+	}
+}
+
+// An unreadable switch is shown as on, and its repository stays on screen.
+func TestMalformedKillIsShownOn(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcConfig, "/", `{"kill":{"global":3,"repos":{"x":"junk"}}}`, t0)
+	v := Build(s, t0, Config{})
+	if !v.Project.Kill.On || !v.Project.Kill.Unreadable || !strings.Contains(v.Project.Kill.Reason, "unreadable kill switch (runs treat it as ON)") {
+		t.Fatalf("%+v", v.Project.Kill)
+	}
+	if len(v.Repos) != 1 || !v.Repos[0].Kill.On {
+		t.Fatalf("block vanished: %+v", v.Repos)
+	}
+	if got := killText(v.Repos[0].Kill, "!", "KILLED"); !strings.Contains(got, "unreadable kill switch") {
+		t.Fatal(got)
+	}
+}
+
+func TestCleanDropsInvisibles(t *testing.T) {
+	for _, in := range []string{"a\tb", "a\u00adb", "a\U000e0041b", "a\u3164b", "a\u2028b", "a\u200bb", "a\u0085b", "a\x1b[2Jb"} {
+		if got := clean(in); got != "ab" && got != "a[2Jb" {
+			t.Errorf("clean(%q) = %q", in, got)
+		}
+	}
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "ti\ttle", "")+`}}`, t0)
+	if got := Build(s, t0, Config{}).Repos[0].Runs[0].Title; got != "title" {
+		t.Fatalf("title %q", got)
+	}
+}
+
+// A poll delivers a full tree every time and must not clear the burn windows.
+func TestPollingKeepsBurnWindows(t *testing.T) {
+	s := newState(t)
+	s.Handle(Update{Kind: UpdPolling, On: true})
+	for i := 0; i <= 12; i++ {
+		at := t0.Add(time.Duration(i*5) * time.Second)
+		s.Handle(Update{Kind: UpdEvent, Src: SrcGlobal, Now: at,
+			Ev: rtdb.Event{Type: "put", Path: "/", Data: json.RawMessage(fmt.Sprintf(`{"spent":%d}`, i*1000000))}})
+	}
+	if _, ok := s.Burn("", t0.Add(60*time.Second)); !ok {
+		t.Fatal("burn unknown under polling")
 	}
 }

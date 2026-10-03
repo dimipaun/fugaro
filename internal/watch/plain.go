@@ -129,6 +129,9 @@ func killText(k KillState, warn, what string) string {
 	if !k.At.IsZero() {
 		at = k.At.UTC().Format("2006-01-02 15:04Z")
 	}
+	if k.Unreadable {
+		return fmt.Sprintf("%s %s %s", warn, what, k.Reason)
+	}
 	return fmt.Sprintf("%s %s by %s at %s %q", warn, what, dashIfEmpty(k.By), at, k.Reason)
 }
 

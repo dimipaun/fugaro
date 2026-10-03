@@ -58,6 +58,9 @@ type KillState struct {
 	By     string // sanitised
 	At     time.Time
 	Reason string // sanitised
+	// Unreadable: the node exists but does not decode. Runs treat that as ON
+	// (budget.killNode), so it is shown as on.
+	Unreadable bool
 }
 
 // ProjectLine is the whole project's totals.
@@ -130,7 +133,7 @@ type View struct {
 	Repos   []RepoBlock
 }
 
-func oneLine(s string) string { return safetext.OneLine(s) }
+func oneLine(s string) string { return safetext.Strip(s) }
 
 // clip cuts s to maxText runes (an ellipsis marks the cut).
 func clip(s string) string {
@@ -146,7 +149,7 @@ func clip(s string) string {
 
 // clean is a database-derived string made safe: no escapes or controls, one
 // line, clipped. dash replaces an empty result when it is "-".
-func clean(s string) string { return clip(oneLine(s)) }
+func clean(s string) string { return clip(safetext.Strip(s)) }
 
 func dash(s string) string {
 	if s = clean(s); s == "" {
@@ -179,7 +182,11 @@ func bar(used budget.Micros, cap budget.Micros, has bool) Bar {
 
 func (s *State) kill(path string, now time.Time) KillState {
 	var k budget.Kill
-	if ok, err := s.Config.Decode(path, &k); !ok || err != nil || !k.On {
+	ok, err := s.Config.Decode(path, &k)
+	if ok && err != nil {
+		return KillState{On: true, Unreadable: true, Reason: "unreadable kill switch (runs treat it as ON)"}
+	}
+	if !ok || err != nil || !k.On {
 		return KillState{}
 	}
 	return KillState{On: true, By: clean(k.By), At: time.UnixMilli(k.At).UTC(), Reason: clean(k.Reason)}
@@ -238,7 +245,7 @@ func Build(s *State, now time.Time, cfg Config) View {
 		slugs[k] = true
 	}
 	for _, k := range s.Config.Keys("kill/repos") {
-		if s.kill("kill/repos/"+k, now).On {
+		if s.kill("kill/repos/"+k, now).On { // an unreadable switch counts as on
 			slugs[k] = true
 		}
 	}
@@ -259,24 +266,16 @@ func Build(s *State, now time.Time, cfg Config) View {
 		b.Bar = bar(b.Counted, daily, has)
 		b.Burn = burnOf(s, slug, now, daily, has, cfg)
 
-		var name string
 		for _, run := range s.Agents.Keys(slug) {
 			var e budget.AgentEntry
 			if ok, err := s.Agents.Decode(slug+"/"+run, &e); !ok || err != nil {
 				continue // a malformed entry shows no row
 			}
-			if name == "" {
-				name = e.Repo
-			}
 			b.Runs = append(b.Runs, runRow(slug, run, e, now))
 		}
-		if name == "" {
-			name = rcaps.Repo
-		}
-		if name == "" {
-			name = unkey(slug)
-		}
-		b.Name = clean(name)
+		// The name is the wire key decoded: the authenticated identity. The
+		// job-written repo field is free text and never names a block.
+		b.Name = clean(unkey(slug))
 		if b.Name == "" {
 			b.Name = "-"
 		}
