@@ -129,7 +129,7 @@ git:
   base_branch: main
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -206,7 +206,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 
 ## Roadmap
 
-- [x] Base images for web (Node) workflows (`web-node`) and Go workflows (`go`)
+- [x] Base images for web (Node) workflows (`web-node`), Go workflows (`go`) and Java workflows that need Postgres, Redis and the Firebase emulators (`java-services`)
 - [x] Job entrypoint implementing the task lifecycle
 - [x] Cache restore and write-back
 - [x] Always-PR finish step (ready or draft)
