@@ -99,8 +99,8 @@ release:
     The Terraform modules, the schemas and the plugin are versioned by this same tag.
 
 # GoReleaser's current Homebrew mechanism (`brews` formulas are deprecated): a
-# cask in dimipaun/homebrew-tap that installs the prebuilt binary on macOS and
-# Linux; `brew install dimipaun/tap/fugaro` resolves it. With no
+# cask in dimipaun/homebrew-tap that installs the prebuilt binary (macOS;
+# Linux is untested); `brew install dimipaun/tap/fugaro` resolves it. With no
 # HOMEBREW_TAP_GITHUB_TOKEN (the workflow always exports it, possibly empty) the
 # upload is skipped and the release still succeeds; a semver pre-release is
 # skipped by `auto`.

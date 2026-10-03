@@ -9,12 +9,16 @@ A push of a strict `vX.Y.Z` tag triggers two independent workflows:
 - `release.yml` (this document): checks the tag, then runs GoReleaser, which builds `fugaro` for darwin and linux on amd64 and arm64, writes `checksums.txt`, an SBOM per archive (syft), a keyless cosign signature of `checksums.txt`, and the GitHub Release with a grouped changelog; it also pushes the Homebrew cask. A `v0.x.y` release is then marked as a pre-release (GoReleaser's `prerelease: auto` only recognises `-rc1`-style suffixes, which the strict tag rule never produces).
 - `images.yml`: builds, smoke tests, scans and publishes `ghcr.io/dimipaun/fugaro-web-node:X.Y.Z` and `:X` (`:X` moves only to the highest release of that major).
 
-Neither workflow runs the test suite; CI already did on main. `release.yml` refuses to publish unless the tagged commit is reachable from `origin/main`, the checks `test`, `terraform` and `rules` all succeeded on it, and the plugin version equals the tag.
+Neither workflow runs the test suite; CI already did on main. Both workflows run `scripts/release-gate.sh` first, so a tag on an off-main or red commit publishes nothing (no binaries, no images). It refuses unless the tagged commit is reachable from `origin/main` and the GitHub Actions checks `test`, `terraform` and `rules` all succeeded on it (a check of that name from another app does not count); if CI is still running, re-run the failed job once it is green. `release.yml` also requires the plugin version to equal the tag.
 
 ## Secrets
 
-- `HOMEBREW_TAP_GITHUB_TOKEN`: a fine-grained personal access token with `Contents: Read and write` on the single repository `dimipaun/homebrew-tap`. Add it as a repository secret. If it is absent the release still succeeds and only the tap update is skipped (push the cask by hand from `dist/homebrew/Casks/` of a run, or re-run once the secret exists).
+- `HOMEBREW_TAP_GITHUB_TOKEN`: a fine-grained personal access token with `Contents: Read and write` on the single repository `dimipaun/homebrew-tap`. Add it as a repository secret. If it is absent the release still succeeds and only the tap update is skipped, with a `::warning::` and a line in the run summary (add the secret and re-run the job, or copy the cask from a `dry-run` artifact's `homebrew/Casks/` by hand).
 - Nothing else: the release uses the workflow's `GITHUB_TOKEN` (`contents: write`) and GitHub OIDC (`id-token: write`) for cosign.
+
+## The cask's quarantine hook
+
+The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quarantine` on the installed `fugaro`. The binaries are not signed or notarized by Apple, so without it Gatekeeper blocks the first run of a downloaded binary. The cost is that Gatekeeper's check is skipped for this binary; integrity rests on the sha256 in the cask, which comes from the release archives, and on the cosign-signed `checksums.txt`. Linux cask support was not tested; Linux users can use the archive or `go install`.
 
 ## Cutting a release
 
@@ -52,7 +56,8 @@ cosign verify-blob checksums.txt \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 
 # The archives match the checksums
-shasum -a 256 -c checksums.txt --ignore-missing
+grep " fugaro_${V}_" checksums.txt | shasum -a 256 -c -      # macOS
+grep " fugaro_${V}_" checksums.txt | sha256sum -c -         # Linux
 
 # Each channel
 brew install dimipaun/tap/fugaro && fugaro version
