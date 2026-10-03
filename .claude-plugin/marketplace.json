@@ -1,6 +1,8 @@
 {
   "name": "fugaro",
-  "owner": { "name": "Dimi Paun" },
+  "owner": {
+    "name": "Dimi Paun"
+  },
   "metadata": {
     "description": "Claude Code plugins for Fugaro, the fleeting cloud workers that run coding-agent tasks and always end with a pull request."
   },
@@ -8,7 +10,8 @@
     {
       "name": "fugaro",
       "source": "./plugin",
-      "description": "Onboard a repository to Fugaro and follow up its pull requests: the fleeting cloud workers that run coding-agent tasks and always end with a pull request."
+      "description": "Onboard a repository to Fugaro and follow up its pull requests: the fleeting cloud workers that run coding-agent tasks and always end with a pull request.",
+      "version": "0.0.0"
     }
   ]
 }
