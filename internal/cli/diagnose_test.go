@@ -441,3 +441,40 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 		t.Fatalf("err %v; a Claude run shows provider lines:\n%s", err, human)
 	}
 }
+
+// With first-line entries in Reviews, the findings come from the transcript
+// of the last senior round, not review-<len(Reviews)>.
+func TestDiagnoseFindingsFromSeniorRound(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abce"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Reviews: []runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 1},
+			{Round: 2, Tier: runstore.TierFirst, Verdict: "ok", Findings: 0},
+			{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1}}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	line := func(sum string) []byte {
+		return []byte(`{"type":"result","subtype":"success","result":"x","structured_output":{"verdict":"changes","findings":[{"severity":"high","file":"a.go","summary":"` + sum + `"}]}}` + "\n")
+	}
+	_ = s.PutFile(ctx, "transcripts/review-1.jsonl", line("senior finding"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/review-3.jsonl", line("wrong transcript"), "application/x-ndjson")
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Findings) != 1 || d.Findings[0].Summary != "senior finding" {
+		t.Fatalf("findings = %+v", d.Findings)
+	}
+}

@@ -182,7 +182,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		if t, ok := lastTest(d.Verify); ok {
 			d.Failed, d.Flaky = t.Failed, t.Flaky
 		}
-		if n := len(rec.Reviews); n > 0 {
+		if n := seniorRound(rec.Reviews); n > 0 {
 			if res, ok := transcriptResult(ctx, s, "review-"+strconv.Itoa(n)); ok {
 				for _, f := range runner.ParseVerdict(res).Findings {
 					d.Findings = append(d.Findings, runner.Finding{Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary)})
@@ -218,6 +218,18 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// seniorRound is the round of the last senior review (not a first-line one,
+// whose transcripts are named review_first-N), 0 when there is none. The
+// senior transcript is review-<round>.
+func seniorRound(rs []runstore.ReviewSummary) int {
+	for i := len(rs) - 1; i >= 0; i-- {
+		if rs[i].Tier != runstore.TierFirst {
+			return rs[i].Round
+		}
+	}
+	return 0
 }
 
 // routeOf fills d's route, reported-vs-charge and pin warnings from the
