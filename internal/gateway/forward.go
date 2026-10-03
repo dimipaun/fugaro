@@ -635,6 +635,7 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	_ = rc.Flush()
 
 	tee := newUsageTee(isSSE(resp.Header, p.stream))
+	tee.provider = rt.provider != nil
 	eof := pump(out, rc, src, func(b []byte) {
 		if readable {
 			tee.feed(b)

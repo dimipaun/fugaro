@@ -154,7 +154,7 @@ func TestReportedCostNeverSettles(t *testing.T) {
 // An unusable reported cost is not recorded and changes nothing.
 func TestReportedCostUnusableIgnored(t *testing.T) {
 	u := pricing.Usage{Input: 1000, Output: 2000}
-	for _, cost := range []string{"-5", `"cheap"`, "1e30"} {
+	for _, cost := range []string{"-5", `"cheap"`, "1e30", "1e999", "null"} {
 		t.Run(cost, func(t *testing.T) {
 			reply := anthropicfake.Compat{}.MessageOK(dsModel, u)
 			reply.Body = replaceUsageCost(t, reply.Body, cost)
@@ -198,10 +198,10 @@ func TestCutProviderStreamChargesPartial(t *testing.T) {
 	reply.CutAfter = 3
 	call, rep := settleCase(t, 10, msg(dsModel, 1000, `"stream":true`), reply)
 	want := pricing.WithFee(cost(t, dsModel, pricing.Usage{Input: 2000, Output: 1000}), 10)
-	if got := pricing.Micros(num(call["charged_micros"])); got < want {
-		t.Errorf("charged %d, want at least the partial charge %d", got, want)
+	if got := pricing.Micros(num(call["charged_micros"])); got != want {
+		t.Errorf("charged %d, want exactly the partial charge %d", got, want)
 	}
-	if call["settled"] != settledPartial || rep.Used < want {
+	if call["settled"] != settledPartial || rep.Used != want {
 		t.Errorf("settled %v, used %d", call["settled"], rep.Used)
 	}
 	if _, ok := call["reported_micros"]; ok {
@@ -212,8 +212,10 @@ func TestCutProviderStreamChargesPartial(t *testing.T) {
 func TestZeroOutputTokensChargesInput(t *testing.T) {
 	u := pricing.Usage{Input: 4000}
 	call, _ := settleCase(t, 0, msg(dsModel, 1000, `"stream":true`), anthropicfake.Compat{OmitCacheFields: true}.StreamOK(dsModel, u))
-	if got := pricing.Micros(num(call["charged_micros"])); got != cost(t, dsModel, u) || got == 0 || call["settled"] != settledUsage {
-		t.Errorf("charged %d settled %v", got, call["settled"])
+	// message_start's one output token stays: a later count never lowers it.
+	want := cost(t, dsModel, pricing.Usage{Input: 4000, Output: 1})
+	if got := pricing.Micros(num(call["charged_micros"])); got != want || got == 0 || call["settled"] != settledUsage {
+		t.Errorf("charged %d, want %d, settled %v", got, want, call["settled"])
 	}
 }
 
@@ -248,5 +250,55 @@ func TestRouteRecordedPerCall(t *testing.T) {
 	}
 	if len(rep.ByRoute) != 1 {
 		t.Errorf("a Claude call has a route: %v", rep.ByRoute)
+	}
+}
+
+// Later usage events on a provider route never lower the charge: each
+// count is the largest any event reported, and a call whose input stays
+// zero is not readable usage.
+func TestProviderUsageNeverLowersCharge(t *testing.T) {
+	full := pricing.Usage{Input: 1000, Output: 2000}
+	events := func(ev ...anthropicfake.Event) anthropicfake.Reply {
+		all := append([]anthropicfake.Event{}, ev[0])
+		all = append(all, anthropicfake.TextEvents("ok")...)
+		all = append(all, ev[1:]...)
+		all = append(all, anthropicfake.Stop)
+		return anthropicfake.Reply{Status: http.StatusOK, Events: all}
+	}
+	start, delta := anthropicfake.StartEvent, anthropicfake.DeltaEvent
+	for _, c := range []struct {
+		name  string
+		reply anthropicfake.Reply
+		want  pricing.Usage // zero: settles at the reservation
+	}{
+		{"delta reports no input", events(start(dsModel, pricing.Usage{Input: 1000}), delta(pricing.Usage{Output: 2000})), full},
+		{"duplicate start with lower numbers", events(start(dsModel, pricing.Usage{Input: 1000}), start(dsModel, pricing.Usage{Input: 500}), delta(full)), full},
+		{"lower output in a later delta", events(start(dsModel, pricing.Usage{Input: 1000}), delta(full), delta(pricing.Usage{Input: 1000, Output: 100})), full},
+		{"input only ever zero", events(start(dsModel, pricing.Usage{}), delta(pricing.Usage{Output: 2000})), pricing.Usage{}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			call, rep := settleCase(t, 10, msg(dsModel, 4000, `"stream":true`), c.reply)
+			got := pricing.Micros(num(call["charged_micros"]))
+			if c.want == (pricing.Usage{}) {
+				res := pricing.Micros(num(call["reserved_micros"]))
+				if got != res || res == 0 || call["settled"] != settledReserved || rep.Used != res {
+					t.Errorf("charged %d of %d reserved, settled %v, used %d", got, res, call["settled"], rep.Used)
+				}
+				return
+			}
+			want := pricing.WithFee(cost(t, dsModel, c.want), 10)
+			if got != want || call["settled"] != settledUsage || rep.Used != want {
+				t.Errorf("charged %d, want %d; settled %v, used %d", got, want, call["settled"], rep.Used)
+			}
+		})
+	}
+}
+
+// A non-streaming provider reply with a zero input count is missing usage.
+func TestProviderMessageZeroInputChargesReservation(t *testing.T) {
+	reply := anthropicfake.Compat{}.MessageOK(dsModel, pricing.Usage{Output: 2000})
+	call, _ := settleCase(t, 10, msg(dsModel, 4000), reply)
+	if got, res := pricing.Micros(num(call["charged_micros"])), pricing.Micros(num(call["reserved_micros"])); got != res || res == 0 || call["settled"] != settledReserved {
+		t.Errorf("charged %d of %d reserved, settled %v", got, res, call["settled"])
 	}
 }

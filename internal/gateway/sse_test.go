@@ -123,3 +123,48 @@ func TestUsageTeeJSON(t *testing.T) {
 		t.Errorf("error type %q", tee.errorType)
 	}
 }
+
+// On a provider route a later usage event never lowers a count, and a
+// zero input is not usage; a Claude stream keeps the last value.
+func TestUsageTeeProviderMax(t *testing.T) {
+	stream := "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":1000,\"output_tokens\":1}}}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":0,\"output_tokens\":7}}\n\n" +
+		"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":3}}\n\n" +
+		"event: message_stop\ndata: {}\n\n"
+	for _, c := range []struct {
+		provider bool
+		in, out  int64
+	}{{true, 1000, 7}, {false, 0, 3}} {
+		tee := newUsageTee(true)
+		tee.provider = c.provider
+		tee.feed([]byte(stream))
+		if !tee.complete || tee.acc.in.v != c.in || tee.acc.out.v != c.out {
+			t.Errorf("provider %v: complete %v in %d out %d, want %d %d", c.provider, tee.complete, tee.acc.in.v, tee.acc.out.v, c.in, c.out)
+		}
+	}
+	tee := newUsageTee(true)
+	tee.provider = true
+	tee.feed([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":0,\"output_tokens\":1}}}\n\n"))
+	if tee.started {
+		t.Error("a provider stream with zero input counted as started")
+	}
+	tee = newUsageTee(true)
+	tee.provider = true
+	tee.feed([]byte("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"input_tokens\":-1,\"output_tokens\":1}}\n\n"))
+	if !tee.acc.negative() || !tee.broken {
+		t.Error("a negative count was hidden by the max")
+	}
+}
+
+func TestUsageAccNullCostNotReported(t *testing.T) {
+	var a usageAcc
+	var u wireUsage
+	for raw, want := range map[string]bool{`null`: false, `1e999`: false, `-1`: false, `0`: true, `0.5`: true} {
+		a = usageAcc{}
+		u.Cost = []byte(raw)
+		a.merge(&u)
+		if a.hasReported != want {
+			t.Errorf("cost %s: hasReported %v, want %v", raw, a.hasReported, want)
+		}
+	}
+}
