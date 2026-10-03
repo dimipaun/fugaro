@@ -7,7 +7,8 @@ on:
   pull_request:
     paths: [".goreleaser.yaml", ".github/workflows/release.yml", "scripts/bump-plugin-version.sh"]
   workflow_dispatch: # dry run: a snapshot build, nothing published or signed
-permissions: {}
+permissions:
+  contents: read
 jobs:
   # Lints the config on PRs. Not a required check.
   check:
