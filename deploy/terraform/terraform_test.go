@@ -554,3 +554,69 @@ func TestHistoryAccountDoesNotHoldTheLauncherRole(t *testing.T) {
 		}
 	})
 }
+
+// M9d: the history account writes Firestore documents with roles/datastore.user
+// and holds no other datastore role (owner would let it manage databases and
+// indexes). Only datastore.user and datastore.viewer exist in the tree, and
+// a datastore role never lands on a service account except the history
+// account's user grant.
+func TestHistoryNoDatastoreAdmin(t *testing.T) {
+	granted := map[string]int{}
+	walk(t, func(path string, b []byte) {
+		for _, typ := range []string{"google_project_iam_member", "google_storage_bucket_iam_member"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				for _, role := range regexp.MustCompile(`roles/datastore\.[A-Za-z]+`).FindAllString(blk.body, -1) {
+					granted[role]++
+					switch role {
+					case "roles/datastore.user":
+						if blk.name != "google_project_iam_member.history_firestore" {
+							t.Errorf("%s: %s grants datastore.user; only history_firestore may", path, blk.name)
+						}
+					case "roles/datastore.viewer":
+						if strings.Contains(blk.body, "history") || strings.Contains(blk.body, "serviceAccount:") {
+							t.Errorf("%s: %s grants datastore.viewer to a service account", path, blk.name)
+						}
+					default:
+						t.Errorf("%s: %s grants %s", path, blk.name, role)
+					}
+				}
+			}
+		}
+	})
+	if granted["roles/datastore.user"] != 1 || granted["roles/datastore.viewer"] != 1 {
+		t.Errorf("want one datastore.user and one datastore.viewer resource, got %v", granted)
+	}
+}
+
+// H8: the Firestore database is an idempotent REST ensure step (a Terraform
+// create of a singleton does not adopt), and the rules are REST too: no
+// Terraform resource for either.
+func TestNoFirestoreDatabaseResource(t *testing.T) {
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
+			if strings.Contains(code, bad) {
+				t.Errorf("%s declares %s: the database and its rules are init --firebase's REST steps", path, bad)
+			}
+		}
+	})
+}
+
+// The history account may read the runs bucket (objectViewer) and nothing
+// more there, and the Firebase module (which has no bucket) never names one.
+func TestHistoryRunsBucketIsReadOnly(t *testing.T) {
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_storage_bucket_iam_member") {
+			if strings.Contains(blk.body, "google_service_account.history") {
+				n++
+				if !hasAttr(blk.body, "role", `"roles/storage.objectViewer"`) {
+					t.Errorf("%s: %s grants the history account more than objectViewer", path, blk.name)
+				}
+			}
+		}
+	})
+	if n != 1 {
+		t.Errorf("want one bucket grant to the history account, got %d", n)
+	}
+}

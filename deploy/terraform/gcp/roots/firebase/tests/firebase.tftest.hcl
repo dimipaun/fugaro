@@ -98,6 +98,8 @@ run "TestSignerHasNoRoles" {
       [for m in google_project_iam_member.admin : m.member != google_service_account.signer.member],
       [google_project_iam_member.history_database.member != google_service_account.signer.member],
       [google_project_iam_member.history_auth.member != google_service_account.signer.member],
+      [google_project_iam_member.history_firestore.member != google_service_account.signer.member],
+      [for m in google_project_iam_member.datastore_viewer : m.member != google_service_account.signer.member],
     ]))
     error_message = "the token signer must hold no role on the FP"
   }
@@ -163,9 +165,37 @@ run "TestLauncherHasViewerAndMinterOnly" {
     condition     = !contains(keys(google_project_iam_member.admin), "user:launcher@example.com") && !contains(keys(google_project_iam_member.admin), "user:operator@example.com")
     error_message = "a launcher or operator who isn't also an owner, editor or listed budget admin must not be a budget admin"
   }
+}
+
+# M9d: the spend history in Firestore. The history account writes (user, on
+# the FP only); everyone who can read the RTDB, and every admin, reads
+# (viewer). No domain: or wildcard member can reach these (variable
+# validation); the Go text check TestHistoryNoDatastoreAdmin pins the roles.
+run "TestFirebaseRootHasDatastoreGrants" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
   assert {
-    condition     = alltrue([for m in google_project_iam_member.viewer : m.role != "roles/datastore.viewer"])
-    error_message = "Firestore arrives with M9d: no Firestore role yet"
+    condition = (keys(google_project_iam_member.datastore_viewer) == [
+      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com",
+    ] && alltrue([for m in google_project_iam_member.datastore_viewer : m.role == "roles/datastore.viewer" && m.project == "fp-1234"]))
+    error_message = "launchers, operators, admins and budget admins get roles/datastore.viewer on the FP, and nobody else"
+  }
+  assert {
+    condition = (google_project_iam_member.history_firestore.role == "roles/datastore.user" && google_project_iam_member.history_firestore.project == "fp-1234" &&
+    google_project_iam_member.history_firestore.member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
+    error_message = "the history account holds roles/datastore.user on the FP"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.datastore_viewer : !startswith(m.member, "serviceAccount:") && !startswith(m.member, "domain:") && !strcontains(m.member, "*")])
+    error_message = "datastore.viewer goes to people only: no service account, domain or wildcard"
+  }
+  assert {
+    condition     = google_project_iam_member.history_database.role == "roles/firebasedatabase.admin" && google_project_iam_member.history_auth.role == "roles/firebaseauth.admin"
+    error_message = "the history account's existing RTDB and Auth grants are unchanged"
   }
 }
 
@@ -184,6 +214,7 @@ run "service_account_grants_are_the_history_account_only" {
     condition = alltrue(concat(
       [for m in google_project_iam_member.viewer : !startswith(m.member, "serviceAccount:")],
       [for m in google_project_iam_member.admin : !startswith(m.member, "serviceAccount:")],
+      [for m in google_project_iam_member.datastore_viewer : !startswith(m.member, "serviceAccount:")],
     ))
     error_message = "with these inputs, no service account holds a viewer or admin role except the history account's own grants"
   }
@@ -389,10 +420,10 @@ run "apis" {
   assert {
     condition = keys(google_project_service.this) == [
       "apikeys.googleapis.com", "cloudresourcemanager.googleapis.com", "firebase.googleapis.com",
-      "firebasedatabase.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com",
+      "firebasedatabase.googleapis.com", "firebaserules.googleapis.com", "firestore.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com",
       "identitytoolkit.googleapis.com", "securetoken.googleapis.com",
     ]
-    error_message = "the FP enables firebase, firebasedatabase, identitytoolkit, securetoken, iamcredentials and apikeys, plus iam and cloudresourcemanager"
+    error_message = "the FP enables firebase, firebasedatabase, identitytoolkit, securetoken, iamcredentials, apikeys, firestore and firebaserules, plus iam and cloudresourcemanager"
   }
 }
 
