@@ -5,14 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 )
 
 // printVarsUngatedFirebase is init --firebase --print-vars's warning.
@@ -115,7 +119,8 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 //  1. the installation root, which creates the history account, so it
 //     exists before the Firebase root grants it anything;
 //  2. the Firebase root (its own state, fugaro/firebase);
-//  3. the database: the rules, the mark, the project name, the mode and the
+//  3. Identity Platform (initialized over REST when missing, never changed
+//     when there, refused when it enables public sign-up) and the database: the rules, the mark, the project name, the mode and the
 //     largest lease, and the local config;
 //  4. the installation root again, which deploys the history job with the
 //     Firebase outputs once its image exists.
@@ -228,7 +233,11 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	confirmed, err := r.deployDatabase(ctx, db, fp)
+	idp, err := r.identityPlatform(ctx, lc, fp)
+	if err != nil {
+		return err
+	}
+	confirmed, err := r.deployDatabase(ctx, db, fp, idp)
 	if err != nil {
 		return err
 	}
@@ -299,7 +308,7 @@ func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, m
 // confirmed; a database that is already as wanted is left alone, with no
 // confirmation. confirmed reports that a confirmation was given, which also
 // covers the local config's diff.
-func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string) (confirmed bool, err error) {
+func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep) (confirmed bool, err error) {
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
 		return false, initErr(err)
@@ -307,20 +316,100 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string) (
 	for _, w := range warnings {
 		r.warn(w)
 	}
-	if len(acts) == 0 {
+	if len(acts) == 0 && !idp.missing {
 		fmt.Fprintln(r.w, "The database already has the rules, mark, project name and mode.")
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "The database of Firebase project %s:\n", fp)
+	fmt.Fprintf(r.w, "The Firebase project %s:\n", fp)
 	for _, a := range acts {
 		fmt.Fprintf(r.w, "  %s: %s\n", a.Path, a.Text)
 	}
-	if err := r.confirm("writes the database as listed, as you (project owner, editor or budget admin), and then the local config", "the database was not written"); err != nil {
+	if idp.missing {
+		fmt.Fprintf(r.w, "  Identity Platform: %s\n", infra.IdentityPlatformStep)
+	} else {
+		fmt.Fprintln(r.w, "  Identity Platform: already initialized, left as it is")
+	}
+	what := "writes the database as listed, as you (project owner, editor or budget admin), and then the local config"
+	if idp.missing {
+		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
+	}
+	if err := r.confirm(what, "the database was not written"); err != nil {
 		return false, err
 	}
-	if err := db.Apply(ctx); err != nil {
-		return false, initErr(err)
+	if len(acts) > 0 {
+		if err := db.Apply(ctx); err != nil {
+			return false, initErr(err)
+		}
+		fmt.Fprintln(r.w, "wrote the database")
 	}
-	fmt.Fprintln(r.w, "wrote the database")
+	if idp.missing {
+		if err := idp.initialize(ctx); err != nil {
+			return false, err
+		}
+		fmt.Fprintln(r.w, "initialized Identity Platform (no sign-in providers)")
+	}
 	return true, nil
+}
+
+// idpStep is the Identity Platform step: read before the confirmation, run
+// after it.
+type idpStep struct {
+	c       *infra.IdentityPlatform
+	missing bool
+}
+
+// identityPlatform reads the Firebase project's Identity Platform
+// configuration (read-only). One that exists is never changed, and is refused
+// when it enables a public sign-up path: the web API key is public, so only
+// custom tokens signed by our signer may work.
+func (r *initRun) identityPlatform(ctx context.Context, lc *localcfg.Config, fp string) (*idpStep, error) {
+	hc := &http.Client{Timeout: 90 * time.Second}
+	if !lc.Endpoints.NoAuth {
+		ts, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, userErr("no Google credentials for Identity Toolkit: run gcloud auth application-default login (%v)", err)
+		}
+		hc = oauth2.NewClient(ctx, ts)
+	} else if lc.Endpoints.IdentityToolkit == "" {
+		return nil, userErr("endpoints: no_auth is set but the identity_toolkit endpoint is not")
+	}
+	s := &idpStep{c: &infra.IdentityPlatform{Endpoint: lc.Endpoints.IdentityToolkit, Project: fp, HTTP: hc}}
+	raw, exists, err := s.c.Config(ctx)
+	if err != nil {
+		return nil, remote(err)
+	}
+	s.missing = !exists
+	if exists {
+		if err := refusePublicSignUp(raw, fp); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+// initialize initializes Identity Platform, then checks the configuration it
+// finds (a race may have left one with sign-in enabled).
+func (s *idpStep) initialize(ctx context.Context) error {
+	if err := s.c.Initialize(ctx); err != nil {
+		return remote(err)
+	}
+	raw, exists, err := s.c.Config(ctx)
+	switch {
+	case err != nil:
+		return remote(err)
+	case !exists:
+		return remote(fmt.Errorf("Identity Platform was initialized in %s but its configuration is still not found", s.c.Project))
+	}
+	return refusePublicSignUp(raw, s.c.Project)
+}
+
+func refusePublicSignUp(raw []byte, fp string) error {
+	public, err := infra.PublicSignUp(raw)
+	if err != nil {
+		return remote(err)
+	}
+	if len(public) == 0 {
+		return nil
+	}
+	return userErr("Identity Platform in Firebase project %s has public sign-up enabled (%s). The web API key is public, so only custom tokens signed by Fugaro's signer may work: disable these in the Firebase console (Authentication, Sign-in method) or with the Identity Toolkit config API, then rerun. fugaro init never changes an existing configuration", fp, strings.Join(public, "; "))
 }

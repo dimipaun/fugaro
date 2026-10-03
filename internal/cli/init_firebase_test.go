@@ -31,11 +31,13 @@ type fbRig struct {
 	billing *gcpfake.Billing
 	db      *gcpfake.RTDB
 	fbdb    *gcpfake.FirebaseDB
+	idt     *gcpfake.IdentityToolkit
 }
 
 func newFBRig(t *testing.T) *fbRig {
 	t.Helper()
 	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t)}
+	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fpID)
 	r.fbdb.AddInstance(fpID, r.db.URL)
 	r.stateBucket()
 	r.crm.AddProject(fpID, 987654321098)
@@ -50,7 +52,7 @@ func newFBRig(t *testing.T) *fbRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, no_auth: true }", 1)
+	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, identity_toolkit: "+r.idt.URL+"/, no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -764,5 +766,84 @@ func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("no %q in\n%s", want, out)
 		}
+	}
+}
+
+func TestIdentityPlatformInitializedWhenMissing(t *testing.T) {
+	r := newFBRig(t)
+	r.idt.UninitializeIdentityPlatform()
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 1 {
+		t.Errorf("initializeAuth calls = %d, want 1", n)
+	}
+	if !strings.Contains(out, "ensure Identity Platform is initialized (no sign-in providers)") {
+		t.Errorf("the confirmation does not list the step:\n%s", out)
+	}
+	if r.db.Value("fugaro/mark") == nil {
+		t.Error("the database was not written")
+	}
+}
+
+func TestIdentityPlatformStepNotRunWithoutConfirmation(t *testing.T) {
+	r := newFBRig(t)
+	r.idt.UninitializeIdentityPlatform()
+	fakeTerminal(t) // nothing is typed
+	// The installation and Firebase applies are confirmed; the database step is not.
+	out, _, err := executeStdin(t, initProjectName+"\n"+initProjectName+"\n", "init", "--firebase", fpID)
+	if err == nil {
+		t.Fatalf("not confirmed, yet init succeeded:\n%s", out)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 0 {
+		t.Errorf("initializeAuth calls = %d before the confirmation", n)
+	}
+	if !strings.Contains(out, "ensure Identity Platform is initialized (no sign-in providers)") {
+		t.Errorf("the confirmation does not list the step:\n%s", out)
+	}
+}
+
+func TestIdentityPlatformAlreadyInitializedNoPost(t *testing.T) {
+	r := newFBRig(t)
+	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 0 {
+		t.Errorf("initializeAuth calls = %d on an initialized project", n)
+	}
+}
+
+func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
+	r := newFBRig(t)
+	r.idt.UninitializeIdentityPlatform()
+	r.idt.RaceInitialize()
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := r.idt.InitializeAuthCalls(); n != 1 {
+		t.Errorf("initializeAuth calls = %d, want 1", n)
+	}
+}
+
+func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
+	for name, cfg := range map[string]map[string]any{
+		"email":     {"signIn": map[string]any{"email": map[string]any{"enabled": true}}},
+		"anonymous": {"signIn": map[string]any{"anonymous": map[string]any{"enabled": true}}},
+		"phone":     {"signIn": map[string]any{"phoneNumber": map[string]any{"enabled": true}}},
+		"idp":       {"defaultSupportedIdpConfigs": []any{map[string]any{"name": "google.com", "enabled": true}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			r.idt.SetIdentityPlatformConfig(cfg)
+			_, stderr, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "public sign-up") {
+				t.Fatalf("err = %v, stderr = %s", err, stderr)
+			}
+			if r.idt.InitializeAuthCalls() != 0 || r.db.Value("fugaro/mark") != nil {
+				t.Error("a refused configuration was followed by writes")
+			}
+		})
 	}
 }
