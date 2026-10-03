@@ -194,13 +194,30 @@ func TestFugaroServicesStartLeavesAnAnsweringServiceAlone(t *testing.T) {
 	}
 }
 
-func TestFugaroServicesStartTimesOut(t *testing.T) {
-	// Postgres' binaries are not on this machine's PATH, so nothing starts
-	// and the port never opens: start fails (by its own error or by the
-	// timeout), never hangs, and names the problem.
-	out, err := runServices(t, []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_PORT=1", "FUGARO_SERVICES_TIMEOUT=2", "PATH=/usr/bin:/bin"}, "start")
-	if err == nil {
-		t.Errorf("start succeeded without postgres:\n%s", out)
+// A failing initdb makes start fail at once with its own message, and a
+// postgres that never opens its port makes it fail with the timeout's.
+func TestFugaroServicesStartReportsItsFailures(t *testing.T) {
+	bin := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := "PATH=" + bin + ":/usr/bin:/bin"
+	env := []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_PORT=1", "FUGARO_SERVICES_TIMEOUT=2", path}
+
+	write("initdb", "echo boom >&2; exit 1\n")
+	if out, err := runServices(t, env, "start"); err == nil || !strings.Contains(out, "postgres: initdb failed") {
+		t.Errorf("failing initdb: err=%v\n%s", err, out)
+	}
+
+	// initdb and pg_ctl succeed (the data directory gets its marker), but
+	// nothing ever listens on the port.
+	write("initdb", "mkdir -p \"$2\" && echo 17 > \"$2/PG_VERSION\"\n")
+	write("pg_ctl", "mkdir -p \"$FUGARO_SERVICES_DIR/postgres\"; echo 1 > \"$FUGARO_SERVICES_DIR/postgres/postmaster.pid\"\n")
+	out, err := runServices(t, env, "start")
+	if err == nil || !strings.Contains(out, "timed out after 2s waiting for: postgres") && !strings.Contains(out, "postgres exited before it was ready") {
+		t.Errorf("a postgres that never listens: err=%v\n%s", err, out)
 	}
 }
 

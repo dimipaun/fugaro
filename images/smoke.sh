@@ -156,6 +156,20 @@ for port in 9000 9099 9199; do
   (exec 3<>"/dev/tcp/localhost/$port") 2>/dev/null || { echo "the emulator port $port is closed" >&2; exit 1; }
 done
 curl -fsS http://localhost:9099/ >/dev/null
+# The services have no authentication: they must answer on loopback only.
+ip=$(hostname -i | cut -d" " -f1)
+refused() {
+  if (exec 3<>"/dev/tcp/$ip/$1") 2>/dev/null; then echo "port $1 answers on $ip, not only on loopback" >&2; exit 1; fi
+}
+for port in 5432 6379 9000 9099 9199; do refused "$port"; done
+# A repository'"'"'s emulator config for containers says host 0.0.0.0; the
+# emulators must stay on loopback anyway.
+fugaro-services stop
+mkdir -p /tmp/fbcfg
+printf '"'"'{"emulators":{"database":{"port":9000,"host":"0.0.0.0"},"auth":{"port":9099,"host":"0.0.0.0"},"storage":{"port":9199,"host":"0.0.0.0"}}}'"'"' > /tmp/fbcfg/firebase.json
+FUGARO_FIREBASE_CONFIG=/tmp/fbcfg/firebase.json fugaro-services start
+for port in 9000 9099 9199; do refused "$port"; done
+curl -fsS http://localhost:9099/ >/dev/null
 fugaro-services stop
 if (exec 3<>/dev/tcp/localhost/5432) 2>/dev/null; then echo "postgres still listens after stop" >&2; exit 1; fi
 if (exec 3<>/dev/tcp/localhost/9000) 2>/dev/null; then echo "the database emulator still listens after stop" >&2; exit 1; fi

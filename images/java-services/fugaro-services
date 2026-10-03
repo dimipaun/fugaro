@@ -163,6 +163,11 @@ start_firebase() {
   fi
   # The subshell changes directory first, so $! is firebase itself (setsid
   # makes it a group leader), not a shell around it.
+  # Whatever host the config names (a repository's container config says
+  # 0.0.0.0), the emulators listen on loopback only: the services have no
+  # authentication and must not be reachable from outside the container.
+  node -e 'const f=process.argv[1],fs=require("fs"),c=JSON.parse(fs.readFileSync(f,"utf8"));c.emulators=c.emulators||{};for(const k of Object.keys(c.emulators))if(c.emulators[k]&&typeof c.emulators[k]==="object")c.emulators[k].host="127.0.0.1";fs.writeFileSync(f,JSON.stringify(c,null,2))' "$proj/firebase.json" \
+    || die "firebase: cannot rewrite the emulator hosts of $cfg"
   (
     cd "$proj" || exit 1
     setsid nohup firebase emulators:start --only "$EMULATORS" --project "$PROJECT" \
@@ -201,7 +206,11 @@ cmd_start() {
     case $s in postgres|redis|firebase) ;; *) die "unknown service '$s' in FUGARO_SERVICES" ;; esac
   done
   for s in $WANT; do
-    if alive "$s" && service_up "$s"; then say "$s: already running"; continue; fi
+    if alive "$s"; then
+      # Ours and running: either up, or still starting, which only waits.
+      if service_up "$s"; then say "$s: already running"; else say "$s: still starting, waiting"; fi
+      continue
+    fi
     forget "$s"
     case $s in
       postgres) start_postgres ;;

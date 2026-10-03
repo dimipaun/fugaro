@@ -57,7 +57,7 @@ ARG CLAUDE_CODE_VERSION=2.1.283
 ARG GH_VERSION=2.101.0
 ENV HOME=/home/fugaro \
     JAVA_HOME=/opt/java \
-    PATH=/home/fugaro/.local/bin:/opt/java/bin:/opt/node/bin:/usr/lib/postgresql/17/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/home/fugaro/.local/bin:/opt/java/bin:/opt/node/bin:/usr/lib/postgresql/${POSTGRES_MAJOR}/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
     DISABLE_AUTOUPDATER=1 \
     FIREBASE_EMULATORS_PATH=/opt/firebase-emulators \
@@ -89,10 +89,12 @@ RUN set -eu; \
     tmp=$(mktemp -d); \
     export GNUPGHOME="$tmp/gnupg"; install -d -m 0700 "$GNUPGHOME"; \
     curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc -o "$tmp/pgdg.asc"; \
+    keys=$(gpg --show-keys --with-colons "$tmp/pgdg.asc" | grep -c '^pub:'); \
     fpr=$(gpg --show-keys --with-colons "$tmp/pgdg.asc" | awk -F: '/^fpr:/ {print $10; exit}'); \
-    [ "$fpr" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8 ] \
-      || { echo "java-services: the PGDG key has fingerprint '$fpr'" >&2; exit 1; }; \
-    gpg --dearmor < "$tmp/pgdg.asc" > /etc/apt/keyrings/pgdg.gpg; \
+    [ "$keys" = 1 ] && [ "$fpr" = B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8 ] \
+      || { echo "java-services: the PGDG key file has $keys primary keys, the first with fingerprint '$fpr'" >&2; exit 1; }; \
+    gpg --import "$tmp/pgdg.asc"; \
+    gpg --export B97B0AFCAA1A47F044F244A07FCC7D46ACCC4CF8 > /etc/apt/keyrings/pgdg.gpg; \
     rm -rf "$tmp"; \
     . /etc/os-release; \
     echo "deb [signed-by=/etc/apt/keyrings/pgdg.gpg] https://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list; \
@@ -152,6 +154,9 @@ RUN set -eu; \
     rm -rf "$tmp"; \
     HOME=/root java -version
 RUN set -eu; \
+    # npm install runs as root at build time; firebase-tools' own version is
+    # pinned but its transitive dependencies float (accepted: there is no
+    # lockfile for a global install, and the nightly rebuild picks up fixes).
     HOME=/root npm install -g --no-audit --no-fund "firebase-tools@${FIREBASE_TOOLS_VERSION}"; \
     install -d -m 0755 "$FIREBASE_EMULATORS_PATH"; \
     for e in database firestore storage pubsub ui dataconnect; do \
