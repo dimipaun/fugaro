@@ -1,0 +1,36 @@
+name: Bug report
+description: Something does not work as documented.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you run, what did you expect, what happened instead? Do not paste secrets or tokens.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Fugaro version
+      description: Output of `fugaro version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options: [GCP (Cloud Run), Other]
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Git provider
+      description: GitHub or Bitbucket Cloud.
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: Command output, `fugaro diagnose <run>` output or a PR link. Check it for credentials first.
+      render: shell

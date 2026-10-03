@@ -4,7 +4,77 @@
 
 *Fugax* is Latin for "fleeting." Fugaro runs long, self-contained coding-agent loops (implement → test → review → fix → compile → open a PR) in ephemeral, throwaway cloud containers instead of on your laptop. Google Cloud Run is the first supported backend; AWS and Azure are wanted next (see [Other clouds](#other-clouds-help-wanted)). Each task gets its own container, runs to completion, pushes its work, and disappears.
 
-> **Status: pre-release, not yet on a tagged version.** The runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, and the Cloud Run backend with its CLI (`run`, `ls`, `logs`, `diagnose`, `cancel`, `secrets`, `image build`, `image check`, `image status`) are implemented, and so are follow-up runs: `fugaro run --pr N` continues a Fugaro pull request, acting on the review comments of the accounts its base branch's `fugaro.yaml` trusts. The GCP resources come from Terraform through `fugaro init` ([docs/gcp-setup.md](docs/gcp-setup.md)), which also adopts what M4's throwaway bootstrap script made; a daily check rebuilds each repository's image when it goes stale. The remaining plugin skills and the first release come next. The design is [docs/design/v1.md](docs/design/v1.md). Expect breaking changes.
+> **Status: pre-1.0. Expect breaking changes.** The first release is v0.1.0. It covers the runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, the Cloud Run backend with its CLI, follow-up runs, the shared budget and the plugin skills. The design is [docs/design/v1.md](docs/design/v1.md).
+
+## Quickstart
+
+Install, stand up an installation in your own Google Cloud project, onboard a repository, run a task. Each step links to the deep doc.
+
+### 1. Install
+
+v0.1.0 is the first release; these channels are live from that tag.
+
+```sh
+brew install dimipaun/tap/fugaro
+# or
+go install github.com/dimipaun/fugaro/cmd/fugaro@latest
+```
+
+Or download an archive from [GitHub Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64). Each release has a `checksums.txt` signed with cosign; [docs/release.md](docs/release.md#verifying-a-release) shows how to verify it.
+
+### 2. Prerequisites
+
+- A Google Cloud project with billing enabled (see [Requirements](#requirements))
+- `gcloud` authenticated, with Application Default Credentials (`gcloud auth application-default login`)
+- Terraform 1.7 or newer on `PATH`
+- Docker, only if you build images locally
+- A GitHub or Bitbucket repository to run tasks against
+
+### 3. Stand up the installation (once per project)
+
+```sh
+fugaro init --name <project> --gcp-project <gcp-project-id> --region <region>
+```
+
+`init` shows its Terraform plan and applies it after you confirm by typing the project's name. Details, what it creates and how to roll back: [docs/gcp-setup.md](docs/gcp-setup.md).
+
+### 4. Onboard a repository
+
+In the repository's checkout, either use the plugin's `fugaro:onboard` skill from Claude Code (below) or write `fugaro.yaml` yourself, starting from `fugaro config example`, and check it with `fugaro validate`. Then, from the checkout:
+
+```sh
+fugaro init --repo                    # its secrets, registry, job and daily image check
+fugaro secrets set anthropic-api-key  # value from stdin or a hidden prompt; also github-app-key, bitbucket-token, claude-oauth-token and the secrets your workflows declare
+```
+
+`init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
+
+### 5. Run, watch, diagnose
+
+```sh
+fugaro run "add a --verbose flag to the export command"
+fugaro ls                      # runs, newest first; --watch redraws until they settle
+fugaro logs -f <run>           # <repo-slug>/<run-id>, or a bare run ID
+fugaro diagnose <run>          # status, failed tests, review findings, last message, cost, PR
+fugaro cancel <run>            # the runner opens a draft PR first
+```
+
+Every run ends in a pull request, a draft one if it failed. To act on review comments, continue it with `fugaro run --pr N` (optionally with extra instructions as TEXT); it reads the comments of the accounts `fugaro.yaml`'s `followup.trusted` lists.
+
+### 6. Optional: the shared budget
+
+With a Firebase project linked to billing, runs share project-wide caps and kill switches ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-shared-budget-on-m9b)):
+
+```sh
+fugaro init --firebase <firebase-project-id>
+fugaro budget show             # caps, today's counters, kill switches
+fugaro budget set ...          # after a while in observe mode; see --help
+fugaro watch                   # live dashboard
+```
+
+### The Claude Code plugin
+
+`plugin/` holds six skills for your local coding agent: `fugaro:onboard` (set a repository up), `fugaro:launch` (start a run), `fugaro:status`, `fugaro:logs`, `fugaro:diagnose` and `fugaro:followup` (continue a Fugaro PR). Add the marketplace in Claude Code with `/plugin marketplace add dimipaun/fugaro`, then `/plugin install fugaro@fugaro`.
 
 ---
 
@@ -72,12 +142,7 @@ With a Firebase project behind the installation (`fugaro init --firebase`), runs
 
 A task is a small hand-off spec: what to do, which repo, which branch, and which workflow. It can be launched directly or by your local coding agent, which builds the spec and starts the job through the `fugaro` CLI. Many tasks can run at once, independently.
 
-Local-agent skills (`plugin/`): `fugaro:onboard` sets a repository up, and `fugaro:followup` continues a Fugaro PR with a follow-up run. Planned:
-
-- launch a task
-- list running and recent tasks
-- fetch logs for a run
-- diagnose a failure (surface the draft PR and its logs)
+Local-agent skills (`plugin/`): `fugaro:onboard` sets a repository up, `fugaro:launch` starts a run, `fugaro:status` lists running and recent runs, `fugaro:logs` fetches a run's logs, `fugaro:diagnose` explains a failure (the draft PR and its logs), and `fugaro:followup` continues a Fugaro PR with a follow-up run.
 
 ## Observability and guardrails
 
@@ -103,20 +168,27 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 
 ## Roadmap
 
-- [ ] Base images for server (JVM/Gradle) and web (Node) workflows
-- [ ] Job entrypoint implementing the task lifecycle
-- [ ] Cache restore and write-back
-- [ ] Always-PR finish step (ready or draft)
-- [ ] Per-repo config schema
-- [ ] Launch CLI and local-agent skills
-- [ ] Status view
+- [x] Base images for web (Node) workflows (`web-node`)
+- [x] Job entrypoint implementing the task lifecycle
+- [x] Cache restore and write-back
+- [x] Always-PR finish step (ready or draft)
+- [x] Per-repo config schema
+- [x] Launch CLI and the six local-agent skills
+- [x] Status view (`fugaro ls`, `fugaro watch`)
+- [x] Follow-up runs, the shared budget, GoReleaser releases and the Homebrew tap
+- [x] AWS and Azure help wanted (see [Other clouds](#other-clouds-help-wanted))
+- [ ] Server (JVM/Gradle) base image
+- [ ] M8: Docker backend, to run a task on your own machine or any Docker host
+- [ ] M9d: run history
+- [ ] M9e: an early draft PR
+- [ ] M10: multi-model support
 - [ ] Android workflow (deferred; heavy compiles stay local for now)
 
 Open design questions are tracked in [docs/SPEC.md](docs/SPEC.md#9-open-questions--notes-for-implementer).
 
 ## Contributing
 
-Ideas, issues, and PRs are welcome. The project is young, so opening an issue to discuss a direction before a large change is appreciated.
+Ideas, issues, and PRs are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). The project is young, so opening an issue to discuss a direction before a large change is appreciated. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md); report vulnerabilities as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
