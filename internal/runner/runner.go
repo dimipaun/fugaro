@@ -92,6 +92,11 @@ type Deps struct {
 	ManagedSettingsPath string
 	// Spend is the job's budget, from SpendFromEnv; the zero value is off.
 	Spend Spend
+	// Providers are the owner's model providers (local config, never
+	// fugaro.yaml). A pin or allow-list entry that is not Claude's must be
+	// claimed by one that lists the repository in allow_data_to, or
+	// bootstrap refuses the run before any call; the zero value has none.
+	Providers map[string]config.ModelProvider
 	// SpendErr is SpendFromEnv's error: bootstrap fails with it once the
 	// run's record is claimed.
 	SpendErr error

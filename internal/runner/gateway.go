@@ -319,6 +319,12 @@ func (r *run) checkBudget() error {
 			Detail: r.noCapDetail()})
 		return &HaltError{*r.haltValue()}
 	}
+	// A model another provider serves needs the owner's approval of this
+	// repository and api-key auth, whatever the mode: refused before any
+	// call, naming the rule.
+	if err := r.checkProviderModels(); err != nil {
+		return err
+	}
 	// The allow-list bounds the models whatever the credential or the mode.
 	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
@@ -344,6 +350,30 @@ func (r *run) checkBudget() error {
 		return errors.New(reason)
 	}
 	return nil
+}
+
+// checkProviderModels is the owner's data policy for provider models
+// (config.CheckProviderPolicy, config.CheckProviderAuth). The run's own
+// allowed_models layer is the file's here; the merged list is CheckAllowed's.
+func (r *run) checkProviderModels() error {
+	var allowed []string
+	if b := r.cfg.Budget; b != nil {
+		allowed = b.AllowedModels
+	}
+	prices := r.spend.Prices
+	if prices == nil {
+		prices = pricing.Embedded()
+	}
+	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
+	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
+	if len(ps) == 0 {
+		return nil
+	}
+	msgs := make([]string, len(ps))
+	for i, p := range ps {
+		msgs[i] = p.String()
+	}
+	return fmt.Errorf("the models are not approved for this repository: %s", strings.Join(msgs, "; "))
 }
 
 // noCapDetail says how to give an enforcing run a cap. Where the owner's

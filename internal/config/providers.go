@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 // Model providers are the owner's list of non-Anthropic backends a run's
@@ -243,4 +245,61 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 		ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by provider %s, which needs agent.auth: api-key (agent.auth is %s: %s)", CodeSpan(r.model), name, a.Auth, why)})
 	}
 	return ps
+}
+
+// CheckProviderPolicy is the repository's side of a provider model (design
+// m10-multi-model.md §3): a model ID that is not Claude's (a "vendor/model"
+// ID) is accepted in the file's pins (agent.models.*, agent.model) and in its
+// budget.allowed_models only when a provider claims it, that provider's
+// allow_data_to names repo (owner/name), and it is a plain priced ID (no
+// alias, no ":" variant). Otherwise the run is refused before any call. The
+// providers are the owner's (local config): a repository cannot add one,
+// and an allow-list that merges away a model keeps it out (CheckAllowed).
+// allowed is the file's own allow-list, nil when it sets none; prices may be
+// nil, which skips the price rule.
+func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[string]ModelProvider, prices *pricing.Table) []Problem {
+	var ps []Problem
+	check := func(path, model string) {
+		if !strings.Contains(model, "/") && !claimed(providers, model) {
+			return // a Claude ID or alias: the pin rules are CheckPins'
+		}
+		name, p, ok := ProviderFor(providers, model)
+		switch {
+		case !ok:
+			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not a Claude model and no provider serves it: providers are set by the owner in the project config, never in fugaro.yaml", CodeSpan(model))})
+		case !p.AllowsData(repo):
+			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is served by provider %s, whose allow_data_to does not name %s: the owner must list the repository in the project config before its code may be sent there", CodeSpan(model), name, CodeSpan(repo))})
+		case strings.Contains(model, ":"):
+			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is a variant (a \":\" suffix is another price and routing): name the plain vendor/model ID", CodeSpan(model))})
+		case pricing.IsAlias(model):
+			ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s is not an explicit model ID: name a plain vendor/model ID", CodeSpan(model))})
+		case prices != nil:
+			if _, ok := prices.Lookup(model); !ok {
+				ps = append(ps, Problem{Path: path, Message: fmt.Sprintf("%s has no price: add it under model_prices in the project config", CodeSpan(model))})
+			}
+		}
+	}
+	for _, r := range []struct{ path, model string }{
+		{"agent.models.coder", a.ModelFor(RoleCoder)},
+		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
+		{"agent.models.background", a.Models.Background},
+		{"agent.model", a.Model},
+	} {
+		// agent.model is the role models' default: said once, under the role.
+		if r.path == "agent.model" && (r.model == a.ModelFor(RoleCoder) || r.model == a.ModelFor(RoleReviewer)) {
+			continue
+		}
+		if r.model != "" {
+			check(r.path, r.model)
+		}
+	}
+	for i, m := range allowed {
+		check(fmt.Sprintf("budget.allowed_models[%d]", i), m)
+	}
+	return ps
+}
+
+func claimed(providers map[string]ModelProvider, model string) bool {
+	_, _, ok := ProviderFor(providers, model)
+	return ok
 }

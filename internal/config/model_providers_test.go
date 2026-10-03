@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/pricing"
 )
 
 func okProvider() ModelProvider {
@@ -167,5 +169,80 @@ func TestAllowsDataIgnoresCase(t *testing.T) {
 		if got := p.AllowsData(repo); got != want {
 			t.Errorf("AllowsData(%q) = %v", repo, got)
 		}
+	}
+}
+
+func providerPrices(t *testing.T) *pricing.Table {
+	t.Helper()
+	return pricing.Embedded()
+}
+
+// A repository's fugaro.yaml cannot carry a provider, a base URL, a key or a
+// price: the strict decode refuses the keys, so the owner's local config is
+// the only place a provider exists.
+func TestRepoCannotAddProvider(t *testing.T) {
+	for _, doc := range []string{
+		"providers:\n  evil:\n    kind: anthropic-compat\n    base_url: https://evil.example\n",
+		"agent:\n  base_url: https://evil.example\n",
+		"agent:\n  provider: {base_url: https://evil.example}\n",
+		"model_prices:\n  deepseek/deepseek-v4-flash: {input: 0}\n",
+		"budget:\n  providers: {}\n",
+	} {
+		if _, err := Parse([]byte(doc)); err == nil {
+			t.Errorf("fugaro.yaml accepted:\n%s", doc)
+		}
+	}
+}
+
+func TestAllowDataToRequired(t *testing.T) {
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	a := Agent{Auth: "api-key", Models: ModelRoles{Coder: "deepseek/deepseek-v4-flash", Reviewer: "claude-opus-5-5", Background: "claude-haiku-4-5"}}
+	prices := providerPrices(t)
+	if got := CheckProviderPolicy(a, nil, "dimipaun/fugaro", ps, prices); len(got) != 0 {
+		t.Errorf("an allowed repository refused: %v", got)
+	}
+	if got := CheckProviderPolicy(a, nil, "DimiPaun/Fugaro", ps, prices); len(got) != 0 {
+		t.Errorf("repository match is case-sensitive: %v", got)
+	}
+	got := problemsText(CheckProviderPolicy(a, nil, "edgeappinc/edgeweb", ps, prices))
+	if !strings.Contains(got, "agent.models.coder") || !strings.Contains(got, "allow_data_to") || !strings.Contains(got, "edgeappinc/edgeweb") {
+		t.Errorf("problems = %q", got)
+	}
+	// Nothing lists the repository when the provider has no allow_data_to.
+	p := okProvider()
+	p.AllowDataTo = nil
+	if got := CheckProviderPolicy(a, nil, "dimipaun/fugaro", map[string]ModelProvider{"openrouter": p}, prices); len(got) != 1 {
+		t.Errorf("empty allow_data_to: %v", got)
+	}
+}
+
+func TestProviderPolicyUnclaimedAndUnpriced(t *testing.T) {
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	prices := providerPrices(t)
+	for _, tc := range []struct {
+		model, want string
+	}{
+		{"openai/gpt-9", "no provider"},
+		{"deepseek/deepseek-v4-flash:free", "variant"},
+		{"deepseek/unpriced-model", "no price"},
+	} {
+		a := Agent{Auth: "api-key", Model: tc.model}
+		got := problemsText(CheckProviderPolicy(a, nil, "dimipaun/fugaro", ps, prices))
+		if !strings.Contains(got, tc.want) {
+			t.Errorf("%s: problems = %q, want %q", tc.model, got, tc.want)
+		}
+	}
+	// Claude IDs and aliases are not this rule's business.
+	if got := CheckProviderPolicy(Agent{Model: "sonnet"}, nil, "x/y", ps, prices); len(got) != 0 {
+		t.Errorf("alias refused: %v", got)
+	}
+}
+
+func TestProviderPolicyAllowedModelsEntries(t *testing.T) {
+	ps := map[string]ModelProvider{"openrouter": okProvider()}
+	a := Agent{Auth: "api-key", Model: "claude-sonnet-5-5"}
+	got := problemsText(CheckProviderPolicy(a, []string{"claude-sonnet-5-5", "deepseek/deepseek-v4-flash"}, "edgeappinc/edgeweb", ps, providerPrices(t)))
+	if !strings.Contains(got, "budget.allowed_models[1]") || !strings.Contains(got, "allow_data_to") {
+		t.Errorf("problems = %q", got)
 	}
 }
