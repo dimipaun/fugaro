@@ -1,0 +1,126 @@
+name: release
+# A strict vX.Y.Z tag push ALSO triggers images.yml (base images on ghcr.io);
+# the two workflows are independent. See docs/release.md.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+    paths: [".goreleaser.yaml", ".github/workflows/release.yml", "scripts/bump-plugin-version.sh"]
+  workflow_dispatch: # dry run: a snapshot build, nothing published or signed
+permissions:
+  contents: read
+jobs:
+  # Lints the config on PRs. Not a required check.
+  check:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        with:
+          version: v2.18.2
+          args: check
+      - name: Plugin version script
+        run: scripts/bump-plugin-version.sh --check "$(jq -r .version plugin/.claude-plugin/plugin.json)"
+
+  # Manual rehearsal: builds every archive and SBOM, publishes and signs nothing.
+  dry-run:
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        env:
+          HOMEBREW_TAP_GITHUB_TOKEN: ""
+        with:
+          version: v2.18.2
+          args: release --snapshot --clean --skip=publish,sign
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: goreleaser-dist
+          path: dist/
+          retention-days: 7
+
+  release:
+    if: github.event_name == 'push'
+    permissions:
+      contents: write # create the release and upload its assets
+      id-token: write # cosign keyless signing
+      checks: read # the gate reads the commit's check-runs
+    # One release at a time; GitHub keeps a single pending run per group, so
+    # tags pushed in quick succession can drop the middle one (re-push it).
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: The tag is strict, on main, and its checks passed
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -eu
+          scripts/release-gate.sh "$TAG"
+          scripts/bump-plugin-version.sh --check "${TAG#v}"
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+      - name: Warn when the Homebrew cask will not be published
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            msg="HOMEBREW_TAP_GITHUB_TOKEN is empty: the Homebrew cask is NOT published for this release. Add the secret (fine-grained PAT, contents:write on dimipaun/homebrew-tap) and push the cask from the dist/homebrew/Casks/ output by hand."
+            echo "::warning::$msg"
+            echo "### Homebrew cask not published" >> "$GITHUB_STEP_SUMMARY"
+            echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: goreleaser/goreleaser-action@f06c13b6b1a9625abc9e6e439d9c05a8f2190e94 # v7.2.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Empty when the secret is absent: the formula upload is then skipped.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+        with:
+          version: v2.18.2
+          args: release --clean
+      # GoReleaser cannot do this at creation (v2.18.2 reads release.prerelease
+      # as the literal auto|true|false, untemplated). `always()` so a failure
+      # after the release exists (an expired tap PAT) still marks it.
+      - name: Mark a pre-1.0 release as a pre-release
+        if: always() && startsWith(github.ref_name, 'v0.')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          case "$TAG" in
+            v0.*)
+              if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+                gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
+              fi
+              ;;
+          esac

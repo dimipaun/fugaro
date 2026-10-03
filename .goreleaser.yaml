@@ -1,0 +1,123 @@
+# GoReleaser v2. Run by .github/workflows/release.yml on a vX.Y.Z tag; see docs/release.md.
+version: 2
+project_name: fugaro
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: fugaro
+    main: ./cmd/fugaro
+    binary: fugaro
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/dimipaun/fugaro/internal/cli.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: fugaro
+    formats: [tar.gz]
+    name_template: "fugaro_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+# One SBOM per archive; needs the syft binary on PATH (the workflow installs it).
+sboms:
+  - id: archive
+    artifacts: archive
+
+# Keyless cosign signature of checksums.txt through GitHub OIDC. The bundle
+# carries the signature and the Fulcio certificate; docs/release.md has the
+# verify-blob command with the exact identity and issuer.
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --yes
+      - --bundle=${signature}
+      - ${artifact}
+    output: true
+
+changelog:
+  sort: asc
+  use: git
+  groups:
+    - title: Features
+      regexp: '^.*?(feat|add)(\([[:word:]]+\))??!?:.*$'
+      order: 0
+    - title: Fixes
+      regexp: '^.*?(fix|bug)(\([[:word:]]+\))??!?:.*$'
+      order: 1
+    - title: Other changes
+      order: 999
+  filters:
+    exclude:
+      - '^docs?(\(.+\))?:'
+      - '^test(s)?(\(.+\))?:'
+      - '^chore(\(.+\))?:'
+      - '^ci(\(.+\))?:'
+      - '^Design:'
+      - '^Merge '
+
+release:
+  github:
+    owner: dimipaun
+    name: fugaro
+  # `auto` marks only semver-suffixed tags (v1.2.3-rc1) as pre-releases, and
+  # the workflows accept strict vX.Y.Z tags alone; so v0.x.y is marked by the
+  # release workflow's last step (GoReleaser cannot do it).
+  prerelease: auto
+  header: |
+    ## Fugaro {{ .Tag }}
+
+    Install:
+
+    - Homebrew: `brew install dimipaun/tap/fugaro`
+    - Go: `go install github.com/dimipaun/fugaro/cmd/fugaro@{{ .Tag }}`
+    - Or download an archive below and verify it against `checksums.txt` (see docs/release.md).
+  footer: |
+    ## Base images
+
+    Published by the images workflow for this tag:
+
+    - `ghcr.io/dimipaun/fugaro-web-node:{{ .Version }}`
+    - `ghcr.io/dimipaun/fugaro-web-node:{{ .Major }}` (moves to the highest release of the major)
+
+    The Terraform modules, the schemas and the plugin are versioned by this same tag.
+
+# GoReleaser's current Homebrew mechanism (`brews` formulas are deprecated): a
+# cask in dimipaun/homebrew-tap that installs the prebuilt binary (macOS;
+# Linux is untested); `brew install dimipaun/tap/fugaro` resolves it. With no
+# HOMEBREW_TAP_GITHUB_TOKEN (the workflow always exports it, possibly empty) the
+# upload is skipped and the release still succeeds; a semver pre-release is
+# skipped by `auto`.
+homebrew_casks:
+  - name: fugaro
+    repository:
+      owner: dimipaun
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    skip_upload: '{{ if eq .Env.HOMEBREW_TAP_GITHUB_TOKEN "" }}true{{ else }}auto{{ end }}'
+    homepage: https://github.com/dimipaun/fugaro
+    description: Fleeting cloud workers that run coding-agent tasks and always end with a pull request
+    license: MIT
+    # The binary is not signed or notarized by Apple.
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/fugaro"]
+          end

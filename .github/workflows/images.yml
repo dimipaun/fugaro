@@ -13,6 +13,7 @@ jobs:
   version:
     permissions:
       contents: read
+      checks: read # the release gate reads the commit's check-runs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -26,6 +27,14 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # A tag push publishes nothing unless the tag is on main and its checks
+      # passed (the same gate release.yml runs).
+      - name: Release gate
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: scripts/release-gate.sh "$TAG"
       - name: Pick the version
         id: version
         run: |
