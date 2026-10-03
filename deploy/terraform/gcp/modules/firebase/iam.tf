@@ -57,6 +57,18 @@ resource "google_project_iam_member" "admin" {
   member  = each.value
 }
 
+# ... and read the spend history in Firestore (fugaro report). Viewer only:
+# nobody but the history account writes it, and it writes through
+# datastore.user, below. Launchers, operators and admins; no domain or
+# wildcard member can get here (the variables' validation).
+resource "google_project_iam_member" "datastore_viewer" {
+  for_each = setunion(local.people, local.admins)
+
+  project = var.project
+  role    = "roles/datastore.viewer"
+  member  = each.value
+}
+
 # The history job's account: its sweep edits the registry and the run
 # ledgers, and deletes the Auth users of expired runs. It is the most
 # privileged new identity (firebasedatabase.admin could lift caps; its code
@@ -74,5 +86,13 @@ resource "google_project_iam_member" "history_database" {
 resource "google_project_iam_member" "history_auth" {
   project = var.project
   role    = "roles/firebaseauth.admin"
+  member  = "serviceAccount:${var.history_account}"
+}
+
+# The rollover writes the spend history: documents only (datastore.user can't
+# create or delete a database or change indexes; never datastore.owner).
+resource "google_project_iam_member" "history_firestore" {
+  project = var.project
+  role    = "roles/datastore.user"
   member  = "serviceAccount:${var.history_account}"
 }

@@ -1,7 +1,8 @@
 # The APIs the FP uses. Enabling one is free; using it may be billed.
 # Nothing here ever disables an API: other things in the project may depend
 # on it. iamcredentials is enabled here because the signer, whose signJwt
-# call it serves, lives in the FP. Firestore and its rules arrive with M9d.
+# call it serves, lives in the FP. firestore and firebaserules serve the spend history (M9d); the
+# Firestore database itself is not Terraform (init --firebase ensures it).
 locals {
   apis = toset([
     "firebase.googleapis.com",
@@ -11,6 +12,8 @@ locals {
     "iamcredentials.googleapis.com",
     "apikeys.googleapis.com",
     "iam.googleapis.com",
+    "firestore.googleapis.com",
+    "firebaserules.googleapis.com",
     # Project IAM members need it.
     "cloudresourcemanager.googleapis.com",
   ])
