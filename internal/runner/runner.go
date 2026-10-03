@@ -1368,7 +1368,10 @@ func (r *run) finalize(ctx context.Context) error {
 		}
 		spec = gitprov.PRSpec{
 			Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
-			Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
+		}
+		if ready {
+			// Only a PR created ready carries them; a draft spec never does.
+			spec.Labels, spec.Reviewers = r.cfg.Git.PR.Labels, r.cfg.Git.PR.Reviewers
 		}
 	}
 	pr, err := r.ensurePR(ctx, spec)
@@ -1393,7 +1396,7 @@ func (r *run) finalize(ctx context.Context) error {
 		return nil
 	case errors.Is(err, gitprov.ErrPRNotOpen) && early:
 		// A person closed the PR during the run. Never open a second one.
-		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was closed during the run; the branch was pushed", r.rec.PR.Number), records)
+		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", r.rec.PR.Number, r.closedWord(ctx, r.rec.PR.Number)), records)
 		return nil
 	case errors.As(err, &partial):
 		r.d.Log.Warn("pull request settings not fully applied", "err", r.redact(err.Error()))
@@ -1452,7 +1455,7 @@ func (r *run) finalize(ctx context.Context) error {
 	r.updateCost()
 	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
 	if gone {
-		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was closed during the run; the branch was pushed", pr.Number), records)
+		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
 		return nil
 	}
 	var fu *FollowUpSection
@@ -1465,11 +1468,29 @@ func (r *run) finalize(ctx context.Context) error {
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
 		r.d.Log.Info("the run report is already on the pull request; not posting it again")
-	} else if err := r.provider.Comment(ctx, pr, report); err != nil {
-		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
+	} else {
+		// On a short context of its own: a slow status write or reviewer
+		// request must not leave the report with an expired one.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+		err := r.provider.Comment(cctx, pr, report)
+		cancel()
+		if err != nil {
+			r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
+		}
 	}
 	r.storeReport(ctx, report, fu)
 	return nil
+}
+
+// closedWord says "merged" when the provider can tell the PR was merged,
+// else "closed".
+func (r *run) closedWord(ctx context.Context, n int) string {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusCallTimeout)
+	defer cancel()
+	if info, err := r.provider.PullRequest(cctx, n); err == nil && info.State == gitprov.PRMerged {
+		return "merged"
+	}
+	return "closed"
 }
 
 // settlePR does what follows a PR's flip: the final status section (and, for
@@ -1484,7 +1505,14 @@ func (r *run) settlePR(ctx context.Context, pr gitprov.PR, ready bool, reason st
 	// section, and the reviewers go with the creation of a ready PR.
 	early := r.follow != nil || r.cfg.Git.PR.EarlyDraftOn()
 	if early {
-		if err := r.settleText(ctx, pr.Number, r.finalSection(ready, reason, records)); errors.Is(err, gitprov.ErrPRNotOpen) {
+		section := r.finalSection(ready, reason, records)
+		err := r.settleText(ctx, pr.Number, section)
+		if err != nil && !errors.Is(err, gitprov.ErrPRNotOpen) {
+			// One more try, so a ready PR does not keep saying Running.
+			r.d.Log.Warn("updating the pull request status failed; retrying once", "pr", pr.Number, "err", r.redact(err.Error()))
+			err = r.settleText(ctx, pr.Number, section)
+		}
+		if errors.Is(err, gitprov.ErrPRNotOpen) {
 			return nil, true
 		} else if err != nil {
 			r.d.Log.Warn("updating the pull request status failed", "pr", pr.Number, "err", r.redact(err.Error()))

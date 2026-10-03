@@ -60,6 +60,10 @@ func (a *auditProvider) after(op string) {
 
 func (a *auditProvider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	a.before("EnsurePR")
+	if spec.Draft && (len(spec.Reviewers) > 0 || len(spec.Labels) > 0) {
+		a.t.Errorf("EnsurePR asked for a draft carrying reviewers %v / labels %v", spec.Reviewers, spec.Labels)
+		return gitprov.PR{}, fmt.Errorf("audit: draft spec with reviewers or labels")
+	}
 	pr, err := a.Provider.EnsurePR(ctx, spec)
 	a.after("EnsurePR")
 	return pr, err
@@ -943,5 +947,162 @@ func TestFinalizeFlipFailureLeavesDraftWithNote(t *testing.T) {
 	if !pr.Draft || len(pr.Reviewers) != 0 || len(pr.Comments) != 1 || !strings.Contains(pr.Comments[0], "not ready") ||
 		!strings.Contains(pr.Body, "**Stopped:**") {
 		t.Fatalf("PR = %+v", pr)
+	}
+}
+
+// TestAgentOpenedReadyPRIsAdoptedAsDraft: an agent that disobeys and opens a
+// ready PR with reviewers is adopted by branch, turned into a draft, its
+// number saved, no second PR opened, and the reviewers already on it are not
+// duplicated. (The notification itself cannot be undone.)
+func TestAgentOpenedReadyPRIsAdoptedAsDraft(t *testing.T) {
+	h := newHarness(t, prCfg(t, 2, ""), nil)
+	h.deps.RetryDelay = time.Millisecond
+	var atReview *fake.PRState
+	openIt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		res, err := implement("feature")(t, ctx, req)
+		_, perr := h.provider.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/" + runID, Base: "main", Title: "Agent's own", Body: "x", Reviewers: []string{"octocat"}})
+		if perr != nil {
+			t.Fatal(perr)
+		}
+		return res, err
+	}
+	snap := probe(func(t *testing.T) { c := h.provider.State.PRs[0]; atReview = &c }, review("changes", 1))
+	rec, err := h.run(t, openIt, snap, fixVerified, review("changes", 1))
+	if err != nil || rec.PR == nil || rec.PR.Number != 1 {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if atReview == nil || !atReview.Draft {
+		t.Fatalf("the agent's PR was not converted to a draft: %+v", atReview)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft || !slices.Equal(pr.Reviewers, []string{"octocat"}) || count(ops(h), "ApplyReady", "") != 0 {
+		t.Fatalf("PR = %+v, calls %q", pr, ops(h))
+	}
+}
+
+// slowProvider delays the reads and requests finalize makes around the report.
+type slowProvider struct {
+	gitprov.Provider
+	d time.Duration
+}
+
+func (s slowProvider) PullRequest(ctx context.Context, n int) (gitprov.PRInfo, error) {
+	time.Sleep(s.d)
+	return s.Provider.PullRequest(ctx, n)
+}
+
+func (s slowProvider) ApplyReady(ctx context.Context, n int, r, l []string) error {
+	time.Sleep(s.d)
+	return s.Provider.ApplyReady(ctx, n, r, l)
+}
+
+func (s slowProvider) Comment(ctx context.Context, pr gitprov.PR, body string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.Provider.Comment(ctx, pr, body)
+}
+
+// TestSlowSettleDoesNotStarveTheReport: slow reads and a slow reviewer
+// request eat finalize's reserve; the report is still posted.
+func TestSlowSettleDoesNotStarveTheReport(t *testing.T) {
+	cfg := strings.Replace(prCfg(t, 2, ""), "finalize_reserve: 30s", "finalize_reserve: 2s", 1)
+	h := newHarness(t, cfg, nil)
+	h.deps.OpenProvider = gitprov.Static(slowProvider{h.provider, 1200 * time.Millisecond})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if pr := onlyPR(t, h.provider); len(pr.Comments) != 1 {
+		t.Fatalf("report not posted: %+v", pr.Comments)
+	}
+}
+
+// failFirstSettle fails the first body write after the flip to ready.
+type failFirstSettle struct {
+	gitprov.Provider
+	ready, failed bool
+}
+
+func (f *failFirstSettle) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
+	pr, err := f.Provider.EnsurePR(ctx, spec)
+	if spec.Number != 0 && !spec.Draft {
+		f.ready = true
+	}
+	return pr, err
+}
+
+func (f *failFirstSettle) UpdatePR(ctx context.Context, n int, u gitprov.PRUpdate) (gitprov.PR, error) {
+	if f.ready && !f.failed {
+		f.failed = true
+		return gitprov.PR{}, fmt.Errorf("transient")
+	}
+	return f.Provider.UpdatePR(ctx, n, u)
+}
+
+// TestFinalSectionRetriedOnce: a ready PR does not keep saying Running after
+// one failed write.
+func TestFinalSectionRetriedOnce(t *testing.T) {
+	h := newHarness(t, prCfg(t, 2, ""), nil)
+	h.deps.OpenProvider = gitprov.Static(&failFirstSettle{Provider: h.provider})
+	if rec, err := h.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if body := onlyPR(t, h.provider).Body; !strings.Contains(body, "**Ready for review**") {
+		t.Fatalf("body:\n%s", body)
+	}
+}
+
+// TestMarkerOnlyTitleFallsBack: a title that is only a forged marker does not
+// leave the PR without one.
+func TestMarkerOnlyTitleFallsBack(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	mk := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo feature > feature.txt && git add -A && git commit -qm feature")
+		verifyTest(t, ctx, req)
+		md := statusBegin + "\n\nbody\n"
+		if err := os.WriteFile(filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md"), []byte(md), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{}, nil
+	}
+	if rec, err := h.run(t, mk, review("ship", 0)); err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if title := onlyPR(t, h.provider).Title; title != "Fugaro run "+runID {
+		t.Fatalf("title = %q", title)
+	}
+}
+
+// TestMergedMidRunSaysMerged: the failure reason tells merged from closed.
+func TestMergedMidRunSaysMerged(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	mergeIt := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		h.provider.State.PRs[0].State = gitprov.PRMerged
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), mergeIt)
+	if err != nil || rec.Status != runstore.StatusFailed || rec.Reason != "PR #1 was merged during the run; the branch was pushed" {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestCancelledRunWithClosedPRStaysCancelled: E10, a cancelled run keeps its
+// status; the closed PR is its reason, and nothing is posted.
+func TestCancelledRunWithClosedPRStaysCancelled(t *testing.T) {
+	h := prHarness(t, prCfg(t, 2, ""))
+	cancelThenBlock := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		closePR(h)
+		if err := h.store.RequestCancel(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return blockUntilDone(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), cancelThenBlock)
+	if err != nil || rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeNone || !strings.Contains(rec.Reason, "was closed during the run") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if len(onlyPR(t, h.provider).Comments) != 0 {
+		t.Fatal("something was posted on a closed PR")
 	}
 }

@@ -44,3 +44,9 @@ func TestDescDigestIgnoresWhitespaceAndDraftPrefix(t *testing.T) {
 		t.Fatal("digest ignores a change")
 	}
 }
+
+func TestInlineTextNeutralisesMentions(t *testing.T) {
+	if out := inlineText("thanks @octocat and @org/team"); strings.Contains(out, "@o") {
+		t.Fatalf("mention kept: %q", out)
+	}
+}

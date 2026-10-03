@@ -518,6 +518,11 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	if r.follow == nil && r.isCancelled() {
+		// A cancelled run stays cancelled (design 4.2a, E10); the PR note
+		// is its reason.
+		r.rec.Status, r.rec.Reason = runstore.StatusCancelled, "cancelled; "+reason
+	}
 	if h := r.haltValue(); h != nil {
 		// A halt stays a halt: the run stopped for its limit, and the
 		// pull request was left as it was for the reason given too.

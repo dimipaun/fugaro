@@ -314,6 +314,9 @@ func scrubDescription(s string) string {
 func (r *run) earlyPRText() (string, string) {
 	title, body := r.rawPRText()
 	title = scrubDescription(title)
+	if title == "" {
+		title = "Fugaro run " + inlineText(r.rec.RunID) // the agent title was only markers
+	}
 	body = scrubDescription(body)
 	if runes := []rune(title); len(runes) > maxTitleRunes {
 		title = string(runes[:maxTitleRunes-1]) + "…"
@@ -332,6 +335,8 @@ func inlineText(s string) string {
 	for _, c := range s {
 		switch {
 		case c == '�':
+		case c == '@':
+			b.WriteString("@\u200b") // a mention must not notify anyone
 		case c == '`':
 			b.WriteRune('\'')
 		case c == '*' || c == '_':
