@@ -620,3 +620,35 @@ func TestHistoryRunsBucketIsReadOnly(t *testing.T) {
 		t.Errorf("want one bucket grant to the history account, got %d", n)
 	}
 }
+
+// M9d: serviceusage.services.use (serviceUsageConsumer) is granted on the
+// Firebase project only, in the firebase module, to the people set (like
+// datastore.viewer) and the history account; never to job accounts, never
+// with a domain or wildcard member.
+func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
+	seen := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !strings.Contains(blk.body, "serviceusage.serviceUsageConsumer") {
+				continue
+			}
+			seen[blk.name] = true
+			if !strings.Contains(path, "modules/firebase/") {
+				t.Errorf("%s: %s grants serviceUsageConsumer outside the firebase module", path, blk.name)
+			}
+			if strings.Contains(blk.body, "domain:") || strings.Contains(blk.body, `"*"`) || strings.Contains(blk.body, "allUsers") {
+				t.Errorf("%s: %s grants serviceUsageConsumer to a domain or wildcard", path, blk.name)
+			}
+			if blk.name == "google_project_iam_member.history_usage" {
+				if !strings.Contains(blk.body, "var.history_account") {
+					t.Errorf("%s: history_usage does not name the history account", path)
+				}
+			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.people, local.admins)") {
+				t.Errorf("%s: %s: only usage_consumer (people and admins) and history_usage may grant it", path, blk.name)
+			}
+		}
+	})
+	if len(seen) != 2 {
+		t.Errorf("want exactly usage_consumer and history_usage, got %v", seen)
+	}
+}

@@ -96,3 +96,24 @@ resource "google_project_iam_member" "history_firestore" {
   role    = "roles/datastore.user"
   member  = "serviceAccount:${var.history_account}"
 }
+
+# The Firestore client sends X-Goog-User-Project: <this project> (user
+# credentials need a quota project, and a service account's own project does
+# not have the Firestore API enabled), which requires
+# serviceusage.services.use on it. serviceUsageConsumer is that one
+# permission set, held by the history account and by the people who get
+# datastore.viewer above, on this project only; no domain or wildcard member
+# can get here (the variables' validation).
+resource "google_project_iam_member" "usage_consumer" {
+  for_each = setunion(local.people, local.admins)
+
+  project = var.project
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = each.value
+}
+
+resource "google_project_iam_member" "history_usage" {
+  project = var.project
+  role    = "roles/serviceusage.serviceUsageConsumer"
+  member  = "serviceAccount:${var.history_account}"
+}

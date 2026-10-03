@@ -100,6 +100,8 @@ run "TestSignerHasNoRoles" {
       [google_project_iam_member.history_auth.member != google_service_account.signer.member],
       [google_project_iam_member.history_firestore.member != google_service_account.signer.member],
       [for m in google_project_iam_member.datastore_viewer : m.member != google_service_account.signer.member],
+      [for m in google_project_iam_member.usage_consumer : m.member != google_service_account.signer.member],
+      [google_project_iam_member.history_usage.member != google_service_account.signer.member],
     ]))
     error_message = "the token signer must hold no role on the FP"
   }
@@ -196,6 +198,37 @@ run "TestFirebaseRootHasDatastoreGrants" {
   assert {
     condition     = google_project_iam_member.history_database.role == "roles/firebasedatabase.admin" && google_project_iam_member.history_auth.role == "roles/firebaseauth.admin"
     error_message = "the history account's existing RTDB and Auth grants are unchanged"
+  }
+}
+
+# The Firestore client sends X-Goog-User-Project: serviceusage.services.use on
+# the FP goes to exactly the datastore.viewer principals and the history
+# account, nobody else.
+run "TestUsageConsumerGrants" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  assert {
+    condition = (keys(google_project_iam_member.usage_consumer) == [
+      "group:editors@example.com", "user:extra@example.com", "user:launcher@example.com", "user:operator@example.com", "user:owner@example.com",
+    ] && alltrue([for m in google_project_iam_member.usage_consumer : m.role == "roles/serviceusage.serviceUsageConsumer" && m.project == "fp-1234"]))
+    error_message = "serviceUsageConsumer goes to the datastore.viewer principals on the FP, and nobody else"
+  }
+  assert {
+    condition     = keys(google_project_iam_member.usage_consumer) == keys(google_project_iam_member.datastore_viewer)
+    error_message = "the consumer set equals the datastore.viewer set"
+  }
+  assert {
+    condition = (google_project_iam_member.history_usage.role == "roles/serviceusage.serviceUsageConsumer" && google_project_iam_member.history_usage.project == "fp-1234" &&
+    google_project_iam_member.history_usage.member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
+    error_message = "the history account holds serviceUsageConsumer on the FP"
+  }
+  assert {
+    condition     = alltrue([for m in google_project_iam_member.usage_consumer : !startswith(m.member, "serviceAccount:") && !startswith(m.member, "domain:") && !strcontains(m.member, "*")])
+    error_message = "no service account, domain or wildcard among the people's consumer grants"
   }
 }
 
