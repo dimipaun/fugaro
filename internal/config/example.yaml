@@ -9,8 +9,9 @@ git:
   provider: github            # github | bitbucket
   base_branch: main
   pr:
-    labels: [fugaro]
+    labels: [fugaro]          # labels and reviewers are applied only when the PR is made ready
     reviewers: []
+    # early_draft: true       # open a draft PR at the first verified push; false: only at the end
 
 agent:
   auth: vertex                # vertex | api-key | oauth

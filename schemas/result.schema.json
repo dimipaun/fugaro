@@ -25,9 +25,11 @@
       "required": ["number", "url"],
       "properties": {
         "number": { "type": "integer" },
-        "url": { "type": "string" }
+        "url": { "type": "string" },
+        "desc": { "type": "string", "description": "Digest of the title and description the runner last wrote, outside the status section." }
       }
     },
+    "draft_fallback": { "type": "boolean", "description": "The host refused draft pull requests; the PR is a normal one with a [DRAFT] title prefix." },
     "reviews": {
       "type": "array",
       "items": {
