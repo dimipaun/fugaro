@@ -1,8 +1,8 @@
 #!/bin/sh
 # smoke-history.sh IMAGE checks a built history image with plain docker: the
 # fugaro binary runs; the image runs as a non-root numeric user, has no shell,
-# and carries no credentials; --rollover refuses naming M9d; --sweep without
-# its environment refuses before any network call.
+# and carries no credentials; --rollover and --sweep without their environment
+# refuse before any network call.
 set -eu
 image=${1:?usage: smoke-history.sh IMAGE}
 fail() { echo "smoke-history: $*" >&2; exit 1; }
@@ -32,6 +32,6 @@ env_dump=$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "
 case "$env_dump" in
   *KEY* | *TOKEN* | *SECRET* | *PASSWORD* | *CREDENTIAL*) fail "the image environment carries something credential-shaped: $env_dump" ;;
 esac
-expect_refusal M9d budget history --rollover
+expect_refusal FUGARO_PROJECT budget history --rollover
 expect_refusal FUGARO_PROJECT budget history --sweep
 echo "smoke-history: $image ok"
