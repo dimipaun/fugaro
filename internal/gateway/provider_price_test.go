@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
@@ -223,5 +224,48 @@ func TestPartialSettlementCarriesFee(t *testing.T) {
 	}
 	if call := r.logs.lastCall(t); call["settled"] != settledPartial || pricing.Micros(num(call["charged_micros"])) != want {
 		t.Errorf("call %v", call)
+	}
+}
+
+// A serving model that is the pin with a date or other suffix (or the pin
+// a prefix of it) is the pin's own model: priced at the pin's rates, not at
+// the table's maximum. An unrelated unknown model keeps the maximum and the
+// log names the serving model and the pin.
+func TestServingModelSuffixPricedAtPin(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 2000}
+	served := dsModel + "-20261001"
+	r0 := feeRouted(t, 10, nil, routedStage, dsRoute, anthropicfake.MessageOK(served, u))
+	if resp, b := r0.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	call := r0.logs.lastCall(t)
+	if want := pricing.WithFee(cost(t, dsModel, u), 10); pricing.Micros(num(call["charged_micros"])) != want {
+		t.Errorf("%s charged %v, want the pin's price %d", served, call["charged_micros"], want)
+	}
+	if call["serving_model"] != served {
+		t.Errorf("serving_model %v", call["serving_model"])
+	}
+	// The served name a prefix of the pin.
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.MessageOK("deepseek/deepseek-v4", u))
+	if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if got := pricing.Micros(num(r.logs.lastCall(t)["charged_micros"])); got != cost(t, dsModel, u) {
+		t.Errorf("prefix serving name charged %d, want %d", got, cost(t, dsModel, u))
+	}
+}
+
+func TestUnrelatedUnknownServingModelNamesCause(t *testing.T) {
+	u := pricing.Usage{Input: 1000, Output: 2000}
+	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.MessageOK("deepseek/surprise-model", u))
+	if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if call := r.logs.lastCall(t); call["priced_as"] != pricedMax {
+		t.Errorf("priced_as %v", call["priced_as"])
+	}
+	logs := r.logs.String()
+	if !strings.Contains(logs, "deepseek/surprise-model") || !strings.Contains(logs, dsModel) || !strings.Contains(logs, "not in the price table") {
+		t.Errorf("the log doesn't name the cause:\n%s", logs)
 	}
 }

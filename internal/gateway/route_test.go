@@ -62,7 +62,7 @@ func TestRouteByModel(t *testing.T) {
 			r := newRouted(t, auth, routedStage, anthropicfake.MessageOK(dsModel, u))
 			r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, u)}
 
-			body := msg(dsModel, 100, `"cache_control":{"type":"ephemeral"}`)
+			body := msg(dsModel, 100, `"temperature":0`)
 			if resp, b := r.post(body); resp.StatusCode != 200 {
 				t.Fatalf("provider model: %d %s", resp.StatusCode, b)
 			}
@@ -806,5 +806,108 @@ func TestRouteAndConfigAgreeOnBaseURLsAndPatterns(t *testing.T) {
 		if r.overlaps(o) != c.overlap || r.matches(c.b) != config.PatternMatches(c.a, c.b) {
 			t.Errorf("route and config disagree on %q / %q", c.a, c.b)
 		}
+	}
+}
+
+// A routed request may carry only the Messages fields the budget prices:
+// anything else (OpenRouter's own plugins, provider routing, extra models,
+// transforms, usage and search options) bills outside token pricing or
+// overrides the account's data policy.
+func TestRoutedForbiddenTopLevelFields(t *testing.T) {
+	for _, extra := range []string{
+		`"plugins":[{"id":"web"}]`,
+		`"provider":{"order":["x"],"allow_fallbacks":true,"data_collection":"allow"}`,
+		`"models":["a/b","c/d"]`,
+		`"route":"fallback"`,
+		`"transforms":["middle-out"]`,
+		`"usage":{"include":true}`,
+		`"web_search_options":{"search_context_size":"high"}`,
+		`"Provider":{"order":["x"]}`,     // case variant
+		`"PLUGINS":[]`,                   // case variant
+		`"Messages2":1`,                  // near-miss of an allowed key
+		`"unknown_future_field":{"a":1}`, // not on the list at all
+		`"provider ":{"order":["x"]}`,    // trailing space
+		`"plugins":null`,                 // null still a present key
+	} {
+		r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
+		resp, b := r.post(msg(dsModel, 100, extra))
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", extra, resp.StatusCode)
+			continue
+		}
+		if _, m := apiError(t, b); !strings.Contains(m, "is not allowed on a provider route") {
+			t.Errorf("%s: message %q", extra, m)
+		}
+		if r.prov.Count() != 0 {
+			t.Errorf("%s: forwarded to the provider", extra)
+		}
+		rep := r.gw.EndStage()
+		if len(rep.Violations) != 1 || rep.Used != 0 {
+			t.Errorf("%s: report %+v, want one violation and no spend", extra, rep)
+		}
+	}
+}
+
+// Two spellings of one key never reach the provider: the body is refused
+// before the allow-list is consulted.
+func TestRoutedDuplicateAndNestedTricks(t *testing.T) {
+	r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
+	for _, body := range []string{
+		msg(dsModel, 100, `"plugins":[]`, `"Plugins":[]`),
+		msg(dsModel, 100, `"provider":{"order":["x"]}`, `"PROVIDER":{}`),
+		`{"model":"` + dsModel + `","max_tokens":100,"messages":[{"role":"user","content":"hi"}],"model":"x"}`,
+	} {
+		if resp, _ := r.post(body); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", body, resp.StatusCode)
+		}
+	}
+	if r.prov.Count() != 0 {
+		t.Error("a refused body was forwarded")
+	}
+	// A forbidden name nested inside an allowed field is that field's content,
+	// not a top-level key: it travels with the request (the provider ignores it).
+	body := msg(dsModel, 100, `"metadata":{"user_id":"u","provider":{"order":["x"]}}`)
+	if resp, b := r.post(body); resp.StatusCode != 200 {
+		t.Errorf("nested name in metadata: %d %s", resp.StatusCode, b)
+	}
+}
+
+func TestRoutedClaudeCodeShapedRequestPasses(t *testing.T) {
+	u := pricing.Usage{Input: 10, Output: 20}
+	r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, u))
+	body := msg(dsModel, 100,
+		`"system":[{"type":"text","text":"be brief"}]`,
+		`"tools":[{"name":"Read","description":"d","input_schema":{"type":"object"}}]`,
+		`"stream":false`,
+		`"metadata":{"user_id":"user_abc_account__session_1"}`,
+		`"thinking":{"type":"enabled","budget_tokens":50}`,
+		`"temperature":1`)
+	if resp, b := r.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if string(r.prov.Body(0)) != body {
+		t.Errorf("body changed: %q", r.prov.Body(0))
+	}
+	for _, k := range []string{"top_p", "top_k", "stop_sequences", "tool_choice", "output_config"} {
+		r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, u))
+		if resp, b := r.post(msg(dsModel, 100, `"`+k+`":null`)); resp.StatusCode != 200 {
+			t.Errorf("%s: %d %s", k, resp.StatusCode, b)
+		}
+	}
+	if rep := r.gw.EndStage(); len(rep.Violations) != 0 {
+		t.Errorf("violations %q", rep.Violations)
+	}
+}
+
+// The Claude path takes every field it did before.
+func TestClaudeKeepsUnlistedTopLevelFields(t *testing.T) {
+	r := newRouted(t, "bearer", routedStage)
+	r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, pricing.Usage{Input: 1, Output: 1})}
+	body := msg(sonnet, 100, `"plugins":[{"id":"web"}]`, `"anything":1`)
+	if resp, b := r.post(body); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	if string(r.fake.Body(0)) != body {
+		t.Errorf("claude body changed: %q", r.fake.Body(0))
 	}
 }

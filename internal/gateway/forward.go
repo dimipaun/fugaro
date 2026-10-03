@@ -32,6 +32,18 @@ type parsed struct {
 	pdf       bool   // a base64 document block
 	violation string // the first shape the budget can't bound, if any
 	toolTypes string // the distinct tool types of tools, comma separated, for the log
+	foreign   string // the first top-level key a provider route doesn't take, if any
+}
+
+// routedKeys are the top-level fields a request to a provider route may
+// carry: the Messages API's own. Anything else (OpenRouter's plugins,
+// provider, models, route, transforms, usage, web_search_options, ...) can
+// bill outside token pricing or override the account's data policy. The
+// Claude path is not held to this list. metadata stays: Claude Code sends
+// metadata.user_id on every request and the gateway never rewrites a body.
+var routedKeys = []string{
+	"model", "max_tokens", "messages", "system", "stream", "tools", "tool_choice", "temperature",
+	"top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config",
 }
 
 // maxJSONDepth bounds how deeply a request body may nest.
@@ -85,6 +97,11 @@ func parseRequest(body []byte, pathModel string) (parsed, error) {
 		return p, errors.New("messages is missing or not a list")
 	}
 
+	for k := range top {
+		if !slices.Contains(routedKeys, k) && (p.foreign == "" || k < p.foreign) {
+			p.foreign = k
+		}
+	}
 	p.cacheTTL = cacheTTL(v)
 	p.violation = p.shapes(top, msgs)
 	return p, nil
@@ -421,6 +438,9 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 	if p.violation != "" {
 		return p.violation
 	}
+	if p.foreign != "" && s.routeFor(p.model) != nil {
+		return fmt.Sprintf("field %s is not allowed on a provider route (it isn't priced by the budget)", strconv.Quote(logValue(p.foreign)))
+	}
 	maxOut := m.MaxOutputTokens
 	if maxOut <= 0 {
 		maxOut = pricing.DefaultMaxOutputTokens
@@ -695,8 +715,15 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 			rates = pricing.MaxOf(pin.Rates, m.Rates)
 			o.pricedAs = pricedMax
 		}
+	} else if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pinSpelling(serving, p.model) {
+		// The pin with a date or other suffix: the pin's own model.
+		rates = pin.Rates
 	} else {
 		o.pricedAs = pricedMax
+		if pr != nil {
+			s.log.Warn("budget: serving model not in the price table, priced at the table maximum",
+				"serving_model", logValue(serving), "pinned_model", logValue(p.model))
+		}
 	}
 	fee := pr.feePct()
 	if what := t.acc.surprise(); what != "" {
@@ -724,6 +751,12 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
 	return o
+}
+
+// pinSpelling: one of the two names starts with the other (the pin plus a
+// date or revision suffix), so the served model is the pinned one.
+func pinSpelling(serving, pin string) bool {
+	return strings.HasPrefix(serving, pin) || strings.HasPrefix(pin, serving)
 }
 
 // countingBody marks sent once the transport reads any byte of it.
