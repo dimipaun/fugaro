@@ -503,10 +503,21 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	rt = s.withRoute(rt, p.model)
 	if rt.provider != nil {
 		cl.route = rt.provider.Name
+		if !known {
+			// A provider's call is real money: with no price in the table
+			// it would be charged a guess, so it is not sent (CheckPins
+			// refuses such a pin at bootstrap; this is the backstop).
+			v := fmt.Sprintf("model %s is routed to %s but has no price: set model_prices", logValue(p.model), rt.provider.Name)
+			s.violation(st, v)
+			s.log.Warn("budget: request refused", "stage", st.st.Name, "violation", v)
+			refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+v)
+			return
+		}
 	}
-	w0 := m.WorstCase(pricing.Request{
+	// The route's fee is part of what the call can cost, so the cap counts it.
+	w0 := pricing.WithFee(m.WorstCase(pricing.Request{
 		BodyBytes: int64(len(body)), HasPDF: p.pdf, ImageCount: p.images, MaxTokens: p.maxTokens, CacheTTL: p.cacheTTL,
-	})
+	}), rt.provider.feePct())
 	if msg, status := s.reserve(r.Context(), st, w0); status == http.StatusTooManyRequests {
 		// Retryable: Claude Code backs off and asks again once the calls
 		// holding the reservations have settled.
@@ -644,11 +655,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		reserved.unparsed = true
 		return reserved
 	case tee.sse && tee.started && tee.complete:
-		return s.fromUsage(tee, p, false)
+		return s.fromUsage(tee, p, rt.provider, false)
 	case tee.sse && tee.started && !tee.broken:
-		return s.fromUsage(tee, p, true)
+		return s.fromUsage(tee, p, rt.provider, true)
 	case !tee.sse && eof && tee.complete:
-		return s.fromUsage(tee, p, false)
+		return s.fromUsage(tee, p, rt.provider, false)
 	}
 	reserved.unparsed = true
 	reserved.errorType = tee.errorType
@@ -658,9 +669,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // fromUsage prices a call from the usage the response reported: at the
 // serving model's rates, the table's maximum for an unknown model, or the
 // maximum times SurpriseMultiplier when the response was priced in a
-// dimension the request didn't allow. A partial call is charged its
-// reported input and cache tokens plus the reserved output.
-func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
+// dimension the request didn't allow. On a provider route (pr, else nil) a
+// serving model other than the pinned one is never priced lower than the
+// pin: the dearer of the two rates per dimension, or the table's maximum
+// when the table doesn't know it; and the route's fee is added to the
+// charge. A partial call is charged its reported input and cache tokens
+// plus the reserved output.
+func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
 		serving = p.model
@@ -670,9 +685,14 @@ func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
 	mult := int64(1)
 	if m, ok := s.o.Prices.Lookup(serving); ok {
 		rates = m.Rates
+		if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pin.ID != m.ID {
+			rates = pricing.MaxOf(pin.Rates, m.Rates)
+			o.pricedAs = pricedMax
+		}
 	} else {
 		o.pricedAs = pricedMax
 	}
+	fee := pr.feePct()
 	if what := t.acc.surprise(); what != "" {
 		rates, mult = s.o.Prices.Max(), pricing.SurpriseMultiplier
 		o.pricedAs = pricedSurprise
@@ -680,7 +700,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
 		s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", what)
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
-	reported := satMul(rates.Cost(u), mult)
+	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
 	o.usage = u
 	o.model = serving
 	o.sent = true
@@ -691,7 +711,7 @@ func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
 	}
 	charged := u
 	charged.Output = max(u.Output, p.maxTokens)
-	o.amount = satMul(rates.Cost(charged), mult)
+	o.amount = pricing.WithFee(satMul(rates.Cost(charged), mult), fee)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
 	return o

@@ -54,6 +54,15 @@ type Model struct {
 	MaxOutputTokens int64    // the model's output maximum; 0: DefaultMaxOutputTokens (more is refused)
 	ImageTokens     int64    // per-image token ceiling (conservative); 0: images refused
 	Rates           Rates
+	// Unverified marks a placeholder row nobody has checked against the
+	// provider's price: it caps money but is not trusted, so pins on it
+	// warn until the owner sets the real price under model_prices (which
+	// replaces the row and clears this). PriceSource and PriceCheckedAt say
+	// where the row came from and when; empty on a row the table's own
+	// Source and CheckedAt cover.
+	Unverified     bool
+	PriceSource    string
+	PriceCheckedAt string
 }
 
 const (
@@ -138,6 +147,12 @@ func (t *Table) Lookup(model string) (Model, bool) {
 	return Model{}, false
 }
 
+// Unverified reports whether model's row is a placeholder nobody checked.
+func (t *Table) Unverified(model string) bool {
+	m, ok := t.Lookup(model)
+	return ok && m.Unverified
+}
+
 // Max is the highest of every rate in the table, for a call served by a
 // model the table doesn't know. A long-context tier's rates count towards
 // the input and output maximum, and the result is flat. A table with no
@@ -150,17 +165,23 @@ func (t *Table) Max() Rates {
 			CacheWrite1h: MaxMultiplier, CacheRead: MaxMultiplier, WebSearchPer1k: MaxWebSearchPer1k}
 	}
 	for _, m := range t.Models {
-		x := m.Rates
-		r.InputPerM = max(r.InputPerM, x.InputPerM)
-		r.OutputPerM = max(r.OutputPerM, x.OutputPerM)
-		if x.LongContext != nil {
-			r.InputPerM = max(r.InputPerM, x.LongContext.InputPerM)
-			r.OutputPerM = max(r.OutputPerM, x.LongContext.OutputPerM)
+		r = MaxOf(r, m.Rates)
+	}
+	return r
+}
+
+// MaxOf is the highest of each rate of a and b, flat: a long-context tier's
+// rates count towards the input and output maximum, and the result has none.
+func MaxOf(a, b Rates) Rates {
+	r := Rates{
+		InputPerM: max(a.InputPerM, b.InputPerM), OutputPerM: max(a.OutputPerM, b.OutputPerM),
+		CacheWrite5m: max(a.CacheWrite5m, b.CacheWrite5m), CacheWrite1h: max(a.CacheWrite1h, b.CacheWrite1h),
+		CacheRead: max(a.CacheRead, b.CacheRead), WebSearchPer1k: max(a.WebSearchPer1k, b.WebSearchPer1k),
+	}
+	for _, t := range []*Tier{a.LongContext, b.LongContext} {
+		if t != nil {
+			r.InputPerM, r.OutputPerM = max(r.InputPerM, t.InputPerM), max(r.OutputPerM, t.OutputPerM)
 		}
-		r.CacheWrite5m = max(r.CacheWrite5m, x.CacheWrite5m)
-		r.CacheWrite1h = max(r.CacheWrite1h, x.CacheWrite1h)
-		r.CacheRead = max(r.CacheRead, x.CacheRead)
-		r.WebSearchPer1k = max(r.WebSearchPer1k, x.WebSearchPer1k)
 	}
 	return r
 }
@@ -199,6 +220,7 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := o[key].clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
+			m.Unverified, m.PriceSource, m.PriceCheckedAt = false, "", ""
 			out.Models[m.ID] = m
 			continue
 		}
@@ -271,6 +293,20 @@ func (r Rates) UnsplitCacheWrites(tokens int64, cacheTTL string) (w5m, w1h int64
 		return tokens, 0
 	}
 	return 0, tokens
+}
+
+// WithFee adds a route fee of pct percent to an amount, rounded up so the
+// fee is never under-charged. A fee that is negative or not a number adds
+// nothing, and the result saturates like the rest of the arithmetic.
+func WithFee(m Micros, pct float64) Micros {
+	if m <= 0 || !(pct > 0) || math.IsInf(pct, 0) {
+		return m
+	}
+	f := math.Ceil(float64(m) * (1 + pct/100))
+	if f >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return max(m, Micros(f))
 }
 
 // toMicros converts a non-negative float amount of µ$, saturating.

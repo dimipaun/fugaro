@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/policy"
@@ -33,6 +34,33 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 	}
 	return ps
 }
+
+// PinWarnings are the pins whose price is an embedded placeholder nobody has
+// verified (a provider model's starter row): the run may go on, but its cap
+// counts a guess until the owner sets the real price under model_prices,
+// which always wins. Callers show these at pin time and in diagnose.
+func PinWarnings(a Agent, prices *pricing.Table) []Problem {
+	var ps []Problem
+	seen := map[string]bool{}
+	for _, r := range []struct{ path, model string }{
+		{"agent.models.coder", a.ModelFor(RoleCoder)},
+		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
+		{"agent.models.background", a.Models.Background},
+	} {
+		m, ok := prices.Lookup(r.model)
+		if !ok || !m.Unverified || seen[m.ID+r.path] {
+			continue
+		}
+		seen[m.ID+r.path] = true
+		ps = append(ps, Problem{Path: r.path, Code: CodeUnverifiedPrice, Message: fmt.Sprintf(
+			"%s has an unverified placeholder price (%s, %s): set the real one under model_prices; until then the cap counts a guess",
+			r.model, m.PriceSource, m.PriceCheckedAt)})
+	}
+	return ps
+}
+
+// CodeUnverifiedPrice marks a PinWarnings problem.
+const CodeUnverifiedPrice = "unverified_price"
 
 // CheckAllowed is the rule for a run under an allow-list of models: the
 // coder, the reviewer and the background model must each be on it. Without a

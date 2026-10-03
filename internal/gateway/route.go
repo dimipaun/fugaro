@@ -36,9 +36,18 @@ type Route struct {
 	// upstream request only; an error means the call is not sent. It is
 	// called from concurrent calls, so it must be safe for that.
 	Credential func() (string, error)
-	// FeePct is the route fee the budget adds to every charge (T5 applies
-	// it; the gateway only carries it).
+	// FeePct is the route fee, in percent, that the budget adds to every
+	// call on this route: to the reservation (so the cap counts it) and to
+	// the settled charge.
 	FeePct float64
+}
+
+// feePct is the fee of r, 0 for no route (a Claude call).
+func (r *Route) feePct() float64 {
+	if r == nil {
+		return 0
+	}
+	return r.FeePct
 }
 
 var routeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)

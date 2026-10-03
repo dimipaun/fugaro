@@ -27,7 +27,7 @@ func TestEmbeddedTableSane(t *testing.T) {
 		if err := m.Rates.Validate(); err != nil {
 			t.Errorf("%s: %v", id, err)
 		}
-		if m.ContextTokens <= 0 || m.MaxOutputTokens <= 0 || m.ImageTokens <= 0 {
+		if m.ContextTokens <= 0 || m.MaxOutputTokens <= 0 || (m.ImageTokens <= 0 && !strings.Contains(id, "/")) { // a provider's text model takes no images
 			t.Errorf("%s: context %d, max output %d, image tokens %d must all be set", id, m.ContextTokens, m.MaxOutputTokens, m.ImageTokens)
 		}
 		for _, name := range append([]string{id}, m.Aliases...) {
