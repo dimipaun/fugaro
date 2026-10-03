@@ -1274,7 +1274,11 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	}
 	r.updateCost()
 	r.rec.Stages = append(r.rec.Stages, runstore.StageTiming{Name: name, StartedAt: started.UTC(), DurationS: r.d.Now().Sub(started).Seconds()})
-	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", err)
+	var errText any // the agent's error may carry a key an upstream echoed
+	if err != nil {
+		errText = r.redact(err.Error())
+	}
+	log.Info("stage finished", "n", n, "cost_usd", res.CostUSD, "err", errText)
 
 	// A halt recorded first decides the stage, whatever the agent says:
 	// is_error, any subtype (even success) or exit code, a kill by the

@@ -106,7 +106,7 @@ func TestProviderRunEndsInPR(t *testing.T) {
 // is fine in observe.
 func TestProviderModelNeedsEnforce(t *testing.T) {
 	g := providerRun(t, providerPinned(t), "observe", "", nil, "acme/app")
-	refusedBeforeAnyCall(t, g, "budget.mode enforce", "fugaro budget set --global --mode enforce", "agent.models.coder")
+	refusedBeforeAnyCall(t, g, "budget.mode enforce", "fugaro budget set --global --mode enforce", "deepseek/deepseek-v4-flash")
 	g = providerRun(t, providerPinned(t), "off", "", nil, "acme/app")
 	refusedBeforeAnyCall(t, g, "budget gateway", "budget.mode to enforce")
 	use := pricing.Usage{Input: 1000, Output: 500}
@@ -280,8 +280,10 @@ func TestFirstLineErrorEchoingKeyIsRedacted(t *testing.T) {
 	if !strings.Contains(g.logs.String(), "the first-line review failed") {
 		t.Fatal("the skip was not logged")
 	}
-	if strings.Contains(g.logs.String(), providerKey) {
-		t.Fatal("the log has the key")
+	for _, l := range strings.Split(g.logs.String(), "\n") {
+		if strings.Contains(l, providerKey) {
+			t.Fatalf("the log has the key: %s", l)
+		}
 	}
 	if keys := objectsContaining(t, g.harness, providerKey); len(keys) > 0 {
 		t.Fatalf("the key is stored in %v", keys)

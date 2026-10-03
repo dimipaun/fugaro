@@ -92,7 +92,7 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("vertex", func(t *testing.T) {
 		cfg := strings.Replace(providerPinned(t), "auth: api-key", "auth: vertex", 1)
-		refusedBeforeAnyCall(t, providerGW(t, cfg, "acme/app"), "vertex", "api-key")
+		refusedBeforeAnyCall(t, providerRun(t, cfg, "observe", "", nil, "acme/app"), "vertex", "api-key")
 	})
 	t.Run("the repository's own allowed_models names an unapproved provider model", func(t *testing.T) {
 		cfg := gwConfig(t, "") + "budget:\n  allowed_models: [" + sonnet + ", " + haiku + ", " + deepseek + "]\n"
@@ -100,7 +100,7 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("the owner's allow-list does not carry it", func(t *testing.T) {
 		g := providerGW(t, providerPinned(t), "acme/app")
-		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.AllowedModelsEnv, sonnet+","+haiku)
+		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.MaxRunUSDEnv, "5", runner.AllowedModelsEnv, sonnet+","+haiku)
 		refusedBeforeAnyCall(t, g, "agent.models.coder", "allowed_models from ceiling")
 	})
 }
