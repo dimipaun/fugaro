@@ -733,7 +733,7 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 			t.Fatal(err)
 		}
 		block := "budget:\n  mode: " + mode + "\n  firebase_project: aurora-fp\n  rtdb_url: https://aurora-fp-default-rtdb.firebaseio.com\n  firebase_api_key: " + fpAPIKey +
-			"\n  token_signer: " + fpSigner + "\n  unreachable_grace: 2m\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"
+			"\n  token_signer: " + fpSigner + "\n  unreachable_grace: 2m\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"
 		if err := os.WriteFile(path, append(data, block...), 0o600); err != nil {
 			t.Fatal(err)
 		}

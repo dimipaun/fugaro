@@ -607,7 +607,7 @@ func TestInitWritesLocalConfigAndBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if lc.RunsBucket != initRunsBucket || lc.RegistryHost != "us-east5-docker.pkg.dev/proj-1234" || lc.LogView != initLogView ||
-		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage != base ||
+		lc.SchedulerRegion != "us-east4" || lc.Terraform.StateBucket != initStateBucket || lc.BaseImage("web-node") != base ||
 		!slices.Equal(lc.Terraform.Launchers, []string{"user:launcher@example.com"}) || lc.Terraform.AlertEmail != "ops@example.com" {
 		t.Fatalf("local config = %+v", lc)
 	}
@@ -1411,7 +1411,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	r.appendConfig(t, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n")
+	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
@@ -1435,7 +1435,7 @@ func TestInitRepoPassesPolicyEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "budget: { max_run_tokens: 123456, allowed_models: [claude-sonnet-5-5] }\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
@@ -1461,7 +1461,7 @@ func TestInitRepoShowsCeilingAndClamps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "budget: { mode: observe, per_run_usd: 5, max_run_tokens: 1000 }\nbase_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yaml := func(block string) string {
@@ -1506,7 +1506,7 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, append(data, "base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc\n"...), 0o600); err != nil {
+	if err := os.WriteFile(path, append(data, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n"...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	yaml := "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: api-key }\n" +
@@ -1517,5 +1517,37 @@ func TestInitRepoSilentWithoutCeiling(t *testing.T) {
 	out, errOut, err := execute(t, "init", "--repo", "--print-vars", "--project", "aurora", "--github-app-id", "42", root)
 	if err != nil || strings.Contains(out+errOut, "Budget ceiling") {
 		t.Fatalf("%v\n%s\n%s", err, out, errOut)
+	}
+}
+
+// --base-image sets one base kind's entry of base_images, from the image's
+// name or KIND=IMAGE, and leaves the kinds it doesn't name alone.
+func TestInitBaseImagePerKind(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	web := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
+	java := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-java-services:dev-0123abc"
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", web, "--base-image", "java-services="+java); err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lc.BaseImage("web-node") != web || lc.BaseImage("java-services") != java || len(lc.BaseImages) != 2 {
+		t.Fatalf("base_images = %v", lc.BaseImages)
+	}
+	// A later run naming one kind keeps the other.
+	web2 := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-9999999"
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base-image", web2); err != nil {
+		t.Fatal(err)
+	}
+	if lc, err = localcfg.Load(r.cfg); err != nil || lc.BaseImage("web-node") != web2 || lc.BaseImage("java-services") != java {
+		t.Fatalf("base_images = %v, %v", lc.BaseImages, err)
+	}
+	// An image whose kind can't be told is refused before anything else.
+	_, _, err = executeStdin(t, "", "init", "--yes", "--base-image", "reg/some-image:1")
+	if err == nil || !strings.Contains(err.Error(), "KIND=IMAGE") || ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
 }

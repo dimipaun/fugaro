@@ -860,8 +860,8 @@ func TestLiveCacheOnGCS(t *testing.T) {
 // until that path is isolated.
 func TestLiveCloudBuildSecretAndDigest(t *testing.T) {
 	e := openLive(t)
-	if e.lc.BaseImage == "" {
-		t.Fatal("the local config needs base_image (fugaro init writes it)")
+	if e.lc.BaseImage("web-node") == "" {
+		t.Fatal("the local config needs base_images.web-node (fugaro init --base-image writes it)")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
@@ -913,9 +913,9 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 	req := &cloudbuild.Build{
 		Steps: []*cloudbuild.BuildStep{
 			// Pulls the base, and runs the metadata control on the cloudbuild network.
-			{Id: "pull", Name: e.lc.BaseImage, Entrypoint: "sh", Args: []string{"-c", metaProbe, "sh", "step"}},
+			{Id: "pull", Name: e.lc.BaseImage("web-node"), Entrypoint: "sh", Args: []string{"-c", metaProbe, "sh", "step"}},
 			{Id: "probe", Name: "gcr.io/cloud-builders/docker", Entrypoint: "bash",
-				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage, "IMAGE=" + tgt.image, "BUILD_ID=$BUILD_ID",
+				Env: []string{"DOCKER_BUILDKIT=1", "FUGARO_BASE=" + e.lc.BaseImage("web-node"), "IMAGE=" + tgt.image, "BUILD_ID=$BUILD_ID",
 					"META_PROBE=" + metaProbe, "DOCKERFILE_SYNTAX=" + dockerfileSyntax}, SecretEnv: []string{"SANDBOX_PROBE"},
 				Args: []string{"-c", script}},
 			{Id: "smoke-probe", Name: tgt.smoke.Name, Entrypoint: "bash", Args: []string{"-c", runScript}},
@@ -967,7 +967,7 @@ docker run --rm --entrypoint sh "$$candidate" /probe.sh run-default || echo "LIV
 		switch {
 		case strings.Contains(l, "LIVE base-digest "):
 			digest = strings.TrimSpace(l[strings.Index(l, "LIVE base-digest ")+len("LIVE base-digest "):])
-			fact(t, "render-step base %s pinned as %s", e.lc.BaseImage, digest)
+			fact(t, "render-step base %s pinned as %s", e.lc.BaseImage("web-node"), digest)
 		case strings.Contains(l, "LIVE candidate "):
 			candidate = strings.TrimSpace(l[strings.Index(l, "LIVE candidate ")+len("LIVE candidate "):])
 			fact(t, "candidate pushed as %s", candidate)
@@ -1022,7 +1022,7 @@ func (e *liveEnv) probeTarget(t *testing.T) probeTarget {
 	host := cmp.Or(e.lc.RegistryHost, DefaultRegistryHost(e.lc.Region, e.lc.GCPProject))
 	spec := BuildSpec{
 		Slug: e.slug, GitProvider: liveProvider, RepoURL: "https://bitbucket.org/" + liveRepo + ".git",
-		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage,
+		BaseBranch: cmp.Or(e.lc.Repos[liveRepo].BaseBranch, "master"), Workflow: liveWorkflow, Base: e.lc.BaseImage("web-node"),
 		Image:       ImageName(host+"/"+RegistryRepoID(e.slug), e.slug, liveWorkflow),
 		GitSecretID: SecretID(e.slug, "bitbucket-token"), GitUser: "x-token-auth",
 		ServiceAccount: BuildServiceAccountID(e.slug) + "@" + liveProject + ".iam.gserviceaccount.com",

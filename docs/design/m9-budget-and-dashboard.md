@@ -842,7 +842,7 @@ This lands with task 0. The controller runs it, and takes the user's confirmatio
 2. **`project: <slug>` in each repository's `fugaro.yaml`,** on its base branch. `init --repo` needs it, so this comes before the re-init.
    - **The sandbox:** the controller commits it, as before, with the user's OK.
    - **The web application repository:** the user's own PR, merged.
-3. **The base image.** Build and push the new base with the operator's image scripts, into `fugaro-base`, and set `base_image`.
+3. **The base image.** Build and push the new base with the operator's image scripts, into `fugaro-base`, and set `base_images.<kind>` (`fugaro init --base-image <tag>`).
 4. **The installation.** Run `fugaro init --name <slug>` against the project. It sets the canonical name (output, bucket label, `fugaro_project` tfvar) and rewrites `projects/<slug>.yaml` from the outputs. Check that its `name:` is unchanged.
 5. **Each repository, from its checkout:** `fugaro image build`, which builds the derived image on the new base, then `fugaro init --repo`. That writes the new job environment (`FUGARO_PROJECT=<slug>`, `FUGARO_GCP_PROJECT=<id>`) and points the jobs at the new `:latest`. The check job follows.
 6. **Verification.**

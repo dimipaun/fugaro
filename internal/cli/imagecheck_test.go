@@ -99,7 +99,7 @@ func (f *checkFixture) hookCheck(t *testing.T) {
 // checkLC is the local config the check job's spec is made from.
 func checkLC() *localcfg.Config {
 	return &localcfg.Config{
-		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImage: checkBase,
+		Version: 1, Name: "aurora", GCPProject: "proj-1234", Region: "us-east5", RunsBucket: checkBucket, BaseImages: map[string]string{"web-node": checkBase},
 		Build: localcfg.Build{MachineType: "E2_HIGHCPU_8"},
 		Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket", BaseBranch: "main", Workflows: []string{"app"}}},
 	}
@@ -448,7 +448,7 @@ func localCheck(t *testing.T) *checkFixture {
 	if err := os.WriteFile(path, []byte(strings.Replace(string(data), "provider: github", "provider: bitbucket", 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cf.appendConfig(t, "base_image: "+checkBase+"\n")
+	cf.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
 	f.bucket = cf.bucket
 	cfg, _ := config.Parse([]byte(bitbucketYAML))
 	lc := checkLC()
@@ -780,5 +780,31 @@ func TestLocalCheckResolvesSpec(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil || got.Project != "aurora" {
 		t.Fatalf("json = %s, %v", out, err)
+	}
+}
+
+// A workflow of a base kind head's fugaro.yaml gained after the job was
+// installed has no base image in the job's spec; the spec still resolves, so
+// the job reports that workflow as not installed instead of failing them all.
+func TestCheckJobResolvesSpecWithAKindAddedSinceInstall(t *testing.T) {
+	newCheckJob(t, checkFiles(), bitbucketYAML)
+	e, err := readJobEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := config.Parse([]byte(bitbucketYAML + "  server: { base: java-services, commands: { build: make, test: make test } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	rs, _, err := e.repoSpec(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check == nil || rs.Check.Image == "" {
+		t.Fatalf("check = %+v", rs.Check)
+	}
+	// The installed kind is still what the job was installed with.
+	if want := e.spec.BaseImages["web-node"]; want != checkBase || e.spec.BaseImages["java-services"] != "" {
+		t.Errorf("spec base images = %v", e.spec.BaseImages)
 	}
 }

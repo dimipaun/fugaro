@@ -47,10 +47,14 @@ type Config struct {
 	Registry string `yaml:"registry,omitempty"`
 	// RegistryHost is <region>-docker.pkg.dev/<gcp_project>, the prefix of
 	// every image registry of the installation.
-	RegistryHost string    `yaml:"registry_host,omitempty"`
-	BaseImage    string    `yaml:"base_image,omitempty"`
-	Build        Build     `yaml:"build"`
-	Terraform    Terraform `yaml:"terraform,omitempty"`
+	RegistryHost string `yaml:"registry_host,omitempty"`
+	// BaseImages are the base images the image builds and the daily image
+	// check start from, by base kind (config.Bases), in the installation's
+	// base registry. A workflow builds from the image of its base kind, so
+	// a project needs an entry for each kind its repositories use.
+	BaseImages map[string]string `yaml:"base_images,omitempty"`
+	Build      Build             `yaml:"build"`
+	Terraform  Terraform         `yaml:"terraform,omitempty"`
 	// ComputePrices override the compute list prices of a region, for
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
@@ -501,6 +505,42 @@ func Load(path string) (*Config, error) {
 	return c, nil
 }
 
+// BaseImage is the base image for base kind kind, "" when the config has
+// none.
+func (c *Config) BaseImage(kind string) string { return c.BaseImages[kind] }
+
+var baseImageNameRE = regexp.MustCompile(`/fugaro-([a-z0-9-]+)(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$`)
+
+// ParseBaseImageFlag reads one fugaro init --base-image value: KIND=IMAGE, or
+// a bare IMAGE whose repository name says the kind (fugaro-<kind>, as in
+// ghcr.io/dimipaun/fugaro-go:1 or <registry>/fugaro-base/fugaro-web-node:dev-abc).
+func ParseBaseImageFlag(v string) (kind, ref string, err error) {
+	if k, r, ok := strings.Cut(v, "="); ok {
+		kind, ref = k, r
+		if !slices.Contains(config.Bases, kind) {
+			return "", "", fmt.Errorf("--base-image %q: %q is not a base kind (%s)", v, kind, strings.Join(config.Bases, ", "))
+		}
+	} else if m := baseImageNameRE.FindStringSubmatch(v); m != nil && slices.Contains(config.Bases, m[1]) {
+		kind, ref = m[1], v
+	} else {
+		return "", "", fmt.Errorf("--base-image %q: cannot tell which base kind it is for; write KIND=IMAGE (kinds: %s) or use an image named fugaro-<kind>", v, strings.Join(config.Bases, ", "))
+	}
+	if ref == "" || strings.ContainsAny(ref, " \t\r\n") {
+		return "", "", fmt.Errorf("--base-image %q: %q is not an image reference", v, ref)
+	}
+	return kind, ref, nil
+}
+
+// oldBaseImageKey is the refusal of a local config of before base images were
+// per kind, with the line to edit made out of its own value.
+func oldBaseImageKey(ref string) string {
+	if ref == "" {
+		ref = "<image>"
+	}
+	return fmt.Sprintf("local config: `base_image: %[1]s` is now `base_images: {web-node: %[1]s}`: there is one base image per base kind (%s); edit that line (use go or java-services instead of web-node for a base image of those kinds)",
+		ref, strings.Join(config.Bases, ", "))
+}
+
 // oldProjectKey is the refusal of a local config of before project
 // configs, whose project: was the GCP project.
 const oldProjectKey = "local config: `project:` is now `gcp_project:`, and the file lives at projects/<name>.yaml with name: <name>; see docs/design/m9-budget-and-dashboard.md §13.1"
@@ -511,6 +551,9 @@ func Parse(data []byte) (*Config, error) {
 	if yaml.Unmarshal(data, &top) == nil {
 		if _, ok := top["project"]; ok {
 			return nil, errors.New(oldProjectKey)
+		}
+		if n, ok := top["base_image"]; ok {
+			return nil, errors.New(oldBaseImageKey(n.Value))
 		}
 	}
 	var c Config
@@ -592,6 +635,14 @@ func (c *Config) validate() error {
 	for _, m := range c.Terraform.BudgetAdmins {
 		if !budgetAdminRE.MatchString(m) {
 			bad("terraform.budget_admins: %q is not an IAM member (user:, group: or serviceAccount: and one address; no domain: and no wildcards)", m)
+		}
+	}
+	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
+		switch ref := c.BaseImages[kind]; {
+		case !slices.Contains(config.Bases, kind):
+			bad("base_images: %q is not a base kind (%s)", kind, strings.Join(config.Bases, ", "))
+		case ref == "" || strings.ContainsAny(ref, " \t\r\n"):
+			bad("base_images.%s: %q is not an image reference", kind, ref)
 		}
 	}
 	c.validateBudget(bad)

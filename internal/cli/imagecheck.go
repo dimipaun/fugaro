@@ -100,15 +100,30 @@ type checkTarget struct {
 	tree     *imagecheck.GitTree
 	cfg      *config.Config // head's fugaro.yaml
 	rs       infra.RepoSpec
-	// baseRef is the base image a build is given, baseDigest its digest
-	// now ("" when it couldn't be read).
-	baseRef, baseDigest string
+	// bases are the base images a build is given, by base kind, and
+	// baseDigests their digests now (a kind is missing when its digest
+	// couldn't be read).
+	bases, baseDigests map[string]string
 	// salt is the template salt of a build this check would submit; ""
 	// leaves it out of the comparison.
 	salt  string
 	force bool
 	now   time.Time
 	warn  func(string)
+}
+
+// readBaseDigests reads the digest of each base image, leaving out (with a
+// warning) the kind whose digest can't be read: its base trigger is skipped.
+func (c *checkTarget) readBaseDigests(ctx context.Context) {
+	c.baseDigests = map[string]string{}
+	for _, kind := range slices.Sorted(maps.Keys(c.bases)) {
+		d, err := c.registry.Digest(ctx, c.bases[kind])
+		if err != nil {
+			c.warn(fmt.Sprintf("could not read the %s base image's digest (%s); its base trigger is skipped", kind, oneLine(err.Error())))
+			continue
+		}
+		c.baseDigests[kind] = d
+	}
 }
 
 // evaluation is one workflow's decision and what it was made from.
@@ -172,10 +187,11 @@ func (c *checkTarget) evaluate(ctx context.Context, name string) (evaluation, er
 			}
 		}
 	}
+	kind := c.cfg.Workflows[name].Base
 	in := imagecheck.Inputs{
 		Config: c.cfg, Workflow: name, Record: rec, LastCheck: ev.prev, LastBuildStatus: ev.lastStatus,
 		Head: c.tree.Head(), Tree: c.tree, Changed: c.tree.Changed,
-		BaseRef: c.baseRef, BaseDigest: c.baseDigest, TemplateSalt: c.salt,
+		BaseRef: c.bases[kind], BaseDigest: c.baseDigests[kind], TemplateSalt: c.salt,
 		Now: c.now, Rebuild: c.cfg.Workflows[name].Rebuild.Defaults(), Force: c.force,
 	}
 	image := gcp.ImageName(c.rs.RegistryPath, c.slug, name)
@@ -334,7 +350,7 @@ func readJobEnv() (jobEnv, error) {
 	}
 	s := e.spec
 	if s.Repo == "" || s.Provider == "" || s.RepoURL == "" || s.BaseBranch == "" || len(s.Workflows) == 0 ||
-		s.Registry == "" || s.BuildServiceAccount == "" || s.BuildRegion == "" || s.BaseImage == "" {
+		s.Registry == "" || s.BuildServiceAccount == "" || s.BuildRegion == "" || len(s.BaseImages) == 0 {
 		return e, fmt.Errorf("%s is incomplete: run fugaro init --repo", infra.CheckSpecEnv)
 	}
 	e.name, e.gcpProject, e.region = os.Getenv("FUGARO_PROJECT"), os.Getenv("FUGARO_GCP_PROJECT"), os.Getenv("FUGARO_REGION")
@@ -352,8 +368,19 @@ func readJobEnv() (jobEnv, error) {
 func (e jobEnv) repoSpec(cfg *config.Config) (infra.RepoSpec, *localcfg.Config, error) {
 	s := e.spec
 	host, _, _ := strings.Cut(s.Registry, "/"+e.gcpProject+"/")
+	// The spec names the base of the kinds the job was installed for. A kind
+	// head's fugaro.yaml has since added has no base here, and its workflow
+	// is reported as not installed rather than checked, so the job's own
+	// image stands in for the spec's sake.
+	bases := maps.Clone(s.BaseImages)
+	stand := bases[slices.Sorted(maps.Keys(bases))[0]]
+	for _, w := range cfg.Workflows {
+		if bases[w.Base] == "" {
+			bases[w.Base] = stand
+		}
+	}
 	lc := &localcfg.Config{
-		Version: 1, Name: e.name, GCPProject: e.gcpProject, Region: e.region, RunsBucket: e.bucket, BaseImage: s.BaseImage,
+		Version: 1, Name: e.name, GCPProject: e.gcpProject, Region: e.region, RunsBucket: e.bucket, BaseImages: bases,
 		Build: localcfg.Build{MachineType: s.MachineType, Region: s.BuildRegion},
 		Repos: map[string]localcfg.Repo{s.Repo: {Provider: s.Provider, BaseBranch: s.BaseBranch, GitHubAppID: os.Getenv(providers.EnvGitHubAppID)}},
 	}
@@ -493,13 +520,10 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	}
 	t := &checkTarget{
 		slug: slug, bucket: bucket, builder: builder, registry: checkRegistry(), tree: tree, cfg: cfg, rs: rs,
-		baseRef: s.BaseImage, salt: gcp.TemplateSalt(Version), force: o.force, now: now,
+		bases: s.BaseImages, salt: gcp.TemplateSalt(Version), force: o.force, now: now,
 		warn: func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) },
 	}
-	if t.baseDigest, err = t.registry.Digest(ctx, s.BaseImage); err != nil {
-		t.warn(fmt.Sprintf("could not read the base image's digest (%s); the base trigger is skipped", oneLine(err.Error())))
-		t.baseDigest = ""
-	}
+	t.readBaseDigests(ctx)
 
 	// Head's workflows the job doesn't check, though head says it should.
 	for _, name := range checkedWorkflows(cfg) {
@@ -556,7 +580,12 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 // build sends, generated now by this fugaro. The check never skips the
 // smoke test: a request without it is refused before it is sent.
 func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra.RepoSpec, cfg *config.Config, name string, s infra.CheckJobSpec, recordBucket string) (id, status string, err error) {
-	spec, err := cloudBuildSpec(rs, cfg, name, s.BaseImage, s.MachineType, recordBucket)
+	kind := cfg.Workflows[name].Base
+	base := s.BaseImages[kind]
+	if base == "" {
+		return "", "", fmt.Errorf("the installed check job has no %s base image: %s", kind, notInstalledReason)
+	}
+	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket)
 	if err != nil {
 		return "", "", err
 	}
@@ -587,12 +616,14 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	if lc.BaseImage == "" {
-		return userErr("the local config has no base_image, which the daily check builds from; set it first")
-	}
 	_, checkoutCfg, err := loadCheckoutConfig(ctx)
 	if err != nil {
 		return err
+	}
+	for _, name := range checkedWorkflows(checkoutCfg) {
+		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
+			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
+		}
 	}
 	repo, err := originRepo(ctx)
 	if err != nil {
@@ -648,13 +679,10 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 		slug: rs.Slug, bucket: records, builder: builder, registry: checkRegistry(), tree: tree, cfg: cfg, rs: rs,
 		// The job's template salt is its base image's fugaro's, which
 		// this fugaro can't know; the salt is left out here.
-		baseRef: lc.BaseImage, force: o.force, now: time.Now().UTC(),
+		bases: lc.BaseImages, force: o.force, now: time.Now().UTC(),
 		warn: func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) },
 	}
-	if t.baseDigest, err = t.registry.Digest(ctx, lc.BaseImage); err != nil {
-		t.warn(fmt.Sprintf("could not read the base image's digest (%s); the base trigger is skipped", oneLine(err.Error())))
-		t.baseDigest = ""
-	}
+	t.readBaseDigests(ctx)
 	type result struct {
 		imagecheck.Decision
 		LastBuildID     string `json:"last_build_id,omitempty"`

@@ -191,7 +191,9 @@ type CheckJobSpec struct {
 	BuildServiceAccount string   `json:"build_service_account"`
 	MachineType         string   `json:"machine_type"`
 	BuildRegion         string   `json:"build_region"`
-	BaseImage           string   `json:"base_image"`
+	// BaseImages are the base images of the checked workflows' base kinds
+	// (kind -> image): what a rebuild the check submits builds FROM.
+	BaseImages map[string]string `json:"base_images"`
 }
 
 // RepoInstallation are the installation values a repository root needs.
@@ -723,17 +725,21 @@ func (rs RepoSpec) UsesVertex() bool {
 	return false
 }
 
-// BaseImageWarning is a warning when the local config's base image (base)
-// isn't in the installation's base registry, else "". The build accounts
-// can read only that registry, so every build would fail at its pull; the
-// check job's own pull would still work, which hides it until then.
-func BaseImageWarning(base string, outs InstallationOutputs) string {
+// BaseImageWarnings are the warnings for each of the local config's base
+// images (kind -> image) that isn't in the installation's base registry,
+// in kind order. The build accounts can read only that registry, so every
+// build from such an image would fail at its pull; the check job's own pull
+// would still work, which hides it until then.
+func BaseImageWarnings(bases map[string]string, outs InstallationOutputs) []string {
 	registry := outs.RegistryHost + "/" + outs.BaseRegistry
-	if base == "" || strings.HasPrefix(base, registry+"/") {
-		return ""
+	var ws []string
+	for _, kind := range slices.Sorted(maps.Keys(bases)) {
+		if ref := bases[kind]; ref != "" && !strings.HasPrefix(ref, registry+"/") {
+			ws = append(ws, fmt.Sprintf("the local config's base_images.%s %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_images.%s to it",
+				kind, ref, registry, registry, kind))
+		}
 	}
-	return fmt.Sprintf("the local config's base_image %s is not in the installation's base registry %s, the only one the build accounts can read, so the image builds would fail at its pull: push the base image to %s and set base_image to it",
-		base, registry, registry)
+	return ws
 }
 
 // check is the daily image check of the workflows in checked. It runs as
@@ -741,8 +747,22 @@ func BaseImageWarning(base string, outs InstallationOutputs) string {
 // credential and nothing else.
 func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	lc := c.lc
-	if lc.BaseImage == "" {
-		return nil, userErr("the local config has no base_image, which the daily image check of %s runs: set base_image in the local config to the base image in the installation's base registry", rs.Name)
+	// The check job runs from the base image of its first workflow's kind,
+	// and passes the job the base of each kind a rebuild of its workflows
+	// builds FROM.
+	bases := map[string]string{}
+	var missing []string
+	for _, name := range checked {
+		kind := c.in.Cfg.Workflows[name].Base
+		if ref := lc.BaseImage(kind); ref != "" {
+			bases[kind] = ref
+		} else if !slices.Contains(missing, kind) {
+			missing = append(missing, kind)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, userErr("the local config has no base_images entry for %s, which the daily image check of %s needs: set base_images.<kind> in the local config to the base image of that kind in the installation's base registry",
+			strings.Join(missing, ", "), rs.Name)
 	}
 	region := lc.SchedulerRegion
 	if region == "" {
@@ -755,7 +775,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	spec, err := json.Marshal(CheckJobSpec{
 		Repo: rs.Name, Provider: c.provider, RepoURL: c.repoURL, BaseBranch: c.baseBranch,
 		Workflows: checked, Registry: rs.RegistryPath, BuildServiceAccount: rs.BuildServiceAccountEmail,
-		MachineType: lc.Build.MachineType, BuildRegion: lc.BuildRegion(), BaseImage: lc.BaseImage,
+		MachineType: lc.Build.MachineType, BuildRegion: lc.BuildRegion(), BaseImages: bases,
 	})
 	if err != nil {
 		return nil, err
@@ -769,7 +789,7 @@ func (c *repoCtx) check(rs RepoSpec, checked []string) (*CheckSpec, error) {
 	env[runner.SecretEnvsVar] = gitEnv
 	return &CheckSpec{
 		Job:             gcp.CheckJobName(c.slug),
-		Image:           lc.BaseImage,
+		Image:           bases[c.in.Cfg.Workflows[checked[0]].Base],
 		SchedulerJob:    gcp.SchedulerJobName(c.slug),
 		SchedulerRegion: region,
 		Schedule:        Schedule(c.slug),

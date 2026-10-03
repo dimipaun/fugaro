@@ -86,6 +86,8 @@ Give it the same flags as step 1. It asks for the project name once more, applie
 
 ### 3. The base image, in `fugaro-base`
 
+**Migrating an existing local config:** the single `base_image: X` key became `base_images: {web-node: X}`; edit that one line (a config that still has `base_image` is refused with this instruction).
+
 Until the base images are published (M7), an operator builds the base from a Fugaro checkout and pushes it to `fugaro-base`. Only operators can write there, and build accounts only read it, so a leaked build token can't replace the image every repository's `credential` step and check job run. The `credential`, `gate`, `record` and `check` commands live in the base image's own `fugaro`, so build it from a version that has them.
 
 ```bash
@@ -98,10 +100,10 @@ fugaro init --base-image "$tag"
 ```
 
 - **The push** needs `roles/artifactregistry.writer` on `fugaro-base`, which the operator role gives.
-- **`init --base-image`** is a plan with no resource change: it rewrites `base_image` in the local config. Rerun `fugaro init --repo` in each repository afterwards, so the check job's image follows it.
+- **`init --base-image`** is a plan with no resource change: it rewrites that base kind's entry of `base_images` in the local config (the kind comes from the image's name, `fugaro-<kind>`; write `--base-image KIND=IMAGE` for any other name; repeat the flag for several kinds, and the kinds you don't name keep theirs). A project needs one entry per base kind its repositories use (`web-node`, `go`, `java-services`), each built and pushed the same way with `build-base.sh <kind>`. Rerun `fugaro init --repo` in each repository afterwards, so the check job's image follows it.
 - **Cost:** about 1.5 GB of registry storage per base image.
 - **Undo:** delete the image (`gcloud artifacts docker images delete <tag> --delete-tags`), and remove the `credHelpers` entry from `~/.docker/config.json`.
-- **A dev tag doesn't move,** so the `base` rebuild trigger fires only when `base_image` itself changes or the tag is pushed again. `rebuild.max_age` (14 days) bounds how long a base security fix waits.
+- **A dev tag doesn't move,** so the `base` rebuild trigger fires only when the kind's `base_images` entry itself changes or the tag is pushed again. `rebuild.max_age` (14 days) bounds how long a base security fix waits.
 
 ### 4. A repository
 
@@ -134,7 +136,7 @@ fugaro init --base-image "$tag"
 - **Undo:** `fugaro init --repo --forget` (state only), or offboarding, below.
 - **Check:**
   - `fugaro image status --repo acme/webapp` shows the record.
-  - From the checkout, `fugaro image check --dry-run` prints `skip` for a current image (locally it only prints, and needs `base_image`).
+  - From the checkout, `fugaro image check --dry-run` prints `skip` for a current image (locally it only prints, and needs `base_images` entries for the kinds of the repository's workflows).
   - `fugaro run …` launches a run.
 
 ### 5. Turning registry cleanup on
@@ -252,7 +254,7 @@ M9a renamed what `project` means (design §1) and added the project name to the 
 1. **Snapshot** `config.yaml`, each job's `gcloud run jobs describe --format json`, and the Scheduler job list; with the old binary check that `fugaro ls --since 1d` shows nothing running. **Pause every repository's `fugarochk-` Scheduler job**, so no check rebuilds on the new base or moves `:latest` meanwhile.
 2. **The local config, by hand.** Choose the project's name. `mkdir -p ~/.config/fugaro/projects`, copy `config.yaml` to `projects/<project>.yaml`, rename its `project:` key to `gcp_project:`, add `name: <project>`, and move `config.yaml` to `config.yaml.bak`.
 3. **`project: <project>` in each repository's `fugaro.yaml`,** merged to the repository's **default branch** (it is required: the runner refuses a repository that names none). The runner reads `project:` from the default branch (what `origin`'s HEAD names) even when `git.base_branch` is another branch, so with a base such as `develop` put it on both.
-4. **A base image from M9a** (step 3 above), then `fugaro init --name <project> --base-image <tag>`: the plan stamps the bucket label, writes the marker object and rewrites `base_image`.
+4. **A base image from M9a** (step 3 above), then `fugaro init --name <project> --base-image <tag>`: the plan stamps the bucket label, writes the marker object and rewrites `base_images`.
 5. **Each repository, from its checkout:** `fugaro image build`, then `fugaro init --repo` (its jobs now carry `FUGARO_PROJECT=<project>` and `FUGARO_GCP_PROJECT=<gcp-project>`), then resume its Scheduler job.
 
 A checkout whose `fugaro.yaml` has no `project:` yet is refused by every fugaro command run inside it (the repository decides the project), including `fugaro init --name`: add `project: <project>` first (step 3), or run the operator commands from another directory.

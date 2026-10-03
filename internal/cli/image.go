@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,7 +89,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.BoolVar(&o.local, "local", false, "build with the local Docker daemon from the checkout you are in")
 	f.StringVar(&o.repo, "repo", "", "owner/name of the repository to build with Cloud Build (default: the checkout's origin, which it must match)")
 	f.StringVar(&o.workflow, "workflow", "", "workflow to build; optional when fugaro.yaml defines one")
-	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_image, else the published base matching this fugaro version)")
+	f.StringVar(&o.base, "base", "", "base image (default: for a Cloud Build build the local config's base_images entry for the workflow's base, else the published base matching this fugaro version)")
 	f.StringVar(&o.tag, "tag", "", "tag for the built image (default fugaro-<dir>-<workflow>:local)")
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
 	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked)")
@@ -182,7 +183,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	base := o.base
 	if base == "" {
-		base = lc.BaseImage
+		base = lc.BaseImage(cfg.Workflows[name].Base)
 	}
 	if base == "" {
 		if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
@@ -193,9 +194,16 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	// creates them: the build account, the registry (refused when its host
 	// names another GCP project than the config's own) and the provider
 	// credential. The spec's check job needs a base image, which this
-	// build doesn't use; the one the build uses stands in.
+	// build doesn't use; the one the build uses stands in for a kind the
+	// local config has none for.
 	specLC := *lc
-	specLC.BaseImage = cmp.Or(specLC.BaseImage, base)
+	specLC.BaseImages = maps.Clone(lc.BaseImages)
+	if specLC.BaseImages == nil {
+		specLC.BaseImages = map[string]string{}
+	}
+	for _, w := range cfg.Workflows {
+		specLC.BaseImages[w.Base] = cmp.Or(specLC.BaseImages[w.Base], base)
+	}
 	rs, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: repo, Cfg: cfg, RepoURL: repoURL})
 	if err != nil {
 		return userErr("%v", err)
