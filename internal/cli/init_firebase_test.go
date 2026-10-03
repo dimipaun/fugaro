@@ -32,12 +32,16 @@ type fbRig struct {
 	db      *gcpfake.RTDB
 	fbdb    *gcpfake.FirebaseDB
 	idt     *gcpfake.IdentityToolkit
+	fs      *gcpfake.Firestore
+	rules   *gcpfake.FirebaseRules
 }
 
 func newFBRig(t *testing.T) *fbRig {
 	t.Helper()
 	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t)}
 	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fpID)
+	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fpID)
+	r.fs.RemoveDatabase() // a fresh Firebase project has none
 	r.fbdb.AddInstance(fpID, r.db.URL)
 	r.stateBucket()
 	r.crm.AddProject(fpID, 987654321098)
@@ -52,7 +56,7 @@ func newFBRig(t *testing.T) *fbRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, identity_toolkit: "+r.idt.URL+"/, no_auth: true }", 1)
+	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, identity_toolkit: "+r.idt.URL+"/, firestore: "+r.fs.URL+", firebase_rules: "+r.rules.URL+", no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -845,5 +849,30 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 				t.Error("a refused configuration was followed by writes")
 			}
 		})
+	}
+}
+
+// dropEndpoint removes one endpoint key from the local config.
+func (r *fbRig) dropEndpoint(t *testing.T, key string) {
+	t.Helper()
+	b, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(b), "\n")
+	for i, l := range lines {
+		if strings.Contains(l, "endpoints:") {
+			parts := strings.Split(l, ", ")
+			var keep []string
+			for _, p := range parts {
+				if !strings.Contains(p, key+": ") {
+					keep = append(keep, p)
+				}
+			}
+			lines[i] = strings.Join(keep, ", ")
+		}
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }

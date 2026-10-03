@@ -322,6 +322,11 @@ type Endpoints struct {
 	// IdentityToolkit is where init --firebase ensures Identity Platform is
 	// initialized in the Firebase project (Identity Toolkit's REST API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
+	// Firestore and FirebaseRules are where init --firebase ensures the
+	// Firebase project's Firestore database exists and deploys its deny-all
+	// security rules (the Firestore and Firebase Rules REST APIs).
+	Firestore     string `yaml:"firestore,omitempty"`
+	FirebaseRules string `yaml:"firebase_rules,omitempty"`
 	// IAMCredentials is where the launcher signs a run's budget token (signJwt).
 	IAMCredentials string `yaml:"iam_credentials,omitempty"`
 	NoAuth         bool   `yaml:"no_auth,omitempty"` // send no credentials (fakes only)
@@ -615,6 +620,7 @@ func (c *Config) validate() error {
 		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
 		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase},
 		{"iam_credentials", c.Endpoints.IAMCredentials}, {"identity_toolkit", c.Endpoints.IdentityToolkit},
+		{"firestore", c.Endpoints.Firestore}, {"firebase_rules", c.Endpoints.FirebaseRules},
 	} {
 		if ep.url == "" {
 			continue

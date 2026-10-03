@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
@@ -172,6 +173,28 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if mode == "enforce" && len(urls) == 0 {
 		return initErr(infra.NoCapsForEnforce())
 	}
+	// Firestore is read now too (read-only), so a database in another
+	// location, rules or a mark that are not ours are refused before the
+	// first apply, and --plan-only shows the step. Before the Firebase root's
+	// first apply the API may not be enabled yet: that is not a refusal, the
+	// step is planned again after the apply.
+	fsStep, err := r.firestoreStep(ctx, lc, fp)
+	if err != nil {
+		return err
+	}
+	if lines, _, err := fsStep.Plan(ctx); err != nil {
+		if !errors.Is(err, infra.ErrFirestoreUnreadable) {
+			return initErr(err)
+		}
+		if r.o.planOnly {
+			fmt.Fprintf(r.w, "Firestore step of the Firebase project %s: not planned, it cannot be read yet (%v)\n", fp, err)
+		}
+	} else if r.o.planOnly {
+		fmt.Fprintf(r.w, "Firestore step of the Firebase project %s (only after you confirm, never in --plan-only):\n", fp)
+		for _, l := range lines {
+			fmt.Fprintf(r.w, "  %s\n", l)
+		}
+	}
 
 	// 1. The installation root.
 	outs, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
@@ -237,7 +260,14 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return err
 	}
-	confirmed, err := r.deployDatabase(ctx, db, fp, idp)
+	fsLines, fsWarnings, err := fsStep.Plan(ctx)
+	if err != nil {
+		return initErr(err)
+	}
+	for _, w := range fsWarnings {
+		r.warn(w)
+	}
+	confirmed, err := r.deployDatabase(ctx, db, fp, idp, fsStep, fsLines)
 	if err != nil {
 		return err
 	}
@@ -308,7 +338,7 @@ func (r *initRun) checkDatabase(ctx context.Context, lc *localcfg.Config, url, m
 // confirmed; a database that is already as wanted is left alone, with no
 // confirmation. confirmed reports that a confirmation was given, which also
 // covers the local config's diff.
-func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep) (confirmed bool, err error) {
+func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, idp *idpStep, fs *infra.FirestoreStep, fsLines []string) (confirmed bool, err error) {
 	acts, warnings, err := db.Plan(ctx)
 	if err != nil {
 		return false, initErr(err)
@@ -316,7 +346,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	for _, w := range warnings {
 		r.warn(w)
 	}
-	if len(acts) == 0 && !idp.missing {
+	if len(acts) == 0 && !idp.missing && !fs.Pending() {
 		fmt.Fprintln(r.w, "The database already has the rules, mark, project name and mode.")
 		return false, nil
 	}
@@ -329,9 +359,15 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	} else {
 		fmt.Fprintln(r.w, "  Identity Platform: already initialized, left as it is")
 	}
+	for _, l := range fsLines {
+		fmt.Fprintf(r.w, "  %s\n", l)
+	}
 	what := "writes the database as listed, as you (project owner, editor or budget admin), and then the local config"
 	if idp.missing {
 		what = "writes the database as listed and " + infra.IdentityPlatformStep + ", as you (project owner, editor or budget admin), and then the local config"
+	}
+	if fs.CreatesDatabase() {
+		what += fmt.Sprintf("; it also creates the Firestore database in %s, whose location is permanent and can never be changed", infra.FirestoreLocation)
 	}
 	if err := r.confirm(what, "the database was not written"); err != nil {
 		return false, err
@@ -348,7 +384,44 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		}
 		fmt.Fprintln(r.w, "initialized Identity Platform (no sign-in providers)")
 	}
+	if fs.Pending() {
+		if err := fs.Apply(ctx); err != nil {
+			return false, initErr(err)
+		}
+		fmt.Fprintln(r.w, "ensured the Firestore database, its deny-all rules and its mark (read back)")
+	}
 	return true, nil
+}
+
+// firestoreStep builds the Firestore ensure step for the Firebase project fp
+// (the person's credentials). With no_auth it needs both endpoints, so a
+// fake run can never reach the real Google.
+func (r *initRun) firestoreStep(ctx context.Context, lc *localcfg.Config, fp string) (*infra.FirestoreStep, error) {
+	hc := &http.Client{Timeout: 90 * time.Second}
+	var ts oauth2.TokenSource
+	if lc.Endpoints.NoAuth {
+		if lc.Endpoints.Firestore == "" || lc.Endpoints.FirebaseRules == "" {
+			return nil, userErr("endpoints: no_auth is set but the firestore and firebase_rules endpoints are not")
+		}
+		ts = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "no-auth"})
+	} else {
+		var err error
+		ts, err = google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")
+		if err != nil {
+			return nil, userErr("no Google credentials for Firestore: run gcloud auth application-default login (%v)", err)
+		}
+		hc = oauth2.NewClient(ctx, ts)
+	}
+	fs, err := firestore.New(lc.Endpoints.Firestore, fp, ts, firestore.WithHTTPClient(hc))
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
+	wait := time.Second
+	if lc.Endpoints.NoAuth {
+		wait = 10 * time.Millisecond
+	}
+	return &infra.FirestoreStep{FS: fs, Rules: &infra.RulesClient{Endpoint: lc.Endpoints.FirebaseRules, Project: fp, HTTP: hc},
+		FP: fp, Project: lc.Name, GCPProject: lc.GCPProject, Version: Version, Wait: wait}, nil
 }
 
 // idpStep is the Identity Platform step: read before the confirmation, run
