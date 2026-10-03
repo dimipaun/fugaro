@@ -248,3 +248,16 @@ func TestGitHubDraft422WithoutDraftIsNotFallback(t *testing.T) {
 		t.Fatalf("pr = %+v, want an error", pr)
 	}
 }
+
+// TestGitHubDraft422MentioningDraftElsewhereIsNotFallback: only GitHub's own
+// "Draft pull requests are not supported" message downgrades to a prefixed
+// PR; a 422 that merely echoes a branch or title containing "draft" is an
+// error.
+func TestGitHubDraft422MentioningDraftElsewhereIsNotFallback(t *testing.T) {
+	p := openInline(t,
+		`{"method": "GET", "path": "/repos/acme/web/pulls?head=acme:fugaro/20260927-101500-abcd&state=open&per_page=1", "status": 200, "response": []}`,
+		`{"method": "POST", "path": "/repos/acme/web/pulls", "status": 422, "response": {"message": "Validation Failed", "errors": [{"resource": "PullRequest", "code": "custom", "message": "A pull request already exists for acme:fugaro/draft-the-docs."}]}}`)
+	if pr, err := p.EnsurePR(ctx, spec(true, nil, nil)); err == nil {
+		t.Fatalf("pr = %+v, want an error", pr)
+	}
+}

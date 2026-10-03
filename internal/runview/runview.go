@@ -33,11 +33,11 @@ const ReasonLost = "no execution found and the runner never recorded the run"
 // record never reached a final status (OOM kill, task timeout, node loss).
 const ReasonNoFinalRecord = "execution ended without finalizing"
 
-// StaleDraftAfter is how long a running first run's status section may go
-// without an update before the row calls its draft stale. Stages run for
-// many minutes, so this is generous; an execution that is gone while the
-// record still says running is stale at once.
-const StaleDraftAfter = time.Hour
+// StaleDraftAfter is how long past its last status update a running first
+// run with no recorded deadline may go before its draft is called stale.
+// Stages and verifies run for many minutes and the limits are configurable,
+// so it is generous. A recorded deadline always decides instead.
+const StaleDraftAfter = 3 * time.Hour
 
 // Input is everything known about one run.
 type Input struct {
@@ -235,8 +235,9 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 }
 
 // staleDraft reports whether row is a first run whose record is not final,
-// has a PR, and either lost its execution or has gone StaleDraftAfter
-// without writing the PR's status section (a follow-up's PR may be ready,
+// has a PR, and either lost its execution, or (execution alive) is past its
+// recorded deadline, or with no deadline has gone StaleDraftAfter without
+// writing the PR's status section (a follow-up's PR may be ready,
 // so it is never called a draft here).
 func staleDraft(row *Row, r *runstore.Record, now time.Time) bool {
 	if r == nil || r.Status != runstore.StatusRunning || r.PR == nil || r.PR.Number == 0 || row.FollowUp {
@@ -245,7 +246,12 @@ func staleDraft(row *Row, r *runstore.Record, now time.Time) bool {
 	switch {
 	case row.Terminal: // the execution ended or is gone, the record never finalized
 		return true
-	case row.Status == string(runstore.StatusRunning) && r.PR.StatusAt != nil:
+	case row.Status != string(runstore.StatusRunning):
+		return false
+	case r.Deadline != nil:
+		// Alive but past the run's own deadline: it should have ended.
+		return now.After(*r.Deadline)
+	case r.PR.StatusAt != nil:
 		return now.Sub(*r.PR.StatusAt) >= StaleDraftAfter
 	}
 	return false

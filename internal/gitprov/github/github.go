@@ -180,9 +180,11 @@ func (p *Provider) create(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR,
 
 // draftUnsupported reports whether err is GitHub refusing a draft pull
 // request ("Draft pull requests are not supported in this repository.").
+// Only that message counts: a 422 that merely echoes a branch or title with
+// "draft" in it must not downgrade the PR.
 func draftUnsupported(err error) bool {
 	var se *httpjson.StatusError
-	return errors.As(err, &se) && se.Status == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(se.Body), "draft")
+	return errors.As(err, &se) && se.Status == http.StatusUnprocessableEntity && strings.Contains(strings.ToLower(se.Body), "draft pull requests are not supported")
 }
 
 // update sets an existing pull request's draft state, and nothing else

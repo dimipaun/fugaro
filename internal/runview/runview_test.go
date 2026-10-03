@@ -324,6 +324,11 @@ func TestJoinInfraErrorKeepsHalt(t *testing.T) {
 	}
 }
 
+func withDeadline(r *runstore.Record, d time.Time) *runstore.Record {
+	r.Deadline = &d
+	return r
+}
+
 func TestJoinStaleDraft(t *testing.T) {
 	at := func(d time.Duration) *time.Time { x := now.Add(-d); return &x }
 	withPR := func(st runstore.Status, statusAt *time.Time) *runstore.Record {
@@ -338,8 +343,11 @@ func TestJoinStaleDraft(t *testing.T) {
 		want  bool
 	}{
 		{"fresh status", withPR(runstore.StatusRunning, at(5*time.Minute)), backend.StateRunning, false},
-		{"old status, execution still running", withPR(runstore.StatusRunning, at(2*time.Hour)), backend.StateRunning, true},
+		{"2h old status, no deadline, execution alive", withPR(runstore.StatusRunning, at(2*time.Hour)), backend.StateRunning, false},
 		{"old status of an old record without the time", withPR(runstore.StatusRunning, nil), backend.StateRunning, false},
+		{"healthy long stage: status 2h old, execution alive, deadline ahead", withDeadline(withPR(runstore.StatusRunning, at(2*time.Hour)), now.Add(time.Hour)), backend.StateRunning, false},
+		{"status 5h old, no deadline, execution alive", withPR(runstore.StatusRunning, at(5*time.Hour)), backend.StateRunning, true},
+		{"past the deadline, execution alive", withDeadline(withPR(runstore.StatusRunning, at(time.Minute)), now.Add(-2*time.Minute)), backend.StateRunning, true},
 		{"execution gone, record not final", withPR(runstore.StatusRunning, at(time.Minute)), backend.StateFailed, true},
 		{"finished run, old status", withPR(runstore.StatusFailed, at(5*time.Hour)), backend.StateSucceeded, false},
 		{"no PR", rec(runstore.StatusRunning, nil), backend.StateFailed, false},
@@ -350,7 +358,7 @@ func TestJoinStaleDraft(t *testing.T) {
 			t.Errorf("%s: stale_draft = %v, want %v (%+v)", c.name, row.StaleDraft, c.want, row)
 		}
 	}
-	r := withPR(runstore.StatusRunning, at(2*time.Hour))
+	r := withPR(runstore.StatusRunning, at(5*time.Hour))
 	r.DraftFallback = true
 	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateRunning)}, prices, now)
 	if !row.DraftFallback || row.PRStatusAt == nil || !row.PRStatusAt.Equal(*r.PR.StatusAt) {
