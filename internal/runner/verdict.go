@@ -28,15 +28,23 @@ var fencedJSONRE = regexp.MustCompile("(?s)```json\\s*\\n(.*?)\\n```")
 // ParseVerdict reads the verdict from structured output, falling back to the
 // last fenced JSON block. Anything unparseable counts as a blocking finding.
 func ParseVerdict(res agent.Result) Verdict {
-	if v, ok := decodeVerdict(res.Structured); ok {
+	if v, ok := TryVerdict(res); ok {
 		return v
+	}
+	return Verdict{Verdict: "changes", Findings: []Finding{{Severity: "blocker", Summary: "review produced no parseable verdict"}}}
+}
+
+// TryVerdict is ParseVerdict that says whether there was a verdict to read.
+func TryVerdict(res agent.Result) (Verdict, bool) {
+	if v, ok := decodeVerdict(res.Structured); ok {
+		return v, true
 	}
 	if m := fencedJSONRE.FindAllStringSubmatch(res.Text, -1); len(m) > 0 {
 		if v, ok := decodeVerdict([]byte(m[len(m)-1][1])); ok {
-			return v
+			return v, true
 		}
 	}
-	return Verdict{Verdict: "changes", Findings: []Finding{{Severity: "blocker", Summary: "review produced no parseable verdict"}}}
+	return Verdict{}, false
 }
 
 func decodeVerdict(b []byte) (Verdict, bool) {

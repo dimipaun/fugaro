@@ -108,6 +108,36 @@ type Agent struct {
 	// MaxRunTokens limits a whole run's tokens; 0 is none. It can only
 	// tighten the project's ceiling and the default branch's value.
 	MaxRunTokens int64 `yaml:"max_run_tokens"`
+	// FirstLineReview is whether a review by the coder's own model comes
+	// before the senior review: auto (on only when a provider serves the
+	// coder and not the reviewer), on or off.
+	FirstLineReview string `yaml:"first_line_review"`
+	// FirstLineRounds bounds the first-line review/fix cycles, apart from
+	// ReviewRounds.
+	FirstLineRounds int `yaml:"first_line_rounds"`
+}
+
+// First-line review settings (Agent.FirstLineReview).
+const (
+	FirstLineAuto = "auto"
+	FirstLineOn   = "on"
+	FirstLineOff  = "off"
+)
+
+// MaxFirstLineRounds is the most first-line review rounds a run may have.
+const MaxFirstLineRounds = 3
+
+// FirstLineOn reports whether the run has a first-line review: on, or auto
+// with a coder a provider serves and a reviewer none does (an Anthropic
+// coder gets none: same family, little to gain, a real cost).
+func (a Agent) FirstLineOn(providers map[string]ModelProvider) bool {
+	switch a.FirstLineReview {
+	case FirstLineOn:
+		return true
+	case FirstLineOff:
+		return false
+	}
+	return claimed(providers, a.ModelFor(RoleCoder)) && !claimed(providers, a.ModelFor(RoleReviewer))
 }
 
 // ModelRoles are the models of the stage roles.
@@ -131,8 +161,9 @@ const (
 	RoleReviewer Role = "reviewer"
 )
 
-// StageRole is the role of a stage: implement and fix are the coder, review
-// the reviewer. An unknown stage is the coder.
+// StageRole is the role of a stage: implement, fix and review_first (the
+// first-line review) are the coder, review (the senior one) the reviewer. An
+// unknown stage is the coder.
 func StageRole(stage string) Role {
 	if stage == "review" {
 		return RoleReviewer

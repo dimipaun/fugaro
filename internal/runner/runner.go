@@ -1008,6 +1008,14 @@ func (r *run) agentLoop(ctx context.Context) {
 			reviewPrompt += "\n\n" + add
 		}
 	}
+	tier := ""
+	if r.cfg.Agent.FirstLineOn(r.d.Providers) {
+		tier = runstore.TierSenior
+		var ok bool
+		if sessionID, ok = r.firstLine(ctx, reviewPrompt, sys, sessionID); !ok {
+			return
+		}
+	}
 	rounds := r.cfg.Agent.ReviewRounds
 	for round := 1; round <= rounds; round++ {
 		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
@@ -1016,7 +1024,7 @@ func (r *run) agentLoop(ctx context.Context) {
 			return
 		}
 		v := ParseVerdict(res)
-		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Verdict: v.Verdict, Findings: len(v.Findings)})
+		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
 		if r.capReached() || v.Verdict == "ship" || round == rounds {
 			return
@@ -1025,21 +1033,87 @@ func (r *run) agentLoop(ctx context.Context) {
 		if r.pr.gone {
 			return
 		}
-		if r.sessionID != "" {
-			sessionID = r.sessionID
-		}
-		req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
-		res, ok, _ = r.stage(ctx, "fix", req, stageOpts{})
-		r.noteSession(req, res)
-		r.countTokens(res)
-		if !ok || r.capReached() {
-			return
-		}
-		r.afterStage(ctx, "fix")
-		if r.pr.gone {
+		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
 			return
 		}
 	}
+}
+
+// fix runs a fix stage for review v in the implement session and reports the
+// session to go on with, and whether the loop may continue.
+func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string, bool) {
+	if r.sessionID != "" {
+		sessionID = r.sessionID
+	}
+	req := agent.Request{Prompt: FixPrompt(v), SessionID: sessionID, Resume: true, AppendSystemPrompt: sys}
+	res, ok, _ := r.stage(ctx, "fix", req, stageOpts{})
+	r.noteSession(req, res)
+	r.countTokens(res)
+	if !ok || r.capReached() {
+		return sessionID, false
+	}
+	r.afterStage(ctx, "fix")
+	return sessionID, !r.pr.gone
+}
+
+// firstLine is the first-line review (design m10 §11a): up to
+// agent.first_line_rounds reviews by the coder's model, each followed by a
+// fix when it asks for changes. Its verdict never decides readiness: it is
+// recorded with its tier, and the senior review that follows is told
+// nothing of it. A first-line stage that fails or has no verdict is
+// recorded and skipped, never failing the run; a halt or a cancel still
+// ends it. It reports the session to go on with, and whether the run may
+// go on to the senior review.
+func (r *run) firstLine(ctx context.Context, reviewPrompt, sys, sessionID string) (string, bool) {
+	rounds := r.cfg.Agent.FirstLineRounds
+	for round := 1; round <= rounds; round++ {
+		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
+		r.countTokens(res)
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Findings: 1}
+		var v Verdict
+		switch skipped := (skippedError{}); {
+		case errors.As(err, &skipped):
+			r.d.Log.Warn("the first-line review failed; skipping it", "round", round, "err", skipped.err)
+		case !ok:
+			return sessionID, false
+		default:
+			var parsed bool
+			if v, parsed = TryVerdict(res); parsed {
+				sum.Verdict, sum.Findings = v.Verdict, len(v.Findings)
+			} else {
+				r.d.Log.Warn("the first-line review produced no parseable verdict; skipping it", "round", round)
+			}
+		}
+		r.rec.Reviews = append(r.rec.Reviews, sum)
+		r.save(ctx)
+		if r.capReached() {
+			return sessionID, false
+		}
+		if sum.Verdict != "changes" {
+			return sessionID, true
+		}
+		r.afterStage(ctx, "review_first")
+		if r.pr.gone {
+			return sessionID, false
+		}
+		var more bool
+		if sessionID, more = r.fix(ctx, v, sys, sessionID); !more {
+			return sessionID, false
+		}
+	}
+	return sessionID, true
+}
+
+// seniorReview is the last review the readiness rule reads: the latest
+// senior one, never a first-line review (a run that ended after only the
+// first line has none, so it is not ready).
+func seniorReview(rs []runstore.ReviewSummary) *runstore.ReviewSummary {
+	for i := len(rs) - 1; i >= 0; i-- {
+		if rs[i].Tier != runstore.TierFirst {
+			return &rs[i]
+		}
+	}
+	return nil
 }
 
 // recoveredError is an agent error stage left to its caller, having
@@ -1049,8 +1123,20 @@ type recoveredError struct{ err error }
 func (e recoveredError) Error() string { return e.err.Error() }
 func (e recoveredError) Unwrap() error { return e.err }
 
+// skippedError is a failed stage the caller skips (stageOpts.Skippable):
+// stage recorded no failure for it.
+type skippedError struct{ err error }
+
+func (e skippedError) Error() string { return e.err.Error() }
+func (e skippedError) Unwrap() error { return e.err }
+
 // stageOpts adjust how stage treats the agent's error.
 type stageOpts struct {
+	// Skippable marks a stage the run does without: when the agent fails
+	// or reports an error (not a halt, a cancel, an exhausted time budget
+	// or a violation), stage records no failure and returns a
+	// skippedError.
+	Skippable bool
 	// Recoverable, when set, picks the agent errors the caller handles
 	// itself: stage records nothing about them (no failure reason, no
 	// log tail) and returns them.
@@ -1207,6 +1293,9 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	case err != nil && opts.Recoverable != nil && stageCtx.Err() == nil && opts.Recoverable(err):
 		r.save(ctx)
 		return res, false, recoveredError{err}
+	case err != nil && opts.Skippable && r.skippable(ctx, stageCtx):
+		r.save(ctx)
+		return res, false, skippedError{err}
 	case err != nil:
 		reason := r.stageReason(ctx, name, StageError(name, stageCtx, r.budget, err))
 		if w := r.lastWaited(); w > 0 && r.gw != nil {
@@ -1218,6 +1307,9 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		}
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
 		return res, false, err
+	case res.IsError && opts.Skippable && r.skippable(ctx, stageCtx):
+		r.save(ctx)
+		return res, false, skippedError{fmt.Errorf("the agent reported an error (%s)", res.Subtype)}
 	case res.IsError:
 		r.fail(fmt.Sprintf("stage %s: the agent reported an error (%s)", name, res.Subtype))
 		r.keepTail(fmt.Sprintf("%s-%d", name, n), stderrTail, transcriptTail)
@@ -1225,6 +1317,13 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	}
 	r.save(ctx)
 	return res, true, nil
+}
+
+// skippable reports whether a failed Skippable stage may be skipped: the run
+// itself is fine (not cancelled or out of time) and only the stage failed.
+// A halt is decided before this is asked.
+func (r *run) skippable(ctx, stageCtx context.Context) bool {
+	return ctx.Err() == nil && !r.budget.Exhausted() && !errors.Is(context.Cause(stageCtx), ErrCancelled)
 }
 
 // stageReason turns an "interrupted" stage reason into the cancel --now one
@@ -1345,11 +1444,7 @@ func (r *run) finalize(ctx context.Context) error {
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
 
-	var last *runstore.ReviewSummary
-	if n := len(r.rec.Reviews); n > 0 {
-		last = &r.rec.Reviews[n-1]
-	}
-	ready, reason := Decide(records, sha, last)
+	ready, reason := Decide(records, sha, seniorReview(r.rec.Reviews))
 	if committed && reason == ReasonNoVerifiedTest {
 		reason = "uncommitted changes were committed at finalize, after the last verified test run"
 	}

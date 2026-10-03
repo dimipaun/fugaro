@@ -111,6 +111,12 @@ func Validate(c *Config) []Problem {
 	if c.Agent.ReviewRounds < 1 || c.Agent.ReviewRounds > 10 {
 		add("agent.review_rounds", "must be between 1 and 10")
 	}
+	if !slices.Contains([]string{FirstLineAuto, FirstLineOn, FirstLineOff}, c.Agent.FirstLineReview) {
+		add("agent.first_line_review", "must be one of auto, on, off")
+	}
+	if c.Agent.FirstLineRounds < 1 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
+		add("agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
+	}
 	if c.Agent.MaxBudgetUSD < 0 {
 		add("agent.max_budget_usd", "must not be negative")
 	}

@@ -92,7 +92,10 @@ func followUpReport(rec *runstore.Record, location string, tail *LogTail, fu *Fo
 		parts := make([]string, 0, len(rec.Reviews))
 		for _, r := range rec.Reviews {
 			p := fmt.Sprintf("round %d: %s", r.Round, r.Verdict)
-			if r.Verdict != "ship" {
+			if r.Tier != "" {
+				p = r.Tier + " " + p
+			}
+			if r.Verdict != "ship" && r.Verdict != "none" {
 				p += " (" + Plural(r.Findings, "finding") + ")"
 			}
 			parts = append(parts, p)

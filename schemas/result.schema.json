@@ -39,6 +39,7 @@
         "required": ["round", "verdict", "findings"],
         "properties": {
           "round": { "type": "integer", "minimum": 1 },
+          "tier": { "enum": ["first", "senior"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's. Absent in a run without a first line (senior)." },
           "verdict": { "type": "string" },
           "findings": { "type": "integer", "minimum": 0 }
         }

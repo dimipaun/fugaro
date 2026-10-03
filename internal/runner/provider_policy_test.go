@@ -34,8 +34,22 @@ func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.
 	return g
 }
 
+// providerPinned has the provider's model as the coder. Its first-line
+// review is off, which `auto` would turn on (providerFirstLine): the tests
+// that use it script one review.
 func providerPinned(t *testing.T) string {
-	return strings.Replace(gwConfig(t, ""), "coder: "+sonnet, "coder: "+deepseek, 1)
+	return strings.Replace(gwConfig(t, "  first_line_review: off\n"), "coder: "+sonnet, "coder: "+deepseek, 1)
+}
+
+// providerFirstLine is providerPinned with first_line_review set to mode
+// ("" leaves it to the default, auto).
+func providerFirstLine(t *testing.T, mode string) string {
+	t.Helper()
+	extra := ""
+	if mode != "" {
+		extra = "  first_line_review: " + mode + "\n"
+	}
+	return strings.Replace(providerPinned(t), "  first_line_review: off\n", extra, 1)
 }
 
 // refusedBeforeAnyCall asserts the run ended as an infra_error naming every

@@ -397,16 +397,28 @@ func verifyPart(records []verify.Record) string {
 	return "no test run yet"
 }
 
-// reviewsPart is the section's account of the review rounds, or "".
+// reviewsPart is the section's account of the review rounds, or "". With a
+// first line, it says which tier the latest review is: the first line only
+// advises, the senior review decides.
 func reviewsPart(rs []runstore.ReviewSummary) string {
 	if len(rs) == 0 {
 		return ""
 	}
 	last := rs[len(rs)-1]
-	if last.Verdict == "ship" {
-		return fmt.Sprintf("review: ship in round %d", last.Round)
+	who := ""
+	switch last.Tier {
+	case runstore.TierFirst:
+		who = "first-line "
+	case runstore.TierSenior:
+		who = "senior "
 	}
-	return fmt.Sprintf("review round %d: %s", last.Round, Plural(last.Findings, "finding"))
+	switch last.Verdict {
+	case "ship":
+		return fmt.Sprintf("%sreview: ship in round %d", who, last.Round)
+	case "none":
+		return fmt.Sprintf("%sreview round %d: skipped, no verdict", who, last.Round)
+	}
+	return fmt.Sprintf("%sreview round %d: %s", who, last.Round, Plural(last.Findings, "finding"))
 }
 
 // costPart is the model cost for the section: dollars for api-key and
@@ -461,7 +473,7 @@ func (r *run) runningSection(stage string) string {
 		head = "**Follow-up running**"
 	}
 	what := fmt.Sprintf("after stage `%s`", inlineText(stage))
-	if stage == "review" {
+	if stage == "review" || stage == "review_first" {
 		if p := reviewsPart(r.rec.Reviews); p != "" {
 			what = p
 		}
