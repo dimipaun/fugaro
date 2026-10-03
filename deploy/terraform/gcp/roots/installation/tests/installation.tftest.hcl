@@ -1178,6 +1178,10 @@ run "TestRolloverSchedulerJob" {
     error_message = "the rollover body is exactly {overrides:{containerOverrides:[{args:[budget,history,--rollover]}],timeout:1800s}}"
   }
   assert {
+    condition     = one(google_cloud_scheduler_job.history_rollover[0].retry_config).retry_count == 0 && one(google_cloud_scheduler_job.history_sweep[0].retry_config).retry_count == 0
+    error_message = "both history Scheduler jobs declare retry_config retry_count 0 (the server default), so a plan shows no drift on it"
+  }
+  assert {
     condition     = google_cloud_scheduler_job.history_rollover[0].paused == true
     error_message = "the rollover job is created paused: the first prune is a person's decision (resume after the manual run)"
   }

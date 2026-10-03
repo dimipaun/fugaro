@@ -71,6 +71,8 @@ func TestStageError(t *testing.T) {
 
 	cancelled, cancel := context.WithCancelCause(context.Background())
 	cancel(ErrCancelled)
+	sigterm, cancel3 := context.WithCancel(context.Background())
+	cancel3()
 	expired, cancel2 := context.WithDeadline(context.Background(), now.Add(-time.Second))
 	defer cancel2()
 
@@ -81,6 +83,7 @@ func TestStageError(t *testing.T) {
 		want string
 	}{
 		{cancelled, fresh, context.Canceled, "cancelled during implement"},
+		{sigterm, fresh, context.Canceled, "interrupted (execution stopped) during implement"},
 		{expired, spent, context.DeadlineExceeded, "time budget exhausted during implement"},
 		{expired, fresh, context.DeadlineExceeded, "stage implement timed out after 40m0s"},
 		{context.Background(), fresh, errors.New("exec: claude not found"), "stage implement failed: exec: claude not found"},

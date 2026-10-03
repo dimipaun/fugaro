@@ -396,6 +396,56 @@ func TestCancelledRunStillOpensDraft(t *testing.T) {
 	}
 }
 
+// TestSigtermWithoutMarkerSaysInterrupted: the execution is stopped (the
+// runner's context is cancelled from outside) with no cancel marker. The
+// reason says so, not "stage implement failed: context canceled"; the status
+// stays what it was (failed).
+func TestSigtermWithoutMarkerSaysInterrupted(t *testing.T) {
+	h := newHarness(t, "", nil)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	h.agent.steps = []step{func(t *testing.T, sctx context.Context, req agent.Request) (agent.Result, error) {
+		stop()
+		return blockUntilDone(t, sctx, req)
+	}}
+	rec, err := runner.Run(ctx, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusFailed || rec.Reason != "interrupted (execution stopped) during implement" {
+		t.Fatalf("record = %+v", rec)
+	}
+	if strings.Contains(rec.Reason, "context canceled") {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+}
+
+// TestCancelNowSaysCancelled: cancel --now writes the marker and stops the
+// execution at once, so the runner's context is cancelled before its poll
+// reads the marker. The reason says the run was cancelled.
+func TestCancelNowSaysCancelled(t *testing.T) {
+	h := newHarness(t, "", nil)
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	h.agent.steps = []step{func(t *testing.T, sctx context.Context, req agent.Request) (agent.Result, error) {
+		if err := h.store.RequestCancel(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		stop()
+		return blockUntilDone(t, sctx, req)
+	}}
+	rec, err := runner.Run(ctx, h.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(rec.Reason, "cancelled") || strings.Contains(rec.Reason, "context canceled") || strings.Contains(rec.Reason, "failed") {
+		t.Fatalf("record = %+v", rec)
+	}
+	if rec.Reason != "cancelled during implement" && rec.Reason != "cancelled (stopped by fugaro cancel --now) during implement" {
+		t.Fatalf("reason = %q", rec.Reason)
+	}
+}
+
 // TestAgentLoopPanicStillOpensDraft checks that a panicking stage does not
 // skip finalize: the run must still push and open a draft PR.
 func TestAgentLoopPanicStillOpensDraft(t *testing.T) {

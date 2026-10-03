@@ -64,6 +64,14 @@ func WatchCancel(parent context.Context, check func(context.Context) (bool, erro
 	return ctx, func() { cancel(nil) }
 }
 
+// interruptedPrefix starts the reason of a stage stopped by the execution
+// being stopped (SIGTERM), when no cancel marker says why.
+const interruptedPrefix = "interrupted (execution stopped)"
+
+// cancelNowPrefix starts the reason when the marker is there and the
+// execution was stopped at once: fugaro cancel --now.
+const cancelNowPrefix = "cancelled (stopped by fugaro cancel --now)"
+
 // StageError explains why a stage ended early, for the run record and draft PR.
 func StageError(stage string, stageCtx context.Context, b Budget, err error) string {
 	var halt *HaltError
@@ -76,6 +84,10 @@ func StageError(stage string, stageCtx context.Context, b Budget, err error) str
 		return "time budget exhausted during " + stage
 	case errors.Is(stageCtx.Err(), context.DeadlineExceeded):
 		return fmt.Sprintf("stage %s timed out after %s", stage, b.Stage)
+	case stageCtx.Err() != nil && errors.Is(context.Cause(stageCtx), context.Canceled):
+		// The runner's own context was cancelled from outside (SIGTERM),
+		// with no cancel marker read here: not a stage failure.
+		return interruptedPrefix + " during " + stage
 	default:
 		return fmt.Sprintf("stage %s failed: %v", stage, err)
 	}
