@@ -1,0 +1,17 @@
+aurora · enforce · 2026-10-03
+live
+TOTAL  82% of $50.00 · burn $0.12/min ⚠ FAST · $4…
+       4 runs · 0.8 run-hours
+▸ acme/app  75% of $40.00 · burn $0.09/min ⚠ FAST…
+  r-aaaa11 Fix the flaky login test
+    coding r2 12m03s SILENT $1.25
+  r-bbbb22 Add pagination to the list endpoint
+    review r1 12m03s NOTIONAL, ⚠ near $1.25
+  acme/lib  110% of $10.00 · burn … · $11.00
+  ⚠ KILLED by dimi@x.io at 2026-10-03 11:55Z "run…
+  r-cccc33 Refactor the parser
+    verify r1 12m03s LOST, OVER, halted: killed $…
+  acme/docs  $0.00, no cap · burn $0.00/min · $0.…
+  r-dddd44 Typos
+    coding r1 - -
+↑↓ select · ? help · q quit

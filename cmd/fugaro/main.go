@@ -29,7 +29,7 @@ func main() {
 // current stage and still finalize; signal handling is then reset, so a
 // second signal gets the default action and force-quits the process.
 func signalContext() (context.Context, context.CancelFunc) {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	context.AfterFunc(ctx, stop)
 	return ctx, stop
 }
