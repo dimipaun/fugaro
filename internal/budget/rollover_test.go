@@ -723,3 +723,88 @@ func TestHostileNodeIsRefusedNotPruned(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// A late write after the final document was written (the review's loss
+// window): the prune compares the whole freshly derived record, so it refuses
+// and the document is left alone.
+func TestLateChangeAfterFinalBlocksPrune(t *testing.T) {
+	for name, late := range map[string]func(e *rollEnv, d int64){
+		"outcome": func(e *rollEnv, d int64) {
+			e.db.Set("outcomes/"+budget.DayKey(d)+"/"+rollSlug+"/20261008-120000-zzzz", map[string]any{"status": "infra_error", "requestedBy": "x@example.invalid"})
+		},
+		"outcome on the next day for a run started on d": func(e *rollEnv, d int64) {
+			e.db.Set("outcomes/"+budget.DayKey(d+1)+"/"+rollSlug+"/20261008-235900-yyyy", map[string]any{"status": "failed", "requestedBy": "x@example.invalid"})
+			e.facts.facts[d] = append(e.facts.facts[d], budget.RunFact{Slug: rollSlug, Run: "20261008-235900-yyyy", StartDay: d})
+		},
+		"crashed ledger": func(e *rollEnv, d int64) {
+			e.db.Set("runs/"+rollSlug+"/20261008-100000-aaaa", map[string]any{"reserved": 1_000_000, "spent": 400_000, "crashed": true})
+		},
+		"late share": func(e *rollEnv, d int64) {
+			e.db.Set("spend/"+budget.DayKey(d)+"/runs/"+rollSlug+"/20261008-100000-aaaa/notional", 77)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := newRollEnv(t)
+			d := e.today() - 12
+			e.seedDay(d, rollSlug, 1_000_000, "20261008-100000-aaaa")
+			e.now = e.now.Add(-4 * 24 * time.Hour) // final, too young to prune
+			e.mustRoll(budget.RolloverOptions{})
+			e.now = rollNow
+			stored := e.doc(d, rollSlug)
+			late(e, d)
+			before := e.db.Value("")
+			_, err := e.roll(budget.RolloverOptions{})
+			if !errors.Is(err, budget.ErrRefused) {
+				t.Fatalf("err = %v, want a refusal", err)
+			}
+			if !reflect.DeepEqual(e.db.Value(""), before) || !reflect.DeepEqual(e.doc(d, rollSlug), stored) {
+				t.Fatal("database or document changed")
+			}
+			// A person reconciles with --day --force, and then the day goes.
+			e.mustRoll(budget.RolloverOptions{Day: &d, Force: true})
+			if e.dayInDB(d) {
+				t.Fatal("not pruned after the forced rewrite")
+			}
+		})
+	}
+}
+
+func TestPruneKeepsRegisteredLedger(t *testing.T) {
+	e := newRollEnv(t)
+	d := e.today() - 12
+	run := "20261008-100000-aaaa"
+	e.seedDay(d, rollSlug, 1_000_000, run)
+	e.db.Set("agents/"+rollSlug+"/"+run, map[string]any{"repo": "acme/app", "requestedBy": "dimi@example.invalid"})
+	e.mustRoll(budget.RolloverOptions{})
+	if e.db.Value("spend/"+budget.DayKey(d)) != nil {
+		t.Fatal("day not pruned")
+	}
+	if e.db.Value("runs/"+rollSlug+"/"+run) == nil || e.db.Value("agents/"+rollSlug+"/"+run) == nil {
+		t.Fatal("a registered run's ledger was removed")
+	}
+}
+
+func TestSkewNeedsServerTimeAndUsesTheEarlierClock(t *testing.T) {
+	e := newRollEnv(t)
+	d := e.today() - 1
+	e.seedDay(d, rollSlug, 1_000_000, "20261019-100000-aaaa")
+	e.r.MaxSkew = 10 * time.Minute
+	e.r.ServerNow = func() (time.Time, bool) { return time.Time{}, false }
+	before := e.db.Value("")
+	if _, err := e.roll(budget.RolloverOptions{}); !errors.Is(err, budget.ErrRefused) || len(e.fs.IDs("spendDaily")) != 0 || !reflect.DeepEqual(e.db.Value(""), before) {
+		t.Fatalf("err = %v: a job that cannot see the database's clock must refuse", err)
+	}
+	// The job's clock is 00:01 on D+2 but the database says 23:58: not final.
+	e.now = time.Date(2026, 10, 21, 0, 1, 0, 0, time.UTC)
+	e.r.ServerNow = func() (time.Time, bool) { return e.now.Add(-3 * time.Minute), true }
+	e.mustRoll(budget.RolloverOptions{})
+	if isFinal(e.doc(d, rollSlug)) {
+		t.Fatal("finalized by a clock that runs ahead of the database's")
+	}
+	// Agreeing clocks past midnight finalize.
+	e.r.ServerNow = func() (time.Time, bool) { return e.now, true }
+	e.mustRoll(budget.RolloverOptions{})
+	if !isFinal(e.doc(d, rollSlug)) {
+		t.Fatal("not final once both clocks are past 00:00 of D+2")
+	}
+}

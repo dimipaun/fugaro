@@ -69,9 +69,9 @@ func TestRolloverNoFirestoreDatabaseIsExit0(t *testing.T) {
 	f.fs.RemoveDatabase()
 	f.seed(budget.Day(f.now)-12, "20261008-100000-bbbb", 2_000_000)
 	before := f.db.Value("")
-	out, _, err := execute(t, "budget", "history", "--rollover")
-	if err != nil || !strings.Contains(out, "no Firestore database") {
-		t.Fatalf("err = %v, out = %q", err, out)
+	out, stderr, err := execute(t, "budget", "history", "--rollover")
+	if err != nil || !strings.Contains(out, "no Firestore database") || !strings.Contains(stderr, "WARNING") || !strings.Contains(stderr, "no Firestore database") {
+		t.Fatalf("err = %v, out = %q, stderr = %q", err, out, stderr)
 	}
 	if f.db.Value("spend/"+budget.DayKey(budget.Day(f.now)-12)) == nil || len(before.(map[string]any)) != len(f.db.Value("").(map[string]any)) {
 		t.Fatal("the database was touched")

@@ -83,6 +83,9 @@ type Roller struct {
 	MaxSkew time.Duration
 	// Warn receives what was skipped; nil discards it.
 	Warn func(string)
+	// ServerNow is the database's time (default: the RTDB client's, from its
+	// Date header); tests replace it.
+	ServerNow func() (time.Time, bool)
 }
 
 // RolloverOptions selects a single day and/or a forced rewrite.
@@ -184,12 +187,28 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 		return rep, refusef("the budget database's /fugaro/project does not name project %s; nothing was moved", r.Project)
 	}
 	if r.MaxSkew > 0 {
-		if srv, ok := r.DB.ServerNow(); ok {
-			if d := now.Sub(srv); d > r.MaxSkew || d < -r.MaxSkew {
-				return rep, refusef("this job's clock differs from the database's by %s; days are finalized by the clock, so nothing was moved", d.Round(time.Second))
-			}
+		sn := r.ServerNow
+		if sn == nil {
+			sn = r.DB.ServerNow
+		}
+		srv, ok := sn()
+		if !ok {
+			return rep, refusef("the database's clock was not seen (no Date header), so the job's clock cannot be checked; nothing was moved")
+		}
+		if d := now.Sub(srv); d > r.MaxSkew || d < -r.MaxSkew {
+			return rep, refusef("this job's clock differs from the database's by %s; days are finalized by the clock, so nothing was moved", d.Round(time.Second))
+		}
+		// A day is final from 00:00 UTC of D+2 by both clocks: use the
+		// earlier, so a job clock running ahead cannot finalize early.
+		if srv.Before(now) {
+			now = srv.UTC()
+			today = Day(now)
 		}
 	}
+	if opt.Day != nil && *opt.Day >= today {
+		return rep, refusef("day %s has not ended by the database's clock (today is %s)", DayDate(*opt.Day), DayDate(today))
+	}
+
 	doc, err := r.FS.Get(ctx, MetaCollection, MarkDocument)
 	switch {
 	case errors.Is(err, firestore.ErrNoDatabase):
@@ -205,55 +224,18 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 	}
 
 	// Everything the pass reads from the database, once.
-	var spend, outcomes map[string]json.RawMessage
-	var runs map[string]map[string]json.RawMessage
 	var caps struct {
 		Defaults *DefaultCaps        `json:"defaults"`
 		Repos    map[string]RepoCaps `json:"repos"`
 	}
-	for _, rd := range []struct {
-		path string
-		out  any
-	}{{"spend", &spend}, {"outcomes", &outcomes}, {"runs", &runs}} {
-		if _, err := r.DB.Get(ctx, rd.path, rd.out); err != nil {
-			return rep, err
-		}
-	}
 	if _, err := r.DB.Get(ctx, "config/caps", &caps); err != nil {
 		return rep, err
 	}
-
-	// Days present, and each run's latest share day.
-	present := map[int64]bool{}
-	for _, m := range []map[string]json.RawMessage{spend, outcomes} {
-		for k := range m {
-			if d, ok := parseDayKey(k); ok {
-				present[d] = true
-			}
-		}
+	snap, err := r.snapshot(ctx)
+	if err != nil {
+		return rep, err
 	}
-	last := map[string]map[string]int64{}
-	ledgerPruneOK := true
-	for k, raw := range spend {
-		d, ok := parseDayKey(k)
-		if !ok {
-			continue
-		}
-		var n dayNode
-		if json.Unmarshal(raw, &n) != nil {
-			ledgerPruneOK = false
-			r.warnf("spend/%s is unreadable; no lifetime ledgers are removed this pass", k)
-			continue
-		}
-		for slug, rr := range n.Runs {
-			for run := range rr {
-				if last[slug] == nil {
-					last[slug] = map[string]int64{}
-				}
-				last[slug][run] = max(last[slug][run], d)
-			}
-		}
-	}
+	spend, outcomes, runs, last, present := snap.spend, snap.outcomes, snap.runs, snap.last, snap.present
 
 	// The days to handle, oldest first.
 	var days []int64
@@ -291,7 +273,18 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 			err = r.writeDay(ctx, &dr, recs, now, dr.Final, opt.Force)
 		}
 		if err == nil && d < today-PruneAfter && dr.Final {
-			err = r.prune(ctx, &dr, d, recs, spend, outcomes, runs, last, present, ledgerPruneOK)
+			fresh := func() ([]DayRecord, *snapshot, error) {
+				fs, err := r.snapshot(ctx)
+				if err != nil {
+					return nil, nil, err
+				}
+				fin, err := r.input(d, fs.spend, fs.outcomes, fs.runs, fs.last, caps.Defaults, caps.Repos, dayFacts, repoNames)
+				if err != nil {
+					return nil, nil, err
+				}
+				return Rollup(fin), fs, nil
+			}
+			err = r.prune(ctx, &dr, d, today, fresh)
 			if err == nil && dr.Pruned {
 				delete(present, d)
 			}
@@ -303,6 +296,55 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 		rep.Days = append(rep.Days, dr)
 	}
 	return rep, errors.Join(errs...)
+}
+
+// snapshot is what the rollover reads from the database.
+type snapshot struct {
+	spend, outcomes map[string]json.RawMessage
+	runs, agents    map[string]map[string]json.RawMessage
+	last            map[string]map[string]int64 // each run's latest share day
+	ledgerOK        bool                        // false: some day node is unreadable, remove no ledgers
+	present         map[int64]bool              // days with a spend or outcomes node
+}
+
+func (r *Roller) snapshot(ctx context.Context) (*snapshot, error) {
+	s := &snapshot{last: map[string]map[string]int64{}, ledgerOK: true, present: map[int64]bool{}}
+	for _, rd := range []struct {
+		path string
+		out  any
+	}{{"spend", &s.spend}, {"outcomes", &s.outcomes}, {"runs", &s.runs}, {"agents", &s.agents}} {
+		if _, err := r.DB.Get(ctx, rd.path, rd.out); err != nil {
+			return nil, err
+		}
+	}
+	for _, m := range []map[string]json.RawMessage{s.spend, s.outcomes} {
+		for k := range m {
+			if d, ok := parseDayKey(k); ok {
+				s.present[d] = true
+			}
+		}
+	}
+	for k, raw := range s.spend {
+		d, ok := parseDayKey(k)
+		if !ok {
+			continue
+		}
+		var n dayNode
+		if json.Unmarshal(raw, &n) != nil {
+			s.ledgerOK = false
+			r.warnf("spend/%s is unreadable; no lifetime ledgers are removed this pass", k)
+			continue
+		}
+		for slug, rr := range n.Runs {
+			for run := range rr {
+				if s.last[slug] == nil {
+					s.last[slug] = map[string]int64{}
+				}
+				s.last[slug][run] = max(s.last[slug][run], d)
+			}
+		}
+	}
+	return s, nil
 }
 
 func parseDayKey(k string) (int64, bool) {
@@ -490,23 +532,43 @@ func sameStored(have, want DayRecord) bool {
 	return reflect.DeepEqual(have.ToFields(), want.ToFields())
 }
 
-// figuresEqual compares what the database held (src) with what a fresh read
-// of the document says (got): every figure that comes from the counters. The
-// derived and the configuration-dependent ones (compute, cap, outcomes,
-// overrun, byPerson) are not part of the promise to the prune.
+// figuresEqual compares what the database holds now (src, derived like the
+// document) with a fresh read of the stored document (got): the whole record
+// except what does not come from the database or changes with configuration
+// (compute, hours, cap, repository name, timestamps). Outcomes, byPerson,
+// overrun and unreconciled are included: a late outcome or share after the
+// document was written blocks the prune, because pruning would lose it.
 func figuresEqual(src, got DayRecord) bool {
-	return got.Final && got.Slug == src.Slug && got.Date == src.Date &&
-		got.SpentMicros == src.SpentMicros && got.NotionalMicros == src.NotionalMicros &&
-		got.Calls == src.Calls && got.Runs == src.Runs &&
-		reflect.DeepEqual(got.ByModel, src.ByModel)
+	if !got.Final {
+		return false
+	}
+	for _, r := range []*DayRecord{&src, &got} {
+		r.ComputeMicros, r.ComputeEstimatedRuns, r.RunHours = 0, 0, 0
+		r.CapDailyMicros, r.Repo = nil, ""
+		r.WrittenAt, r.ArchivedAt = time.Time{}, time.Time{}
+		r.Final = true
+	}
+	return reflect.DeepEqual(src.ToFields(), got.ToFields())
 }
 
 // prune deletes the day's nodes if every condition holds. A refusal keeps the
 // day and says why.
-func (r *Roller) prune(ctx context.Context, dr *DayReport, d int64, recs []DayRecord, spend, outcomes map[string]json.RawMessage,
-	runs map[string]map[string]json.RawMessage, last map[string]map[string]int64, present map[int64]bool, ledgers bool) error {
+func (r *Roller) prune(ctx context.Context, dr *DayReport, d, today int64,
+	fresh func() ([]DayRecord, *snapshot, error)) error {
 	keep := func(format string, a ...any) error {
 		return refusef("not pruned: "+format, a...)
+	}
+	// Everything below works from a fresh read of the database, derived the
+	// same way as the documents: whatever a late write added since they were
+	// written must show up as a difference, because nothing else holds it.
+	recs, snap, err := fresh()
+	if err != nil {
+		return err
+	}
+	spend, outcomes, runs, last, present, ledgers := snap.spend, snap.outcomes, snap.runs, snap.last, snap.present, snap.ledgerOK
+	if !present[d] {
+		dr.Pruned = true // another pass removed it
+		return nil
 	}
 	if present[d-1] {
 		dr.Note = "waits for the day before"
@@ -556,7 +618,7 @@ func (r *Roller) prune(ctx context.Context, dr *DayReport, d int64, recs []DayRe
 			return keep("%s is not readable back: %v", rec.DocID(), err)
 		}
 		if !figuresEqual(rec, got) {
-			return keep("%s read back is not final or does not equal the database's figures", rec.DocID())
+			return keep("%s read back is not final or does not equal what the database holds now (a late write? check, then --day %s --force)", rec.DocID(), rec.Date)
 		}
 	}
 
@@ -576,6 +638,9 @@ func (r *Roller) prune(ctx context.Context, dr *DayReport, d int64, recs []DayRe
 		for slug, rr := range last {
 			for run, ld := range rr {
 				if ld == d {
+					if _, live := snap.agents[slug][run]; live {
+						continue // still registered: never remove a live run's ledger
+					}
 					if raw, ok := runs[slug][run]; ok {
 						nodes = append(nodes, node{"runs/" + slug + "/" + run, raw})
 					}
@@ -602,7 +667,7 @@ func (r *Roller) prune(ctx context.Context, dr *DayReport, d int64, recs []DayRe
 		}
 	}
 	for p := range updates {
-		if !pruneKeyOK(p, d) {
+		if !pruneKeyOK(p, d, today) {
 			return keep("internal: refusing to delete %q", p)
 		}
 	}
@@ -648,11 +713,14 @@ func leaves(path string, raw json.RawMessage, out map[string]any) error {
 }
 
 // pruneKeyOK is the last guard before a delete: only leaves below the day's
-// own nodes or a lifetime ledger.
-func pruneKeyOK(p string, d int64) bool {
+// own nodes or a lifetime ledger, and only for a day old enough to prune.
+func pruneKeyOK(p string, d, today int64) bool {
+	if d < 0 || d >= today-PruneAfter {
+		return false
+	}
 	parts := strings.Split(p, "/")
 	for _, s := range parts {
-		if s == "" {
+		if s == "" || strings.ContainsAny(s, ".$#[]") || strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 			return false
 		}
 	}
