@@ -554,3 +554,126 @@ func TestHistoryAccountDoesNotHoldTheLauncherRole(t *testing.T) {
 		}
 	})
 }
+
+// M9d: the history account writes Firestore documents with roles/datastore.user
+// and holds no other datastore role (owner would let it manage databases and
+// indexes). Only datastore.user and datastore.viewer exist in the tree, and
+// a datastore role never lands on a service account except the history
+// account's user grant.
+func TestHistoryNoDatastoreAdmin(t *testing.T) {
+	granted := map[string]int{}
+	walk(t, func(path string, b []byte) {
+		for _, typ := range []string{"google_project_iam_member", "google_storage_bucket_iam_member"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				for _, role := range regexp.MustCompile(`roles/datastore\.[A-Za-z]+`).FindAllString(blk.body, -1) {
+					granted[role]++
+					switch role {
+					case "roles/datastore.user":
+						if blk.name != "google_project_iam_member.history_firestore" {
+							t.Errorf("%s: %s grants datastore.user; only history_firestore may", path, blk.name)
+						}
+					case "roles/datastore.viewer":
+						if strings.Contains(blk.body, "history") || strings.Contains(blk.body, "serviceAccount:") {
+							t.Errorf("%s: %s grants datastore.viewer to a service account", path, blk.name)
+						}
+					default:
+						t.Errorf("%s: %s grants %s", path, blk.name, role)
+					}
+				}
+			}
+		}
+	})
+	if granted["roles/datastore.user"] != 1 || granted["roles/datastore.viewer"] != 1 {
+		t.Errorf("want one datastore.user and one datastore.viewer resource, got %v", granted)
+	}
+}
+
+// H8: the Firestore database is an idempotent REST ensure step (a Terraform
+// create of a singleton does not adopt), and the rules are REST too: no
+// Terraform resource for either.
+func TestNoFirestoreDatabaseResource(t *testing.T) {
+	walk(t, func(path string, b []byte) {
+		code := stripComments(string(b))
+		for _, bad := range []string{`"google_firestore_database"`, `"google_firebase_rules_`, `"google_firestore_`} {
+			if strings.Contains(code, bad) {
+				t.Errorf("%s declares %s: the database and its rules are init --firebase's REST steps", path, bad)
+			}
+		}
+	})
+}
+
+// The history account may read the runs bucket (objectViewer) and nothing
+// more there, and the Firebase module (which has no bucket) never names one.
+func TestHistoryRunsBucketIsReadOnly(t *testing.T) {
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_storage_bucket_iam_member") {
+			if strings.Contains(blk.body, "google_service_account.history") {
+				n++
+				if !hasAttr(blk.body, "role", `"roles/storage.objectViewer"`) {
+					t.Errorf("%s: %s grants the history account more than objectViewer", path, blk.name)
+				}
+			}
+		}
+	})
+	if n != 1 {
+		t.Errorf("want one bucket grant to the history account, got %d", n)
+	}
+}
+
+// M9d: serviceusage.services.use (serviceUsageConsumer) is granted on the
+// Firebase project only, in the firebase module, to the people set (like
+// datastore.viewer) and the history account; never to job accounts, never
+// with a domain or wildcard member.
+func TestUsageConsumerOnlyInFirebaseModule(t *testing.T) {
+	seen := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !strings.Contains(blk.body, "serviceusage.serviceUsageConsumer") {
+				continue
+			}
+			seen[blk.name] = true
+			if !strings.Contains(path, "modules/firebase/") {
+				t.Errorf("%s: %s grants serviceUsageConsumer outside the firebase module", path, blk.name)
+			}
+			if strings.Contains(blk.body, "domain:") || strings.Contains(blk.body, `"*"`) || strings.Contains(blk.body, "allUsers") {
+				t.Errorf("%s: %s grants serviceUsageConsumer to a domain or wildcard", path, blk.name)
+			}
+			if blk.name == "google_project_iam_member.history_usage" {
+				if !strings.Contains(blk.body, "var.history_account") {
+					t.Errorf("%s: history_usage does not name the history account", path)
+				}
+			} else if blk.name != "google_project_iam_member.usage_consumer" || !strings.Contains(blk.body, "setunion(local.people, local.admins)") {
+				t.Errorf("%s: %s: only usage_consumer (people and admins) and history_usage may grant it", path, blk.name)
+			}
+		}
+	})
+	if len(seen) != 2 {
+		t.Errorf("want exactly usage_consumer and history_usage, got %v", seen)
+	}
+}
+
+// The rollover Scheduler job is created paused and Terraform never touches
+// that again, so an apply neither pauses nor resumes it behind a person's back
+// (the first rollover prunes RTDB days). ignore_changes is not visible in a
+// plan test, so the source is pinned.
+func TestRolloverJobPausedAndIgnored(t *testing.T) {
+	found := false
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_cloud_scheduler_job") {
+			if blk.name != "google_cloud_scheduler_job.history_rollover" {
+				continue
+			}
+			found = true
+			if !regexp.MustCompile(`paused\s*=\s*true`).MatchString(blk.body) {
+				t.Errorf("%s: the rollover job is not created paused", path)
+			}
+			if !regexp.MustCompile(`ignore_changes\s*=\s*\[\s*paused\s*\]`).MatchString(blk.body) {
+				t.Errorf("%s: the rollover job does not ignore changes to paused", path)
+			}
+		}
+	})
+	if !found {
+		t.Fatal("no rollover scheduler job found")
+	}
+}

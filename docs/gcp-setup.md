@@ -203,11 +203,47 @@ What to know:
 - **The history image.** The sweeper's job runs the image `<region>-docker.pkg.dev/<project>/fugaro-base/history:latest`. Like the dev base image until M7, **you build and push it once, by hand**, from a checkout of this repository: `sh images/build-base.sh history <region>-docker.pkg.dev/<project>/fugaro-base/history:latest`, then `gcloud auth configure-docker <region>-docker.pkg.dev` and `docker push <region>-docker.pkg.dev/<project>/fugaro-base/history:latest`; then run `fugaro init --firebase <id>` again, which deploys the history job and its Scheduler job. `init --firebase` prints these exact commands (with your registry path) while the image is missing. CI builds, smoke-tests and scans the image but does not publish it. Without it the sweeper does not run: crashed runs' registry entries stay and old run users are not deleted. The image's base (`distroless/static-debian12:nonroot`) is pinned by tag, not by digest.
 - **Who runs the third apply.** The history job runs as the history account and nobody is granted `actAs` on it by design, so the person running `init --firebase` must be able to act as it by other means (the project's owner or editor role, or Service Account User they already hold).
 - **Mode skew.** A job whose env mode is `observe` under a database `enforce` halts on cap refusals; `budget show` prints both modes.
-- **The history job.** Every 15 minutes the sweeper removes the registry entries of runs that ended without cleaning up, marks their reservation `crashed` (it stays counted, which errs high), and deletes old run users. It runs as its own account with its own image, holds the database admin role and no model credential, and never writes the caps.
+- **The history job.** Once a day (00:30 UTC) it also moves finished days to Firestore ("Spend history and reports (M9d)" below). Every 15 minutes the sweeper removes the registry entries of runs that ended without cleaning up, marks their reservation `crashed` (it stays counted, which errs high), and deletes old run users. It runs as its own account with its own image, holds the database admin role and no model credential, and never writes the caps.
 - **Watching it.** `fugaro watch` shows the caps, the spend, the burn rate, the live runs and the kill switches as they change (it needs only the Viewer role on the Firebase project, like `budget show`); `fugaro budget show` is the one-shot version. The optional `watch: { burn_alert_usd_per_hour: N }` in the project config sets the burn-rate alert (default: the daily cap over 8 hours). In `watch`, `k`/`r` act on the selected repository and `K`/`R` on the whole project, `k` asks for `y` or Enter; `r`, `K` and `R` ask for a typed word (the repository's or the project's name).
 - **Rollback.** `fugaro init --firebase … --budget-mode off` then `fugaro init --repo` (the jobs lose the backend environment); the data stays. `fugaro budget kill --all` is the emergency stop.
 - **Verification.** Firebase and Realtime Database behaviour that cannot be checked offline is recorded by live check 21 in [gcp-live-checklist.md](gcp-live-checklist.md).
 - **Backstop at the vendor.** Set a spend limit on the Anthropic Console workspace the key belongs to; Fugaro's caps are a guard, not a replacement.
+
+## Spend history and reports (M9d)
+
+With the shared budget on, finished days move from the Realtime Database to **Firestore** and `fugaro report` reads them. Until [check 23](gcp-live-checklist.md#check-23-spend-history-and-fugaro-report) has been run against a real project, treat the Firestore calls as unverified.
+
+**What it needs**
+
+1. **A Firestore database in `us-east5`, which is permanent.** `fugaro init --firebase <id>` creates it over REST (not Terraform: its location can never change and Terraform does not adopt an existing database), with delete protection on, deny-all rules (only IAM principals read or write) and a Fugaro mark. When it would create the database it says so and you must **type `us-east5`** (or pass `--yes`); a project that already has a Fugaro-marked database in `us-east5` is adopted without asking, and one in another location, of another type, with another owner's mark or with data and no mark is refused with nothing written. `--plan-only` shows the step. There is no `nam5` fallback: if `us-east5` is refused, the run stops with the API's error and choosing another location is your decision. Cost: within the free tier at expected scale.
+2. **Rebuild and push the history image.** The history job now also runs `budget history --rollover`, a subcommand the image from M9b does not have. Build and push it as in "The history image" above (`sh images/build-base.sh history <region>-docker.pkg.dev/<project>/fugaro-base/history:latest`, `docker push`), then deploy it by rerunning `fugaro init --firebase <id>`. Rebuild the base image too if you want `fugaro` in the jobs to be the same version.
+3. **Rerun `fugaro init --firebase <id>`.** Terraform adds the `firestore` and `firebaserules` APIs, `roles/datastore.user` and `roles/serviceusage.serviceUsageConsumer` for the history account on the Firebase project, `roles/storage.objectViewer` on the runs bucket for it (for `compute_usd`), the job's `FUGARO_RUNS_BUCKET` and `FUGARO_FIRESTORE_DB=(default)` environment, and the Scheduler job `fugaro-history-rollover` (`30 0 * * *`, UTC). Read the plan: it creates these, plus one in-place update (the history job's two new environment variables). The rollover Scheduler job is created **paused** and Terraform never resumes it: run the rollover once by hand and resume it as the live checklist (Check 23) says; until then nothing is pruned. Nothing changes for an installation with the budget off.
+4. **Viewers.** Reading history needs `roles/datastore.viewer` **and** `roles/serviceusage.serviceUsageConsumer` on the Firebase project (the client sends `X-Goog-User-Project`). Terraform grants both to the launchers, operators and budget admins (people only); give them to anyone else by hand.
+
+**The rollover** runs at 00:30 UTC. A day is written **provisional** once it has ended and becomes **final at 00:00 UTC of the day after next (D+2)**, because a run can still write to the previous day until then. A final document is never rewritten unless you run `fugaro budget history --rollover --day D --force` (a backfill: run it as the history account's job, or with credentials that may write Firestore). The database's day nodes are deleted only when a day is older than 8 days, final, equal to its documents and read back; anything else refuses (exit 1) and keeps the data. A rerun changes nothing. The history keeps requesters' addresses (`byPerson`) and the repositories' names, readable only through IAM.
+
+**Reports**
+
+```bash
+fugaro report                                  # the last 30 days by day
+fugaro report --by week --since 12w
+fugaro report --by month --since 2026-01-01 --until 2026-09-30
+fugaro report --by repo --since 7d
+fugaro report --by model --since 7d
+fugaro report --by person --since 30d --repo owner/name
+fugaro report --since 90d --csv > spend.csv    # spreadsheet-safe cells
+fugaro report --since 7d --json                # exact decimal *_usd strings
+```
+
+Model dollars, `NOTIONAL~` (a subscription's list-price figure, never billed) and compute dollars are separate columns and are never summed. Compute is an estimate and reads `n/a` when no run's was estimated. Days that are not final yet (the last day or two, and any the rollover has not reached) are computed live from the budget database and marked `(partial)`.
+
+**Degraded mode.** With no `firebase_project`, no Firestore database or no mark, `fugaro report` says history is not enabled and prints run-record totals from the runs bucket, labelled "run records, not budget history" (a subscription's model spend shows as notional). A permission error (exit 1) names the two viewer roles. If Firestore is down the job exits 2 and the next night covers every day still in the database.
+
+**Attribution.** A run's compute, hours and count belong to its start day. A run that crashed before writing a `result.json` has none of these (compute is `n/a`) and its outcome counts on the day the outcome was recorded, which can be the day after it started: a known, small difference.
+
+**Retention.** Firestore documents are kept forever. The budget database keeps each day for at least 8 days and until it is final and archived.
+
+**Rolling back.** Pause the Scheduler job (`gcloud scheduler jobs pause fugaro-history-rollover --location <scheduler region>`) or remove it with Terraform and the rollover stops; the budget database is then not pruned and nothing is lost. There is nothing to undo in Firestore except deleting the `spendDaily` documents (and `meta/installation`) yourself in the Console or with `gcloud firestore`; the database has delete protection, and **its location can never change**: a different location needs a different Firebase project. `fugaro report` falls back to run records meanwhile.
 
 ## Installations from before M9a
 

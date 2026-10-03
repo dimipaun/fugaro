@@ -114,7 +114,12 @@ groups, plus --budget-admin), and the installation again (the history job,
 once its image exists). Between the last two it deploys the database's rules,
 mark, project name, mode (--budget-mode; an absent one is seeded observe) and
 largest lease, after a confirmation of their own, then writes the local
-config. --plan-only stops after the installation's plan. Each repository then
+config. The same step creates the Firestore database for the spend history
+(fugaro report) if the project has none: its location, us-east5, is permanent
+(chosen once, never changed or deleted by Fugaro), so init asks you to type
+the location to confirm it (--yes confirms it too), and it refuses to adopt a
+database that holds data or is in another location; it also deploys
+deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro init --repo to pick up the jobs' environment.
 
 init --repo [PATH] onboards the repository of the checkout at PATH (default:
@@ -157,7 +162,7 @@ Terraform's state, destroying nothing.`,
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing; init never creates it) and build the budget backend in it: three confirmed applies, the database's rules and mark, and the config")
+	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing; init never creates it) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")

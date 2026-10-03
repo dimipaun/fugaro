@@ -11,7 +11,7 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
 5. **The settled decisions D1–D15 in §16:**
    - **Budget writes.** Jobs write directly to RTDB with per-run Firebase tokens that the launcher mints, and database rules bound what each token can do. There is no budget service.
    - **Caps are a guardrail for now.** Making them hold against a compromised agent is deferred.
-   - **Firebase regions.** RTDB goes in `us-central1`. Firestore goes in `us-east5`, or `nam5` where that isn't available.
+   - **Firebase regions.** RTDB goes in `us-central1`. Firestore goes in `us-east5` (M9d built no `nam5` fallback: if `us-east5` is refused the step fails and a different location is a deliberate decision, because a database location can never change).
    - **The budget day is UTC**, and caps count model dollars only.
 
 ---
@@ -62,7 +62,7 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
   - **M9a:** gateway, pinned models, per-run cap in-process, and `halted`, with no Firebase.
   - **M9b:** Firebase counters, daily caps, kill switches and `fugaro budget`.
   - **M9c:** `fugaro watch`.
-  - **M9d:** Firestore history and `fugaro report`.
+  - **M9d (built):** Firestore history and `fugaro report`. The live bring-up is check 23 in [gcp-live-checklist.md](../gcp-live-checklist.md); until it is run, the facts it lists are assumptions.
   - **M9e:** draft PR at the first push (D15, revised 2026-10-01).
   - **M9f (optional):** changes to the task loop (the verify gate and structured findings).
   - **M10 (later, own design):** multi-model work from spec v3.
@@ -442,7 +442,7 @@ These record where the build settled something the design left open. The authori
 - **`oauth`** records `notional` only (R7) and is bound by the kill switches, the token cap and the grace.
 - **`fugaro budget`** (`show`, `set`, `kill`, `resume`, `prices`): admins write caps with ETag-guarded single-node `PUT`s that show the old and new value; raising a cap, setting one that was unset, lowering the mode to observe and `resume` ask for the project's name (or `--yes`); `kill --all` asks for it too. `show` needs the Viewer role only. `--repo` is `owner/name`.
 - **`init --firebase <id>`** adopts a Firebase project the user created and linked to billing. It refuses a project that is missing, has no billing, or whose database holds data but no Fugaro mark; it runs three confirmed applies, deploys the rules, the mark, the project name, the mode and `maxReserve` over REST, and **refuses `--budget-mode enforce` unless the global daily and per-run caps exist** (an enforcing budget with no global caps would refuse every lease). Data is kept on a rollback (`prevent_destroy`).
-- **Sweeper** (`fugaro budget history --sweep`) as in v1.md §6.1; the rollover (`--rollover`) is M9d.
+- **Sweeper** (`fugaro budget history --sweep`) as in v1.md §6.1; the rollover (`--rollover`) is M9d, built (§9).
 
 ---
 
@@ -479,7 +479,7 @@ These record where the build settled something the design left open. The authori
 ### 6.1 APIs, region and IAM
 
 - **APIs on the FP:** `firebase`, `firebasedatabase`, `firestore`, `firebaserules` (for Firestore rules) and `identitytoolkit` plus `securetoken` (for custom-token sign-in). `iamcredentials` must be enabled where the signer account lives.
-- **Regions (D4).** RTDB goes in `us-central1`: RTDB offers only `us-central1`, `europe-west1` and `asia-southeast1`, and a location can't be changed later. Firestore goes in `us-east5`, which Firestore lists as a regional location, with `nam5` as the fallback for installations elsewhere.
+- **Regions (D4).** RTDB goes in `us-central1`: RTDB offers only `us-central1`, `europe-west1` and `asia-southeast1`, and a location can't be changed later. Firestore goes in `us-east5` (check 23 confirms the location is offered; there is no `nam5` fallback in the code, see D4) and can't be changed either.
 - **IAM.** Each grant is an `*_iam_member` in the Firebase root (§6.6). Every grant to a principal of the project is cross-project, onto the FP.
 
 | Principal | Grants |
@@ -517,13 +517,13 @@ These record where the build settled something the design left open. The authori
 ```
 
 - **`title`** is the task's first line, clipped to 80 characters and redacted. Launchers already read every `task.json`.
-- **Day nodes older than 8 days** are deleted by the history job once they're archived.
+- **Day nodes older than 8 days** are deleted by the rollover only after the day is final, equal to its Firestore documents and read back (§9). `spend/<day>/meta` is not written by M9d (nothing reads it); the Firestore document, not a flag in RTDB, says a day is archived.
 
 **Firestore** (the `(default)` database):
 
-`spendDaily/<YYYY-MM-DD>_<slug>` holds one repository's day (no project prefix: the Firebase project is the Fugaro project's own, D3): `{repo, slug, date, spentMicros, notionalMicros, computeMicros, unreconciledMicros, overrunMicros, runHours, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{<escaped model>: {micros, in, out, cr, cw}}, byPerson{<escaped requested_by>: {micros, notionalMicros, runs}}, capDailyMicros, final, version: 1, archivedAt, writtenAt}`. Amounts are the RTDB's integer µ$ (USD is formatting; the earlier `...Usd` floats are dropped), map keys use the RTDB's `Key` escaping, and `meta/installation {project, version}` is the Firestore mark. A day is written provisionally after it ends and **final** once `now >= start(D+2)`, because a run may still write to the previous day until then (rules `DAYOK`); a final document is never rewritten without `--day D --force`. Plan: [2026-10-03-m9d-history-and-report.md](../plans/2026-10-03-m9d-history-and-report.md).
+`spendDaily/<YYYY-MM-DD>_<slug>` holds one repository's day (no project prefix: the Firebase project is the Fugaro project's own, D3): `{repo, slug, date, spentMicros, notionalMicros, computeMicros, unreconciledMicros, overrunMicros, runHours, calls, runs, outcomes{succeeded, failed, halted, cancelled, infra_error}, byModel{<escaped model>: {micros, in, out, cr, cw}}, byPerson{<escaped requested_by>: {micros, notionalMicros, runs}}, capDailyMicros, final, version: 1, archivedAt, writtenAt}`. Amounts are the RTDB's integer µ$ (USD is formatting; the earlier `...Usd` floats are dropped), map keys use the RTDB's `Key` escaping, and `meta/installation {managed_by, project, gcp_project, firebase_project, version, fugaro_version}` is the Firestore mark (written once, never replaced; a foreign or unreadable mark refuses every write and read). A day is written provisionally after it ends and **final** once `now >= start(D+2)`, because a run may still write to the previous day until then (rules `DAYOK`); a final document is never rewritten without `--day D --force`. Plan: [2026-10-03-m9d-history-and-report.md](../plans/2026-10-03-m9d-history-and-report.md).
 
-The Firestore database is created by an idempotent REST step in `init --firebase`, not by Terraform: its location is permanent and a Terraform create does not adopt an existing database. Its rules deny everything; only IAM principals read or write. The history account also needs `roles/storage.objectViewer` on the runs bucket (for `compute_usd`).
+The Firestore database is created by an idempotent REST step in `init --firebase`, not by Terraform: its location is permanent and a Terraform create does not adopt an existing database. Its rules deny everything; only IAM principals read or write. History keeps the requesters' addresses (`byPerson`) indefinitely, readable by IAM viewers only. The history account also needs `roles/storage.objectViewer` on the runs bucket (for `compute_usd`).
 
 The global figure is computed on read. There is no composite index: `report` queries the `date` field with a range and filters repository, person and model client-side.
 
@@ -651,12 +651,11 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
 - **The Firebase root's content:**
   - the APIs (§6.1);
   - `google_firebase_project` and `google_firebase_database_instance`, both **google-beta** (A5);
-  - `google_firestore_database`, Native mode, with `DELETE_PROTECTION_ENABLED` and `prevent_destroy`;
-  - Firestore rules that deny everything (`google_firebaserules_ruleset` and `google_firebaserules_release`);
+  - the `firestore` and `firebaserules` APIs. The Firestore database (Native, delete protection on) and its deny-all rules are **not** Terraform resources: `init --firebase` ensures them over REST (§6.7), with a Go test that no `google_firestore_database` exists;
   - the signer account, the `fugaroTokenMinter` role and its grants;
-  - the history job's account, its job (its own image, D11) and two Scheduler jobs (`30 0 * * *` for the rollover, `*/15 * * * *` for the sweep), running as `fugaro-scheduler`;
+  - the history job's account, its job (its own image, D11) and two Scheduler jobs (`30 0 * * *` for the rollover, `*/15 * * * *` for the sweep), running as `fugaro-scheduler` (they are in the installation root, below; the rollover job posts `overrides.containerOverrides[].args = [budget history --rollover]` to the run API, assumption A4 of check 23);
   - the grants in §6.1;
-  - ~~in the repository module, the jobs' environment~~ (correction R10, M9b): the jobs' environment is plain env set by `fugaro init --repo` from `internal/infra/spec.go` (`FUGARO_RTDB_URL`, `FUGARO_FIREBASE_API_KEY`, with `FUGARO_BUDGET_MODE`, `FUGARO_MODEL_PRICES` and `FUGARO_MAX_RUN_USD` as in M9a), not Terraform variables. The history job's environment is the one Terraform-defined environment. M9b creates no Firestore database and no rollover Scheduler job (M9d).
+  - ~~in the repository module, the jobs' environment~~ (correction R10, M9b): the jobs' environment is plain env set by `fugaro init --repo` from `internal/infra/spec.go` (`FUGARO_RTDB_URL`, `FUGARO_FIREBASE_API_KEY`, with `FUGARO_BUDGET_MODE`, `FUGARO_MODEL_PRICES` and `FUGARO_MAX_RUN_USD` as in M9a), not Terraform variables. The history job's environment is the one Terraform-defined environment. M9b created no Firestore database and no rollover Scheduler job; M9d adds the Scheduler job `fugaro-history-rollover` (below) and the IAM of §9.
 - **Marks.** The instance can't carry labels, so `init` writes `/fugaro/mark` into the database and discovery checks it. Everything else carries `fugaro=managed`, or its account display name.
 - **A third Terraform root, `roots/firebase`,** with its state at `fugaro/firebase` in the installation's state bucket, which is operator-only as in §8.1.
   - **Providers.** Its providers (`google` and `google-beta`, pinned) target the FP, with `project`, `billing_project` and `user_project_override`.
@@ -668,7 +667,8 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
 ### 6.7 `fugaro init`
 
 - **Adoption and marks:**
-  - **Discovery adopts** an existing FP's default RTDB instance and `(default)` Firestore database when they're empty or carry our mark. It **refuses** unmarked data, and refuses a Firestore database whose location isn't the one D4 chose.
+  - **Discovery adopts** an existing FP's default RTDB instance and `(default)` Firestore database when they're empty or carry our mark (an unmarked database is adopted only if it has no root collection at all). It **refuses** unmarked data, and refuses a Firestore database whose location isn't the one D4 chose or that isn't Native.
+  - **The Firestore step (M9d).** Read-only planning runs before the first apply (so refusals happen with nothing applied, and `--plan-only` shows it). If there is no database, the real run, after the shared confirmation, tells the person the location is permanent and requires typing `us-east5` before it creates the database (`--yes` confirms it). It then writes the Firestore mark, then deploys deny-all rules and verifies them by reading back; it never replaces an existing non-equivalent release (it refuses with instructions) and never deletes anything.
   - **After the apply,** init deploys the RTDB rules and the mark.
   - **`--budget-mode observe|enforce`** sets the mode. `--budget-admin` repeats, and fills `terraform.budget_admins`.
   - **The guard** adds the database and instance to its `prevent_destroy` list.
@@ -704,7 +704,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
 These estimates assume 20 repositories, about 100 runs a day of about 45 minutes each, and 5 people watching for 2 hours a day.
 
 - **RTDB.** Under 1 MB stored. Downloads come from the jobs' kill-switch streams (nearly idle), their re-reads, and the watch streams: under 2 GB a month, about $2. Concurrent connections are about 20 jobs plus a few viewers. The Spark plan's hard limit of 100 connections would make a busy fleet fail closed, so **use Blaze**, with a billing budget alert.
-- **Firestore.** About 600 writes a month, which is within the free tier.
+- **Firestore.** About 600 writes a month, which is within the free tier. The history keeps requesters' addresses indefinitely.
 - **Firebase Auth.** Custom-token sign-in is free at this volume (about 3,000 users a month, deleted after two days).
 - **History job.** About 3,000 short executions a month, a few dollars at most.
 - **Scheduler.** Two more jobs, $0.20 a month.
@@ -745,22 +745,21 @@ Caps must be finite, non-negative and at most $100,000, and a per-run cap can't 
 
 ## 9. History and `fugaro report`
 
-- **The daily rollover** runs at 00:30 UTC. For each day in the last 7 days that isn't archived, the history job:
-  (It runs as its own Scheduler job at 00:30 UTC; the 15-minute job stays the sweep. Days are written provisionally, then final at D+2, and day nodes are pruned only when final, older than 8 days and read back equal.)
-  1. counts `outcomes/<day>`;
-  2. reads `spend/<day>`;
-  3. adds `computeUsd` from the runs' `result.json` records, since the job can read the runs bucket;
-  4. `Set`s `spendDaily/<date>_<slug>`, which is idempotent because the document ID is deterministic;
-  5. marks the day archived;
-  6. prunes day nodes older than 8 days.
+**Built in M9d** (plan: [2026-10-03-m9d-history-and-report.md](../plans/2026-10-03-m9d-history-and-report.md); v1.md §6.1 and §9.1 describe the behaviour). Unverified against the real services until check 23 in [gcp-live-checklist.md](../gcp-live-checklist.md) is run.
 
-  It can be rerun, and `--day` backfills.
-- **Unreconciled spend.** Crashed runs' outstanding amounts go into `unreconciledUsd`, and gateway `overrun` into `overrunUsd`.
-- **`fugaro report`** takes `[--repo R | --all] [--week | --month | --year | --from D --to D] [--by day|week|month|repo|model] [--json]`.
-  - It reads Firestore with viewer IAM, and adds today's partial data from RTDB, marked `(partial)`.
-  - Weeks are ISO weeks in UTC.
-  - Totals separate billed, notional and estimated compute.
-  - `--by model` shows the coder/reviewer split.
+- **The rollover** is `fugaro budget history --rollover`, run at 00:30 UTC by the Scheduler job `fugaro-history-rollover` against the history Cloud Run job (the 15-minute job stays the sweep). It handles every day before today that is still in the database, oldest first (so a long outage strands nothing), and per day:
+  1. derives each repository's record from `spend/<day>`, `outcomes/<day>` and the next day's outcomes (a run started on D-1 is counted on its start day), the run ledgers and the `result.json` objects of runs started that day (for compute, an estimate; unreadable ones are `n/a`, not 0);
+  2. writes `spendDaily/<date>_<slug>` conditionally on the document's `updateTime` (`MustNotExist` on create, up to 4 re-reads on a conflict), **provisional** while D is today or yesterday and **final** from 00:00 UTC of D+2; an identical provisional document is not rewritten; a final one is never rewritten, and never made provisional; `--rollover --day D --force` rewrites one (a backfill);
+  3. prunes the day's RTDB nodes only under the preconditions in v1.md §6.1: older than 8 days, final, the previous day already gone, the global counter equal to the sum of the documents, each document equal to a fresh derivation, each node equal to its snapshot; one atomic leaf-null `PATCH`, with every path checked. A refusal is exit 1 and leaves RTDB untouched.
+  A failure on one day skips that day's prune and the others continue; exit 1 refusal, 2 backend failure. With no Firestore database it warns, exits 0 and touches nothing (the job exists before `init --firebase` creates the database).
+- **What the history account may do:** read and write Firestore (`roles/datastore.user`, the Firebase project only), call the API on that project's behalf (`serviceUsageConsumer`), read the runs bucket (`storage.objectViewer`, no condition), plus its M9b rights on the database. Nothing else is new: no `actAs`, no domain or wildcard member.
+- **Unreconciled spend.** Crashed runs' outstanding amounts go into `unreconciledMicros`, and gateway `overrun` into `overrunMicros`, both on the ledger's last-share day.
+- **`fugaro report [--by day|week|month|year|repo|model|person] [--since D|Nd] [--until D] [--repo R] [--csv | --json]`.**
+  - It reads Firestore with the viewer's IAM (a single-field `date` range, no composite index; the repository filter is client-side), and computes the days that have no final document from RTDB (within its 8-day window, plus today), marked `(partial)`.
+  - Weeks are ISO weeks in UTC. Totals keep model dollars, `NOTIONAL~` and compute separate and never sum them; compute is `n/a` when no run was estimated.
+  - `--by model` shows the models (the coder/reviewer split is not stored); `--by person` the requester address, `unknown` for unattributed spend. There is no `--all`, `--week`/`--month` shortcut or person/model filter; the default range is 30 days.
+  - Without Firestore history it falls back to run-record totals from the runs bucket and says so (degraded); a permission error names `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`.
+- **Not built:** an organization-wide export of `spendDaily` (see §18).
 
 ## 10. One account of cost
 
@@ -813,7 +812,7 @@ The attacker is a compromised agent in run A. It runs as the same user as the ru
 | **Image checks and rebuilds, `verify`, finalize, writeback** | **Unaffected.** None of them makes model calls or uses the budget |
 | Contention (8 stale retries) | Treated like an unreachable backend, with the same grace |
 | Hard kill (a task timeout or out-of-memory) | Nothing is released. The sweeper records `crashed` and `infra_error`, and the amount stays counted, erring high |
-| Firestore down during the rollover | Retried next day (7-day lookback), and RTDB keeps 8 days |
+| Firestore down during the rollover | The rollover exits 2 and prunes nothing for the day; the next night redoes every day still in the database (RTDB keeps each day until its documents are final, equal and 8 days old) |
 | Clock skew | The rules use the server's `now`. The client takes the server's time from the `Date` header |
 | Price table stale | Check dates, a warning after 90 days, and the Claude Code cross-check |
 | Watch loses its stream | A header warning and reconnection. Nothing in the cloud is affected |
@@ -935,8 +934,8 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 
 **M9d: history and reports**
 
-18. The rollover mode (Firestore writes, lookback, pruning, compute from `result.json`) and its Scheduler job. **M**
-19. `fugaro report`. **M**
+18. The rollover mode (Firestore writes, pruning, compute from `result.json`) and its Scheduler job. **M** (built, M9d)
+19. `fugaro report`. **M** (built, M9d)
 
 **M9f: task loop (optional)**
 
@@ -956,7 +955,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D1 | Who writes budget state | **Per-run Firebase custom tokens, minted by the launcher, bounded by database rules.** No budget service; only a scheduled, admin-privileged history and sweeper job | Rules carry the security (§6.4) and need the emulator in CI. Launchers need `signJwt` on the signer. A compromised run can fill up to its per-run cap (denial of service). A budget service stays as later hardening |
 | D2 | How hard the caps are | **A guardrail now. An external gateway later** | A compromised agent can spend around the gateway. The backstops are provider-side (§11) |
 | D3 | Where Firebase lives | **A dedicated FP per Fugaro project (V1).** The user creates the project and links billing; `fugaro init --firebase` adopts it. V2 and V3 were rejected | "Global" is the Fugaro project. Grants from the GCP project onto the FP, a third Terraform state, and separate billing. Organization-wide aggregation comes later and read-only |
-| D4 | Regions | **RTDB `us-central1`. Firestore `us-east5`** (listed as supported; `nam5` elsewhere) | RTDB can't be moved later. About 25 ms from `us-east5` jobs, which is negligible next to model latency |
+| D4 | Regions | **RTDB `us-central1`. Firestore `us-east5`** (to be confirmed supported by check 23; no `nam5` fallback is built) | RTDB can't be moved later. About 25 ms from `us-east5` jobs, which is negligible next to model latency |
 | D5 | The budget day | **UTC** | Epoch-day keys. No days of 23 or 25 hours |
 | D6 | Budget admins | **The GCP project's owners and editors, plus an optional `budget_admins` list.** Terraform grants them `firebasedatabase.admin` on the FP | Launchers, operators and job accounts can't change caps or switches. The owner list is discovered at `init`, so re-run `init --firebase` after changing owners |
 | D7 | What caps count | **Model dollars only** | Compute is reported, never capped |
@@ -1000,7 +999,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 - **M9b: Firebase counters, daily caps, kill switches, `fugaro budget`.** The dedicated FP per Fugaro project (`init --firebase`), per-run tokens and rules, leases, observe mode, the registry and the sweeper.
 - **Later, read-only: organization-wide roll-up.** Each project's history job exports `spendDaily` to one shared place. There is no shared live state.
 - **M9c: `fugaro watch`.** Only needs M9b's data.
-- **M9d: Firestore history and `fugaro report`.** Independent of M9c.
+- **M9d: Firestore history and `fugaro report`.** Built; independent of M9c. Live bring-up pending (check 23).
 - **M9e: draft PR at the first push (D15, revised).** Small. Finalize and the provider adapters; see the reconciliation doc.
 - **M9f (optional): the verify gate and structured findings.**
 - **Later:** the external gateway or budget service (D2 hardening), non-Claude coders (M10, [reconciliation](m9-spec-v3-reconciliation.md)), per-round comments, the redundant mode, per-batch concurrency, and letting launchers use the kill switch.

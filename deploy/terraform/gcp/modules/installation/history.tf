@@ -120,6 +120,16 @@ resource "google_cloud_run_v2_job" "history" {
           name  = "FUGARO_RTDB_URL"
           value = var.history.rtdb_url
         }
+        # M9d: the rollover reads result.json objects in the runs bucket and
+        # writes the FP's (default) Firestore database. No credential.
+        env {
+          name  = "FUGARO_RUNS_BUCKET"
+          value = var.runs_bucket
+        }
+        env {
+          name  = "FUGARO_FIRESTORE_DB"
+          value = "(default)"
+        }
       }
     }
   }
@@ -143,8 +153,21 @@ resource "google_cloud_run_v2_job_iam_member" "history_invoker" {
   member   = google_service_account.scheduler.member
 }
 
-# The sweep, every 15 minutes (D12). There is no rollover job: that, and
-# Firestore, arrive with M9d. Scheduler isn't offered in every Cloud Run
+# The rollover reads the runs' result.json objects (the notional and compute
+# columns of a day's record come from there). objectViewer, on this bucket
+# only and with no condition (unverified assumption A3), never objectAdmin:
+# the job account has no write access to the runs bucket. Granted whenever
+# the account exists (the first apply), like its other project roles.
+resource "google_storage_bucket_iam_member" "history_runs_reader" {
+  count = var.enable_budget ? 1 : 0
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectViewer"
+  member = google_service_account.history[0].member
+}
+
+# The sweep, every 15 minutes (D12). The rollover is its own Scheduler job
+# below. Scheduler isn't offered in every Cloud Run
 # region, so it runs in the scheduler region and the URI names the job's own.
 resource "google_cloud_scheduler_job" "history_sweep" {
   count = local.deploy_history ? 1 : 0
@@ -163,6 +186,59 @@ resource "google_cloud_scheduler_job" "history_sweep" {
   http_target {
     http_method = "POST"
     uri         = "https://run.googleapis.com/v2/projects/${var.project}/locations/${google_cloud_run_v2_job.history[0].location}/jobs/${google_cloud_run_v2_job.history[0].name}:run"
+
+    oauth_token {
+      service_account_email = google_service_account.scheduler.email
+      scope                 = "https://www.googleapis.com/auth/cloud-platform"
+    }
+  }
+
+  depends_on = [google_cloud_run_v2_job_iam_member.history_invoker]
+}
+
+# The rollover, once a day at 00:30 UTC (M9d H7): the same Cloud Run job, run
+# with its args replaced by --rollover through the run API's overrides. The
+# sweep stays liveness only. Unverified assumption A4: that jobs.run accepts
+# overrides.containerOverrides[].args; the test asserts exactly this body, and
+# the live runbook proves it. Overrides replace the container's args whole,
+# so they repeat "budget history". overrides.timeout gives this execution
+# 1800s (the first pass reads a whole window of run records); the sweep keeps
+# the job's 600s, and the code stops starting new days after 25 minutes.
+#
+# The job is created PAUSED and Terraform never changes that again
+# (ignore_changes): the first rollover prunes RTDB days, so a person runs it by
+# hand, verifies, and then resumes the job (gcloud scheduler jobs resume; the
+# live runbook's check 23). Retry
+# 0: a failed rollover logs, and the next day's run (idempotent, with its
+# backfill window) covers the gap.
+resource "google_cloud_scheduler_job" "history_rollover" {
+  count = local.deploy_history ? 1 : 0
+
+  project   = var.project
+  region    = var.history.scheduler_region
+  name      = var.history.rollover_scheduler_job
+  schedule  = "30 0 * * *"
+  time_zone = "Etc/UTC"
+  paused    = true
+
+  lifecycle {
+    ignore_changes = [paused]
+  }
+
+  retry_config {
+    retry_count = 0
+  }
+
+  http_target {
+    http_method = "POST"
+    uri         = "https://run.googleapis.com/v2/projects/${var.project}/locations/${google_cloud_run_v2_job.history[0].location}/jobs/${google_cloud_run_v2_job.history[0].name}:run"
+    headers     = { "Content-Type" = "application/json" }
+    body = base64encode(jsonencode({
+      overrides = {
+        containerOverrides = [{ args = ["budget", "history", "--rollover"] }]
+        timeout            = "1800s"
+      }
+    }))
 
     oauth_token {
       service_account_email = google_service_account.scheduler.email

@@ -424,6 +424,14 @@ func TestRTDBStreamCancelEndsIt(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("channel still open after cancel")
 	}
+	// The channel closes before the server's handler has necessarily
+	// unwound: wait for the count to reach zero, then check it stays there
+	// (no reconnect).
+	deadline := time.Now().Add(2 * time.Second)
+	for f.Streams() != 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
 	if f.Streams() != 0 {
 		t.Fatal("the client re-opened a cancelled stream")
 	}

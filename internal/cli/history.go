@@ -16,6 +16,7 @@ import (
 	"golang.org/x/oauth2/google"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
@@ -24,7 +25,7 @@ import (
 // §6.5, D12): a scheduled Cloud Run job, in its own small image, running as
 // the history service account (firebasedatabase.admin and firebaseauth.admin
 // on the Firebase project, run viewer on the GCP project). --sweep is shipped
-// here; --rollover (RTDB to Firestore) arrives with M9d.
+// here; --rollover moves finished days to Firestore (M9d, rollover.go).
 //
 // The job has no project config file: Terraform gives it the plain
 // environment below, and the account's identity is its only credential.
@@ -35,9 +36,20 @@ const (
 	envRegion      = "FUGARO_REGION"
 	envFirebaseFP  = "FUGARO_FIREBASE_PROJECT"
 	envRTDBURL     = "FUGARO_RTDB_URL"
+	envRunsBucket  = "FUGARO_RUNS_BUCKET"
+	envFirestoreDB = "FUGARO_FIRESTORE_DB"
 	identityRoot   = "https://identitytoolkit.googleapis.com"
 	cloudPlatform  = "https://www.googleapis.com/auth/cloud-platform"
 	historyTimeout = 8 * time.Minute
+	// The rollover's Scheduler call gives its execution a 30 minute timeout
+	// (overrides.timeout); no new day is started after 25 minutes, and the
+	// context ends just before the platform's kill, so a pass ends cleanly
+	// and the next one continues.
+	rolloverStartLimit = 25 * time.Minute
+	rolloverTimeout    = 29 * time.Minute
+	// rolloverMaxSkew is how far the job's clock may differ from the
+	// database's before the rollover refuses to finalize days.
+	rolloverMaxSkew = 10 * time.Minute
 )
 
 // historyWiring points the history command at fakes; tests only.
@@ -46,12 +58,18 @@ type historyWiring struct {
 	runURL      string
 	identityURL string
 	now         func() time.Time
+	firestore   string // Firestore endpoint
+	// bucket opens the runs bucket named by FUGARO_RUNS_BUCKET.
+	bucket func(ctx context.Context, name string) (*blobx.Bucket, error)
+	// skew checks the clock against the database's, as in production.
+	skew bool
 }
 
 var historyTest *historyWiring
 
 func newBudgetHistoryCmd() *cobra.Command {
-	var sweep, rollover bool
+	var sweep, rollover, force bool
+	var day string
 	cmd := &cobra.Command{
 		Use:    "history (--sweep | --rollover)",
 		Short:  "The history job: sweep the run registry (internal)",
@@ -61,8 +79,12 @@ func newBudgetHistoryCmd() *cobra.Command {
 			switch {
 			case sweep == rollover:
 				return userErr("history needs exactly one of --sweep and --rollover")
+			case sweep && (force || day != ""):
+				return userErr("--day and --force belong to --rollover")
 			case rollover:
-				return userErr("history --rollover (the daily move of the RTDB counters to Firestore) arrives with M9d; only --sweep exists in M9b")
+				ctx, cancel := context.WithTimeout(cmd.Context(), rolloverTimeout)
+				defer cancel()
+				return runHistoryRollover(ctx, cmd, os.Getenv, day, force)
 			}
 			ctx, cancel := context.WithTimeout(cmd.Context(), historyTimeout)
 			defer cancel()
@@ -70,7 +92,9 @@ func newBudgetHistoryCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&sweep, "sweep", false, "remove the registry entries of runs that ended, record them crashed, delete old run users")
-	cmd.Flags().BoolVar(&rollover, "rollover", false, "move finished days to Firestore (arrives with M9d)")
+	cmd.Flags().BoolVar(&rollover, "rollover", false, "move finished days to Firestore and prune old day nodes")
+	cmd.Flags().StringVar(&day, "day", "", "with --rollover: only this UTC day (YYYY-MM-DD), any age still in the database")
+	cmd.Flags().BoolVar(&force, "force", false, "with --rollover --day: rewrite a final document (a backfill)")
 	return cmd
 }
 

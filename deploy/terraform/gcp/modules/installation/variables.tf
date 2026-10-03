@@ -234,14 +234,15 @@ variable "enable_budget" {
 variable "history" {
   description = "The history job (it sweeps the run registry of crashed runs), used only with enable_budget. Its job name must not start with fugaro-, which fugaro ls and max_parallel count as workflow jobs. deploy_job stays false in the first apply and is set once the Firebase root has output rtdb_url (the third apply), when the job's image exists."
   type = object({
-    account_id       = string
-    job              = string
-    image            = string
-    scheduler_job    = string
-    scheduler_region = string
-    deploy_job       = optional(bool, false)
-    firebase_project = optional(string)
-    rtdb_url         = optional(string)
+    account_id             = string
+    job                    = string
+    image                  = string
+    scheduler_job          = string
+    scheduler_region       = string
+    rollover_scheduler_job = optional(string, "fugaro-history-rollover")
+    deploy_job             = optional(bool, false)
+    firebase_project       = optional(string)
+    rtdb_url               = optional(string)
   })
   default = null
 
@@ -251,6 +252,8 @@ variable "history" {
       can(regex("^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$", var.history.job)) &&
       !startswith(var.history.job, "fugaro-") &&
       can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.history.scheduler_job)) &&
+      can(regex("^[a-zA-Z][a-zA-Z0-9_-]{0,62}$", var.history.rollover_scheduler_job)) &&
+      var.history.rollover_scheduler_job != var.history.scheduler_job &&
       can(regex("^[a-z]+-[a-z]+[0-9]+$", var.history.scheduler_region)) &&
       length(var.history.image) > 0
     )

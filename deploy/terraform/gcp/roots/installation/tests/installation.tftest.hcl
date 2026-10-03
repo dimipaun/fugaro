@@ -676,8 +676,8 @@ run "budget_off_has_no_history" {
   }
 
   assert {
-    condition     = length(google_service_account.history) == 0 && length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0
-    error_message = "without enable_budget there is no history account, job or Scheduler job"
+    condition     = length(google_service_account.history) == 0 && length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0 && length(google_cloud_scheduler_job.history_rollover) == 0 && length(google_storage_bucket_iam_member.history_runs_reader) == 0
+    error_message = "without enable_budget there is no history account, job, Scheduler job or bucket grant"
   }
   assert {
     condition     = output.history_service_account == null && output.history_job == null
@@ -850,11 +850,11 @@ run "TestHistoryAccountGrants" {
   }
   assert {
     condition     = !contains(keys(google_storage_bucket_iam_member.runs), "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
-    error_message = "the history account has no access to the runs bucket"
+    error_message = "the history account is not among the runs bucket's object admins (its read-only grant is history_runs_reader)"
   }
 }
 
-run "TestOnlySweepSchedulerJob" {
+run "TestSweepSchedulerJob" {
   command = plan
 
   module {
@@ -895,8 +895,8 @@ run "TestOnlySweepSchedulerJob" {
   }
 
   assert {
-    condition     = length(google_cloud_scheduler_job.history_sweep) == 1
-    error_message = "there is exactly one history Scheduler job: the sweep (the rollover is M9d)"
+    condition     = length(google_cloud_scheduler_job.history_sweep) == 1 && one(google_cloud_scheduler_job.history_sweep[0].http_target).body == null
+    error_message = "the sweep job sends no body: the job's own --sweep args run"
   }
   assert {
     condition     = google_cloud_scheduler_job.history_sweep[0].schedule == "*/15 * * * *" && google_cloud_scheduler_job.history_sweep[0].time_zone == "Etc/UTC"
@@ -981,8 +981,9 @@ run "history_job" {
     condition = (toset([for e in one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).env : "${e.name}=${e.value}"]) == toset([
       "FUGARO_PROJECT=aurora", "FUGARO_GCP_PROJECT=proj-1234", "FUGARO_REGION=us-east5",
       "FUGARO_FIREBASE_PROJECT=fp-1234", "FUGARO_RTDB_URL=https://fp-1234-default-rtdb.firebaseio.com",
+      "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234", "FUGARO_FIRESTORE_DB=(default)",
     ]))
-    error_message = "the history job's environment is exactly the project, the region and the FP's identifiers, and holds no credential"
+    error_message = "the history job's environment is exactly the project, the region, the FP's identifiers, the runs bucket and the Firestore database, and holds no credential"
   }
   assert {
     condition     = one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).args == tolist(["budget", "history", "--sweep"])
@@ -1116,4 +1117,127 @@ run "bad_history_account_id" {
   }
 
   expect_failures = [var.history]
+}
+
+run "TestRolloverSchedulerJob" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition     = length(google_cloud_scheduler_job.history_rollover) == 1 && google_cloud_scheduler_job.history_rollover[0].name == "fugaro-history-rollover" && google_cloud_scheduler_job.history_rollover[0].region == "us-east1"
+    error_message = "one rollover Scheduler job, fugaro-history-rollover, in the scheduler region"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_rollover[0].schedule == "30 0 * * *" && google_cloud_scheduler_job.history_rollover[0].time_zone == "Etc/UTC"
+    error_message = "the rollover runs at 00:30 UTC"
+  }
+  assert {
+    condition     = one(google_cloud_scheduler_job.history_rollover[0].http_target).uri == "https://run.googleapis.com/v2/projects/proj-1234/locations/us-east5/jobs/fugarohist:run" && one(google_cloud_scheduler_job.history_rollover[0].http_target).http_method == "POST"
+    error_message = "the rollover starts the same history job, as the sweep does"
+  }
+  # Unverified assumption A4: jobs.run honours overrides.containerOverrides[].args.
+  # This pins exactly what is sent, so the live runbook has one body to prove.
+  assert {
+    condition     = jsondecode(base64decode(one(google_cloud_scheduler_job.history_rollover[0].http_target).body)) == { overrides = { containerOverrides = [{ args = ["budget", "history", "--rollover"] }], timeout = "1800s" } }
+    error_message = "the rollover body is exactly {overrides:{containerOverrides:[{args:[budget,history,--rollover]}],timeout:1800s}}"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_rollover[0].paused == true
+    error_message = "the rollover job is created paused: the first prune is a person's decision (resume after the manual run)"
+  }
+  assert {
+    condition     = one(google_cloud_scheduler_job.history_rollover[0].http_target).headers["Content-Type"] == "application/json"
+    error_message = "the rollover body is JSON"
+  }
+  assert {
+    condition     = one(one(google_cloud_scheduler_job.history_rollover[0].http_target).oauth_token).service_account_email == "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    error_message = "the rollover runs as fugaro-scheduler, which holds run.invoker on the history job only"
+  }
+  assert {
+    condition     = one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).args == tolist(["budget", "history", "--sweep"])
+    error_message = "the job's own args stay --sweep: the rollover only overrides them per run"
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.history_sweep[0].schedule == "*/15 * * * *"
+    error_message = "the 15-minute sweep is unchanged"
+  }
+}
+
+run "TestHistoryEnvHasBucket" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+      deploy_job       = true
+      firebase_project = "fp-1234"
+      rtdb_url         = "https://fp-1234-default-rtdb.firebaseio.com"
+    }
+  }
+
+  assert {
+    condition = (contains([for e in one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).env : "${e.name}=${e.value}"], "FUGARO_RUNS_BUCKET=fugaro-runs-proj-1234") &&
+    contains([for e in one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).env : "${e.name}=${e.value}"], "FUGARO_FIRESTORE_DB=(default)"))
+    error_message = "the history job names the runs bucket and the Firestore database"
+  }
+  assert {
+    condition = (google_storage_bucket_iam_member.history_runs_reader[0].role == "roles/storage.objectViewer" && google_storage_bucket_iam_member.history_runs_reader[0].bucket == "fugaro-runs-proj-1234" &&
+    google_storage_bucket_iam_member.history_runs_reader[0].member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
+    error_message = "the history account reads the runs bucket (objectViewer), that bucket only"
+  }
 }
