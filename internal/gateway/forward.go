@@ -597,18 +597,41 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
 	defer closeSrc()
+	if rt.provider != nil && !(resp.StatusCode >= 200 && resp.StatusCode <= 299) {
+		// A provider's error is never copied: it may echo the key.
+		var eb []byte
+		if readable {
+			eb, _ = io.ReadAll(io.LimitReader(src, 64<<10))
+		}
+		o := zeroOutcome(p.model, true)
+		o.errorType = providerError(w, resp, eb)
+		return o
+	}
+	var out io.Writer = w
+	var rw *redactWriter
 	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	if rt.provider != nil {
+		// Whatever else comes back from a provider is scrubbed of its key
+		// (it is the one in the request, read at request time).
+		key := keyFrom(up.Header)
+		redactHeaders(w.Header(), key)
+		rw = newRedactWriter(w, key)
+		out = rw
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 
 	tee := newUsageTee(isSSE(resp.Header, p.stream))
-	eof := pump(w, rc, src, func(b []byte) {
+	eof := pump(out, rc, src, func(b []byte) {
 		if readable {
 			tee.feed(b)
 		}
 	})
 	cancel()
+	if rw != nil {
+		_ = rw.Close()
+	}
 	tee.finish()
 
 	ok2xx := resp.StatusCode >= 200 && resp.StatusCode <= 299
@@ -701,14 +724,18 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 	}
 	up.ContentLength = int64(len(body))
 	up.GetBody = nil // never replayed: the gateway never retries
-	up.Header = forwardHeaders(r.Header)
-	s.scrubToken(up.Header)
 	if rt.provider != nil {
-		if err := rt.provider.attachCredential(up.Header); err != nil {
+		// Only what the provider needs: no cookies, no session or agent
+		// IDs, no SDK telemetry.
+		up.Header = providerHeaders(r.Header)
+		s.scrubToken(up.Header)
+		if _, err := rt.provider.attachCredential(up.Header); err != nil {
 			return nil, nil, err
 		}
 		return up, sent, nil
 	}
+	up.Header = forwardHeaders(r.Header)
+	s.scrubToken(up.Header)
 	switch s.o.Upstream.Kind {
 	case "anthropic":
 		up.Header.Set("x-api-key", s.o.Upstream.APIKey)
@@ -899,7 +926,13 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 		writeError(w, status, errorTypeFor(status), msg)
 		return
 	}
-	if m := s.countRoutedModel(body); m != "" {
+	m, err := s.countRoutedModel(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "fugaro: "+err.Error())
+		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusBadRequest, "request_bytes", len(body), "response_bytes", 0)
+		return
+	}
+	if m != "" {
 		// The only upstream here is Anthropic's, and a provider's model's
 		// conversation is not sent there; counting is not proven on the
 		// provider, so the agent estimates by itself.
@@ -951,20 +984,25 @@ func jsonString(s string) string {
 }
 
 // countRoutedModel is the model of a count_tokens body when a route claims
-// it ("" otherwise, and for a body that isn't an object: Anthropic refuses
-// that). Any spelling of the key "model" counts.
-func (s *Server) countRoutedModel(body []byte) string {
-	if len(s.o.Routes) == 0 || checkKeys(body) != nil {
-		return ""
+// it ("" when none does). With routes, a body that is not one clean JSON
+// object (duplicate or odd keys, malformed) is an error: it never falls
+// through to Anthropic, which may read it differently than the gateway
+// did. Any spelling of the key "model" counts.
+func (s *Server) countRoutedModel(body []byte) (string, error) {
+	if len(s.o.Routes) == 0 {
+		return "", nil
+	}
+	if err := checkKeys(body); err != nil {
+		return "", errors.New("the request body is not acceptable: " + err.Error())
 	}
 	var top map[string]any
-	if json.Unmarshal(body, &top) != nil {
-		return ""
+	if err := json.Unmarshal(body, &top); err != nil {
+		return "", errors.New("the request body is not a JSON object")
 	}
 	for k, v := range top {
 		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && s.routeFor(m) != nil {
-			return m
+			return m, nil
 		}
 	}
-	return ""
+	return "", nil
 }

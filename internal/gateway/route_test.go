@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -32,11 +35,16 @@ type routed struct {
 
 func newRouted(t *testing.T, auth string, stage Stage, provScript ...anthropicfake.Reply) *routed {
 	t.Helper()
+	return newRoutedCred(t, auth, func() (string, error) { return providerKey, nil }, stage, provScript...)
+}
+
+func newRoutedCred(t *testing.T, auth string, cred func() (string, error), stage Stage, provScript ...anthropicfake.Reply) *routed {
+	t.Helper()
 	prov, psrv := anthropicfake.New(t, provScript...)
 	h := newHarnessWith(t, func(o *Options) {
 		o.Routes = []Route{{
 			Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: psrv.URL + "/api", Auth: auth,
-			Credential: func() (string, error) { return providerKey, nil },
+			Credential: cred,
 		}}
 	})
 	h.gw.BeginStage(stage)
@@ -257,8 +265,7 @@ func TestGatewayTokenNeverSentUpstream(t *testing.T) {
 }
 
 func TestProviderKeyUnavailableSendsNothing(t *testing.T) {
-	r := newRouted(t, "bearer", routedStage)
-	r.gw.o.Routes[0].Credential = func() (string, error) { return "", fmt.Errorf("secret %s gone", providerKey) }
+	r := newRoutedCred(t, "bearer", func() (string, error) { return "", fmt.Errorf("secret %s gone", providerKey) }, routedStage)
 	resp, b := r.post(msg(dsModel, 100))
 	if resp.StatusCode != http.StatusBadGateway {
 		t.Fatalf("status %d", resp.StatusCode)
@@ -354,11 +361,341 @@ func TestStartRejectsBadRoutes(t *testing.T) {
 			t.Errorf("%s: Start accepted the route", name)
 		}
 	}
+	for name, rs := range map[string][]Route{
+		"claims anthropic/*": with(func(r *Route) { r.Models = []string{"anthropic/*"} }),
+		"claims anthropic/x": with(func(r *Route) { r.Models = []string{"anthropic/claude-sonnet-4"} }),
+		"upper-case name":    with(func(r *Route) { r.Name = "OpenRouter" }),
+		"name with a space":  with(func(r *Route) { r.Name = "open router" }),
+		"empty name":         with(func(r *Route) { r.Name = "" }),
+		"name too long":      with(func(r *Route) { r.Name = "a" + strings.Repeat("b", 20) }),
+	} {
+		if err := ok(rs, anth); err == nil {
+			t.Errorf("%s: Start accepted the route", name)
+		}
+	}
 	if err := ok([]Route{good}, Upstream{Kind: "vertex", Token: staticToken("t"), VertexProject: "proj-1234", VertexLocations: []string{"us-east5"}}); err == nil {
 		t.Error("routes with the vertex upstream were accepted")
 	}
 	// The Anthropic upstream stays strict: no path.
 	if err := ok(nil, Upstream{Kind: "anthropic", APIKey: testKey, BaseURL: "https://example.com/proxy"}); err == nil {
 		t.Error("a path on the Anthropic base was accepted")
+	}
+}
+
+// A provider echoes what it was sent in its 401s (masked or whole). Nothing
+// of the key may reach the agent or the log, and Claude Code must still see
+// the error type it acts on.
+func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
+	cases := []struct {
+		status int
+		typ    string
+	}{
+		{401, "authentication_error"}, {429, "rate_limit_error"}, {529, "overloaded_error"}, {400, "invalid_request_error"},
+	}
+	for _, auth := range []string{"bearer", "x-api-key"} {
+		for _, c := range cases {
+			t.Run(fmt.Sprintf("%s/%d", auth, c.status), func(t *testing.T) {
+				r := newRouted(t, auth, routedStage)
+				r.prov.Func = func(req *http.Request, _ []byte) anthropicfake.Reply {
+					key := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+					if key == "" {
+						key = req.Header.Get("x-api-key")
+					}
+					masked := key[:9] + "..." + key[len(key)-4:]
+					return anthropicfake.Reply{Status: c.status,
+						Header: http.Header{
+							"X-Echo":           {"key " + key},
+							"X-Masked":         {masked},
+							"Www-Authenticate": {"Bearer realm=" + key},
+							"Set-Cookie":       {"k=" + key},
+							"Retry-After":      {"7"},
+							"X-Request-Id":     {"req_123"},
+							"X-Provider-Org":   {"org-secret"},
+						},
+						Body: fmt.Sprintf(`{"type":"error","error":{"type":%q,"message":"invalid key %s (%s) in %s"},"user_id":"u-secret"}`,
+							c.typ, key, masked, key[:12])}
+				}
+				resp, b := r.post(msg(dsModel, 100))
+				if resp.StatusCode != c.status {
+					t.Fatalf("status %d, want %d: %s", resp.StatusCode, c.status, b)
+				}
+				typ, m := apiError(t, b)
+				if typ != c.typ {
+					t.Errorf("error type %q, want %q", typ, c.typ)
+				}
+				if strings.Contains(b, "u-secret") || strings.Contains(m, "invalid key") {
+					t.Errorf("provider text reached the agent: %s", b)
+				}
+				hs := fmt.Sprint(resp.Header)
+				for _, leak := range []string{providerKey, providerKey[:9], providerKey[:12], providerKey[len(providerKey)-4:], "org-secret"} {
+					if strings.Contains(b+hs, leak) {
+						t.Errorf("%q reached the agent: %s %s", leak, b, hs)
+					}
+					if strings.Contains(r.logs.String(), leak) {
+						t.Errorf("%q reached the log: %s", leak, r.logs.String())
+					}
+				}
+				if resp.Header.Get("Retry-After") != "7" || resp.Header.Get("X-Request-Id") != "req_123" || !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+					t.Errorf("an allowlisted header was lost: %v", resp.Header)
+				}
+				if resp.Header.Get("Set-Cookie") != "" {
+					t.Error("a cookie reached the agent")
+				}
+				if l := r.gw.Ledger(); l.Reserved != 0 {
+					t.Errorf("reserved %d", l.Reserved)
+				}
+			})
+		}
+	}
+}
+
+// An error body that is not an Anthropic error still maps to a usable type.
+func TestUpstreamErrorWithoutTypeGetsOneFromStatus(t *testing.T) {
+	for status, want := range map[int]string{401: "authentication_error", 403: "permission_error", 404: "not_found_error", 429: "rate_limit_error", 500: "api_error", 502: "api_error", 503: "overloaded_error", 422: "invalid_request_error"} {
+		r := newRouted(t, "bearer", routedStage, anthropicfake.Reply{Status: status, Body: "<html>" + providerKey + "</html>"})
+		resp, b := r.post(msg(dsModel, 100))
+		if typ, _ := apiError(t, b); resp.StatusCode != status || typ != want || strings.Contains(b, providerKey) {
+			t.Errorf("%d: got %d %q %s", status, resp.StatusCode, typ, b)
+		}
+	}
+}
+
+// Whatever else comes back on a routed 2xx (a stream, a body, a header)
+// is scrubbed of the exact key too.
+func TestRoutedSuccessScrubsKey(t *testing.T) {
+	u := pricing.Usage{Input: 10, Output: 20}
+	t.Run("body", func(t *testing.T) {
+		rep := anthropicfake.MessageOK(dsModel, u)
+		rep.Body = strings.Replace(rep.Body, `"msg_fake"`, `"`+providerKey+`"`, 1)
+		rep.Header = http.Header{"X-Echo": {"Bearer " + providerKey}, "X-Ok": {"fine"}}
+		r := newRouted(t, "bearer", routedStage, rep)
+		resp, b := r.post(msg(dsModel, 100))
+		if resp.StatusCode != 200 || strings.Contains(b+fmt.Sprint(resp.Header), providerKey) || resp.Header.Get("X-Ok") != "fine" {
+			t.Errorf("%d %s %v", resp.StatusCode, b, resp.Header)
+		}
+	})
+	t.Run("stream", func(t *testing.T) {
+		rep := anthropicfake.StreamOK(dsModel, u)
+		rep.Events = append([]anthropicfake.Event(nil), rep.Events...)
+		rep.Events[0].Data = strings.Replace(rep.Events[0].Data, `"msg_fake"`, `"`+providerKey+`"`, 1)
+		r := newRouted(t, "bearer", routedStage, rep)
+		resp, b := r.do(r.request(context.Background(), "/v1/messages", msg(dsModel, 100, `"stream":true`)))
+		if resp.StatusCode != 200 || strings.Contains(b, providerKey) || !strings.Contains(b, "message_stop") || !strings.Contains(b, "[redacted]") {
+			t.Errorf("%d %s", resp.StatusCode, b)
+		}
+	})
+}
+
+func TestRedactWriterAcrossChunks(t *testing.T) {
+	var out strings.Builder
+	rw := newRedactWriter(&out, "SECRETKEY")
+	for _, c := range []string{"a SEC", "RETK", "EY b SECRETKEYSECR", "ETKEY c SECRE", "x SECRET"} {
+		if _, err := rw.Write([]byte(c)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rw.Close()
+	if got, want := out.String(), "a [redacted] b [redacted][redacted] c SECREx SECRET"; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestProviderGetsOnlyAllowlistedHeaders(t *testing.T) {
+	u := pricing.Usage{Input: 1, Output: 1}
+	r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, u))
+	r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, u)}
+	hdr := []string{"Accept", "application/json", "Anthropic-Beta", "b1", "User-Agent", "claude-cli/9",
+		"Cookie", "sid=1", "X-Claude-Code-Session-Id", "sess", "X-Claude-Code-Agent-Id", "ag",
+		"X-Stainless-Os", "Linux", "X-App", "cli", "X-Custom", "v"}
+	if resp, b := r.post(msg(dsModel, 100), hdr...); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	h := r.prov.Seen()[0].Header
+	for _, k := range []string{"Cookie", "X-Claude-Code-Session-Id", "X-Claude-Code-Agent-Id", "X-Stainless-Os", "X-App", "X-Custom"} {
+		if h.Get(k) != "" {
+			t.Errorf("%s reached the provider", k)
+		}
+	}
+	for k, want := range map[string]string{"Content-Type": "application/json", "Anthropic-Version": "2023-06-01", "Anthropic-Beta": "b1", "User-Agent": "claude-cli/9", "Accept": "application/json"} {
+		if h.Get(k) != want {
+			t.Errorf("%s = %q, want %q", k, h.Get(k), want)
+		}
+	}
+	// Anthropic gets everything it got before.
+	if resp, b := r.post(msg(sonnet, 100), hdr...); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	ah := r.fake.Seen()[0].Header
+	for _, k := range []string{"Cookie", "X-Claude-Code-Session-Id", "X-Stainless-Os", "X-Custom"} {
+		if ah.Get(k) == "" {
+			t.Errorf("Anthropic lost %s", k)
+		}
+	}
+}
+
+func TestScrubTokenStrict(t *testing.T) {
+	r := newRouted(t, "bearer", routedStage)
+	s := r.gw
+	tok := s.Token()
+	for name, v := range map[string]string{
+		"plain":      "a" + tok,
+		"upper":      strings.ToUpper(tok),
+		"percent":    "x%" + fmt.Sprintf("%02X", tok[0]) + tok[1:],
+		"lower pct":  "x%" + fmt.Sprintf("%02x", tok[0]) + tok[1:],
+		"half pct":   "x%" + fmt.Sprintf("%02x", tok[0]) + strings.ToUpper(tok[1:]),
+		"bad escape": "100%zz" + tok,
+	} {
+		h := http.Header{"X-A": {v}, "X-B": {"keep"}}
+		s.scrubToken(h)
+		if h.Get("X-A") != "" || h.Get("X-B") != "keep" {
+			t.Errorf("%s: %v", name, h)
+		}
+		if q := s.upstreamQuery(&http.Request{URL: &url.URL{RawQuery: "k=" + v}}); q != "" {
+			t.Errorf("%s: the query kept the token: %q", name, q)
+		}
+	}
+	if q := s.upstreamQuery(&http.Request{URL: &url.URL{RawQuery: "beta=true"}}); q != "?beta=true" {
+		t.Errorf("an innocent query: %q", q)
+	}
+}
+
+func TestStartCopiesRoutes(t *testing.T) {
+	routes := []Route{{Name: "openrouter", Models: []string{"deepseek/*"}, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+		Credential: func() (string, error) { return "k", nil }}}
+	gw, err := Start(context.Background(), Options{Upstream: Upstream{Kind: "anthropic", APIKey: testKey}, Routes: routes, Prices: pricing.Embedded(), Mode: Observe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gw.Close(context.Background()) })
+	routes[0].Models[0] = "claude-*"
+	routes[0].BaseURL = "https://evil.example"
+	routes[0].Auth = "x-api-key"
+	if r := gw.routeFor(dsModel); r == nil || r.BaseURL != "https://openrouter.ai/api" || r.Auth != "bearer" {
+		t.Errorf("the caller's slice changed the gateway's routes: %+v", r)
+	}
+	if gw.routeFor(sonnet) != nil {
+		t.Error("a Claude model got routed after the caller edited its slice")
+	}
+}
+
+// Route.Credential is called from concurrent calls.
+func TestConcurrentRoutedCalls(t *testing.T) {
+	u := pricing.Usage{Input: 1, Output: 1}
+	var calls atomic.Int64
+	r := newRoutedCred(t, "bearer", func() (string, error) { calls.Add(1); return providerKey, nil }, routedStage)
+	r.prov.Func = func(*http.Request, []byte) anthropicfake.Reply { return anthropicfake.MessageOK(dsModel, u) }
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if resp, b := r.post(msg(dsModel, 100)); resp.StatusCode != 200 {
+				t.Errorf("%d %s", resp.StatusCode, b)
+			}
+		}()
+	}
+	wg.Wait()
+	if r.prov.Count() != 8 || calls.Load() < 8 {
+		t.Errorf("provider saw %d, credential read %d times", r.prov.Count(), calls.Load())
+	}
+}
+
+// Odd spellings of the model: each is the pin exactly (and goes where the
+// pin goes) or is refused as unpinned; none reaches another upstream.
+func TestOddModelSpellingsNeverMisroute(t *testing.T) {
+	u := pricing.Usage{Input: 1, Output: 1}
+	for name, body := range map[string]string{
+		"leading space":   msg(" "+dsModel, 100),
+		"trailing space":  msg(dsModel+" ", 100),
+		"fullwidth slash": msg("deepseek\uff0fdeepseek-v4-flash", 100),
+		"json-escaped /":  strings.Replace(msg(dsModel, 100), "deepseek/", `deepseek\/`, 1),
+		"json-escaped d":  strings.Replace(msg(dsModel, 100), "deepseek", `\u0064eepseek`, 1),
+		"upper":           msg(strings.ToUpper(dsModel), 100),
+		"nul suffix":      msg(dsModel+`\u0000`, 100),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, u))
+			r.fake.Script = []anthropicfake.Reply{anthropicfake.MessageOK(sonnet, u)}
+			resp, b := r.post(body)
+			if r.fake.Count() != 0 {
+				t.Fatalf("a routed-looking model reached Anthropic: %d %s", resp.StatusCode, b)
+			}
+			switch resp.StatusCode {
+			case 400:
+				if r.prov.Count() != 0 {
+					t.Error("refused, yet sent to the provider")
+				}
+			case 200:
+				if r.prov.Count() != 1 {
+					t.Error("accepted, but not at the provider")
+				}
+			default:
+				t.Errorf("status %d %s", resp.StatusCode, b)
+			}
+		})
+	}
+	// A pin with the odd spelling is matched only by that spelling.
+	for _, pin := range []string{" " + dsModel, dsModel + " "} {
+		r := newRouted(t, "bearer", Stage{Name: "implement", Model: pin, Background: pin})
+		if resp, _ := r.post(msg(dsModel, 100)); resp.StatusCode != 400 || r.prov.Count() != 0 || r.fake.Count() != 0 {
+			t.Errorf("pin %q let the plain ID through: %d", pin, resp.StatusCode)
+		}
+	}
+}
+
+func TestPinsAcrossProviders(t *testing.T) {
+	u := pricing.Usage{Input: 1, Output: 1}
+	// A Claude pin does not admit a routed model.
+	r := newRouted(t, "bearer", Stage{Name: "implement", Model: sonnet, Background: haiku})
+	if resp, _ := r.post(msg(dsModel, 100)); resp.StatusCode != 400 || r.prov.Count() != 0 || r.fake.Count() != 0 {
+		t.Errorf("claude pin, routed request: %d", resp.StatusCode)
+	}
+	// A routed pin does not admit a Claude model, by ID or alias.
+	r = newRouted(t, "bearer", Stage{Name: "implement", Model: dsModel, Background: dsModel})
+	for _, m := range []string{sonnet, "claude-sonnet-4-5", haiku} {
+		if resp, _ := r.post(msg(m, 100)); resp.StatusCode != 400 || r.prov.Count() != 0 || r.fake.Count() != 0 {
+			t.Errorf("routed pin, %s request: %d", m, resp.StatusCode)
+		}
+	}
+	// The background model may be the routed one.
+	r = newRouted(t, "bearer", Stage{Name: "implement", Model: sonnet, Background: dsModel}, anthropicfake.MessageOK(dsModel, u))
+	if resp, b := r.post(msg(dsModel, 100)); resp.StatusCode != 200 || r.prov.Count() != 1 || r.fake.Count() != 0 {
+		t.Errorf("routed background: %d %s", resp.StatusCode, b)
+	}
+}
+
+func TestStageMaxOutputAppliesToRoutedModel(t *testing.T) {
+	r := newRouted(t, "bearer", Stage{Name: "implement", Model: dsModel, Background: sonnet, MaxOutputTokens: 500})
+	resp, b := r.post(msg(dsModel, 501))
+	if resp.StatusCode != 400 || !strings.Contains(b, "above the stage's limit") || r.prov.Count() != 0 {
+		t.Errorf("%d %s", resp.StatusCode, b)
+	}
+	r.prov.Script = []anthropicfake.Reply{anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1})}
+	if resp, b := r.post(msg(dsModel, 500)); resp.StatusCode != 200 {
+		t.Errorf("%d %s", resp.StatusCode, b)
+	}
+}
+
+func TestCountTokensMalformedWithRoutesIs400(t *testing.T) {
+	r := newRouted(t, "bearer", routedStage)
+	r.fake.Script = []anthropicfake.Reply{{Body: `{"input_tokens":7}`}}
+	for name, body := range map[string]string{
+		"duplicate model": `{"model":"` + sonnet + `","model":"` + dsModel + `","messages":[]}`,
+		"duplicate case":  `{"model":"` + sonnet + `","Model":"` + dsModel + `","messages":[]}`,
+		"malformed":       `{"model":"` + dsModel + `",`,
+		"not an object":   `[1]`,
+	} {
+		resp, b := r.post2("/v1/messages/count_tokens", body)
+		if resp.StatusCode != 400 {
+			t.Errorf("%s: status %d %s, want 400", name, resp.StatusCode, b)
+		}
+	}
+	if r.fake.Count() != 0 || r.prov.Count() != 0 {
+		t.Errorf("a malformed count was forwarded (Anthropic %d, provider %d)", r.fake.Count(), r.prov.Count())
+	}
+	// Without routes the body still goes to Anthropic, as before.
+	h := newHarness(t, anthropicfake.Reply{Body: `{"input_tokens":7}`})
+	if resp, _ := h.post2("/v1/messages/count_tokens", `{"model":"`+sonnet+`","model":"x"}`); resp.StatusCode == 400 && h.fake.Count() == 0 {
+		t.Error("the no-routes gateway changed its count_tokens behaviour")
 	}
 }

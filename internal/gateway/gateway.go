@@ -191,6 +191,7 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
+	o.Routes = copyRoutes(o.Routes)
 	var tok [32]byte
 	if _, err := rand.Read(tok[:]); err != nil {
 		return nil, fmt.Errorf("gateway: token: %w", err)
