@@ -60,14 +60,6 @@ func TestHistorySweepRemovesCrashedRun(t *testing.T) {
 	}
 }
 
-func TestRolloverIsNotYetImplemented(t *testing.T) {
-	newHistoryFixture(t)
-	_, _, err := execute(t, "budget", "history", "--rollover")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "M9d") {
-		t.Fatalf("err = %v, want exit 1 naming M9d", err)
-	}
-}
-
 func TestHistoryNeedsExactlyOneMode(t *testing.T) {
 	newHistoryFixture(t)
 	for _, args := range [][]string{{"budget", "history"}, {"budget", "history", "--sweep", "--rollover"}} {
