@@ -157,3 +157,15 @@ func TestProviderKeyEnv(t *testing.T) {
 		t.Error("npm-token is a provider secret")
 	}
 }
+
+func TestAllowsDataIgnoresCase(t *testing.T) {
+	p := ModelProvider{AllowDataTo: []string{"EdgeAppInc/FugaroSandbox"}}
+	for repo, want := range map[string]bool{
+		"EdgeAppInc/FugaroSandbox": true, "edgeappinc/fugarosandbox": true,
+		"edgeappinc/edgeweb": false, "": false,
+	} {
+		if got := p.AllowsData(repo); got != want {
+			t.Errorf("AllowsData(%q) = %v", repo, got)
+		}
+	}
+}

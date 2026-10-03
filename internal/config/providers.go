@@ -55,8 +55,11 @@ func (p ModelProvider) Matches(model string) bool {
 	return slices.ContainsFunc(p.Models, func(pat string) bool { return patternMatches(pat, model) })
 }
 
-// AllowsData reports whether repo (owner/name) may send code to p.
-func (p ModelProvider) AllowsData(repo string) bool { return slices.Contains(p.AllowDataTo, repo) }
+// AllowsData reports whether repo (owner/name) may send code to p. Git hosts
+// treat owner and repository names case-insensitively, so so does this.
+func (p ModelProvider) AllowsData(repo string) bool {
+	return slices.ContainsFunc(p.AllowDataTo, func(r string) bool { return strings.EqualFold(r, repo) })
+}
 
 func patternMatches(pat, model string) bool {
 	if pre, ok := strings.CutSuffix(pat, "*"); ok {
@@ -189,7 +192,7 @@ func IsProviderKeyEnv(name string) bool {
 // both (the job spec, secrets set) call this.
 func ProviderBySecret(providers map[string]ModelProvider, secret string) (name string, ok bool) {
 	for _, n := range sortedKeys(providers) {
-		if providers[n].Secret == secret {
+		if strings.EqualFold(providers[n].Secret, secret) {
 			return n, true
 		}
 	}

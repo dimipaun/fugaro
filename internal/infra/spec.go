@@ -546,6 +546,16 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	// repository the owner allowed to send code there gets it. It is mounted
 	// only with api-key (a run does not mix credentials) and as a variable
 	// the agent's environment never carries.
+	//
+	// Limitation: every workflow of an allowed repository gets the key,
+	// whether or not its pins name that provider's models. The spec sees
+	// only the checked-in agent block (c.in.Cfg.Agent, shared by all
+	// workflows), but the models a run uses come from the branch's
+	// fugaro.yaml and a task's --model override, neither known when the job
+	// is deployed; gating on the visible pins would make a run that pins a
+	// provider model later fail for a missing key. The key reaches only the
+	// runner, never the agent, and the repository is already one the owner
+	// allowed to send code to the provider.
 	if c.in.Cfg.Agent.Auth == "api-key" {
 		for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
 			if p := lc.Providers[name]; p.AllowsData(c.in.Repo) {

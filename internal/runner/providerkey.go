@@ -27,8 +27,22 @@ func ProviderCredential(env []string, p config.ModelProvider) (cred func() (stri
 		return nil, "", errors.New("model provider has no secret")
 	case value == "":
 		return nil, "", fmt.Errorf("the key of model provider secret %s is not mounted (%s is not set in the runner environment): run fugaro secrets set %s", p.Secret, name, p.Secret)
+	case !plainKey(value):
+		return nil, "", fmt.Errorf("%s holds whitespace, a control character or a non-ASCII character: the key was pasted with extra text (re-run fugaro secrets set %s)", name, p.Secret)
 	case len(value) < minSecretLen:
 		return nil, "", fmt.Errorf("%s is shorter than %d bytes, so it cannot be redacted safely", name, minSecretLen)
 	}
 	return func() (string, error) { return value, nil }, value, nil
+}
+
+// plainKey reports whether s is printable ASCII without spaces, as every
+// provider key is; a trailing newline or a space from a paste would make the
+// header invalid or the redaction miss the real value.
+func plainKey(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] <= ' ' || s[i] >= 0x7f {
+			return false
+		}
+	}
+	return true
 }

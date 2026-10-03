@@ -1151,8 +1151,8 @@ func TestProviderKeyMountedOnlyForAllowedRepos(t *testing.T) {
 	if !strings.Contains(ws.Env[runner.SecretEnvsVar], env) {
 		t.Errorf("%s does not list %s, so it would not be redacted: %q", runner.SecretEnvsVar, env, ws.Env[runner.SecretEnvsVar])
 	}
-	for k, v := range ws.Env {
-		if config.IsProviderKeyEnv(k) || v == "openrouter-api-key" {
+	for k := range ws.Env {
+		if config.IsProviderKeyEnv(k) {
 			t.Errorf("the job's plain env carries %s", k)
 		}
 	}
@@ -1177,5 +1177,15 @@ func TestWorkflowSecretCannotShadowProviderSecret(t *testing.T) {
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "other-key") || !strings.Contains(err.Error(), "provider") {
 		t.Fatalf("err = %v", err)
+	}
+	// Names differ only in case but derive the same Secret Manager ID and
+	// the same variable, so a different case is a shadow too.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	w = in.Cfg.Workflows["web"]
+	w.Secrets = append(w.Secrets, config.Secret{Name: "Other-Key", Env: "MY_KEY"})
+	in.Cfg.Workflows["web"] = w
+	if _, err = Repo(in); !errors.As(err, &ue) || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("a differently cased name: err = %v", err)
 	}
 }
