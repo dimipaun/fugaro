@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -236,8 +235,8 @@ func seniorRound(rs []runstore.ReviewSummary) int {
 	return 0
 }
 
-// reportedGapPct is how far apart a provider's reported cost and Fugaro's
-// charge may be before diagnose warns.
+// reportedGapPct is how far above Fugaro's charge (without the route fee) a
+// provider's reported cost may be before diagnose warns.
 const reportedGapPct = 10
 
 // routeOf fills d's route, reported-vs-charge and pin warnings from the
@@ -252,16 +251,26 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	if c.ReportedUSD > 0 {
 		// The provider's charge is the routes' spend; the run's ModelUSD also
 		// holds Claude's, and "unattributed" may be a Claude call's.
-		var charge float64
+		// The provider reports the model's price, not Fugaro's route fee, so
+		// the comparison is against the charge without the fee.
+		var charge, bare float64
 		for r, v := range c.RouteBy {
-			if r != "unattributed" {
-				charge += v
+			if r == "unattributed" {
+				continue
 			}
+			charge += v
+			fee := 0.0
+			if lc != nil {
+				fee = lc.Providers[r].RouteFeePct
+			}
+			bare += v / (1 + fee/100)
 		}
 		d.Reported, d.Charge = c.ReportedUSD, charge
-		if gap := math.Abs(d.Reported-charge) / math.Max(charge, 1e-9) * 100; charge <= 0 || gap > reportedGapPct {
-			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f but the table charged $%.4f (more than %d%% apart): check model_prices and the account's provider settings",
-				d.Reported, charge, reportedGapPct)
+		// Only a report above the charge is a sign of under-pricing: a lower
+		// one may be partial reporting (a cut stream, a call without a cost).
+		if d.Reported > bare*(1+reportedGapPct/100.0) {
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low (partial reporting is also possible); check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, bare)
 		}
 	}
 	prices := pricing.Embedded()

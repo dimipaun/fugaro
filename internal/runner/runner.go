@@ -1073,7 +1073,7 @@ func (r *run) firstLine(ctx context.Context, reviewPrompt, sys, sessionID string
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):
-			r.d.Log.Warn("the first-line review failed; skipping it", "round", round, "err", skipped.err)
+			r.d.Log.Warn("the first-line review failed; skipping it", "round", round, "err", r.redact(skipped.err.Error()))
 		case !ok:
 			return sessionID, false
 		default:

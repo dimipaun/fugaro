@@ -14,6 +14,8 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -396,7 +398,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
 	cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "claude-sonnet-5-5": 0.12}
 	cost.RouteBy = map[string]float64{"openrouter": 0.30}
-	cost.ReportedUSD = 0.25
+	cost.ReportedUSD = 0.40
 	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
 		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost}
 	if err := s.WriteRecord(ctx, rec); err != nil {
@@ -406,7 +408,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.2500", "charged $0.3000", "unverified placeholder", "more than 10% apart"} {
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "unverified placeholder", "more than 10% above", "may be too low"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}
@@ -419,7 +421,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err := json.Unmarshal([]byte(js), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.Route["openrouter"] != 0.30 || d.Reported != 0.25 || d.Charge != 0.30 || len(d.PinWarnings) != 1 || d.ReportedWarning == "" {
+	if d.Route["openrouter"] != 0.30 || d.Reported != 0.40 || d.Charge != 0.30 || len(d.PinWarnings) != 1 || d.ReportedWarning == "" {
 		t.Fatalf("route %v reported %v charge %v warnings %v", d.Route, d.Reported, d.Charge, d.PinWarnings)
 	}
 	if strings.Contains(human+js, key) {
@@ -453,7 +455,7 @@ func TestDiagnoseReportedComparesTheProviderRouteOnly(t *testing.T) {
 	for i, tc := range []struct {
 		reported float64
 		warn     bool
-	}{{0.31, false}, {0.40, true}} {
+	}{{0.31, false}, {0.10, false}, {0.32, false}, {0.40, true}} {
 		id := fmt.Sprintf("20260927-14000%d-aaaa", i)
 		exec := seedRun(t, f, id, "", "someone@example.com", true)
 		cost := runstore.NewCost(0.60, 0, runstore.BasisAPIList)
@@ -512,5 +514,29 @@ func TestDiagnoseFindingsFromSeniorRound(t *testing.T) {
 	}
 	if len(d.Findings) != 1 || d.Findings[0].Summary != "senior finding" {
 		t.Fatalf("findings = %+v", d.Findings)
+	}
+}
+
+// The provider reports the model's price, so the comparison leaves the route
+// fee out of the charge: a report equal to the bare price is not a gap, one
+// 10% above it is, and a report below the charge never warns.
+func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{"openrouter": {RouteFeePct: 50}}}
+	for _, tc := range []struct {
+		reported float64
+		warn     bool
+	}{{0.30, false}, {0.329, false}, {0.34, true}, {0.05, false}} {
+		cost := runstore.NewCost(0.45, 0, runstore.BasisAPIList)
+		cost.RouteBy = map[string]float64{"openrouter": 0.45} // 0.30 bare plus the 50% fee
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.45}
+		cost.ReportedUSD = tc.reported
+		var d Diagnosis
+		routeOf(&d, &runstore.Record{Cost: &cost}, lc, func(s string) string { return s })
+		if (d.ReportedWarning != "") != tc.warn {
+			t.Errorf("reported %v: warning %q, want warning %v", tc.reported, d.ReportedWarning, tc.warn)
+		}
+		if tc.warn && !strings.Contains(d.ReportedWarning, "may") {
+			t.Errorf("warning %q isn't worded as a possibility", d.ReportedWarning)
+		}
 	}
 }

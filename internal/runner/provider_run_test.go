@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -257,6 +258,36 @@ func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
 	}
 	if strings.Contains(g.logs.String(), providerKey) {
 		t.Fatal("the log has the key")
+	}
+}
+
+// TestFirstLineErrorEchoingKeyIsRedacted: a first-line stage that fails with
+// an error (and stderr) carrying the provider key is skipped with a log line,
+// and the key reaches no log, record or stored object.
+func TestFirstLineErrorEchoingKeyIsRedacted(t *testing.T) {
+	g := providerRun(t, providerFirstLine(t, "on"), "observe", "", nil, "acme/app")
+	broken := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		_, _ = req.Stderr.Write([]byte("claude: " + providerKey + "\n"))
+		return agent.Result{}, errors.New("upstream said: bad key " + providerKey)
+	}
+	rec, err := g.run(t, implement("feature"), broken, review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if got := tiers(rec); !eq(got, "first:none", "senior:ship") {
+		t.Fatalf("reviews = %v", got)
+	}
+	if !strings.Contains(g.logs.String(), "the first-line review failed") {
+		t.Fatal("the skip was not logged")
+	}
+	if strings.Contains(g.logs.String(), providerKey) {
+		t.Fatal("the log has the key")
+	}
+	if keys := objectsContaining(t, g.harness, providerKey); len(keys) > 0 {
+		t.Fatalf("the key is stored in %v", keys)
+	}
+	if got, _ := json.Marshal(rec); bytes.Contains(got, []byte(providerKey)) {
+		t.Fatalf("the record has the key: %s", got)
 	}
 }
 
