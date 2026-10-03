@@ -15,7 +15,7 @@ import (
 // providers block) to a workflow job: compact JSON, an object keyed by the
 // provider's name. It holds no key, only the name of the secret that has it,
 // and only the providers that list the job's repository in allow_data_to are
-// in it. fugaro init --repo sets it from the local config; a repository's
+// in it, each with allow_data_to cut down to that repository. fugaro init --repo sets it from the local config; a repository's
 // fugaro.yaml has no say in it.
 const ModelProvidersEnv = "FUGARO_MODEL_PROVIDERS"
 
@@ -29,6 +29,10 @@ func ProvidersEnv(providers map[string]config.ModelProvider, repo string) (strin
 	out := map[string]config.ModelProvider{}
 	for _, name := range slices.Sorted(maps.Keys(providers)) {
 		if p := providers[name]; p.AllowsData(repo) {
+			// The run only needs to know it is allowed: the other
+			// repositories the owner listed stay out of the job's
+			// environment.
+			p.AllowDataTo = []string{repo}
 			out[name] = p
 		}
 	}

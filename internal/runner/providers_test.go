@@ -14,7 +14,7 @@ func lookup(m map[string]string) func(string) (string, bool) {
 
 func TestProvidersEnvRoundTrip(t *testing.T) {
 	p := orProvider
-	p.AllowDataTo = []string{"acme/app"}
+	p.AllowDataTo = []string{"acme/app", "acme/private-one"}
 	q := orProvider
 	q.Secret, q.Models, q.AllowDataTo = "other-key", []string{"qwen/*"}, []string{"acme/else"}
 	all := map[string]config.ModelProvider{"openrouter": p, "other": q}
@@ -22,11 +22,14 @@ func TestProvidersEnvRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if strings.Contains(v, "acme/private-one") {
+		t.Fatalf("another repository the owner listed is in the job's env: %s", v)
+	}
 	if strings.Contains(v, "other-key") {
 		t.Fatalf("a provider the repo may not use: %s", v)
 	}
 	got, err := runner.ProvidersFromEnv(lookup(map[string]string{runner.ModelProvidersEnv: v}))
-	if err != nil || len(got) != 1 || got["openrouter"].Secret != p.Secret || got["openrouter"].Models[0] != "deepseek/*" {
+	if err != nil || len(got) != 1 || got["openrouter"].Secret != p.Secret || got["openrouter"].Models[0] != "deepseek/*" || !got["openrouter"].AllowsData("acme/app") || len(got["openrouter"].AllowDataTo) != 1 {
 		t.Fatalf("got %+v, %v", got, err)
 	}
 	if v, _ := runner.ProvidersEnv(all, "acme/none"); v != "" {

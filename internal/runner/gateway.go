@@ -276,6 +276,7 @@ func (r *run) closeGateway() {
 	r.mu.Unlock()
 	r.rec.CostUSD = led.Used.USD()
 	r.updateCost()
+	r.warnReportedGap()
 }
 
 // routingKnob reports whether the live test's knob skips the
@@ -352,6 +353,9 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
+	if r.spend.Mode == "observe" && r.runsProviderModel() {
+		r.d.Log.Warn("budget.mode is observe: provider models are real dollars and observe never refuses a call; use enforce with a per-run cap to bound the spend", "code", "provider_observe")
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
@@ -360,6 +364,39 @@ func (r *run) checkBudget() error {
 	}
 	return nil
 }
+
+// runsProviderModel is whether any role of the run is served by a provider.
+func (r *run) runsProviderModel() bool {
+	a := r.cfg.Agent
+	for _, m := range []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()} {
+		if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// warnReportedGap logs, once, when the providers' own cost figures are more
+// than reportedGapPct above what the gateway charged on the provider routes
+// (the table price settles, so a high report means a wrong price or a
+// served-by fallback; a low one only means Fugaro over-charged).
+func (r *run) warnReportedGap() {
+	r.mu.Lock()
+	var charged pricing.Micros
+	for _, v := range r.routeBy {
+		charged += v
+	}
+	reported := r.reported
+	r.mu.Unlock()
+	if reported <= 0 || float64(reported) <= float64(charged)*(1+float64(reportedGapPct)/100) {
+		return
+	}
+	r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% over the $%.4f charged: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, charged.USD()), "code", "reported_gap")
+}
+
+// reportedGapPct is the margin (percent) a provider's reported cost may
+// exceed the charge by before the run warns.
+const reportedGapPct = 10
 
 // checkProviderModels is the owner's data policy for provider models
 // (config.CheckProviderPolicy, config.CheckProviderAuth). The run's own

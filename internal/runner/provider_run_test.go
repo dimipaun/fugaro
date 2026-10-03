@@ -59,10 +59,8 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	if got := g.compat.Header(0, "Authorization"); got != "Bearer "+providerKey {
 		t.Fatalf("the provider saw Authorization %q", got)
 	}
-	for _, h := range []string{"X-Api-Key"} {
-		if got := g.compat.Header(0, h); got != "" {
-			t.Fatalf("the provider saw %s %q", h, got)
-		}
+	if got := g.compat.Header(0, "X-Api-Key"); got != "" {
+		t.Fatalf("the provider saw X-Api-Key %q", got)
 	}
 	if g.fake.Count() != 0 {
 		t.Fatalf("Anthropic saw %d calls of a provider-model run", g.fake.Count())
@@ -98,6 +96,54 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	}
 	if strings.Contains(g.logs.String(), providerKey) {
 		t.Fatal("the log has the provider key")
+	}
+}
+
+// Provider models are real dollars but observe never refuses a call: the run
+// says so once at bootstrap (and not under enforce, nor for a Claude-only run).
+func TestProviderObserveModeWarns(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500}
+	for mode, cap := range map[string]string{"observe": "", "enforce": "5"} {
+		g := providerRun(t, providerPinned(t), mode, cap, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+		var status int
+		var body string
+		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("%s: rec = %+v, err = %v", mode, rec, err)
+		}
+		got := strings.Count(g.logs.String(), "code=provider_observe")
+		if want := map[string]int{"observe": 1, "enforce": 0}[mode]; got != want {
+			t.Errorf("%s: %d observe warnings, want %d:\n%s", mode, got, want, g.logs.String())
+		}
+	}
+	g := newGW(t, gwConfig(t, ""), "observe", "", capScript(1)...)
+	if _, err := g.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(g.logs.String(), "provider_observe") {
+		t.Error("a Claude-only run warned about provider spend")
+	}
+}
+
+// A provider that reports more than 10% above the charge is logged once at
+// the end of the run (warn level, no key); a report below the charge is not.
+func TestReportedAboveChargeWarnsOnce(t *testing.T) {
+	use := pricing.Usage{Input: 1000, Output: 500} // charged 3000 micros at the starter prices
+	for _, c := range []struct {
+		cost float64
+		warn int
+	}{{0.0100, 1}, {0.0031, 0}, {0.0010, 0}} {
+		g := providerRun(t, providerPinned(t), "observe", "", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
+		var status int
+		var body string
+		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+			t.Fatalf("rec = %+v, err = %v", rec, err)
+		}
+		if n := strings.Count(g.logs.String(), "code=reported_gap"); n != c.warn {
+			t.Errorf("reported %v: %d warnings, want %d:\n%s", c.cost, n, c.warn, g.logs.String())
+		}
+		if strings.Contains(g.logs.String(), providerKey) {
+			t.Error("the log has the provider key")
+		}
 	}
 }
 
