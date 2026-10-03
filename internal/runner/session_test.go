@@ -255,7 +255,7 @@ func TestSaveSessionOnCancel(t *testing.T) {
 }
 
 func TestSaveSessionOnFinalizeError(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.deps.RetryDelay = time.Millisecond
 	h.provider.FailEnsure = 3
 	rec, err := h.run(t, withSession(implement("feature"), "", "finalize\n"), review("ship", 0))

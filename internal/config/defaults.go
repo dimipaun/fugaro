@@ -20,6 +20,10 @@ func applyDefaults(c *Config) {
 	if c.Git.BaseBranch == "" {
 		c.Git.BaseBranch = "main"
 	}
+	if c.Git.PR.EarlyDraft == nil {
+		t := true
+		c.Git.PR.EarlyDraft = &t
+	}
 	if c.Agent.Auth == "" {
 		c.Agent.Auth = "vertex"
 	}

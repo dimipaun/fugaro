@@ -36,7 +36,8 @@
           "additionalProperties": false,
           "properties": {
             "labels": { "type": "array", "items": { "type": "string" } },
-            "reviewers": { "type": "array", "items": { "type": "string" } }
+            "reviewers": { "type": "array", "items": { "type": "string" } },
+            "early_draft": { "type": "boolean", "description": "Open the draft pull request at the first verified push (default true). False opens it only when the run finishes, for repositories whose host has no drafts. Labels and reviewers are applied only when the PR becomes ready." }
           }
         }
       }

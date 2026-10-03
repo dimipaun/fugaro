@@ -24,12 +24,15 @@ type PRSpec struct {
 	// or body beyond the draft prefix. It returns ErrPRNotOpen (wrapped,
 	// with the PR) when that PR isn't open, or its source branch isn't
 	// Branch.
-	Number    int      `json:"number,omitempty"`
-	Branch    string   `json:"branch"`
-	Base      string   `json:"base"`
-	Title     string   `json:"title"`
-	Body      string   `json:"body"`
-	Draft     bool     `json:"draft"`
+	Number int    `json:"number,omitempty"`
+	Branch string `json:"branch"`
+	Base   string `json:"base"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+	Draft  bool   `json:"draft"`
+	// Labels and Reviewers are applied only to a pull request EnsurePR
+	// creates with Draft false; a draft carries neither, and ApplyReady
+	// is how a PR that became ready gets them.
 	Labels    []string `json:"labels,omitempty"`
 	Reviewers []string `json:"reviewers,omitempty"`
 }
@@ -39,6 +42,21 @@ type PR struct {
 	Number int    `json:"number"`
 	URL    string `json:"url"`
 	Draft  bool   `json:"draft"`
+	// DraftFallback is set when Draft is true only because the title
+	// carries DraftPrefix: the host refused real draft pull requests, so
+	// the PR is an ordinary one that merely looks like a draft (and the
+	// host may already have requested reviews, such as CODEOWNERS).
+	DraftFallback bool `json:"draft_fallback,omitempty"`
+}
+
+// PRUpdate is a change to an existing pull request by UpdatePR; a nil
+// field is left alone.
+type PRUpdate struct {
+	Title *string
+	Body  *string
+	// Draft, when set, also moves the PR to that draft state (the same
+	// semantics as EnsurePR by number, including the DraftPrefix fallback).
+	Draft *bool
 }
 
 // ErrPRNotOpen means an update by number found the pull request merged
@@ -66,6 +84,8 @@ type PRInfo struct {
 	URL          string
 	State        PRState
 	Draft        bool
+	Title        string // as the host shows it: with DraftPrefix on a prefix-marked draft
+	Body         string // GitHub's body, Bitbucket's description; untrusted text
 	AuthorID     string // the PR author's account ID (GitHub numeric user ID; Bitbucket account_id)
 	SourceBranch string
 	SourceRepo   string // owner/name of the head repository, as the provider spells it
@@ -132,6 +152,24 @@ type Provider interface {
 	GitAuth(ctx context.Context, minValid time.Duration) (GitAuth, error)
 	// Repository reads the repository's visibility.
 	Repository(ctx context.Context) (RepoInfo, error)
+	// UpdatePR changes pull request number's title and/or body (and, when
+	// u.Draft is set, its draft state) and nothing else: reviewers, labels,
+	// the draft state when u.Draft is nil, and any field u leaves nil keep
+	// their values. It reads the PR first: a PR that isn't open is not
+	// written and gives ErrPRNotOpen (wrapped, with the PR), and an update
+	// that would change nothing sends no write. A title update keeps the
+	// DraftPrefix on a prefix-marked draft. The returned PR's Draft is the
+	// state after the call.
+	UpdatePR(ctx context.Context, number int, u PRUpdate) (PR, error)
+	// ApplyReady requests reviewers and applies labels on pull request
+	// number, which the caller has just made ready (a draft carries
+	// neither; EnsurePR with Draft true never applies them). It is
+	// idempotent: reviewers or labels already on the PR are not asked for
+	// again, so a retry is safe. Bitbucket has no labels: they are dropped
+	// with a warning, once per Provider. A failure, such as an unknown
+	// reviewer, returns a *PartialError: the PR stays as it is (ready) and
+	// the caller reports it. A PR that isn't open gives ErrPRNotOpen.
+	ApplyReady(ctx context.Context, number int, reviewers, labels []string) error
 	// PullRequest reads pull request number, whatever its state.
 	PullRequest(ctx context.Context, number int) (PRInfo, error)
 	// Comments returns every published comment on pull request number,

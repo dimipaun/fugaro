@@ -78,10 +78,20 @@ type Git struct {
 }
 
 // PRSettings are applied to every pull request Fugaro opens.
+//
+// Labels and Reviewers are applied only when a pull request is made ready:
+// a draft carries neither (design §4.2a).
 type PRSettings struct {
 	Labels    []string `yaml:"labels"`
 	Reviewers []string `yaml:"reviewers"`
+	// EarlyDraft opens the draft pull request at the first verified push;
+	// false opens it only at finalize. Unset means true (applyDefaults).
+	EarlyDraft *bool `yaml:"early_draft"`
 }
+
+// EarlyDraftOn reports whether the draft pull request opens at the first
+// verified push: true unless git.pr.early_draft is false.
+func (p PRSettings) EarlyDraftOn() bool { return p.EarlyDraft == nil || *p.EarlyDraft }
 
 // Agent configures the Claude Code agent.
 type Agent struct {

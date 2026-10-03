@@ -45,6 +45,10 @@ type Diagnosis struct {
 	AgentMessage string           `json:"agent_message,omitempty"`
 	LogTail      []string         `json:"log_tail,omitempty"`
 	ReportPath   string           `json:"report_path"`
+	// DraftNote is a line about the run's draft PR when it needs one: left
+	// stale by a run that died, or an ordinary PR marked [DRAFT] because
+	// the host has no drafts. Computed against the time of the call.
+	DraftNote string `json:"draft_note,omitempty"`
 	// FollowUp is what a follow-up acted on: the record's block, else the
 	// PR and previous run its task names. CommentsPath is where the
 	// comments it was given are stored. Both are absent for a first run.
@@ -134,6 +138,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		return nil, remote(fmt.Errorf("run %s: expected one row, got %d", run, len(rows)))
 	}
 	d := &Diagnosis{Row: rows[0], ReportPath: s.Prefix() + "report.md"}
+	d.DraftNote = draftNote(d.Row, time.Now())
 	d.Row.Reason = red(d.Row.Reason)
 	if h := d.Row.Halt; h != nil {
 		c := *h
@@ -197,6 +202,25 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// draftNote is diagnose's line about the run's draft PR, "" when there is
+// nothing to add. A stale draft is the one a run that died left behind: the
+// history sweeper has no git credentials and never edits a PR, so its
+// description still says "Running".
+func draftNote(row runview.Row, now time.Time) string {
+	var notes []string
+	if row.StaleDraft && row.PR > 0 {
+		last := "never updated"
+		if row.PRStatusAt != nil {
+			last = "last updated " + age(now.Sub(*row.PRStatusAt)) + " ago"
+		}
+		notes = append(notes, fmt.Sprintf("draft PR #%d %s; the run may have crashed (its description still says Running; continue with fugaro run --pr %d)", row.PR, last, row.PR))
+	}
+	if row.DraftFallback && row.PR > 0 {
+		notes = append(notes, fmt.Sprintf("PR #%d is an ordinary pull request marked [DRAFT] in its title: the host has no draft pull requests", row.PR))
+	}
+	return strings.Join(notes, "; ")
 }
 
 // followUpOf is a run's follow-up block, redacted: its record's, else
@@ -344,7 +368,10 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
 	if r.PRURL != "" {
-		fmt.Fprintf(&b, "PR:       %s\n", oneLine(r.PRURL))
+		fmt.Fprintf(&b, "PR:       %s\n", oneLine(prColumnURL(r)))
+	}
+	if d.DraftNote != "" {
+		fmt.Fprintf(&b, "Draft:    %s\n", oneLine(d.DraftNote))
 	}
 	if d.FollowUp != nil {
 		fmt.Fprintf(&b, "%s\n", oneLine(followUpLine(d.FollowUp)))
@@ -380,6 +407,12 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// prColumnURL is the PR's URL with ls's draft marker.
+func prColumnURL(r runview.Row) string {
+	col := prColumn(runview.Row{PRURL: r.PRURL, Outcome: r.Outcome, Status: r.Status, FollowUp: r.FollowUp, RecordPR: r.RecordPR, StaleDraft: r.StaleDraft})
+	return col
 }
 
 // indent prefixes every line of s with two spaces.

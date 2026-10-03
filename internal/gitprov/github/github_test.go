@@ -85,7 +85,7 @@ func TestExistingPRDraftUnsupportedRetitles(t *testing.T) {
 func TestExistingPrefixedDraftUnsupportedSkipsPATCH(t *testing.T) {
 	p := open(t, "existing_prefixed_draft_unsupported.json")
 	pr, err := p.EnsurePR(ctx, spec(true, nil, nil))
-	if err != nil || pr != (gitprov.PR{Number: 18, URL: "https://github.com/acme/web/pull/18", Draft: true}) {
+	if err != nil || pr != (gitprov.PR{Number: 18, URL: "https://github.com/acme/web/pull/18", Draft: true, DraftFallback: true}) {
 		t.Fatalf("pr = %+v, %v", pr, err)
 	}
 }
@@ -256,7 +256,7 @@ const headSHA = "0123456789abcdef0123456789abcdef01234567"
 
 func TestGitHubPullRequestOpen(t *testing.T) {
 	got, err := open(t, "pull_open.json").PullRequest(ctx, 12)
-	want := gitprov.PRInfo{Number: 12, URL: "https://github.com/acme/web/pull/12", State: gitprov.PROpen, Draft: true,
+	want := gitprov.PRInfo{Number: 12, URL: "https://github.com/acme/web/pull/12", State: gitprov.PROpen, Draft: true, Title: "Add search",
 		AuthorID: "900001", SourceBranch: branchName, SourceRepo: "acme/web", HeadSHA: headSHA}
 	if err != nil || got != want {
 		t.Fatalf("got  %+v, %v\nwant %+v", got, err, want)

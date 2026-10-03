@@ -103,3 +103,10 @@ func (h *RunHandle) ForceHaltAndCancel(hl runstore.Halt) {
 	h.r.halt, h.r.cancelled = &hl, true
 	h.r.mu.Unlock()
 }
+
+// SetEarlyOpenTimeout bounds the early PR open to d for the rest of t.
+func SetEarlyOpenTimeout(t *testing.T, d time.Duration) {
+	prev := earlyOpenTimeout
+	earlyOpenTimeout = d
+	t.Cleanup(func() { earlyOpenTimeout = prev })
+}

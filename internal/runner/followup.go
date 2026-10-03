@@ -492,12 +492,16 @@ func (r *run) storeUnposted(ctx context.Context, err error, records []verify.Rec
 // follow-up's is read again first, and the note goes only on an open one:
 // a transport error can hide that it was merged or closed meanwhile.
 func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
+	n := r.spec.PR
 	if r.follow == nil {
-		return true
+		if r.prNumber() == 0 {
+			return true
+		}
+		n = r.prNumber() // opened early: a person may have closed it since
 	}
 	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
 	defer cancel()
-	pr, err := r.provider.PullRequest(cctx, r.spec.PR)
+	pr, err := r.provider.PullRequest(cctx, n)
 	switch {
 	case err != nil:
 		r.d.Log.Warn("reading the pull request before the not-ready note failed; not posting it", "err", r.redact(err.Error()))
@@ -514,6 +518,11 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
 	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	if r.follow == nil && r.isCancelled() {
+		// A cancelled run stays cancelled (design 4.2a, E10); the PR note
+		// is its reason.
+		r.rec.Status, r.rec.Reason = runstore.StatusCancelled, "cancelled; "+reason
+	}
 	if h := r.haltValue(); h != nil {
 		// A halt stays a halt: the run stopped for its limit, and the
 		// pull request was left as it was for the reason given too.
@@ -522,7 +531,10 @@ func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.
 	}
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
 	r.updateCost()
-	fu := r.followUpSection()
+	var fu *FollowUpSection
+	if r.follow != nil {
+		fu = r.followUpSection()
+	}
 	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(false, records), fu), r.secretList())
 	r.storeReport(ctx, report, fu)
 }

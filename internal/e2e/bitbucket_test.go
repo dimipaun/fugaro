@@ -28,25 +28,45 @@ type bitbucketAPI struct {
 	mu       sync.Mutex
 	prs      []bbPR
 	comments []string
+	log      []string // the writes, in order
 }
 
 type bbPR struct {
-	ID     int    `json:"id"`
-	Title  string `json:"title"`
-	Draft  bool   `json:"draft"`
-	Branch string `json:"-"`
-	Links  struct {
+	ID          int          `json:"id"`
+	Title       string       `json:"title"`
+	Draft       bool         `json:"draft"`
+	Description string       `json:"description"`
+	State       string       `json:"state"`
+	Branch      string       `json:"-"`
+	Reviewers   []bbReviewer `json:"reviewers"`
+	Links       struct {
 		HTML struct {
 			Href string `json:"href"`
 		} `json:"html"`
 	} `json:"links"`
+	Source struct {
+		Branch struct {
+			Name string `json:"name"`
+		} `json:"branch"`
+		Repository struct {
+			FullName string `json:"full_name"`
+		} `json:"repository"`
+	} `json:"source"`
 }
 
-// bbRequest holds every request body field the provider sends.
+type bbReviewer struct {
+	UUID      string `json:"uuid,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+}
+
+// bbRequest holds every request body field the provider sends. Pointers
+// tell a field that was sent from one that was left out.
 type bbRequest struct {
-	Title  string `json:"title"`
-	Draft  bool   `json:"draft"`
-	Source struct {
+	Title       *string       `json:"title"`
+	Description *string       `json:"description"`
+	Draft       *bool         `json:"draft"`
+	Reviewers   *[]bbReviewer `json:"reviewers"`
+	Source      struct {
 		Branch struct {
 			Name string `json:"name"`
 		} `json:"branch"`
@@ -54,6 +74,14 @@ type bbRequest struct {
 	Content struct {
 		Raw string `json:"raw"`
 	} `json:"content"`
+}
+
+func deref[T any](p *T) T {
+	var zero T
+	if p == nil {
+		return zero
+	}
+	return *p
 }
 
 func (a *bitbucketAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -82,10 +110,37 @@ func (a *bitbucketAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		json.NewEncoder(w).Encode(map[string]any{"values": values})
 	case r.Method == http.MethodPost && r.URL.Path == prs:
-		pr := bbPR{ID: len(a.prs) + 1, Title: in.Title, Draft: in.Draft, Branch: in.Source.Branch.Name}
+		pr := bbPR{ID: len(a.prs) + 1, Title: deref(in.Title), Draft: deref(in.Draft), Description: deref(in.Description), State: "OPEN", Branch: in.Source.Branch.Name,
+			Reviewers: deref(in.Reviewers)}
 		pr.Links.HTML.Href = fmt.Sprintf("https://bitbucket.org/acme/app/pull-requests/%d", pr.ID)
+		pr.Source.Branch.Name, pr.Source.Repository.FullName = pr.Branch, "acme/app"
 		a.prs = append(a.prs, pr)
+		a.log = append(a.log, fmt.Sprintf("POST draft=%t reviewers=%d", pr.Draft, len(pr.Reviewers)))
+		if pr.Draft && len(pr.Reviewers) > 0 {
+			a.t.Errorf("a draft was created with reviewers")
+		}
 		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(pr)
+	case r.Method == http.MethodGet && r.URL.Path == prs+"/1" && len(a.prs) == 1:
+		json.NewEncoder(w).Encode(a.prs[0])
+	case r.Method == http.MethodPut && r.URL.Path == prs+"/1" && len(a.prs) == 1:
+		pr := &a.prs[0]
+		if in.Title != nil {
+			pr.Title = *in.Title
+		}
+		if in.Description != nil {
+			pr.Description = *in.Description
+		}
+		if in.Draft != nil {
+			pr.Draft = *in.Draft
+		}
+		if in.Reviewers != nil {
+			pr.Reviewers = *in.Reviewers
+		}
+		a.log = append(a.log, fmt.Sprintf("PUT title=%t description=%t draft=%t reviewers=%t now-draft=%t", in.Title != nil, in.Description != nil, in.Draft != nil, in.Reviewers != nil, pr.Draft))
+		if pr.Draft && len(pr.Reviewers) > 0 {
+			a.t.Errorf("reviewers on a draft after PUT")
+		}
 		json.NewEncoder(w).Encode(pr)
 	case r.Method == http.MethodPost && r.URL.Path == prs+"/1/comments":
 		a.comments = append(a.comments, in.Content.Raw)
@@ -103,12 +158,21 @@ func (a *bitbucketAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // with the amended commit on the remote, one ready PR with its report, and
 // the token nowhere in what the run wrote.
 func TestBitbucketRunOverHTTP(t *testing.T) {
+	t.Run("finalize_only", func(t *testing.T) { bitbucketRun(t, false) })
+	t.Run("early_draft", func(t *testing.T) { bitbucketRun(t, true) })
+}
+
+func bitbucketRun(t *testing.T, early bool) {
 	testutil.IsolateGit(t)
 	const token = "bb-e2e-token-5678"
 	files := testutil.FixtureFiles(t)
 	// Labels exist only to check that the Bitbucket adapter's "labels
 	// aren't supported" warning reaches the runner's log, once.
-	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "provider: github", "provider: bitbucket\n  pr: { labels: [fugaro] }", 1)
+	pr := "{ labels: [fugaro], early_draft: false }"
+	if early {
+		pr = "{ labels: [fugaro], reviewers: [\"{11111111-2222-3333-4444-555555555555}\"] }"
+	}
+	files["fugaro.yaml"] = strings.Replace(files["fugaro.yaml"], "provider: github", "provider: bitbucket\n  pr: "+pr, 1)
 	remote := testutil.NewHTTPRemote(t, files, testutil.Token("x-token-auth", token))
 	api := &bitbucketAPI{t: t, token: token}
 	apiSrv := httptest.NewServer(api)
@@ -171,10 +235,24 @@ func TestBitbucketRunOverHTTP(t *testing.T) {
 		t.Fatalf("%s commits ahead of main, want only the amended one", n)
 	}
 	api.mu.Lock()
-	prs, comments := api.prs, api.comments
+	prs, comments, writes := api.prs, api.comments, api.log
 	api.mu.Unlock()
 	if len(prs) != 1 || prs[0].Draft || prs[0].Title != "Add feature" || len(comments) != 1 || !strings.Contains(comments[0], "ready for review") {
 		t.Fatalf("PRs %+v, comments %q", prs, comments)
+	}
+	if early {
+		pr := prs[0]
+		if len(writes) < 3 || writes[0] != "POST draft=true reviewers=0" || len(pr.Reviewers) != 1 || pr.Reviewers[0].UUID != "{11111111-2222-3333-4444-555555555555}" {
+			t.Fatalf("writes %q, reviewers %+v", writes, pr.Reviewers)
+		}
+		if last := writes[len(writes)-1]; !strings.Contains(last, "reviewers=true now-draft=false") {
+			t.Fatalf("the reviewers must be the last write, after the draft became ready: %q", writes)
+		}
+		if !strings.HasPrefix(pr.Description, "Adds feature.txt.") || strings.Count(pr.Description, "fugaro:status begin") != 1 || !strings.Contains(pr.Description, "**Ready for review**") {
+			t.Fatalf("description:\n%s", pr.Description)
+		}
+	} else if len(writes) != 1 || strings.Contains(prs[0].Description, "fugaro:status") {
+		t.Fatalf("the finalize-only flow wrote %q, description %q", writes, prs[0].Description)
 	}
 	env := testutil.FakeClaudeCalls(t, claude)[0].Env
 	if !slices.Contains(env, "FUGARO_GIT_TOKEN="+token) || slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, "FUGARO_BITBUCKET_TOKEN=") }) {

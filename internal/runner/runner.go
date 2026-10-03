@@ -188,6 +188,8 @@ type run struct {
 	sessionID string
 	// follow is a follow-up's state; nil for a first run.
 	follow *followState
+	// pr is the early draft pull request's state (prflow.go).
+	pr prFlow
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -987,6 +989,10 @@ func (r *run) agentLoop(ctx context.Context) {
 	if !ok || r.capReached() {
 		return
 	}
+	r.afterStage(ctx, "implement")
+	if r.pr.gone {
+		return // a person closed the PR: nothing more to spend on it
+	}
 	sessionID := req.SessionID
 	reviewPrompt := ReviewPrompt(r.cfg.Agent.Review, r.reviewFile, r.cfg.Git.BaseBranch)
 	if f := r.follow; f != nil {
@@ -1007,6 +1013,10 @@ func (r *run) agentLoop(ctx context.Context) {
 		if r.capReached() || v.Verdict == "ship" || round == rounds {
 			return
 		}
+		r.afterStage(ctx, "review")
+		if r.pr.gone {
+			return
+		}
 		if r.sessionID != "" {
 			sessionID = r.sessionID
 		}
@@ -1015,6 +1025,10 @@ func (r *run) agentLoop(ctx context.Context) {
 		r.noteSession(req, res)
 		r.countTokens(res)
 		if !ok || r.capReached() {
+			return
+		}
+		r.afterStage(ctx, "fix")
+		if r.pr.gone {
 			return
 		}
 	}
@@ -1334,32 +1348,55 @@ func (r *run) finalize(ctx context.Context) error {
 	// posting still records that it updated its pull request.
 	r.rec.PushedHead = sha
 	r.save(ctx)
+	early := r.follow == nil && r.rec.PR != nil // opened at a stage boundary: settled by its number
 	var spec gitprov.PRSpec
-	if r.follow != nil {
+	switch {
+	case r.follow != nil:
 		// The pull request exists: only its draft state changes, and its
 		// title and description stay as people may have edited them.
 		spec = gitprov.PRSpec{Number: r.spec.PR, Branch: r.rec.Branch, Base: base, Draft: !ready}
-	} else {
+	case early:
+		// By the recorded number, never by branch: a PR a person closed
+		// must not be answered with a second one.
+		spec = gitprov.PRSpec{Number: r.rec.PR.Number, Branch: r.rec.Branch, Base: base, Draft: !ready}
+	default:
 		title, body := r.prText()
+		if r.cfg.Git.PR.EarlyDraftOn() {
+			// A section will be added, so the text is scrubbed of forged
+			// markers and leaves it room.
+			title, body = r.earlyPRText()
+		}
 		spec = gitprov.PRSpec{
 			Branch: r.rec.Branch, Base: base, Title: title, Body: body, Draft: !ready,
-			Labels: r.cfg.Git.PR.Labels, Reviewers: r.cfg.Git.PR.Reviewers,
+		}
+		if ready {
+			// Only a PR created ready carries them; a draft spec never does.
+			spec.Labels, spec.Reviewers = r.cfg.Git.PR.Labels, r.cfg.Git.PR.Reviewers
 		}
 	}
 	pr, err := r.ensurePR(ctx, spec)
-	if pr.Number != 0 && r.follow == nil {
-		r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL}
+	r.notePR(ctx, pr) // the number is in the record before anything else is done
+	if err != nil && early && pr.Number == 0 {
+		// The PR is the early draft, whatever the failed call returned.
+		pr = gitprov.PR{Number: r.rec.PR.Number, URL: r.rec.PR.URL, Draft: true}
 	}
 	if r.follow != nil {
 		// The pull request bootstrap checked, whatever EnsurePR returned
 		// alongside an error.
 		pr = gitprov.PR{Number: r.spec.PR, URL: r.follow.pr.URL, Draft: pr.Draft}
 	}
+	if pr.DraftFallback {
+		r.rec.DraftFallback = true
+	}
 	var partial *gitprov.PartialError
 	switch {
 	case errors.Is(err, gitprov.ErrPRNotOpen) && r.follow != nil:
 		// Closed or merged after the push: nothing more may be posted.
 		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was closed during finalize; the branch was pushed", r.spec.PR), records)
+		return nil
+	case errors.Is(err, gitprov.ErrPRNotOpen) && early:
+		// A person closed the PR during the run. Never open a second one.
+		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", r.rec.PR.Number, r.closedWord(ctx, r.rec.PR.Number)), records)
 		return nil
 	case errors.As(err, &partial):
 		r.d.Log.Warn("pull request settings not fully applied", "err", r.redact(err.Error()))
@@ -1389,6 +1426,13 @@ func (r *run) finalize(ctx context.Context) error {
 				r.d.Log.Warn("posting the not-ready comment failed", "err", r.redact(cerr.Error()))
 			}
 		}
+		if early {
+			// The draft still says it is running; best effort to say it stopped.
+			stopped := "**Stopped:** the run could not finish setting up this pull request (" + inlineText(r.redact(err.Error())) + "). Check it by hand."
+			if serr := r.settleText(ctx, r.rec.PR.Number, r.sectionLines(stopped, r.updated("stopped"))); serr != nil {
+				r.d.Log.Warn("updating the pull request status failed", "err", r.redact(serr.Error()))
+			}
+		}
 		err = fmt.Errorf("opening pull request: %w", err)
 		if r.follow != nil {
 			// The branch was pushed: the next follow-up quotes this run's
@@ -1409,21 +1453,80 @@ func (r *run) finalize(ctx context.Context) error {
 		r.rec.Status, r.rec.Outcome = runstore.StatusFailed, runstore.OutcomeDraft
 	}
 	r.updateCost()
+	notes, gone := r.settlePR(ctx, pr, ready, reason, records)
+	if gone {
+		r.endUnchanged(ctx, fmt.Sprintf("PR #%d was %s during the run; the branch was pushed", pr.Number, r.closedWord(ctx, pr.Number)), records)
+		return nil
+	}
 	var fu *FollowUpSection
 	if r.follow != nil {
 		fu = r.followUpSection()
 		fu.MovedToDraft = r.follow.wasReady && !ready
 	}
-	report := agent.Redact(FollowUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu), r.secretList())
+	report := agent.Redact(followUpReport(r.rec, r.d.Store.Prefix(), r.logTail(ready, records), fu, notes), r.secretList())
 	// A follow-up's pull request is the one people watch: an earlier
 	// attempt of this execution may already have posted this report.
 	if r.follow != nil && r.reportPosted(ctx, pr) {
 		r.d.Log.Info("the run report is already on the pull request; not posting it again")
-	} else if err := r.provider.Comment(ctx, pr, report); err != nil {
-		r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
+	} else {
+		// On a short context of its own: a slow status write or reviewer
+		// request must not leave the report with an expired one.
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), giveUpCommentTimeout)
+		err := r.provider.Comment(cctx, pr, report)
+		cancel()
+		if err != nil {
+			r.d.Log.Warn("posting the run report failed", "err", r.redact(err.Error()))
+		}
 	}
 	r.storeReport(ctx, report, fu)
 	return nil
+}
+
+// closedWord says "merged" when the provider can tell the PR was merged,
+// else "closed".
+func (r *run) closedWord(ctx context.Context, n int) string {
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusCallTimeout)
+	defer cancel()
+	if info, err := r.provider.PullRequest(cctx, n); err == nil && info.State == gitprov.PRMerged {
+		return "merged"
+	}
+	return "closed"
+}
+
+// settlePR does what follows a PR's flip: the final status section (and, for
+// a first run's early draft, the agent's final title and description), then,
+// only if the PR is now ready, the reviewers and labels. gone is true when
+// the PR turned out to be closed meanwhile; notes are for the report.
+func (r *run) settlePR(ctx context.Context, pr gitprov.PR, ready bool, reason string, records []verify.Record) (notes []string, gone bool) {
+	if pr.DraftFallback {
+		notes = append(notes, "this host has no draft pull requests: the PR is a normal one marked [DRAFT], so reviews may already have been requested")
+	}
+	// early_draft=false keeps a first run's finalize exactly as it was: no
+	// section, and the reviewers go with the creation of a ready PR.
+	early := r.follow != nil || r.cfg.Git.PR.EarlyDraftOn()
+	if early {
+		section := r.finalSection(ready, reason, records)
+		err := r.settleText(ctx, pr.Number, section)
+		if err != nil && !errors.Is(err, gitprov.ErrPRNotOpen) {
+			// One more try, so a ready PR does not keep saying Running.
+			r.d.Log.Warn("updating the pull request status failed; retrying once", "pr", pr.Number, "err", r.redact(err.Error()))
+			err = r.settleText(ctx, pr.Number, section)
+		}
+		if errors.Is(err, gitprov.ErrPRNotOpen) {
+			return nil, true
+		} else if err != nil {
+			r.d.Log.Warn("updating the pull request status failed", "pr", pr.Number, "err", r.redact(err.Error()))
+			notes = append(notes, "the pull request description could not be updated; its status section may be out of date")
+		}
+	}
+	// Only a PR that is ready now gets reviewers: a follow-up only when it
+	// is the one that flipped a draft to ready.
+	if ready && !pr.Draft && (r.follow == nil && early || r.follow != nil && !r.follow.wasReady) {
+		if note := r.applyReady(ctx, pr.Number); note != "" {
+			notes = append(notes, note)
+		}
+	}
+	return notes, false
 }
 
 // storeReport stores the report, and a follow-up's followup.md as the
@@ -1457,6 +1560,9 @@ func (r *run) ensurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, er
 		pr, err := r.provider.EnsurePR(ctx, spec)
 		if pr.Number != 0 {
 			last = pr
+			// Recorded the moment it exists, even when the call erred: a
+			// retry, or a crash, then finds it by number.
+			r.notePR(ctx, pr)
 		}
 		var partial *gitprov.PartialError
 		if err == nil || errors.As(err, &partial) {
@@ -1529,8 +1635,14 @@ func (r *run) prText() (string, string) {
 	if runes := []rune(title); len(runes) > maxTitleRunes {
 		title = string(runes[:maxTitleRunes-1]) + "…"
 	}
-	if len(body) > maxBodyBytes {
-		body = strings.ToValidUTF8(body[:maxBodyBytes-len(truncatedNote)], "") + truncatedNote
+	return title, clipBody(body, maxBodyBytes)
+}
+
+// clipBody cuts body to at most limit bytes, ending with a note when it
+// was cut.
+func clipBody(body string, limit int) string {
+	if len(body) > limit {
+		body = strings.ToValidUTF8(body[:limit-len(truncatedNote)], "") + truncatedNote
 	}
-	return title, body
+	return body
 }

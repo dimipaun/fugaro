@@ -446,3 +446,30 @@ func TestAgentModelsValidation(t *testing.T) {
 		t.Fatalf("limits at the bounds: %v", ps)
 	}
 }
+
+func TestPREarlyDraftDefaultsTrue(t *testing.T) {
+	for _, tc := range []struct {
+		pr   string
+		want bool
+	}{{"", true}, {"  pr: { early_draft: true }\n", true}, {"  pr: { early_draft: false }\n", false}} {
+		cfg, problems := Parse([]byte(strings.Replace(earlyDraftBase(t), "git:\n", "git:\n"+tc.pr, 1)))
+		if len(problems) > 0 {
+			t.Fatalf("%q: %v", tc.pr, problems)
+		}
+		if got := cfg.Git.PR.EarlyDraftOn(); got != tc.want {
+			t.Errorf("%q: EarlyDraftOn = %v, want %v", tc.pr, got, tc.want)
+		}
+	}
+	if !(PRSettings{}).EarlyDraftOn() {
+		t.Error("the zero PRSettings must default to early drafts")
+	}
+}
+
+func earlyDraftBase(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile("../../testdata/config/valid/minimal.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}

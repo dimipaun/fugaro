@@ -41,6 +41,27 @@ type PRState struct {
 	// Head, when set, overrides the head PullRequest reports, as when
 	// someone pushed to the branch.
 	Head string `json:"head,omitempty"`
+	// Title and Body are the PR's current text: the spec's at creation,
+	// then whatever UpdatePR set. An old state file without them reads
+	// as the spec's.
+	Title string `json:"title,omitempty"`
+	Body  string `json:"body,omitempty"`
+	// Reviewers and Labels are what the PR actually carries. A draft
+	// never gets any; they arrive at creation of a ready PR or through
+	// ApplyReady.
+	Reviewers []string `json:"reviewers,omitempty"`
+	Labels    []string `json:"labels,omitempty"`
+}
+
+// Call is one entry of the call log, which holds the calls that write
+// (reads leave the state file untouched): Op is the Provider method
+// (EnsurePR, UpdatePR, ApplyReady, Comment), PR the PR number involved
+// (0 for an EnsurePR that finds or creates by branch, until it knows),
+// Detail what was asked, such as "draft=true" or "title,body".
+type Call struct {
+	Op     string `json:"op"`
+	PR     int    `json:"pr,omitempty"`
+	Detail string `json:"detail,omitempty"`
 }
 
 // State is the fake provider's data.
@@ -48,6 +69,9 @@ type State struct {
 	PRs []PRState `json:"prs"`
 	// Public makes the repository public.
 	Public bool `json:"public,omitempty"`
+	// Calls is every call made, in order (failed injected ones included),
+	// so tests can assert what the runner did and in which order.
+	Calls []Call `json:"calls,omitempty"`
 }
 
 // Provider is a fake git host.
@@ -87,8 +111,20 @@ type Provider struct {
 	FailComments    int
 	FailPullRequest int
 	FailRepository  int
-	mu              sync.Mutex
-	State           State
+	// FailUpdatePR and FailApplyReady make that many calls fail without
+	// changing anything.
+	FailUpdatePR   int
+	FailApplyReady int
+	// RejectReviewers names reviewers the host does not know: ApplyReady
+	// (and a ready creation) still applies the others and the labels, and
+	// reports a *gitprov.PartialError.
+	RejectReviewers []string
+	// NoDrafts models a host that refuses real drafts: a draft is created
+	// as a normal PR whose title carries gitprov.DraftPrefix, reported
+	// with Draft and DraftFallback set.
+	NoDrafts bool
+	mu       sync.Mutex
+	State    State
 }
 
 // gitWaitDelay bounds how long a git subprocess's leaked children may hold
@@ -135,6 +171,8 @@ func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR,
 	if err := p.load(); err != nil {
 		return gitprov.PR{}, err
 	}
+	p.logLocked(Call{Op: "EnsurePR", PR: spec.Number, Detail: fmt.Sprintf("draft=%t", spec.Draft)})
+	defer func() { _ = p.save() }()
 	if p.FailEnsureAfterCreate > 0 {
 		p.FailEnsureAfterCreate--
 		pr, err := p.ensureLocked(spec.Branch, spec.Draft, spec)
@@ -172,19 +210,78 @@ func (p *Provider) ensureLocked(branch string, draft bool, spec gitprov.PRSpec) 
 		if st.Spec.Branch != branch {
 			return st.PR, fmt.Errorf("PR #%d is on %s, not %s: %w", st.Number, st.Spec.Branch, branch, gitprov.ErrPRNotOpen)
 		}
-		st.Draft = draft
+		p.setDraftLocked(st, draft)
 		return st.PR, p.save()
 	}
 	for i := range p.State.PRs {
 		if p.State.PRs[i].Spec.Branch == branch {
-			p.State.PRs[i].Draft = draft
+			p.setDraftLocked(&p.State.PRs[i], draft)
 			return p.State.PRs[i].PR, p.save()
 		}
 	}
 	n := len(p.State.PRs) + 1
 	pr := gitprov.PR{Number: n, URL: fmt.Sprintf("https://example.invalid/pr/%d", n), Draft: draft}
-	p.State.PRs = append(p.State.PRs, PRState{PR: pr, Spec: spec})
-	return pr, p.save()
+	st := PRState{PR: pr, Spec: spec, Title: spec.Title, Body: spec.Body}
+	if draft && p.NoDrafts {
+		st.Title, st.Draft, st.DraftFallback = gitprov.DraftTitle(spec.Title, true), true, true
+	}
+	var perr error
+	if !draft {
+		// Only a PR created ready carries reviewers and labels.
+		perr = p.applyLocked(&st, spec.Reviewers, spec.Labels)
+	}
+	p.State.PRs = append(p.State.PRs, st)
+	if err := p.save(); err != nil {
+		return st.PR, err
+	}
+	return st.PR, perr
+}
+
+// setDraftLocked moves st to the wanted draft state the way a host does:
+// a real flag, or the title prefix when NoDrafts. Reviewers are not
+// touched either way.
+func (p *Provider) setDraftLocked(st *PRState, draft bool) {
+	title := p.titleOf(st)
+	switch {
+	case p.NoDrafts:
+		st.Title, st.Draft, st.DraftFallback = gitprov.DraftTitle(title, draft), draft, draft
+	default:
+		st.Title, st.Draft, st.DraftFallback = gitprov.DraftTitle(title, false), draft, false
+	}
+}
+
+func (p *Provider) titleOf(st *PRState) string {
+	if st.Title != "" {
+		return st.Title
+	}
+	return st.Spec.Title
+}
+
+func (p *Provider) logLocked(c Call) {
+	p.State.Calls = append(p.State.Calls, c)
+}
+
+// applyLocked adds labels and reviewers st lacks, except RejectReviewers,
+// which gives a *gitprov.PartialError.
+func (p *Provider) applyLocked(st *PRState, reviewers, labels []string) error {
+	var rejected []string
+	for _, r := range reviewers {
+		switch {
+		case slices.Contains(p.RejectReviewers, r):
+			rejected = append(rejected, r)
+		case !slices.Contains(st.Reviewers, r):
+			st.Reviewers = append(st.Reviewers, r)
+		}
+	}
+	for _, l := range labels {
+		if !slices.Contains(st.Labels, l) {
+			st.Labels = append(st.Labels, l)
+		}
+	}
+	if len(rejected) > 0 {
+		return &gitprov.PartialError{Err: fmt.Errorf("fake provider: reviewers %s were rejected", strings.Join(rejected, ", "))}
+	}
+	return nil
 }
 
 // findLocked returns the PR numbered number. Callers hold p.mu.
@@ -213,6 +310,7 @@ func (p *Provider) Comment(_ context.Context, pr gitprov.PR, body string) error 
 	if err := p.load(); err != nil {
 		return err
 	}
+	p.logLocked(Call{Op: "Comment", PR: pr.Number})
 	st, err := p.findLocked(pr.Number)
 	if err != nil {
 		return err
@@ -285,6 +383,8 @@ func (p *Provider) pullRequest(number int) (info gitprov.PRInfo, branch string, 
 		URL:          st.URL,
 		State:        stateOf(st),
 		Draft:        st.Draft,
+		Title:        p.titleOf(st),
+		Body:         p.bodyOf(st),
 		AuthorID:     cmp.Or(st.AuthorID, p.SelfID),
 		SourceBranch: st.Spec.Branch,
 		SourceRepo:   cmp.Or(st.Source, p.Repo),
@@ -337,4 +437,92 @@ func (p *Provider) GitAuth(_ context.Context, minValid time.Duration) (gitprov.G
 		return gitprov.GitAuth{}, nil
 	}
 	return p.Auth(minValid), nil
+}
+
+func (p *Provider) bodyOf(st *PRState) string {
+	if st.Body != "" {
+		return st.Body
+	}
+	return st.Spec.Body
+}
+
+// UpdatePR implements gitprov.Provider.
+func (p *Provider) UpdatePR(_ context.Context, number int, u gitprov.PRUpdate) (gitprov.PR, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return gitprov.PR{}, err
+	}
+	var what []string
+	if u.Title != nil {
+		what = append(what, "title")
+	}
+	if u.Body != nil {
+		what = append(what, "body")
+	}
+	if u.Draft != nil {
+		what = append(what, fmt.Sprintf("draft=%t", *u.Draft))
+	}
+	p.logLocked(Call{Op: "UpdatePR", PR: number, Detail: strings.Join(what, ",")})
+	if p.FailUpdatePR > 0 {
+		p.FailUpdatePR--
+		_ = p.save()
+		return gitprov.PR{}, errors.New("fake provider: injected UpdatePR failure")
+	}
+	st, err := p.findLocked(number)
+	if err != nil {
+		return gitprov.PR{}, err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		_ = p.save()
+		return st.PR, fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if u.Title != nil {
+		title := *u.Title
+		if st.DraftFallback && (u.Draft == nil || *u.Draft) {
+			title = gitprov.DraftTitle(title, true)
+		}
+		st.Title = title
+	}
+	if u.Body != nil {
+		st.Body = *u.Body
+	}
+	if u.Draft != nil {
+		p.setDraftLocked(st, *u.Draft)
+	}
+	return st.PR, p.save()
+}
+
+// ApplyReady implements gitprov.Provider. Unlike a real host, the fake
+// refuses a PR that is still a draft: the runner must flip it first, and
+// a test should notice when it does not.
+func (p *Provider) ApplyReady(_ context.Context, number int, reviewers, labels []string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err := p.load(); err != nil {
+		return err
+	}
+	p.logLocked(Call{Op: "ApplyReady", PR: number, Detail: fmt.Sprintf("reviewers=%s labels=%s", strings.Join(reviewers, ","), strings.Join(labels, ","))})
+	if p.FailApplyReady > 0 {
+		p.FailApplyReady--
+		_ = p.save()
+		return errors.New("fake provider: injected ApplyReady failure")
+	}
+	st, err := p.findLocked(number)
+	if err != nil {
+		return err
+	}
+	if state := stateOf(st); state != gitprov.PROpen {
+		_ = p.save()
+		return fmt.Errorf("PR #%d is %s: %w", st.Number, state, gitprov.ErrPRNotOpen)
+	}
+	if st.Draft {
+		_ = p.save()
+		return fmt.Errorf("fake provider: ApplyReady on PR #%d, which is still a draft", number)
+	}
+	perr := p.applyLocked(st, reviewers, labels)
+	if err := p.save(); err != nil {
+		return err
+	}
+	return perr
 }

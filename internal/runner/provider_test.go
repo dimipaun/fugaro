@@ -92,7 +92,7 @@ func TestAgentPushAndAmendIsTolerated(t *testing.T) {
 // asked to outlive it, that the agent sees the new one, and that every
 // token handed out is redacted.
 func TestTokenRefreshedBetweenStages(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.useHTTPRemote(t, testutil.Prefix("x-token-auth", "tok-"))
 	var mu sync.Mutex
 	var asked []time.Duration
@@ -138,7 +138,7 @@ func TestTokenValidityCappedBelowTokenLife(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"],
 		"timeouts: { total: 5m, stage: 2m, verify: 1m, finalize_reserve: 30s }",
 		"timeouts: { total: 5h, stage: 2h, verify: 1m, finalize_reserve: 70m }", 1)
-	h := newHarness(t, cfg, nil)
+	h := newHarness(t, oldFlow(cfg), nil)
 	h.useHTTPRemote(t, testutil.Prefix("x-token-auth", "tok-"))
 	var mu sync.Mutex
 	var asked []time.Duration
@@ -214,7 +214,7 @@ func TestEnsurePRRetried(t *testing.T) {
 }
 
 func TestEnsurePRGivesUp(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.deps.RetryDelay = time.Millisecond
 	h.provider.FailEnsure = 3
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
@@ -237,7 +237,7 @@ func TestEnsurePRGivesUp(t *testing.T) {
 // PR at all: the populated PR from the earlier attempt must survive into
 // the final, still-failed record.
 func TestEnsurePRGivesUpKeepsPopulatedPR(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.deps.RetryDelay = time.Millisecond
 	h.provider.FailEnsureAfterCreate = 1 // attempt 1: creates the PR, still errors
 	h.provider.FailEnsure = 2            // attempts 2 and 3: fail with no PR at all
@@ -296,7 +296,7 @@ func (s stallEnsure) Comment(ctx context.Context, pr gitprov.PR, body string) er
 // than the expired finalize one.
 func TestEnsurePRGivesUpAfterDeadlineStillComments(t *testing.T) {
 	cfg := strings.Replace(testutil.FixtureFiles(t)["fugaro.yaml"], "finalize_reserve: 30s", "finalize_reserve: 3s", 1)
-	h := newHarness(t, cfg, nil)
+	h := newHarness(t, oldFlow(cfg), nil)
 	h.deps.RetryDelay = time.Millisecond
 	h.deps.OpenProvider = gitprov.Static(stallEnsure{h.provider})
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
@@ -315,7 +315,7 @@ func TestEnsurePRGivesUpAfterDeadlineStillComments(t *testing.T) {
 // TestNotReadyNoteCarriesMarker: the not-ready note ends with the run's
 // marker, so a later follow-up can tell which run posted it.
 func TestNotReadyNoteCarriesMarker(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.deps.RetryDelay = time.Millisecond
 	h.provider.FailEnsureAfterCreate = 3 // every attempt creates or finds the PR, and still errors
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
@@ -332,7 +332,7 @@ func TestNotReadyNoteCarriesMarker(t *testing.T) {
 // TestEnsurePRGivesUpCommentIsRedacted checks that the give-up comment,
 // which quotes the provider's error, never carries a credential.
 func TestEnsurePRGivesUpCommentIsRedacted(t *testing.T) {
-	h := newHarness(t, "", nil)
+	h := newHarness(t, oldFlowCfg(t), nil)
 	h.useHTTPRemote(t, testutil.Token("x-token-auth", gitToken))
 	h.provider.Auth = staticAuth(gitToken)
 	h.deps.RetryDelay = time.Millisecond

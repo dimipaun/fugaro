@@ -30,6 +30,7 @@ The JSON has:
 - `findings`: the last review's findings
 - `agent_message`: the agent's final message (clipped to 4 KiB)
 - `log_tail`: the newest 30 log lines
+- `draft_note`: a line about the run's draft pull request when it needs one (a stale draft, or the `[DRAFT]` title fallback); `row.stale_draft`, `row.draft_fallback` and `row.pr_status_at` say the same in fields
 - `report_path`: where the run's report is stored
 - `follow_up` and `comments_path`: for a follow-up, the pull request and previous run it continues, and which comments were used
 
@@ -37,7 +38,11 @@ Read the whole thing before you conclude. For more of the output, `fugaro logs <
 
 ## 2. The pull request
 
-A run that pushed has a branch (`fugaro/<run-id>`, or the PR's branch for a follow-up) and usually a pull request, in `row.pr_url`. A draft pull request means the run wasn't sure of its work, or was halted or cancelled, and the work is there to read. Open the pull request, and its report comment, and say what is in it. A run with `outcome` `none` pushed nothing, so there is no pull request.
+A run that pushed has a branch (`fugaro/<run-id>`, or the PR's branch for a follow-up) and usually a pull request, in `row.pr_url`. A draft pull request means the run wasn't sure of its work, or was halted or cancelled, and the work is there to read. Open the pull request, and its report comment, and say what is in it. A run with `outcome` `none` pushed nothing, so there is no pull request, with one exception: a pull request a person closed or merged during the run stays in `row.pr_url`, and the reason says so.
+
+The draft pull request appears **early**: at the run's first verified push, while the run is still going, with a **Fugaro status** section in its description that the runner keeps current. So a run in progress, a halted run and a cancelled run all can have one. **Reviewers are requested only when the pull request becomes ready**; a draft has none, so a draft that nobody reviewed is not a sign that nobody was told.
+
+A stale draft: if `row.stale_draft` is true (or `draft_note` says `the run may have crashed`), the run's record never reached a final status, and its execution is gone or its status section stopped updating, so the run probably died and its draft still says `Running`. Say so as an inference. The work up to the last verified push is on the branch; the sensible step is a follow-up (`fugaro run --pr N`), with the user's go-ahead. If `draft_fallback` is true, the host has no draft pull requests: the pull request is an ordinary one with `[DRAFT]` in its title, so it can look ready to reviewers; say so.
 
 ## 3. What the status means
 

@@ -67,6 +67,15 @@ const (
 type PRRef struct {
 	Number int    `json:"number"`
 	URL    string `json:"url"`
+	// Desc is a digest of the title and description (outside the status
+	// section) the runner last wrote, so finalize replaces them from pr.md
+	// only while nobody has edited them. Empty for a follow-up's PR and
+	// for one the runner opened at finalize.
+	Desc string `json:"desc,omitempty"`
+	// StatusAt is when the runner last wrote the status section into the
+	// description. A running record whose StatusAt is long past is the
+	// stale draft of a run that died; diagnose and ls say so.
+	StatusAt *time.Time `json:"status_at,omitempty"`
 }
 
 // ReviewSummary is one review round's verdict.
@@ -99,17 +108,20 @@ type Record struct {
 	// git.base_branch of the config it ran with (not the task's ref, which
 	// a first run may set to another branch). A follow-up takes it as its
 	// ref. Absent in records from before it was kept.
-	BaseBranch string          `json:"base_branch,omitempty"`
-	HeadSHA    string          `json:"head_sha,omitempty"`
-	PR         *PRRef          `json:"pr,omitempty"`
-	Reviews    []ReviewSummary `json:"reviews,omitempty"`
-	Verify     []verify.Record `json:"verify,omitempty"`
-	CostUSD    float64         `json:"cost_usd"` // the model spend (design §4.6)
-	Cost       *Cost           `json:"cost,omitempty"`
-	Stages     []StageTiming   `json:"stages,omitempty"`
-	StartedAt  time.Time       `json:"started_at"`
-	Deadline   *time.Time      `json:"deadline,omitempty"`
-	FinishedAt *time.Time      `json:"finished_at,omitempty"`
+	BaseBranch string `json:"base_branch,omitempty"`
+	HeadSHA    string `json:"head_sha,omitempty"`
+	PR         *PRRef `json:"pr,omitempty"`
+	// DraftFallback is set when the host refused real draft pull requests,
+	// so the PR is an ordinary one marked "[DRAFT]" in its title.
+	DraftFallback bool            `json:"draft_fallback,omitempty"`
+	Reviews       []ReviewSummary `json:"reviews,omitempty"`
+	Verify        []verify.Record `json:"verify,omitempty"`
+	CostUSD       float64         `json:"cost_usd"` // the model spend (design §4.6)
+	Cost          *Cost           `json:"cost,omitempty"`
+	Stages        []StageTiming   `json:"stages,omitempty"`
+	StartedAt     time.Time       `json:"started_at"`
+	Deadline      *time.Time      `json:"deadline,omitempty"`
+	FinishedAt    *time.Time      `json:"finished_at,omitempty"`
 	// FinalizeReserveS is the workflow's timeouts.finalize_reserve at the
 	// task's ref, overrides applied, in seconds; read it with
 	// FinalizeReserve. Absent until bootstrap has read fugaro.yaml.
