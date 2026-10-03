@@ -386,12 +386,8 @@ func (r *run) checkProviderModels() error {
 	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
 	// stage pins and Claude Code's haiku role all see the same one.
 	bg := r.backgroundModel()
-	if !r.gatewayOn() {
-		for _, m := range []string{r.cfg.Agent.ModelFor(config.RoleCoder), r.cfg.Agent.ModelFor(config.RoleReviewer), bg} {
-			if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
-				return fmt.Errorf("%s is served by a provider, which needs the budget gateway: set budget.mode to observe or enforce (with agent.auth api-key); without it the call would go to Anthropic", config.CodeSpan(m))
-			}
-		}
+	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.d.Providers, r.gatewayOn()); len(ps) > 0 {
+		return errors.New(ps[0].Message)
 	}
 	r.cfg.Agent.Models.Background = bg
 	return nil

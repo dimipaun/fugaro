@@ -247,6 +247,27 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 	return ps
 }
 
+// CheckProviderGateway refuses a provider model when the budget gateway is
+// off: the gateway holds the key and routes the call, so without it the call
+// would go to Anthropic. bg is the run's effective background model. One
+// problem per role that names a provider model.
+func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, gatewayOn bool) []Problem {
+	if gatewayOn {
+		return nil
+	}
+	var ps []Problem
+	for _, r := range []struct{ path, model string }{
+		{"agent.models.coder", a.ModelFor(RoleCoder)},
+		{"agent.models.reviewer", a.ModelFor(RoleReviewer)},
+		{"agent.models.background", bg},
+	} {
+		if _, _, ok := ProviderFor(providers, r.model); ok {
+			ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by a provider, which needs the budget gateway: set budget.mode to observe or enforce (with agent.auth api-key); without it the call would go to Anthropic", CodeSpan(r.model))})
+		}
+	}
+	return ps
+}
+
 // CheckProviderPolicy is the repository's side of a provider model (design
 // m10-multi-model.md §3): a model ID that is not Claude's (a "vendor/model"
 // ID) is accepted in the file's pins (agent.models.*, agent.model) and in its

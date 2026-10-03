@@ -52,8 +52,8 @@ func TestUnverifiedPriceWarns(t *testing.T) {
 	if err := m.Rates.Validate(); err != nil {
 		t.Errorf("starter rates: %v", err)
 	}
-	if !tbl.Unverified(dsID) || tbl.Unverified("claude-sonnet-5-5") || tbl.Unverified("nope") {
-		t.Error("Unverified wrong")
+	if c, _ := tbl.Lookup("claude-sonnet-5-5"); c.Unverified {
+		t.Error("a Claude row is verified")
 	}
 }
 
@@ -68,7 +68,7 @@ func TestOverrideBeatsEmbedded(t *testing.T) {
 	if m.Rates.InputPerM != 0.11 || m.Rates.OutputPerM != 0.22 {
 		t.Errorf("override lost: %+v", m.Rates)
 	}
-	if m.Unverified || tbl.Unverified(dsID) {
+	if m.Unverified {
 		t.Error("an owner's price is the owner's: it must not stay unverified")
 	}
 	if b, _ := base.Lookup(dsID); !b.Unverified {

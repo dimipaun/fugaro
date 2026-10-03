@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"slices"
 	"strconv"
@@ -64,10 +65,13 @@ type Diagnosis struct {
 	Route   map[string]float64 `json:"route_by,omitempty"`
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
 	// Reported is what providers said the run's calls cost, beside Charge,
-	// what the table said (the charge always settles). Zero when no
-	// provider reported one.
-	Reported float64 `json:"reported_usd,omitempty"`
-	Charge   float64 `json:"charge_usd,omitempty"`
+	// what the table said for the provider routes' calls (the charge
+	// always settles; Claude's spend is not in it). Zero when no provider
+	// reported one. ReportedWarning is set when the two differ by more than
+	// reportedGapPct percent.
+	Reported        float64 `json:"reported_usd,omitempty"`
+	Charge          float64 `json:"charge_usd,omitempty"`
+	ReportedWarning string  `json:"reported_warning,omitempty"`
 	// PinWarnings are the model prices the run's cap counted on a guess:
 	// an unverified placeholder, or cache rates left at 0.
 	PinWarnings []string `json:"pin_warnings,omitempty"`
@@ -232,6 +236,10 @@ func seniorRound(rs []runstore.ReviewSummary) int {
 	return 0
 }
 
+// reportedGapPct is how far apart a provider's reported cost and Fugaro's
+// charge may be before diagnose warns.
+const reportedGapPct = 10
+
 // routeOf fills d's route, reported-vs-charge and pin warnings from the
 // record's cost: the models the run paid for are its pins. The warnings use
 // the price table with the project's overrides, as the run's cap did.
@@ -242,7 +250,19 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 	c := rec.Cost
 	d.Route, d.ModelBy = redactKeys(c.RouteBy, red), redactKeys(c.ModelBy, red)
 	if c.ReportedUSD > 0 {
-		d.Reported, d.Charge = c.ReportedUSD, c.ModelUSD
+		// The provider's charge is the routes' spend; the run's ModelUSD also
+		// holds Claude's, and "unattributed" may be a Claude call's.
+		var charge float64
+		for r, v := range c.RouteBy {
+			if r != "unattributed" {
+				charge += v
+			}
+		}
+		d.Reported, d.Charge = c.ReportedUSD, charge
+		if gap := math.Abs(d.Reported-charge) / math.Max(charge, 1e-9) * 100; charge <= 0 || gap > reportedGapPct {
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f but the table charged $%.4f (more than %d%% apart): check model_prices and the account's provider settings",
+				d.Reported, charge, reportedGapPct)
+		}
 	}
 	prices := pricing.Embedded()
 	if lc != nil {
@@ -444,6 +464,9 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	for _, w := range d.PinWarnings {
 		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
+	}
+	if d.ReportedWarning != "" {
+		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(d.ReportedWarning))
 	}
 	if r.PRURL != "" {
 		fmt.Fprintf(&b, "PR:       %s\n", oneLine(prColumnURL(r)))

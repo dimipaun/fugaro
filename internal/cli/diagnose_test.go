@@ -406,7 +406,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.2500", "charged $0.4200", "unverified placeholder"} {
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.2500", "charged $0.3000", "unverified placeholder", "more than 10% apart"} {
 		if !strings.Contains(human, want) {
 			t.Fatalf("diagnose lacks %q:\n%s", want, human)
 		}
@@ -419,7 +419,7 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	if err := json.Unmarshal([]byte(js), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.Route["openrouter"] != 0.30 || d.Reported != 0.25 || d.Charge != 0.42 || len(d.PinWarnings) != 1 {
+	if d.Route["openrouter"] != 0.30 || d.Reported != 0.25 || d.Charge != 0.30 || len(d.PinWarnings) != 1 || d.ReportedWarning == "" {
 		t.Fatalf("route %v reported %v charge %v warnings %v", d.Route, d.Reported, d.Charge, d.PinWarnings)
 	}
 	if strings.Contains(human+js, key) {
@@ -439,6 +439,42 @@ func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
 	human, _, err = execute(t, "diagnose", id2)
 	if err != nil || strings.Contains(human, "Route:") || strings.Contains(human, "Reported:") || strings.Contains(human, "Warning:") {
 		t.Fatalf("err %v; a Claude run shows provider lines:\n%s", err, human)
+	}
+}
+
+// A run with a provider coder and a Claude senior: the charge compared with
+// the provider's report is the provider route's spend, not the whole run's,
+// and an "unattributed" remainder (maybe Claude's) is not in it.
+func TestDiagnoseReportedComparesTheProviderRouteOnly(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		reported float64
+		warn     bool
+	}{{0.31, false}, {0.40, true}} {
+		id := fmt.Sprintf("20260927-14000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		cost := runstore.NewCost(0.60, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "claude-sonnet-5-5": 0.25, "unattributed": 0.05}
+		cost.RouteBy = map[string]float64{"openrouter": 0.30, "unattributed": 0.30}
+		cost.ReportedUSD = tc.reported
+		if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.60, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Charge != 0.30 || d.Reported != tc.reported || (d.ReportedWarning != "") != tc.warn {
+			t.Fatalf("reported %v: charge %v reported %v warning %q (want warning %v)", tc.reported, d.Charge, d.Reported, d.ReportedWarning, tc.warn)
+		}
 	}
 }
 

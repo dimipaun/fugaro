@@ -170,12 +170,6 @@ func (t *Table) Lookup(model string) (Model, bool) {
 	return Model{}, false
 }
 
-// Unverified reports whether model's row is a placeholder nobody checked.
-func (t *Table) Unverified(model string) bool {
-	m, ok := t.Lookup(model)
-	return ok && m.Unverified
-}
-
 // Max is the highest of every rate in the table, for a call served by a
 // model the table doesn't know. A long-context tier's rates count towards
 // the input and output maximum, and the result is flat. A table with no

@@ -527,6 +527,12 @@ func TestValidateProviderModels(t *testing.T) {
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth: api-key") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
+	// A provider model with the gateway off (budget mode off) is refused, as
+	// the runner refuses it.
+	path = budgetProject(t, "budget: { mode: off }\n"+validateProviderBlock, coder)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
 	// A vendor/model no provider serves.
 	path = budgetProject(t, "budget: { mode: observe }\n", coder)
 	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {

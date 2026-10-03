@@ -193,6 +193,8 @@ func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Conf
 	problems = append(problems, config.CheckProviderAuth(cfg.Agent, lc.Providers)...)
 	agent := cfg.Agent
 	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
+	mode := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg)).Mode
+	problems = append(problems, config.CheckProviderGateway(agent, agent.Models.Background, lc.Providers, mode != "" && mode != policy.ModeOff)...)
 	if cfg.Agent.Auth != "oauth" {
 		warnings = append(warnings, config.PinWarnings(agent, prices)...)
 	}
