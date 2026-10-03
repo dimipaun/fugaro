@@ -46,6 +46,20 @@ case "$cmd" in
   "corepack --version")
     [ "$missing" = corepack ] && fail_missing corepack
     echo "0.36.0" ;;
+  "go version")
+    [ "$missing" = go ] && fail_missing go
+    echo "go version go${FAKE_GO_VERSION:-0} linux/amd64" ;;
+  "terraform version")
+    [ "$missing" = terraform ] && fail_missing terraform
+    printf 'Terraform v%s\non linux_amd64\n' "${FAKE_TERRAFORM_VERSION:-0}" ;;
+  "make --version")
+    [ "$missing" = make ] && fail_missing make
+    echo "GNU Make 4.3" ;;
+  "gcc --version")
+    [ "$missing" = gcc ] && fail_missing gcc
+    echo "gcc (Ubuntu) 13.3.0" ;;
+  "go env GOTOOLCHAIN")
+    echo "${FAKE_GOTOOLCHAIN:-local}" ;;
   "id -un")
     echo "fugaro" ;;
   "pwd")

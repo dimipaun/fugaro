@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  go:
+    base: go
+    image: { jdk: "21" }
+    commands: { build: go build ./..., test: go test ./... }

@@ -3,10 +3,12 @@
 # §13): fugaro, Claude Code, gh and the toolchain run, and the image runs as
 # the non-root fugaro user in /work/repo under tini, with no passwordless
 # sudo, no leftover credential files, and no file under $HOME owned by
-# anyone but fugaro. The image's Claude Code, gh and (for web-node) Node are
-# checked against CLAUDE_CODE_VERSION, GH_VERSION and NODE_VERSION, which
-# default to the ARG lines in images/BASE/Dockerfile, so CI and release
-# builds always assert the pins; set one in the environment to override it.
+# anyone but fugaro. The image's Claude Code and gh, and its toolchain (Node
+# for web-node; Go and Terraform for go), are checked against the pins
+# CLAUDE_CODE_VERSION, GH_VERSION, NODE_VERSION, GO_VERSION and
+# TERRAFORM_VERSION, which default to the ARG lines in images/BASE/Dockerfile,
+# so CI and release builds always assert the pins; set one in the environment
+# to override it.
 set -eu
 image=${1:?usage: smoke.sh IMAGE BASE}
 base=${2:?usage: smoke.sh IMAGE BASE}
@@ -60,6 +62,25 @@ case "$base" in
           *) fail "node -v reports '$node_version', not pinned NODE_VERSION major=$NODE_VERSION" ;;
         esac ;;
     esac
+    ;;
+  go)
+    GO_VERSION=${GO_VERSION:-$(arg_default GO_VERSION)}
+    TERRAFORM_VERSION=${TERRAFORM_VERSION:-$(arg_default TERRAFORM_VERSION)}
+    [ -n "$GO_VERSION" ] || fail "$dockerfile has no ARG GO_VERSION=... pin"
+    [ -n "$TERRAFORM_VERSION" ] || fail "$dockerfile has no ARG TERRAFORM_VERSION=... pin"
+    go_version=$(run go version) || fail "go version failed"
+    echo "$go_version"
+    case "$go_version" in
+      "go version go$GO_VERSION "*) ;;
+      *) fail "go version reports '$go_version', not pinned GO_VERSION=$GO_VERSION" ;;
+    esac
+    tf_version=$(first_line "$(run terraform version)") || fail "terraform version failed"
+    echo "$tf_version"
+    [ "$tf_version" = "Terraform v$TERRAFORM_VERSION" ] \
+      || fail "terraform version reports '$tf_version', not pinned TERRAFORM_VERSION=$TERRAFORM_VERSION"
+    run make --version >/dev/null || fail "make --version failed"
+    run gcc --version >/dev/null || fail "gcc --version failed"
+    [ "$(run go env GOTOOLCHAIN)" = local ] || fail "GOTOOLCHAIN is not local"
     ;;
   server-jvm)
     run java -version || fail "java -version failed"

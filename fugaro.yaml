@@ -1,0 +1,41 @@
+# fugaro.yaml — Fugaro running on its own repository (docs/dogfooding.md).
+# Schema: https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/fugaro.schema.json
+version: 1
+project: fugaro
+
+git:
+  provider: github
+  base_branch: main
+  pr:
+    # TODO(user): add your GitHub login (and a label if you want one) once the first run works.
+    reviewers: []
+    labels: []
+
+agent:
+  auth: oauth
+
+# oauth is a subscription, so there is no per-token price to cap: observe records usage only.
+budget:
+  mode: observe
+
+workflows:
+  go:
+    base: go
+    image:
+      # Bake the module cache and a warm build cache into the derived image.
+      setup: ["go mod download && go build ./..."]
+    commands:
+      # The verify step must finish in about 20 minutes. It is NOT the merge gate:
+      # GitHub CI is (go test -race ./..., the docker-tests, rules and terraform jobs).
+      # Left out here: Docker (docker-tests) and the Firebase emulator (rules), which the
+      # container can't run; -race; the live-tagged tests; and internal/runner and
+      # internal/e2e, about 12 and 6 minutes each. A change to those packages should run them.
+      build: |
+        set -e
+        go build ./...
+        go vet ./...
+        test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      test: |
+        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e)
+    resources: { cpu: 4, memory: 8Gi }
+    timeouts: { total: 90m, stage: 40m, verify: 25m, finalize_reserve: 5m }

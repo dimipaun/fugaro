@@ -34,7 +34,8 @@ A workflow is one buildable unit with its own image.
 
 - **`web-node`:** `package.json` at the root with a lockfile (`yarn.lock`, `pnpm-lock.yaml`, `package-lock.json` or `npm-shrinkwrap.json`). Usually named `web`. A monorepo with one root lockfile (Yarn, pnpm or npm workspaces) is one workflow.
 - **`server-jvm`:** `gradlew` or `settings.gradle(.kts)`. Usually named `server`. The `server-jvm` image is not published yet, so its image build fails with "has no published image yet". Record the workflow if the user wants it, tell them it can't run yet, and finish the web workflows.
-- **Both:** two workflows.
+- **`go`:** `go.mod` at the root. Usually named `go`. The image carries Go (pinned, `GOTOOLCHAIN=local`), gcc and make, git and Terraform; add anything else with `image.apt` or `image.setup`. Go writes no JUnit reports, so a run has no per-test results unless the test command produces them.
+- **Several:** one workflow each.
 
 Set the git settings:
 - `git.provider` from `git remote get-url origin`: `github.com` means `github`, `bitbucket.org` means `bitbucket`.
@@ -106,7 +107,7 @@ The build context holds only the repository bundle, so use files from `/work/rep
 
 ## 5. Resources
 
-The defaults are 4 CPUs and 8Gi for `web-node`, and 8 CPUs and 32Gi for `server-jvm`. Cloud Run allows at most 16Gi with 4 CPUs, and 32Gi with 8.
+The defaults are 4 CPUs and 8Gi for `web-node` and `go`, and 8 CPUs and 32Gi for `server-jvm`. Cloud Run allows at most 16Gi with 4 CPUs, and 32Gi with 8.
 
 Match what the repo's CI gives its build and test steps today. Read the CI machine size: Bitbucket `size: 1x/2x/4x/8x` is 4/8/16/32 GB, and GitHub-hosted `ubuntu-latest` has 16 GB for public repositories and 8 GB for private ones. Use that memory, rounded up to a Cloud Run size, plus about 1Gi for the agent itself, which runs in the same container.
 - If CI raises the Node heap with `--max-old-space-size=<MB>` and the test runner uses parallel workers, check workers × heap + 2Gi against that figure.
