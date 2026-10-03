@@ -75,6 +75,12 @@ type pullRequest struct {
 	ID    int    `json:"id"`
 	Title string `json:"title"`
 	Draft bool   `json:"draft"`
+	// Description is the PR's body, as Bitbucket spells it.
+	Description string `json:"description"`
+	Reviewers   []struct {
+		UUID      string `json:"uuid"`
+		AccountID string `json:"account_id"`
+	} `json:"reviewers"`
 	Links struct {
 		HTML struct {
 			Href string `json:"href"`
@@ -100,16 +106,11 @@ func (p *Provider) prPath(suffix string) string {
 
 // EnsurePR implements gitprov.Provider. Bitbucket Cloud pull requests have
 // no labels, so spec.Labels is ignored (logged once per Provider instance).
-// spec.Reviewers are account UUIDs ("{…}") or account IDs.
+// A draft is created without reviewers (see PRSpec). spec.Reviewers are account UUIDs ("{…}") or account IDs.
 func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	if spec.Number != 0 {
 		// An update by number must never fall through to find-or-create.
 		return p.updateByNumber(ctx, spec)
-	}
-	if len(spec.Labels) > 0 {
-		p.warnOnce.Do(func() {
-			p.o.Warn(fmt.Sprintf("bitbucket: pull request labels aren't supported; ignoring labels %v", spec.Labels))
-		})
 	}
 	existing, err := p.find(ctx, spec.Branch)
 	if err != nil {
@@ -118,7 +119,22 @@ func (p *Provider) EnsurePR(ctx context.Context, spec gitprov.PRSpec) (gitprov.P
 	if existing != nil {
 		return p.update(ctx, *existing, spec.Draft)
 	}
+	if spec.Draft {
+		// A draft carries no reviewers and no labels: ApplyReady adds
+		// them once the PR is ready.
+		spec.Reviewers, spec.Labels = nil, nil
+	}
+	p.warnLabels(spec.Labels)
 	return p.create(ctx, spec)
+}
+
+// warnLabels says once that labels, which Bitbucket Cloud lacks, are dropped.
+func (p *Provider) warnLabels(labels []string) {
+	if len(labels) > 0 {
+		p.warnOnce.Do(func() {
+			p.o.Warn(fmt.Sprintf("bitbucket: pull request labels aren't supported; ignoring labels %v", labels))
+		})
+	}
 }
 
 // update puts an existing pull request (one an earlier attempt or the
@@ -287,7 +303,7 @@ func (p *Provider) finish(ctx context.Context, pr pullRequest, draft bool) (gitp
 			return out, &gitprov.PartialError{Err: wrapped}
 		}
 	}
-	return gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: draft}, nil
+	return gitprov.PR{Number: pr.ID, URL: pr.Links.HTML.Href, Draft: draft, DraftFallback: addPrefix}, nil
 }
 
 // Comment implements gitprov.Provider.
@@ -352,7 +368,7 @@ func (p *Provider) getPull(ctx context.Context, number int) (pullDetail, gitprov
 		// Never act on another pull request than the one asked for.
 		return pullDetail{}, gitprov.PRInfo{}, fmt.Errorf("reading pull request #%d: the response is for #%d", number, d.ID)
 	}
-	info := gitprov.PRInfo{Number: d.ID, URL: d.Links.HTML.Href, Draft: d.isDraft(), AuthorID: d.Author.accountID(),
+	info := gitprov.PRInfo{Number: d.ID, URL: d.Links.HTML.Href, Draft: d.isDraft(), Title: d.Title, Body: d.Description, AuthorID: d.Author.accountID(),
 		SourceBranch: d.Source.Branch.Name}
 	if d.Source.Commit != nil {
 		info.HeadSHA = d.Source.Commit.Hash
@@ -403,4 +419,120 @@ func (p *Provider) updateByNumber(ctx context.Context, spec gitprov.PRSpec) (git
 		return pr, fmt.Errorf("pull request #%d is on %s, not %s: %w", info.Number, info.SourceBranch, spec.Branch, gitprov.ErrPRNotOpen)
 	}
 	return p.update(ctx, d.pullRequest, spec.Draft)
+}
+
+// putPull PUTs title, description and the real draft flag together, and
+// nothing else. Bitbucket's PUT is not documented to keep omitted fields:
+// the recorded exchanges show a PUT of {title, draft} keeping the
+// description and the reviewers, but nothing recorded shows what a PUT
+// carrying a new description does to the draft flag, so each text PUT
+// re-sends all three from the pull request just read (assumption A3).
+func (p *Provider) putPull(ctx context.Context, id int, extra map[string]any, cur pullRequest, title, description string) (pullRequest, error) {
+	body := map[string]any{"title": title, "description": description, "draft": cur.Draft}
+	for k, v := range extra {
+		body[k] = v
+	}
+	var out pullRequest
+	err := p.api.Do(ctx, "PUT", p.prPath(fmt.Sprintf("/%d", id)), body, &out)
+	return out, err
+}
+
+// UpdatePR implements gitprov.Provider: one GET, then at most one text PUT
+// (skipped when nothing changes), then the draft flip through update.
+func (p *Provider) UpdatePR(ctx context.Context, number int, u gitprov.PRUpdate) (gitprov.PR, error) {
+	d, info, err := p.getPull(ctx, number)
+	if err != nil {
+		return gitprov.PR{}, err
+	}
+	cur := d.pullRequest
+	pr := gitprov.PR{Number: info.Number, URL: info.URL, Draft: info.Draft, DraftFallback: strings.HasPrefix(cur.Title, gitprov.DraftPrefix) && !cur.Draft}
+	if info.State != gitprov.PROpen {
+		return pr, fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
+	}
+	title, desc := cur.Title, cur.Description
+	if u.Title != nil {
+		title = *u.Title
+		if strings.HasPrefix(cur.Title, gitprov.DraftPrefix) && (u.Draft == nil || *u.Draft) {
+			title = gitprov.DraftTitle(title, true)
+		}
+	}
+	if u.Body != nil {
+		desc = *u.Body
+	}
+	if title != cur.Title || desc != cur.Description {
+		out, err := p.putPull(ctx, number, nil, cur, title, desc)
+		if err != nil {
+			return pr, fmt.Errorf("updating pull request #%d: %w", number, err)
+		}
+		if out.ID == number {
+			cur = out
+		} else {
+			cur.Title, cur.Description = title, desc
+		}
+	}
+	if u.Draft != nil && *u.Draft != info.Draft {
+		return p.update(ctx, cur, *u.Draft)
+	}
+	return pr, nil
+}
+
+// ApplyReady implements gitprov.Provider: one GET, then, when a reviewer
+// is not yet on the pull request, one PUT carrying the existing reviewers
+// plus the new ones along with the current title, description and draft
+// flag. Labels are not supported and are dropped with a warning.
+func (p *Provider) ApplyReady(ctx context.Context, number int, want, labels []string) error {
+	p.warnLabels(labels)
+	d, info, err := p.getPull(ctx, number)
+	if err != nil {
+		return err
+	}
+	if info.State != gitprov.PROpen {
+		return fmt.Errorf("pull request #%d is %s: %w", info.Number, info.State, gitprov.ErrPRNotOpen)
+	}
+	all := d.pullRequest.reviewerRefs()
+	var added []string
+	for _, id := range want {
+		if !d.pullRequest.hasReviewer(id) {
+			added = append(added, id)
+		}
+	}
+	if len(added) == 0 {
+		return nil
+	}
+	all = append(all, reviewers(added)...)
+	_, err = p.putPull(ctx, number, map[string]any{"reviewers": all}, d.pullRequest, d.Title, d.Description)
+	if err != nil {
+		var se *httpjson.StatusError
+		if errors.As(err, &se) && se.Status == http.StatusBadRequest {
+			// One bad reviewer (an unknown account, or the token's own)
+			// fails the whole request; the PR stays as it was, ready.
+			return &gitprov.PartialError{Err: fmt.Errorf("reviewers %s were rejected: %w", strings.Join(added, ", "), err)}
+		}
+		return &gitprov.PartialError{Err: fmt.Errorf("requesting reviewers on pull request #%d: %w", number, err)}
+	}
+	return nil
+}
+
+func (pr pullRequest) reviewerRefs() []map[string]string {
+	var out []map[string]string
+	for _, r := range pr.Reviewers {
+		switch {
+		case r.UUID != "":
+			out = append(out, map[string]string{"uuid": r.UUID})
+		case r.AccountID != "":
+			out = append(out, map[string]string{"account_id": r.AccountID})
+		}
+	}
+	return out
+}
+
+// hasReviewer reports whether id (a "{uuid}" or an account ID) is already
+// a reviewer. UUIDs compare case-insensitively.
+func (pr pullRequest) hasReviewer(id string) bool {
+	for _, r := range pr.Reviewers {
+		if strings.EqualFold(r.UUID, id) || (r.AccountID != "" && r.AccountID == id) {
+			return true
+		}
+	}
+	return false
 }

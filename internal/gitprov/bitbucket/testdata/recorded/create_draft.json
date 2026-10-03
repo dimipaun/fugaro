@@ -22,11 +22,6 @@
         }
       },
       "draft": true,
-      "reviewers": [
-        {
-          "uuid": "{5a4d0b0e-0000-4000-8000-00000000a11c}"
-        }
-      ],
       "source": {
         "branch": {
           "name": "fugaro/live-20260927-183406-draft"

@@ -137,6 +137,7 @@ var recShortSHA = regexp.MustCompile(`^[0-9a-f]{7,40}$`) // Bitbucket abbreviate
 const (
 	recFollowUpPR     = 16
 	recFollowUpBranch = "fugaro/live-20260930-130729-draft"
+	recFollowUpTitle  = "Fugaro live check 20260930-130729"
 	recBotID          = "712020:00000000-0000-4000-8000-00000000b07e" // the repository access token's account_id
 )
 
@@ -166,7 +167,7 @@ func TestRecordedFollowUpReads(t *testing.T) {
 		t.Fatalf("Repository = %+v, %v; the sandbox is private", repo, err)
 	}
 	info, err := p.PullRequest(ctx, recFollowUpPR)
-	want := gitprov.PRInfo{Number: recFollowUpPR, URL: recPRURL + "16", State: gitprov.PROpen, AuthorID: recBotID,
+	want := gitprov.PRInfo{Number: recFollowUpPR, URL: recPRURL + "16", State: gitprov.PROpen, Title: recFollowUpTitle, Body: recBody, AuthorID: recBotID,
 		SourceBranch: recFollowUpBranch, SourceRepo: "acme/sandbox", HeadSHA: "3bd808d407ef"}
 	if err != nil || info != want || !recShortSHA.MatchString(info.HeadSHA) {
 		t.Fatalf("PullRequest = %+v, %v\nwant %+v", info, err, want)
