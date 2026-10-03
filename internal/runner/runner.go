@@ -1069,7 +1069,7 @@ func (r *run) firstLine(ctx context.Context, reviewPrompt, sys, sessionID string
 	for round := 1; round <= rounds; round++ {
 		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
 		r.countTokens(res)
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Findings: 1}
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none"}
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):

@@ -3,6 +3,7 @@ package runner_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -162,8 +163,8 @@ func TestFirstLineFailureSkipped(t *testing.T) {
 			if got := tiers(rec); !eq(got, "first:none", "senior:ship") {
 				t.Fatalf("reviews = %v", got)
 			}
-			if rec.Reviews[0].Findings != 1 {
-				t.Errorf("a skipped first line records its missing verdict as a finding: %+v", rec.Reviews[0])
+			if rec.Reviews[0].Findings != 0 {
+				t.Errorf("a skipped first line has no findings to record: %+v", rec.Reviews[0])
 			}
 			// No fix, and no second first-line round after a failure.
 			if len(h.agent.calls) != 3 || h.agent.calls[2].Model != "senior-model" {
@@ -272,5 +273,108 @@ func TestFirstLineCostCountsToCap(t *testing.T) {
 	// A halted run is not ready, whatever the first line said.
 	if got := tiers(rec); !eq(got, "first:ship") {
 		t.Fatalf("reviews = %v", got)
+	}
+}
+
+// withFirstLine turns a config with a draft PR (prCfg or prFollowYAML) into
+// one with a coder, a senior reviewer and the first line on.
+func withFirstLine(t *testing.T, cfg string) string {
+	t.Helper()
+	out := strings.Replace(cfg, "review_rounds: 2", "review_rounds: 2\n  models: { coder: coder-model, reviewer: senior-model }\n  first_line_review: on", 1)
+	if out == cfg {
+		t.Fatal("no review_rounds: 2 in the config")
+	}
+	return out
+}
+
+// TestFirstLineStatusSectionAndNoReviewersUntilReady: with the early draft
+// PR, the status section names the first-line review (as such) while the
+// senior review runs, the draft has no reviewers or labels, and they come
+// only with the flip to ready.
+func TestFirstLineStatusSectionAndNoReviewersUntilReady(t *testing.T) {
+	clk := newClock()
+	h := prHarness(t, withFirstLine(t, prCfg(t, 2, "")))
+	h.deps.Now = clk.Now
+	var body string
+	var draft bool
+	var reviewers, labels []string
+	rec, err := h.run(t,
+		afterStep(clk, implement("feature")),
+		afterStep(clk, review("changes", 1)), // first line
+		probe(func(t *testing.T) { // the fix that follows the first-line review
+			pr := h.provider.State.PRs[0]
+			body, draft, reviewers, labels = pr.Body, pr.Draft, pr.Reviewers, pr.Labels
+		}, afterStep(clk, fixVerified)),
+		review("ship", 0))
+	mustReady(t, rec, err)
+	if !draft || len(reviewers) != 0 || len(labels) != 0 {
+		t.Fatalf("after the first-line review: draft=%v reviewers=%v labels=%v", draft, reviewers, labels)
+	}
+	if !strings.Contains(body, "first-line review round 1: 1 finding") || strings.Contains(body, "senior review") {
+		t.Fatalf("the status section after the first-line review:\n%s", body)
+	}
+	if got := tiers(rec); !eq(got, "first:changes", "senior:ship") {
+		t.Fatalf("reviews = %v", got)
+	}
+	pr := onlyPR(t, h.provider)
+	if pr.Draft || len(pr.Reviewers) != 1 || !strings.Contains(pr.Body, "**Ready for review**") || !strings.Contains(pr.Body, "senior review: ship") {
+		t.Fatalf("final PR = %+v", pr)
+	}
+}
+
+// TestCancelDuringFirstLineReviewEndsCancelled: a cancel while the first-line
+// review runs ends the run cancelled with the draft left as it is, never
+// ready, with no senior review.
+func TestCancelDuringFirstLineReviewEndsCancelled(t *testing.T) {
+	h := prHarness(t, withFirstLine(t, prCfg(t, 2, "")))
+	cancelThenBlock := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if req.JSONSchema == "" {
+			t.Errorf("the cancelling stage is not a review: %+v", req)
+		}
+		if err := h.store.RequestCancel(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return blockUntilDone(t, ctx, req)
+	}
+	rec, err := h.run(t, implement("feature"), cancelThenBlock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Status != runstore.StatusCancelled || rec.Outcome != runstore.OutcomeDraft {
+		t.Fatalf("rec = %+v", rec)
+	}
+	if got := stageNames(rec); !eq(got, "implement", "review_first") {
+		t.Fatalf("stages = %v", got)
+	}
+	pr := onlyPR(t, h.provider)
+	if !pr.Draft || len(pr.Reviewers) != 0 || !strings.Contains(pr.Body, "**Cancelled**") {
+		t.Fatalf("PR = %+v", pr)
+	}
+	if seniorReview := len(h.agent.calls); seniorReview != 2 {
+		t.Fatalf("%d agent calls, want implement and the first-line review only", seniorReview)
+	}
+}
+
+// TestFollowUpRunWithFirstLineReview: a --pr follow-up with the first line on
+// runs it before the senior review, records both tiers and flips the draft.
+func TestFollowUpRunWithFirstLineReview(t *testing.T) {
+	cfg := withFirstLine(t, prFollowYAML(t, ""))
+	h := followUpHarness(t, cfg, nil, implement("feature"), review("changes", 1), fixVerified, review("changes", 1), fixVerified, review("changes", 1))
+	st := h.state(t)
+	if !st.PRs[0].Draft || len(st.PRs[0].Reviewers) != 0 {
+		t.Fatalf("first run's PR = %+v", st.PRs[0])
+	}
+	h.followUp(t, followID, runID, "")
+	rec, err := h.run(t, implement("again"), review("ship", 0), review("ship", 0))
+	mustReady(t, rec, err)
+	if got := stageNames(rec); !eq(got, "implement", "review_first", "review") {
+		t.Fatalf("stages = %v", got)
+	}
+	if got := tiers(rec); !eq(got, "first:ship", "senior:ship") {
+		t.Fatalf("reviews = %v", got)
+	}
+	st = h.state(t)
+	if pr := st.PRs[0]; len(st.PRs) != 1 || pr.Draft || !slices.Equal(pr.Reviewers, []string{"octocat"}) {
+		t.Fatalf("PR = %+v", pr)
 	}
 }

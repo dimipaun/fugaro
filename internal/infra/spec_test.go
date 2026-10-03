@@ -1158,6 +1158,10 @@ func TestProviderKeyMountedOnlyForAllowedRepos(t *testing.T) {
 	}
 	// Not on oauth or vertex: a run does not mix credentials.
 	in = sandboxInputs(t, m5Additions+providerLC)
+	// This relies on sandboxInputs' default auth not being api-key.
+	if in.Cfg.Agent.Auth == "api-key" {
+		t.Fatalf("sandboxInputs now defaults to %s auth: set an oauth auth here explicitly", in.Cfg.Agent.Auth)
+	}
 	if rs, err = Repo(in); err != nil {
 		t.Fatal(err)
 	}
