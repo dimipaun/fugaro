@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov/fake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -330,6 +331,13 @@ func TestExecPassesProject(t *testing.T) {
 // returns the stdout, the error and the store of the run.
 func localExec(t *testing.T, env map[string]string, flags ...string) (string, error, *runstore.Store) {
 	t.Helper()
+	return localExecCfg(t, nil, env, flags...)
+}
+
+// localExecCfg is localExec with the fixture's fugaro.yaml replaced by
+// edit(its text), when edit is not nil.
+func localExecCfg(t *testing.T, edit func(string) string, env map[string]string, flags ...string) (string, error, *runstore.Store) {
+	t.Helper()
 	const runID = "20260926-221530-abcd"
 	testutil.IsolateGit(t)
 	for _, k := range []string{"FUGARO_RUN", "FUGARO_GIT_PROVIDER", "FUGARO_PROJECT", "FUGARO_BUDGET_MODE", "FUGARO_MAX_RUN_USD", "FUGARO_MODEL_PRICES", "FUGARO_MANAGED_SETTINGS", "CLOUD_RUN_EXECUTION"} {
@@ -337,14 +345,18 @@ func localExec(t *testing.T, env map[string]string, flags ...string) (string, er
 	}
 	// The backend's variables must be absent, not empty: an empty one is a
 	// malformed setting (TestExecPassesBackendErr).
-	for _, k := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE"} {
+	for _, k := range []string{"FUGARO_RTDB_URL", "FUGARO_FIREBASE_API_KEY", "FUGARO_BUDGET_GRACE", "FUGARO_MODEL_PROVIDERS"} {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
-	remote := testutil.NewRemote(t, testutil.FixtureFiles(t))
+	files := testutil.FixtureFiles(t)
+	if edit != nil {
+		files["fugaro.yaml"] = edit(files["fugaro.yaml"])
+	}
+	remote := testutil.NewRemote(t, files)
 	dir := t.TempDir()
 	b, err := fileblob.OpenBucket(dir, nil)
 	if err != nil {
@@ -489,5 +501,58 @@ func TestExecIdentityURLFlag(t *testing.T) {
 	}
 	if err := checkTestHooks(execOptions{identityURL: "http://127.0.0.1:9099"}, runner.Spend{}, nil, ""); err != nil {
 		t.Errorf("a loopback URL was refused: %v", err)
+	}
+}
+
+// The owner's model providers in the job's environment reach the runner: a
+// repository the provider lists, with a provider model pinned, gets as far as
+// the provider's key (not mounted here); without the variable the same file
+// is refused as a model no provider serves. A malformed value is the run's
+// infra_error, never a silent none.
+func TestExecPassesModelProviders(t *testing.T) {
+	pinned := func(cfg string) string {
+		out := strings.Replace(cfg, "  review_rounds: 2\n", `  review_rounds: 2
+  model: claude-sonnet-5-5
+  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5, background: claude-sonnet-5-5 }
+  max_output_tokens: { coder: 4096, reviewer: 4096 }
+`, 1)
+		if out == cfg {
+			t.Fatal("fixture has no review_rounds line")
+		}
+		return out
+	}
+	budget := map[string]string{"FUGARO_BUDGET_MODE": "enforce", "FUGARO_MAX_RUN_USD": "5"}
+	with := func(k, v string) map[string]string {
+		m := map[string]string{k: v}
+		for bk, bv := range budget {
+			m[bk] = bv
+		}
+		return m
+	}
+	flags := []string{"--managed-settings", filepath.Join(t.TempDir(), "managed-settings.json"), "--gateway-upstream", "http://127.0.0.1:1"}
+	pv, err := runner.ProvidersEnv(map[string]config.ModelProvider{"openrouter": {
+		Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer", Secret: "openrouter-api-key",
+		Models: []string{"deepseek/*"}, AllowDataTo: []string{"acme/app"},
+	}}, "acme/app")
+	if err != nil || pv == "" {
+		t.Fatalf("ProvidersEnv = %q, %v", pv, err)
+	}
+	_, err, store := localExecCfg(t, pinned, with(runner.ModelProvidersEnv, pv), flags...)
+	if err == nil || !strings.Contains(err.Error(), "not mounted") {
+		t.Fatalf("with the provider: err = %v, want the missing key", err)
+	}
+	if rec, rerr := store.ReadRecord(context.Background()); rerr != nil || rec.Status != runstore.StatusInfraError {
+		t.Fatalf("record = %+v, %v", rec, rerr)
+	}
+	if _, err, _ = localExecCfg(t, pinned, budget, flags...); err == nil || !strings.Contains(err.Error(), "no provider serves it") {
+		t.Fatalf("without the provider: err = %v", err)
+	}
+	_, err, store = localExecCfg(t, pinned, with(runner.ModelProvidersEnv, "{not json"), flags...)
+	if err == nil || !strings.Contains(err.Error(), runner.ModelProvidersEnv) {
+		t.Fatalf("malformed: err = %v", err)
+	}
+	rec, rerr := store.ReadRecord(context.Background())
+	if rerr != nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, runner.ModelProvidersEnv) {
+		t.Fatalf("malformed: record = %+v, %v", rec, rerr)
 	}
 }

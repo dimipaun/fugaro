@@ -36,7 +36,7 @@ func callDeepseek(status *int, body *string, inner step) step {
 // PR with the cost to the micro in result.json.
 func TestProviderRunEndsInPR(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500}
-	g := providerRun(t, providerPinned(t), "observe", "",
+	g := providerRun(t, providerPinned(t), "enforce", "50",
 		[]anthropicfake.Reply{anthropicfake.Compat{Cost: 0.0021}.MessageOK(deepseek, use)}, "acme/app")
 	prov := g.deps.Providers["openrouter"]
 	prov.RouteFeePct = 10
@@ -100,28 +100,28 @@ func TestProviderRunEndsInPR(t *testing.T) {
 	}
 }
 
-// Provider models are real dollars but observe never refuses a call: the run
-// says so once at bootstrap (and not under enforce, nor for a Claude-only run).
-func TestProviderObserveModeWarns(t *testing.T) {
+// Provider models are real dollars and observe never refuses a call, so a
+// provider model is refused at bootstrap in observe (and off) mode, naming the
+// rule and the command to change the mode; enforce runs, and a Claude-only run
+// is fine in observe.
+func TestProviderModelNeedsEnforce(t *testing.T) {
+	g := providerRun(t, providerPinned(t), "observe", "", nil, "acme/app")
+	refusedBeforeAnyCall(t, g, "budget.mode enforce", "fugaro budget set --global --mode enforce", "agent.models.coder")
+	g = providerRun(t, providerPinned(t), "off", "", nil, "acme/app")
+	refusedBeforeAnyCall(t, g, "budget gateway", "budget.mode to enforce")
 	use := pricing.Usage{Input: 1000, Output: 500}
-	for mode, cap := range map[string]string{"observe": "", "enforce": "5"} {
-		g := providerRun(t, providerPinned(t), mode, cap, []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
-		var status int
-		var body string
-		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
-			t.Fatalf("%s: rec = %+v, err = %v", mode, rec, err)
-		}
-		got := strings.Count(g.logs.String(), "code=provider_observe")
-		if want := map[string]int{"observe": 1, "enforce": 0}[mode]; got != want {
-			t.Errorf("%s: %d observe warnings, want %d:\n%s", mode, got, want, g.logs.String())
-		}
-	}
-	g := newGW(t, gwConfig(t, ""), "observe", "", capScript(1)...)
-	if _, err := g.run(t, implement("feature"), review("ship", 0)); err != nil {
-		t.Fatal(err)
+	g = providerRun(t, providerPinned(t), "enforce", "5", []anthropicfake.Reply{anthropicfake.Compat{}.MessageOK(deepseek, use)}, "acme/app")
+	var status int
+	var body string
+	if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("enforce: rec = %+v, err = %v", rec, err)
 	}
 	if strings.Contains(g.logs.String(), "provider_observe") {
-		t.Error("a Claude-only run warned about provider spend")
+		t.Error("the moot observe warning is back")
+	}
+	g = newGW(t, gwConfig(t, ""), "observe", "", capScript(1)...)
+	if _, err := g.run(t, implement("feature"), review("ship", 0)); err != nil {
+		t.Fatalf("a Claude-only run in observe: %v", err)
 	}
 }
 
@@ -133,7 +133,7 @@ func TestReportedAboveChargeWarnsOnce(t *testing.T) {
 		cost float64
 		warn int
 	}{{0.0100, 1}, {0.0031, 0}, {0.0010, 0}} {
-		g := providerRun(t, providerPinned(t), "observe", "", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
+		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
 		var status int
 		var body string
 		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
@@ -157,7 +157,7 @@ func TestBackgroundDefaultsToCoder(t *testing.T) {
 	if noBackground == providerPinned(t) {
 		t.Fatal("fixture has no background")
 	}
-	g := providerRun(t, noBackground, "observe", "", nil, "acme/app")
+	g := providerRun(t, noBackground, "enforce", "50", nil, "acme/app")
 	if rec, err := g.run(t, implement("feature"), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
@@ -170,7 +170,7 @@ func TestBackgroundDefaultsToCoder(t *testing.T) {
 	}
 
 	// An explicit background wins.
-	g = providerRun(t, providerPinned(t), "observe", "", nil, "acme/app")
+	g = providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
 	if _, err := g.run(t, implement("feature"), review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestProviderModelNeedsTheGateway(t *testing.T) {
 // TestMissingProviderKeyIsInfraError: the key is not mounted, so the run does
 // not start (no agent), naming the variable and never a value.
 func TestMissingProviderKeyIsInfraError(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "observe", "", nil, "acme/app")
+	g := providerRun(t, providerPinned(t), "enforce", "50", nil, "acme/app")
 	g.deps.Env = slices.DeleteFunc(g.deps.Env, func(kv string) bool { return strings.HasPrefix(kv, orProvider.SecretEnv()+"=") })
 	refusedBeforeAnyCall(t, g, "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY", "not mounted")
 }
@@ -224,7 +224,7 @@ func TestHaltOnProviderRun(t *testing.T) {
 // result.json, the report, the PR or the logs; neither may a fake claude that
 // echoes the key itself. (The gateway half is in internal/gateway.)
 func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
-	g := providerRun(t, providerPinned(t), "observe", "",
+	g := providerRun(t, providerPinned(t), "enforce", "50",
 		[]anthropicfake.Reply{anthropicfake.Error(401, "authentication_error", "invalid api key "+providerKey+" (bearer "+providerKey+")")}, "acme/app")
 	var status int
 	var body string
@@ -265,7 +265,7 @@ func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
 // an error (and stderr) carrying the provider key is skipped with a log line,
 // and the key reaches no log, record or stored object.
 func TestFirstLineErrorEchoingKeyIsRedacted(t *testing.T) {
-	g := providerRun(t, providerFirstLine(t, "on"), "observe", "", nil, "acme/app")
+	g := providerRun(t, providerFirstLine(t, "on"), "enforce", "50", nil, "acme/app")
 	broken := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		_, _ = req.Stderr.Write([]byte("claude: " + providerKey + "\n"))
 		return agent.Result{}, errors.New("upstream said: bad key " + providerKey)

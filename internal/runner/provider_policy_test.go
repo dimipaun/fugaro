@@ -16,7 +16,7 @@ const deepseek = "deepseek/deepseek-v4-flash"
 // acme/app, with the owner's provider allowing the repos in allow.
 func providerGW(t *testing.T, cfg string, allow ...string) *gw {
 	t.Helper()
-	return providerRun(t, cfg, "observe", "", nil, allow...)
+	return providerRun(t, cfg, "enforce", "50", nil, allow...)
 }
 
 // providerRun is providerGW in a budget mode with a cap, whose provider
@@ -100,7 +100,7 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("the owner's allow-list does not carry it", func(t *testing.T) {
 		g := providerGW(t, providerPinned(t), "acme/app")
-		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "observe", runner.AllowedModelsEnv, sonnet+","+haiku)
+		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "enforce", runner.AllowedModelsEnv, sonnet+","+haiku)
 		refusedBeforeAnyCall(t, g, "agent.models.coder", "allowed_models from ceiling")
 	})
 }

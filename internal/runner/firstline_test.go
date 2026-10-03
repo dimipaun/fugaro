@@ -221,7 +221,7 @@ func TestFirstLineOffAndClaudeOnlyUnchanged(t *testing.T) {
 // TestFirstLineUsesCoderPins: the first-line stage runs with the coder's
 // model and the one stage budget, the senior with the reviewer's.
 func TestFirstLineUsesCoderPins(t *testing.T) {
-	g := providerRun(t, providerFirstLine(t, "on"), "observe", "", nil, "acme/app")
+	g := providerRun(t, providerFirstLine(t, "on"), "enforce", "50", nil, "acme/app")
 	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
@@ -245,7 +245,7 @@ func TestFirstLineUsesCoderPins(t *testing.T) {
 // TestFirstLineAutoOnlyForProviderCoder: with no setting, a provider coder
 // gets the first line and a Claude coder does not.
 func TestFirstLineAutoOnlyForProviderCoder(t *testing.T) {
-	g := providerRun(t, providerFirstLine(t, ""), "observe", "", nil, "acme/app")
+	g := providerRun(t, providerFirstLine(t, ""), "enforce", "50", nil, "acme/app")
 	rec, err := g.run(t, implement("feature"), review("ship", 0), review("ship", 0))
 	if err != nil || !eq(stageNames(rec), "implement", "review_first", "review") {
 		t.Fatalf("provider coder: stages = %v, err = %v", stageNames(rec), err)

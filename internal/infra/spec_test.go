@@ -1193,3 +1193,46 @@ func TestWorkflowSecretCannotShadowProviderSecret(t *testing.T) {
 		t.Fatalf("a differently cased name: err = %v", err)
 	}
 }
+
+// The job of an allowed repository names only the providers that list it,
+// each with allow_data_to cut to that one repository; a repository no provider
+// lists gets no such variable at all.
+func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	lc := in.LC.Providers["openrouter"]
+	lc.AllowDataTo = []string{"acme/sandbox", "acme/webapp"}
+	in.LC.Providers["openrouter"] = lc
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := rs.Workflows["web"].Env[ModelProvidersEnv]
+	if !ok {
+		t.Fatalf("the job has no %s: %v", ModelProvidersEnv, rs.Workflows["web"].Env)
+	}
+	var got map[string]config.ModelProvider
+	if err := json.Unmarshal([]byte(v), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || len(got["openrouter"].AllowDataTo) != 1 || got["openrouter"].AllowDataTo[0] != "acme/sandbox" {
+		t.Errorf("providers in the job = %+v, want only openrouter cut to acme/sandbox", got)
+	}
+	if strings.Contains(v, "acme/webapp") || strings.Contains(v, "other-key") || strings.Contains(v, "acme/other") {
+		t.Errorf("the job's providers leak another repository or provider: %s", v)
+	}
+
+	// A repository no provider lists: no variable.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	for name, p := range in.LC.Providers {
+		p.AllowDataTo = []string{"acme/other"}
+		in.LC.Providers[name] = p
+	}
+	if rs, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := rs.Workflows["web"].Env[ModelProvidersEnv]; ok {
+		t.Errorf("a repository no provider allows got %s = %s", ModelProvidersEnv, v)
+	}
+}

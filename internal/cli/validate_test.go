@@ -505,7 +505,7 @@ func inCheckoutOf(t *testing.T, repo string) {
 }
 
 func TestValidateProviderModels(t *testing.T) {
-	const budget = "budget: { mode: observe }\n" + validateProviderBlock
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
 	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
 	// An approved repository: valid, the background model defaults to the
 	// coder's, and the placeholder price is a warning.
@@ -530,8 +530,13 @@ func TestValidateProviderModels(t *testing.T) {
 	// A provider model with the gateway off (budget mode off) is refused, as
 	// the runner refuses it.
 	path = budgetProject(t, "budget: { mode: off }\n"+validateProviderBlock, coder)
-	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") {
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") || !strings.Contains(out, "budget.mode to enforce") {
 		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// Observe never refuses a call: a provider's dollars need enforce.
+	path = budgetProject(t, "budget: { mode: observe }\n"+validateProviderBlock, coder)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
+		t.Fatalf("observe: exit %d: %s", ExitCode(err), out)
 	}
 	// A vendor/model no provider serves.
 	path = budgetProject(t, "budget: { mode: observe }\n", coder)

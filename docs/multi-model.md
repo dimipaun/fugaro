@@ -34,10 +34,13 @@ model_prices:
     output_per_m: 0.28
     cache_read: 0.1                   # a multiplier of input_per_m (default 0.1), not a price
 budget:
-  mode: observe                       # a provider model needs the gateway: observe or enforce
+  mode: enforce                       # a provider model needs the gateway in enforce mode: observe never refuses a call
+  per_run_usd: 2                      # enforce needs a per-run cap
 ```
 
-Then run `fugaro init --repo` in each repository that is listed, so its job carries the provider list and mounts the key's variable. A repository not in `allow_data_to` gets neither, and a run on it that names a provider model is refused.
+Then run `fugaro init --repo` in each repository that is listed, so its job carries the provider list and mounts the key's variable. A repository not in `allow_data_to` gets neither, and a run on it that names a provider model is refused. Removing a repository from `allow_data_to` takes effect only after `fugaro init --repo` is run again for it (the list and the key's mount live in the job's configuration until then).
+
+**Provider models require `budget.mode: enforce`.** Provider calls are real dollars and `observe` never refuses a call, so a run (and `fugaro validate`) that names a provider model under `observe` or `off` is refused, naming the rule. Set `budget.mode: enforce` and `budget.per_run_usd` in the local project config and run `fugaro init --repo`; `fugaro budget set --global --mode enforce` (which needs the global `--daily` and `--per-run` caps, and asks you to type the project's name to lower it again) makes the shared database enforce too.
 
 **Set `model_prices` yourself.** The embedded `deepseek/deepseek-v4-flash` row is a placeholder (1 / 4 / 0.1 dollars per million tokens), marked unverified: no price was read from OpenRouter (the real prices, and that OpenRouter reports usage the way the gateway reads it, are assumed until Check 25). A pin on it is accepted with a warning (`fugaro validate`, `diagnose`) and the cap counts that guess. Your `model_prices` entry replaces it. `fugaro budget prices` has a `VERIFIED` column and shows the source of an unverified row. When you leave out the cache fields, they default to the usual multiples of `input_per_m` (never to 0).
 
@@ -72,7 +75,7 @@ Each is an `infra_error` before any model call, naming the pin and the rule (and
 
 - **No provider claims the model**, or the provider's `allow_data_to` does not name this repository. Code only goes where the owner said it may.
 - **`agent.auth` is `oauth` or `vertex`.** An OAuth token is a Claude subscription credential and is never sent elsewhere, and a run does not mix credentials. Use `api-key`.
-- **The gateway is off** (`budget.mode: off`). The gateway is what holds the key and prices the calls.
+- **The gateway is off or only observing** (`budget.mode: off` or `observe`). The gateway is what holds the key and prices the calls, and only `enforce` refuses a call that would go over a cap.
 - **A variant suffix (`:free`, `:nitro`, `:online`) or an alias.** A variant is another price and routing; pins are exact upstream IDs.
 - **No price** for the model (add it under `model_prices`), or an entry in `budget.allowed_models` or the pins that the owner's allow-list does not carry.
 - **A provider key that is not mounted**, or has whitespace, a control character or non-ASCII, or fewer than 4 bytes.
@@ -94,6 +97,7 @@ Provider models are real dollars: the charge is the table price of the reported 
 
 ## 7. Known limits
 
-- `fugaro report --by route` does not exist yet (the history has no route split); `--by model` works.
-- The provider key is in the runner's memory (the D2 residual of the gateway): use the per-project credit limit.
+- `fugaro report --by route` does not exist yet (the history has no route split); `--by model` works only with spend history on.
+- The provider key is in the runner's memory (the D2 residual of the gateway): use the per-project credit limit. Besides `/proc/<runner>/environ`, a prompt-injected agent can reach the job service account's metadata token, and that account has `secretAccessor` on the mounted provider secret, so it can read the key itself. The credit limit on the key is the real backstop; the gateway's pins and caps do not bound a key the agent holds.
+- `metadata` is the one extra body field a provider route passes (Claude Code sends `metadata.user_id` on every request and the gateway never rewrites a body), so the provider sees that device-hash identifier. The impact is low. Any other field outside the Messages API (OpenRouter's `plugins`, `provider`, `models`, `route`, `transforms`, `usage`, `web_search_options`) is refused as a violation, because it could bill outside token pricing or override the account's data policy.
 - Claude Code features that a compatible endpoint may not support (extended thinking, beta headers, server tools) surface as the upstream's error and fail the stage; which of them break is assumed until Check 25 records it. The same holds for token counting: the local 404 for a provider model is a design choice, and how OpenRouter's `count_tokens` answers is assumed until Check 25.

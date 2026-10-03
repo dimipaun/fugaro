@@ -353,9 +353,6 @@ func (r *run) checkBudget() error {
 	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
 		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
 	}
-	if r.spend.Mode == "observe" && r.runsProviderModel() {
-		r.d.Log.Warn("budget.mode is observe: provider models are real dollars and observe never refuses a call; use enforce with a per-run cap to bound the spend", "code", "provider_observe")
-	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
@@ -363,17 +360,6 @@ func (r *run) checkBudget() error {
 		return errors.New(reason)
 	}
 	return nil
-}
-
-// runsProviderModel is whether any role of the run is served by a provider.
-func (r *run) runsProviderModel() bool {
-	a := r.cfg.Agent
-	for _, m := range []string{a.ModelFor(config.RoleCoder), a.ModelFor(config.RoleReviewer), r.backgroundModel()} {
-		if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
-			return true
-		}
-	}
-	return false
 }
 
 // warnReportedGap logs, once, when the providers' own cost figures are more
@@ -423,7 +409,11 @@ func (r *run) checkProviderModels() error {
 	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
 	// stage pins and Claude Code's haiku role all see the same one.
 	bg := r.backgroundModel()
-	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.d.Providers, r.gatewayOn()); len(ps) > 0 {
+	mode := policy.ModeOff
+	if r.gatewayOn() {
+		mode = r.spend.Mode
+	}
+	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.d.Providers, mode); len(ps) > 0 {
 		return errors.New(ps[0].Message)
 	}
 	r.cfg.Agent.Models.Background = bg

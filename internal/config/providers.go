@@ -282,13 +282,21 @@ func CheckProviderAuth(a Agent, providers map[string]ModelProvider) []Problem {
 	return ps
 }
 
-// CheckProviderGateway refuses a provider model when the budget gateway is
-// off: the gateway holds the key and routes the call, so without it the call
-// would go to Anthropic. bg is the run's effective background model. One
-// problem per role that names a provider model.
-func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, gatewayOn bool) []Problem {
-	if gatewayOn {
+// CheckProviderGateway refuses a provider model unless the budget gateway is
+// on and enforcing. The gateway holds the key and routes the call, so without
+// it the call would go to Anthropic; and observe never refuses a call, while
+// a provider's calls are real dollars (and an injected agent could send what
+// the pins would stop), so the owner's default is enforce. mode is the run's
+// effective budget mode ("" and "off" are the gateway off); bg is the run's
+// effective background model. One problem per role that names a provider
+// model.
+func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider, mode string) []Problem {
+	if mode == "enforce" {
 		return nil
+	}
+	why := "which needs the budget gateway: set budget.mode to enforce (with agent.auth api-key) and a per-run cap; without it the call would go to Anthropic"
+	if mode == "observe" {
+		why = "which needs budget.mode enforce: observe never refuses a call and a provider's calls are real dollars. Set budget.mode: enforce with budget.per_run_usd in the project config and run `fugaro init --repo` (or budget.mode: enforce in fugaro.yaml); `fugaro budget set --global --mode enforce` makes the shared database enforce too (it needs the global --daily and --per-run caps)"
 	}
 	var ps []Problem
 	for _, r := range []struct{ path, model string }{
@@ -297,7 +305,7 @@ func CheckProviderGateway(a Agent, bg string, providers map[string]ModelProvider
 		{"agent.models.background", bg},
 	} {
 		if _, _, ok := ProviderFor(providers, r.model); ok {
-			ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by a provider, which needs the budget gateway: set budget.mode to observe or enforce (with agent.auth api-key); without it the call would go to Anthropic", CodeSpan(r.model))})
+			ps = append(ps, Problem{Path: r.path, Message: fmt.Sprintf("%s is served by a provider, %s", CodeSpan(r.model), why)})
 		}
 	}
 	return ps
