@@ -10,6 +10,7 @@ type baseDefault struct {
 
 var baseDefaults = map[string]baseDefault{
 	"server-jvm": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 8, memory: "32Gi"},
+	"go":         {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 	"web-node":   {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 }
 

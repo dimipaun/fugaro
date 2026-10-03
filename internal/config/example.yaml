@@ -47,7 +47,7 @@ agent:
 
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
-    base: web-node            # server-jvm | web-node
+    base: web-node            # go | server-jvm | web-node
     image:                    # optional; rendered into the derived image (see `fugaro image render`)
       node: "24"              # Node.js major (24) or exact version (24.19.0); defaults to the base's LTS
       apt: [fonts-liberation] # extra system packages

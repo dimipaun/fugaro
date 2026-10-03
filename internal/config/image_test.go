@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -87,5 +88,29 @@ func TestImageProblems(t *testing.T) {
 				t.Fatalf("want problem path=%q msg~%q, got %v", tc.path, tc.msg, problems)
 			}
 		})
+	}
+}
+
+func TestGoBase(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/valid/go.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	w := cfg.Workflows["go"]
+	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" || len(w.Commands.Reports) == 0 {
+		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
+	}
+	for file, path := range map[string]string{"image-node-on-go": "workflows.go.image.node", "image-jdk-on-go": "workflows.go.image.jdk"} {
+		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != path {
+			t.Errorf("%s: problems = %v, want one at %s", file, ps, path)
+		}
 	}
 }

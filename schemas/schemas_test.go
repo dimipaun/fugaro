@@ -608,3 +608,26 @@ func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
 		t.Fatalf("schema rejects stage review_first: %v\n%s", err, data)
 	}
 }
+
+// The repository's own fugaro.yaml (Fugaro dogfooding itself) must pass the
+// schema, the Go validator and the checkout checks, so a base or command rename
+// can't leave it broken until a run reads it.
+func TestRepositoryFugaroYAML(t *testing.T) {
+	data, err := os.ReadFile("../fugaro.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := compile(t, "fugaro.schema.json").Validate(yamlInstance(t, data)); err != nil {
+		t.Errorf("schema rejects fugaro.yaml: %v", err)
+	}
+	cfg, problems := config.Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("fugaro.yaml: %v", problems)
+	}
+	if problems := config.Check(cfg, ".."); len(problems) > 0 {
+		t.Errorf("fugaro.yaml against the checkout: %v", problems)
+	}
+	if w := cfg.Workflows["go"]; cfg.Project != "fugaro" || w.Base != "go" {
+		t.Errorf("project %q, workflow go = %+v", cfg.Project, w)
+	}
+}

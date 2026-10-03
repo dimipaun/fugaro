@@ -150,6 +150,14 @@
           "then": { "properties": { "image": { "not": { "required": ["jdk"] } } } }
         },
         {
+          "if": { "required": ["base"], "properties": { "base": { "const": "go" } } },
+          "then": {
+            "properties": {
+              "image": { "not": { "anyOf": [{ "required": ["node"] }, { "required": ["jdk"] }] }, "properties": { "skip_build_scripts": { "const": false } } }
+            }
+          }
+        },
+        {
           "if": { "required": ["base"], "properties": { "base": { "const": "server-jvm" } } },
           "then": {
             "properties": {
@@ -159,7 +167,7 @@
         }
       ],
       "properties": {
-        "base": { "enum": ["server-jvm", "web-node"] },
+        "base": { "enum": ["go", "server-jvm", "web-node"] },
         "image": {
           "type": "object",
           "additionalProperties": false,

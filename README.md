@@ -206,7 +206,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 
 ## Roadmap
 
-- [x] Base images for web (Node) workflows (`web-node`)
+- [x] Base images for web (Node) workflows (`web-node`) and Go workflows (`go`)
 - [x] Job entrypoint implementing the task lifecycle
 - [x] Cache restore and write-back
 - [x] Always-PR finish step (ready or draft)
