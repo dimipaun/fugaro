@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // gitWaitDelay bounds how long a git invocation's Wait spends draining
@@ -113,12 +115,11 @@ func (r *Repo) Environ() []string { return r.processEnv() }
 
 func (r *Repo) processEnv() []string {
 	env := append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.Env...)
-	if len(r.StripEnv) == 0 {
-		return env
-	}
+	// A provider key (FUGARO_PROVIDER_KEY_*) is the gateway's alone: no git
+	// call, and nothing git runs, ever sees one, whatever StripEnv says.
 	return slices.DeleteFunc(env, func(kv string) bool {
 		k, _, _ := strings.Cut(kv, "=")
-		return slices.Contains(r.StripEnv, k)
+		return config.IsProviderKeyEnv(k) || slices.Contains(r.StripEnv, k)
 	})
 }
 
