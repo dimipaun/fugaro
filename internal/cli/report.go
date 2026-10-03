@@ -95,16 +95,23 @@ func reportRange(since, until string, today int64) (from, to int64, err error) {
 		}
 		to = min(budget.Day(t), today)
 	}
-	if n, ok := strings.CutSuffix(since, "d"); ok && !strings.Contains(since, "-") {
-		days, err := strconv.Atoi(n)
-		if err != nil || days < 1 || days > reportMaxDays {
-			return 0, 0, fmt.Errorf("--since %q: use a date (YYYY-MM-DD) or a number of days (30d, 1 to %d)", safetext.Strip(since), reportMaxDays)
+	n, unit := since, int64(0)
+	if v, ok := strings.CutSuffix(since, "d"); ok {
+		n, unit = v, 1
+	} else if v, ok := strings.CutSuffix(since, "w"); ok {
+		n, unit = v, 7
+	}
+	if unit > 0 && !strings.Contains(since, "-") {
+		count, err := strconv.Atoi(n)
+		days := int64(count) * unit
+		if err != nil || count < 1 || days > reportMaxDays {
+			return 0, 0, fmt.Errorf("--since %q: use a date (YYYY-MM-DD), a number of days (30d) or weeks (12w), at most %d days", safetext.Strip(since), reportMaxDays)
 		}
-		from = to - int64(days) + 1
+		from = to - days + 1
 	} else {
 		t, err := time.Parse("2006-01-02", since)
 		if err != nil {
-			return 0, 0, fmt.Errorf("--since %q: use a date (YYYY-MM-DD) or a number of days (30d)", safetext.Strip(since))
+			return 0, 0, fmt.Errorf("--since %q: use a date (YYYY-MM-DD) a number of days (30d) or weeks (12w)", safetext.Strip(since))
 		}
 		from = budget.Day(t)
 	}
@@ -322,6 +329,9 @@ func (l *lazyFacts) close() {
 func newReportFirestore(ctx context.Context, lc *localcfg.Config) (*firestore.Client, error) {
 	var src oauth2.TokenSource
 	if lc.Endpoints.NoAuth {
+		if lc.Endpoints.Firestore == "" {
+			return nil, userErr("no_auth is set but endpoints.firestore is empty: refusing to reach the real Firestore without credentials")
+		}
 		src = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"})
 	} else {
 		ts, err := google.DefaultTokenSource(ctx, cloudPlatform)

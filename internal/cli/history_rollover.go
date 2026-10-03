@@ -77,6 +77,9 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 			openBkt = test.bucket
 		}
 	}
+	if noAuth && fsURL == "" {
+		return userErr("no-auth wiring without a Firestore endpoint: refusing to reach the real Firestore without credentials")
+	}
 	if noAuth {
 		dbAuth = rtdb.Auth{IDToken: func() string { return "" }}
 		fsSrc = oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "test"})
@@ -104,10 +107,12 @@ func runHistoryRollover(ctx context.Context, cmd *cobra.Command, getenv func(str
 	}
 	defer bucket.Close()
 
+	limit := time.Now().Add(rolloverStartLimit)
 	warn := func(s string) { fmt.Fprintln(cmd.ErrOrStderr(), "rollover: "+oneLine(s)) }
 	r := &budget.Roller{
 		DB: db, FS: fs, Project: env[envProject], Now: now, MaxSkew: skew, Warn: warn,
-		Facts: budget.BucketFacts{Bucket: bucket.Bucket, Warn: warn},
+		StartLimit: limit,
+		Facts:      budget.BucketFacts{Bucket: bucket.Bucket, Warn: warn},
 	}
 	rep, err := r.Rollover(ctx, opt)
 	out := cmd.OutOrStdout()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/report"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -119,7 +120,11 @@ func TestReportRangeDefaults(t *testing.T) {
 	if err != nil || to != today || budget.DayDate(from) != "2026-10-01" {
 		t.Fatalf("future until clamps to today: %d %d %v", from, to, err)
 	}
-	for _, bad := range [][2]string{{"0d", ""}, {"x", ""}, {"2026-10-05", "2026-10-01"}, {"2026-13-01", ""}, {"30d", "nope"}, {"99999d", ""}} {
+	from, to, err = reportRange("12w", "", today)
+	if err != nil || to != today || to-from+1 != 84 {
+		t.Fatalf("12w: %d..%d %v", from, to, err)
+	}
+	for _, bad := range [][2]string{{"0w", ""}, {"-1w", ""}, {"w", ""}, {"1.5w", ""}, {"9999w", ""}, {"0d", ""}, {"x", ""}, {"2026-10-05", "2026-10-01"}, {"2026-13-01", ""}, {"30d", "nope"}, {"99999d", ""}} {
 		if _, _, err := reportRange(bad[0], bad[1], today); err == nil {
 			t.Errorf("%v accepted", bad)
 		}
@@ -419,6 +424,30 @@ func TestReportDimParsing(t *testing.T) {
 	for _, s := range []string{"day", "week", "month", "year", "repo", "model", "person"} {
 		if _, err := report.ParseDim(s); err != nil {
 			t.Error(s, err)
+		}
+	}
+}
+
+// With no_auth and no Firestore endpoint the report must not fall back to the
+// real service.
+func TestReportNoAuthNeverReachesRealFirestore(t *testing.T) {
+	lc := &localcfg.Config{}
+	lc.Endpoints.NoAuth = true
+	lc.Budget = &localcfg.Budget{FirebaseProject: "aurora-fp"}
+	if _, err := newReportFirestore(context.Background(), lc); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestInitHelpMentionsFirestoreStep(t *testing.T) {
+	out, _, err := execute(t, "init", "--help")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out = strings.Join(strings.Fields(out), " ")
+	for _, want := range []string{"Firestore", "us-east5", "permanent", "type the location"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("init --help lacks %q", want)
 		}
 	}
 }

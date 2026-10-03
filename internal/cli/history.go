@@ -41,8 +41,12 @@ const (
 	identityRoot   = "https://identitytoolkit.googleapis.com"
 	cloudPlatform  = "https://www.googleapis.com/auth/cloud-platform"
 	historyTimeout = 8 * time.Minute
-	// rolloverTimeout bounds the daily pass, which reads the runs bucket.
-	rolloverTimeout = 15 * time.Minute
+	// The rollover's Scheduler call gives its execution a 30 minute timeout
+	// (overrides.timeout); no new day is started after 25 minutes, and the
+	// context ends just before the platform's kill, so a pass ends cleanly
+	// and the next one continues.
+	rolloverStartLimit = 25 * time.Minute
+	rolloverTimeout    = 29 * time.Minute
 	// rolloverMaxSkew is how far the job's clock may differ from the
 	// database's before the rollover refuses to finalize days.
 	rolloverMaxSkew = 10 * time.Minute

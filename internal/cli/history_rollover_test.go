@@ -174,3 +174,11 @@ func TestRolloverReadBackMismatchIsExit1(t *testing.T) {
 		t.Fatalf("output = %q", out)
 	}
 }
+
+func TestRolloverNoAuthNeverReachesRealFirestore(t *testing.T) {
+	newRolloverFixture(t)
+	historyTest.firestore = ""
+	if _, _, err := execute(t, "budget", "history", "--rollover"); err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v", err)
+	}
+}
