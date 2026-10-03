@@ -323,3 +323,43 @@ func TestJoinInfraErrorKeepsHalt(t *testing.T) {
 		t.Fatalf("row = %+v", row)
 	}
 }
+
+func TestJoinStaleDraft(t *testing.T) {
+	at := func(d time.Duration) *time.Time { x := now.Add(-d); return &x }
+	withPR := func(st runstore.Status, statusAt *time.Time) *runstore.Record {
+		r := rec(st, nil)
+		r.PR = &runstore.PRRef{Number: 7, URL: "https://h/pr/7", StatusAt: statusAt}
+		return r
+	}
+	cases := []struct {
+		name  string
+		r     *runstore.Record
+		state backend.State
+		want  bool
+	}{
+		{"fresh status", withPR(runstore.StatusRunning, at(5*time.Minute)), backend.StateRunning, false},
+		{"old status, execution still running", withPR(runstore.StatusRunning, at(2*time.Hour)), backend.StateRunning, true},
+		{"old status of an old record without the time", withPR(runstore.StatusRunning, nil), backend.StateRunning, false},
+		{"execution gone, record not final", withPR(runstore.StatusRunning, at(time.Minute)), backend.StateFailed, true},
+		{"finished run, old status", withPR(runstore.StatusFailed, at(5*time.Hour)), backend.StateSucceeded, false},
+		{"no PR", rec(runstore.StatusRunning, nil), backend.StateFailed, false},
+	}
+	for _, c := range cases {
+		row := Join(Input{Task: spec, Launch: launch, Record: c.r, Exec: exec(c.state)}, prices, now)
+		if row.StaleDraft != c.want {
+			t.Errorf("%s: stale_draft = %v, want %v (%+v)", c.name, row.StaleDraft, c.want, row)
+		}
+	}
+	r := withPR(runstore.StatusRunning, at(2*time.Hour))
+	r.DraftFallback = true
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateRunning)}, prices, now)
+	if !row.DraftFallback || row.PRStatusAt == nil || !row.PRStatusAt.Equal(*r.PR.StatusAt) {
+		t.Errorf("fallback/status_at not carried: %+v", row)
+	}
+	// A follow-up's PR may be ready: never called a draft.
+	fr := withPR(runstore.StatusRunning, at(2*time.Hour))
+	fr.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: "20260927-100000-abcd"}
+	if row := Join(Input{Task: spec, Launch: launch, Record: fr, Exec: exec(backend.StateRunning)}, prices, now); row.StaleDraft {
+		t.Errorf("follow-up flagged: %+v", row)
+	}
+}

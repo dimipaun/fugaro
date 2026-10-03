@@ -550,15 +550,27 @@ func statusCell(r runview.Row) string {
 }
 
 // prColumn is a row's pull request: "#N <url>", "#N" while the URL is
-// unknown (a follow-up before it starts), else the URL alone.
+// unknown (a follow-up before it starts), else the URL alone; then a
+// "(draft)" marker while the PR is, or may be left, a draft: the early draft
+// of a running first run, an outcome of draft, a draft whose run died.
 func prColumn(r runview.Row) string {
+	var col string
 	switch {
 	case r.PR > 0 && r.PRURL != "":
-		return fmt.Sprintf("#%d %s", r.PR, oneLine(r.PRURL))
+		col = fmt.Sprintf("#%d %s", r.PR, oneLine(r.PRURL))
 	case r.PR > 0:
-		return fmt.Sprintf("#%d", r.PR)
+		col = fmt.Sprintf("#%d", r.PR)
+	default:
+		col = oneLine(r.PRURL)
 	}
-	return oneLine(r.PRURL)
+	switch {
+	case col == "":
+	case r.StaleDraft:
+		col += " (draft, stale)"
+	case r.Outcome == string(runstore.OutcomeDraft), r.Status == string(runstore.StatusRunning) && !r.FollowUp && r.RecordPR > 0:
+		col += " (draft)"
+	}
+	return col
 }
 
 // age rounds d to minutes, hours or days.

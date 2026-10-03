@@ -222,7 +222,7 @@ func TestOpensDraftAfterFirstVerifiedStage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if seen != 1 || !draft || len(reviewers) != 0 || saved == nil || saved.Number != 1 || saved.Desc == "" {
+	if seen != 1 || !draft || len(reviewers) != 0 || saved == nil || saved.Number != 1 || saved.Desc == "" || saved.StatusAt == nil {
 		t.Fatalf("at the review stage: PRs=%d draft=%v reviewers=%v saved=%+v", seen, draft, reviewers, saved)
 	}
 	if !strings.Contains(body, statusBegin) || !strings.Contains(body, "**Running**") || !strings.HasPrefix(body, "Adds feature.txt.") {

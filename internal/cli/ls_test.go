@@ -839,7 +839,7 @@ func TestLsPRColumn(t *testing.T) {
 			lines[fields[0]] = l
 		}
 	}
-	if l := lines[appSlug+"/"+r.fu1]; !strings.HasSuffix(l, "#7 https://github.com/acme/app/pull/7") {
+	if l := lines[appSlug+"/"+r.fu1]; !strings.HasSuffix(l, "#7 https://github.com/acme/app/pull/7 (draft)") {
 		t.Fatalf("finished follow-up line = %q\n%s", l, human)
 	}
 	if l := lines[appSlug+"/"+waiting]; !strings.HasSuffix(l, "#7") {
@@ -868,5 +868,52 @@ func TestLsShowsHalted(t *testing.T) {
 	out, _, err := execute(t, "ls")
 	if err != nil || !strings.Contains(out, "halted (token_cap)") {
 		t.Fatalf("ls = %s, %v", out, err)
+	}
+}
+
+func TestLsShowsDraftInProgress(t *testing.T) {
+	f := newCloudFixture(t)
+	const run, done, stale = "20260927-100000-abcd", "20260927-100100-bbbb", "20260927-100200-cccc"
+	e1 := seedRun(t, f, run, "", "", true)
+	f.run.SetState(e1, backend.StateRunning)
+	live := staleRecord(run, e1, time.Now().Add(-time.Minute))
+	writeRecord(t, f, run, live)
+	e2 := seedRun(t, f, done, "", "", true)
+	f.run.SetState(e2, backend.StateSucceeded)
+	ready := prRecord(done, e2, 8, 1)
+	ready.Status, ready.Outcome = runstore.StatusSucceeded, runstore.OutcomeReady
+	writeRecord(t, f, done, ready)
+	e3 := seedRun(t, f, stale, "", "", true)
+	f.run.SetState(e3, backend.StateFailed)
+	writeRecord(t, f, stale, staleRecord(stale, e3, time.Now().Add(-5*time.Hour)))
+
+	human, _, err := execute(t, "ls", "--since", "0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(human, "\n") {
+		switch {
+		case strings.Contains(line, run):
+			if !strings.HasSuffix(strings.TrimSpace(line), "https://github.com/acme/app/pull/7 (draft)") {
+				t.Errorf("running line: %q", line)
+			}
+		case strings.Contains(line, done):
+			if strings.Contains(line, "(draft") {
+				t.Errorf("ready PR marked draft: %q", line)
+			}
+		case strings.Contains(line, stale):
+			if !strings.Contains(line, "(draft, stale)") {
+				t.Errorf("stale line: %q", line)
+			}
+		}
+	}
+	got, _ := lsJSON(t, "--since", "0")
+	for _, r := range got.Runs {
+		if r.RunID == stale && !r.StaleDraft {
+			t.Errorf("json lacks stale_draft: %+v", r)
+		}
+		if r.RunID == run && (r.StaleDraft || r.PRStatusAt == nil) {
+			t.Errorf("json of the live run: %+v", r)
+		}
 	}
 }

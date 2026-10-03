@@ -72,6 +72,10 @@ type PRRef struct {
 	// only while nobody has edited them. Empty for a follow-up's PR and
 	// for one the runner opened at finalize.
 	Desc string `json:"desc,omitempty"`
+	// StatusAt is when the runner last wrote the status section into the
+	// description. A running record whose StatusAt is long past is the
+	// stale draft of a run that died; diagnose and ls say so.
+	StatusAt *time.Time `json:"status_at,omitempty"`
 }
 
 // ReviewSummary is one review round's verdict.

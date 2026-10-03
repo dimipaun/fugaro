@@ -14,7 +14,7 @@
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
     "stage": { "enum": ["bootstrap", "implement", "review", "fix", "finalize", "writeback"] },
-    "outcome": { "enum": ["ready", "draft", "none"] },
+    "outcome": { "enum": ["", "ready", "draft", "none"], "description": "Empty while the run is in progress." },
     "reason": { "type": "string" },
     "branch": { "type": "string" },
     "base_branch": { "type": "string", "minLength": 1, "description": "The base the run's pull request targets: git.base_branch of the config it ran with. A follow-up takes it as its ref." },
@@ -26,7 +26,8 @@
       "properties": {
         "number": { "type": "integer" },
         "url": { "type": "string" },
-        "desc": { "type": "string", "description": "Digest of the title and description the runner last wrote, outside the status section." }
+        "desc": { "type": "string", "description": "Digest of the title and description the runner last wrote, outside the status section." },
+        "status_at": { "type": "string", "format": "date-time", "description": "When the runner last wrote the status section into the description; a running record with an old value is the stale draft of a run that died." }
       }
     },
     "draft_fallback": { "type": "boolean", "description": "The host refused draft pull requests; the PR is a normal one with a [DRAFT] title prefix." },

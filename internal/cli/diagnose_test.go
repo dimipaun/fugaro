@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -325,5 +326,59 @@ func TestDiagnoseHaltBlock(t *testing.T) {
 	writeRecord(t, f, other, prRecord(other, e2, 8, 1))
 	if human, _, err := execute(t, "diagnose", other); err != nil || strings.Contains(human, "Halted:") {
 		t.Fatalf("a failed run prints a halt (%v):\n%s", err, human)
+	}
+}
+
+func staleRecord(id, exec string, statusAt time.Time) *runstore.Record {
+	rec := prRecord(id, exec, 7, 2)
+	rec.Status, rec.Outcome, rec.Stage = runstore.StatusRunning, "", "review"
+	rec.PR.StatusAt = &statusAt
+	return rec
+}
+
+func TestDiagnoseStaleDraft(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	f.run.SetState(exec, backend.StateFailed) // the execution died; the record never finalized
+	rec := staleRecord(id, exec, time.Now().Add(-3*time.Hour))
+	rec.DraftFallback = true
+	writeRecord(t, f, id, rec)
+
+	human, _, err := execute(t, "diagnose", id)
+	want := "Draft:    draft PR #7 last updated 3h ago; the run may have crashed"
+	if err != nil || !strings.Contains(human, want) {
+		t.Fatalf("diagnose lacks %q (%v):\n%s", want, err, human)
+	}
+	for _, w := range []string{"fugaro run --pr 7", "marked [DRAFT] in its title", "PR:       https://github.com/acme/app/pull/7 (draft, stale)"} {
+		if !strings.Contains(human, w) {
+			t.Errorf("diagnose lacks %q:\n%s", w, human)
+		}
+	}
+	out, _, err := execute(t, "diagnose", "--json", id)
+	var d Diagnosis
+	if err != nil || json.Unmarshal([]byte(out), &d) != nil || !d.Row.StaleDraft || !d.Row.DraftFallback || d.Row.PRStatusAt == nil || !strings.Contains(d.DraftNote, "may have crashed") {
+		t.Fatalf("json = %+v (%v):\n%s", d, err, out)
+	}
+	// A fresh status is no stale draft, and a halted run's draft is just a draft.
+	live := "20260927-110000-bbbb"
+	e2 := seedRun(t, f, live, "", "", true)
+	f.run.SetState(e2, backend.StateRunning)
+	writeRecord(t, f, live, staleRecord(live, e2, time.Now().Add(-time.Minute)))
+	if human, _, err := execute(t, "diagnose", live); err != nil || strings.Contains(human, "Draft:") || strings.Contains(human, "stale") {
+		t.Fatalf("a live run reads stale (%v):\n%s", err, human)
+	}
+}
+
+func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
+	r := runview.Row{PR: 7, PRURL: "https://h/pr/7\x1b[2J", StaleDraft: true}
+	var b strings.Builder
+	d := &Diagnosis{Row: r, DraftNote: draftNote(r, time.Now())}
+	d.Row.Run, d.Row.Status = "a/b", "infra_error"
+	if err := printDiagnosis(&b, d, false); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(b.String(), "\x1b") {
+		t.Fatalf("control sequence printed: %q", b.String())
 	}
 }

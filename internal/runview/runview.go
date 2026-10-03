@@ -33,6 +33,12 @@ const ReasonLost = "no execution found and the runner never recorded the run"
 // record never reached a final status (OOM kill, task timeout, node loss).
 const ReasonNoFinalRecord = "execution ended without finalizing"
 
+// StaleDraftAfter is how long a running first run's status section may go
+// without an update before the row calls its draft stale. Stages run for
+// many minutes, so this is generous; an execution that is gone while the
+// record still says running is stale at once.
+const StaleDraftAfter = time.Hour
+
 // Input is everything known about one run.
 type Input struct {
 	Slug, RunID  string
@@ -94,6 +100,16 @@ type Row struct {
 	// PreviousRun is the run a follow-up continues.
 	PreviousRun string `json:"previous_run,omitempty"`
 	FollowUp    bool   `json:"follow_up"`
+
+	// DraftFallback: the host has no draft pull requests, so the PR is an
+	// ordinary one with "[DRAFT]" in its title.
+	DraftFallback bool `json:"draft_fallback,omitempty"`
+	// PRStatusAt is when the runner last wrote the PR's status section.
+	PRStatusAt *time.Time `json:"pr_status_at,omitempty"`
+	// StaleDraft means the run's record is still not final but its draft
+	// PR's status section is old, or the run's execution is gone: the run
+	// probably died and the draft was left as it was.
+	StaleDraft bool `json:"stale_draft,omitempty"`
 }
 
 // Pushed reports whether the run of task t (nil when unreadable) with
@@ -209,12 +225,30 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Terminal = true
 	}
 	row.Settled = row.Terminal || row.Status == StatusUnlaunched
+	row.StaleDraft = staleDraft(&row, r, now)
 	row.Cost = cost(r, e, prices, now)
 	if unstarted {
 		// Never launched: no compute at all, which is known, not unestimated.
 		row.Cost = runstore.NewCost(row.Cost.ModelUSD, 0, row.Cost.ModelBasis)
 	}
 	return row
+}
+
+// staleDraft reports whether row is a first run whose record is not final,
+// has a PR, and either lost its execution or has gone StaleDraftAfter
+// without writing the PR's status section (a follow-up's PR may be ready,
+// so it is never called a draft here).
+func staleDraft(row *Row, r *runstore.Record, now time.Time) bool {
+	if r == nil || r.Status != runstore.StatusRunning || r.PR == nil || r.PR.Number == 0 || row.FollowUp {
+		return false
+	}
+	switch {
+	case row.Terminal: // the execution ended or is gone, the record never finalized
+		return true
+	case row.Status == string(runstore.StatusRunning) && r.PR.StatusAt != nil:
+		return now.Sub(*r.PR.StatusAt) >= StaleDraftAfter
+	}
+	return false
 }
 
 // followUpFields sets row's branch, PR and follow-up fields from task t
@@ -229,8 +263,10 @@ func followUpFields(row *Row, t *task.Spec, r *runstore.Record) {
 			row.Branch = r.Branch
 		}
 		row.Outcome, row.BaseBranch = string(r.Outcome), r.BaseBranch
+		row.DraftFallback = r.DraftFallback
 		if r.PR != nil {
 			row.RecordPR = r.PR.Number
+			row.PRStatusAt = r.PR.StatusAt
 		}
 		if !r.StartedAt.IsZero() {
 			at := r.StartedAt

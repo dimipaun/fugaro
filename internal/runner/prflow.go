@@ -68,6 +68,17 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	r.save(ctx)
 }
 
+// noteStatusWritten records when the status section was last written, in
+// the run record, so a stale draft can be told from a live one.
+func (r *run) noteStatusWritten(ctx context.Context, at time.Time) {
+	if r.rec.PR == nil || at.IsZero() {
+		return
+	}
+	at = at.UTC()
+	r.rec.PR.StatusAt = &at
+	r.save(ctx)
+}
+
 // prNumber is the number of the run's PR, 0 when none is known.
 func (r *run) prNumber() int {
 	if r.rec.PR == nil {
@@ -205,6 +216,7 @@ func (r *run) openDraft(ctx context.Context, sha, stage string) {
 			r.d.Log.Warn("making the early pull request a draft failed", "pr", pr.Number, "err", r.redact(uerr.Error()))
 		}
 	}
+	r.noteStatusWritten(ctx, r.pr.lastStatus)
 	if pr.DraftFallback {
 		r.rec.DraftFallback = true
 		r.pr.lastStatus = time.Time{} // the next boundary says so in the section
@@ -241,6 +253,9 @@ func (r *run) statusUpdate(ctx context.Context, stage string) {
 	switch {
 	case err == nil:
 		r.pr.fails = 0
+		if !(r.follow != nil && r.pr.noSection) {
+			r.noteStatusWritten(ctx, now)
+		}
 	case errors.Is(err, gitprov.ErrPRNotOpen):
 		r.pr.gone = true
 		r.d.Log.Warn("the pull request is no longer open; finalize will not recreate it", "pr", n)

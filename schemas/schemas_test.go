@@ -562,3 +562,29 @@ func TestBudgetRecordSchema(t *testing.T) {
 		t.Error("schema accepts an unknown key in budget")
 	}
 }
+
+func TestSchemaAcceptsPRDesc(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	rec := runstore.Record{
+		Version: 1, RunID: "20261003-100000-abcd", Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "review", Branch: "fugaro/x", StartedAt: at,
+		PR:            &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7", Desc: "0123abcd", StatusAt: &at},
+		DraftFallback: true,
+	}
+	data, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects a record with pr.desc, pr.status_at, draft_fallback: %v\n%s", err, data)
+	}
+	bad, _ := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"status_at":"2026`), []byte(`"status_at_x":"2026`), 1)))
+	if err := sch.Validate(bad); err == nil {
+		t.Fatal("schema accepts an unknown pr key")
+	}
+}
