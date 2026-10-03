@@ -382,3 +382,62 @@ func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
 		t.Fatalf("control sequence printed: %q", b.String())
 	}
 }
+
+func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
+	const key = "sk-or-v1-testkeyshouldneverprint"
+	t.Setenv("OPENROUTER_API_KEY", key)
+	f := newCloudFixture(t)
+	const id = "20260927-130000-dddd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+	cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "claude-sonnet-5-5": 0.12}
+	cost.RouteBy = map[string]float64{"openrouter": 0.30}
+	cost.ReportedUSD = 0.25
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.2500", "charged $0.4200", "unverified placeholder"} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("diagnose lacks %q:\n%s", want, human)
+		}
+	}
+	js, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Route["openrouter"] != 0.30 || d.Reported != 0.25 || d.Charge != 0.42 || len(d.PinWarnings) != 1 {
+		t.Fatalf("route %v reported %v charge %v warnings %v", d.Route, d.Reported, d.Charge, d.PinWarnings)
+	}
+	if strings.Contains(human+js, key) {
+		t.Fatal("the provider key is in the output")
+	}
+
+	// A Claude-only run shows none of it.
+	const id2 = "20260927-130001-eeee"
+	exec2 := seedRun(t, f, id2, "", "someone@example.com", true)
+	s2 := runstore.Open(b, appSlug, id2)
+	c2 := runstore.NewCost(1, 0, runstore.BasisAPIList)
+	c2.ModelBy = map[string]float64{"claude-sonnet-5-5": 1}
+	if err := s2.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id2, Repo: "acme/app", Workflow: "web", Execution: exec2,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1, Cost: &c2}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err = execute(t, "diagnose", id2)
+	if err != nil || strings.Contains(human, "Route:") || strings.Contains(human, "Reported:") || strings.Contains(human, "Warning:") {
+		t.Fatalf("err %v; a Claude run shows provider lines:\n%s", err, human)
+	}
+}

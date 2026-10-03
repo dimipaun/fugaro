@@ -657,3 +657,70 @@ func TestTUIAndCLIShareSetKill(t *testing.T) {
 		t.Fatalf("%q", o.Notice)
 	}
 }
+
+func TestPricesMarksPlaceholderRowsUnverified(t *testing.T) {
+	const key = "sk-or-v1-testkeyshouldneverprint"
+	t.Setenv("OPENROUTER_API_KEY", key)
+	isolateProjects(t, t.TempDir())
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ds, sonnet string
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(l, "deepseek/deepseek-v4-flash"):
+			ds = l
+		case strings.HasPrefix(l, "claude-sonnet-5-5"):
+			sonnet = l
+		}
+	}
+	if !strings.Contains(ds, "NO") || !strings.Contains(ds, "UNVERIFIED") || !strings.Contains(ds, "placeholder") {
+		t.Fatalf("the placeholder row is not marked:\n%s", out)
+	}
+	if !strings.Contains(sonnet, "yes") || strings.Contains(sonnet, "UNVERIFIED") {
+		t.Fatalf("a checked row is marked unverified:\n%s", out)
+	}
+	js, _, err := execute(t, "budget", "prices", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Models []priceRow `json:"models"`
+	}
+	if err := json.Unmarshal([]byte(js), &doc); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, m := range doc.Models {
+		if m.ID == "deepseek/deepseek-v4-flash" {
+			found = m.Unverified && m.Source != "" && m.CheckedAt != ""
+		} else if m.Unverified {
+			t.Errorf("%s is marked unverified", m.ID)
+		}
+	}
+	if !found {
+		t.Fatalf("json lacks the unverified flag and source: %s", js)
+	}
+	if strings.Contains(out+js, key) {
+		t.Fatal("the provider key is in the output")
+	}
+}
+
+func TestPricesOverrideClearsUnverified(t *testing.T) {
+	newBudgetFixture(t, "budget: { mode: observe, per_run_usd: 5, rtdb_url: http://127.0.0.1:9 }\n"+
+		"model_prices:\n  deepseek/deepseek-v4-flash: { input_per_m: 0.2, output_per_m: 0.8, cache_read: 0.1 }\n")
+	out, _, err := execute(t, "budget", "prices")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "deepseek/deepseek-v4-flash") {
+			if strings.Contains(l, "UNVERIFIED") || !strings.Contains(l, "local override") || !strings.Contains(l, "yes") {
+				t.Fatalf("an owner price should be verified and marked local:\n%s", l)
+			}
+			return
+		}
+	}
+	t.Fatalf("no deepseek row:\n%s", out)
+}
