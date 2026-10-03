@@ -51,6 +51,8 @@ Small milestone. Behaviour:
 - The history job's sweeper marks the stale drafts of crashed runs.
 - **Live test:** confirm that a Bitbucket draft does not notify the assigned reviewer.
 
+**Rulings and the task plan:** [v1.md §4.2a](v1.md) and [the M9e plan](../plans/2026-10-03-m9e-early-draft-pr.md). Draft means no reviewers and no labels until the PR is ready (reviewers on a draft could notify a real reviewer early). Rebase-before-opening stays out of M9e. The sweeper (history job) has no git credentials, so it does not edit PRs: it marks the run `crashed`, and the draft's own status line (with its update time) plus `fugaro diagnose` show the stale draft.
+
 Code areas: `internal/runner` (finalize, and `EnsurePR` by PR number so later stages update the existing PR; `followup.go` for follow-ups) and the `internal/gitprov` adapters (`github`, `bitbucket`, `fake`: draft creation, draft-to-ready, description update, comment). The old M9e (verify gate and structured findings) is now **M9f**.
 
 ## v3 items not adopted, or done differently
