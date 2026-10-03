@@ -54,7 +54,7 @@ func (r *run) stagePins(stage string) map[string]string {
 	}
 	role := config.StageRole(stage)
 	a := r.cfg.Agent
-	return agent.PinVars(a.ModelFor(role), a.Models.Background, a.MaxOutputFor(role))
+	return agent.PinVars(a.ModelFor(role), r.backgroundModel(), a.MaxOutputFor(role))
 }
 
 // writeManagedSettings writes the managed settings for a stage: the

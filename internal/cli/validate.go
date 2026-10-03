@@ -97,6 +97,10 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		}
 		return problems, warnings
 	}
+	// The runner's default background model (a provider coder's own) is the
+	// run's, so the pin rules judge it, not an unset one.
+	agentPins := cfg.Agent
+	agentPins.Models.Background = config.EffectiveBackground(agentPins, lc.Providers)
 	e := policy.Merge(ceilingLayer(lc), runner.FileLayer(cfg))
 	for _, ig := range e.Ignored {
 		warnings = append(warnings, clampWarning(ig))
@@ -111,7 +115,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		}
 		ef.Sources[k] = v
 	}
-	allowed := config.CheckAllowed(cfg.Agent, ef, ceilingLayer(lc).AllowedModels)
+	allowed := config.CheckAllowed(agentPins, ef, ceilingLayer(lc).AllowedModels)
 	problems = append(problems, allowed...)
 	// A role with no model already has its problem: not a second one, from
 	// the pins, saying much the same.
@@ -136,7 +140,7 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 		problems = append(problems, config.Problem{Path: "model_prices", Message: err.Error() + " (in the project config)"})
 	} else if cfg.Agent.Auth != "oauth" {
 		// An oauth run has no gateway: nothing is priced or pinned.
-		for _, p := range config.CheckPins(cfg.Agent, prices) {
+		for _, p := range config.CheckPins(agentPins, prices) {
 			if !named[p.Path] {
 				problems = append(problems, p)
 			}
@@ -145,6 +149,52 @@ func budgetProblems(cfg *config.Config, lc *localcfg.Config) (problems, warnings
 	if cfg.Agent.Auth == "api-key" && e.Mode == policy.ModeEnforce && e.PerRunUSD <= 0 {
 		warnings = append(warnings, config.Problem{Path: "budget.per_run_usd",
 			Message: "the mode is enforce but no per-run cap is set in the project config or here; the run would halt (no_cap)"})
+	}
+	return problems, warnings
+}
+
+// providerProblems are the rules for models another provider serves, with the
+// owner's providers from the project config when it is cfg's own project: the
+// runner's refusals (a model no provider claims, a repository not in
+// allow_data_to, a variant or alias, no price, auth other than api-key), and
+// the warnings of the pins' prices (unverified placeholders, defaulted cache
+// rates). The repository is the checkout's origin; without one the
+// allow_data_to rule can't be checked, and a warning says so.
+func providerProblems(ctx context.Context, cfg *config.Config, lc *localcfg.Config) (problems, warnings []config.Problem) {
+	if lc == nil || lc.Name != cfg.Project {
+		return nil, nil
+	}
+	prices := pricing.Embedded()
+	o, err := lc.Overrides()
+	if err == nil {
+		prices, err = prices.With(o)
+	}
+	if err != nil {
+		return nil, nil // budgetProblems says so
+	}
+	var allowed []string
+	if cfg.Budget != nil {
+		allowed = cfg.Budget.AllowedModels
+	}
+	repo, rerr := originRepo(ctx)
+	if rerr == nil {
+		problems = append(problems, config.CheckProviderPolicy(cfg.Agent, allowed, repo, lc.Providers, prices)...)
+	} else {
+		for _, p := range config.CheckProviderPolicy(cfg.Agent, allowed, "", lc.Providers, prices) {
+			// Without the repository only the rules that don't name it hold.
+			if !strings.Contains(p.Message, "allow_data_to") {
+				problems = append(problems, p)
+			}
+		}
+		if len(lc.Providers) > 0 {
+			warnings = append(warnings, config.Problem{Path: "providers", Message: "the repository is unknown here (no origin remote), so allow_data_to was not checked"})
+		}
+	}
+	problems = append(problems, config.CheckProviderAuth(cfg.Agent, lc.Providers)...)
+	agent := cfg.Agent
+	agent.Models.Background = config.EffectiveBackground(agent, lc.Providers)
+	if cfg.Agent.Auth != "oauth" {
+		warnings = append(warnings, config.PinWarnings(agent, prices)...)
 	}
 	return problems, warnings
 }
@@ -217,6 +267,8 @@ func newValidateCmd() *cobra.Command {
 				lc := selectedProjectConfig(cmd.Context())
 				bp, bw := budgetProblems(cfg, lc)
 				problems, warnings = append(problems, bp...), bw
+				pp, pw := providerProblems(cmd.Context(), cfg, lc)
+				problems, warnings = append(problems, pp...), append(warnings, pw...)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
 						warnings = append(warnings, config.Problem{Path: "branch", Message: n})

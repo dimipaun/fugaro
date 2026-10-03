@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -15,11 +16,21 @@ const deepseek = "deepseek/deepseek-v4-flash"
 // acme/app, with the owner's provider allowing the repos in allow.
 func providerGW(t *testing.T, cfg string, allow ...string) *gw {
 	t.Helper()
-	g := newGW(t, cfg, "observe", "")
+	return providerRun(t, cfg, "observe", "", nil, allow...)
+}
+
+// providerRun is providerGW in a budget mode with a cap, whose provider
+// answers with script. The provider's key is mounted as the job does.
+func providerRun(t *testing.T, cfg, mode, capUSD string, script []anthropicfake.Reply, allow ...string) *gw {
+	t.Helper()
+	g := newGW(t, cfg, mode, capUSD)
+	compat, up := anthropicfake.New(t, script...)
+	g.compat = compat
 	g.deps.Providers = map[string]config.ModelProvider{"openrouter": {
-		Kind: config.ModelProviderKind, BaseURL: "https://openrouter.ai/api", Auth: "bearer",
+		Kind: config.ModelProviderKind, BaseURL: up.URL, Auth: "bearer",
 		Secret: "openrouter-api-key", Models: []string{"deepseek/*"}, AllowDataTo: allow,
 	}}
+	withProviderKey(g.harness)
 	return g
 }
 
@@ -75,7 +86,7 @@ func TestNoCallBeforeRefusal(t *testing.T) {
 	})
 	t.Run("the owner's allow-list does not carry it", func(t *testing.T) {
 		g := providerGW(t, providerPinned(t), "acme/app")
-		g.deps.Spend = ceilingOf(t, runner.AllowedModelsEnv, sonnet+","+haiku)
+		g.deps.Spend = ceilingOf(t, runner.BudgetModeEnv, "observe", runner.AllowedModelsEnv, sonnet+","+haiku)
 		refusedBeforeAnyCall(t, g, "agent.models.coder", "allowed_models from ceiling")
 	})
 }

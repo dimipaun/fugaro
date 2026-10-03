@@ -27,23 +27,23 @@ const MaxRouteFeePct = 50
 
 // ModelProvider is one entry of the local config's providers block.
 type ModelProvider struct {
-	Kind string `yaml:"kind"`
+	Kind string `yaml:"kind" json:"kind"`
 	// BaseURL is https, or http on a loopback host (the fake in tests).
-	BaseURL string `yaml:"base_url"`
+	BaseURL string `yaml:"base_url" json:"base_url"`
 	// Auth is how the credential is sent: "bearer" (Authorization) or
 	// "x-api-key".
-	Auth string `yaml:"auth"`
+	Auth string `yaml:"auth" json:"auth"`
 	// Secret is the logical name of the secret holding the key, never the
 	// key itself.
-	Secret string `yaml:"secret"`
+	Secret string `yaml:"secret" json:"secret"`
 	// RouteFeePct is added to every charge on this provider; 0 is none.
-	RouteFeePct float64 `yaml:"route_fee_pct,omitempty"`
+	RouteFeePct float64 `yaml:"route_fee_pct,omitempty" json:"route_fee_pct,omitempty"`
 	// Models are the model IDs the provider serves: exact IDs, or a prefix
 	// ending in "*" such as "deepseek/*". No two providers may overlap.
-	Models []string `yaml:"models"`
+	Models []string `yaml:"models" json:"models"`
 	// AllowDataTo are the repositories (owner/name) whose code may be sent
 	// here; empty means none.
-	AllowDataTo []string `yaml:"allow_data_to,omitempty"`
+	AllowDataTo []string `yaml:"allow_data_to,omitempty" json:"allow_data_to,omitempty"`
 }
 
 var (
@@ -302,4 +302,20 @@ func CheckProviderPolicy(a Agent, allowed []string, repo string, providers map[s
 func claimed(providers map[string]ModelProvider, model string) bool {
 	_, _, ok := ProviderFor(providers, model)
 	return ok
+}
+
+// EffectiveBackground is the model of Claude Code's background (haiku-role)
+// requests. The file's agent.models.background when set. Otherwise, with a
+// coder a provider serves, the coder's own model: the alternative is Claude
+// Code's built-in Claude haiku, a hidden call to Anthropic that no pin allows
+// and that a run on a provider is not expected to make. With a Claude coder
+// it stays unset, as it always was.
+func EffectiveBackground(a Agent, providers map[string]ModelProvider) string {
+	if a.Models.Background != "" {
+		return a.Models.Background
+	}
+	if coder := a.ModelFor(RoleCoder); claimed(providers, coder) {
+		return coder
+	}
+	return ""
 }

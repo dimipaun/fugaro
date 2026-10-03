@@ -46,9 +46,10 @@ const (
 	ComputePricesEnv = "FUGARO_COMPUTE_PRICES"
 	// The project's budget, which the runner reads (runner.SpendFromEnv):
 	// the mode, the per-run cap in US dollars, and the price overrides.
-	BudgetModeEnv  = runner.BudgetModeEnv
-	MaxRunUSDEnv   = runner.MaxRunUSDEnv
-	ModelPricesEnv = runner.ModelPricesEnv
+	BudgetModeEnv     = runner.BudgetModeEnv
+	MaxRunUSDEnv      = runner.MaxRunUSDEnv
+	ModelPricesEnv    = runner.ModelPricesEnv
+	ModelProvidersEnv = runner.ModelProvidersEnv
 	// The ceiling's token cap and allow-list of models, set on every
 	// workflow job whatever the mode.
 	MaxRunTokensEnv  = runner.MaxRunTokensEnv
@@ -525,6 +526,15 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 	if err := budgetEnv(lc, ws.Env); err != nil {
 		return WorkflowSpec{}, userErr("%v", err)
+	}
+	// Only the providers this repository may send code to are named; the
+	// keys are mounted below.
+	pv, err := runner.ProvidersEnv(lc.Providers, c.in.Repo)
+	if err != nil {
+		return WorkflowSpec{}, userErr("%v", err)
+	}
+	if pv != "" {
+		ws.Env[ModelProvidersEnv] = pv
 	}
 
 	var collisions []string

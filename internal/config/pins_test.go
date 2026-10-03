@@ -157,7 +157,16 @@ func TestUnverifiedPriceWarns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), tbl); len(ws) != 0 {
-		t.Fatalf("an owner's price still warns: %v", ws)
+	// ...but leaving the cache multipliers at 0 is its own warning.
+	ws = PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), tbl)
+	if paths(ws) != "agent.models.coder,agent.models.background" || ws[0].Code != pricing.CodeCacheRateDefaulted {
+		t.Fatalf("an override without cache rates: %v", ws)
+	}
+	full, err := pricing.Embedded().With(pricing.Overrides{"deepseek/deepseek-v4-flash": {InputPerM: 0.1, OutputPerM: 0.2, CacheWrite5m: 1, CacheWrite1h: 1, CacheRead: 0.1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), full); len(ws) != 0 {
+		t.Fatalf("an owner's full price still warns: %v", ws)
 	}
 }

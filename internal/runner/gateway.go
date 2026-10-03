@@ -96,6 +96,12 @@ func (r *run) startGateway(ctx context.Context) error {
 		return fmt.Errorf("starting the gateway: auth %q never goes through it", r.cfg.Agent.Auth)
 	}
 	o.Upstream = up
+	routes, err := r.gatewayRoutes()
+	if err != nil {
+		return errors.New(r.redact(err.Error()))
+	}
+	o.Routes = routes
+	r.routed = len(routes) > 0
 	gw, err := gateway.Start(ctx, o)
 	if err != nil {
 		return fmt.Errorf("starting the gateway: %s", r.redact(err.Error()))
@@ -136,7 +142,7 @@ func vertexLocations(env []string) []string {
 func (r *run) beginGatewayStage(name string) {
 	role := config.StageRole(name)
 	a := r.cfg.Agent
-	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: a.Models.Background, MaxOutputTokens: a.MaxOutputFor(role)})
+	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: r.backgroundModel(), MaxOutputTokens: a.MaxOutputFor(role)})
 }
 
 // endGatewayStage closes the stage in the gateway, takes its figures into
@@ -343,6 +349,9 @@ func (r *run) checkBudget() error {
 		}
 		return fmt.Errorf("the models can't be priced under the budget: %s", strings.Join(msgs, "; "))
 	}
+	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
+		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
@@ -366,14 +375,26 @@ func (r *run) checkProviderModels() error {
 	}
 	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
 	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
-	if len(ps) == 0 {
-		return nil
+	if len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("the models are not approved for this repository: %s", strings.Join(msgs, "; "))
 	}
-	msgs := make([]string, len(ps))
-	for i, p := range ps {
-		msgs[i] = p.String()
+	// From here the pins are the run's: an unset background model becomes
+	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
+	// stage pins and Claude Code's haiku role all see the same one.
+	bg := r.backgroundModel()
+	if !r.gatewayOn() {
+		for _, m := range []string{r.cfg.Agent.ModelFor(config.RoleCoder), r.cfg.Agent.ModelFor(config.RoleReviewer), bg} {
+			if _, _, ok := config.ProviderFor(r.d.Providers, m); ok {
+				return fmt.Errorf("%s is served by a provider, which needs the budget gateway: set budget.mode to observe or enforce (with agent.auth api-key); without it the call would go to Anthropic", config.CodeSpan(m))
+			}
+		}
 	}
-	return fmt.Errorf("the models are not approved for this repository: %s", strings.Join(msgs, "; "))
+	r.cfg.Agent.Models.Background = bg
+	return nil
 }
 
 // noCapDetail says how to give an enforcing run a cap. Where the owner's

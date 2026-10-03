@@ -36,9 +36,11 @@ func CheckPins(a Agent, prices *pricing.Table) []Problem {
 }
 
 // PinWarnings are the pins whose price is an embedded placeholder nobody has
-// verified (a provider model's starter row): the run may go on, but its cap
-// counts a guess until the owner sets the real price under model_prices,
-// which always wins. Callers show these at pin time and in diagnose.
+// verified (a provider model's starter row), or whose owner override left
+// cache rates at 0 (counted at the input price instead): the run may go on,
+// but its cap counts a guess until the owner sets the real price under
+// model_prices, which always wins. Callers show these at pin time and in
+// diagnose.
 func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 	var ps []Problem
 	seen := map[string]bool{}
@@ -48,13 +50,18 @@ func PinWarnings(a Agent, prices *pricing.Table) []Problem {
 		{"agent.models.background", a.Models.Background},
 	} {
 		m, ok := prices.Lookup(r.model)
-		if !ok || !m.Unverified || seen[m.ID+r.path] {
+		if !ok || seen[m.ID+r.path] {
 			continue
 		}
 		seen[m.ID+r.path] = true
-		ps = append(ps, Problem{Path: r.path, Code: CodeUnverifiedPrice, Message: fmt.Sprintf(
-			"%s has an unverified placeholder price (%s, %s): set the real one under model_prices; until then the cap counts a guess",
-			r.model, m.PriceSource, m.PriceCheckedAt)})
+		if m.Unverified {
+			ps = append(ps, Problem{Path: r.path, Code: CodeUnverifiedPrice, Message: fmt.Sprintf(
+				"%s has an unverified placeholder price (%s, %s): set the real one under model_prices; until then the cap counts a guess",
+				r.model, m.PriceSource, m.PriceCheckedAt)})
+		}
+		if w := m.CacheWarning(); w != "" {
+			ps = append(ps, Problem{Path: r.path, Code: pricing.CodeCacheRateDefaulted, Message: w})
+		}
 	}
 	return ps
 }

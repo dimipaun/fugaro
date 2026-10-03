@@ -172,6 +172,7 @@ type run struct {
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
 	routeBy      map[string]pricing.Micros
+	routed       bool // the gateway has provider routes, so route_by exists
 	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int

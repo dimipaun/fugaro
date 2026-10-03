@@ -128,15 +128,3 @@ func TestProviderCredentialLength(t *testing.T) {
 		t.Error("3 bytes accepted")
 	}
 }
-
-// TestUpstreamErrorEchoingKeyIsRedacted: a provider that echoes the key it
-// was sent in an error body ("invalid key sk-or-...") must not put it in
-// the agent's hands, the gateway log, the transcript or result.json.
-//
-// The gateway half (the agent-visible response and the gateway log) is
-// proven in internal/gateway TestUpstreamErrorEchoingKeyIsRedacted. This
-// stub stays for the runner half (transcript, result.json) once T8 wires
-// provider routes.
-func TestUpstreamErrorEchoingKeyIsRedacted(t *testing.T) {
-	t.Skip("TODO(T8): the runner does not wire provider routes yet")
-}
