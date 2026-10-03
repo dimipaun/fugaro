@@ -95,6 +95,7 @@ release:
 
     - `ghcr.io/dimipaun/fugaro-web-node:{{ .Version }}`
     - `ghcr.io/dimipaun/fugaro-web-node:{{ .Major }}` (moves to the highest release of the major)
+    - `ghcr.io/dimipaun/fugaro-go:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-go:{{ .Major }}`
 
     The Terraform modules, the schemas and the plugin are versioned by this same tag.
 
