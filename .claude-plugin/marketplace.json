@@ -8,7 +8,7 @@
     {
       "name": "fugaro",
       "source": "./plugin",
-      "description": "Onboard a repository to Fugaro and follow up its pull requests: the fleeting cloud workers that run coding-agent tasks and always end with a pull request."
+      "description": "Onboard a repository to Fugaro, launch runs, check their status and logs, diagnose them and follow up their pull requests: the fleeting cloud workers that run coding-agent tasks and always end with a pull request."
     }
   ]
 }
