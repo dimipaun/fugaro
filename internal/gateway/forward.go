@@ -621,7 +621,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 	}
 	var out io.Writer = w
 	var rw *redactWriter
-	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	if rt.provider != nil {
+		copyProviderResponseHeaders(w.Header(), resp.Header, decoded)
+	} else {
+		copyResponseHeaders(w.Header(), resp.Header, decoded)
+	}
 	if rt.provider != nil {
 		// Whatever else comes back from a provider is scrubbed of its key
 		// (it is the one in the request, read at request time).
@@ -816,6 +820,32 @@ func copyResponseHeaders(dst, src http.Header, decoded bool) {
 			continue
 		}
 		dst[ck] = append([]string(nil), vs...)
+	}
+}
+
+// providerSuccessHeaders are the headers of a provider's 2xx the agent may
+// see (with the prefixes below): what it needs to read the body and back off.
+// Anything else (cookies, account or generation identifiers, unknown
+// headers) is the provider's own and stays at the gateway.
+var providerSuccessHeaders = map[string]bool{
+	"Content-Type": true, "Retry-After": true, "Request-Id": true, "X-Request-Id": true, "Anthropic-Request-Id": true,
+	"Cache-Control": true,
+}
+
+var providerSuccessPrefixes = []string{"X-Ratelimit-", "Ratelimit-", "Anthropic-Ratelimit-"}
+
+// copyProviderResponseHeaders is copyResponseHeaders for a routed 2xx: an
+// allowlist. Content-Encoding goes only when the body was not decoded.
+func copyProviderResponseHeaders(dst, src http.Header, decoded bool) {
+	for k, vs := range src {
+		ck := http.CanonicalHeaderKey(k)
+		ok := providerSuccessHeaders[ck] || (ck == "Content-Encoding" && !decoded)
+		for _, p := range providerSuccessPrefixes {
+			ok = ok || strings.HasPrefix(ck, p)
+		}
+		if ok {
+			dst[ck] = append([]string(nil), vs...)
+		}
 	}
 }
 

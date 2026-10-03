@@ -465,6 +465,49 @@ func TestUpstreamErrorWithoutTypeGetsOneFromStatus(t *testing.T) {
 	}
 }
 
+// A routed 2xx passes only an allowlist of headers (as an error does): a
+// cookie, an account identifier or any unknown header never reaches the
+// agent. A Claude call's headers are unchanged.
+func TestRoutedSuccessHeadersAreAllowlisted(t *testing.T) {
+	u := pricing.Usage{Input: 10, Output: 20}
+	r := newRouted(t, "bearer", routedStage)
+	hdr := http.Header{
+		"Set-Cookie": {"sid=abc"}, "X-Provider-Org": {"org-secret"}, "X-Generation-Id": {"gen-1"},
+		"Retry-After": {"7"}, "X-Request-Id": {"req_123"}, "X-Ratelimit-Remaining": {"41"}, "Anthropic-Ratelimit-Requests-Remaining": {"9"},
+	}
+	r.prov.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		rep := anthropicfake.MessageOK(dsModel, u)
+		rep.Header = hdr.Clone()
+		return rep
+	}
+	resp, b := r.post(msg(dsModel, 100))
+	if resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
+	for k, want := range map[string]string{"Retry-After": "7", "X-Request-Id": "req_123", "X-Ratelimit-Remaining": "41", "Anthropic-Ratelimit-Requests-Remaining": "9"} {
+		if resp.Header.Get(k) != want {
+			t.Errorf("%s = %q, want %q", k, resp.Header.Get(k), want)
+		}
+	}
+	if resp.Header.Get("Content-Type") == "" {
+		t.Error("the content type was lost")
+	}
+	for _, k := range []string{"Set-Cookie", "X-Provider-Org", "X-Generation-Id"} {
+		if resp.Header.Get(k) != "" {
+			t.Errorf("%s reached the agent: %v", k, resp.Header)
+		}
+	}
+	// Claude's headers still pass through.
+	r.fake.Func = func(*http.Request, []byte) anthropicfake.Reply {
+		rep := anthropicfake.MessageOK(sonnet, u)
+		rep.Header = http.Header{"X-Generation-Id": {"claude-gen"}, "Anthropic-Ratelimit-Requests-Limit": {"50"}}
+		return rep
+	}
+	if resp, b := r.post(msg(sonnet, 100)); resp.StatusCode != 200 || resp.Header.Get("X-Generation-Id") != "claude-gen" || resp.Header.Get("Anthropic-Ratelimit-Requests-Limit") != "50" {
+		t.Errorf("claude headers: %d %v %s", resp.StatusCode, resp.Header, b)
+	}
+}
+
 // Whatever else comes back on a routed 2xx (a stream, a body, a header)
 // is scrubbed of the exact key too.
 func TestRoutedSuccessScrubsKey(t *testing.T) {
@@ -472,10 +515,10 @@ func TestRoutedSuccessScrubsKey(t *testing.T) {
 	t.Run("body", func(t *testing.T) {
 		rep := anthropicfake.MessageOK(dsModel, u)
 		rep.Body = strings.Replace(rep.Body, `"msg_fake"`, `"`+providerKey+`"`, 1)
-		rep.Header = http.Header{"X-Echo": {"Bearer " + providerKey}, "X-Ok": {"fine"}}
+		rep.Header = http.Header{"X-Echo": {"Bearer " + providerKey}, "Request-Id": {"Bearer " + providerKey}, "Retry-After": {"fine"}}
 		r := newRouted(t, "bearer", routedStage, rep)
 		resp, b := r.post(msg(dsModel, 100))
-		if resp.StatusCode != 200 || strings.Contains(b+fmt.Sprint(resp.Header), providerKey) || resp.Header.Get("X-Ok") != "fine" {
+		if resp.StatusCode != 200 || strings.Contains(b+fmt.Sprint(resp.Header), providerKey) || resp.Header.Get("Retry-After") != "fine" {
 			t.Errorf("%d %s %v", resp.StatusCode, b, resp.Header)
 		}
 	})
