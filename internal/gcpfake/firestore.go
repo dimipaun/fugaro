@@ -41,6 +41,7 @@ type Firestore struct {
 	auth     []string
 	quota    []string
 	ops      map[string]bool // operation name -> polled once already
+	raceLoc  string          // see RaceCreate
 }
 
 type fsDatabase struct{ location, typ, protection string }
@@ -75,6 +76,22 @@ func (f *Firestore) SetDatabase(location string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.db = &fsDatabase{location: location, typ: "FIRESTORE_NATIVE", protection: "DELETE_PROTECTION_ENABLED"}
+}
+
+// SetDatabaseType gives the existing database another type (FIRESTORE_NATIVE
+// or DATASTORE_MODE).
+func (f *Firestore) SetDatabaseType(typ string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.db.typ = typ
+}
+
+// RaceCreate makes the next database creation lose a race: the database
+// appears in location, and the create answers 409 ALREADY_EXISTS.
+func (f *Firestore) RaceCreate(location string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.raceLoc = location
 }
 
 // RemoveDatabase leaves the project with no database: document calls answer
@@ -189,7 +206,7 @@ func (f *Firestore) handle(w http.ResponseWriter, r *http.Request, body []byte) 
 	f.mu.Lock()
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
 	f.quota = append(f.quota, r.Header.Get("X-Goog-User-Project"))
-	write := r.Method == http.MethodPatch || r.Method == http.MethodDelete || (r.Method == http.MethodPost && !strings.HasSuffix(r.URL.Path, ":runQuery"))
+	write := r.Method == http.MethodPatch || r.Method == http.MethodDelete || (r.Method == http.MethodPost && !strings.HasSuffix(r.URL.Path, ":runQuery") && !strings.HasSuffix(r.URL.Path, ":listCollectionIds"))
 	if write && f.denyNext > 0 {
 		f.denyNext--
 		f.mu.Unlock()
@@ -215,6 +232,8 @@ func (f *Firestore) handle(w http.ResponseWriter, r *http.Request, body []byte) 
 		f.getDatabase(w, project)
 	case strings.HasPrefix(rest, "/operations/") && r.Method == http.MethodGet:
 		f.getOperation(w, project, rest)
+	case rest == "/documents:listCollectionIds" && r.Method == http.MethodPost:
+		f.listCollectionIDs(w, project, body)
 	case rest == "/documents:runQuery" && r.Method == http.MethodPost:
 		f.runQuery(w, project, body)
 	case strings.HasPrefix(rest, "/documents/"):
@@ -266,6 +285,10 @@ func (f *Firestore) createDatabase(w http.ResponseWriter, r *http.Request, proje
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.raceLoc != "" && f.db == nil {
+		f.db = &fsDatabase{location: f.raceLoc, typ: "FIRESTORE_NATIVE", protection: "DELETE_PROTECTION_DISABLED"}
+		f.raceLoc = ""
+	}
 	if f.db != nil {
 		writeError(w, 409, "ALREADY_EXISTS", "Database already exists. Please use a different database ID.")
 		return
@@ -914,4 +937,47 @@ func compareValues(a, b any) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// listCollectionIDs answers the root's collection IDs (sorted, paged by
+// pageSize/pageToken, the token being the last ID returned).
+func (f *Firestore) listCollectionIDs(w http.ResponseWriter, project string, body []byte) {
+	var req struct {
+		PageSize  int    `json:"pageSize"`
+		PageToken string `json:"pageToken"`
+	}
+	if len(body) > 0 && json.Unmarshal(body, &req) != nil {
+		writeError(w, 400, "INVALID_ARGUMENT", "bad request body")
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.db == nil {
+		noDatabase(w, project)
+		return
+	}
+	seen := map[string]bool{}
+	var ids []string
+	for k := range f.docs {
+		if c, _, _ := strings.Cut(k, "/"); !seen[c] {
+			seen[c] = true
+			ids = append(ids, c)
+		}
+	}
+	sort.Strings(ids)
+	var out []string
+	for _, id := range ids {
+		if req.PageToken == "" || id > req.PageToken {
+			out = append(out, id)
+		}
+	}
+	resp := map[string]any{}
+	if req.PageSize > 0 && len(out) > req.PageSize {
+		out = out[:req.PageSize]
+		resp["nextPageToken"] = out[len(out)-1]
+	}
+	if len(out) > 0 {
+		resp["collectionIds"] = out
+	}
+	writeJSON(w, 200, resp)
 }

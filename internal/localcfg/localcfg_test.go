@@ -248,6 +248,20 @@ func TestParseEndpoints(t *testing.T) {
 	}
 }
 
+// The Firestore endpoints are checked like identity_toolkit.
+func TestParseFirestoreEndpoints(t *testing.T) {
+	for _, field := range []string{"firestore", "firebase_rules", "identity_toolkit"} {
+		if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"http://127.0.0.1:9\" }\n")); err != nil {
+			t.Errorf("%s: %v", field, err)
+		}
+		for _, bad := range []string{"http://example.com/", "https://u:p@example.com/", "firestore.googleapis.com"} {
+			if _, err := Parse([]byte(sample + "endpoints: { " + field + ": \"" + bad + "\" }\n")); err == nil || !strings.Contains(err.Error(), "endpoints."+field) {
+				t.Errorf("%s %s: err = %v", field, bad, err)
+			}
+		}
+	}
+}
+
 // --project and --region go into resource paths: they are validated like
 // the config's own values.
 func TestOverrideValidates(t *testing.T) {
