@@ -23,6 +23,12 @@ type Cost struct {
 	ModelSource string `json:"model_source,omitempty"`
 	// ModelBy is the model spend by model, in USD.
 	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// RouteBy is the model spend by provider route, in USD; Claude calls
+	// have no route and are not in it.
+	RouteBy map[string]float64 `json:"route_by,omitempty"`
+	// ReportedUSD is what providers said their calls cost, summed. It is
+	// recorded to compare with the charge and never settles a call.
+	ReportedUSD float64 `json:"reported_usd,omitempty"`
 	// Unreconciled is the USD charged from reservations rather than from
 	// reported usage.
 	Unreconciled float64 `json:"unreconciled,omitempty"`

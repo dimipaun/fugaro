@@ -84,11 +84,13 @@ func (s *Server) reserve(ctx context.Context, st *stageState, w pricing.Micros) 
 type charge struct {
 	amount       pricing.Micros
 	unreconciled pricing.Micros
-	model        string // the serving model, for ByModel
-	unparsed     bool   // a 2xx settled at its reservation
-	tokens       int64  // reported tokens
-	sent         bool   // the call reached the upstream (it counts as a call)
-	violation    string // a surprise pricing dimension
+	model        string         // the serving model, for ByModel
+	unparsed     bool           // a 2xx settled at its reservation
+	tokens       int64          // reported tokens
+	sent         bool           // the call reached the upstream (it counts as a call)
+	violation    string         // a surprise pricing dimension
+	route        string         // the provider route the call went to; "" is Anthropic
+	reported     pricing.Micros // the cost the provider reported, never charged
 }
 
 // settle releases a call's reservation w and charges it. An amount above
@@ -114,7 +116,11 @@ func (s *Server) settle(st *stageState, w pricing.Micros, c charge) {
 	r.Used = satAdd(r.Used, c.amount)
 	if c.amount > 0 {
 		r.ByModel[c.model] = satAdd(r.ByModel[c.model], c.amount)
+		if c.route != "" {
+			r.ByRoute[c.route] = satAdd(r.ByRoute[c.route], c.amount)
+		}
 	}
+	r.Reported = satAdd(r.Reported, c.reported)
 	r.Unreconciled = satAdd(r.Unreconciled, c.unreconciled)
 	r.Overrun = satAdd(r.Overrun, over)
 	if c.unparsed {

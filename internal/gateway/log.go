@@ -17,6 +17,7 @@ type callLog struct {
 	stream                     bool
 	usage                      pricing.Usage // reported
 	reserved, charged          pricing.Micros
+	reported                   pricing.Micros // what the provider said it cost; recorded, never charged
 	pricedAs, settled          string
 	sessionID, agentID         string
 	errorType                  string
@@ -49,6 +50,9 @@ func (s *Server) logCall(c callLog) {
 	}
 	if c.route != "" {
 		attrs = append(attrs, "route", c.route)
+	}
+	if c.reported > 0 {
+		attrs = append(attrs, "reported_micros", int64(c.reported))
 	}
 	if c.errorType != "" {
 		attrs = append(attrs, "error_type", errorTypeValue(c.errorType))

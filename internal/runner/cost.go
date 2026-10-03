@@ -28,6 +28,13 @@ func (r *run) updateCost() {
 	if gateway {
 		c.Unreconciled = r.unreconciled.USD()
 		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
+		c.ReportedUSD = r.reported.USD()
+		if len(r.routeBy) > 0 {
+			c.RouteBy = make(map[string]float64, len(r.routeBy))
+			for k, v := range r.routeBy {
+				c.RouteBy[k] = v.USD()
+			}
+		}
 	}
 	r.mu.Unlock()
 	c.ModelSource = "claude-code"

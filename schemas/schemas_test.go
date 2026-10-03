@@ -425,6 +425,7 @@ func TestResultSchemaHalted(t *testing.T) {
 	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
 	cost.ModelSource, cost.ModelBy, cost.Unreconciled, cost.UsageUnparsed = "gateway", map[string]float64{"claude-a": 4.12}, 0.5, 1
+	cost.RouteBy, cost.ReportedUSD = map[string]float64{"openrouter": 1.5}, 1.4
 	check := func(reason runstore.HaltReason) error {
 		rec := runstore.Record{
 			Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "implement", Outcome: runstore.OutcomeDraft,

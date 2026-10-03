@@ -111,6 +111,8 @@ type StageReport struct {
 	Calls         int                       // calls sent upstream
 	Used          pricing.Micros            // settled this stage
 	ByModel       map[string]pricing.Micros // by serving model
+	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
+	Reported      pricing.Micros            // what providers said their calls cost: for comparison, never charged
 	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
 	Overrun       pricing.Micros            // charged above the calls' reservations
 	WouldHalt     int                       // observe: calls enforce would have refused
@@ -348,7 +350,7 @@ func (s *Server) ledgerLocked() Ledger {
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}}}
+	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -360,7 +362,7 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByModel: map[string]pricing.Micros{}}
+		return StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -387,6 +389,10 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v
+	}
+	rep.ByRoute = make(map[string]pricing.Micros, len(st.rep.ByRoute))
+	for k, v := range st.rep.ByRoute {
+		rep.ByRoute[k] = v
 	}
 	rep.Violations = append([]string(nil), st.rep.Violations...)
 	return rep

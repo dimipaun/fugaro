@@ -540,9 +540,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// outcome is known it is charged its full reservation.
 	out := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: cl.pricedAs}
 	defer func() {
+		out.route = cl.route
 		s.settle(st, w0, out.charge)
-		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType =
-			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType
+		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType, cl.reported =
+			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
 		s.logCall(cl)
 	}()
 	out = s.forward(w, r, rt, body, p, known, w0, &cl.status)
@@ -707,6 +708,9 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	if !partial {
 		o.amount, o.settled = reported, settledUsage
+		if pr != nil && t.acc.hasReported {
+			o.charge.reported = t.acc.reported // a record for comparison: it never prices the call
+		}
 		return o
 	}
 	charged := u

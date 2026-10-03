@@ -108,6 +108,7 @@ func (r *run) startGateway(ctx context.Context) error {
 	r.gw = gw
 	r.gwAgent = &agent.Gateway{BaseURL: gw.URL(), Token: gw.Token()}
 	r.modelBy = map[string]pricing.Micros{}
+	r.routeBy = map[string]pricing.Micros{}
 	r.stageExtra = r.endGatewayStage
 	r.mu.Unlock()
 	return nil
@@ -148,6 +149,10 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	for m, v := range rep.ByModel {
 		r.modelBy[m] += v
 	}
+	for m, v := range rep.ByRoute {
+		r.routeBy[m] += v
+	}
+	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled
 	r.unparsed += rep.UsageUnparsed
 	r.mu.Unlock()

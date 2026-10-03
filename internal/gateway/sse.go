@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -108,7 +109,16 @@ func (f *field) take(p *int64) {
 type usageAcc struct {
 	in, cc, cr, out, w5, w1, web field
 	speed, tier, geo             json.RawMessage
+	// reported is the cost a provider put in the usage object (OpenRouter's
+	// usage.cost, in USD), in micros. It is only recorded for comparison
+	// with the charge and never settles a call.
+	reported    pricing.Micros
+	hasReported bool
 }
+
+// maxReportedUSD bounds a provider-reported cost the gateway will record;
+// anything above it is a malformed field, not a price.
+const maxReportedUSD = 1e6
 
 type wireUsage struct {
 	InputTokens              *int64 `json:"input_tokens"`
@@ -122,6 +132,7 @@ type wireUsage struct {
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
 	} `json:"server_tool_use"`
+	Cost         json.RawMessage `json:"cost"`
 	Speed        json.RawMessage `json:"speed"`
 	ServiceTier  json.RawMessage `json:"service_tier"`
 	InferenceGeo json.RawMessage `json:"inference_geo"`
@@ -138,6 +149,12 @@ func (a *usageAcc) merge(u *wireUsage) {
 	}
 	if t := u.ServerToolUse; t != nil {
 		a.web.take(t.WebSearchRequests)
+	}
+	if len(u.Cost) > 0 {
+		var usd float64
+		if json.Unmarshal(u.Cost, &usd) == nil && usd >= 0 && usd <= maxReportedUSD {
+			a.reported, a.hasReported = pricing.Micros(math.Round(usd*1e6)), true
+		}
 	}
 	for _, x := range []struct {
 		dst *json.RawMessage

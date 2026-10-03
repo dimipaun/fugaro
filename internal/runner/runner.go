@@ -166,6 +166,8 @@ type run struct {
 	gwUsed       pricing.Micros
 	lastStage    *gateway.StageReport
 	modelBy      map[string]pricing.Micros
+	routeBy      map[string]pricing.Micros
+	reported     pricing.Micros
 	unreconciled pricing.Micros
 	unparsed     int
 	provider     gitprov.Provider
