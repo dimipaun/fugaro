@@ -67,6 +67,9 @@ type Config struct {
 	// ModelPrices replace the built-in price of a model (or add one), by
 	// model ID, for the budget's accounting.
 	ModelPrices map[string]ModelPrice `yaml:"model_prices,omitempty"`
+	// Providers are the non-Anthropic backends models may be routed to
+	// (design m10-multi-model.md §3), by name. Only the owner sets them.
+	Providers map[string]config.ModelProvider `yaml:"providers,omitempty"`
 	// Watch tunes fugaro watch.
 	Watch       *Watch          `yaml:"watch,omitempty"`
 	User        string          `yaml:"user,omitempty"`
@@ -592,6 +595,9 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	for _, p := range config.ValidateModelProviders(c.Providers) {
+		bad("%s: %s", p.Path, p.Message)
+	}
 	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
 		if _, err := pricing.FromUSD(*w.BurnAlertUSDPerHour); err != nil {
 			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
