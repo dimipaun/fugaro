@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -21,6 +22,14 @@ func TestMain(m *testing.M) {
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	os.Setenv("https_proxy", "http://127.0.0.1:1")
 	os.Unsetenv("STORAGE_EMULATOR_HOST")
+	// Commands read the project from the fugaro.yaml of the checkout they run
+	// in, found through git from the working directory. The tests run inside
+	// this repository, whose own fugaro.yaml names the project fugaro, so git
+	// is told not to look in the repository root: a test that wants a
+	// checkout makes its own (git doesn't enter a ceiling directory itself).
+	if wd, err := os.Getwd(); err == nil {
+		os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(filepath.Dir(wd)))
+	}
 	os.Exit(m.Run())
 }
 
