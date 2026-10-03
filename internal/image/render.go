@@ -15,9 +15,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
-// bases lists the base images Fugaro publishes. server-jvm joins after the
-// server spike (design §14), with images/server-jvm/ and its install-jdk.
-var bases = []string{"go", "web-node"}
+// bases lists the base images Fugaro publishes: one directory each under
+// images/.
+var bases = config.Bases
 
 // RenderInput is what the derived-image template is rendered from.
 type RenderInput struct {

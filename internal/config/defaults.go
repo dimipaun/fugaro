@@ -2,6 +2,10 @@ package config
 
 import "time"
 
+// Bases are the base images Fugaro publishes, the values of a workflow's
+// base: (and the keys of the local config's base_images).
+var Bases = []string{"go", "java-services", "web-node"}
+
 type baseDefault struct {
 	reports []string
 	cpu     int
@@ -9,9 +13,13 @@ type baseDefault struct {
 }
 
 var baseDefaults = map[string]baseDefault{
-	"server-jvm": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 8, memory: "32Gi"},
-	"go":         {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
-	"web-node":   {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
+	// java-services runs the repository's services (Postgres, Redis, the
+	// Firebase emulators) next to Gradle and the test JVM in one container,
+	// and the services' data lives in memory on Cloud Run: 16Gi, the most a
+	// 4 vCPU container may have.
+	"java-services": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 4, memory: "16Gi"},
+	"go":            {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
+	"web-node":      {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 }
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache

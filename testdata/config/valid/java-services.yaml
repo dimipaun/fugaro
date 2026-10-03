@@ -1,0 +1,10 @@
+version: 1
+project: aurora
+git: { provider: bitbucket }
+workflows:
+  server:
+    base: java-services
+    image: { apt: [python3], setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"] }
+    commands:
+      build: ./gradlew.sh --no-daemon testClasses
+      test: fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest --tests 'co.edgeapp.server.SomeTests'

@@ -3,6 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     image: { skip_build_scripts: true }
     commands: { build: ./gradlew assemble, test: ./gradlew test }

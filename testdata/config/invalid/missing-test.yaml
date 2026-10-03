@@ -2,4 +2,4 @@ version: 1
 project: aurora
 git: { provider: github }
 workflows:
-  server: { base: server-jvm, commands: { build: make } }
+  server: { base: java-services, commands: { build: make } }

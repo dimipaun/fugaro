@@ -43,7 +43,7 @@ repos:
 
 // m5Additions are the local config fields an M5 installation adds.
 const m5Additions = `registry_host: us-east5-docker.pkg.dev/proj-1234
-base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc
+base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
 `
 
 func parseLC(t *testing.T, yaml string) *localcfg.Config {
@@ -115,7 +115,7 @@ workflows:
       - { name: npm-token, env: NPM_TOKEN }
     timeouts: { total: 60m }
   api:
-    base: server-jvm
+    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
     rebuild: { check: "off" }
 `
@@ -130,7 +130,7 @@ gcp_project: proj-1234
 region: us-east5
 runs_bucket: fugaro-runs-proj-1234
 registry_host: us-east5-docker.pkg.dev/proj-1234
-base_image: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc
+base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc}
 compute_prices: { us-east5: { vcpu_second_usd: 0.00002, gib_second_usd: 0.0000025 } }
 repos:
   acme/webapp: { provider: github, base_branch: main, workflows: [web, api], github_app_id: "123456" }
@@ -355,7 +355,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		t.Fatal("no check")
 	}
 	if c.Job != gcp.CheckJobName(slug) || c.SchedulerJob != gcp.SchedulerJobName(slug) || c.SchedulerRegion != "us-east4" || !c.Paused ||
-		c.Image != in.LC.BaseImage {
+		c.Image != in.LC.BaseImage("web-node") {
 		t.Errorf("check = %+v", c)
 	}
 	if !regexp.MustCompile(`^([0-9]|[1-5][0-9]) [56] \* \* \*$`).MatchString(c.Schedule) {
@@ -372,7 +372,7 @@ func TestRepoSpecBitbucket(t *testing.T) {
 		Repo: "acme/sandbox", Provider: "bitbucket", RepoURL: "https://bitbucket.org/acme/sandbox.git", BaseBranch: "master",
 		Workflows: []string{"web"}, Registry: "us-east5-docker.pkg.dev/proj-1234/" + gcp.RegistryRepoID(slug),
 		BuildServiceAccount: gcp.BuildServiceAccountID(slug) + "@proj-1234.iam.gserviceaccount.com",
-		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImage: in.LC.BaseImage,
+		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: map[string]string{"web-node": in.LC.BaseImage("web-node")},
 	}
 	if !equalJSON(t, spec, want) {
 		t.Errorf("check spec = %+v, want %+v", spec, want)
@@ -500,7 +500,7 @@ func TestNoCheckWhenAllOff(t *testing.T) {
 		t.Fatalf("tfvars: %v\n%s", err, vars)
 	}
 	// And without a base image nothing needs one.
-	in.LC.BaseImage = ""
+	in.LC.BaseImages = nil
 	if _, err := Repo(in); err != nil {
 		t.Fatal(err)
 	}
@@ -522,7 +522,8 @@ func TestSpecRefuses(t *testing.T) {
 		"tag mover role of another project": func(in *Inputs) {
 			in.Installation.RoleIDs.TagMover = "projects/other-proj/roles/" + RoleTagMover
 		},
-		"no base image": func(in *Inputs) { in.LC.BaseImage = "" },
+		"no base image":                         func(in *Inputs) { in.LC.BaseImages = nil },
+		"no base image for the workflow's kind": func(in *Inputs) { in.LC.BaseImages = map[string]string{"go": "ghcr.io/dimipaun/fugaro-go:1"} },
 		"secret env collides": func(in *Inputs) {
 			w := in.Cfg.Workflows["web"]
 			w.Secrets = []config.Secret{{Name: "x", Env: "FUGARO_BUCKET"}}
@@ -743,22 +744,33 @@ func TestDefaultInstallationOutputs(t *testing.T) {
 // The build account can read only the installation's base registry, so a
 // base image elsewhere (an M4 local config's, in the legacy registry)
 // would fail every build at its pull.
-func TestBaseImageWarning(t *testing.T) {
+func TestBaseImageWarnings(t *testing.T) {
 	outs := InstallationOutputs{RegistryHost: "us-east5-docker.pkg.dev/proj-1234", BaseRegistry: BaseRegistry}
+	if ws := BaseImageWarnings(nil, outs); len(ws) != 0 {
+		t.Errorf("no base images: %v", ws)
+	}
 	for base, warn := range map[string]bool{
-		"": false,
 		"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc":  false,
 		"us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-0123abc":       true,
 		"us-east5-docker.pkg.dev/proj-1234/fugaro-basex/fugaro-web-node:dev-0123abc": true,
 		"us-east5-docker.pkg.dev/other-proj/fugaro-base/fugaro-web-node:dev-0123abc": true,
 	} {
-		got := BaseImageWarning(base, outs)
-		if (got != "") != warn {
-			t.Errorf("%q: warning %q, want one: %v", base, got, warn)
+		got := BaseImageWarnings(map[string]string{"web-node": base}, outs)
+		if (len(got) != 0) != warn {
+			t.Errorf("%q: warnings %q, want one: %v", base, got, warn)
 		}
-		if warn && (!strings.Contains(got, base) || !strings.Contains(got, outs.RegistryHost+"/"+BaseRegistry)) {
-			t.Errorf("%q: the warning %q doesn't name the image and the base registry", base, got)
+		if warn && (len(got) != 1 || !strings.Contains(got[0], base) || !strings.Contains(got[0], "base_images.web-node") || !strings.Contains(got[0], outs.RegistryHost+"/"+BaseRegistry)) {
+			t.Errorf("%q: the warnings %q don't name the image, its kind and the base registry", base, got)
 		}
+	}
+	// One warning per offending kind, in kind order.
+	got := BaseImageWarnings(map[string]string{
+		"web-node":      "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:1",
+		"go":            "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:1",
+		"java-services": "ghcr.io/dimipaun/fugaro-java-services:1",
+	}, outs)
+	if len(got) != 2 || !strings.Contains(got[0], "base_images.java-services") || !strings.Contains(got[1], "base_images.web-node") {
+		t.Errorf("warnings = %q", got)
 	}
 }
 
@@ -1234,5 +1246,37 @@ func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
 	}
 	if v, ok := rs.Workflows["web"].Env[ModelProvidersEnv]; ok {
 		t.Errorf("a repository no provider allows got %s = %s", ModelProvidersEnv, v)
+	}
+}
+
+// The check job runs from the base image of its first workflow's kind and
+// hands the job the base of every checked kind.
+func TestCheckUsesTheBaseOfEachCheckedKind(t *testing.T) {
+	in := webappInputs(t)
+	api := in.Cfg.Workflows["api"]
+	api.Rebuild.Check = "auto"
+	in.Cfg.Workflows["api"] = api
+	var ue *UserError
+	if _, err := Repo(in); !errors.As(err, &ue) || !strings.Contains(err.Error(), "base_images entry for java-services") {
+		t.Fatalf("no java-services base image: err = %v", err)
+	}
+	java := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-java-services:dev-0123abc"
+	in.LC.BaseImages["java-services"] = java
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.Check.Image != java {
+		t.Errorf("check image = %s, want the first checked workflow's (api) base %s", rs.Check.Image, java)
+	}
+	var spec CheckJobSpec
+	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if want := (map[string]string{"web-node": in.LC.BaseImage("web-node"), "java-services": java}); !maps.Equal(spec.BaseImages, want) {
+		t.Errorf("job spec base images = %v, want %v", spec.BaseImages, want)
+	}
+	if !slices.Equal(spec.Workflows, []string{"api", "web"}) {
+		t.Errorf("job spec workflows = %v", spec.Workflows)
 	}
 }

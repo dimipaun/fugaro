@@ -22,7 +22,7 @@ ENV FUGARO_BASE_IMAGE=${FUGARO_BASE}
 ARG REPO_URL
 ARG REPO_ORIGIN=${REPO_URL}
 ARG BASE_BRANCH
-{{- if or .Image.Apt .Image.Node .Image.JDK}}
+{{- if or .Image.Apt .Image.Node}}
 
 USER root
 {{- if .Image.Apt}}
@@ -32,9 +32,6 @@ RUN apt-get update \
 {{- end}}
 {{- if .Image.Node}}
 RUN /usr/local/lib/fugaro/install-node {{.Image.Node}}
-{{- end}}
-{{- if .Image.JDK}}
-RUN /usr/local/lib/fugaro/install-jdk {{.Image.JDK}}
 {{- end}}
 USER fugaro
 {{- end}}

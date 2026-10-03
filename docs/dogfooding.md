@@ -29,7 +29,7 @@ The merge gate stays GitHub CI: `go test -race ./...`, the docker-tests job, the
    fugaro init --base-image "$tag"
    ```
 
-   After a release, the same image can be mirrored instead of built: `docker pull ghcr.io/dimipaun/fugaro-go:<version>`, `docker tag` it to the registry path, `docker push`. The base image is a single value in the project config, so this project holds only `go` workflows (`web-node` ones would build from the wrong base).
+   After a release, the same image can be mirrored instead of built: `docker pull ghcr.io/dimipaun/fugaro-go:<version>`, `docker tag` it to the registry path, `docker push`. The project config keeps one base image per base kind (`base_images`), so a project can hold `go`, `web-node` and `java-services` workflows side by side, each built from the base of its kind; `--base-image` takes the image's `fugaro-<kind>` name to know which entry it sets.
 5. **The budget backend** (the history image it needs is built by hand, as in gcp-setup.md "The history image"):
 
    ```bash

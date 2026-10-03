@@ -10,4 +10,4 @@ budget:
   per_run_usd: 2.5
   allowed_models: [claude-opus-5-5, claude-sonnet-5-5, claude-haiku-4-5]
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

@@ -132,8 +132,8 @@ func Validate(c *Config) []Problem {
 		if !WorkflowNameRE.MatchString(name) {
 			add(p, "workflow name must match %s", WorkflowNameRE)
 		}
-		if !slices.Contains([]string{"go", "server-jvm", "web-node"}, w.Base) {
-			add(p+".base", "must be one of go, server-jvm, web-node")
+		if !slices.Contains(Bases, w.Base) {
+			add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
 		}
 		ps = append(ps, validateImage(p, w)...)
 		if strings.TrimSpace(w.Commands.Build) == "" {

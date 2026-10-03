@@ -49,21 +49,21 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 	if cfg, _ := Parse([]byte(webYAML)); cfg.Workflows["web"].Image.SkipBuildScripts {
 		t.Fatal("skip_build_scripts defaults to true")
 	}
-	jvm := strings.Replace(webYAML, "web-node", "server-jvm", 1)
+	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	if _, problems := Parse([]byte(jvm + "    image: { skip_build_scripts: false }\n")); len(problems) > 0 {
-		t.Fatalf("an explicit false on server-jvm: %v", problems)
+		t.Fatalf("an explicit false on java-services: %v", problems)
 	}
 }
 
 func TestImageProblems(t *testing.T) {
-	jvm := strings.Replace(webYAML, "web-node", "server-jvm", 1)
+	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	cases := []struct{ name, yaml, path, msg string }{
 		{"image and dockerfile", webYAML + "    image: { node: \"24\" }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
-		{"jdk on web-node", webYAML + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "only applies to base server-jvm"},
-		{"node on server-jvm", jvm + "    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
+		{"jdk on web-node", webYAML + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
+		{"node on java-services", jvm + "    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
 		{"node minor only", webYAML + "    image: { node: \"24.19\" }\n", "workflows.web.image.node", "major version such as 24"},
 		{"node alias", webYAML + "    image: { node: lts }\n", "workflows.web.image.node", "major version such as 24"},
-		{"jdk version", jvm + "    image: { jdk: \"21.0.4\" }\n", "workflows.web.image.jdk", "major version such as 21"},
+		{"jdk on java-services", jvm + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
 		{"apt injection", webYAML + "    image: { apt: [\"curl; rm -rf /\"] }\n", "workflows.web.image.apt[0]", "package name"},
 		{"apt upper case", webYAML + "    image: { apt: [LibVips] }\n", "workflows.web.image.apt[0]", "package name"},
 		{"setup empty", webYAML + "    image: { setup: [\"  \"] }\n", "workflows.web.image.setup[0]", "must not be empty"},
@@ -73,7 +73,7 @@ func TestImageProblems(t *testing.T) {
 		{"setup flag-like (RUN mount)", webYAML + "    image: { setup: [\"--mount=type=secret,id=git-credentials,target=/tmp/c cp /tmp/c /work/repo/.leak\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup exec form", webYAML + "    image: { setup: [\"[\\\"sh\\\", \\\"-c\\\", \\\"echo hi\\\"]\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
 		{"setup leading whitespace then flag", webYAML + "    image: { setup: [\"  --mount=type=bind,target=/x\"] }\n", "workflows.web.image.setup[0]", "must not start with - or ["},
-		{"skip_build_scripts on server-jvm", jvm + "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts", "only applies to base web-node"},
+		{"skip_build_scripts on java-services", jvm + "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts", "only applies to base web-node"},
 		{"skip_build_scripts and dockerfile", webYAML + "    image: { skip_build_scripts: true }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"dockerfile absolute", webYAML + "    dockerfile: /etc/Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
 		{"dockerfile parent", webYAML + "    dockerfile: .fugaro/../../x.Dockerfile\n", "workflows.web.dockerfile", "relative path inside the repository"},
@@ -104,7 +104,35 @@ func TestGoBase(t *testing.T) {
 	if w.Resources.CPU != 4 || w.Resources.Memory != "8Gi" || len(w.Commands.Reports) == 0 {
 		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
 	}
-	for file, path := range map[string]string{"image-node-on-go": "workflows.go.image.node", "image-jdk-on-go": "workflows.go.image.jdk"} {
+	for file, path := range map[string]string{"image-node-on-go": "workflows.go.image.node"} {
+		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != path {
+			t.Errorf("%s: problems = %v, want one at %s", file, ps, path)
+		}
+	}
+}
+
+func TestJavaServicesBase(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/valid/java-services.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, problems := Parse(data)
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	w := cfg.Workflows["server"]
+	if w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" ||
+		len(w.Commands.Reports) != 1 || w.Commands.Reports[0] != "**/build/test-results/**/*.xml" {
+		t.Errorf("defaults = %+v, reports %v", w.Resources, w.Commands.Reports)
+	}
+	for file, path := range map[string]string{
+		"image-node-on-java-services": "workflows.server.image.node",
+		"image-jdk-on-java-services":  "workflows.server.image.jdk",
+	} {
 		data, err := os.ReadFile("../../testdata/config/invalid/" + file + ".yaml")
 		if err != nil {
 			t.Fatal(err)

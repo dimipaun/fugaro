@@ -5,7 +5,7 @@ import "testing"
 func firstLineCfg(t *testing.T, agentYAML string) Config {
 	t.Helper()
 	cfg, ps := Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent:\n" + agentYAML +
-		"\nworkflows:\n  server: { base: server-jvm, commands: { build: make, test: make test } }\n"))
+		"\nworkflows:\n  server: { base: java-services, commands: { build: make, test: make test } }\n"))
 	if len(ps) > 0 {
 		t.Fatalf("problems: %v", ps)
 	}
@@ -22,7 +22,7 @@ func TestFirstLineDefaults(t *testing.T) {
 func TestFirstLineRoundsBounds(t *testing.T) {
 	for n, ok := range map[string]bool{"0": true /* unset: default 1 */, "1": true, "3": true, "4": false, "-1": false} {
 		_, ps := Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { first_line_rounds: " + n + " }\n" +
-			"workflows:\n  server: { base: server-jvm, commands: { build: make, test: make test } }\n"))
+			"workflows:\n  server: { base: java-services, commands: { build: make, test: make test } }\n"))
 		if (len(ps) == 0) != ok {
 			t.Errorf("first_line_rounds %s: valid = %v, want %v (%v)", n, len(ps) == 0, ok, ps)
 		}
@@ -32,7 +32,7 @@ func TestFirstLineRoundsBounds(t *testing.T) {
 func TestFirstLineReviewValues(t *testing.T) {
 	for v, ok := range map[string]bool{"auto": true, "on": true, "off": true, "yes": false, "true": false} {
 		_, ps := Parse([]byte("version: 1\nproject: aurora\ngit: { provider: github }\nagent: { first_line_review: " + v + " }\n" +
-			"workflows:\n  server: { base: server-jvm, commands: { build: make, test: make test } }\n"))
+			"workflows:\n  server: { base: java-services, commands: { build: make, test: make test } }\n"))
 		if (len(ps) == 0) != ok {
 			t.Errorf("first_line_review %s: valid = %v, want %v (%v)", v, len(ps) == 0, ok, ps)
 		}

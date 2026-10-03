@@ -5,4 +5,4 @@ agent: { auth: api-key }
 budget:
   per_day_usd: 10
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

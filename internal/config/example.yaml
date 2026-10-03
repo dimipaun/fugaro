@@ -47,7 +47,7 @@ agent:
 
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
-    base: web-node            # go | server-jvm | web-node
+    base: web-node            # go | java-services | web-node
     image:                    # optional; rendered into the derived image (see `fugaro image render`)
       node: "24"              # Node.js major (24) or exact version (24.19.0); defaults to the base's LTS
       apt: [fonts-liberation] # extra system packages
@@ -71,11 +71,11 @@ workflows:
     #   paths: []             # globs; a change under one on the base branch forces a rebuild
 
   server:
-    base: server-jvm
-    # image: { jdk: "21" }    # JDK major version
+    base: java-services
+    # image: { apt: [python3], setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"] }   # ships JDK 25, Postgres, Redis and the Firebase emulators
     commands:
       build: ./gradlew assemble
-      test: ./gradlew test
+      test: ./gradlew test    # with services: fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest ...
       rerun_failed:           # optional; lets the agent prove a failure is flaky
         command: ./gradlew test
         each: "--tests {id}"  # appended once per failed test ID

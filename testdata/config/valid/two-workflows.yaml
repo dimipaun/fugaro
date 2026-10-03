@@ -5,7 +5,7 @@ git:
   base_branch: develop
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
   web:
     base: web-node

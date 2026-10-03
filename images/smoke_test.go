@@ -19,7 +19,7 @@ import (
 const fakeDockerScript = `#!/bin/sh
 set -eu
 shift # run
-shift # --rm
+while [ "$1" != fake-image ]; do shift; done # --rm and any other flags
 shift # IMAGE
 cmd="$*"
 missing=${FAKE_DOCKER_MISSING:-}
@@ -60,6 +60,23 @@ case "$cmd" in
     echo "gcc (Ubuntu) 13.3.0" ;;
   "go env GOTOOLCHAIN")
     echo "${FAKE_GOTOOLCHAIN:-local}" ;;
+  "java -version")
+    [ "$missing" = java ] && fail_missing java
+    printf 'openjdk version "%s" 2026-07-21 LTS\nOpenJDK Runtime Environment Temurin-%s (build %s)\n' "${FAKE_JDK_VERSION:-0}" "${FAKE_JDK_VERSION:-0}" "${FAKE_JDK_VERSION:-0}" >&2 ;;
+  "psql --version")
+    [ "$missing" = psql ] && fail_missing psql
+    echo "psql (PostgreSQL) ${FAKE_POSTGRES_VERSION:-0}.11 (Ubuntu)" ;;
+  "redis-server --version")
+    [ "$missing" = redis-server ] && fail_missing redis-server
+    echo "Redis server v=7.0.15 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=x" ;;
+  "sh -c "*"firebase --version"*)
+    [ "$missing" = firebase ] && fail_missing firebase
+    echo "${FAKE_FIREBASE_VERSION:-0}" ;;
+  "sh -c "*"FIREBASE_EMULATORS_PATH"*)
+    printf '%s\n' ${FAKE_EMULATOR_JARS:-firebase-database-emulator-v4.jar cloud-firestore-emulator-v1.jar cloud-storage-rules-runtime-v1.jar pubsub-emulator-0.8 dataconnect-emulator-3 ui-v1.15.0} ;;
+  "bash -c "*"fugaro-services"*)
+    [ "${FAKE_SERVICES_FAIL:-}" = 1 ] && { echo "fugaro-services: timed out" >&2; exit 1; }
+    echo "services ok" ;;
   "id -un")
     echo "fugaro" ;;
   "pwd")

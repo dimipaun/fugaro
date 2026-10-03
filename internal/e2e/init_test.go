@@ -135,7 +135,7 @@ func newInitRepoRig(t *testing.T, repo, origin string, edit func(string) string)
 	r.cfgText = "version: 1\nname: " + initRepoProjectName + "\ngcp_project: " + initRepoProject + "\nregion: " + initRepoRegion + "\nruns_bucket: " + initRepoRunsBucket + "\n" +
 		"registry: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "/fugaro\n" +
 		"registry_host: " + initRepoRegion + "-docker.pkg.dev/" + initRepoProject + "\n" +
-		"base_image: " + initRepoBaseImage + "\n" +
+		"base_images: {web-node: " + initRepoBaseImage + "}\n" +
 		"scheduler_region: us-east4\n" +
 		"terraform: { state_bucket: " + initRepoStateBucket + " }\n" +
 		"user: test@example.com\n" +

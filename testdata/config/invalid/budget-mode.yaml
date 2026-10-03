@@ -5,4 +5,4 @@ agent: { auth: api-key }
 budget:
   mode: strict
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

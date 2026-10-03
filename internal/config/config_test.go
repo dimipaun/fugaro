@@ -18,7 +18,7 @@ git:
   provider: github
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test
@@ -36,8 +36,8 @@ func TestParseAppliesDefaults(t *testing.T) {
 		t.Errorf("agent defaults = %+v", cfg.Agent)
 	}
 	w := cfg.Workflows["server"]
-	if w.Resources.CPU != 8 || w.Resources.Memory != "32Gi" {
-		t.Errorf("resources = %+v, want 8 / 32Gi", w.Resources)
+	if w.Resources.CPU != 4 || w.Resources.Memory != "16Gi" {
+		t.Errorf("resources = %+v, want 4 / 16Gi", w.Resources)
 	}
 	if got := w.Commands.Reports; len(got) != 1 || got[0] != "**/build/test-results/**/*.xml" {
 		t.Errorf("reports = %v", got)

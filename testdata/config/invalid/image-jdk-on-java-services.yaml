@@ -4,5 +4,5 @@ git: { provider: github }
 workflows:
   server:
     base: java-services
-    image: { node: "24" }
+    image: { jdk: "21" }
     commands: { build: ./gradlew assemble, test: ./gradlew test }

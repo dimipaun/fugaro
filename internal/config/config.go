@@ -248,8 +248,11 @@ func (r Rebuild) Defaults() Rebuild {
 // Image customizes the workflow's generated derived image (design §7.2). The
 // zero value means the base image's defaults.
 type Image struct {
-	Node  string   `yaml:"node"`  // web-node: Node.js version, N or N.N.N
-	JDK   string   `yaml:"jdk"`   // server-jvm: JDK major version
+	Node string `yaml:"node"` // web-node: Node.js version, N or N.N.N
+	// JDK is refused on every base: the java-services base ships one pinned
+	// JDK. The field stays so the image-check and cache hashes, which cover
+	// it, do not change for existing images.
+	JDK   string   `yaml:"jdk"`
 	Apt   []string `yaml:"apt"`   // extra system packages, installed as root
 	Setup []string `yaml:"setup"` // extra RUN steps, run as fugaro in /work/repo after the warm-up
 	// SkipBuildScripts makes web-node's dependency warm-up install without

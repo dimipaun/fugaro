@@ -49,7 +49,8 @@ var stdinIsTerminal = func(in io.Reader) bool {
 type initOptions struct {
 	cloud                               cloudOptions
 	schedulerRegion                     string
-	runsBucket, stateBucket, baseImage  string
+	runsBucket, stateBucket             string
+	baseImages                          []string
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -153,7 +154,7 @@ Terraform's state, destroying nothing.`,
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
-	f.StringVar(&o.baseImage, "base-image", "", "the base image the image checks run and builds start from, recorded in the local config")
+	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -394,6 +395,11 @@ func (o *initOptions) check() error {
 	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
+	}
+	for _, v := range o.baseImages {
+		if _, _, err := localcfg.ParseBaseImageFlag(v); err != nil {
+			return userErr("%v", err)
+		}
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
 		return userErr("--budget-mode and --budget-admin are for fugaro init --firebase <firebase-project-id>")
@@ -1028,7 +1034,20 @@ func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, 
 		next.Terraform.AlertEmail = r.o.alertEmail
 	}
 	if r.o.baseImageChanged {
-		next.BaseImage = r.o.baseImage
+		next.BaseImages = maps.Clone(next.BaseImages)
+		if next.BaseImages == nil {
+			next.BaseImages = map[string]string{}
+		}
+		for _, v := range r.o.baseImages {
+			kind, ref, err := localcfg.ParseBaseImageFlag(v)
+			if err != nil {
+				return userErr("%v", err)
+			}
+			next.BaseImages[kind] = ref
+			if n := localcfg.BaseImageNameKind(ref); n != kind {
+				r.warn(fmt.Sprintf("--base-image %s names an image whose repository is not fugaro-%s: make sure it is the %s base image", v, kind, kind))
+			}
+		}
 	}
 	next.Build.ServiceAccount = ""
 	if r.mutate != nil {
@@ -1457,7 +1476,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	if w := baseProjectWarning(ctx, root, cfg.Git.BaseBranch, outs.ProjectName); w != "" {
 		r.warn(w)
 	}
-	if w := infra.BaseImageWarning(lc.BaseImage, outs); w != "" {
+	for _, w := range infra.BaseImageWarnings(lc.BaseImages, outs) {
 		r.warn(w)
 	}
 	if spec, err = infra.Repo(in); err != nil {
@@ -1747,7 +1766,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 	}
 	built := 0
 	for _, name := range names {
-		base := lc.BaseImage
+		base := lc.BaseImage(cfg.Workflows[name].Base)
 		if base == "" {
 			if base, err = image.BaseRef(cfg.Workflows[name].Base, Version); err != nil {
 				return built, userErr("%v", err)

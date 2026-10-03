@@ -7,7 +7,7 @@ One SemVer tag `vX.Y.Z` releases everything (design section 12): the binary, the
 A push of a strict `vX.Y.Z` tag triggers two independent workflows:
 
 - `release.yml` (this document): checks the tag, then runs GoReleaser, which builds `fugaro` for darwin and linux on amd64 and arm64, writes `checksums.txt`, an SBOM per archive (syft), a keyless cosign signature of `checksums.txt`, and the GitHub Release with a grouped changelog; it also pushes the Homebrew cask. A `v0.x.y` release is then marked as a pre-release (GoReleaser's `prerelease: auto` only recognises `-rc1`-style suffixes, which the strict tag rule never produces).
-- `images.yml`: builds, smoke tests, scans and publishes `ghcr.io/dimipaun/fugaro-web-node:X.Y.Z` and `:X`, and the same two tags of `ghcr.io/dimipaun/fugaro-go` (`:X` moves only to the highest release of that major). Pull requests build, smoke test and publish nothing; the nightly run scans.
+- `images.yml`: builds, smoke tests, scans and publishes `ghcr.io/dimipaun/fugaro-web-node:X.Y.Z` and `:X`, and the same two tags of `ghcr.io/dimipaun/fugaro-go` and `ghcr.io/dimipaun/fugaro-java-services` (`:X` moves only to the highest release of that major). Pull requests build, smoke test and publish nothing; the nightly run scans.
 
 Neither workflow runs the test suite; CI already did on main. Both workflows run `scripts/release-gate.sh` first, so a tag on an off-main or red commit publishes nothing (no binaries, no images). It refuses unless the tagged commit is reachable from `origin/main` and the GitHub Actions checks `test`, `terraform` and `rules` all succeeded on it (a check of that name from another app does not count); if CI is still running, re-run the failed job once it is green. `release.yml` also requires the plugin version to equal the tag.
 
@@ -64,6 +64,7 @@ brew install dimipaun/tap/fugaro && fugaro version
 go install github.com/dimipaun/fugaro/cmd/fugaro@v$V
 docker pull ghcr.io/dimipaun/fugaro-web-node:$V
 docker pull ghcr.io/dimipaun/fugaro-go:$V
+docker pull ghcr.io/dimipaun/fugaro-java-services:$V
 ```
 
 `fugaro version` prints `X.Y.Z` (no `v`); a `go install` build prints `dev` because the version is injected only by GoReleaser's `-ldflags`. SBOMs are the `*.sbom.json` assets (SPDX/syft JSON, one per archive).

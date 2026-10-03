@@ -1,0 +1,273 @@
+#!/bin/bash
+# fugaro-services start|stop|status: runs the backing services a Java test
+# suite wants, as the calling (non-root) user, in the background:
+#
+#   postgres  PostgreSQL on localhost:5432. A fresh cluster in the state
+#             directory, with trust authentication and a superuser (postgres,
+#             which may CREATE DATABASE), so any db.user/db.password the
+#             repository's property files name works and CREATE EXTENSION
+#             postgis / vector is allowed.
+#   redis     redis-server on 127.0.0.1:6379, no persistence.
+#   firebase  the Firebase emulators, from the repository's emulator config,
+#             on the ports that config names.
+#
+# It is meant as the first step of a workflow's verify command:
+#
+#   fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest --tests '...'
+#
+# `start` is idempotent: a service that is already up (started by an earlier
+# `start`, or by anything else) is left alone. It returns 0 once every
+# selected service answers on its port, and 1 after FUGARO_SERVICES_TIMEOUT
+# seconds, printing the tail of the logs of the services that did not. `stop`
+# stops what `start` started. `status` prints one line per service and
+# returns 0 only when all are up.
+#
+# Everything it writes is under FUGARO_SERVICES_DIR (default /tmp) and the
+# user's HOME (firebase-tools' small config store); nothing under the image's
+# own directories, so a read-only root filesystem works. On Cloud Run /tmp is
+# memory, so the cluster's data counts against the container's memory.
+#
+# Settings, all optional environment variables:
+#   FUGARO_SERVICES            services to manage, space separated
+#                              (default: "postgres redis firebase")
+#   FUGARO_SERVICES_DIR        state, data and logs (default /tmp/fugaro-services)
+#   FUGARO_SERVICES_TIMEOUT    seconds `start` waits for the ports (default 180)
+#   FUGARO_FIREBASE_EMULATORS  emulators to start (default database,auth,storage;
+#                              any of auth,database,eventarc,firestore,functions,
+#                              hosting,pubsub,storage,ui,dataconnect)
+#   FUGARO_FIREBASE_CONFIG     the firebase.json that names their ports and rules
+#                              (default docker/firebase-emulator/firebase.json,
+#                              else ./firebase.json, else the emulators' own ports)
+#   FIREBASE_PROJECT_ID        the emulators' project (default demo-edge-test; the
+#                              demo- prefix keeps them away from real Firebase)
+#   FUGARO_POSTGRES_PORT, FUGARO_REDIS_PORT  (defaults 5432 and 6379)
+set -uo pipefail
+
+STATE=${FUGARO_SERVICES_DIR:-/tmp/fugaro-services}
+TIMEOUT=${FUGARO_SERVICES_TIMEOUT:-180}
+WANT=${FUGARO_SERVICES:-postgres redis firebase}
+EMULATORS=${FUGARO_FIREBASE_EMULATORS:-database,auth,storage}
+PROJECT=${FIREBASE_PROJECT_ID:-demo-edge-test}
+PG_PORT=${FUGARO_POSTGRES_PORT:-5432}
+REDIS_PORT=${FUGARO_REDIS_PORT:-6379}
+PG_DATA=$STATE/postgres
+RUN=$STATE/run
+LOGS=$STATE/log
+export NO_UPDATE_NOTIFIER=1
+
+die() { echo "fugaro-services: $*" >&2; exit 1; }
+say() { echo "fugaro-services: $*"; }
+port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+alive() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
+forget() { rm -f "${RUN:?}/${1:?}.pid"; }
+
+# Default ports of the emulators, for when no config names them.
+emulator_default_port() {
+  case $1 in
+    ui) echo 4000 ;; hosting) echo 5000 ;; functions) echo 5001 ;; pubsub) echo 8085 ;;
+    firestore) echo 8080 ;; database) echo 9000 ;; auth) echo 9099 ;; storage) echo 9199 ;;
+    eventarc) echo 9299 ;; dataconnect) echo 9399 ;; *) die "unknown emulator '$1'" ;;
+  esac
+}
+
+# The firebase.json to use, or empty.
+firebase_config() {
+  local c=${FUGARO_FIREBASE_CONFIG:-}
+  if [ -n "$c" ]; then
+    [ -f "$c" ] || die "FUGARO_FIREBASE_CONFIG $c does not exist"
+    echo "$c"; return
+  fi
+  for c in docker/firebase-emulator/firebase.json firebase.json; do
+    if [ -f "$c" ]; then echo "$c"; return; fi
+  done
+}
+
+# emulator_port NAME CONFIG prints the port the config gives the emulator,
+# else the default.
+emulator_port() {
+  local p=""
+  if [ -n "$2" ]; then
+    p=$(node -e 'try{const c=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const e=(c.emulators||{})[process.argv[2]];if(e&&e.port)console.log(e.port)}catch(e){}' "$2" "$1")
+  fi
+  echo "${p:-$(emulator_default_port "$1")}"
+}
+
+service_port_list() { # service -> the ports it must answer on
+  case $1 in
+    postgres) echo "$PG_PORT" ;;
+    redis) echo "$REDIS_PORT" ;;
+    firebase)
+      local cfg e; cfg=$(firebase_config)
+      for e in ${EMULATORS//,/ }; do emulator_port "$e" "$cfg"; done ;;
+  esac
+}
+
+service_up() { local p; for p in $(service_port_list "$1"); do port_open "$p" || return 1; done; }
+
+start_postgres() {
+  if port_open "$PG_PORT"; then say "postgres: port $PG_PORT already open, leaving it"; return; fi
+  if [ ! -f "$PG_DATA/PG_VERSION" ]; then
+    rm -rf "${PG_DATA:?}"
+    # trust: no password is asked, so whatever db.password says is accepted.
+    # C.UTF-8 exists in every image; the database encoding is UTF8.
+    initdb -D "$PG_DATA" -U postgres --auth=trust -E UTF8 --locale=C.UTF-8 >"$LOGS/postgres-initdb.log" 2>&1 \
+      || { cat "$LOGS/postgres-initdb.log" >&2; die "postgres: initdb failed"; }
+  fi
+  # fsync off and no full-page writes: the cluster is thrown away with the
+  # container, so durability only costs test time. The socket lives under the
+  # state directory because /var/run/postgresql is not writable here.
+  pg_ctl -D "$PG_DATA" -l "$LOGS/postgres.log" -o "-p $PG_PORT -c listen_addresses=localhost \
+-c unix_socket_directories=$RUN -c fsync=off -c synchronous_commit=off -c full_page_writes=off \
+-c max_connections=300 -c shared_buffers=512MB" start >"$LOGS/postgres-start.log" 2>&1 \
+    || { cat "$LOGS/postgres-start.log" "$LOGS/postgres.log" >&2; die "postgres: pg_ctl start failed"; }
+  # pg_ctl's own pid file is the postmaster's; the generic liveness check reads ours.
+  head -1 "$PG_DATA/postmaster.pid" > "$RUN/postgres.pid"
+}
+
+start_redis() {
+  if port_open "$REDIS_PORT"; then say "redis: port $REDIS_PORT already open, leaving it"; return; fi
+  mkdir -p "$STATE/redis"
+  setsid nohup redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save "" --appendonly no \
+    --dir "$STATE/redis" --protected-mode yes >"$LOGS/redis.log" 2>&1 </dev/null &
+  echo $! > "$RUN/redis.pid"
+}
+
+start_firebase() {
+  local cfg e open=""
+  cfg=$(firebase_config)
+  for e in ${EMULATORS//,/ }; do
+    if port_open "$(emulator_port "$e" "$cfg")"; then open="$open $e"; fi
+  done
+  if [ -n "$open" ]; then
+    # Some emulator is already listening. A second suite would fail on the
+    # port, so leave everything alone and let the wait below judge.
+    say "firebase: port of$open already open, leaving the emulators"; return
+  fi
+  # firebase.json resolves its rules files (and hosting/functions sources)
+  # relative to itself, and the emulators write *-debug.log into the working
+  # directory. So run from a scratch project directory holding the config plus
+  # links to everything in the repository root: the repository stays clean and
+  # the config can live elsewhere (docker/firebase-emulator/).
+  local proj="$STATE/firebase-project" root f; root=$(pwd)
+  rm -rf "${proj:?}"; mkdir -p "$proj"
+  for f in "$root"/* "$root"/.firebaserc; do
+    if [ -e "$f" ] && [ "$(basename "$f")" != firebase.json ]; then ln -s "$f" "$proj/$(basename "$f")"; fi
+  done
+  if [ -n "$cfg" ]; then
+    cp "$cfg" "$proj/firebase.json"
+  else
+    # No config: the emulators on their own default ports and open rules.
+    # shellcheck disable=SC2086
+    node -e 'const o={emulators:{}};for(const e of process.argv.slice(1))o.emulators[e]={host:"127.0.0.1"};console.log(JSON.stringify(o))' \
+      ${EMULATORS//,/ } > "$proj/firebase.json"
+  fi
+  # The subshell changes directory first, so $! is firebase itself (setsid
+  # makes it a group leader), not a shell around it.
+  # Whatever host the config names (a repository's container config says
+  # 0.0.0.0), the emulators listen on loopback only: the services have no
+  # authentication and must not be reachable from outside the container.
+  node -e 'const f=process.argv[1],fs=require("fs"),c=JSON.parse(fs.readFileSync(f,"utf8"));c.emulators=c.emulators||{};for(const k of Object.keys(c.emulators))if(c.emulators[k]&&typeof c.emulators[k]==="object")c.emulators[k].host="127.0.0.1";fs.writeFileSync(f,JSON.stringify(c,null,2))' "$proj/firebase.json" \
+    || die "firebase: cannot rewrite the emulator hosts of $cfg"
+  (
+    cd "$proj" || exit 1
+    setsid nohup firebase emulators:start --only "$EMULATORS" --project "$PROJECT" \
+      --non-interactive >"$LOGS/firebase.log" 2>&1 </dev/null &
+    echo $! > "$RUN/firebase.pid"
+  )
+}
+
+wait_ready() {
+  local deadline=$((SECONDS + TIMEOUT)) s pending
+  while :; do
+    pending=""
+    for s in $WANT; do service_up "$s" || pending="$pending $s"; done
+    [ -z "$pending" ] && return 0
+    # A service we started that died will never come up: stop waiting.
+    for s in $pending; do
+      if [ -f "$RUN/$s.pid" ] && ! alive "$s"; then
+        echo "fugaro-services: $s exited before it was ready" >&2
+        tail -n 40 "$LOGS/$s.log" >&2 2>/dev/null; return 1
+      fi
+    done
+    if [ "$SECONDS" -ge "$deadline" ]; then
+      echo "fugaro-services: timed out after ${TIMEOUT}s waiting for:$pending" >&2
+      for s in $pending; do echo "--- $LOGS/$s.log" >&2; tail -n 40 "$LOGS/$s.log" >&2 2>/dev/null; done
+      return 1
+    fi
+    sleep 0.5
+  done
+}
+
+cmd_start() {
+  mkdir -p "$RUN" "$LOGS" || die "cannot create $STATE"
+  chmod 0700 "$STATE" 2>/dev/null || true
+  local s
+  for s in $WANT; do
+    case $s in postgres|redis|firebase) ;; *) die "unknown service '$s' in FUGARO_SERVICES" ;; esac
+  done
+  for s in $WANT; do
+    if alive "$s"; then
+      # Ours and running: either up, or still starting, which only waits.
+      if service_up "$s"; then say "$s: already running"; else say "$s: still starting, waiting"; fi
+      continue
+    fi
+    forget "$s"
+    case $s in
+      postgres) start_postgres ;;
+      redis) start_redis ;;
+      firebase) start_firebase ;;
+    esac
+  done
+  wait_ready || exit 1
+  for s in $WANT; do say "$s: up (port $(service_port_list "$s" | paste -sd, -))"; done
+}
+
+stop_pid() { # name
+  local pid; pid=$(cat "$RUN/$1.pid" 2>/dev/null) || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    # setsid made the process a group leader: signal the group, which takes the
+    # emulators' java children with it.
+    kill -TERM -- "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null
+    local i; for i in $(seq 1 150); do kill -0 "$pid" 2>/dev/null || break; sleep 0.1; done
+    kill -KILL -- "-$pid" 2>/dev/null || true
+  fi
+  forget "$1"
+}
+
+# The emulators' own java processes start in sessions of their own, out of
+# reach of the group signal; firebase stops them when it is told to, and this
+# catches any it left behind.
+stop_emulator_jars() {
+  local jars=${FIREBASE_EMULATORS_PATH:-/opt/firebase-emulators}
+  pkill -TERM -u "$(id -u)" -f "$jars/" 2>/dev/null || return 0
+  sleep 1
+  pkill -KILL -u "$(id -u)" -f "$jars/" 2>/dev/null || true
+}
+
+cmd_stop() {
+  [ -d "$RUN" ] || { say "nothing to stop"; return 0; }
+  stop_pid firebase
+  stop_emulator_jars
+  stop_pid redis
+  if [ -f "$PG_DATA/postmaster.pid" ]; then
+    pg_ctl -D "$PG_DATA" -m fast -w stop >/dev/null 2>&1 || true
+  fi
+  forget postgres
+  say "stopped"
+}
+
+cmd_status() {
+  local s rc=0
+  for s in $WANT; do
+    if service_up "$s"; then echo "$s: up (port $(service_port_list "$s" | paste -sd, -))"
+    else echo "$s: down"; rc=1; fi
+  done
+  return $rc
+}
+
+case ${1:-} in
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  status) cmd_status ;;
+  *) echo "usage: fugaro-services start|stop|status" >&2; exit 2 ;;
+esac
