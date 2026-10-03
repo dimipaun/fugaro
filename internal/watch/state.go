@@ -65,6 +65,7 @@ type State struct {
 	cancelled bool
 
 	burn map[string][]sample // "" is the project, otherwise the wire slug
+	seen [4]bool             // per source: a put of "/" has arrived
 }
 
 // NewState is an empty state.
@@ -204,4 +205,47 @@ func (s *State) conn(now time.Time) Connection {
 		c.Age = max(now.Sub(s.lastEvent), 0)
 	}
 	return c
+}
+
+// UpdateKind is what a supervisor Update carries.
+type UpdateKind int
+
+const (
+	UpdEvent   UpdateKind = iota // Src and Ev: one event of a stream (or a poll)
+	UpdDay                       // Day: the spend streams now show this UTC day
+	UpdTick                      // nothing but Now: time passed (stale, ages, burn)
+	UpdPolling                   // On: reading by GET instead of SSE
+)
+
+// Update is one message of the supervisor to the model. Now is the server's
+// time (the local clock before any response): pass it on to Build.
+type Update struct {
+	Kind UpdateKind
+	Src  Source
+	Ev   rtdb.Event
+	Day  int64
+	On   bool
+	Now  time.Time
+}
+
+// Handle folds an Update in. A "put" of "/" on a source that has already
+// delivered one is a reconnect (or a poll): the tree is replaced, and the
+// burn windows restart.
+func (s *State) Handle(u Update) error {
+	switch u.Kind {
+	case UpdDay:
+		s.SetDay(u.Day)
+		s.seen[SrcGlobal], s.seen[SrcRepos] = false, false
+	case UpdPolling:
+		s.Polling = u.On
+	case UpdEvent:
+		if u.Ev.Type == "put" && u.Ev.Path == "/" {
+			if s.seen[u.Src] {
+				s.Reconnected()
+			}
+			s.seen[u.Src] = true
+		}
+		return s.Apply(u.Src, u.Ev, u.Now)
+	}
+	return nil
 }
