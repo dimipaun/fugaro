@@ -50,6 +50,11 @@ func (r *Route) feePct() float64 {
 	return r.FeePct
 }
 
+// MaxFeePct bounds a route's fee, the same limit as the project config's
+// route_fee_pct (config.MaxRouteFeePct; a test keeps the two equal): a larger
+// fee is a typo, and +Inf would make every reservation saturate.
+const MaxFeePct = 50
+
 var routeNameRE = regexp.MustCompile(`^[a-z][a-z0-9-]{0,19}$`)
 
 func (r Route) matches(model string) bool {
@@ -115,8 +120,8 @@ func validateRoutes(u Upstream, routes []Route) error {
 			return fmt.Errorf("%s: auth %q must be bearer or x-api-key", at, r.Auth)
 		case len(r.Models) == 0:
 			return fmt.Errorf("%s serves no models", at)
-		case r.FeePct < 0 || r.FeePct != r.FeePct:
-			return fmt.Errorf("%s: fee %v is negative", at, r.FeePct)
+		case r.FeePct < 0 || r.FeePct != r.FeePct || r.FeePct > MaxFeePct:
+			return fmt.Errorf("%s: fee %v must be between 0 and %d percent", at, r.FeePct, MaxFeePct)
 		}
 		if r.BaseURL == "" {
 			return fmt.Errorf("%s has no base URL", at)

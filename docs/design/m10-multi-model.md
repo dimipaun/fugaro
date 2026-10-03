@@ -84,6 +84,8 @@ model_prices:
 
 **Cache accounting.** The Anthropic usage fields (`cache_creation_input_tokens`, `cache_read_input_tokens`) may be absent or zero on a compatible endpoint even when the provider caches (spec §5.4). Conservative default: when a route reports no cache fields, all input is charged at the full input rate (over-charges, never under). The route's `cache_read` multiplier applies only when the field appears. A fixture test pins both shapes.
 
+**A call can settle above its reservation.** The reservation is the pinned model's worst case plus the fee. If the provider serves a dearer model than the pin (a fallback), the call is charged at the dearer of the two rates, so its settled amount can exceed what was reserved. The overshoot is counted after the call (`overrun`, as for a Claude call whose usage beats its estimate); it cannot be refused beforehand because the served model is unknown until the response.
+
 **Settlement** (§5.5) is unchanged: complete stream = actual usage; error before `message_start` = 0; after = input plus reserved output; cancel and disconnect as today. Retry is the client's. One addition: a non-Anthropic upstream that streams **no usage at all** (a completed stream without `message_start` usage) is charged the full reservation and logged `settled: reserved`, so a silent upstream cannot be free.
 
 **Leases, caps, halts, kill switches, history, `report --by model`:** unchanged; they see dollars and a model ID. `spendDaily`/`byModel` already key by model ID; `report` adds a `route` column from M10's per-call log field (phase 2).

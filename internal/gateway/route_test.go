@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway/anthropicfake"
 	"github.com/dimipaun/fugaro/internal/pricing"
 )
@@ -356,6 +358,9 @@ func TestStartRejectsBadRoutes(t *testing.T) {
 		"mid wildcard":       with(func(r *Route) { r.Models = []string{"a*b"} }),
 		"overlap":            {good, {Name: "second", Models: []string{"deepseek/deepseek-v4-flash"}, BaseURL: "https://x.example", Auth: "bearer", Credential: cred}},
 		"negative fee":       with(func(r *Route) { r.FeePct = -1 }),
+		"NaN fee":            with(func(r *Route) { r.FeePct = math.NaN() }),
+		"infinite fee":       with(func(r *Route) { r.FeePct = math.Inf(1) }),
+		"fee over the max":   with(func(r *Route) { r.FeePct = MaxFeePct + 0.5 }),
 	} {
 		if err := ok(rs, anth); err == nil {
 			t.Errorf("%s: Start accepted the route", name)
@@ -697,5 +702,13 @@ func TestCountTokensMalformedWithRoutesIs400(t *testing.T) {
 	h := newHarness(t, anthropicfake.Reply{Body: `{"input_tokens":7}`})
 	if resp, _ := h.post2("/v1/messages/count_tokens", `{"model":"`+sonnet+`","model":"x"}`); resp.StatusCode == 400 && h.fake.Count() == 0 {
 		t.Error("the no-routes gateway changed its count_tokens behaviour")
+	}
+}
+
+// The gateway's fee limit mirrors the project config's (the gateway cannot
+// import config in its own code, so this is where the two meet).
+func TestMaxFeePctMatchesConfig(t *testing.T) {
+	if MaxFeePct != config.MaxRouteFeePct {
+		t.Errorf("gateway.MaxFeePct = %d, config.MaxRouteFeePct = %d", MaxFeePct, config.MaxRouteFeePct)
 	}
 }

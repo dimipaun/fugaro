@@ -1,6 +1,9 @@
 package gateway
 
 import (
+	"context"
+	"fmt"
+	"io"
 	"net/http"
 	"testing"
 
@@ -48,20 +51,31 @@ func TestFeeInReservation(t *testing.T) {
 }
 
 // A cap that fits the model's worst case but not the fee must refuse: the
-// cap counts the fee.
+// cap counts the fee. With the fee's room in the cap the same call goes.
 func TestFeeInReservationCapRefuses(t *testing.T) {
 	body := msg(dsModel, 1000)
 	base := worst(t, dsModel, body, 1000, "")
-	prov, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
-	h := newHarnessWith(t, func(o *Options) {
-		o.Mode, o.Cap = Enforce, base+1 // room for the model's worst case, not for the fee
-		o.Routes = []Route{{Name: "openrouter", Models: dsRoute, BaseURL: psrv.URL, Auth: "bearer",
-			Credential: func() (string, error) { return providerKey, nil }, FeePct: 10}}
-	})
-	h.gw.BeginStage(routedStage)
-	resp, b := h.post(body)
-	if resp.StatusCode == 200 || prov.Count() != 0 {
-		t.Fatalf("a call whose worst case plus fee exceeds the cap was sent: %d %s", resp.StatusCode, b)
+	withFee := pricing.WithFee(base, 10)
+	run := func(capM pricing.Micros) (*http.Response, string, int) {
+		prov, psrv := anthropicfake.New(t, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
+		h := newHarnessWith(t, func(o *Options) {
+			o.Mode, o.Cap = Enforce, capM
+			o.Routes = []Route{{Name: "openrouter", Models: dsRoute, BaseURL: psrv.URL, Auth: "bearer",
+				Credential: func() (string, error) { return providerKey, nil }, FeePct: 10}}
+		})
+		h.gw.BeginStage(routedStage)
+		resp, b := h.post(body)
+		return resp, b, prov.Count()
+	}
+	resp, b, sent := run(base + 1) // room for the model's worst case, not for the fee
+	typ, m := apiError(t, b)
+	want := fmt.Sprintf("fugaro: budget halted: run cap %s cannot hold a call that needs up to %s", dollars(base+1), dollars(withFee))
+	if resp.StatusCode != http.StatusForbidden || typ != "permission_error" || m != want || sent != 0 {
+		t.Fatalf("a call whose worst case plus fee exceeds the cap: %d %s %q (sent %d), want 403 permission_error %q", resp.StatusCode, typ, m, sent, want)
+	}
+	// Control: the cap with room for the fee sends it.
+	if resp, b, sent := run(withFee); resp.StatusCode != 200 || sent != 1 {
+		t.Fatalf("a call that fits the cap with its fee was refused: %d %s (sent %d)", resp.StatusCode, b, sent)
 	}
 }
 
@@ -163,13 +177,51 @@ func TestServingModelNeverLowersTheCharge(t *testing.T) {
 }
 
 // The same model under a different spelling than the pin is the same row:
-// priced as the table says, not as a surprise.
+// priced as the table says, not as a surprise (and not at the dearer of two
+// rows: it is one row).
 func TestServingModelSameAsPinPricedNormally(t *testing.T) {
+	const alias = "deepseek/deepseek-v4-flash-0001"
+	prices := func(tbl *pricing.Table) {
+		m := tbl.Models[dsModel]
+		m.Aliases = []string{alias}
+		tbl.Models[dsModel] = m
+	}
 	u := pricing.Usage{Input: 1000, Output: 2000}
-	r := feeRouted(t, 0, nil, routedStage, dsRoute, anthropicfake.MessageOK(dsModel, u))
-	r.post(msg(dsModel, 4000))
+	r := feeRouted(t, 0, prices, routedStage, dsRoute, anthropicfake.MessageOK(alias, u))
+	if resp, b := r.post(msg(dsModel, 4000)); resp.StatusCode != 200 {
+		t.Fatalf("%d %s", resp.StatusCode, b)
+	}
 	call := r.logs.lastCall(t)
+	if call["serving_model"] != alias {
+		t.Fatalf("the call was served as %v, not the alias", call["serving_model"])
+	}
 	if call["priced_as"] != pricedTable || pricing.Micros(num(call["charged_micros"])) != cost(t, dsModel, u) {
+		t.Errorf("call %v", call)
+	}
+}
+
+// A cut stream settles input plus the reserved output, and the fee counts
+// on both the charge and the part that is unreconciled.
+func TestPartialSettlementCarriesFee(t *testing.T) {
+	start := pricing.Usage{Input: 500}
+	rep := anthropicfake.StreamOK(dsModel, pricing.Usage{Input: 500, Output: 300})
+	rep.CutAfter = 1
+	r := feeRouted(t, 10, nil, routedStage, dsRoute, rep)
+	resp, err := http.DefaultClient.Do(r.request(context.Background(), "/v1/messages", msg(dsModel, 4000, `"stream":true`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	charged, reported := start, start
+	charged.Output, reported.Output = 4000, 1
+	want := pricing.WithFee(cost(t, dsModel, charged), 10)
+	seen := pricing.WithFee(cost(t, dsModel, reported), 10)
+	rp := r.gw.EndStage()
+	if rp.Used != want || rp.Unreconciled != want-seen || rp.Unreconciled <= 0 {
+		t.Errorf("report %+v, want used %d, unreconciled %d", rp, want, want-seen)
+	}
+	if call := r.logs.lastCall(t); call["settled"] != settledPartial || pricing.Micros(num(call["charged_micros"])) != want {
 		t.Errorf("call %v", call)
 	}
 }

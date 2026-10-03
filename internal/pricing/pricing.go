@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // Micros are integer micro-dollars (µ$). A price of $X per million tokens
@@ -63,7 +64,29 @@ type Model struct {
 	Unverified     bool
 	PriceSource    string
 	PriceCheckedAt string
+	// CacheDefaulted names the cache multipliers an owner's override left
+	// at 0 on a provider row and With raised to 1 (the input rate), so
+	// cache tokens are never free there: a provider that reports cache
+	// tokens bills them, and 0 is almost always a field left out.
+	CacheDefaulted []string
 }
+
+// CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers
+// that report pin warnings by code.
+const CodeCacheRateDefaulted = "cache_rate_defaulted"
+
+// CacheWarning is the warning for a row whose cache rates were defaulted, or
+// "" when none were.
+func (m Model) CacheWarning() string {
+	if len(m.CacheDefaulted) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s left at 0 in model_prices; counted at the input price (1x) so cache tokens are not free: set the real multipliers",
+		m.ID, strings.Join(m.CacheDefaulted, ", "))
+}
+
+// isProviderID reports whether a model ID is a provider's "vendor/model".
+func isProviderID(id string) bool { return strings.Contains(id, "/") }
 
 const (
 	// DefaultMaxOutputTokens is a model's output maximum when the table
@@ -221,12 +244,36 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
 			m.Unverified, m.PriceSource, m.PriceCheckedAt = false, "", ""
+			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
 			continue
 		}
-		out.Models[key] = Model{ID: key, Rates: r}
+		m := Model{ID: key, Rates: r}
+		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
+		out.Models[key] = m
 	}
 	return out, nil
+}
+
+// defaultCacheRates raises a provider row's cache multipliers left at 0 to 1,
+// the input rate, and names them: a cache token is never cheaper than an
+// input token unless the owner says so with a real number, and a missing
+// field must not make it free. Claude rows keep what the owner set.
+func defaultCacheRates(id string, r *Rates) []string {
+	if !isProviderID(id) {
+		return nil
+	}
+	var names []string
+	for _, f := range []struct {
+		name string
+		p    *float64
+	}{{"cache_write_5m", &r.CacheWrite5m}, {"cache_write_1h", &r.CacheWrite1h}, {"cache_read", &r.CacheRead}} {
+		if *f.p == 0 {
+			*f.p = 1
+			names = append(names, f.name)
+		}
+	}
+	return names
 }
 
 func (t *Table) clone() *Table {
@@ -237,6 +284,7 @@ func (t *Table) clone() *Table {
 	out.Source, out.CheckedAt = t.Source, t.CheckedAt
 	for id, m := range t.Models {
 		m.Aliases = append([]string(nil), m.Aliases...)
+		m.CacheDefaulted = append([]string(nil), m.CacheDefaulted...)
 		m.Rates = m.Rates.clone()
 		out.Models[id] = m
 	}
@@ -295,18 +343,20 @@ func (r Rates) UnsplitCacheWrites(tokens int64, cacheTTL string) (w5m, w1h int64
 	return 0, tokens
 }
 
-// WithFee adds a route fee of pct percent to an amount, rounded up so the
-// fee is never under-charged. A fee that is negative or not a number adds
-// nothing, and the result saturates like the rest of the arithmetic.
+// WithFee adds a route fee of pct percent to an amount. The fee is rounded
+// up so it is never under-charged, and the sum saturates at the largest
+// Micros like the rest of the arithmetic: a fee too big to count (+Inf, or a
+// product past the range) saturates rather than leaving the amount alone. A
+// fee that is negative, zero or not a number adds nothing.
 func WithFee(m Micros, pct float64) Micros {
-	if m <= 0 || !(pct > 0) || math.IsInf(pct, 0) {
-		return m
+	if m <= 0 || !(pct > 0) {
+		return max(m, 0)
 	}
-	f := math.Ceil(float64(m) * (1 + pct/100))
-	if f >= math.MaxInt64 {
+	fee := math.Ceil(float64(m) * pct / 100)
+	if math.IsNaN(fee) || fee >= math.MaxInt64 {
 		return math.MaxInt64
 	}
-	return max(m, Micros(f))
+	return Micros(satAdd(int64(m), int64(fee)))
 }
 
 // toMicros converts a non-negative float amount of µ$, saturating.
