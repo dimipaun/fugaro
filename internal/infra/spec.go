@@ -542,8 +542,22 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	case "api-key":
 		mount("anthropic-api-key", config.ReservedSecrets["anthropic-api-key"])
 	}
+	// A provider's key is the runner's, for its gateway, and only a
+	// repository the owner allowed to send code there gets it. It is mounted
+	// only with api-key (a run does not mix credentials) and as a variable
+	// the agent's environment never carries.
+	if c.in.Cfg.Agent.Auth == "api-key" {
+		for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+			if p := lc.Providers[name]; p.AllowsData(c.in.Repo) {
+				mount(p.Secret, p.SecretEnv())
+			}
+		}
+	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
+		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
+			return WorkflowSpec{}, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
+		}
 		mount(s.Name, s.Env)
 		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
 	}

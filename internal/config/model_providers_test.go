@@ -136,3 +136,24 @@ func TestAPIKeyWithProviderModelAllowed(t *testing.T) {
 		t.Errorf("an all-Claude oauth run refused: %v", got)
 	}
 }
+
+func TestProviderKeyEnv(t *testing.T) {
+	p := okProvider()
+	p.Secret = "openrouter-api-key"
+	if got := p.SecretEnv(); got != "FUGARO_PROVIDER_KEY_OPENROUTER_API_KEY" || !IsProviderKeyEnv(got) || !IsProviderKeyEnv("fugaro_provider_key_x") {
+		t.Errorf("SecretEnv = %q", got)
+	}
+	// A workflow secret can never be mounted as a provider key's variable.
+	if !ReservedEnv(p.SecretEnv()) {
+		t.Errorf("%s is not a reserved variable", p.SecretEnv())
+	}
+	if IsProviderKeyEnv("ANTHROPIC_API_KEY") {
+		t.Error("ANTHROPIC_API_KEY is not a provider key variable")
+	}
+	if n, ok := ProviderBySecret(map[string]ModelProvider{"openrouter": p}, "openrouter-api-key"); !ok || n != "openrouter" {
+		t.Errorf("ProviderBySecret = %q %v", n, ok)
+	}
+	if _, ok := ProviderBySecret(map[string]ModelProvider{"openrouter": p}, "npm-token"); ok {
+		t.Error("npm-token is a provider secret")
+	}
+}

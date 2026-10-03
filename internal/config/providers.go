@@ -162,6 +162,40 @@ func ValidateModelProviders(providers map[string]ModelProvider) []Problem {
 	return ps
 }
 
+// ProviderKeyEnvPrefix starts the variable a provider's key is mounted as
+// in the runner. It is under FUGARO_, which a workflow secret's variable may
+// not use (ReservedEnvPrefixes), and the agent's environment is built from
+// an allow-list that never includes it.
+const ProviderKeyEnvPrefix = "FUGARO_PROVIDER_KEY_"
+
+// SecretEnv is the variable p's key is mounted as in the runner (only the
+// runner and its gateway read it; the agent's environment never has it).
+func (p ModelProvider) SecretEnv() string { return ProviderKeyEnv(p.Secret) }
+
+// ProviderKeyEnv is the variable the provider secret named secret is
+// mounted as: FUGARO_PROVIDER_KEY_ and the name in upper case with '_' for '-'.
+func ProviderKeyEnv(secret string) string {
+	return ProviderKeyEnvPrefix + strings.ToUpper(strings.ReplaceAll(secret, "-", "_"))
+}
+
+// IsProviderKeyEnv reports whether name is a provider key's variable.
+func IsProviderKeyEnv(name string) bool {
+	return strings.HasPrefix(strings.ToUpper(name), ProviderKeyEnvPrefix)
+}
+
+// ProviderBySecret is the provider whose key is the secret named secret.
+// Provider secrets are the owner's, in the local config, so a workflow's own
+// secrets cannot be checked against them by Validate: the places that hold
+// both (the job spec, secrets set) call this.
+func ProviderBySecret(providers map[string]ModelProvider, secret string) (name string, ok bool) {
+	for _, n := range sortedKeys(providers) {
+		if providers[n].Secret == secret {
+			return n, true
+		}
+	}
+	return "", false
+}
+
 func reservedSecretName(s string) bool { _, ok := ReservedSecrets[s]; return ok }
 
 func checkProviderURL(s string) error {

@@ -1112,3 +1112,70 @@ func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
 		}
 	}
 }
+
+const providerLC = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/sandbox"]
+  elsewhere:
+    kind: anthropic-compat
+    base_url: https://other.example
+    auth: x-api-key
+    secret: other-key
+    models: ["qwen/*"]
+    allow_data_to: ["acme/other"]
+`
+
+// A provider's key is mounted into the job of a repository the owner
+// allowed to send code to it, as a variable no workflow can name, and into
+// no other.
+func TestProviderKeyMountedOnlyForAllowedRepos(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := rs.Workflows["web"]
+	env := config.ProviderKeyEnv("openrouter-api-key")
+	if ws.SecretEnv[env] != "openrouter-api-key" || ws.SecretIDs["openrouter-api-key"] == "" || rs.Secrets["openrouter-api-key"] == "" {
+		t.Errorf("the key is not mounted: %v %v", ws.SecretEnv, ws.SecretIDs)
+	}
+	if _, ok := ws.SecretEnv[config.ProviderKeyEnv("other-key")]; ok {
+		t.Errorf("the key of a provider this repository is not allowed to use is mounted: %v", ws.SecretEnv)
+	}
+	if !strings.Contains(ws.Env[runner.SecretEnvsVar], env) {
+		t.Errorf("%s does not list %s, so it would not be redacted: %q", runner.SecretEnvsVar, env, ws.Env[runner.SecretEnvsVar])
+	}
+	for k, v := range ws.Env {
+		if config.IsProviderKeyEnv(k) || v == "openrouter-api-key" {
+			t.Errorf("the job's plain env carries %s", k)
+		}
+	}
+	// Not on oauth or vertex: a run does not mix credentials.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	if rs, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rs.Workflows["web"].SecretEnv[env]; ok {
+		t.Errorf("the key is mounted on %s auth", in.Cfg.Agent.Auth)
+	}
+}
+
+func TestWorkflowSecretCannotShadowProviderSecret(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	w := in.Cfg.Workflows["web"]
+	// Even a provider the repository may not use: the name is the owner's.
+	w.Secrets = append(w.Secrets, config.Secret{Name: "other-key", Env: "MY_KEY"})
+	in.Cfg.Workflows["web"] = w
+	_, err := Repo(in)
+	var ue *UserError
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "other-key") || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("err = %v", err)
+	}
+}
