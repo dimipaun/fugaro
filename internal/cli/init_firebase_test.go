@@ -168,8 +168,8 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	if got, want := r.applies(t), []string{"installation", "firebase", "installation"}; !slices.Equal(got, want) {
 		t.Fatalf("applies in %v, want %v", got, want)
 	}
-	if n := strings.Count(out, "⚠ CONFIRM"); n != 4 {
-		t.Errorf("%d confirmations, want 4 (three applies and the database):\n%s", n, out)
+	if n := strings.Count(out, "⚠ CONFIRM"); n != 5 {
+		t.Errorf("%d confirmations, want 5 (three applies, the database and its location):\n%s", n, out)
 	}
 	for _, want := range []string{"to the Firebase project aurora-fp", "(the history job and its sweep schedule)", "writes the database as listed"} {
 		if !strings.Contains(out, want) {
