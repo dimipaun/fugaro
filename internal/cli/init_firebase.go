@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -372,6 +373,11 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	if err := r.confirm(what, "the database was not written"); err != nil {
 		return false, err
 	}
+	if fs.CreatesDatabase() {
+		if err := r.confirmLocation(); err != nil {
+			return false, err
+		}
+	}
 	if len(acts) > 0 {
 		if err := db.Apply(ctx); err != nil {
 			return false, initErr(err)
@@ -391,6 +397,26 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 		fmt.Fprintln(r.w, "ensured the Firestore database, its deny-all rules and its mark (read back)")
 	}
 	return true, nil
+}
+
+// confirmLocation is the Firestore database's own confirmation: its location
+// is permanent, so the person types the location itself (--yes confirms it, as
+// it does every step).
+func (r *initRun) confirmLocation() error {
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
+	if r.o.yes {
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+		return nil
+	}
+	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
+	line, err := r.in.ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return userErr("reading the confirmation: %v", err)
+	}
+	if strings.TrimSpace(line) != infra.FirestoreLocation {
+		return userErr("the location %s was not typed; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
+	}
+	return nil
 }
 
 // firestoreStep builds the Firestore ensure step for the Firebase project fp

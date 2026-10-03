@@ -186,15 +186,15 @@ func TestRulesReadBackFlaky(t *testing.T) {
 	if _, ok := r.fs.Value("meta", "installation"); !ok {
 		t.Error("no mark")
 	}
-	// Never read back: the step fails and the mark is not written.
+	// Never read back: the step fails; the mark was written first, so a rerun finds it.
 	r2 := newFBRig(t)
 	r2.rules.FlakeAfterWrite(1000)
 	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
 	if err == nil || !strings.Contains(err.Error(), "did not read back") {
 		t.Fatalf("err = %v\n%s", err, out)
 	}
-	if _, ok := r2.fs.Value("meta", "installation"); ok {
-		t.Error("the mark was written after a failed rules read-back")
+	if _, ok := r2.fs.Value("meta", "installation"); !ok {
+		t.Error("the mark (written first) is missing after a failed rules read-back")
 	}
 }
 
@@ -222,19 +222,6 @@ func TestMarkOfOtherProjectRefused(t *testing.T) {
 				t.Error("the foreign mark was changed")
 			}
 		})
-	}
-}
-
-func TestUnmarkedDatabaseWithHistoryRefused(t *testing.T) {
-	r := newFBRig(t)
-	r.fs.SetDatabase("us-east5")
-	r.fs.Set("spendDaily", "2026-10-01_a", map[string]any{"date": "2026-10-01"})
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "no Fugaro mark") {
-		t.Fatalf("err = %v\n%s", err, out)
-	}
-	if r.fsWrites() != 0 {
-		t.Error("writes into a foreign database")
 	}
 }
 
@@ -273,5 +260,212 @@ func TestNoAuthNeedsFirestoreEndpoints(t *testing.T) {
 				t.Error("applied before refusing")
 			}
 		})
+	}
+}
+
+func TestUnmarkedDatabaseWithOtherCollectionRefused(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.SetDatabase("us-east5")
+	r.fs.Set("app_users", "u1", map[string]any{"name": "x"})
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "app_users") || !strings.Contains(err.Error(), "no Fugaro mark") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r.fsWrites() != 0 || len(r.applies(t)) != 0 {
+		t.Error("writes into a foreign database")
+	}
+	if _, ok := r.fs.Value("meta", "installation"); ok {
+		t.Error("marked a foreign database")
+	}
+}
+
+func TestUnmarkedEmptyDatabaseAdopted(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.SetDatabase("us-east5")
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.dbCreates() != 0 {
+		t.Error("created over an existing database")
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("no mark")
+	}
+	if _, ok := r.rules.Source(); !ok {
+		t.Error("no rules")
+	}
+}
+
+// The mark is written before the rules: a rules failure leaves a marked
+// database, and the rerun completes without a second create.
+func TestHalfFailedRerunCompletes(t *testing.T) {
+	r := newFBRig(t)
+	r.rules.FailWrites(1)
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err == nil {
+		t.Fatalf("a failed rules write passed:\n%s", out)
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("the mark was not written before the rules")
+	}
+	if _, ok := r.rules.Source(); ok {
+		t.Error("rules exist after a failed write")
+	}
+	if out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatalf("rerun: %v\n%s", err, out)
+	}
+	if r.dbCreates() != 1 {
+		t.Errorf("creates = %d", r.dbCreates())
+	}
+	if src, ok := r.rules.Source(); !ok || src != infra.FirestoreRules {
+		t.Error("the rerun did not deploy the rules")
+	}
+}
+
+func TestLocationConfirmationRequiredToCreate(t *testing.T) {
+	// The shared confirmations are typed (3), the location is not: no create.
+	for name, loc := range map[string]string{"missing": "", "wrong": "nam5\n"} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			fakeTerminal(t)
+			out, _, err := executeStdin(t, names(3)+loc, "init", "--firebase", fpID)
+			if err == nil || !strings.Contains(err.Error()+out, "us-east5") {
+				t.Fatalf("err = %v\n%s", err, out)
+			}
+			if r.fsWrites() != 0 {
+				t.Error("something was created without the location typed")
+			}
+			if _, ok := r.fs.Value("meta", "installation"); ok {
+				t.Error("marked")
+			}
+		})
+	}
+	r := newFBRig(t)
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, names(3)+"us-east5\n", "init", "--firebase", fpID); err != nil && !strings.Contains(err.Error(), "confirm") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if r.dbCreates() != 1 {
+		t.Errorf("creates = %d with the location typed", r.dbCreates())
+	}
+}
+
+func TestAdoptNeedsNoLocationConfirmation(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.SetDatabase("us-east5")
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, names(4), "init", "--firebase", fpID)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "Type us-east5") {
+		t.Errorf("asked for the location when adopting:\n%s", out)
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("not adopted")
+	}
+}
+
+// A default release that appears after the plan: refused after the database
+// exists (and is marked); the rerun refuses in Plan until deny-all is deployed.
+func TestDefaultReleaseAppearsAfterCreation(t *testing.T) {
+	r := newFBRig(t)
+	loose := "rules_version = '2';\nservice cloud.firestore { match /databases/{d}/documents { match /{x=**} { allow read, write: if request.time < timestamp.date(2030, 1, 1); } } }"
+	r.rules.SeedAfterReads(2, loose)
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "not deny-all") || !strings.Contains(err.Error(), "deploy deny-all yourself") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r.dbCreates() != 1 || r.rules.Writes() != 0 {
+		t.Errorf("creates %d, rules writes %d", r.dbCreates(), r.rules.Writes())
+	}
+	if src, _ := r.rules.Source(); src != loose {
+		t.Error("the default release was changed")
+	}
+	// Rerun: refused in Plan, before anything is applied.
+	before := len(r.applies(t))
+	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
+		t.Fatalf("rerun err = %v", err)
+	}
+	if len(r.applies(t)) != before || r.dbCreates() != 1 {
+		t.Error("the rerun wrote")
+	}
+	// The user deploys deny-all; the rerun completes.
+	r.rules.SeedRelease(infra.FirestoreRules)
+	if out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatalf("after the fix: %v\n%s", err, out)
+	}
+}
+
+func TestEnsureRefusesNonNativeDatabase(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.SetDatabase("us-east5")
+	r.fs.SetDatabaseType("DATASTORE_MODE")
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "DATASTORE_MODE") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r.fsWrites() != 0 || len(r.applies(t)) != 0 {
+		t.Error("writes after a refusal")
+	}
+}
+
+func TestCreateRaceAdoptsOnlyAcceptable(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.RaceCreate("us-east5")
+	if out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("the raced database was not marked")
+	}
+	r2 := newFBRig(t)
+	r2.fs.RaceCreate("europe-west1")
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "europe-west1") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if _, ok := r2.fs.Value("meta", "installation"); ok {
+		t.Error("marked a database in another location")
+	}
+	if _, ok := r2.rules.Source(); ok {
+		t.Error("rules deployed over a refused database")
+	}
+}
+
+func TestUnreadableBeforeAPIEnabled(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.Refuse(403, "PERMISSION_DENIED", "SERVICE_DISABLED", "Cloud Firestore API has not been used in project")
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--plan-only")
+	if err != nil || !strings.Contains(out, "cannot be read yet") {
+		t.Fatalf("plan-only: %v\n%s", err, out)
+	}
+	// A real run tolerates it in discovery, then needs it after the apply.
+	out, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err == nil || !strings.Contains(err.Error(), "cannot read the Firestore state") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	if r.dbCreates() != 0 || r.rules.Writes() != 0 {
+		t.Error("wrote although Firestore was unreadable")
+	}
+}
+
+func TestMarkVersionNewerAccepted(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.SetDatabase("us-east5")
+	m := ownMark()
+	m["version"] = int64(2)
+	r.fs.Set("meta", "installation", m)
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err != nil || !strings.Contains(out, "newer than this fugaro knows") {
+		t.Fatalf("err = %v\n%s", err, out)
+	}
+	m["version"] = int64(0)
+	r2 := newFBRig(t)
+	r2.fs.SetDatabase("us-east5")
+	r2.fs.Set("meta", "installation", m)
+	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); ExitCode(err) != ExitUserError || err == nil {
+		t.Fatalf("version 0 accepted: %v", err)
 	}
 }

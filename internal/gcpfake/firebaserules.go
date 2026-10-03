@@ -28,6 +28,10 @@ type FirebaseRules struct {
 	flake    int
 	flaking  int
 	next     int
+	reads    int
+	failW    int
+	seedAt   int
+	seedSrc  string
 }
 
 // NewFirebaseRules starts the fake for Firebase project project.
@@ -45,12 +49,28 @@ func (f *FirebaseRules) SeedRelease(source string) {
 	f.release = f.addRuleset(source)
 }
 
+// SeedAfterReads makes a release with source appear (a default one, made by
+// something else) once the fake answered n release reads: the n+1st read
+// finds it.
+func (f *FirebaseRules) SeedAfterReads(n int, source string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seedAt, f.seedSrc = n+1, source
+}
+
+// FailWrites makes the next n POST calls answer 500 and change nothing.
+func (f *FirebaseRules) FailWrites(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.failW = n
+}
+
 // FlakeAfterWrite makes the n release reads after the next release creation
 // answer 404, as an eventually consistent read could.
 func (f *FirebaseRules) FlakeAfterWrite(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.flake = n
+	f.flake, f.flaking = n, 0
 }
 
 // Source is the Firestore release's rules source ("" and false when there is
@@ -94,6 +114,10 @@ func (f *FirebaseRules) handle(w http.ResponseWriter, r *http.Request, body []by
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if m := rulesReleasePath.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodGet && m[1] == f.project {
+		f.reads++
+		if f.seedAt > 0 && f.reads == f.seedAt && f.release == "" {
+			f.release = f.addRuleset(f.seedSrc)
+		}
 		if f.release == "" || f.flaking > 0 {
 			if f.flaking > 0 {
 				f.flaking--
@@ -112,6 +136,11 @@ func (f *FirebaseRules) handle(w http.ResponseWriter, r *http.Request, body []by
 		}
 		writeJSON(w, 200, map[string]any{"name": "projects/" + f.project + "/rulesets/" + m[2],
 			"source": map[string]any{"files": []any{map[string]any{"name": "firestore.rules", "content": src}}}})
+		return
+	}
+	if r.Method == http.MethodPost && f.failW > 0 {
+		f.failW--
+		writeError(w, 500, "INTERNAL", "injected failure")
 		return
 	}
 	switch {

@@ -161,7 +161,7 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
 	fakeTerminal(t)
-	out, _, err := executeStdin(t, names(4), "init", "--firebase", fpID, "--budget-mode", "observe")
+	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "init", "--firebase", fpID, "--budget-mode", "observe")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

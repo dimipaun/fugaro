@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 
@@ -82,7 +81,9 @@ func (m FirestoreMark) mismatch(f map[string]any) string {
 		return fmt.Sprintf("GCP project %q", str("gcp_project"))
 	case str("firebase_project") != m.FirebaseProject:
 		return fmt.Sprintf("Firebase project %q", str("firebase_project"))
-	case fmt.Sprint(f["version"]) != fmt.Sprint(m.Version):
+	}
+	// A mark of a newer schema (a later Fugaro) is still ours.
+	if v, ok := f["version"].(int64); !ok || v < m.Version {
 		return fmt.Sprintf("version %v", f["version"])
 	}
 	return ""
@@ -102,6 +103,7 @@ type FirestoreStep struct {
 	Wait time.Duration
 
 	planned                          bool
+	warnings                         []string
 	createDB, deployRules, writeMark bool
 }
 
@@ -126,6 +128,7 @@ func fsErr(what string, err error) error {
 // returns the lines the confirmation lists, and warnings. It makes no write.
 func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err error) {
 	s.createDB, s.deployRules, s.writeMark, s.planned = false, false, false, false
+	s.warnings = nil
 	db, err := s.FS.GetDatabase(ctx)
 	switch {
 	case errors.Is(err, firestore.ErrNotFound):
@@ -141,16 +144,14 @@ func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err
 			warnings = append(warnings, fmt.Sprintf("the Firestore database of %s has delete protection %s: init leaves it as it is", s.FP, strings.ToLower(db.DeleteProtection)))
 		}
 		lines = append(lines, fmt.Sprintf("Cloud Firestore database: exists in %s, adopted as it is", db.LocationID))
-		marked, err := s.readMark(ctx)
+		marked, err := s.adoptable(ctx)
 		if err != nil {
 			return nil, nil, err
 		}
 		if marked {
 			lines = append(lines, "Firestore mark (meta/installation): present, left as it is")
 		} else {
-			if err := s.refuseForeignData(ctx); err != nil {
-				return nil, nil, err
-			}
+			lines = append(lines, "Firestore database holds no collection and no mark: it is empty, adopted")
 			s.writeMark = true
 		}
 	}
@@ -167,7 +168,7 @@ func (s *FirestoreStep) Plan(ctx context.Context) (lines, warnings []string, err
 		lines = append(lines, "Firestore security rules: deny-all already deployed, left as it is")
 	}
 	s.planned = true
-	return lines, warnings, nil
+	return lines, append(warnings, s.warnings...), nil
 }
 
 func (s *FirestoreStep) checkExisting(db *firestore.Database) error {
@@ -190,20 +191,31 @@ func (s *FirestoreStep) readMark(ctx context.Context) (marked bool, err error) {
 	if why := s.mark().mismatch(d.Fields); why != "" {
 		return false, userErr("the Firestore database of %s carries a Fugaro mark that is not ours: it names %s, not project %s in GCP project %s with Firebase project %s (one Firebase project serves one installation, design D3). init changes no mark", s.FP, why, s.Project, s.GCPProject, s.FP)
 	}
+	if v, _ := d.Fields["version"].(int64); v > s.mark().Version {
+		s.warnings = append(s.warnings, fmt.Sprintf("the Firestore mark of %s has version %d, newer than this fugaro knows (%d): left as it is", s.FP, v, s.mark().Version))
+	}
 	return true, nil
 }
 
-// refuseForeignData refuses an existing, unmarked database that already
-// holds spend history: it is somebody else's.
-func (s *FirestoreStep) refuseForeignData(ctx context.Context) error {
-	docs, err := s.FS.Query(ctx, FirestoreHistory, "date", "0000-00-00", "9999-99-99")
-	if err != nil && !errors.Is(err, firestore.ErrNotFound) {
-		return fsErr("reading the "+FirestoreHistory+" collection", err)
+// adoptable decides whether an existing database may be adopted: one with
+// our mark is; one with a foreign mark is refused; an unmarked one only when
+// it is empty (no root collection at all), because it is somebody else's
+// otherwise.
+func (s *FirestoreStep) adoptable(ctx context.Context) (marked bool, err error) {
+	if marked, err = s.readMark(ctx); err != nil || marked {
+		return marked, err
 	}
-	if len(docs) > 0 {
-		return userErr("the Firestore database of %s holds %d %s documents and no Fugaro mark (%s/%s): it is not ours, and init writes into databases that are empty or carry our mark", s.FP, len(docs), FirestoreHistory, FirestoreMetaCollection, FirestoreMarkDoc)
+	ids, err := s.FS.ListCollectionIDs(ctx)
+	if err != nil {
+		return false, fsErr("listing the collections of the Firestore database of "+s.FP, err)
 	}
-	return nil
+	if len(ids) > 0 {
+		if len(ids) > 5 {
+			ids = append(ids[:5:5], "...")
+		}
+		return false, userErr("the Firestore database of %s holds data (collections: %s) and no Fugaro mark (%s/%s): it is not ours, and init adopts a database only when it is empty or carries our mark. init changed nothing there", s.FP, strings.Join(ids, ", "), FirestoreMetaCollection, FirestoreMarkDoc)
+	}
+	return false, nil
 }
 
 // Apply performs what Plan found, in order: the database, the rules, the mark,
@@ -217,7 +229,10 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		if errors.Is(err, firestore.ErrPrecondition) {
 			// Created by someone since the plan: adopt only if it is ours to adopt.
 			if db, err = s.FS.GetDatabase(ctx); err == nil {
-				err = s.checkExisting(db)
+				if err = s.checkExisting(db); err == nil {
+					// Created by someone else meanwhile: ours only if empty or marked.
+					_, err = s.adoptable(ctx)
+				}
 			}
 		}
 		if err != nil {
@@ -228,17 +243,17 @@ func (s *FirestoreStep) Apply(ctx context.Context) error {
 		}
 		s.createDB = false
 	}
-	if s.deployRules {
-		if err := s.Rules.deploy(ctx, FirestoreRules, s.wait()); err != nil {
-			return err
-		}
-		s.deployRules = false
-	}
 	if s.writeMark {
 		if err := s.putMark(ctx); err != nil {
 			return err
 		}
 		s.writeMark = false
+	}
+	if s.deployRules {
+		if err := s.Rules.deploy(ctx, FirestoreRules, s.wait()); err != nil {
+			return err
+		}
+		s.deployRules = false
 	}
 	return nil
 }
@@ -403,18 +418,55 @@ func (c *RulesClient) release(ctx context.Context) (source string, exists bool, 
 	return rs.Source.Files[0].Content, true, nil
 }
 
-var (
-	lineComment  = regexp.MustCompile(`//[^\n]*`)
-	blockComment = regexp.MustCompile(`(?s)/\*.*?\*/`)
-	spaces       = regexp.MustCompile(`\s+`)
-)
-
 // normalizeRules makes two rule sources that differ in comments and
-// whitespace equal.
+// whitespace equal. String literals are kept exactly (a quote starts one, a
+// backslash escapes inside it), and comments inside them are not comments.
 func normalizeRules(s string) string {
-	s = blockComment.ReplaceAllString(s, " ")
-	s = lineComment.ReplaceAllString(s, " ")
-	return strings.TrimSpace(spaces.ReplaceAllString(s, " "))
+	var b strings.Builder
+	space := false
+	flush := func() {
+		if space && b.Len() > 0 {
+			b.WriteByte(' ')
+		}
+		space = false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '/' && i+1 < len(s) && s[i+1] == '/':
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			space = true
+		case c == '/' && i+1 < len(s) && s[i+1] == '*':
+			end := strings.Index(s[i+2:], "*/")
+			if end < 0 {
+				return s // unterminated: matches nothing sensible
+			}
+			i += end + 3
+			space = true
+		case c == '\'' || c == '"':
+			flush()
+			j := i + 1
+			for j < len(s) && s[j] != c {
+				if s[j] == '\\' {
+					j++
+				}
+				j++
+			}
+			if j >= len(s) {
+				j = len(s) - 1
+			}
+			b.WriteString(s[i : j+1])
+			i = j
+		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+			space = true
+		default:
+			flush()
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }
 
 // inspect reads the Firestore release. No release is rulesMissing; one whose

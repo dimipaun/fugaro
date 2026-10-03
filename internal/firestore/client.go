@@ -377,6 +377,32 @@ func (c *Client) Query(ctx context.Context, coll, field string, from, to any) ([
 	return nil, &Error{Op: "QUERY", Path: coll, Msg: fmt.Sprintf("more than %d pages", maxPages)}
 }
 
+// ListCollectionIDs returns the IDs of the database's root collections
+// (documents:listCollectionIds), all pages. No database is ErrNoDatabase.
+func (c *Client) ListCollectionIDs(ctx context.Context) ([]string, error) {
+	var out []string
+	token := ""
+	for page := 0; page < maxPages; page++ {
+		body := map[string]any{"pageSize": 100}
+		if token != "" {
+			body["pageToken"] = token
+		}
+		var resp struct {
+			IDs   []string `json:"collectionIds"`
+			Token string   `json:"nextPageToken"`
+		}
+		if err := c.do(ctx, "LIST-COLLECTIONS", "database", http.MethodPost, "/v1/"+c.dbPath()+"/documents:listCollectionIds", nil, body, &resp); err != nil {
+			return nil, err
+		}
+		out = append(out, resp.IDs...)
+		if resp.Token == "" {
+			return out, nil
+		}
+		token = resp.Token
+	}
+	return nil, &Error{Op: "LIST-COLLECTIONS", Path: "database", Msg: fmt.Sprintf("more than %d pages", maxPages)}
+}
+
 // Database is the (default) database's settings.
 type Database struct {
 	Name             string
