@@ -121,6 +121,10 @@ case "$base" in
     esac
     redis_version=$(first_line "$(run redis-server --version)") || fail "redis-server --version failed"
     echo "$redis_version"
+    case "$redis_version" in
+      "Redis server "*) ;;
+      *) fail "redis-server --version reports '$redis_version'" ;;
+    esac
     jars=$(run sh -c 'ls "$FIREBASE_EMULATORS_PATH"') || fail "listing the emulators' jars failed"
     for emulator in firebase-database-emulator cloud-firestore-emulator cloud-storage-rules-runtime pubsub-emulator dataconnect-emulator ui-v; do
       case "$jars" in
