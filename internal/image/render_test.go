@@ -609,3 +609,13 @@ func TestTemplatePinsTheCommit(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderGoBase(t *testing.T) {
+	out, err := Render(RenderInput{Workflow: "go", Base: "go", Image: config.Image{Setup: []string{"go mod download"}}, Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); !strings.Contains(s, "go mod download") || strings.Contains(s, "install-node") {
+		t.Errorf("rendered Dockerfile:\n%s", s)
+	}
+}
