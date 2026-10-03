@@ -127,13 +127,19 @@ func TestProviderModelNeedsEnforce(t *testing.T) {
 
 // A provider that reports more than 10% above the charge is logged once at
 // the end of the run (warn level, no key); a report below the charge is not.
+// The charge is compared without the route fee, which the provider doesn't
+// report: with a 10% fee the charge is 3300 and the bare price 3000.
 func TestReportedAboveChargeWarnsOnce(t *testing.T) {
 	use := pricing.Usage{Input: 1000, Output: 500} // charged 3000 micros at the starter prices
 	for _, c := range []struct {
 		cost float64
+		fee  float64
 		warn int
-	}{{0.0100, 1}, {0.0031, 0}, {0.0010, 0}} {
+	}{{0.0100, 0, 1}, {0.0031, 0, 0}, {0.0010, 0, 0}, {0.0035, 10, 1}, {0.0032, 10, 0}} {
 		g := providerRun(t, providerPinned(t), "enforce", "50", []anthropicfake.Reply{anthropicfake.Compat{Cost: c.cost}.MessageOK(deepseek, use)}, "acme/app")
+		prov := g.deps.Providers["openrouter"]
+		prov.RouteFeePct = c.fee
+		g.deps.Providers["openrouter"] = prov
 		var status int
 		var body string
 		if rec, err := g.run(t, callDeepseek(&status, &body, implement("feature")), review("ship", 0)); err != nil || rec.Status != runstore.StatusSucceeded {

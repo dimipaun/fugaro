@@ -353,6 +353,16 @@ func WithFee(m Micros, pct float64) Micros {
 	return Micros(satAdd(int64(m), int64(fee)))
 }
 
+// WithoutFee takes a route fee of pct percent back out of a charge made with
+// WithFee: what the provider itself would have charged. Rounded down, so a
+// report is never excused by rounding.
+func WithoutFee(m Micros, pct float64) Micros {
+	if m <= 0 || !(pct > 0) {
+		return max(m, 0)
+	}
+	return Micros(math.Floor(float64(m) * 100 / (100 + pct)))
+}
+
 // toMicros converts a non-negative float amount of µ$, saturating.
 func toMicros(f float64) Micros {
 	switch {

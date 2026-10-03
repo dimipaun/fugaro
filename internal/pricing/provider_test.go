@@ -137,3 +137,20 @@ func TestOverrideDefaultsZeroCacheRatesOnProviderRow(t *testing.T) {
 		t.Error("embedded row carries a warning")
 	}
 }
+
+func TestWithoutFee(t *testing.T) {
+	for _, c := range []struct {
+		m    Micros
+		pct  float64
+		want Micros
+	}{{3300, 10, 3000}, {3000, 0, 3000}, {0, 10, 0}, {-5, 10, 0}, {3001, 10, 2728}, {100, math.NaN(), 100}} {
+		if got := WithoutFee(c.m, c.pct); got != c.want {
+			t.Errorf("WithoutFee(%d, %v) = %d, want %d", c.m, c.pct, got, c.want)
+		}
+	}
+	for _, m := range []Micros{1, 999, 3000, 123456} {
+		if got := WithoutFee(WithFee(m, 10), 10); got > m || got < m-1 {
+			t.Errorf("round trip of %d gave %d", m, got)
+		}
+	}
+}

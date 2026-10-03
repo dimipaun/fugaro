@@ -160,7 +160,7 @@ providers:
     allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]   # only these repositories may send code here
 model_prices:                      # the embedded deepseek row is an unverified placeholder: set the real prices
   deepseek/deepseek-v4-flash: { input_per_m: 0.14, output_per_m: 0.28, cache_read: 0.1 }   # example numbers; cache_read is a multiplier of input_per_m (default 0.1)
-budget: { mode: observe }          # a provider model needs the gateway
+budget: { mode: enforce, per_run_usd: 2 }  # a provider model needs enforce
 ```
 
 ```yaml

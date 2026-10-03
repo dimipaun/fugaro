@@ -364,13 +364,15 @@ func (r *run) checkBudget() error {
 
 // warnReportedGap logs, once, when the providers' own cost figures are more
 // than reportedGapPct above what the gateway charged on the provider routes
-// (the table price settles, so a high report means a wrong price or a
-// served-by fallback; a low one only means Fugaro over-charged).
+// without the route fee, which providers don't report (the table price
+// settles, so a high report means a wrong price or a served-by fallback; a
+// low one only means Fugaro over-charged).
 func (r *run) warnReportedGap() {
 	r.mu.Lock()
 	var charged pricing.Micros
-	for _, v := range r.routeBy {
-		charged += v
+	for name, v := range r.routeBy {
+		// The provider reports the model's price, not Fugaro's route fee.
+		charged += pricing.WithoutFee(v, r.d.Providers[name].RouteFeePct)
 	}
 	reported := r.reported
 	r.mu.Unlock()

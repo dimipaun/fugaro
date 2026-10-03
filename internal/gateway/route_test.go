@@ -822,12 +822,17 @@ func TestRoutedForbiddenTopLevelFields(t *testing.T) {
 		`"transforms":["middle-out"]`,
 		`"usage":{"include":true}`,
 		`"web_search_options":{"search_context_size":"high"}`,
-		`"Provider":{"order":["x"]}`,     // case variant
-		`"PLUGINS":[]`,                   // case variant
-		`"Messages2":1`,                  // near-miss of an allowed key
-		`"unknown_future_field":{"a":1}`, // not on the list at all
-		`"provider ":{"order":["x"]}`,    // trailing space
-		`"plugins":null`,                 // null still a present key
+		`"Provider":{"order":["x"]}`,                            // case variant
+		`"PLUGINS":[]`,                                          // case variant
+		`"Messages2":1`,                                         // near-miss of an allowed key
+		`"unknown_future_field":{"a":1}`,                        // not on the list at all
+		`"provider ":{"order":["x"]}`,                           // trailing space
+		`"plugins":null`,                                        // null still a present key
+		`"\u0070lugins":[{"id":"web"}]`,                         // the same key, unicode-escaped
+		`"pro\u0076ider":{"order":["x"]}`,                       // the same key, partly escaped
+		`"metadata":{"user_id":"u","provider":{"order":["x"]}}`, // metadata holds only user_id
+		`"metadata":{"plugins":[]}`,
+		`"metadata":"u"`,
 	} {
 		r := newRouted(t, "bearer", routedStage, anthropicfake.MessageOK(dsModel, pricing.Usage{Input: 1, Output: 1}))
 		resp, b := r.post(msg(dsModel, 100, extra))
@@ -864,11 +869,11 @@ func TestRoutedDuplicateAndNestedTricks(t *testing.T) {
 	if r.prov.Count() != 0 {
 		t.Error("a refused body was forwarded")
 	}
-	// A forbidden name nested inside an allowed field is that field's content,
-	// not a top-level key: it travels with the request (the provider ignores it).
-	body := msg(dsModel, 100, `"metadata":{"user_id":"u","provider":{"order":["x"]}}`)
+	// A forbidden name nested inside another allowed field is that field's
+	// content, not a top-level key: it travels with the request.
+	body := msg(dsModel, 100, `"tools":[{"name":"x","provider":{"order":["x"]},"input_schema":{"type":"object"}}]`)
 	if resp, b := r.post(body); resp.StatusCode != 200 {
-		t.Errorf("nested name in metadata: %d %s", resp.StatusCode, b)
+		t.Errorf("nested name in a tool: %d %s", resp.StatusCode, b)
 	}
 }
 

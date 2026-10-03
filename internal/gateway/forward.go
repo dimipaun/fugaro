@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptrace"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -39,8 +40,9 @@ type parsed struct {
 // carry: the Messages API's own. Anything else (OpenRouter's plugins,
 // provider, models, route, transforms, usage, web_search_options, ...) can
 // bill outside token pricing or override the account's data policy. The
-// Claude path is not held to this list. metadata stays: Claude Code sends
-// metadata.user_id on every request and the gateway never rewrites a body.
+// Claude path is not held to this list. metadata stays, but only its
+// user_id: Claude Code sends metadata.user_id on every request and the
+// gateway never rewrites a body.
 var routedKeys = []string{
 	"model", "max_tokens", "messages", "system", "stream", "tools", "tool_choice", "temperature",
 	"top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config",
@@ -100,6 +102,23 @@ func parseRequest(body []byte, pathModel string) (parsed, error) {
 	for k := range top {
 		if !slices.Contains(routedKeys, k) && (p.foreign == "" || k < p.foreign) {
 			p.foreign = k
+		}
+	}
+	if md, has := top["metadata"]; has {
+		// Claude Code sends metadata.user_id and nothing else; any other
+		// key in it is a foreign field like a top-level one.
+		obj, _ := md.(map[string]any)
+		bad := ""
+		if obj == nil {
+			bad = "metadata"
+		}
+		for k := range obj {
+			if k != "user_id" && (bad == "" || "metadata."+k < bad) {
+				bad = "metadata." + k
+			}
+		}
+		if bad != "" && (p.foreign == "" || bad < p.foreign) {
+			p.foreign = bad
 		}
 	}
 	p.cacheTTL = cacheTTL(v)
@@ -753,10 +772,17 @@ func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outco
 	return o
 }
 
-// pinSpelling: one of the two names starts with the other (the pin plus a
-// date or revision suffix), so the served model is the pinned one.
+// pinSuffix is what may follow the pin in the serving model's name for it
+// to be the pin's own snapshot: a date or a short revision number.
+var pinSuffix = regexp.MustCompile(`^[-@:]?(\d{8}|\d{4}-\d{2}-\d{2}|v?\d{1,3}(\.\d+)*)$`)
+
+// pinSpelling: the serving model is the pin plus a date or revision suffix,
+// so it is the pin's own model. Any other name that merely shares a prefix
+// (a variant such as -ultra-pro, a shorter name, the pin as the longer one)
+// is a different model.
 func pinSpelling(serving, pin string) bool {
-	return strings.HasPrefix(serving, pin) || strings.HasPrefix(pin, serving)
+	rest, ok := strings.CutPrefix(serving, pin)
+	return ok && pinSuffix.MatchString(rest)
 }
 
 // countingBody marks sent once the transport reads any byte of it.
