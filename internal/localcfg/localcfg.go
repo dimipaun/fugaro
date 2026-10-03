@@ -511,6 +511,15 @@ func (c *Config) BaseImage(kind string) string { return c.BaseImages[kind] }
 
 var baseImageNameRE = regexp.MustCompile(`/fugaro-([a-z0-9-]+)(:[A-Za-z0-9._-]+)?(@sha256:[0-9a-f]{64})?$`)
 
+// BaseImageNameKind is the base kind a ref's repository name says
+// (fugaro-<kind>), "" when it names none.
+func BaseImageNameKind(ref string) string {
+	if m := baseImageNameRE.FindStringSubmatch(ref); m != nil && slices.Contains(config.Bases, m[1]) {
+		return m[1]
+	}
+	return ""
+}
+
 // ParseBaseImageFlag reads one fugaro init --base-image value: KIND=IMAGE, or
 // a bare IMAGE whose repository name says the kind (fugaro-<kind>, as in
 // ghcr.io/dimipaun/fugaro-go:1 or <registry>/fugaro-base/fugaro-web-node:dev-abc).

@@ -1044,6 +1044,9 @@ func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, 
 				return userErr("%v", err)
 			}
 			next.BaseImages[kind] = ref
+			if n := localcfg.BaseImageNameKind(ref); n != kind {
+				r.warn(fmt.Sprintf("--base-image %s names an image whose repository is not fugaro-%s: make sure it is the %s base image", v, kind, kind))
+			}
 		}
 	}
 	next.Build.ServiceAccount = ""

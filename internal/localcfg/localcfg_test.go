@@ -768,3 +768,14 @@ func TestParseBaseImageFlag(t *testing.T) {
 		}
 	}
 }
+
+func TestBaseImageNameKind(t *testing.T) {
+	for ref, want := range map[string]string{
+		"ghcr.io/dimipaun/fugaro-go:1": "go", "reg/fugaro-base/fugaro-java-services:dev-a": "java-services",
+		"reg/my-image:1": "", "reg/fugaro-rust:1": "",
+	} {
+		if got := BaseImageNameKind(ref); got != want {
+			t.Errorf("%s: kind %q, want %q", ref, got, want)
+		}
+	}
+}
