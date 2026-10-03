@@ -552,7 +552,7 @@ M9e (design §4.2a) opens a draft PR at a run's first verified push, keeps a sta
 - The `live`-tag tests' guard (a sandbox with no reviewers) does not cover this check, which is manual. Step 4 adds a throwaway reviewer account that **you** own to the sandbox config, and removes it again in step 9.
 
 **Before it (free).**
-1. The unit and fake runs are green on the branch under test, and the binary and the sandbox's image are built from it: `fugaro init --repo <owner/name>` so the job carries the new runner (an older runner never opens an early draft; check `git.pr.early_draft` is absent or `true` in the sandbox's `fugaro.yaml`).
+1. The unit and fake runs are green on the branch under test, and the binary and the sandbox's image are built from it: `fugaro init --repo <path to the sandbox checkout>` (`init --repo` takes a checkout path, not owner/name) so the job carries the new runner (an older runner never opens an early draft; check `git.pr.early_draft` is absent or `true` in the sandbox's `fugaro.yaml`).
 2. `export FUGARO=<path to the binary>` and `export SANDBOX=<owner/name>`; the rest uses `$FUGARO run --repo $SANDBOX ...`.
 3. Know the sandbox token's one-line way to read a PR (`GET /2.0/repositories/<ws>/<repo>/pullrequests/<id>`) for the read-backs below, with the token out of argv (as in git-providers.md).
 
@@ -628,13 +628,13 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 
 **Rules.**
 - **You run it, with your own credit-limited OpenRouter key, and no agent, assistant or log ever sees the key.** Create a key for this check alone, with a small credit limit (a few dollars is plenty), and revoke it afterwards. Store it only through `fugaro secrets set openrouter-api-key` (hidden prompt or stdin) and, for step 2, in a file with mode 0600 that you delete at the end. Never paste it into a chat, a command line argument, a PR or this checklist.
-- **Sandbox only.** Use the sandbox repository (`edgeappinc/fugarosandbox`) and nowhere else. **EdgeWeb is not in `allow_data_to` and is never used.**
+- **Sandbox only.** The live check uses the sandbox repository (`edgeappinc/fugarosandbox`) and no other.
 - Each run needs your go-ahead and your own task text. Budget: about $2 in total on the account (the sandbox's per-run cap applies); the credit limit on the key is the backstop.
 
 **Before it (free).**
 1. The branch under test is built, and `docs/multi-model.md` sections 1 and 2 are done: the account's provider preferences (no fallbacks, the data policy) set at OpenRouter, a `providers.openrouter` block in the local project config with `allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]`, `budget: { mode: observe }`, and **no** `model_prices` entry yet for the model.
 2. In the sandbox's `fugaro.yaml` on a branch you will run from: `agent.auth: api-key`, `agent.models.coder: deepseek/deepseek-v4-flash`, a Claude reviewer, `first_line_review: auto`. `fugaro validate` must pass **with a warning** that the price of `deepseek/deepseek-v4-flash` is an unverified placeholder; `fugaro budget prices` must show the row with `VERIFIED` = `NO`.
-3. `fugaro init --repo edgeappinc/fugarosandbox`, then `fugaro secrets set openrouter-api-key` from the sandbox's checkout, and paste the key at the hidden prompt.
+3. From the sandbox's checkout, `fugaro init --repo .` (it takes a checkout path), then `fugaro secrets set openrouter-api-key` from the sandbox's checkout, and paste the key at the hidden prompt.
 4. Look the model's real prices and the account's fee up on its OpenRouter page now; you need them in step 7.
 
 **Steps.**
@@ -654,7 +654,7 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 4. **⚠ CONFIRM, Claude Code against the endpoint.** Read the run's stage logs and transcripts (`fugaro logs`, `fugaro diagnose`, the bucket's `transcripts/`) for what broke: an `anthropic-beta` header or thinking parameter the endpoint rejected, a tool call that came back malformed, a stage that failed with an upstream error (and its `error_type`), the background model requests, any 404 on token counting. `FACT:` each, with the stage and the upstream's message. Run once more with a task that makes the agent use several tools (edit, build through `fugaro verify`) to see tool-call quality.
 5. **⚠ CONFIRM, cache accounting.** In the `model call` lines of a run with a long conversation, note whether `cache_read` and `cache_write_5m` are ever non-zero. `FACT:` yes or no; if no, whether the Activity page shows cached tokens (then Fugaro over-charges, which is the safe side).
 6. **⚠ CONFIRM, the credit limit and a halt (optional).** Set `budget.per_run_usd` low enough that the run halts: it must end `halted (run_cap)` with a draft PR, and the OpenRouter Activity page must show no call after the halt. Restore the cap.
-7. **Set real prices.** Put the real prices and your account's fee into the local config (`model_prices` for the model, `route_fee_pct` on the provider), `fugaro init --repo` again, and run `fugaro budget prices`: the row now says `VERIFIED` `yes` (an override replaces the placeholder) and the warning is gone. Run the task once more and compare the charge with the Activity page to the cent.
+7. **Set real prices.** Put the real prices and your account's fee into the local config (`model_prices` for the model, `route_fee_pct` on the provider), `fugaro init --repo .` again from the sandbox's checkout, and run `fugaro budget prices`: the row now says `VERIFIED` `yes` (an override replaces the placeholder) and the warning is gone. Run the task once more and compare the charge with the Activity page to the cent.
 8. **Clean up.** Decline the sandbox PRs this check opened and delete their branches (the commands under Check 24's "Clean up"; never merge them). **Revoke the OpenRouter key** and delete `$KEYFILE`; remove the key's secret version if you like (`fugaro secrets set` writes versions you can disable in Secret Manager).
 
 **What to paste back** (and nothing else): the `FACT:` lines of steps 1 to 5 and 7; the full headers and body of step 2 with any identifier you do not want to share cut out (**never the key, and no `Authorization` header** , since curl's `-D` records only response headers); the `diagnose` output of the run; the `model call` log lines (they hold no header and no body); `fugaro budget prices` for the model before and after. These replace the hand-written fixtures in `internal/gateway/anthropicfake` and settle the unverified rows of the results table.
