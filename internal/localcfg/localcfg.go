@@ -67,10 +67,32 @@ type Config struct {
 	// ModelPrices replace the built-in price of a model (or add one), by
 	// model ID, for the budget's accounting.
 	ModelPrices map[string]ModelPrice `yaml:"model_prices,omitempty"`
-	User        string                `yaml:"user,omitempty"`
-	MaxParallel int                   `yaml:"max_parallel"`
-	Endpoints   Endpoints             `yaml:"endpoints,omitempty"`
-	Repos       map[string]Repo       `yaml:"repos"`
+	// Watch tunes fugaro watch.
+	Watch       *Watch          `yaml:"watch,omitempty"`
+	User        string          `yaml:"user,omitempty"`
+	MaxParallel int             `yaml:"max_parallel"`
+	Endpoints   Endpoints       `yaml:"endpoints,omitempty"`
+	Repos       map[string]Repo `yaml:"repos"`
+}
+
+// Watch is the watch block: how fugaro watch flags a fast burn.
+type Watch struct {
+	// BurnAlertUSDPerHour is the spend rate above which watch marks a
+	// project or repository FAST; nil means the effective daily cap spread
+	// over 8 hours (none when there is no cap), 0 marks any spend.
+	BurnAlertUSDPerHour *float64 `yaml:"burn_alert_usd_per_hour,omitempty"`
+}
+
+// BurnAlert is watch.burn_alert_usd_per_hour in micro-dollars, nil when unset.
+func (c *Config) BurnAlert() *pricing.Micros {
+	if c.Watch == nil || c.Watch.BurnAlertUSDPerHour == nil {
+		return nil
+	}
+	m, err := pricing.FromUSD(*c.Watch.BurnAlertUSDPerHour)
+	if err != nil {
+		return nil // validate refused it
+	}
+	return &m
 }
 
 // Budget modes.
@@ -565,6 +587,11 @@ func (c *Config) validate() error {
 		}
 	}
 	c.validateBudget(bad)
+	if w := c.Watch; w != nil && w.BurnAlertUSDPerHour != nil {
+		if _, err := pricing.FromUSD(*w.BurnAlertUSDPerHour); err != nil {
+			bad("watch.burn_alert_usd_per_hour: %v (a finite dollar amount, 0 or more)", err)
+		}
+	}
 	for _, region := range slices.Sorted(maps.Keys(c.ComputePrices)) {
 		if !regionRE.MatchString(region) {
 			bad("compute_prices: %q is not a region such as us-central1", region)

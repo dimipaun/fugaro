@@ -149,6 +149,12 @@ func openCloud(ctx context.Context, o cloudOptions) (*cloudEnv, error) {
 	if err != nil {
 		return nil, err
 	}
+	return openCloudFor(ctx, lc)
+}
+
+// openCloudFor connects to the backend and the runs bucket of an already
+// selected project config.
+func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
@@ -185,6 +191,11 @@ func openBudgetDB(ctx context.Context, o cloudOptions) (*localcfg.Config, *rtdb.
 	if err != nil {
 		return nil, nil, err
 	}
+	return budgetDBFor(ctx, lc)
+}
+
+// budgetDBFor is openBudgetDB's second half, for a config already selected.
+func budgetDBFor(ctx context.Context, lc *localcfg.Config) (*localcfg.Config, *rtdb.Client, error) {
 	if lc.Budget == nil || lc.Budget.RTDBURL == "" {
 		return nil, nil, userErr("project %s has no Firebase budget backend (budget.rtdb_url is not set in its project config): an operator runs fugaro init --firebase <firebase-project-id> --name %s", lc.Name, lc.Name)
 	}

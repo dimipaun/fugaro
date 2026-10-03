@@ -86,7 +86,7 @@ func TestKillAllReason(t *testing.T) {
 	f := NewFlow("aurora")
 	f.Start(KillAll, Target{}, true)
 	r := run(f, []step{{typ: "aurora"}, {key: "enter"}, {typ: "run\x1b[2Jaway‮\n"}, {key: "enter"}})
-	if len(r) != 1 || r[0].Reason != "run[2Jaway" {
+	if len(r) != 1 || r[0].Reason != "runaway" {
 		t.Fatalf("%+v", r)
 	}
 	// An over-long reason is cut.

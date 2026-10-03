@@ -639,3 +639,31 @@ func TestLocalConfigBudgetFirebaseKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestBurnAlertConfigStrict(t *testing.T) {
+	c, err := Parse([]byte(sample + "watch: { burn_alert_usd_per_hour: 12.5 }\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.BurnAlert(); a == nil || *a != 12_500_000 {
+		t.Fatalf("alert = %v", a)
+	}
+	if c, err = Parse([]byte(sample + "watch: { burn_alert_usd_per_hour: 0 }\n")); err != nil || c.BurnAlert() == nil || *c.BurnAlert() != 0 {
+		t.Fatalf("0 is a valid alert: %v %v", c.BurnAlert(), err)
+	}
+	if c, err = Parse([]byte(sample)); err != nil || c.BurnAlert() != nil {
+		t.Fatalf("unset must stay nil: %v %v", c.BurnAlert(), err)
+	}
+	for name, y := range map[string]string{
+		"negative": "watch: { burn_alert_usd_per_hour: -1 }\n",
+		"nan":      "watch: { burn_alert_usd_per_hour: .nan }\n",
+		"inf":      "watch: { burn_alert_usd_per_hour: .inf }\n",
+		"huge":     "watch: { burn_alert_usd_per_hour: 1e9 }\n",
+		"string":   "watch: { burn_alert_usd_per_hour: fast }\n",
+		"unknown":  "watch: { burn_alert: 1 }\n",
+	} {
+		if _, err := Parse([]byte(sample + y)); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

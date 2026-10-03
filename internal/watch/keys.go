@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // The kill and resume prompts (design §7, plan W10) as a pure state machine:
@@ -61,19 +61,19 @@ type Request struct {
 	Reason  string
 }
 
-type phase int
+type flowPhase int
 
 const (
-	idle    phase = iota
-	askYes        // kill one repository: y or Enter
-	askWord       // type the project's or repository's name
+	idle    flowPhase = iota
+	askYes            // kill one repository: y or Enter
+	askWord           // type the project's or repository's name
 	askReason
 )
 
 // Flow is the prompt state. The zero value is not usable; use NewFlow.
 type Flow struct {
 	project  string
-	ph       phase
+	ph       flowPhase
 	kind     Kind
 	target   Target
 	input    string
@@ -178,9 +178,9 @@ func (f *Flow) Type(s string, live bool) *Request {
 	case askWord, askReason:
 		f.input += CleanLine(s, 0)
 		if f.ph == askReason {
-			f.input = clipRunes(f.input, MaxReason)
+			f.input = safetext.Clip(f.input, MaxReason)
 		} else {
-			f.input = clipRunes(f.input, 200)
+			f.input = safetext.Clip(f.input, 200)
 		}
 	}
 	return nil
@@ -248,7 +248,7 @@ func (f *Flow) submit(reason string) *Request {
 	if f.inflight {
 		return nil
 	}
-	req := &Request{Kind: f.kind, Project: f.project, Target: f.target, Reason: clipRunes(CleanLine(reason, 0), MaxReason)}
+	req := &Request{Kind: f.kind, Project: f.project, Target: f.target, Reason: safetext.Clip(CleanLine(reason, 0), MaxReason)}
 	f.ph, f.input, f.notice, f.inflight = idle, "", "", true
 	return req
 }
@@ -326,26 +326,13 @@ func verb(k Kind) string {
 
 // ----------------------------------------------------------- sanitizing
 
-// CleanLine is s as one safe line: controls, newlines, escape bytes and
-// invisible format characters (BiDi, zero width) are dropped, invalid UTF-8
-// is dropped, and, when max > 0, it is cut to max runes with an ellipsis.
+// CleanLine is s as one safe line: escape sequences, controls, newlines and
+// invisible format characters (BiDi, zero width) are dropped (safetext.Strip)
+// and, when max > 0, it is cut to max runes.
 func CleanLine(s string, max int) string {
-	var b strings.Builder
-	for _, r := range s {
-		if r == utf8.RuneError || unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == ' ' || r == ' ' {
-			continue
-		}
-		b.WriteRune(r)
-	}
+	s = safetext.Strip(s)
 	if max > 0 {
-		return clipRunes(b.String(), max)
+		return safetext.Clip(s, max)
 	}
-	return b.String()
-}
-
-func clipRunes(s string, n int) string {
-	if utf8.RuneCountInString(s) <= n {
-		return s
-	}
-	return string([]rune(s)[:n])
+	return s
 }

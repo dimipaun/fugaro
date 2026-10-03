@@ -18,7 +18,37 @@ func OneLine(s string) string { return Text(s, false) }
 func MultiLine(s string) string { return Text(s, true) }
 
 // Text implements OneLine and MultiLine.
-func Text(s string, keepNewlines bool) string {
+func Text(s string, keepNewlines bool) string { return text(s, keepNewlines, true) }
+
+// Strip is s as typed or pasted input: what OneLine would replace is dropped
+// instead of marked, and so are tabs and the Unicode line separators, so the
+// result is one run of printable characters.
+func Strip(s string) string {
+	s = text(s, false, false)
+	return strings.Map(func(r rune) rune {
+		if r == '\t' || r == 0x2028 || r == 0x2029 {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// Clip is s cut to at most n runes (no marker).
+func Clip(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:max(n, 0)])
+}
+
+// text implements Text and Strip; repl says whether a rejected character
+// leaves a "?" (Text) or nothing (Strip).
+func text(s string, keepNewlines, repl bool) string {
+	mark := func(b *strings.Builder) {
+		if repl {
+			b.WriteByte('?')
+		}
+	}
 	clean := true
 	for i := 0; i < len(s); i++ {
 		if c := s[i]; c < 0x20 && c != '\t' && (c != '\n' || !keepNewlines) || c >= 0x7f {
@@ -35,7 +65,7 @@ func Text(s string, keepNewlines bool) string {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
 		case r == utf8.RuneError && size <= 1:
-			b.WriteByte('?')
+			mark(&b)
 			i += max(size, 1)
 		case r == 0x1b: // ESC
 			i = skipEscape(s, i+1)
@@ -47,7 +77,7 @@ func Text(s string, keepNewlines bool) string {
 			b.WriteRune(r)
 			i += size
 		case r < 0x20 || r == 0x7f || (r >= 0x80 && r <= 0x9f) || spoofing(r):
-			b.WriteByte('?')
+			mark(&b)
 			i += size
 		default:
 			b.WriteString(s[i : i+size])
