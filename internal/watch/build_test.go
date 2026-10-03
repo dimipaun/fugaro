@@ -1,0 +1,374 @@
+package watch
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/rtdb"
+)
+
+var t0 = time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+
+func ms(t time.Time) int64 { return t.UnixMilli() }
+
+const usd = budget.Micros(1_000_000)
+
+func put(t *testing.T, s *State, src Source, path, data string, at time.Time) {
+	t.Helper()
+	if err := s.Apply(src, rtdb.Event{Type: "put", Path: path, Data: json.RawMessage(data)}, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func newState(t *testing.T) *State {
+	s := NewState()
+	s.SetDay(budget.Day(t0))
+	return s
+}
+
+func agent(repo, title string, extra string) string {
+	return fmt.Sprintf(`{"repo":%q,"title":%q,"requestedBy":"a@b.c","startedAt":%d,"updatedAt":%d%s}`,
+		repo, title, ms(t0.Add(-10*time.Minute)), ms(t0), extra)
+}
+
+func TestBuildGroupsByRepo(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{
+	 "acme%2Fapp":{"r2":`+agent("acme/app", "second", `,"auth":"api-key","spent":2000000`)+`,"r1":`+agent("acme/app", "first", `,"coder":"opus","reviewer":"sonnet","round":2,"stage":"coding","verify":"tests"`)+`},
+	 "lib":{"x":`+agent("lib", "t", "")+`}}`, t0)
+	put(t, s, SrcRepos, "/", `{"acme%2Fapp":{"counted":3000000,"spent":2000000},"lib":{"spent":500000}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":4000000,"spent":2500000,"notional":100}`, t0)
+	put(t, s, SrcConfig, "/", `{"mode":"enforce","caps":{"global":{"dailyMicros":10000000},"defaults":{"repoDailyMicros":6000000},"repos":{"lib":{"dailyMicros":1000000}}}}`, t0)
+	v := Build(s, t0, Config{})
+	if v.Mode != "enforce" || v.Day != "2026-10-03" {
+		t.Fatalf("mode/day %q %q", v.Mode, v.Day)
+	}
+	if len(v.Repos) != 2 || v.Repos[0].Name != "acme/app" || v.Repos[0].Slug != "acme%2Fapp" {
+		t.Fatalf("repos %+v", v.Repos)
+	}
+	a := v.Repos[0]
+	if len(a.Runs) != 2 || a.Runs[0].Run != "r1" || a.Runs[1].Run != "r2" {
+		t.Fatalf("runs %+v", a.Runs)
+	}
+	r1 := a.Runs[0]
+	if r1.Round != "2" || r1.Stage != "coding" || r1.Models != "opus / sonnet" || r1.Verify != "tests" {
+		t.Fatalf("r1 %+v", r1)
+	}
+	if a.Bar.Cap != 6*usd || !a.Bar.Has || int(a.Bar.Percent) != 50 {
+		t.Fatalf("default cap bar %+v", a.Bar)
+	}
+	if lib := v.Repos[1]; lib.Bar.Cap != usd || int(lib.Bar.Percent) != 0 && lib.Bar.Used != 0 {
+		t.Fatalf("lib bar %+v", lib.Bar)
+	}
+	p := v.Project
+	if p.Runs != 3 || p.Counted != 4*usd || p.Bar.Cap != 10*usd {
+		t.Fatalf("project %+v", p)
+	}
+	if p.RunHours < 0.49 || p.RunHours > 0.51 { // 3 runs * 10 min
+		t.Fatalf("run hours %v", p.RunHours)
+	}
+}
+
+func TestCapBarMissingCap(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcRepos, "/", `{"r":{"counted":5000000}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":5000000}`, t0)
+	v := Build(s, t0, Config{})
+	if v.Project.Bar.Has || v.Repos[0].Bar.Has {
+		t.Fatalf("no cap must not be a bar: %+v %+v", v.Project.Bar, v.Repos[0].Bar)
+	}
+	// A zero cap is a cap (everything is over it), not "no cap".
+	put(t, s, SrcConfig, "/", `{"caps":{"global":{"dailyMicros":0}}}`, t0)
+	if b := Build(s, t0, Config{}).Project.Bar; !b.Has || b.Percent < 100 {
+		t.Fatalf("zero cap %+v", b)
+	}
+}
+
+func TestNotionalNeverInCapBar(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcRepos, "/", `{"r":{"counted":1000000,"spent":1000000,"notional":9000000}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":1000000,"spent":1000000,"notional":9000000}`, t0)
+	put(t, s, SrcConfig, "/", `{"caps":{"global":{"dailyMicros":10000000},"defaults":{"repoDailyMicros":10000000}}}`, t0)
+	put(t, s, SrcAgents, "/", `{"r":{"o":`+agent("r", "t", `,"auth":"oauth","spent":9000000`)+`}}`, t0)
+	v := Build(s, t0, Config{})
+	for _, b := range []Bar{v.Project.Bar, v.Repos[0].Bar} {
+		if b.Used != usd || int(b.Percent) != 10 {
+			t.Fatalf("bar %+v includes notional", b)
+		}
+	}
+	if v.Repos[0].Notional != 9*usd || v.Project.Notional != 9*usd {
+		t.Fatal("notional must still be reported")
+	}
+	if r := v.Repos[0].Runs[0]; !r.Notional || r.Spent != 9*usd {
+		t.Fatalf("oauth run %+v", r)
+	}
+}
+
+func spend(t *testing.T, s *State, at time.Time, spent int64) {
+	put(t, s, SrcGlobal, "/", fmt.Sprintf(`{"spent":%d}`, spent), at)
+}
+
+func TestBurnWindow(t *testing.T) {
+	min := func(n float64) time.Time { return t0.Add(time.Duration(n * float64(time.Minute))) }
+	s := newState(t)
+
+	// Empty window.
+	if _, ok := s.Burn("", t0); ok {
+		t.Fatal("no samples, no rate")
+	}
+	spend(t, s, min(0), 0)
+	if _, ok := s.Burn("", min(0.5)); ok {
+		t.Fatal("first 60 s show no rate")
+	}
+	spend(t, s, min(2), 2_000_000)
+	if per, ok := s.Burn("", min(2)); !ok || per != 1_000_000 {
+		t.Fatalf("rate %v %v, want $1/min", per, ok)
+	}
+	// A flat stretch dilutes the rate: the window ends at now.
+	if per, ok := s.Burn("", min(4)); !ok || per != 500_000 {
+		t.Fatalf("flat rate %v %v", per, ok)
+	}
+	// Samples older than five minutes leave the window.
+	spend(t, s, min(8), 2_000_000)
+	spend(t, s, min(9), 4_000_000)
+	// Window at minute 9 holds the samples of minutes 8 and 9: $2 in 1 min.
+	if per, ok := s.Burn("", min(9)); !ok || per != 2_000_000 {
+		t.Fatalf("windowed rate %v %v", per, ok)
+	}
+
+	// A counter that goes back (midnight, a rewrite) restarts the window;
+	// it is never a negative rate.
+	spend(t, s, min(10), 100)
+	if per, ok := s.Burn("", min(10.5)); ok {
+		t.Fatalf("after a reset: %v", per)
+	}
+	if per, ok := s.Burn("", min(12)); !ok || per < 0 {
+		t.Fatalf("after warmup: %v %v", per, ok)
+	}
+
+	// New day and reconnect start empty.
+	s.SetDay(s.Day + 1)
+	if _, ok := s.Burn("", min(13)); ok {
+		t.Fatal("SetDay clears the window")
+	}
+	spend(t, s, min(13), 1)
+	s.Reconnected()
+	if _, ok := s.Burn("", min(20)); ok {
+		t.Fatal("Reconnected clears the window")
+	}
+}
+
+func TestBurnFast(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcConfig, "/", `{"caps":{"global":{"dailyMicros":80000000}}}`, t0) // $10/h default alert
+	spend(t, s, t0, 0)
+	spend(t, s, t0.Add(2*time.Minute), 4_000_000) // $2/min = $120/h
+	v := Build(s, t0.Add(2*time.Minute), Config{})
+	if !v.Project.Burn.Known || !v.Project.Burn.Fast {
+		t.Fatalf("%+v", v.Project.Burn)
+	}
+	hi := 200 * usd
+	if Build(s, t0.Add(2*time.Minute), Config{BurnAlertPerHour: &hi}).Project.Burn.Fast {
+		t.Fatal("configured alert ignored")
+	}
+	// No cap, no alert: never fast.
+	s2 := newState(t)
+	spend(t, s2, t0, 0)
+	spend(t, s2, t0.Add(2*time.Minute), 4_000_000)
+	if Build(s2, t0.Add(2*time.Minute), Config{}).Project.Burn.Fast {
+		t.Fatal("fast without a cap")
+	}
+}
+
+func TestStuckClassification(t *testing.T) {
+	at := func(d time.Duration) int64 { return ms(t0.Add(d)) }
+	tests := []struct {
+		name  string
+		extra string // entry JSON fields
+		upd   time.Duration
+		want  Health
+		dl    Deadline
+	}{
+		{"fresh", ``, -10 * time.Second, HealthOK, DeadlineOK},
+		{"edge 60s is ok", ``, -60 * time.Second, HealthOK, DeadlineOK},
+		{"silent", ``, -61 * time.Second, HealthSilent, DeadlineOK},
+		{"edge 180s silent", ``, -180 * time.Second, HealthSilent, DeadlineOK},
+		{"lost", ``, -181 * time.Second, HealthLost, DeadlineOK},
+		{"amber at 80%", fmt.Sprintf(`,"stageStartedAt":%d,"stageDeadline":%d`, at(-81*time.Second), at(19*time.Second)), 0, HealthOK, DeadlineNear},
+		{"not yet amber", fmt.Sprintf(`,"stageStartedAt":%d,"stageDeadline":%d`, at(-79*time.Second), at(21*time.Second)), 0, HealthOK, DeadlineOK},
+		{"over", fmt.Sprintf(`,"stageStartedAt":%d,"stageDeadline":%d`, at(-200*time.Second), at(-time.Second)), 0, HealthOK, DeadlineOver},
+		{"deadline without stage start", fmt.Sprintf(`,"stageDeadline":%d`, at(time.Hour)), 0, HealthOK, DeadlineOK},
+		{"over without stage start", fmt.Sprintf(`,"stageDeadline":%d`, at(-time.Second)), 0, HealthOK, DeadlineOver},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newState(t)
+			e := fmt.Sprintf(`{"repo":"r","requestedBy":"x","startedAt":%d,"updatedAt":%d%s}`, at(-time.Hour), at(tt.upd), tt.extra)
+			put(t, s, SrcAgents, "/", `{"r":{"a":`+e+`}}`, t0)
+			r := Build(s, t0, Config{}).Repos[0].Runs[0]
+			if r.Health != tt.want || r.Deadline != tt.dl {
+				t.Fatalf("got health %v deadline %v, want %v %v", r.Health, r.Deadline, tt.want, tt.dl)
+			}
+		})
+	}
+	// No heartbeat yet: judged from the start.
+	s := newState(t)
+	put(t, s, SrcAgents, "/", fmt.Sprintf(`{"r":{"a":{"repo":"r","requestedBy":"x","startedAt":%d}}}`, at(-5*time.Minute)), t0)
+	if r := Build(s, t0, Config{}).Repos[0].Runs[0]; r.Health != HealthLost {
+		t.Fatalf("no updatedAt: %v", r.Health)
+	}
+	// No timestamps at all: no flag.
+	s = newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":{"repo":"r","requestedBy":"x"}}}`, t0)
+	if r := Build(s, t0, Config{}).Repos[0].Runs[0]; r.Health != HealthOK || r.HasAge {
+		t.Fatalf("no timestamps: %+v", r)
+	}
+}
+
+func TestHostileTitlesSanitized(t *testing.T) {
+	hostile := []string{
+		"a\x1b[2Jb", "a\x1b]52;c;ZXZpbA==\x07b", "a\x1b]8;;http://x\x1b\\link\x1b]8;;\x1b\\", "a\u009b2Jb",
+		"x‮evil", "a​b", "line1\nline2", "a\rb", "a\x00b", "bad\xffutf",
+		strings.Repeat("A", 10_000), strings.Repeat("\x1b[31m", 3000) + "z", strings.Repeat("é", 10_000),
+	}
+	for i, h := range hostile {
+		s := newState(t)
+		entry := func(f string) string {
+			j, _ := json.Marshal(h)
+			return fmt.Sprintf(`{"repo":%s,"title":%s,"stage":%s,"verify":%s,"coder":%s,"reviewer":%s,"auth":%s,"halted":%s,"requestedBy":"x"}`, j, j, j, j, j, j, j, j)
+		}
+		j, _ := json.Marshal(h)
+		put(t, s, SrcAgents, "/", fmt.Sprintf(`{%s:{%s:%s}}`, j2(h), j2(h), entry("")), t0)
+		put(t, s, SrcConfig, "/", fmt.Sprintf(`{"kill":{"global":{"on":true,"by":%s,"reason":%s,"at":1},"repos":{%s:{"on":true,"by":%s,"reason":%s}}},"mode":%s}`, j, j, j2(h), j, j, j), t0)
+		s.Apply(SrcConfig, rtdb.Event{Type: "error", Err: errors.New(h)}, t0)
+		v := Build(s, t0, Config{})
+
+		var all []string
+		all = append(all, v.Mode, v.Conn.Reason, v.Project.Kill.By, v.Project.Kill.Reason)
+		for _, b := range v.Repos {
+			all = append(all, b.Name, b.Kill.By, b.Kill.Reason) // Slug is the raw wire key, for paths only
+			for _, r := range b.Runs {
+				all = append(all, r.Run, r.Title, r.Stage, r.Round, r.Verify, r.Models, r.Auth, r.Halted)
+			}
+		}
+		for _, f := range all {
+			for _, r := range f {
+				if r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x200b || r == 0x202e {
+					t.Fatalf("case %d: %q holds %U", i, f, r)
+				}
+			}
+			if n := len([]rune(f)); n > maxText+1 {
+				t.Fatalf("case %d: %d runes", i, n)
+			}
+			if strings.Contains(f, "]52;") || strings.Contains(f, "[2J") && strings.Contains(f, "\x1b") {
+				t.Fatalf("case %d: escape survived in %q", i, f)
+			}
+		}
+	}
+}
+
+// j2 is h as a JSON object key (RTDB keys cannot hold control characters on
+// the wire, but a hostile writer's key reaches Build as whatever Unkey gives).
+func j2(h string) string { j, _ := json.Marshal(budget.Key(h)); return string(j) }
+
+func TestAbsentFieldsShowDash(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":{"repo":"r","requestedBy":"x"}}}`, t0)
+	r := Build(s, t0, Config{}).Repos[0].Runs[0]
+	for name, v := range map[string]string{"title": r.Title, "stage": r.Stage, "round": r.Round, "verify": r.Verify, "models": r.Models, "auth": r.Auth} {
+		if v != "-" {
+			t.Errorf("%s = %q, want -", name, v)
+		}
+	}
+	if r.HasSpent || r.Halted != "" || r.Notional {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestKilledFirst(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcRepos, "/", `{"big":{"spent":9000000},"mid":{"spent":5000000},"dead":{"spent":1}}`, t0)
+	put(t, s, SrcConfig, "/", `{"kill":{"repos":{"dead":{"on":true,"by":"me","at":1000,"reason":"why"},"off":{"on":false}}}}`, t0)
+	v := Build(s, t0, Config{})
+	var order []string
+	for _, b := range v.Repos {
+		order = append(order, b.Slug)
+	}
+	if strings.Join(order, ",") != "dead,big,mid" {
+		t.Fatalf("order %v (a switch that is off adds no block)", order)
+	}
+	if k := v.Repos[0].Kill; !k.On || k.By != "me" || k.Reason != "why" || !k.At.Equal(time.UnixMilli(1000)) {
+		t.Fatalf("%+v", k)
+	}
+	put(t, s, SrcConfig, "/", `{"kill":{"global":{"on":true,"by":"op"}}}`, t0)
+	if v := Build(s, t0, Config{}); !v.Project.Kill.On || v.Project.Kill.By != "op" {
+		t.Fatalf("%+v", v.Project.Kill)
+	}
+}
+
+func TestMalformedNodesDoNotPanic(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":"string","b":{"round":"x"},"c":{"repo":"r","spent":-5}}}`, t0)
+	put(t, s, SrcRepos, "/", `{"r":{"counted":"nan"}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":-9}`, t0)
+	put(t, s, SrcConfig, "/", `{"mode":5,"caps":{"global":"x"},"kill":{"global":3}}`, t0)
+	v := Build(s, t0, Config{})
+	if v.Project.Counted != 0 || v.Mode != "observe" || len(v.Repos) != 1 || len(v.Repos[0].Runs) != 1 || v.Repos[0].Runs[0].Spent != 0 {
+		t.Fatalf("%+v", v)
+	}
+}
+
+func TestConnection(t *testing.T) {
+	s := newState(t)
+	if c := Build(s, t0, Config{}).Conn; c.Kind != ConnOffline || c.Reason != "connecting" {
+		t.Fatalf("before first event: %+v", c)
+	}
+	s.Apply(SrcAgents, rtdb.Event{Type: "keep-alive"}, t0)
+	if c := Build(s, t0.Add(45*time.Second), Config{}).Conn; c.Kind != ConnLive || c.Age != 45*time.Second {
+		t.Fatalf("%+v", c)
+	}
+	if c := Build(s, t0.Add(46*time.Second), Config{}).Conn; c.Kind != ConnStale {
+		t.Fatalf("%+v", c)
+	}
+	s.Polling = true
+	s.Apply(SrcAgents, rtdb.Event{Type: "keep-alive"}, t0.Add(time.Minute))
+	if c := Build(s, t0.Add(time.Minute), Config{}).Conn; c.Kind != ConnPolling {
+		t.Fatalf("%+v", c)
+	}
+	s.Apply(SrcAgents, rtdb.Event{Type: "error", Err: fmt.Errorf("x: %w", rtdb.ErrUnavailable)}, t0.Add(time.Minute))
+	if c := Build(s, t0.Add(time.Minute), Config{}).Conn; c.Kind != ConnOffline || c.Age != 0 {
+		t.Fatalf("%+v", c)
+	}
+	s.Apply(SrcAgents, rtdb.Event{Type: "error", Err: fmt.Errorf("x: %w", rtdb.ErrPermission)}, t0.Add(time.Minute))
+	if c := Build(s, t0.Add(time.Minute), Config{}).Conn; c.Kind != ConnRefused {
+		t.Fatalf("%+v", c)
+	}
+	// Any later event clears it; the first put rebuilds the tree.
+	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`}}`, t0.Add(2*time.Minute))
+	if c := Build(s, t0.Add(2*time.Minute), Config{}).Conn; c.Kind != ConnPolling {
+		t.Fatalf("%+v", c)
+	}
+}
+
+// What finished during an outage is gone after the next put "/".
+func TestStatePutAfterReconnectReplacesTree(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`,"b":`+agent("r", "t", "")+`}}`, t0)
+	s.Apply(SrcAgents, rtdb.Event{Type: "error", Err: rtdb.ErrUnavailable}, t0)
+	put(t, s, SrcAgents, "/", `{"r":{"b":`+agent("r", "t", "")+`}}`, t0.Add(time.Minute))
+	if rs := Build(s, t0.Add(time.Minute), Config{}).Repos[0].Runs; len(rs) != 1 || rs[0].Run != "b" {
+		t.Fatalf("%+v", rs)
+	}
+}
+
+func TestBadEventDataIsReturned(t *testing.T) {
+	s := newState(t)
+	if err := s.Apply(SrcAgents, rtdb.Event{Type: "put", Path: "/", Data: json.RawMessage(`{`)}, t0); err == nil {
+		t.Fatal("want an error")
+	}
+}
