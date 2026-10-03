@@ -713,11 +713,11 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
 ## 7. `fugaro watch`
 
 - **Bubble Tea** (D13), with `lipgloss`, `bubbles` and `teatest` for golden frames. These are pinned and reviewed as new dependencies.
-- **Data comes from three event streams** under the viewer's IAM token (A2): `/config`, `/spend/<today>` (re-subscribed at UTC midnight) and `/agents`. After more than 30 s without events, the header shows `⚠ live data stale`.
+- **Data comes from four event streams** under the viewer's IAM token (A2): `/config`, `/spend/<today>/global`, `/spend/<today>/repos` (both re-subscribed at UTC midnight; the per-run day shares are not needed) and `/agents`. After more than 45 s without any event, keep-alives included (the server sends one about every 30 s, so 30 s would flap), the header shows `⚠ live data stale`. *(Amended 2026-10-03: was three streams and 30 s.)*
 - **Layout.** This follows the spec: a global line, then each repository with its cap bar and burn rate, then its runs with stage, round, models, spend and age.
   - A killed repository shows `KILLED by <who> <time> "<reason>"`.
   - `oauth` runs show their spend as notional.
-- **Burn rate** is computed client-side over a rolling 5-minute window of `counted`, and highlighted above `watch.burn_alert` (default: the daily cap spread over 8 hours).
+- **Burn rate** is computed client-side over a rolling 5-minute window of `spent` (heartbeats report it every 15 s; `counted` jumps by whole leases, so its slope is lumpy; *amended 2026-10-03*), and highlighted above `watch.burn_alert` (default: the daily cap spread over 8 hours).
 - **Stuck runs.** A run is flagged silent or lost (§6.5), or amber past 80% of its stage deadline. `l` cross-checks a lost run against Cloud Run executions.
 - **Keys.**
   - `k` kills everything, after you type `kill`.
@@ -725,6 +725,7 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
   - `r` and `R` resume, after you type the repository name, or `resume` for global.
   - Writes use the viewer's IAM. Without admin rights, the key shows "you are not a budget admin".
 - **Untrusted text.** Every job-written field is stripped of control and escape characters and clipped, so a compromised run can't inject terminal escapes.
+- **M9c's settled details** (2026-10-03) are in [the M9c plan](../plans/2026-10-03-m9c-fugaro-watch.md): reconnect and polling fallback, the `stale` and `outage` displays, stuck thresholds, narrow terminals, `--json` and plain output, the kill and resume flow, the model structure and tests. `fugaro ls --watch` stays. The registry's live shape has no `round` or `spent` until a run reports them; watch shows `-` for an absent field. `/config` is readable by viewers over IAM (the rules deny every token read of `fugaro/*`, but IAM bypasses rules).
 - **Without Firebase,** watch polls `ls` data every 10 s: runs grouped the same way, with each run's cost from `result.json`, no caps, and the kill keys disabled.
 
 ## 8. `fugaro budget`
