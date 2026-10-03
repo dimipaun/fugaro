@@ -1,6 +1,6 @@
 {
   "name": "fugaro",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Skills for Fugaro: onboard a repository (fugaro.yaml and its image), launch a run, check status, read logs, diagnose a run and follow up a Fugaro pull request.",
   "author": { "name": "Dimi Paun" },
   "repository": "https://github.com/dimipaun/fugaro",
