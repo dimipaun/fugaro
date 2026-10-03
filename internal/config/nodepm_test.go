@@ -94,8 +94,8 @@ func TestDefaultCache(t *testing.T) {
 	if err != nil || len(got) != 1 || !slices.Equal(got[0].Key, []string{"yarn.lock"}) || !slices.Equal(got[0].Paths, []string{"~/.yarn/berry/cache"}) {
 		t.Fatalf("DefaultCache = %+v, %v", got, err)
 	}
-	if got, err := DefaultCache("server-jvm", root); got != nil || err != nil {
-		t.Fatalf("server-jvm DefaultCache = %+v, %v", got, err)
+	if got, err := DefaultCache("java-services", root); got != nil || err != nil {
+		t.Fatalf("java-services DefaultCache = %+v, %v", got, err)
 	}
 }
 

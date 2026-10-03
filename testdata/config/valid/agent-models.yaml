@@ -11,4 +11,4 @@ agent:
   max_output_tokens: { coder: 64000, reviewer: 32000 }
   max_run_tokens: 5000000
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

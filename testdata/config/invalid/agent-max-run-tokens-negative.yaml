@@ -4,4 +4,4 @@ git: { provider: github }
 agent:
   max_run_tokens: -5
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

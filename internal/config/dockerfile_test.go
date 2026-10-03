@@ -59,7 +59,7 @@ func TestLintDockerfileRejects(t *testing.T) {
 		{"no FROM", "RUN true\n", "has no FROM instruction"},
 		{"foreign base", "FROM node:24\nRUN git clone x /work/repo\n", "must build its final stage FROM ${FUGARO_BASE} or ghcr.io/dimipaun/fugaro-web-node, not node:24"},
 		{"final stage not on base", validRepoDockerfile + "FROM ubuntu:24.04\nRUN true /work/repo\n", "not ubuntu:24.04"},
-		{"wrong base", "FROM ghcr.io/dimipaun/fugaro-server-jvm:1\nRUN git clone x /work/repo\n", "builds FROM fugaro-server-jvm, but the workflow's base is web-node"},
+		{"wrong base", "FROM ghcr.io/dimipaun/fugaro-java-services:1\nRUN git clone x /work/repo\n", "builds FROM fugaro-java-services, but the workflow's base is web-node"},
 		{"undeclared arg", "FROM ${FUGARO_BASE}\nRUN git clone x /work/repo\n", "without declaring ARG FUGARO_BASE"},
 		{"no checkout", "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN npm ci\n", "must bake the checkout into /work/repo"},
 		{"workdir moved", validRepoDockerfile + "WORKDIR /app\n", "must leave WORKDIR at /work/repo, not /app"},

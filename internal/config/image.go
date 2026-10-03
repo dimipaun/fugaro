@@ -9,7 +9,6 @@ import (
 
 var (
 	nodeVersionRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+\.[0-9]+)?$`)
-	jdkVersionRE  = regexp.MustCompile(`^[0-9]+$`)
 	aptPackageRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$`)
 )
 
@@ -36,12 +35,7 @@ func validateImage(p string, w Workflow) []Problem {
 		}
 	}
 	if img.JDK != "" {
-		switch {
-		case w.Base != "server-jvm":
-			add(p+".image.jdk", "only applies to base server-jvm")
-		case !jdkVersionRE.MatchString(img.JDK):
-			add(p+".image.jdk", "must be a major version such as 21")
-		}
+		add(p+".image.jdk", "is not supported: the java-services base ships a pinned JDK (25), and no base installs another")
 	}
 	if img.SkipBuildScripts && w.Base != "web-node" {
 		add(p+".image.skip_build_scripts", "only applies to base web-node")

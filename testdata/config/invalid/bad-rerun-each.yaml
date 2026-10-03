@@ -3,5 +3,5 @@ project: aurora
 git: { provider: github }
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands: { build: make, test: make test, rerun_failed: { command: make test, each: "--tests" } }

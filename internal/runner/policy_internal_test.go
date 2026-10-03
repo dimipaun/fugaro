@@ -68,7 +68,7 @@ func TestDefaultBranchFileNotShadowedByTag(t *testing.T) {
 // and `fugaro validate` share: every policy key is in it.
 func TestFileLayerCarriesEveryPolicyKey(t *testing.T) {
 	cfg, ps := config.Parse([]byte("version: 1\nproject: x\ngit: { provider: github }\nagent:\n  max_run_tokens: 7\n  max_output_tokens: { coder: 11, reviewer: 13 }\n" +
-		"budget: { mode: observe, per_run_usd: 3, per_day_usd: 9, allowed_models: [claude-haiku-4-5] }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"))
+		"budget: { mode: observe, per_run_usd: 3, per_day_usd: 9, allowed_models: [claude-haiku-4-5] }\nworkflows:\n  s: { base: java-services, commands: { build: make, test: make } }\n"))
 	if len(ps) > 0 {
 		t.Fatal(ps)
 	}

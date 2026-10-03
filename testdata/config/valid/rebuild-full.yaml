@@ -12,6 +12,6 @@ workflows:
       base: false
       paths: ["scripts/**", "*.gradle"]
   server:
-    base: server-jvm
+    base: java-services
     commands: { build: ./gradlew assemble, test: ./gradlew test }
     rebuild: { check: off, max_age: 0 }

@@ -4,7 +4,7 @@ git:
   provider: github
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands:
       build: ./gradlew assemble
       test: ./gradlew test

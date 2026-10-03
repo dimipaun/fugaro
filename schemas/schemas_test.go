@@ -90,7 +90,7 @@ func TestFugaroSchemaCorpus(t *testing.T) {
 
 func TestSchemaBudgetBlock(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
-	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: server-jvm, commands: { build: make, test: make } }\n"
+	base := "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  s: { base: java-services, commands: { build: make, test: make } }\n"
 	for _, c := range []struct {
 		budget string
 		ok     bool
@@ -241,7 +241,7 @@ func TestResultSchemaImageBlock(t *testing.T) {
 func TestFugaroSchemaReservesTheSameEnv(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	doc := func(env string) []byte {
-		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n    base: server-jvm\n" +
+		return []byte("version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  server:\n    base: java-services\n" +
 			"    commands: { build: make, test: make test }\n    secrets: [{ name: tok, env: " + env + " }]\n")
 	}
 	if err := sch.Validate(yamlInstance(t, doc("NPM_TOKEN"))); err != nil {

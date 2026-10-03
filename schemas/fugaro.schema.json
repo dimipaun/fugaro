@@ -146,19 +146,15 @@
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
-          "if": { "required": ["base"], "properties": { "base": { "const": "web-node" } } },
-          "then": { "properties": { "image": { "not": { "required": ["jdk"] } } } }
-        },
-        {
           "if": { "required": ["base"], "properties": { "base": { "const": "go" } } },
           "then": {
             "properties": {
-              "image": { "not": { "anyOf": [{ "required": ["node"] }, { "required": ["jdk"] }] }, "properties": { "skip_build_scripts": { "const": false } } }
+              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
             }
           }
         },
         {
-          "if": { "required": ["base"], "properties": { "base": { "const": "server-jvm" } } },
+          "if": { "required": ["base"], "properties": { "base": { "const": "java-services" } } },
           "then": {
             "properties": {
               "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
@@ -167,13 +163,12 @@
         }
       ],
       "properties": {
-        "base": { "enum": ["go", "server-jvm", "web-node"] },
+        "base": { "enum": ["go", "java-services", "web-node"] },
         "image": {
           "type": "object",
           "additionalProperties": false,
           "properties": {
             "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
-            "jdk": { "type": ["string", "integer"], "pattern": "^[0-9]+$" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": {
               "type": "array",

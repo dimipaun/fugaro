@@ -180,7 +180,7 @@ workflows:
 	// base: only web-node is known today, so a different base is compared
 	// on the canonical form directly.
 	a, _ := json.Marshal(imageConfig{Base: "web-node"})
-	b, _ := json.Marshal(imageConfig{Base: "server-jvm"})
+	b, _ := json.Marshal(imageConfig{Base: "java-services"})
 	if hashOf(a) == hashOf(b) {
 		t.Error("base does not change the hash")
 	}

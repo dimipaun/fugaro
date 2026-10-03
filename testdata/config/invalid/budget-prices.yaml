@@ -6,4 +6,4 @@ budget:
   per_run_usd: 5
   model_prices: { claude-opus-5-5: { input_per_m: 0, output_per_m: 0 } }
 workflows:
-  server: { base: server-jvm, commands: { build: make, test: make test } }
+  server: { base: java-services, commands: { build: make, test: make test } }

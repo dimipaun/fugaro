@@ -3,6 +3,6 @@ project: aurora
 git: { provider: github }
 workflows:
   server:
-    base: server-jvm
+    base: java-services
     commands: { build: make, test: make test }
     secrets: [{ name: tok, env: GIT_TOKEN }]

@@ -411,7 +411,7 @@ func TestDockerfileSkipBuildScripts(t *testing.T) {
 }
 
 func TestRenderRefusesUnpublishedBase(t *testing.T) {
-	if _, err := Render(RenderInput{Workflow: "server", Base: "server-jvm"}); err == nil || !strings.Contains(err.Error(), "server-jvm has no published image yet") {
+	if _, err := Render(RenderInput{Workflow: "server", Base: "rust"}); err == nil || !strings.Contains(err.Error(), "rust has no published image yet") {
 		t.Fatalf("err = %v", err)
 	}
 }
@@ -616,6 +616,16 @@ func TestRenderGoBase(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s := string(out); !strings.Contains(s, "go mod download") || strings.Contains(s, "install-node") {
+		t.Errorf("rendered Dockerfile:\n%s", s)
+	}
+}
+
+func TestRenderJavaServicesBase(t *testing.T) {
+	out, err := Render(RenderInput{Workflow: "server", Base: "java-services", Image: config.Image{Apt: []string{"python3"}, Setup: []string{"./gradlew.sh testClasses"}}, Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(out); !strings.Contains(s, "python3") || !strings.Contains(s, "./gradlew.sh testClasses") || strings.Contains(s, "install-node") || strings.Contains(s, "install-jdk") {
 		t.Errorf("rendered Dockerfile:\n%s", s)
 	}
 }

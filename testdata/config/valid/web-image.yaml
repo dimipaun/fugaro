@@ -10,6 +10,6 @@ workflows:
       setup: ["npx playwright install --with-deps chromium"]
     commands: { build: npm run build, test: npm test }
   server:
-    base: server-jvm
-    image: { jdk: 21 }
+    base: java-services
+    image: { apt: [python3] }
     commands: { build: ./gradlew assemble, test: ./gradlew test }
