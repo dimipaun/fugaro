@@ -21,17 +21,23 @@ import (
 const rollSlug = "acme-app"
 
 type fakeFacts struct {
-	mu    sync.Mutex
-	facts map[int64][]budget.RunFact
-	repos map[string]string
-	err   error
-	calls int
+	mu     sync.Mutex
+	facts  map[int64][]budget.RunFact
+	repos  map[string]string
+	err    error
+	calls  int
+	onCall func(n int) error // called before each read; may fail it
 }
 
 func (f *fakeFacts) Facts(ctx context.Context, from, to int64) (map[int64][]budget.RunFact, map[string]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	if f.onCall != nil {
+		if err := f.onCall(f.calls); err != nil {
+			return nil, nil, err
+		}
+	}
 	return f.facts, f.repos, f.err
 }
 
@@ -806,5 +812,84 @@ func TestSkewNeedsServerTimeAndUsesTheEarlierClock(t *testing.T) {
 	e.mustRoll(budget.RolloverOptions{})
 	if !isFinal(e.doc(d, rollSlug)) {
 		t.Fatal("not final once both clocks are past 00:00 of D+2")
+	}
+}
+
+// The bucket is slow: the pass has finished the days before the one it was cut
+// off at (each day's facts are read just before the day is written).
+func TestCutOffPassKeepsEarlierDays(t *testing.T) {
+	e := newRollEnv(t)
+	today := e.today()
+	for d := today - 12; d < today-8; d++ {
+		e.seedDay(d, rollSlug, 1_000_000+d, fmt.Sprintf("20261001-%06d-aaaa", d-today+20))
+	}
+	wall := time.Now()
+	e.r.Wall = func() time.Time { return wall }
+	e.r.StartLimit = wall.Add(25 * time.Minute)
+	e.facts.onCall = func(n int) error { wall = wall.Add(10 * time.Minute); return nil } // each day takes 10 minutes
+	rep, err := e.roll(budget.RolloverOptions{})
+	if err != nil || !rep.More || len(rep.Days) != 3 {
+		t.Fatalf("rep = %+v, err = %v: want 3 days then more remain", rep.Days, err)
+	}
+	if !strings.Contains(rep.Summary(), "more days remain") {
+		t.Fatal(rep.Summary())
+	}
+	for d := today - 12; d < today-9; d++ {
+		if !isFinal(e.doc(d, rollSlug)) || e.dayInDB(d) {
+			t.Fatalf("day %s was not finished", budget.DayDate(d))
+		}
+	}
+	if e.doc(today-9, rollSlug) != nil {
+		t.Fatal("a day was started after the limit")
+	}
+	// The next pass continues.
+	e.facts.onCall = nil
+	e.r.StartLimit = time.Time{}
+	e.mustRoll(budget.RolloverOptions{})
+	if !isFinal(e.doc(today-9, rollSlug)) || e.dayInDB(today-9) {
+		t.Fatal("the next pass did not continue")
+	}
+}
+
+// A bucket that fails on the third day (killed or down) leaves the first two written.
+func TestBucketFailureMidwayKeepsEarlierDays(t *testing.T) {
+	e := newRollEnv(t)
+	today := e.today()
+	for d := today - 12; d < today-9; d++ {
+		e.seedDay(d, rollSlug, 1_000_000+d, fmt.Sprintf("20261001-%06d-aaaa", d-today+20))
+	}
+	e.facts.onCall = func(n int) error {
+		if n == 3 {
+			return errors.New("bucket killed")
+		}
+		return nil
+	}
+	_, err := e.roll(budget.RolloverOptions{})
+	if err == nil || budget.OnlyRefusals(err) {
+		t.Fatalf("err = %v", err)
+	}
+	if !isFinal(e.doc(today-12, rollSlug)) || !isFinal(e.doc(today-11, rollSlug)) || e.doc(today-10, rollSlug) != nil || !e.dayInDB(today-10) {
+		t.Fatal("earlier days were not kept, or the failed day was touched")
+	}
+}
+
+func TestRemovedCapIsClearedAndRerunWritesNothing(t *testing.T) {
+	e := newRollEnv(t)
+	d := e.today() - 1
+	e.seedDay(d, rollSlug, 1_000_000, "20261019-100000-aaaa")
+	e.db.Set("config/caps/repos/"+rollSlug, map[string]any{"dailyMicros": 9_000_000})
+	e.mustRoll(budget.RolloverOptions{})
+	if e.doc(d, rollSlug)["capDailyMicros"] != int64(9_000_000) {
+		t.Fatal("cap not recorded")
+	}
+	e.db.Set("config/caps/repos/"+rollSlug, nil)
+	e.mustRoll(budget.RolloverOptions{})
+	if _, ok := e.doc(d, rollSlug)["capDailyMicros"]; ok {
+		t.Fatal("a removed cap stayed in the document")
+	}
+	n := e.patches()
+	e.mustRoll(budget.RolloverOptions{})
+	if e.patches() != n {
+		t.Fatal("an unchanged document was rewritten")
 	}
 }

@@ -86,6 +86,19 @@ type Roller struct {
 	// ServerNow is the database's time (default: the RTDB client's, from its
 	// Date header); tests replace it.
 	ServerNow func() (time.Time, bool)
+	// StartLimit, when set, stops the pass from starting a new day after that
+	// wall-clock time (the job's timeout minus a margin); the report says
+	// more days remain and the next pass continues.
+	StartLimit time.Time
+	// Wall is the wall clock for StartLimit (default time.Now).
+	Wall func() time.Time
+}
+
+func (r *Roller) wall() time.Time {
+	if r.Wall != nil {
+		return r.Wall()
+	}
+	return time.Now()
 }
 
 // RolloverOptions selects a single day and/or a forced rewrite.
@@ -107,6 +120,7 @@ type DayReport struct {
 
 // RolloverReport is the whole pass.
 type RolloverReport struct {
+	More        bool // the pass stopped early (time); the next pass continues
 	NoFirestore bool // no Firestore database exists yet: nothing was done
 	Days        []DayReport
 }
@@ -126,7 +140,11 @@ func (r RolloverReport) Summary() string {
 			f++
 		}
 	}
-	return fmt.Sprintf("rollover: %d days, %d documents written, %d unchanged, %d days pruned, %d failed", len(r.Days), w, u, p, f)
+	more := ""
+	if r.More {
+		more = "; more days remain, the next pass continues"
+	}
+	return fmt.Sprintf("rollover: %d days, %d documents written, %d unchanged, %d days pruned, %d failed%s", len(r.Days), w, u, p, f, more)
 }
 
 // Line is the day's summary line.
@@ -255,16 +273,25 @@ func (r *Roller) Rollover(ctx context.Context, opt RolloverOptions) (RolloverRep
 		return rep, nil
 	}
 
-	facts, repoNames, err := r.Facts.Facts(ctx, days[0]-1, days[len(days)-1])
-	if err != nil {
-		return rep, fmt.Errorf("reading the runs bucket: %w", err)
-	}
-
 	var errs []error
 	for _, d := range days {
+		if !r.StartLimit.IsZero() && r.wall().After(r.StartLimit) {
+			rep.More = true // the next pass continues with the days still left
+			break
+		}
 		dr := DayReport{Day: d, Final: today >= d+2}
-		// A run lasts at most a day: the outcome nodes of d may hold a run that
-		// started on d-1, whose facts say it is not d's.
+		// Each day's facts are read just before the day is written, so a pass
+		// that is cut off has already finished the days before it. A run lasts
+		// at most a day: the outcome nodes of d may hold a run that started on
+		// d-1, whose facts say it is not d's.
+		facts, repoNames, err := r.Facts.Facts(ctx, d-1, d)
+		if err != nil {
+			err = fmt.Errorf("reading the runs bucket: %w", err)
+			dr.Err = err
+			errs = append(errs, fmt.Errorf("day %s: %w", DayDate(d), err))
+			rep.Days = append(rep.Days, dr)
+			break // the later days need the same bucket
+		}
 		dayFacts := append(append([]RunFact(nil), facts[d-1]...), facts[d]...)
 		in, err := r.input(d, spend, outcomes, runs, last, caps.Defaults, caps.Repos, dayFacts, repoNames)
 		var recs []DayRecord
@@ -513,6 +540,9 @@ func (r *Roller) put(ctx context.Context, rec DayRecord, now time.Time, final, f
 		}
 		if existing != nil && sameStored(*existing, want) {
 			return putUnchanged, nil
+		}
+		if want.CapDailyMicros == nil {
+			opts = append(opts, firestore.Clear("capDailyMicros")) // a cap removed since an earlier write
 		}
 		_, err = r.FS.Patch(ctx, SpendCollection, rec.DocID(), want.ToFields(), opts...)
 		if errors.Is(err, firestore.ErrPrecondition) {
