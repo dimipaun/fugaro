@@ -607,6 +607,21 @@ curl -fsS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat <toke
 | Sandbox PRs declined, branches deleted | |
 | Unverified (GitHub): A1, A4, A6, CODEOWNERS | still unverified |
 
+### Results of the first live pass (2026-10-03, Bitbucket sandbox, runner built at 7452450)
+
+Sandbox only; no reviewers configured there (its `fugaro.yaml` says the sandbox must never notify a person), so everything about reviewers at ready is **not** verified. Nothing was run on EdgeWeb.
+
+- **Passing run** (`20261003-074036-9e94`, PR #28): the draft appeared 31 s after launch (during the run), with **0 reviewers** and the status section; 10 s later, at the end, it flipped to ready and the section read `Ready for review`. The description kept the agent's text, the test plan and the report line.
+- **A2 confirmed:** the Bitbucket API's rendered description contains neither `fugaro:status` nor `[//]:`; only the visible `### Fugaro status` header and its text.
+- **A3, partly:** the PUT that flips draft to ready (title, description, draft re-sent) kept the description and applied the flip. The PUT carrying **reviewers** is still unverified (no reviewers in the sandbox).
+- **Failing task** (`20261003-074150-8461`, PR #29): the draft opened at the first verified round, the run ended `failed`, the PR stayed a draft with 0 reviewers and the section said why; `diagnose` shows the reason and the review finding, `ls` marks the PR `(draft)`.
+- **Budget halt after the first push** (kill switch, `20261003-074307-a4a8`, PR #30): the run ended `halted (kill_switch)` in about 9 s; the draft stayed with a `Halted` section (who and why; the `@` in the email is neutralised) and a comment with the recovery instruction. A launch while killed was refused earlier (M9b).
+- **Follow-up on that halted draft** (`fugaro run --pr 30`, `20261003-074440-5c41`): same PR by number; the section went `Halted` → `Follow-up running` → `Ready for review`, and the PR flipped from draft to ready.
+- **Graceful `cancel`** (`20261003-074536-d9f2`, PR #31): the cancel arrived 14 s before the run would have finished and the run completed (`succeeded`, PR ready): a harmless race, not a failure. A cancel that lands earlier is covered by the hermetic tests; re-run with an earlier cancel (right after the draft appears and while the agent is still in `implement`) if you want it live.
+- **`cancel --now`** (`20261003-074644-4eac`, PR #32): the execution was cancelled at once; the draft stayed (0 reviewers) with the section `Draft · stage review failed: context canceled`. Polish: the wording should say the run was cancelled.
+- **Not verified:** reviewers requested only at ready (A1/A3 reviewer PUT) and everything GitHub (A1, A4, A6, CODEOWNERS); the live stale-draft display (needs a crashed run).
+- **Sandbox PRs:** #28–#32 (and #27) were left OPEN for the owner to decline (the sandbox token can decline them with the commands above). Cost: about $1.1 of model notional on the subscription for the five runs of this pass; cloud spend under $0.05 (one image build, no other applies).
+
 ## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the
