@@ -101,7 +101,10 @@ type testClock struct {
 	t  time.Time
 }
 
-func newClock() *testClock { return &testClock{t: time.Date(2026, 10, 3, 14, 0, 0, 0, time.UTC)} }
+// newClock starts at the real time: the run's deadline is taken from this clock
+// while the stage contexts count against the wall clock, so a fixed date makes
+// every run time out once the wall clock passes it.
+func newClock() *testClock { return &testClock{t: time.Now().UTC().Truncate(time.Second)} }
 
 func (c *testClock) Now() time.Time {
 	c.mu.Lock()
