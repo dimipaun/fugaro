@@ -41,7 +41,7 @@ const (
 	// maxKillReason bounds a switch's reason, which watch shows.
 	maxKillReason = 200
 	// setAttempts bounds the ETag retries of one set, kill or resume.
-	setAttempts = 5
+	setAttempts = budget.SetAttempts
 	// staleAfter marks a registry entry whose runner has not heartbeaten
 	// for this long (the heartbeat is every 15 s).
 	staleAfter = 90 * time.Second
@@ -110,7 +110,7 @@ func clipRunes(s string, n int) string {
 
 // adminDenied says what a refused write means: D6.
 func adminDenied(lc *localcfg.Config) error {
-	return userErr("you are not a budget admin for project %s: only the GCP project's owners and editors and terraform.budget_admins may change caps and kill switches; ask one of them, or to be added", lc.Name)
+	return userErr("%s", budget.AdminDeniedText(lc.Name))
 }
 
 // dbErr classifies an error of a database call: a refusal is a user error
@@ -1059,53 +1059,49 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	}
 	out := cmd.OutOrStdout()
 	in := bufio.NewReader(cmd.InOrStdin())
-	for attempt := 1; attempt <= setAttempts; attempt++ {
-		var cur budget.Kill
-		etag, _, err := db.GetETag(ctx, path, &cur)
-		if err != nil {
-			return dbErr(lc, err, false)
-		}
-		if cur.On == kill {
-			if kill {
-				fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(cur.By), ms(cur.At), oneLine(cur.Reason))
-			} else {
-				fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
+	res, err := budget.SetKill(ctx, db, path, kill, me, o.reason, budget.KillHooks{
+		Confirm: func(budget.Kill) error {
+			switch {
+			case kill && o.all:
+				return confirmTyped(cmd, in, lc, o.yes, "this halts every run of the project and refuses new ones")
+			case !kill:
+				return confirmTyped(cmd, in, lc, o.yes, "this lets "+what+" start and continue runs again")
 			}
 			return nil
-		}
-		switch {
-		case kill && o.all:
-			if err := confirmTyped(cmd, in, lc, o.yes, "this halts every run of the project and refuses new ones"); err != nil {
-				return err
-			}
-		case !kill:
-			if err := confirmTyped(cmd, in, lc, o.yes, "this lets "+what+" start and continue runs again"); err != nil {
-				return err
-			}
-		}
-		next := budget.Kill{On: kill, By: me, At: budgetNow().UnixMilli(), Reason: o.reason}
-		err = db.PutIfMatch(ctx, path, etag, next)
-		if errors.Is(err, rtdb.ErrPrecondition) {
-			fmt.Fprintln(out, "changed by someone else meanwhile; reading it again")
-			continue
-		}
-		if err != nil {
-			return dbErr(lc, err, true)
-		}
+		},
+		Conflict: func() { fmt.Fprintln(out, "changed by someone else meanwhile; reading it again") },
+		Now:      budgetNow,
+	})
+	var ke *budget.KillError
+	switch {
+	case errors.As(err, &ke):
+		return dbErr(lc, err, ke.Write)
+	case errors.Is(err, budget.ErrKillContention):
+		return remote(fmt.Errorf("the kill switch kept changing under the write (%d attempts); run it again", setAttempts))
+	case err != nil:
+		return err
+	}
+	cur := res.Previous
+	if res.Already {
 		if kill {
-			fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
+			fmt.Fprintf(out, "%s is already killed (by %s at %s: %s); nothing changed\n", what, oneLine(cur.By), ms(cur.At), oneLine(cur.Reason))
 		} else {
-			fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
-			if !o.all {
-				var g budget.Kill
-				if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
-					fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
-				}
-			}
+			fmt.Fprintf(out, "%s is not killed; nothing changed\n", what)
 		}
 		return nil
 	}
-	return remote(fmt.Errorf("the kill switch kept changing under the write (%d attempts); run it again", setAttempts))
+	if kill {
+		fmt.Fprintf(out, "killed %s (by %s). Running runs halt within seconds; undo with fugaro budget resume\n", what, oneLine(me))
+	} else {
+		fmt.Fprintf(out, "resumed %s (by %s)\n", what, oneLine(me))
+		if !o.all {
+			var g budget.Kill
+			if _, err := db.Get(ctx, budget.PathKillGlobal, &g); err == nil && g.On {
+				fmt.Fprintf(out, "warning: the project-wide kill switch is still on (by %s): %s stays halted until fugaro budget resume --all\n", oneLine(g.By), what)
+			}
+		}
+	}
+	return nil
 }
 
 // ------------------------------------------------------------- prices

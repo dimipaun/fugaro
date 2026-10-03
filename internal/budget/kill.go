@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
 // killNode decodes a kill switch for a running run: a node that exists but
@@ -85,4 +87,94 @@ func (s *Session) watchKill(ctx context.Context, path, source string) {
 		case <-time.After(s.cfg.KillRestart):
 		}
 	}
+}
+
+// SetAttempts bounds the ETag retries of one SetKill (and of the CLI's other
+// conditional writes).
+const SetAttempts = 5
+
+// KillDB is the part of the database SetKill needs; *rtdb.Client is one.
+type KillDB interface {
+	GetETag(ctx context.Context, path string, out any) (etag string, found bool, err error)
+	PutIfMatch(ctx context.Context, path, etag string, v any) error
+}
+
+// ErrKillContention: the switch kept changing under SetAttempts writes.
+var ErrKillContention = errors.New("the kill switch kept changing under the write")
+
+// KillError is a failed read or write of a switch, so a caller can word a
+// refusal (a write the database denied) differently from a refused read.
+type KillError struct {
+	Write bool
+	Err   error
+}
+
+func (e *KillError) Error() string { return e.Err.Error() }
+func (e *KillError) Unwrap() error { return e.Err }
+
+// KillHooks lets a caller act between SetKill's steps. Both may be nil.
+type KillHooks struct {
+	// Confirm runs after the current value is read and found to differ from
+	// the wanted state, before every write attempt. Its error aborts SetKill
+	// and is returned unchanged; nothing is written.
+	Confirm func(prev Kill) error
+	// Conflict runs when the write lost an ETag race, before the re-read.
+	Conflict func()
+	// Now stamps the switch; nil is time.Now.
+	Now func() time.Time
+}
+
+// SetResult says what SetKill did.
+type SetResult struct {
+	Written  bool // the node was written
+	Already  bool // it was already in the wanted state; nothing was written
+	Previous Kill // the node as last read
+	Wrote    Kill // what was written, when Written
+}
+
+// SetKill turns the switch at path (PathKillGlobal or PathKillRepo) on or
+// off, recording by, the time and reason. It is the one writer of a switch:
+// the CLI and the watch TUI both call it, so they cannot diverge. A switch
+// already in the wanted state is a no-op, not a rewrite (it would erase who
+// first set it). The write is conditional on the ETag read; a lost race is
+// re-read up to SetAttempts times.
+func SetKill(ctx context.Context, db KillDB, path string, on bool, by, reason string, h KillHooks) (SetResult, error) {
+	now := h.Now
+	if now == nil {
+		now = time.Now
+	}
+	for attempt := 1; attempt <= SetAttempts; attempt++ {
+		var cur Kill
+		etag, _, err := db.GetETag(ctx, path, &cur)
+		if err != nil {
+			return SetResult{}, &KillError{Err: err}
+		}
+		if cur.On == on {
+			return SetResult{Already: true, Previous: cur}, nil
+		}
+		if h.Confirm != nil {
+			if err := h.Confirm(cur); err != nil {
+				return SetResult{Previous: cur}, err
+			}
+		}
+		next := Kill{On: on, By: by, At: now().UnixMilli(), Reason: reason}
+		err = db.PutIfMatch(ctx, path, etag, next)
+		if errors.Is(err, rtdb.ErrPrecondition) {
+			if h.Conflict != nil {
+				h.Conflict()
+			}
+			continue
+		}
+		if err != nil {
+			return SetResult{Previous: cur}, &KillError{Write: true, Err: err}
+		}
+		return SetResult{Written: true, Previous: cur, Wrote: next}, nil
+	}
+	return SetResult{}, ErrKillContention
+}
+
+// AdminDeniedText is what a refused write of a cap or a kill switch means
+// (D6), shared by the CLI and watch.
+func AdminDeniedText(project string) string {
+	return "you are not a budget admin for project " + project + ": only the GCP project's owners and editors and terraform.budget_admins may change caps and kill switches; ask one of them, or to be added"
 }
