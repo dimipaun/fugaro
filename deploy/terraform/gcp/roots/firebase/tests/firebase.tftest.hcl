@@ -362,51 +362,6 @@ run "TestRtdbRegionIsUsCentral1" {
   }
 }
 
-run "TestIdentityPlatformInitializedWithNoSignIn" {
-  command = plan
-
-  module {
-    source = "../../modules/firebase"
-  }
-
-  override_resource {
-    target          = google_service_account.signer
-    override_during = plan
-    values = {
-      name   = "projects/fp-1234/serviceAccounts/fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-      email  = "fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-      member = "serviceAccount:fugaro-token-signer@fp-1234.iam.gserviceaccount.com"
-    }
-  }
-  override_resource {
-    target          = google_project_iam_custom_role.token_minter
-    override_during = plan
-    values = {
-      name = "projects/fp-1234/roles/fugaroTokenMinter"
-    }
-  }
-
-  assert {
-    condition     = google_identity_platform_config.this.project == "fp-1234"
-    error_message = "Identity Platform must be initialized in the FP, or Identity Toolkit answers CONFIGURATION_NOT_FOUND"
-  }
-  assert {
-    condition = (
-      try(length(google_identity_platform_config.this.sign_in), 0) == 0 ||
-      (
-        !try(google_identity_platform_config.this.sign_in[0].anonymous[0].enabled, false) &&
-        !try(google_identity_platform_config.this.sign_in[0].email[0].enabled, false) &&
-        !try(google_identity_platform_config.this.sign_in[0].phone_number[0].enabled, false)
-      )
-    )
-    error_message = "the module must enable no sign-in provider: no anonymous, email or phone sign-up"
-  }
-  assert {
-    condition     = try(length(google_identity_platform_config.this.multi_tenant), 0) == 0 && try(length(google_identity_platform_config.this.blocking_functions), 0) == 0
-    error_message = "the configuration sets only what the initialization needs"
-  }
-}
-
 run "apis" {
   command = plan
 

@@ -47,6 +47,8 @@ type IdentityToolkit struct {
 	exchanges int
 	refreshes int
 	nextID    int
+
+	idp idpState
 }
 
 type fbUser struct {
@@ -160,6 +162,10 @@ func (f *IdentityToolkit) sign(input string) string {
 }
 
 func (f *IdentityToolkit) handle(w http.ResponseWriter, r *http.Request, body []byte) {
+	if strings.HasPrefix(r.URL.Path, "/admin/v2/projects/") || strings.HasPrefix(r.URL.Path, "/v2/projects/") {
+		f.platform(w, r, body)
+		return
+	}
 	if strings.HasPrefix(r.URL.Path, "/v1/projects/") {
 		f.admin(w, r, body)
 		return
@@ -398,6 +404,107 @@ func (f *IdentityToolkit) admin(w http.ResponseWriter, r *http.Request, body []b
 			out["errors"] = failed
 		}
 		writeJSON(w, http.StatusOK, out)
+	default:
+		f.unhandled(w, r)
+	}
+}
+
+// idpState is the project's Identity Platform configuration.
+type idpState struct {
+	missing bool           // not initialized: the config answers CONFIGURATION_NOT_FOUND
+	race    bool           // initializeAuth answers "already enabled" (and the config then exists)
+	config  map[string]any // the configuration when it exists
+	posts   int
+}
+
+// UninitializeIdentityPlatform makes the project's Identity Platform
+// configuration not exist, until initializeAuth is called.
+func (f *IdentityToolkit) UninitializeIdentityPlatform() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idp.missing = true
+}
+
+// RaceInitialize makes initializeAuth answer 400 INVALID_PROJECT_ID "already
+// been enabled" (somebody else initialized it since the config was read); the
+// configuration exists afterwards.
+func (f *IdentityToolkit) RaceInitialize() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idp.race = true
+}
+
+// SetIdentityPlatformConfig sets the configuration an initialized project has
+// (JSON object, as the admin API returns it); it also initializes the project.
+func (f *IdentityToolkit) SetIdentityPlatformConfig(config map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.idp.missing = false
+	f.idp.config = config
+}
+
+// InitializeAuthCalls counts the initializeAuth calls.
+func (f *IdentityToolkit) InitializeAuthCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.idp.posts
+}
+
+// platform serves the project configuration calls init makes with an OAuth
+// token and x-goog-user-project: GET /admin/v2/projects/<p>/config and POST
+// /v2/projects/<p>/identityPlatform:initializeAuth.
+func (f *IdentityToolkit) platform(w http.ResponseWriter, r *http.Request, body []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var project, op string
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/admin/v2/projects/"):
+		project, op, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/admin/v2/projects/"), "/")
+		if op == "config" && r.Method == http.MethodGet {
+			op = "get"
+		}
+	default:
+		project, op, _ = strings.Cut(strings.TrimPrefix(r.URL.Path, "/v2/projects/"), "/")
+		if op == "identityPlatform:initializeAuth" && r.Method == http.MethodPost {
+			op = "init"
+		}
+	}
+	if project != f.project {
+		writeFirebaseError(w, http.StatusForbidden, "PROJECT_MISMATCH")
+		return
+	}
+	if r.Header.Get("x-goog-user-project") != f.project {
+		writeFirebaseError(w, http.StatusForbidden, "x-goog-user-project must name the Firebase project")
+		return
+	}
+	switch op {
+	case "get":
+		if f.idp.missing {
+			writeFirebaseError(w, http.StatusBadRequest, "CONFIGURATION_NOT_FOUND")
+			return
+		}
+		cfg := f.idp.config
+		if cfg == nil {
+			cfg = map[string]any{}
+		}
+		out := map[string]any{"name": "projects/" + f.project + "/config"}
+		for k, v := range cfg {
+			out[k] = v
+		}
+		writeJSON(w, http.StatusOK, out)
+	case "init":
+		f.idp.posts++
+		if string(body) != "{}" {
+			writeFirebaseError(w, http.StatusBadRequest, "INVALID_REQUEST")
+			return
+		}
+		if f.idp.race || !f.idp.missing {
+			f.idp.missing = false
+			writeFirebaseError(w, http.StatusBadRequest, "INVALID_PROJECT_ID : Identity Platform has already been enabled for this project.")
+			return
+		}
+		f.idp.missing = false
+		writeJSON(w, http.StatusOK, map[string]any{})
 	default:
 		f.unhandled(w, r)
 	}
