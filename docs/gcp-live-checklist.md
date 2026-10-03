@@ -204,6 +204,7 @@ In the commands below, `T` is short for
 | 20 | The model gateway against the real Anthropic API, from local Docker: pins per role, cost, tokens, a halt (design §6.1, §4.5) | See "Check 20" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_ANTHROPIC_API_KEY=… FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 60m -run TestLiveGateway -v ./internal/e2e/` | See below. |
 | 19 | A follow-up of the sandbox run's PR, acting on review comments you post by hand, and a follow-up refused because the PR was declined | See "Check 19" below: `FUGARO_LIVE_FOLLOWUP=1 FUGARO_BITBUCKET_TOKEN=… go test -tags live -p 1 -v -timeout 100m -run TestLiveSandboxFollowUp ./internal/e2e/` | See below. |
 | 21 | The shared budget against the real Firebase project: tokens, rules, leases and releases, a repository daily cap, a kill, token expiry, the grace (design §5, §6.4) | See "Check 21" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_RTDB_URL=<url> FUGARO_LIVE_FIREBASE_API_KEY=<key> FUGARO_LIVE_TOKEN_SIGNER=<account> FUGARO_LIVE_ANTHROPIC_API_KEY=<key> FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 90m -run TestLiveBudget -v ./internal/e2e/` | About $0.50. Every answer is a `FACT:` line; the run, cap and kill halts are the assertions. |
+| 22 | `fugaro watch` against the real project: header and bars agree with `budget show`, a live run, kill and resume, a viewer-only identity, an outage (M9c) | See "Check 22" below; **you** run it at your own terminal. | Nothing beyond the sandbox runs (about $0.30 each with `oauth`, notional). |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -416,6 +417,51 @@ back.
 **If it can't be run** (no API key): the leases are verified for `oauth` (notional) only, and the `api-key` budget behaviour stays documented as unverified.
 
 **Afterwards:** the test removes what it made. `fugaro budget show --all` should show no `live21-*` repository; `docker image rm` the base tag if you don't need it.
+
+## Check 22: fugaro watch
+
+The unit tests cover the view, the streams and the kill flow offline (fake database). This check is what only the real project and a real terminal can show. Run it **at your own terminal** (the TUI needs a TTY; a `!`-prefix shell is not one). Caps must be set (check 21's setup). Each step that touches the project asks for your go-ahead; EdgeWeb only on request. Record every `FACT`.
+
+**Procedure**
+
+1. **Read-only.** `fugaro watch --once` and `fugaro watch --json --once` with no run in flight: caps, mode, no agents. A viewer must be able to open the streams (assumption A2); if not, note it, since `--poll` is the fallback.
+2. **The screen.** `fugaro watch`: the header, project line and bars match `fugaro budget show` side by side. Resize to 100, 70 and 45 columns. `NO_COLOR=1 fugaro watch`. Inside tmux. Quit with `q` and confirm the run list is unchanged.
+3. **One sandbox `oauth` run** (your task text): its entry appears within a few seconds, stage and age move, spend shows the `NOTIONAL` marker, the entry disappears at the end. Note the real update latency (`FACT`), and whether the stream held its keep-alive (about 30 s) over the whole run (assumption A1).
+4. **Kill and resume** during a second sandbox run: Select the sandbox repository and press `k`, then `y` (or Enter): the run halts within seconds and the block shows `KILLED by <you>`. Press `r`, type the repository name, Enter: it resumes. Then press `K` and cancel at the project-name prompt with Esc (a project-wide kill is not worth the risk live). `fugaro budget resume --all` is the emergency undo.
+5. **A viewer-only identity** (a second account with only `firebasedatabase.viewer`, or `gcloud auth application-default login` as it): `watch` reads; `k` shows the not-a-budget-admin text and changes nothing. Skipped, with the unit test as the evidence, if there is no such identity.
+6. **Outage.** Turn Wi-Fi off for 60 s with the TUI open: `stale` after 45 s, then `OFFLINE`, frame greyed, kill keys refused; on return the view rebuilds. Then `fugaro watch --poll` against the same project.
+7. **UTC midnight.** Leave the TUI open across 00:00 UTC, or accept `TestMidnightResubscribe`; the day label and counters must roll.
+
+**Only a real terminal can confirm** (record what you saw)
+
+- The alternate screen is restored on `q`, Ctrl-C and after a crash (the shell prompt and scrollback come back intact).
+- Raw-mode keys: arrow keys, PgUp/PgDn, and Esc timing (a lone Esc cancels a prompt without a delay or a stray escape sequence).
+- Resize while running, including below 40 columns and back.
+- Bracketed paste into a prompt (a pasted `y`, a pasted newline or escape sequence does nothing).
+- The width of the warning glyph: some terminals draw it two columns wide, which shifts the line by one; `--ascii` is the fallback.
+- Colour contrast on a light and a dark theme.
+- CPU at many agents (about 100 live runs, or the closest you can get) and over a long session.
+- tmux (and a pager-less ssh session).
+
+**Results template**
+
+| Item | Result |
+|---|---|
+| Viewer can open the four streams (A2) | |
+| Update latency, run start to row (`FACT`) | |
+| Keep-alive and put-on-connect hold (A1) | |
+| Bars match `budget show` | |
+| Kill, banner and resume timing | |
+| Viewer-only refusal text | |
+| Stale, OFFLINE and rebuild | |
+| Alt-screen restore | |
+| Esc timing and paste | |
+| Resize 100/70/45 | |
+| Width of the warning glyph | |
+| Light and dark contrast | |
+| CPU at N agents | |
+| tmux | |
+| Midnight rollover | |
 
 ## Not covered by these tests (manual)
 
