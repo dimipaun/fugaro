@@ -1,0 +1,73 @@
+---
+name: status
+description: Report on Fugaro runs, meaning what is running, what finished and what failed, with cost and pull requests, plus the project's budget state. Use when the user asks how their Fugaro runs are doing, what is running, whether a run finished, or what the budget looks like. Safe to run after a restart, since it reads the cloud state.
+---
+
+# Status of Fugaro runs
+
+You are reporting what Fugaro runs exist and how they are doing. Everything comes from the cloud's records, never from your memory of the conversation, so it is right after a restart too.
+
+You are done when you have told the user which runs are running, which finished (with their pull requests) and which failed or halted, and what to do next for each.
+
+Ground rules:
+- **Read only.** This skill launches nothing and changes nothing. Never run `fugaro cancel`, `fugaro budget set`, `fugaro budget kill` or `fugaro budget resume`: tell the user the exact command and let them run it.
+- **Secrets.** Never print a secret or a token. The CLI redacts its output; if you see something that looks like a credential, don't repeat it.
+- **No terminal screens.** `fugaro watch` opens a live screen that you can't drive. Suggest the user runs it, or use `fugaro watch --once` (or `--plain`) for one text snapshot.
+
+## 1. List the runs
+
+```bash
+fugaro ls --json
+```
+
+By default it lists the last 7 days of the configuration's repositories. Narrow or widen it:
+- `--repo <owner/name>` for one repository, `--all` for every repository in the runs bucket
+- `--mine` for runs the user requested
+- `--since <duration>` (`36h`, `7d`, `0` for no bound)
+- `--batch <name>` for one batch
+- `--pr N` for the runs on one pull request (needs one repository; the window is 90 days)
+
+The JSON has `project`, `runs`, `totals` and `warnings`. Each run has `run`, `repo`, `status`, `stage`, `reason`, `halt` (when halted), `pr_url`, `branch`, `outcome`, `created`, `cost`, `terminal` and `settled`. Print `warnings` to the user: they say an image rebuild or the daily image check failed or is overdue.
+
+Group the runs:
+- **Running:** `launching`, `pending`, `running`. Say the stage and the age.
+- **Succeeded:** with the pull request URL. A pull request is a normal one when the outcome is `ready`, a draft otherwise: open it before saying more.
+- **Needs attention:** `failed`, `infra_error`, `error`, `halted`, `cancelled`, `unlaunched`. For each, give the `reason` and offer `fugaro diagnose <run>` (the diagnose skill reads it).
+
+`totals` is what the listed runs cost. Report model spend as such; subscription (`oauth`) spend is notional, never billed.
+
+## 2. The budget
+
+```bash
+fugaro budget show
+```
+
+It shows the mode (`observe` or `enforce`), the caps, today's counters (UTC), the headroom, the kill switches and the runs in flight, and needs the Viewer role on the project's Firebase project. Narrow it with `--repo <owner/name>`, widen it with `--all`, and use `--json` to parse it. If it refuses, report that the user lacks the role or the project has no budget backend, and carry on without it.
+
+Mention a kill switch that is on, a cap close to its limit, or no headroom. Changing any of it belongs to the user (a budget admin): `fugaro budget set`, `fugaro budget kill` and `fugaro budget resume` are theirs, and you only name them.
+
+## 3. The live screen
+
+For live spend, burn rate and the running agents, point the user to:
+
+```bash
+fugaro watch
+```
+
+It is an interactive screen that only the user can read. For a snapshot you can read, run `fugaro watch --once` (add `--json` to parse it). `fugaro ls --watch` redraws the run list until every run has settled, and needs no budget backend. A run that has not reported for a minute is `silent`, and for three minutes `lost`.
+
+## 4. What the statuses mean
+
+| Status | Meaning |
+|---|---|
+| `launching`, `pending` | Launched; the worker has not started yet. After ten minutes without a record it becomes `infra_error`. |
+| `running` | Working; `stage` says which step. |
+| `succeeded` | Ended with a result record and a pull request. Check `outcome` for ready or draft. |
+| `failed` | The run ended without a passing result: tests, review or the agent failed. |
+| `infra_error` | The platform failed, not the task. `fugaro diagnose` has the reason. |
+| `halted` | A budget cap or kill switch stopped it. It exits cleanly and pushed a draft pull request, unless it halted at the start. The reason is shown as `halted (run_cap)`. |
+| `cancelled` | Someone cancelled it. |
+| `error` | Its records can't be read or trusted; the reason says which. |
+| `unlaunched` | A task was stored but never launched. `fugaro run --retry <run>` launches it, with the user's go-ahead. |
+
+Next steps to offer: a failed or halted run with a draft pull request can be continued with the followup skill, once the cause is dealt with; `fugaro logs <run>` has its output.

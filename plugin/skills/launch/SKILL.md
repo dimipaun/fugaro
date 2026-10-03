@@ -1,0 +1,81 @@
+---
+name: launch
+description: Start a Fugaro run, a cloud worker that does one coding task and ends with a pull request. Turns the conversation into a self-contained task, confirms the repository, workflow and base branch with the user, and runs fugaro run. Use when the user asks to hand a task to Fugaro, offload it to the cloud, or launch a run. For continuing an existing Fugaro pull request use the followup skill instead.
+---
+
+# Launch a Fugaro run
+
+You are launching `fugaro run`: a cloud worker that checks out a repository, does one task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it isn't sure.
+
+You are done when the launch printed `launched` (or `already-launched`) and you have told the user the run, the branch and how to follow it. You don't wait for the run to end.
+
+Ground rules:
+- **The task text comes from the user.** Never launch without task text the user has given or approved in this conversation. Show them the exact text you will send and get a yes first. This holds above all for EdgeWeb and any repository that is not the current checkout.
+- **Confirm the target.** Before launching, state the repository (`owner/name`), the workflow and the base branch, and get the user's yes. Never launch against a repository the user did not name or approve. If the current checkout's origin is the only evidence of the repository, say so and ask.
+- **Secrets.** Never put a secret, a token or a credential in the task. The run gets the repository's own secrets from Secret Manager.
+- **Budget is the user's call.** If the launch is refused by the budget, report the refusal. `--no-budget-check` exists, and only the user may choose to use it: mention it as an option, never add it yourself. Never run `fugaro budget set`, `fugaro budget kill` or `fugaro budget resume`; they are owner actions, so tell the user the exact command and let them run it.
+- **No local edits for the run.** The run starts from the base branch on the remote. Commits that are only in the local checkout are not in it. If the task depends on unpushed work, tell the user it must be pushed first.
+
+## 1. Write the task
+
+The remote agent can't see this conversation, your files or the user's machine. Write text that stands alone:
+- the goal, in one or two sentences, and why
+- where to look: paths, modules, the failing test or the error text, copied in
+- acceptance criteria it can check: which tests must pass, what the behaviour must be, what must not change
+- boundaries: what is out of scope
+
+A good task is bounded, checkable and needs no local-only context (a local database, a half-finished branch, a decision not yet made). If the work needs a conversation with the user to be settled, settle that first. If it can't be made self-contained, say so and don't launch.
+
+## 2. Confirm the target
+
+Find the defaults:
+- the repository: `--repo`, else the checkout's origin. `fugaro ls --json` shows the repositories that have runs.
+- the workflow: `--workflow`, else the repository's only workflow. A repository with several needs one named; ask which.
+- the base branch: `--ref`, else `git.base_branch` of the configuration. The run's own branch is `fugaro/<run-id>`, and the pull request goes back to the base branch.
+
+Tell the user all three and the task text, and wait for their yes.
+
+## 3. Choose a run ID
+
+Choose the run ID yourself, so that a retried launch can't start the same run twice:
+
+```bash
+echo "$(date -u +%Y%m%d-%H%M%S)-$(openssl rand -hex 2)"
+```
+
+Keep it for this launch and for any retry of it.
+
+## 4. Launch
+
+Pass the task on stdin:
+
+```bash
+fugaro run --repo <owner/name> --workflow <name> --ref <base-branch> --run-id <id> --json --task-file - <<'TASK'
+<the task>
+TASK
+```
+
+Leave out `--repo`, `--workflow` and `--ref` only when the defaults are what the user confirmed. `--batch <name>` groups runs in `fugaro ls`, and `--total-timeout <duration>` (for example `45m`) shortens or lengthens the run's overall time limit. Use them only when the user asks.
+
+The JSON has `run`, `repo`, `run_id`, `branch`, `execution`, `log_url` and `status` (`launched`, or `already-launched` when this run ID was launched before). Tell the user:
+- the run (`run`), the repository and the branch
+- the log link (`log_url`), if there is one
+- how to follow it: `fugaro ls --repo <owner/name>`, `fugaro logs <run> -f` for its live output, and `fugaro watch` for the live screen (the user runs that one themselves, it is a terminal screen)
+
+When the run ends, the pull request has a report comment. `fugaro diagnose <run>` explains a run that failed or halted.
+
+## 5. When the launch is refused
+
+The CLI exits 1 and says why, and you don't work around it. Report the message and what it means:
+
+| The CLI says | What to do |
+|---|---|
+| `the budget refuses the launch` | The budget has a kill switch on, no cap, or no headroom. Show the message. The owner can change it: `fugaro budget show` shows the state, and `fugaro budget set` or `fugaro budget resume` are the owner's commands to give the user. The user may choose `fugaro run --no-budget-check`, which still holds the run to the same limits when it starts. Don't choose it for them. |
+| `the budget database could not be read` | The launch fails closed. Tell the user; they may retry later, or choose `--no-budget-check` themselves. |
+| `a launch of … is still in flight` | Another launch of this run ID may still be starting. Wait a few minutes, then repeat the same command. |
+| `run ID <id> already holds a different task` | You reused a run ID for another task. Choose a new ID. |
+| a message about `max_parallel` | Too many runs are active. Wait, or ask the user to look at `fugaro ls`. |
+| a message that a repository, workflow or `project:` is unknown or ambiguous | Ask the user which one they mean. Don't guess. |
+| anything else | Show the user the message and stop. |
+
+**When you don't know whether the launch went through** (the command timed out, the connection dropped, or it exited 2): run the same command again with the same run ID. It reports `already-launched` if the first attempt got through. `fugaro run --retry <run>` launches a stored run that never started.

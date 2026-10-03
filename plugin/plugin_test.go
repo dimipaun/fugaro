@@ -96,7 +96,7 @@ func TestSkills(t *testing.T) {
 		}
 		names[meta.Name] = true
 	}
-	for _, want := range []string{"onboard", "followup"} {
+	for _, want := range []string{"onboard", "followup", "launch", "status", "logs", "diagnose"} {
 		if !names[want] {
 			t.Errorf("skills = %v, want %s", names, want)
 		}
