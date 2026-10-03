@@ -24,6 +24,8 @@
 
 User rulings from M9: multi-model is M10 with its own design; Anthropic models stay direct (cache); the rest via OpenRouter; caps count model dollars only; `oauth` stays uncapped and Anthropic-only; stay in Go; no backward compatibility (reshape directly, re-run init); never use or ask for an API key; live tests sandbox-only and run by the user. Recommended here (design §0): no protocol translation; route by model inside the existing gateway; owner decides which repositories may send code to which provider; table price caps money, provider-reported cost is recorded not trusted; first slice is OpenRouter + one DeepSeek model.
 
+User rulings for M10 (2026-10-03): provider OpenRouter, first model `deepseek/deepseek-v4-flash`; `allow_data_to` lists `edgeappinc/fugarosandbox` and `dimipaun/fugaro`, EdgeWeb is excluded; review is two-tier (T12).
+
 ## Review Focus
 
 **Per-task review (security- or money-critical): T3, T4, T5, T6.** Everything else is reviewed once on the branch at the end (user's token-economy rule).
@@ -61,8 +63,9 @@ User rulings from M9: multi-model is M10 with its own design; Anthropic models s
 | T9 CLI: `budget prices` source/verified, `diagnose` route and reported vs charge, `report` model rows | S | A | T6, T8 | end |
 | T10 docs: design sync into v1.md, README, setup guide (account-side OpenRouter policy, per-project credit limit) | S | B | T8 | end |
 | T11 live check on the sandbox, user-run with the user's own key | S | user | all | n/a |
+| T12 two-tier review: a `review_first` stage on the coder model, then the senior Claude review; senior verdict decides readiness | M | A | T8 | end |
 
-Order: T7 first (the fake is the harness for the rest), then T1 and T3 in parallel, T2/T4/T5, T6, T8, T9, T10, T11.
+Order: T7 first (the fake is the harness for the rest), then T1 and T3 in parallel, T2/T4/T5, T6, T8, T12, T9, T10, T11.
 
 ### Task 7 (M, lane B): Compat-fake
 
@@ -128,6 +131,16 @@ Order: T7 first (the fake is the harness for the rest), then T1 and T3 in parall
 - [ ] **Failing tests first:** `TestProviderRunEndsInPR`, `TestBackgroundDefaultsToCoder`, `TestCostExactToTheMicro`, `TestHaltOnProviderRun`.
 - [ ] Commit: `runner: runs on a provider model`
 
+### Task 12 (M, lane A): Two-tier review
+
+**Files:** `internal/config/config.go` (`Agent`, `StageRole`), `validate.go`, `internal/runner` stage machine, `schemas/result.schema.json`, tests with the fake `claude` and the compat-fake. Design: m10-multi-model.md §11a.
+
+- Config: `agent.first_line_review: auto|on|off` (default `auto`: on only when the coder's model is provider-routed and the reviewer's is not) and `agent.first_line_rounds` (default 1, 1 to 3). `StageRole("review_first")` is the coder role, so pins, `max_output_tokens.coder` and price are the coder's.
+- Stage machine: `implement, review_first(1..k) with fix between, then review(1)` and the existing `[fix, review(n)]` loop. The senior `review` always runs and its verdict alone feeds the readiness rule; first-line `changes` go to `fix` (resume S1) first; a first-line stage that errors or has no parseable verdict is recorded and skipped, never failing the run (a budget halt still does). First-line findings are not passed to the senior reviewer.
+- Record: `result.json` `reviews[]` gains `tier` (`first|senior`); transcripts `review_first-<n>.jsonl`; both tiers draw on the one run cap, stage budget and token cap.
+- [ ] **Failing tests first:** `TestFirstLineDefaultsByCoder` (auto on for a provider coder, off for Claude), `TestFirstLineVerdictNeverMakesReady`, `TestFirstLineChangesGoThroughFix`, `TestSeniorReviewAlwaysRuns`, `TestFirstLineFailureSkipped`, `TestFirstLineUsesCoderPins`, `TestFirstLineCostCountsToCap`, `TestFirstLineRoundsBounds`.
+- [ ] Commit: `runner: a first-line review by the coder before the senior review`
+
 ### Task 9 (S, lane A): CLI
 
 `budget prices` source (embedded|override) and verified columns; `diagnose` route and `reported` vs `charge` with a warning above 10 %; `report --by model` rows carry the route.
@@ -145,4 +158,4 @@ Sandbox repository only, user-created credit-limited OpenRouter key, one cheap t
 
 ## Done when
 
-All tasks green under `./.superpowers/heavy.sh`, per-task reviews of T3-T6 clean, the end-of-branch review clean, the design's §13 items either verified from a recording or left as named warnings, and the user's live check (T11) recorded.
+All tasks green under `./.superpowers/heavy.sh`, per-task reviews of T3-T6 clean, the end-of-branch review clean (T12 included), the design's §13 items either verified from a recording or left as named warnings, and the user's live check (T11) recorded.
