@@ -65,11 +65,15 @@ type Upstream struct {
 // Options configure a gateway.
 type Options struct {
 	Upstream Upstream
-	Prices   *pricing.Table
-	Mode     Mode
-	Cap      pricing.Micros // enforce: > 0; observe: 0 accounts only
-	Log      *slog.Logger   // the runner's, which redacts; nil discards
-	Client   *http.Client   // nil: a default with no overall timeout (streams are long)
+	// Routes send the models they claim to a provider, each with its own
+	// credential; every other model goes to Upstream. Only with the
+	// anthropic upstream.
+	Routes []Route
+	Prices *pricing.Table
+	Mode   Mode
+	Cap    pricing.Micros // enforce: > 0; observe: 0 accounts only
+	Log    *slog.Logger   // the runner's, which redacts; nil discards
+	Client *http.Client   // nil: a default with no overall timeout (streams are long)
 	// Lease, when set, is where the gateway's budget comes from: it holds
 	// only what the lease granted, asks for more when a call doesn't fit,
 	// and releases what is unused at Close. Cap is then ignored (the lease
@@ -107,6 +111,8 @@ type StageReport struct {
 	Calls         int                       // calls sent upstream
 	Used          pricing.Micros            // settled this stage
 	ByModel       map[string]pricing.Micros // by serving model
+	ByRoute       map[string]pricing.Micros // by provider route (Claude calls have none)
+	Reported      pricing.Micros            // what providers said their calls cost: for comparison, never charged
 	Unreconciled  pricing.Micros            // charged from reservations, not from reported usage
 	Overrun       pricing.Micros            // charged above the calls' reservations
 	WouldHalt     int                       // observe: calls enforce would have refused
@@ -187,6 +193,7 @@ func Start(ctx context.Context, o Options) (*Server, error) {
 	if err := o.validate(); err != nil {
 		return nil, err
 	}
+	o.Routes = copyRoutes(o.Routes)
 	var tok [32]byte
 	if _, err := rand.Read(tok[:]); err != nil {
 		return nil, fmt.Errorf("gateway: token: %w", err)
@@ -240,6 +247,9 @@ func (o Options) validate() error {
 	}
 	u := o.Upstream
 	if err := checkBaseURL(u.BaseURL); err != nil {
+		return err
+	}
+	if err := validateRoutes(u, o.Routes); err != nil {
 		return err
 	}
 	switch u.Kind {
@@ -340,7 +350,7 @@ func (s *Server) ledgerLocked() Ledger {
 func (s *Server) BeginStage(st Stage) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}}}
+	s.stage = &stageState{st: st, rep: StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}}
 }
 
 // EndStage stops allowing calls, waits (at most 30 s) for the stage's
@@ -352,7 +362,7 @@ func (s *Server) EndStage() StageReport {
 	s.stage = nil
 	s.mu.Unlock()
 	if st == nil {
-		return StageReport{ByModel: map[string]pricing.Micros{}}
+		return StageReport{ByModel: map[string]pricing.Micros{}, ByRoute: map[string]pricing.Micros{}}
 	}
 	done := make(chan struct{})
 	go func() { st.calls.Wait(); close(done) }()
@@ -379,6 +389,10 @@ func (s *Server) stageReport(st *stageState) StageReport {
 	rep.ByModel = make(map[string]pricing.Micros, len(st.rep.ByModel))
 	for k, v := range st.rep.ByModel {
 		rep.ByModel[k] = v
+	}
+	rep.ByRoute = make(map[string]pricing.Micros, len(st.rep.ByRoute))
+	for k, v := range st.rep.ByRoute {
+		rep.ByRoute[k] = v
 	}
 	rep.Violations = append([]string(nil), st.rep.Violations...)
 	return rep
@@ -436,6 +450,10 @@ type route struct {
 	count     bool   // a token count: free, forwarded without a reservation
 	upstream  string // the upstream URL, query included
 	pathModel string // vertex: the model the path names
+	// anthropic upstream: the request's path and query, so a pinned
+	// provider model can be sent to its own base instead (see withRoute).
+	path, query string
+	provider    *Route // the provider the model is routed to; nil: Options.Upstream
 }
 
 // ServeHTTP routes on URL.Path only; the raw query is forwarded as is.
@@ -458,7 +476,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "authentication_error", "fugaro: the gateway token is missing or wrong")
 			return
 		}
-		rt = route{count: p == "/v1/messages/count_tokens", upstream: anthropicBase(s.o.Upstream) + p + query(r)}
+		rt = route{count: p == "/v1/messages/count_tokens", upstream: anthropicBase(s.o.Upstream) + p + s.upstreamQuery(r), path: p, query: s.upstreamQuery(r)}
 	case "vertex":
 		var ok bool
 		var why string

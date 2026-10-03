@@ -28,6 +28,8 @@ func (r *run) updateCost() {
 	if gateway {
 		c.Unreconciled = r.unreconciled.USD()
 		c.ModelBy = modelByUSD(r.modelBy, r.gwUsed)
+		c.ReportedUSD = r.reported.USD()
+		c.RouteBy = routeByUSD(r.routeBy, r.modelBy, r.gwUsed, r.routed)
 	}
 	r.mu.Unlock()
 	c.ModelSource = "claude-code"
@@ -54,6 +56,33 @@ func modelByUSD(by map[string]pricing.Micros, total pricing.Micros) map[string]f
 	}
 	if rest := total - sum; rest > 0 {
 		out[unattributedModel] = rest.USD()
+	}
+	return out
+}
+
+// routeByUSD is the split of the provider routes' spend in USD. Spend that no
+// stage report carried (a call that settled after its stage's wait ran out)
+// is in the ledger's total but has no stage, hence no route to be told from:
+// as with modelByUSD it is "unattributed", and only a run that has routes
+// can have it (it may be a Claude call's; the figure is never dropped). nil
+// when the run has no routes or spent nothing through them.
+func routeByUSD(by, modelBy map[string]pricing.Micros, total pricing.Micros, routed bool) map[string]float64 {
+	if !routed {
+		return nil
+	}
+	out := make(map[string]float64, len(by)+1)
+	for m, v := range by {
+		out[m] = v.USD()
+	}
+	var sum pricing.Micros
+	for _, v := range modelBy {
+		sum += v
+	}
+	if rest := total - sum; rest > 0 {
+		out[unattributedModel] = rest.USD()
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

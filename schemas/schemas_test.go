@@ -164,7 +164,7 @@ func TestResultSchemaAcceptsRunnerRecords(t *testing.T) {
 		Status:    runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
 		Reason: "tests failing on the final commit", Branch: "fugaro/add-a-feature", BaseBranch: "main", HeadSHA: "abcdef1234567",
 		PR:      &runstore.PRRef{Number: 7, URL: "https://example.com/pr/7"},
-		Reviews: []runstore.ReviewSummary{{Round: 1, Verdict: "changes", Findings: 2}},
+		Reviews: []runstore.ReviewSummary{{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 2}, {Round: 1, Tier: runstore.TierSenior, Verdict: "ship"}},
 		Verify: []verify.Record{{
 			N: 1, Kind: verify.KindTest, Rerun: true, HeadSHA: "abcdef1234567", CleanTree: true, ExitCode: 1,
 			TimedOut: true, Tests: 3, Failures: 1, Skipped: 1, Failed: []string{"pkg.A"}, Flaky: []string{"pkg.B"},
@@ -425,6 +425,7 @@ func TestResultSchemaHalted(t *testing.T) {
 	at := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
 	cost := runstore.NewCost(4.12, 0.38, runstore.BasisAPIList)
 	cost.ModelSource, cost.ModelBy, cost.Unreconciled, cost.UsageUnparsed = "gateway", map[string]float64{"claude-a": 4.12}, 0.5, 1
+	cost.RouteBy, cost.ReportedUSD = map[string]float64{"openrouter": 1.5}, 1.4
 	check := func(reason runstore.HaltReason) error {
 		rec := runstore.Record{
 			Version: 1, RunID: "20260930-100000-abcd", Status: runstore.StatusHalted, Stage: "implement", Outcome: runstore.OutcomeDraft,
@@ -586,5 +587,24 @@ func TestSchemaAcceptsPRDesc(t *testing.T) {
 	bad, _ := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"status_at":"2026`), []byte(`"status_at_x":"2026`), 1)))
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal("schema accepts an unknown pr key")
+	}
+}
+
+func TestSchemaAcceptsReviewFirstStage(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 3, 10, 0, 0, 0, time.UTC)
+	data, err := json.Marshal(runstore.Record{
+		Version: 1, RunID: "20261003-100000-abcd", Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "review_first", Branch: "fugaro/x", StartedAt: at,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inst, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sch.Validate(inst); err != nil {
+		t.Fatalf("schema rejects stage review_first: %v\n%s", err, data)
 	}
 }

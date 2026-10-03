@@ -681,3 +681,30 @@ func TestBurnAlertConfigStrict(t *testing.T) {
 		}
 	}
 }
+
+func TestProviderDecodeStrict(t *testing.T) {
+	base := "name: belong\ngcp_project: edge-devel-dimi\nregion: us-east5\nruns_bucket: belong-runs\nrepos: {}\n"
+	good := base + `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    route_fee_pct: 5.5
+    models: ["deepseek/*"]
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]
+`
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Providers["openrouter"]; p.Secret != "openrouter-api-key" || p.RouteFeePct != 5.5 || !p.AllowsData("dimipaun/fugaro") {
+		t.Errorf("decoded provider = %+v", p)
+	}
+	if _, err := Parse([]byte(strings.Replace(good, "auth: bearer", "auth: bearer\n    api_key: sk-secret", 1))); err == nil {
+		t.Error("an unknown provider field (api_key) was accepted")
+	}
+	if _, err := Parse([]byte(strings.Replace(good, "https://openrouter.ai/api", "http://openrouter.ai/api", 1))); err == nil || !strings.Contains(err.Error(), "providers.openrouter.base_url") {
+		t.Errorf("plain http accepted or unnamed: %v", err)
+	}
+}

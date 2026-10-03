@@ -18,7 +18,10 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/logtail"
+	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -56,6 +59,21 @@ type Diagnosis struct {
 	// whether the run is a follow-up at all.
 	FollowUp     *runstore.FollowUp `json:"follow_up,omitempty"`
 	CommentsPath string             `json:"comments_path,omitempty"`
+	// Route is the model spend by provider route (a Claude call has none);
+	// ModelBy is the spend by model. Both are the run's own record.
+	Route   map[string]float64 `json:"route_by,omitempty"`
+	ModelBy map[string]float64 `json:"model_by,omitempty"`
+	// Reported is what providers said the run's calls cost, beside Charge,
+	// what the table said for the provider routes' calls (the charge
+	// always settles; Claude's spend is not in it). Zero when no provider
+	// reported one. ReportedWarning is set when the two differ by more than
+	// reportedGapPct percent.
+	Reported        float64 `json:"reported_usd,omitempty"`
+	Charge          float64 `json:"charge_usd,omitempty"`
+	ReportedWarning string  `json:"reported_warning,omitempty"`
+	// PinWarnings are the model prices the run's cap counted on a guess:
+	// an unverified placeholder, or cache rates left at 0.
+	PinWarnings []string `json:"pin_warnings,omitempty"`
 }
 
 type diagnoseOptions struct {
@@ -154,6 +172,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		return nil, remote(err)
 	}
 	d.FollowUp = followUpOf(d.Row, rec, red)
+	routeOf(d, rec, env.lc, red)
 	if d.FollowUp != nil {
 		d.CommentsPath = s.Prefix() + "comments.json"
 	}
@@ -166,7 +185,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		if t, ok := lastTest(d.Verify); ok {
 			d.Failed, d.Flaky = t.Failed, t.Flaky
 		}
-		if n := len(rec.Reviews); n > 0 {
+		if n := seniorRound(rec.Reviews); n > 0 {
 			if res, ok := transcriptResult(ctx, s, "review-"+strconv.Itoa(n)); ok {
 				for _, f := range runner.ParseVerdict(res).Findings {
 					d.Findings = append(d.Findings, runner.Finding{Severity: red(f.Severity), File: red(f.File), Summary: red(f.Summary)})
@@ -202,6 +221,85 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
 	}
 	return d, nil
+}
+
+// seniorRound is the round of the last senior review (not a first-line one,
+// whose transcripts are named review_first-N), 0 when there is none. The
+// senior transcript is review-<round>.
+func seniorRound(rs []runstore.ReviewSummary) int {
+	for i := len(rs) - 1; i >= 0; i-- {
+		if rs[i].Tier != runstore.TierFirst {
+			return rs[i].Round
+		}
+	}
+	return 0
+}
+
+// reportedGapPct is how far above Fugaro's charge (without the route fee) a
+// provider's reported cost may be before diagnose warns.
+const reportedGapPct = 10
+
+// routeOf fills d's route, reported-vs-charge and pin warnings from the
+// record's cost: the models the run paid for are its pins. The warnings use
+// the price table with the project's overrides, as the run's cap did.
+func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(string) string) {
+	if rec == nil || rec.Cost == nil {
+		return
+	}
+	c := rec.Cost
+	d.Route, d.ModelBy = redactKeys(c.RouteBy, red), redactKeys(c.ModelBy, red)
+	if c.ReportedUSD > 0 {
+		// The provider's charge is the routes' spend; the run's ModelUSD also
+		// holds Claude's, and "unattributed" may be a Claude call's.
+		// The provider reports the model's price, not Fugaro's route fee, so
+		// the comparison is against the charge without the fee.
+		var charge, bare float64
+		for r, v := range c.RouteBy {
+			if r == "unattributed" {
+				continue
+			}
+			charge += v
+			fee := 0.0
+			if lc != nil {
+				fee = lc.Providers[r].RouteFeePct
+			}
+			bare += v / (1 + fee/100)
+		}
+		d.Reported, d.Charge = c.ReportedUSD, charge
+		// Only a report above the charge is a sign of under-pricing: a lower
+		// one may be partial reporting (a cut stream, a call without a cost).
+		if d.Reported > bare*(1+reportedGapPct/100.0) {
+			d.ReportedWarning = fmt.Sprintf("the providers reported $%.4f, more than %d%% above the $%.4f the table charged without the route fee: model_prices may be too low (partial reporting is also possible); check model_prices and the account's provider settings",
+				d.Reported, reportedGapPct, bare)
+		}
+	}
+	prices := pricing.Embedded()
+	if lc != nil {
+		if ov, err := lc.Overrides(); err == nil {
+			if t, err := prices.With(ov); err == nil {
+				prices = t
+			}
+		}
+	}
+	for _, id := range slices.Sorted(maps.Keys(c.ModelBy)) {
+		for _, w := range config.PinWarnings(config.Agent{Model: id}, prices) {
+			// The one model fills every role; say it once.
+			if m := red(w.Message); !slices.Contains(d.PinWarnings, m) {
+				d.PinWarnings = append(d.PinWarnings, m)
+			}
+		}
+	}
+}
+
+func redactKeys(m map[string]float64, red func(string) string) map[string]float64 {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(m))
+	for k, v := range m {
+		out[red(k)] += v
+	}
+	return out
 }
 
 // draftNote is diagnose's line about the run's draft PR, "" when there is
@@ -367,6 +465,18 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 		fmt.Fprintf(&b, "%s\n", oneLine(line))
 	}
 	fmt.Fprintf(&b, "%s\n", oneLine(strings.ReplaceAll(runner.CostLine(r.Cost), "**", "")))
+	if len(d.Route) > 0 {
+		fmt.Fprintf(&b, "Route:    %s\n", oneLine(spendList(d.Route)))
+	}
+	if d.Reported > 0 {
+		fmt.Fprintf(&b, "Reported: providers said $%.4f; charged $%.4f (the table price settles)\n", d.Reported, d.Charge)
+	}
+	for _, w := range d.PinWarnings {
+		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(w))
+	}
+	if d.ReportedWarning != "" {
+		fmt.Fprintf(&b, "Warning:  %s\n", oneLine(d.ReportedWarning))
+	}
 	if r.PRURL != "" {
 		fmt.Fprintf(&b, "PR:       %s\n", oneLine(prColumnURL(r)))
 	}
@@ -407,6 +517,24 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// spendList is "name $x, name $y", biggest first.
+func spendList(m map[string]float64) string {
+	names := slices.SortedFunc(maps.Keys(m), func(a, b string) int {
+		if m[a] != m[b] {
+			if m[a] > m[b] {
+				return -1
+			}
+			return 1
+		}
+		return strings.Compare(a, b)
+	})
+	parts := make([]string, len(names))
+	for i, n := range names {
+		parts[i] = fmt.Sprintf("%s $%.4f", n, m[n])
+	}
+	return strings.Join(parts, ", ")
 }
 
 // prColumnURL is the PR's URL with ls's draft marker.

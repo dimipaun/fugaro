@@ -1139,6 +1139,11 @@ type priceRow struct {
 	WebSearchPer1k   float64  `json:"web_search_per_1k"`
 	LongContext      string   `json:"long_context,omitempty"`
 	Local            bool     `json:"local"`
+	// Unverified marks a placeholder price nobody has checked; Source and
+	// CheckedAt say where the row came from (empty: the table's own).
+	Unverified bool   `json:"unverified"`
+	Source     string `json:"source,omitempty"`
+	CheckedAt  string `json:"checked_at,omitempty"`
 }
 
 type pricesDoc struct {
@@ -1189,7 +1194,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 		r := m.Rates
 		row := priceRow{ID: id, Aliases: m.Aliases, InputPerM: r.InputPerM, OutputPerM: r.OutputPerM,
 			CacheReadPerM: r.InputPerM * r.CacheRead, CacheWrite5mPerM: r.InputPerM * r.CacheWrite5m,
-			CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local[id]}
+			CacheWrite1hPerM: r.InputPerM * r.CacheWrite1h, WebSearchPer1k: r.WebSearchPer1k, Local: local[id],
+			Unverified: m.Unverified, Source: m.PriceSource, CheckedAt: m.PriceCheckedAt}
 		if r.LongContext != nil {
 			row.LongContext = fmt.Sprintf("above %d input tokens: $%g in / $%g out", r.LongContext.AboveInputTokens, r.LongContext.InputPerM, r.LongContext.OutputPerM)
 		}
@@ -1205,9 +1211,14 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 	w := cmd.OutOrStdout()
 	fmt.Fprintf(w, "model prices, US dollars per million tokens (source %s, checked %s)\n", doc.Source, doc.CheckedAt)
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tNOTES")
+	fmt.Fprintln(tw, "MODEL\tINPUT\tOUTPUT\tCACHE READ\tCACHE WRITE 5M\tCACHE WRITE 1H\tWEB SEARCH/1K\tVERIFIED\tNOTES")
 	for _, r := range doc.Models {
 		var notes []string
+		verified := "yes"
+		if r.Unverified {
+			verified = "NO"
+			notes = append(notes, "UNVERIFIED placeholder: "+r.Source+" ("+r.CheckedAt+")")
+		}
 		if r.Local {
 			notes = append(notes, "local override")
 		}
@@ -1217,8 +1228,8 @@ func runBudgetPrices(cmd *cobra.Command, o *budgetPricesOptions) error {
 		if len(r.Aliases) > 0 {
 			notes = append(notes, "aliases "+strings.Join(r.Aliases, ", "))
 		}
-		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
-			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, oneLine(strings.Join(notes, "; ")))
+		fmt.Fprintf(tw, "%s\t$%g\t$%g\t$%g\t$%g\t$%g\t$%g\t%s\t%s\n", oneLine(r.ID), r.InputPerM, r.OutputPerM, r.CacheReadPerM,
+			r.CacheWrite5mPerM, r.CacheWrite1hPerM, r.WebSearchPer1k, verified, oneLine(strings.Join(notes, "; ")))
 	}
 	return tw.Flush()
 }

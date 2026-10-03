@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // baseEnv is what the agent inherits from the runner besides auth and declared secrets.
@@ -57,6 +59,21 @@ func BuildEnv(parent []string, spec EnvSpec) (env, secretValues []string, err er
 	for _, k := range baseEnv {
 		if v, ok := p[k]; ok {
 			out[k] = v
+		}
+	}
+	for _, k := range spec.Secrets {
+		if config.IsProviderKeyEnv(k) {
+			// A provider's key belongs to the runner's gateway, never to the
+			// agent, whatever a workflow declares.
+			return nil, nil, fmt.Errorf("secret %s is a provider key, which the agent never gets", k)
+		}
+	}
+	// Provider keys are in the runner's environment (the gateway reads them)
+	// and nowhere in the allow-list above; they are registered for redaction
+	// here too, in case a mounted-secret list missed one.
+	for _, k := range slices.Sorted(maps.Keys(p)) {
+		if v := p[k]; config.IsProviderKeyEnv(k) && len(v) >= 4 {
+			secretValues = append(secretValues, v)
 		}
 	}
 	secretNames := slices.Clone(spec.Secrets)

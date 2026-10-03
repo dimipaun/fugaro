@@ -592,6 +592,37 @@ func TestGitEnvStripsModelCredentials(t *testing.T) {
 	}
 }
 
+// A provider key (FUGARO_PROVIDER_KEY_*, any case) never reaches git or a
+// command git runs, even for a Repo whose StripEnv is empty.
+func TestGitEnvStripsProviderKeys(t *testing.T) {
+	repo, _ := setup(t)
+	t.Setenv("FUGARO_PROVIDER_KEY_OPENROUTER", "or-real-key")
+	t.Setenv("fugaro_provider_key_other", "other-real-key")
+	t.Setenv("KEEP_ME", "kept")
+	dump := filepath.Join(t.TempDir(), "env.txt")
+	hook := filepath.Join(t.TempDir(), "fsmonitor.sh")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\nenv > "+dump+"\nprintf '\\0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "config", "core.fsmonitor", hook)
+	repo.Env = append(repo.Env, "FUGARO_PROVIDER_KEY_FROM_REPO_ENV=repo-env-key")
+	repo.StripEnv = nil
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(dump)
+	if err != nil {
+		t.Fatalf("the fsmonitor hook never ran: %v", err)
+	}
+	if !strings.Contains(string(b), "KEEP_ME=kept") {
+		t.Fatalf("the hook's env lost an ordinary variable:\n%s", b)
+	}
+	if strings.Contains(strings.ToUpper(string(b)), "PROVIDER_KEY") || strings.Contains(string(b), "real-key") {
+		t.Errorf("the hook's env holds a provider key:\n%s", b)
+	}
+}
+
 func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 	_, remote := setup(t)
 	dir := filepath.Join(t.TempDir(), "w")

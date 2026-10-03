@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+agent:
+  first_line_rounds: 4
+workflows:
+  server: { base: server-jvm, commands: { build: make, test: make test } }

@@ -69,6 +69,8 @@
         },
         "max_run_tokens": { "type": "integer", "minimum": 0, "description": "Limit on a whole run's tokens; 0 is none. In a fugaro.yaml it can only tighten the project's ceiling and the default branch's value." },
         "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
+        "first_line_review": { "enum": ["auto", "on", "off"], "description": "A review by the coder's own model, with a fix between, before the senior review. auto: on only when a provider serves the coder and not the reviewer." },
+        "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "First-line review/fix cycles, counted apart from review_rounds." },
         "max_budget_usd": { "type": "number", "minimum": 0 },
         "instructions": { "type": "string" },
         "review": { "type": "string" }

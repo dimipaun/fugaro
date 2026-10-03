@@ -80,10 +80,20 @@ type PRRef struct {
 
 // ReviewSummary is one review round's verdict.
 type ReviewSummary struct {
-	Round    int    `json:"round"`
+	Round int `json:"round"`
+	// Tier is TierFirst for a first-line review (by the coder's model,
+	// never deciding readiness) and TierSenior for the reviewer's; empty
+	// is a senior review in a run that had no first line.
+	Tier     string `json:"tier,omitempty"`
 	Verdict  string `json:"verdict"`
 	Findings int    `json:"findings"`
 }
+
+// Review tiers (ReviewSummary.Tier).
+const (
+	TierFirst  = "first"
+	TierSenior = "senior"
+)
 
 // StageTiming records how long one stage took.
 type StageTiming struct {

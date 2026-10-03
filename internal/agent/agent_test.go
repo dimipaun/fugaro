@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -668,5 +669,46 @@ func TestNoProxyCoversLoopback(t *testing.T) {
 	env, _, _ = BuildEnv([]string{"ANTHROPIC_API_KEY=key-123", "NO_PROXY=localhost,corp.invalid"}, EnvSpec{Auth: "api-key", Gateway: gw})
 	if !slices.Contains(env, "NO_PROXY=localhost,corp.invalid,127.0.0.1") {
 		t.Errorf("env = %v", env)
+	}
+}
+
+// TestAgentEnvHasNoProviderKey: a provider's key is in the runner's
+// environment for the gateway, and in no agent environment: not with the
+// gateway, not without it, not on any auth, and not by declaring it.
+func TestAgentEnvHasNoProviderKey(t *testing.T) {
+	const (
+		orKey = "sk-or-v1-not-a-real-key"
+		other = "other-provider-key-xyz"
+	)
+	parent := []string{
+		"PATH=/bin", "ANTHROPIC_API_KEY=key-123", "CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p",
+		config.ProviderKeyEnv("openrouter-api-key") + "=" + orKey, config.ProviderKeyEnv("other-key") + "=" + other,
+		"CLAUDE_CODE_OAUTH_TOKEN=oauth-tok-1",
+	}
+	gw := &Gateway{BaseURL: "http://127.0.0.1:4000", Token: "tok-abc"}
+	for name, spec := range map[string]EnvSpec{
+		"api-key":         {Auth: "api-key"},
+		"api-key gateway": {Auth: "api-key", Gateway: gw},
+		"vertex":          {Auth: "vertex"},
+		"vertex gateway":  {Auth: "vertex", Gateway: gw},
+		"oauth":           {Auth: "oauth"},
+	} {
+		env, secrets, err := BuildEnv(parent, spec)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		for _, kv := range env {
+			if strings.Contains(kv, orKey) || strings.Contains(kv, other) || config.IsProviderKeyEnv(strings.SplitN(kv, "=", 2)[0]) {
+				t.Errorf("%s: a provider key is in the agent's env: %s", name, kv)
+			}
+		}
+		if !slices.Contains(secrets, orKey) || !slices.Contains(secrets, other) {
+			t.Errorf("%s: the provider keys are not registered for redaction: %v", name, secrets)
+		}
+	}
+	// A workflow that declares the variable gets an error, not the key.
+	_, _, err := BuildEnv(parent, EnvSpec{Auth: "api-key", Secrets: []string{config.ProviderKeyEnv("openrouter-api-key")}})
+	if err == nil || strings.Contains(err.Error(), orKey) {
+		t.Errorf("declaring a provider key: err = %v", err)
 	}
 }

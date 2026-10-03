@@ -24,6 +24,8 @@
 
 User rulings from M9: multi-model is M10 with its own design; Anthropic models stay direct (cache); the rest via OpenRouter; caps count model dollars only; `oauth` stays uncapped and Anthropic-only; stay in Go; no backward compatibility (reshape directly, re-run init); never use or ask for an API key; live tests sandbox-only and run by the user. Recommended here (design §0): no protocol translation; route by model inside the existing gateway; owner decides which repositories may send code to which provider; table price caps money, provider-reported cost is recorded not trusted; first slice is OpenRouter + one DeepSeek model.
 
+User rulings for M10 (2026-10-03): provider OpenRouter, first model `deepseek/deepseek-v4-flash`; `allow_data_to` lists `edgeappinc/fugarosandbox` and `dimipaun/fugaro`, EdgeWeb is excluded; review is two-tier (T12).
+
 ## Review Focus
 
 **Per-task review (security- or money-critical): T3, T4, T5, T6.** Everything else is reviewed once on the branch at the end (user's token-economy rule).
@@ -61,83 +63,94 @@ User rulings from M9: multi-model is M10 with its own design; Anthropic models s
 | T9 CLI: `budget prices` source/verified, `diagnose` route and reported vs charge, `report` model rows | S | A | T6, T8 | end |
 | T10 docs: design sync into v1.md, README, setup guide (account-side OpenRouter policy, per-project credit limit) | S | B | T8 | end |
 | T11 live check on the sandbox, user-run with the user's own key | S | user | all | n/a |
+| T12 two-tier review: a `review_first` stage on the coder model, then the senior Claude review; senior verdict decides readiness | M | A | T8 | end |
 
-Order: T7 first (the fake is the harness for the rest), then T1 and T3 in parallel, T2/T4/T5, T6, T8, T9, T10, T11.
+Order: T7 first (the fake is the harness for the rest), then T1 and T3 in parallel, T2/T4/T5, T6, T8, T12, T9, T10, T11.
 
 ### Task 7 (M, lane B): Compat-fake
 
 **Files:** `internal/gateway/anthropicfake/` (extend) or `compatfake/`, tests.
 
 - A fake Messages upstream with knobs: required auth header (`x-api-key` or bearer), omit cache fields, omit usage, add a `cost` field, rename the serving model, 401/429/5xx, cut the stream, record the headers and body it received. Hand-written fixtures from docs, marked `unverified`.
-- [ ] **Failing tests first:** `TestFakeRecordsAuthHeader`, `TestFakeOmitsUsage`, `TestFakeCutsStream`.
-- [ ] Commit: `gateway: a compat upstream fake`
+- [x] **Failing tests first:** `TestFakeRecordsAuthHeader`, `TestFakeOmitsUsage`, `TestFakeCutsStream`.
+- [x] Commit: `gateway: a compat upstream fake`
 
 ### Task 1 (M, lane A): Provider config
 
 **Files:** `internal/config/providers.go`, `config.go`, `validate.go`, tests.
 
 - `providers.<name>` with `kind: anthropic-compat`, `base_url` (https; loopback http for tests only), `auth`, `secret`, `route_fee_pct`, `models` (patterns), `allow_data_to`. Strict decode. Overlapping patterns across providers rejected. A provider-routed model requires `agent.auth: api-key` (message names `oauth`/`vertex` limits).
-- [ ] **Failing tests first:** `TestProviderDecodeStrict`, `TestProviderOverlapRejected`, `TestProviderHTTPRefusedExceptLoopback`, `TestOAuthWithProviderModelRefused`, `TestVertexWithProviderModelRefused`, `TestFeeBounds`.
-- [ ] Commit: `config: provider routes for non-Anthropic models`
+- [x] **Failing tests first:** `TestProviderDecodeStrict`, `TestProviderOverlapRejected`, `TestProviderHTTPRefusedExceptLoopback`, `TestOAuthWithProviderModelRefused`, `TestVertexWithProviderModelRefused`, `TestFeeBounds`.
+- [x] Commit: `config: provider routes for non-Anthropic models`
 
 ### Task 2 (M, lane A): Repository policy and bootstrap refusal
 
 **Files:** `internal/config/pins.go`, `policy`, `internal/runner` bootstrap, tests.
 
 - A provider ID in the pins needs: claimed by a provider, repo in `allow_data_to`, priced, explicit (no alias, no variant suffix `:free|:nitro|:online|...`), on `allowed_models` if set. Refused **before any call**, naming the rule. A repository's `fugaro.yaml` can never add or alter a provider.
-- [ ] **Failing tests first:** `TestRepoCannotAddProvider`, `TestAllowDataToRequired`, `TestVariantSuffixPinRefused`, `TestUnpricedModelRefused`, `TestNoCallBeforeRefusal`.
-- [ ] Commit: `config: provider models need owner approval`
+- [x] **Failing tests first:** `TestRepoCannotAddProvider`, `TestAllowDataToRequired`, `TestVariantSuffixPinRefused`, `TestUnpricedModelRefused`, `TestNoCallBeforeRefusal`.
+- [x] Commit: `config: provider models need owner approval`
 
 ### Task 3 (L, lane B): Gateway routes **(critical: own review)**
 
 **Files:** `internal/gateway/route.go`, `gateway.go`, `forward.go`, tests against the fake.
 
 - `Options.Routes`: model pattern to `Upstream{Kind: compat, BaseURL, Credential, AuthHeader}`; Claude models keep the existing upstream. Chosen per request from the parsed model **after** the pin check. The agent's `x-api-key`/`authorization` are dropped and the route credential attached; the gateway token is never sent upstream. HTTP client refuses redirects to another host. No change to body or other headers. `count_tokens` for a compat route is answered locally (no forward) unless the route proves support.
-- [ ] **Failing tests first:** `TestRouteByModel`, `TestUnpinnedModelStill400`, `TestAgentAuthHeaderNeverForwarded`, `TestGatewayTokenNeverSentUpstream`, `TestNoCrossHostRedirect`, `TestBodyUnchangedOnCompatRoute`, `TestKillSwitchCancelsProviderStream`.
-- [ ] Commit: `gateway: route a pinned model to its provider`
+- [x] **Failing tests first:** `TestRouteByModel`, `TestUnpinnedModelStill400`, `TestAgentAuthHeaderNeverForwarded`, `TestGatewayTokenNeverSentUpstream`, `TestNoCrossHostRedirect`, `TestBodyUnchangedOnCompatRoute`, `TestKillSwitchCancelsProviderStream`.
+- [x] Commit: `gateway: route a pinned model to its provider`
 
 ### Task 4 (M, lane A): Secrets and env **(critical: own review)**
 
 **Files:** `config.ReservedSecrets`, runner env building, redactor, init/secrets path, tests.
 
 - Provider secret names reserved; mounted into the runner only; scrubbed from the agent env; redactor learns the value; upstream error text scanned before logging.
-- [ ] **Failing tests first:** `TestAgentEnvHasNoProviderKey`, `TestUpstreamErrorEchoingKeyIsRedacted`, `TestWorkflowSecretCannotShadowProviderSecret`, `TestKeyNotInResultJSON`.
-- [ ] Commit: `runner: provider keys stay out of the agent`
+- [x] **Failing tests first:** `TestAgentEnvHasNoProviderKey`, `TestUpstreamErrorEchoingKeyIsRedacted`, `TestWorkflowSecretCannotShadowProviderSecret`, `TestKeyNotInResultJSON`.
+- [x] Commit: `runner: provider keys stay out of the agent`
 
 ### Task 5 (M, lane B): Pricing and fee **(critical: own review)**
 
 **Files:** `internal/pricing`, gateway reservation and settlement, tests.
 
 - Starter row(s) for the first model, **unverified** with source and date and a pin-time warning (owner `model_prices` always wins; owner supplies the real numbers). `route_fee_pct` multiplies the worst case and the charge. Unknown serving model on a route: highest rate of the route's pattern, `priced_as: max`.
-- [ ] **Failing tests first:** `TestFeeInReservation`, `TestFeeInSettlement`, `TestUnverifiedPriceWarns`, `TestOverrideBeatsEmbedded`, `TestUnknownServingModelPricedMax`.
-- [ ] Commit: `pricing: provider prices and the route fee`
+- [x] **Failing tests first:** `TestFeeInReservation`, `TestFeeInSettlement`, `TestUnverifiedPriceWarns`, `TestOverrideBeatsEmbedded`, `TestUnknownServingModelPricedMax`.
+- [x] Commit: `pricing: provider prices and the route fee`
 
 ### Task 6 (M, lane B): Settlement rules **(critical: own review)**
 
 **Files:** `internal/gateway/forward.go` (`fromUsage`), `runstore`, schema, tests.
 
 - No cache fields: all input at the full input rate. No usage on a completed stream: charge the reservation, `settled: reserved`. Provider-reported cost recorded as `reported`, never settles (`TestReportedCostNeverSettles`); `route` recorded per call. `result.json` additive.
-- [ ] **Failing tests first:** `TestNoCacheFieldsChargesFullInput`, `TestMissingUsageChargesReservation`, `TestReportedCostNeverSettles`, `TestUnknownEventsSkipped`, `TestStreamWithNoEventsChargedAfterStart`.
-- [ ] Commit: `gateway: settle provider calls conservatively`
+- [x] **Failing tests first:** `TestNoCacheFieldsChargesFullInput`, `TestMissingUsageChargesReservation`, `TestReportedCostNeverSettles`, `TestUnknownEventsSkipped`, `TestStreamWithNoEventsChargedAfterStart`.
+- [x] Commit: `gateway: settle provider calls conservatively`
 
 ### Task 8 (M, lane A): Runner wiring
 
 **Files:** `internal/runner`, tests with fake `claude` and the compat-fake.
 
 - Pins to `--model` and the `ANTHROPIC_DEFAULT_*`/small-fast pins; background defaults to the coder's model with a provider coder; per-route settings fragment (empty at first). End to end: a `deepseek/...` run ends in a PR, cost exact, no key in the agent env, a halt works.
-- [ ] **Failing tests first:** `TestProviderRunEndsInPR`, `TestBackgroundDefaultsToCoder`, `TestCostExactToTheMicro`, `TestHaltOnProviderRun`.
-- [ ] Commit: `runner: runs on a provider model`
+- [x] **Failing tests first:** `TestProviderRunEndsInPR`, `TestBackgroundDefaultsToCoder`, `TestCostExactToTheMicro`, `TestHaltOnProviderRun`.
+- [x] Commit: `runner: runs on a provider model`
+
+### Task 12 (M, lane A): Two-tier review
+
+**Files:** `internal/config/config.go` (`Agent`, `StageRole`), `validate.go`, `internal/runner` stage machine, `schemas/result.schema.json`, tests with the fake `claude` and the compat-fake. Design: m10-multi-model.md §11a.
+
+- Config: `agent.first_line_review: auto|on|off` (default `auto`: on only when the coder's model is provider-routed and the reviewer's is not) and `agent.first_line_rounds` (default 1, 1 to 3). `StageRole("review_first")` is the coder role, so pins, `max_output_tokens.coder` and price are the coder's.
+- Stage machine: `implement, review_first(1..k) with fix between, then review(1)` and the existing `[fix, review(n)]` loop. The senior `review` always runs and its verdict alone feeds the readiness rule; first-line `changes` go to `fix` (resume S1) first; a first-line stage that errors or has no parseable verdict is recorded and skipped, never failing the run (a budget halt still does). First-line findings are not passed to the senior reviewer.
+- Record: `result.json` `reviews[]` gains `tier` (`first|senior`); transcripts `review_first-<n>.jsonl`; both tiers draw on the one run cap, stage budget and token cap.
+- [x] **Failing tests first:** `TestFirstLineDefaultsByCoder` (auto on for a provider coder, off for Claude), `TestFirstLineVerdictNeverMakesReady`, `TestFirstLineChangesGoThroughFix`, `TestSeniorReviewAlwaysRuns`, `TestFirstLineFailureSkipped`, `TestFirstLineUsesCoderPins`, `TestFirstLineCostCountsToCap`, `TestFirstLineRoundsBounds`.
+- [x] Commit: `runner: a first-line review by the coder before the senior review`
 
 ### Task 9 (S, lane A): CLI
 
 `budget prices` source (embedded|override) and verified columns; `diagnose` route and `reported` vs `charge` with a warning above 10 %; `report --by model` rows carry the route.
-- [ ] **Failing tests first:** `TestPricesShowsSourceAndVerified`, `TestDiagnoseShowsReportedVsCharge`.
-- [ ] Commit: `cli: show routes and where a price came from`
+- [x] **Failing tests first:** `TestPricesShowsSourceAndVerified`, `TestDiagnoseShowsReportedVsCharge`.
+- [x] Commit: `cli: show routes and where a price came from`
 
 ### Task 10 (S, lane B): Docs
 
 Fold the design into `v1.md`, README config section, the setup guide (OpenRouter account-side provider policy, a credit-limited key per Fugaro project), and the live checklist item.
-- [ ] Commit: `docs: multi-model runs`
+- [x] Commit: `docs: multi-model runs`
 
 ### Task 11 (S, user): Live check
 
@@ -145,4 +158,4 @@ Sandbox repository only, user-created credit-limited OpenRouter key, one cheap t
 
 ## Done when
 
-All tasks green under `./.superpowers/heavy.sh`, per-task reviews of T3-T6 clean, the end-of-branch review clean, the design's §13 items either verified from a recording or left as named warnings, and the user's live check (T11) recorded.
+All tasks green under `./.superpowers/heavy.sh`, per-task reviews of T3-T6 clean, the end-of-branch review clean (T12 included), the design's §13 items either verified from a recording or left as named warnings, and the user's live check (T11) recorded.

@@ -13,7 +13,7 @@
     "workflow": { "type": "string" },
     "execution": { "type": "string", "description": "The canonical full execution name; empty or absent for local runs." },
     "status": { "enum": ["running", "succeeded", "failed", "infra_error", "cancelled", "halted"] },
-    "stage": { "enum": ["bootstrap", "implement", "review", "fix", "finalize", "writeback"] },
+    "stage": { "enum": ["bootstrap", "implement", "review_first", "review", "fix", "finalize", "writeback"] },
     "outcome": { "enum": ["", "ready", "draft", "none"], "description": "Empty while the run is in progress." },
     "reason": { "type": "string" },
     "branch": { "type": "string" },
@@ -39,6 +39,7 @@
         "required": ["round", "verdict", "findings"],
         "properties": {
           "round": { "type": "integer", "minimum": 1 },
+          "tier": { "enum": ["first", "senior"], "description": "first: the coder model's first-line review, never decides readiness; senior: the reviewer's. Absent in a run without a first line (senior)." },
           "verdict": { "type": "string" },
           "findings": { "type": "integer", "minimum": 0 }
         }
@@ -84,6 +85,8 @@
         "model_basis": { "enum": ["api-list", "subscription"] },
         "model_source": { "enum": ["gateway", "claude-code"], "description": "Where model_usd came from: the gateway's settled ledger or Claude Code's own total." },
         "model_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by model." },
+        "route_by": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0 }, "description": "Model spend in USD, by provider route; calls on Anthropic have no route." },
+        "reported_usd": { "type": "number", "minimum": 0, "description": "What providers said their calls cost, summed. For comparison with model_usd; never charged." },
         "unreconciled": { "type": "number", "minimum": 0, "description": "USD charged from reservations rather than from reported usage." },
         "usage_unparsed": { "type": "integer", "minimum": 0, "description": "Calls settled at their reservation because their usage could not be read." }
       }

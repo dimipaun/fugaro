@@ -1112,3 +1112,127 @@ func TestJobEnvOmitsBackendWhenBudgetOff(t *testing.T) {
 		}
 	}
 }
+
+const providerLC = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/sandbox"]
+  elsewhere:
+    kind: anthropic-compat
+    base_url: https://other.example
+    auth: x-api-key
+    secret: other-key
+    models: ["qwen/*"]
+    allow_data_to: ["acme/other"]
+`
+
+// A provider's key is mounted into the job of a repository the owner
+// allowed to send code to it, as a variable no workflow can name, and into
+// no other.
+func TestProviderKeyMountedOnlyForAllowedRepos(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := rs.Workflows["web"]
+	env := config.ProviderKeyEnv("openrouter-api-key")
+	if ws.SecretEnv[env] != "openrouter-api-key" || ws.SecretIDs["openrouter-api-key"] == "" || rs.Secrets["openrouter-api-key"] == "" {
+		t.Errorf("the key is not mounted: %v %v", ws.SecretEnv, ws.SecretIDs)
+	}
+	if _, ok := ws.SecretEnv[config.ProviderKeyEnv("other-key")]; ok {
+		t.Errorf("the key of a provider this repository is not allowed to use is mounted: %v", ws.SecretEnv)
+	}
+	if !strings.Contains(ws.Env[runner.SecretEnvsVar], env) {
+		t.Errorf("%s does not list %s, so it would not be redacted: %q", runner.SecretEnvsVar, env, ws.Env[runner.SecretEnvsVar])
+	}
+	for k := range ws.Env {
+		if config.IsProviderKeyEnv(k) {
+			t.Errorf("the job's plain env carries %s", k)
+		}
+	}
+	// Not on oauth or vertex: a run does not mix credentials.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	// This relies on sandboxInputs' default auth not being api-key.
+	if in.Cfg.Agent.Auth == "api-key" {
+		t.Fatalf("sandboxInputs now defaults to %s auth: set an oauth auth here explicitly", in.Cfg.Agent.Auth)
+	}
+	if rs, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := rs.Workflows["web"].SecretEnv[env]; ok {
+		t.Errorf("the key is mounted on %s auth", in.Cfg.Agent.Auth)
+	}
+}
+
+func TestWorkflowSecretCannotShadowProviderSecret(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	w := in.Cfg.Workflows["web"]
+	// Even a provider the repository may not use: the name is the owner's.
+	w.Secrets = append(w.Secrets, config.Secret{Name: "other-key", Env: "MY_KEY"})
+	in.Cfg.Workflows["web"] = w
+	_, err := Repo(in)
+	var ue *UserError
+	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "other-key") || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("err = %v", err)
+	}
+	// Names differ only in case but derive the same Secret Manager ID and
+	// the same variable, so a different case is a shadow too.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	w = in.Cfg.Workflows["web"]
+	w.Secrets = append(w.Secrets, config.Secret{Name: "Other-Key", Env: "MY_KEY"})
+	in.Cfg.Workflows["web"] = w
+	if _, err = Repo(in); !errors.As(err, &ue) || !strings.Contains(err.Error(), "provider") {
+		t.Fatalf("a differently cased name: err = %v", err)
+	}
+}
+
+// The job of an allowed repository names only the providers that list it,
+// each with allow_data_to cut to that one repository; a repository no provider
+// lists gets no such variable at all.
+func TestProvidersEnvInTheJobIsCutToTheRepo(t *testing.T) {
+	in := sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	lc := in.LC.Providers["openrouter"]
+	lc.AllowDataTo = []string{"acme/sandbox", "acme/webapp"}
+	in.LC.Providers["openrouter"] = lc
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := rs.Workflows["web"].Env[ModelProvidersEnv]
+	if !ok {
+		t.Fatalf("the job has no %s: %v", ModelProvidersEnv, rs.Workflows["web"].Env)
+	}
+	var got map[string]config.ModelProvider
+	if err := json.Unmarshal([]byte(v), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || len(got["openrouter"].AllowDataTo) != 1 || got["openrouter"].AllowDataTo[0] != "acme/sandbox" {
+		t.Errorf("providers in the job = %+v, want only openrouter cut to acme/sandbox", got)
+	}
+	if strings.Contains(v, "acme/webapp") || strings.Contains(v, "other-key") || strings.Contains(v, "acme/other") {
+		t.Errorf("the job's providers leak another repository or provider: %s", v)
+	}
+
+	// A repository no provider lists: no variable.
+	in = sandboxInputs(t, m5Additions+providerLC)
+	in.Cfg.Agent.Auth = "api-key"
+	for name, p := range in.LC.Providers {
+		p.AllowDataTo = []string{"acme/other"}
+		in.LC.Providers[name] = p
+	}
+	if rs, err = Repo(in); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := rs.Workflows["web"].Env[ModelProvidersEnv]; ok {
+		t.Errorf("a repository no provider allows got %s = %s", ModelProvidersEnv, v)
+	}
+}

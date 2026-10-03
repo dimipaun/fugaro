@@ -12,10 +12,12 @@ import (
 // upstream error.
 type callLog struct {
 	stage, model, servingModel string
-	status                     int // the upstream's, or the gateway's own refusal; 0: no status
+	route                      string // the provider the call went to; "" is the Anthropic upstream
+	status                     int    // the upstream's, or the gateway's own refusal; 0: no status
 	stream                     bool
 	usage                      pricing.Usage // reported
 	reserved, charged          pricing.Micros
+	reported                   pricing.Micros // what the provider said it cost; recorded, never charged
 	pricedAs, settled          string
 	sessionID, agentID         string
 	errorType                  string
@@ -45,6 +47,12 @@ func (s *Server) logCall(c callLog) {
 		"settled", c.settled,
 		"session_id", logValue(c.sessionID),
 		"agent_id", logValue(c.agentID),
+	}
+	if c.route != "" {
+		attrs = append(attrs, "route", c.route)
+	}
+	if c.reported > 0 {
+		attrs = append(attrs, "reported_micros", int64(c.reported))
 	}
 	if c.errorType != "" {
 		attrs = append(attrs, "error_type", errorTypeValue(c.errorType))

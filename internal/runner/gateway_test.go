@@ -76,6 +76,8 @@ type gw struct {
 	*harness
 	fake *anthropicfake.Fake
 	logs *lockedBuf
+	// compat is the provider's fake upstream, set by providerGW.
+	compat *anthropicfake.Fake
 }
 
 // newGW starts a fake upstream answering with script and a run in budget

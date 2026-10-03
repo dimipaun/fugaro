@@ -12,6 +12,7 @@ import (
 	"mime"
 	"net/http"
 	"net/http/httptrace"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -32,6 +33,19 @@ type parsed struct {
 	pdf       bool   // a base64 document block
 	violation string // the first shape the budget can't bound, if any
 	toolTypes string // the distinct tool types of tools, comma separated, for the log
+	foreign   string // the first top-level key a provider route doesn't take, if any
+}
+
+// routedKeys are the top-level fields a request to a provider route may
+// carry: the Messages API's own. Anything else (OpenRouter's plugins,
+// provider, models, route, transforms, usage, web_search_options, ...) can
+// bill outside token pricing or override the account's data policy. The
+// Claude path is not held to this list. metadata stays, but only its
+// user_id: Claude Code sends metadata.user_id on every request and the
+// gateway never rewrites a body.
+var routedKeys = []string{
+	"model", "max_tokens", "messages", "system", "stream", "tools", "tool_choice", "temperature",
+	"top_p", "top_k", "stop_sequences", "metadata", "thinking", "output_config",
 }
 
 // maxJSONDepth bounds how deeply a request body may nest.
@@ -85,6 +99,28 @@ func parseRequest(body []byte, pathModel string) (parsed, error) {
 		return p, errors.New("messages is missing or not a list")
 	}
 
+	for k := range top {
+		if !slices.Contains(routedKeys, k) && (p.foreign == "" || k < p.foreign) {
+			p.foreign = k
+		}
+	}
+	if md, has := top["metadata"]; has {
+		// Claude Code sends metadata.user_id and nothing else; any other
+		// key in it is a foreign field like a top-level one.
+		obj, _ := md.(map[string]any)
+		bad := ""
+		if obj == nil {
+			bad = "metadata"
+		}
+		for k := range obj {
+			if k != "user_id" && (bad == "" || "metadata."+k < bad) {
+				bad = "metadata." + k
+			}
+		}
+		if bad != "" && (p.foreign == "" || bad < p.foreign) {
+			p.foreign = bad
+		}
+	}
 	p.cacheTTL = cacheTTL(v)
 	p.violation = p.shapes(top, msgs)
 	return p, nil
@@ -415,8 +451,14 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 	if !s.sameModel(p.model, st.Model) && !s.sameModel(p.model, st.Background) {
 		return fmt.Sprintf("model %s is not pinned for stage %s", logValue(p.model), st.Name)
 	}
+	if s.routeFor(p.model) != nil && hasVariantSuffix(p.model) {
+		return fmt.Sprintf("model %s carries a variant suffix, which changes the provider's routing and price: pin the plain model ID", logValue(p.model))
+	}
 	if p.violation != "" {
 		return p.violation
+	}
+	if p.foreign != "" && s.routeFor(p.model) != nil {
+		return fmt.Sprintf("field %s is not allowed on a provider route (it isn't priced by the budget)", strconv.Quote(logValue(p.foreign)))
 	}
 	maxOut := m.MaxOutputTokens
 	if maxOut <= 0 {
@@ -435,13 +477,17 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 }
 
 // sameModel: the same ID, or two spellings the table resolves to one
-// model. A prefix never matches.
+// model. A prefix never matches, and a provider's model matches only
+// itself: the alias rule is Claude's.
 func (s *Server) sameModel(a, pin string) bool {
 	if a == "" || pin == "" {
 		return false
 	}
 	if a == pin {
 		return true
+	}
+	if s.routeFor(a) != nil || s.routeFor(pin) != nil {
+		return false
 	}
 	ma, okA := s.o.Prices.Lookup(a)
 	mp, okP := s.o.Prices.Lookup(pin)
@@ -493,9 +539,24 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+v)
 		return
 	}
-	w0 := m.WorstCase(pricing.Request{
+	rt = s.withRoute(rt, p.model)
+	if rt.provider != nil {
+		cl.route = rt.provider.Name
+		if !known {
+			// A provider's call is real money: with no price in the table
+			// it would be charged a guess, so it is not sent (CheckPins
+			// refuses such a pin at bootstrap; this is the backstop).
+			v := fmt.Sprintf("model %s is routed to %s but has no price: set model_prices", logValue(p.model), rt.provider.Name)
+			s.violation(st, v)
+			s.log.Warn("budget: request refused", "stage", st.st.Name, "violation", v)
+			refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+v)
+			return
+		}
+	}
+	// The route's fee is part of what the call can cost, so the cap counts it.
+	w0 := pricing.WithFee(m.WorstCase(pricing.Request{
 		BodyBytes: int64(len(body)), HasPDF: p.pdf, ImageCount: p.images, MaxTokens: p.maxTokens, CacheTTL: p.cacheTTL,
-	})
+	}), rt.provider.feePct())
 	if msg, status := s.reserve(r.Context(), st, w0); status == http.StatusTooManyRequests {
 		// Retryable: Claude Code backs off and asks again once the calls
 		// holding the reservations have settled.
@@ -518,9 +579,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 	// outcome is known it is charged its full reservation.
 	out := outcome{charge: charge{amount: w0, unreconciled: w0, model: p.model, sent: true}, settled: settledReserved, pricedAs: cl.pricedAs}
 	defer func() {
+		out.route = cl.route
 		s.settle(st, w0, out.charge)
-		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType =
-			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType
+		cl.charged, cl.settled, cl.pricedAs, cl.servingModel, cl.usage, cl.errorType, cl.reported =
+			out.amount, out.settled, out.pricedAs, out.servingModel, out.usage, out.errorType, out.reported
 		s.logCall(cl)
 	}()
 	out = s.forward(w, r, rt, body, p, known, w0, &cl.status)
@@ -575,22 +637,57 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return reserved
 	}
 	defer resp.Body.Close()
+	if rt.provider != nil && isRedirect(resp.StatusCode) {
+		// Never handed to the agent (its Location is another host's) and
+		// never followed: the provider answered with nothing usable.
+		*status = http.StatusBadGateway
+		writeError(w, http.StatusBadGateway, "api_error", "fugaro: the provider answered with a redirect, which the gateway does not follow")
+		return zeroOutcome(p.model, true)
+	}
 	*status = resp.StatusCode
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
 	defer closeSrc()
-	copyResponseHeaders(w.Header(), resp.Header, decoded)
+	if rt.provider != nil && !(resp.StatusCode >= 200 && resp.StatusCode <= 299) {
+		// A provider's error is never copied: it may echo the key.
+		var eb []byte
+		if readable {
+			eb, _ = io.ReadAll(io.LimitReader(src, 64<<10))
+		}
+		o := zeroOutcome(p.model, true)
+		o.errorType = providerError(w, resp, eb)
+		return o
+	}
+	var out io.Writer = w
+	var rw *redactWriter
+	if rt.provider != nil {
+		copyProviderResponseHeaders(w.Header(), resp.Header, decoded)
+	} else {
+		copyResponseHeaders(w.Header(), resp.Header, decoded)
+	}
+	if rt.provider != nil {
+		// Whatever else comes back from a provider is scrubbed of its key
+		// (it is the one in the request, read at request time).
+		key := keyFrom(up.Header)
+		redactHeaders(w.Header(), key)
+		rw = newRedactWriter(w, key)
+		out = rw
+	}
 	w.WriteHeader(resp.StatusCode)
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 
 	tee := newUsageTee(isSSE(resp.Header, p.stream))
-	eof := pump(w, rc, src, func(b []byte) {
+	tee.provider = rt.provider != nil
+	eof := pump(out, rc, src, func(b []byte) {
 		if readable {
 			tee.feed(b)
 		}
 	})
 	cancel()
+	if rw != nil {
+		_ = rw.Close()
+	}
 	tee.finish()
 
 	ok2xx := resp.StatusCode >= 200 && resp.StatusCode <= 299
@@ -603,11 +700,11 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		reserved.unparsed = true
 		return reserved
 	case tee.sse && tee.started && tee.complete:
-		return s.fromUsage(tee, p, false)
+		return s.fromUsage(tee, p, rt.provider, false)
 	case tee.sse && tee.started && !tee.broken:
-		return s.fromUsage(tee, p, true)
+		return s.fromUsage(tee, p, rt.provider, true)
 	case !tee.sse && eof && tee.complete:
-		return s.fromUsage(tee, p, false)
+		return s.fromUsage(tee, p, rt.provider, false)
 	}
 	reserved.unparsed = true
 	reserved.errorType = tee.errorType
@@ -617,9 +714,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 // fromUsage prices a call from the usage the response reported: at the
 // serving model's rates, the table's maximum for an unknown model, or the
 // maximum times SurpriseMultiplier when the response was priced in a
-// dimension the request didn't allow. A partial call is charged its
-// reported input and cache tokens plus the reserved output.
-func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
+// dimension the request didn't allow. On a provider route (pr, else nil) a
+// serving model other than the pinned one is never priced lower than the
+// pin: the dearer of the two rates per dimension, or the table's maximum
+// when the table doesn't know it; and the route's fee is added to the
+// charge. A partial call is charged its reported input and cache tokens
+// plus the reserved output.
+func (s *Server) fromUsage(t *usageTee, p parsed, pr *Route, partial bool) outcome {
 	serving := t.model
 	if serving == "" {
 		serving = p.model
@@ -629,9 +730,21 @@ func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
 	mult := int64(1)
 	if m, ok := s.o.Prices.Lookup(serving); ok {
 		rates = m.Rates
+		if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pin.ID != m.ID {
+			rates = pricing.MaxOf(pin.Rates, m.Rates)
+			o.pricedAs = pricedMax
+		}
+	} else if pin, pinned := s.o.Prices.Lookup(p.model); pr != nil && pinned && pinSpelling(serving, p.model) {
+		// The pin with a date or other suffix: the pin's own model.
+		rates = pin.Rates
 	} else {
 		o.pricedAs = pricedMax
+		if pr != nil {
+			s.log.Warn("budget: serving model not in the price table, priced at the table maximum",
+				"serving_model", logValue(serving), "pinned_model", logValue(p.model))
+		}
 	}
+	fee := pr.feePct()
 	if what := t.acc.surprise(); what != "" {
 		rates, mult = s.o.Prices.Max(), pricing.SurpriseMultiplier
 		o.pricedAs = pricedSurprise
@@ -639,21 +752,37 @@ func (s *Server) fromUsage(t *usageTee, p parsed, partial bool) outcome {
 		s.log.Warn("budget: surprise pricing", "model", logValue(serving), "what", what)
 	}
 	u := t.acc.usage(rates, p.cacheTTL)
-	reported := satMul(rates.Cost(u), mult)
+	reported := pricing.WithFee(satMul(rates.Cost(u), mult), fee)
 	o.usage = u
 	o.model = serving
 	o.sent = true
 	o.tokens = u.Input + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead + u.Output
 	if !partial {
 		o.amount, o.settled = reported, settledUsage
+		if pr != nil && t.acc.hasReported {
+			o.charge.reported = t.acc.reported // a record for comparison: it never prices the call
+		}
 		return o
 	}
 	charged := u
 	charged.Output = max(u.Output, p.maxTokens)
-	o.amount = satMul(rates.Cost(charged), mult)
+	o.amount = pricing.WithFee(satMul(rates.Cost(charged), mult), fee)
 	o.unreconciled = max(o.amount-reported, 0)
 	o.settled = settledPartial
 	return o
+}
+
+// pinSuffix is what may follow the pin in the serving model's name for it
+// to be the pin's own snapshot: a date or a short revision number.
+var pinSuffix = regexp.MustCompile(`^[-@:]?(\d{8}|\d{4}-\d{2}-\d{2}|v?\d{1,3}(\.\d+)*)$`)
+
+// pinSpelling: the serving model is the pin plus a date or revision suffix,
+// so it is the pin's own model. Any other name that merely shares a prefix
+// (a variant such as -ultra-pro, a shorter name, the pin as the longer one)
+// is a different model.
+func pinSpelling(serving, pin string) bool {
+	rest, ok := strings.CutPrefix(serving, pin)
+	return ok && pinSuffix.MatchString(rest)
 }
 
 // countingBody marks sent once the transport reads any byte of it.
@@ -683,7 +812,18 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 	}
 	up.ContentLength = int64(len(body))
 	up.GetBody = nil // never replayed: the gateway never retries
+	if rt.provider != nil {
+		// Only what the provider needs: no cookies, no session or agent
+		// IDs, no SDK telemetry.
+		up.Header = providerHeaders(r.Header)
+		s.scrubToken(up.Header)
+		if _, err := rt.provider.attachCredential(up.Header); err != nil {
+			return nil, nil, err
+		}
+		return up, sent, nil
+	}
 	up.Header = forwardHeaders(r.Header)
+	s.scrubToken(up.Header)
 	switch s.o.Upstream.Kind {
 	case "anthropic":
 		up.Header.Set("x-api-key", s.o.Upstream.APIKey)
@@ -739,6 +879,32 @@ func copyResponseHeaders(dst, src http.Header, decoded bool) {
 			continue
 		}
 		dst[ck] = append([]string(nil), vs...)
+	}
+}
+
+// providerSuccessHeaders are the headers of a provider's 2xx the agent may
+// see (with the prefixes below): what it needs to read the body and back off.
+// Anything else (cookies, account or generation identifiers, unknown
+// headers) is the provider's own and stays at the gateway.
+var providerSuccessHeaders = map[string]bool{
+	"Content-Type": true, "Retry-After": true, "Request-Id": true, "X-Request-Id": true, "Anthropic-Request-Id": true,
+	"Cache-Control": true,
+}
+
+var providerSuccessPrefixes = []string{"X-Ratelimit-", "Ratelimit-", "Anthropic-Ratelimit-"}
+
+// copyProviderResponseHeaders is copyResponseHeaders for a routed 2xx: an
+// allowlist. Content-Encoding goes only when the body was not decoded.
+func copyProviderResponseHeaders(dst, src http.Header, decoded bool) {
+	for k, vs := range src {
+		ck := http.CanonicalHeaderKey(k)
+		ok := providerSuccessHeaders[ck] || (ck == "Content-Encoding" && !decoded)
+		for _, p := range providerSuccessPrefixes {
+			ok = ok || strings.HasPrefix(ck, p)
+		}
+		if ok {
+			dst[ck] = append([]string(nil), vs...)
+		}
 	}
 }
 
@@ -852,6 +1018,8 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 	}
 }
 
+func isRedirect(status int) bool { return status >= 300 && status <= 399 }
+
 // maxCountsInFlight bounds the token counts forwarded at once: they are
 // free, but each spends the organization's rate limit with the real key.
 const maxCountsInFlight = 4
@@ -870,6 +1038,20 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	body, status, msg := readBody(r)
 	if status != 0 {
 		writeError(w, status, errorTypeFor(status), msg)
+		return
+	}
+	m, err := s.countRoutedModel(body)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "fugaro: "+err.Error())
+		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusBadRequest, "request_bytes", len(body), "response_bytes", 0)
+		return
+	}
+	if m != "" {
+		// The only upstream here is Anthropic's, and a provider's model's
+		// conversation is not sent there; counting is not proven on the
+		// provider, so the agent estimates by itself.
+		writeError(w, http.StatusNotFound, "not_found_error", "fugaro: token counting isn't available for model "+logValue(m))
+		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusNotFound, "request_bytes", len(body), "response_bytes", 0)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -913,4 +1095,28 @@ func errorTypeFor(status int) string {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// countRoutedModel is the model of a count_tokens body when a route claims
+// it ("" when none does). With routes, a body that is not one clean JSON
+// object (duplicate or odd keys, malformed) is an error: it never falls
+// through to Anthropic, which may read it differently than the gateway
+// did. Any spelling of the key "model" counts.
+func (s *Server) countRoutedModel(body []byte) (string, error) {
+	if len(s.o.Routes) == 0 {
+		return "", nil
+	}
+	if err := checkKeys(body); err != nil {
+		return "", errors.New("the request body is not acceptable: " + err.Error())
+	}
+	var top map[string]any
+	if err := json.Unmarshal(body, &top); err != nil {
+		return "", errors.New("the request body is not a JSON object")
+	}
+	for k, v := range top {
+		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && s.routeFor(m) != nil {
+			return m, nil
+		}
+	}
+	return "", nil
 }

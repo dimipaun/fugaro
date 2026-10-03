@@ -14,6 +14,8 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -380,5 +382,161 @@ func TestDiagnoseDraftTextIsSanitised(t *testing.T) {
 	}
 	if strings.Contains(b.String(), "\x1b") {
 		t.Fatalf("control sequence printed: %q", b.String())
+	}
+}
+
+func TestDiagnoseShowsRouteReportedAndPinWarnings(t *testing.T) {
+	const key = "sk-or-v1-testkeyshouldneverprint"
+	t.Setenv("OPENROUTER_API_KEY", key)
+	f := newCloudFixture(t)
+	const id = "20260927-130000-dddd"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	cost := runstore.NewCost(0.42, 0, runstore.BasisAPIList)
+	cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "claude-sonnet-5-5": 0.12}
+	cost.RouteBy = map[string]float64{"openrouter": 0.30}
+	cost.ReportedUSD = 0.40
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.42, Cost: &cost}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err := execute(t, "diagnose", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Route:", "openrouter $0.3000", "Reported:", "$0.4000", "charged $0.3000", "unverified placeholder", "more than 10% above", "may be too low"} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("diagnose lacks %q:\n%s", want, human)
+		}
+	}
+	js, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Route["openrouter"] != 0.30 || d.Reported != 0.40 || d.Charge != 0.30 || len(d.PinWarnings) != 1 || d.ReportedWarning == "" {
+		t.Fatalf("route %v reported %v charge %v warnings %v", d.Route, d.Reported, d.Charge, d.PinWarnings)
+	}
+	if strings.Contains(human+js, key) {
+		t.Fatal("the provider key is in the output")
+	}
+
+	// A Claude-only run shows none of it.
+	const id2 = "20260927-130001-eeee"
+	exec2 := seedRun(t, f, id2, "", "someone@example.com", true)
+	s2 := runstore.Open(b, appSlug, id2)
+	c2 := runstore.NewCost(1, 0, runstore.BasisAPIList)
+	c2.ModelBy = map[string]float64{"claude-sonnet-5-5": 1}
+	if err := s2.WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id2, Repo: "acme/app", Workflow: "web", Execution: exec2,
+		Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 1, Cost: &c2}); err != nil {
+		t.Fatal(err)
+	}
+	human, _, err = execute(t, "diagnose", id2)
+	if err != nil || strings.Contains(human, "Route:") || strings.Contains(human, "Reported:") || strings.Contains(human, "Warning:") {
+		t.Fatalf("err %v; a Claude run shows provider lines:\n%s", err, human)
+	}
+}
+
+// A run with a provider coder and a Claude senior: the charge compared with
+// the provider's report is the provider route's spend, not the whole run's,
+// and an "unattributed" remainder (maybe Claude's) is not in it.
+func TestDiagnoseReportedComparesTheProviderRouteOnly(t *testing.T) {
+	f := newCloudFixture(t)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	for i, tc := range []struct {
+		reported float64
+		warn     bool
+	}{{0.31, false}, {0.10, false}, {0.32, false}, {0.40, true}} {
+		id := fmt.Sprintf("20260927-14000%d-aaaa", i)
+		exec := seedRun(t, f, id, "", "someone@example.com", true)
+		cost := runstore.NewCost(0.60, 0, runstore.BasisAPIList)
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.30, "claude-sonnet-5-5": 0.25, "unattributed": 0.05}
+		cost.RouteBy = map[string]float64{"openrouter": 0.30, "unattributed": 0.30}
+		cost.ReportedUSD = tc.reported
+		if err := runstore.Open(b, appSlug, id).WriteRecord(ctx, &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, CostUSD: 0.60, Cost: &cost}); err != nil {
+			t.Fatal(err)
+		}
+		js, _, err := execute(t, "diagnose", "--json", id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var d Diagnosis
+		if err := json.Unmarshal([]byte(js), &d); err != nil {
+			t.Fatal(err)
+		}
+		if d.Charge != 0.30 || d.Reported != tc.reported || (d.ReportedWarning != "") != tc.warn {
+			t.Fatalf("reported %v: charge %v reported %v warning %q (want warning %v)", tc.reported, d.Charge, d.Reported, d.ReportedWarning, tc.warn)
+		}
+	}
+}
+
+// With first-line entries in Reviews, the findings come from the transcript
+// of the last senior round, not review-<len(Reviews)>.
+func TestDiagnoseFindingsFromSeniorRound(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abce"
+	exec := seedRun(t, f, id, "", "someone@example.com", true)
+	ctx := context.Background()
+	b, _ := blob.OpenBucket(ctx, f.bucket)
+	defer b.Close()
+	s := runstore.Open(b, appSlug, id)
+	rec := &runstore.Record{Version: 1, RunID: id, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusFailed, Stage: "writeback", Outcome: runstore.OutcomeDraft,
+		Reviews: []runstore.ReviewSummary{
+			{Round: 1, Tier: runstore.TierFirst, Verdict: "changes", Findings: 1},
+			{Round: 2, Tier: runstore.TierFirst, Verdict: "ok", Findings: 0},
+			{Round: 1, Tier: runstore.TierSenior, Verdict: "changes", Findings: 1}}}
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	line := func(sum string) []byte {
+		return []byte(`{"type":"result","subtype":"success","result":"x","structured_output":{"verdict":"changes","findings":[{"severity":"high","file":"a.go","summary":"` + sum + `"}]}}` + "\n")
+	}
+	_ = s.PutFile(ctx, "transcripts/review-1.jsonl", line("senior finding"), "application/x-ndjson")
+	_ = s.PutFile(ctx, "transcripts/review-3.jsonl", line("wrong transcript"), "application/x-ndjson")
+	out, _, err := execute(t, "diagnose", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d Diagnosis
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Findings) != 1 || d.Findings[0].Summary != "senior finding" {
+		t.Fatalf("findings = %+v", d.Findings)
+	}
+}
+
+// The provider reports the model's price, so the comparison leaves the route
+// fee out of the charge: a report equal to the bare price is not a gap, one
+// 10% above it is, and a report below the charge never warns.
+func TestRouteOfComparesWithoutTheRouteFee(t *testing.T) {
+	lc := &localcfg.Config{Providers: map[string]config.ModelProvider{"openrouter": {RouteFeePct: 50}}}
+	for _, tc := range []struct {
+		reported float64
+		warn     bool
+	}{{0.30, false}, {0.329, false}, {0.34, true}, {0.05, false}} {
+		cost := runstore.NewCost(0.45, 0, runstore.BasisAPIList)
+		cost.RouteBy = map[string]float64{"openrouter": 0.45} // 0.30 bare plus the 50% fee
+		cost.ModelBy = map[string]float64{"deepseek/deepseek-v4-flash": 0.45}
+		cost.ReportedUSD = tc.reported
+		var d Diagnosis
+		routeOf(&d, &runstore.Record{Cost: &cost}, lc, func(s string) string { return s })
+		if (d.ReportedWarning != "") != tc.warn {
+			t.Errorf("reported %v: warning %q, want warning %v", tc.reported, d.ReportedWarning, tc.warn)
+		}
+		if tc.warn && !strings.Contains(d.ReportedWarning, "may") {
+			t.Errorf("warning %q isn't worded as a possibility", d.ReportedWarning)
+		}
 	}
 }

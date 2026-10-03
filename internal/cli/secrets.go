@@ -80,8 +80,10 @@ func newSecretsSetCmd() *cobra.Command {
 Manager, creating the secret if it doesn't exist.
 
 NAME is one of ` + strings.Join(slices.Sorted(maps.Keys(config.ReservedSecrets)), ", ") + `,
-or a secret some workflow declares under secrets: in the repository's
-fugaro.yaml (run it from a checkout of the repository for those).
+the secret of a model provider in the local config's providers block (for a
+repository that provider's allow_data_to lists), or a secret some workflow
+declares under secrets: in the repository's fugaro.yaml (run it from a
+checkout of the repository for those).
 
 The value is read only from stdin: pipe or redirect it in
 (fugaro secrets set bitbucket-token < token-file), or, when stdin is a
@@ -167,7 +169,14 @@ func secretsSet(cmd *cobra.Command, o secretsOptions, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, reserved := config.ReservedSecrets[name]; !reserved {
+	_, reserved := config.ReservedSecrets[name]
+	if p, ok := config.ProviderBySecret(env.lc.Providers, name); ok && !reserved {
+		// The owner's, from the local config, so any checkout will do. The
+		// key is only ever mounted for a repository the provider may see.
+		if !env.lc.Providers[p].AllowsData(r.repo) {
+			return userErr("model provider %s does not list %s in allow_data_to, so its key is not stored for it", p, r.repo)
+		}
+	} else if !reserved {
 		// A workflow secret must be one the repository declares: a typo
 		// would store an orphan nothing mounts, and a value typed as NAME
 		// would end up in the ID. Neither message quotes NAME.

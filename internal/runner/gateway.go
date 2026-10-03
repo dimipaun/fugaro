@@ -96,6 +96,12 @@ func (r *run) startGateway(ctx context.Context) error {
 		return fmt.Errorf("starting the gateway: auth %q never goes through it", r.cfg.Agent.Auth)
 	}
 	o.Upstream = up
+	routes, err := r.gatewayRoutes()
+	if err != nil {
+		return errors.New(r.redact(err.Error()))
+	}
+	o.Routes = routes
+	r.routed = len(routes) > 0
 	gw, err := gateway.Start(ctx, o)
 	if err != nil {
 		return fmt.Errorf("starting the gateway: %s", r.redact(err.Error()))
@@ -108,6 +114,7 @@ func (r *run) startGateway(ctx context.Context) error {
 	r.gw = gw
 	r.gwAgent = &agent.Gateway{BaseURL: gw.URL(), Token: gw.Token()}
 	r.modelBy = map[string]pricing.Micros{}
+	r.routeBy = map[string]pricing.Micros{}
 	r.stageExtra = r.endGatewayStage
 	r.mu.Unlock()
 	return nil
@@ -135,7 +142,7 @@ func vertexLocations(env []string) []string {
 func (r *run) beginGatewayStage(name string) {
 	role := config.StageRole(name)
 	a := r.cfg.Agent
-	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: a.Models.Background, MaxOutputTokens: a.MaxOutputFor(role)})
+	r.gw.BeginStage(gateway.Stage{Name: name, Model: a.ModelFor(role), Background: r.backgroundModel(), MaxOutputTokens: a.MaxOutputFor(role)})
 }
 
 // endGatewayStage closes the stage in the gateway, takes its figures into
@@ -148,6 +155,10 @@ func (r *run) endGatewayStage(stage string) ([]string, int64) {
 	for m, v := range rep.ByModel {
 		r.modelBy[m] += v
 	}
+	for m, v := range rep.ByRoute {
+		r.routeBy[m] += v
+	}
+	r.reported += rep.Reported
 	r.unreconciled += rep.Unreconciled
 	r.unparsed += rep.UsageUnparsed
 	r.mu.Unlock()
@@ -265,6 +276,7 @@ func (r *run) closeGateway() {
 	r.mu.Unlock()
 	r.rec.CostUSD = led.Used.USD()
 	r.updateCost()
+	r.warnReportedGap()
 }
 
 // routingKnob reports whether the live test's knob skips the
@@ -314,6 +326,12 @@ func (r *run) checkBudget() error {
 			Detail: r.noCapDetail()})
 		return &HaltError{*r.haltValue()}
 	}
+	// A model another provider serves needs the owner's approval of this
+	// repository and api-key auth, whatever the mode: refused before any
+	// call, naming the rule.
+	if err := r.checkProviderModels(); err != nil {
+		return err
+	}
 	// The allow-list bounds the models whatever the credential or the mode.
 	if ps := config.CheckAllowed(r.cfg.Agent, r.policy, r.ceilingAllowed()); len(ps) > 0 {
 		msgs := make([]string, len(ps))
@@ -332,12 +350,75 @@ func (r *run) checkBudget() error {
 		}
 		return fmt.Errorf("the models can't be priced under the budget: %s", strings.Join(msgs, "; "))
 	}
+	for _, w := range config.PinWarnings(r.cfg.Agent, s.Prices) {
+		r.d.Log.Warn("model pin: "+w.String(), "code", w.Code)
+	}
 	if err := r.checkManagedDirWritable(); err != nil {
 		return err
 	}
 	if reason := r.checkSettingsRouting(); reason != "" {
 		return errors.New(reason)
 	}
+	return nil
+}
+
+// warnReportedGap logs, once, when the providers' own cost figures are more
+// than reportedGapPct above what the gateway charged on the provider routes
+// without the route fee, which providers don't report (the table price
+// settles, so a high report means a wrong price or a served-by fallback; a
+// low one only means Fugaro over-charged).
+func (r *run) warnReportedGap() {
+	r.mu.Lock()
+	var charged pricing.Micros
+	for name, v := range r.routeBy {
+		// The provider reports the model's price, not Fugaro's route fee.
+		charged += pricing.WithoutFee(v, r.d.Providers[name].RouteFeePct)
+	}
+	reported := r.reported
+	r.mu.Unlock()
+	if reported <= 0 || float64(reported) <= float64(charged)*(1+float64(reportedGapPct)/100) {
+		return
+	}
+	r.d.Log.Warn(fmt.Sprintf("reported cost: the providers reported $%.4f, more than %d%% over the $%.4f charged: check model_prices and the account's provider settings", reported.USD(), reportedGapPct, charged.USD()), "code", "reported_gap")
+}
+
+// reportedGapPct is the margin (percent) a provider's reported cost may
+// exceed the charge by before the run warns.
+const reportedGapPct = 10
+
+// checkProviderModels is the owner's data policy for provider models
+// (config.CheckProviderPolicy, config.CheckProviderAuth). The run's own
+// allowed_models layer is the file's here; the merged list is CheckAllowed's.
+func (r *run) checkProviderModels() error {
+	var allowed []string
+	if b := r.cfg.Budget; b != nil {
+		allowed = b.AllowedModels
+	}
+	prices := r.spend.Prices
+	if prices == nil {
+		prices = pricing.Embedded()
+	}
+	ps := config.CheckProviderPolicy(r.cfg.Agent, allowed, r.spec.Repo, r.d.Providers, prices)
+	ps = append(ps, config.CheckProviderAuth(r.cfg.Agent, r.d.Providers)...)
+	if len(ps) > 0 {
+		msgs := make([]string, len(ps))
+		for i, p := range ps {
+			msgs[i] = p.String()
+		}
+		return fmt.Errorf("the models are not approved for this repository: %s", strings.Join(msgs, "; "))
+	}
+	// From here the pins are the run's: an unset background model becomes
+	// the provider coder's, so that CheckPins, CheckAllowed, the gateway's
+	// stage pins and Claude Code's haiku role all see the same one.
+	bg := r.backgroundModel()
+	mode := policy.ModeOff
+	if r.gatewayOn() {
+		mode = r.spend.Mode
+	}
+	if ps := config.CheckProviderGateway(r.cfg.Agent, bg, r.d.Providers, mode); len(ps) > 0 {
+		return errors.New(ps[0].Message)
+	}
+	r.cfg.Agent.Models.Background = bg
 	return nil
 }
 

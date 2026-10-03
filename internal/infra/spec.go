@@ -46,9 +46,10 @@ const (
 	ComputePricesEnv = "FUGARO_COMPUTE_PRICES"
 	// The project's budget, which the runner reads (runner.SpendFromEnv):
 	// the mode, the per-run cap in US dollars, and the price overrides.
-	BudgetModeEnv  = runner.BudgetModeEnv
-	MaxRunUSDEnv   = runner.MaxRunUSDEnv
-	ModelPricesEnv = runner.ModelPricesEnv
+	BudgetModeEnv     = runner.BudgetModeEnv
+	MaxRunUSDEnv      = runner.MaxRunUSDEnv
+	ModelPricesEnv    = runner.ModelPricesEnv
+	ModelProvidersEnv = runner.ModelProvidersEnv
 	// The ceiling's token cap and allow-list of models, set on every
 	// workflow job whatever the mode.
 	MaxRunTokensEnv  = runner.MaxRunTokensEnv
@@ -526,6 +527,15 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	if err := budgetEnv(lc, ws.Env); err != nil {
 		return WorkflowSpec{}, userErr("%v", err)
 	}
+	// Only the providers this repository may send code to are named; the
+	// keys are mounted below.
+	pv, err := runner.ProvidersEnv(lc.Providers, c.in.Repo)
+	if err != nil {
+		return WorkflowSpec{}, userErr("%v", err)
+	}
+	if pv != "" {
+		ws.Env[ModelProvidersEnv] = pv
+	}
 
 	var collisions []string
 	mount := func(logical, env string) {
@@ -542,8 +552,32 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	case "api-key":
 		mount("anthropic-api-key", config.ReservedSecrets["anthropic-api-key"])
 	}
+	// A provider's key is the runner's, for its gateway, and only a
+	// repository the owner allowed to send code there gets it. It is mounted
+	// only with api-key (a run does not mix credentials) and as a variable
+	// the agent's environment never carries.
+	//
+	// Limitation: every workflow of an allowed repository gets the key,
+	// whether or not its pins name that provider's models. The spec sees
+	// only the checked-in agent block (c.in.Cfg.Agent, shared by all
+	// workflows), but the models a run uses come from the branch's
+	// fugaro.yaml and a task's --model override, neither known when the job
+	// is deployed; gating on the visible pins would make a run that pins a
+	// provider model later fail for a missing key. The key reaches only the
+	// runner, never the agent, and the repository is already one the owner
+	// allowed to send code to the provider.
+	if c.in.Cfg.Agent.Auth == "api-key" {
+		for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
+			if p := lc.Providers[name]; p.AllowsData(c.in.Repo) {
+				mount(p.Secret, p.SecretEnv())
+			}
+		}
+	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
+		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
+			return WorkflowSpec{}, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
+		}
 		mount(s.Name, s.Env)
 		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
 	}

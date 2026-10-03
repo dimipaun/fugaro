@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -477,5 +478,69 @@ func TestValidateWarnsPerDayIsClientEnforced(t *testing.T) {
 	path = fileWithBudget(t, "budget: { mode: observe }\n", "budget: { per_run_usd: 1 }\n", pinnedAgent)
 	if _, errOut, err = execute(t, "validate", path); err != nil || strings.Contains(errOut, "per_day_usd") {
 		t.Fatalf("no day cap, but %v %q", err, errOut)
+	}
+}
+
+const validateProviderBlock = `providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: ["acme/sandbox"]
+`
+
+// inCheckoutOf makes the working directory a checkout whose origin is repo.
+func inCheckoutOf(t *testing.T, repo string) {
+	t.Helper()
+	dir := t.TempDir()
+	for _, args := range [][]string{{"init", "-q"}, {"remote", "add", "origin", "https://github.com/" + repo + ".git"}} {
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	t.Chdir(dir)
+}
+
+func TestValidateProviderModels(t *testing.T) {
+	const budget = "budget: { mode: enforce, per_run_usd: 2 }\n" + validateProviderBlock
+	const coder = "  auth: api-key\n  models: { coder: deepseek/deepseek-v4-flash, reviewer: claude-sonnet-5-5 }"
+	// An approved repository: valid, the background model defaults to the
+	// coder's, and the placeholder price is a warning.
+	path := budgetProject(t, budget, coder)
+	inCheckoutOf(t, "acme/sandbox")
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil || !strings.Contains(out, "is valid") || !strings.Contains(errOut, "warning: agent.models.coder: deepseek/deepseek-v4-flash has an unverified placeholder price") {
+		t.Fatalf("%v\nout: %s\nerr: %s", err, out, errOut)
+	}
+	// Another repository is refused, naming the rule.
+	inCheckoutOf(t, "acme/other")
+	out, _, err = execute(t, "validate", path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "allow_data_to") || !strings.Contains(out, "acme/other") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// oauth cannot carry a provider key.
+	path = budgetProject(t, budget, strings.Replace(coder, "api-key", "oauth", 1))
+	inCheckoutOf(t, "acme/sandbox")
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.auth: api-key") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// A provider model with the gateway off (budget mode off) is refused, as
+	// the runner refuses it.
+	path = budgetProject(t, "budget: { mode: off }\n"+validateProviderBlock, coder)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "needs the budget gateway") || !strings.Contains(out, "budget.mode to enforce") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// Observe never refuses a call: a provider's dollars need enforce.
+	path = budgetProject(t, "budget: { mode: observe }\n"+validateProviderBlock, coder)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "budget.mode enforce") || !strings.Contains(out, "fugaro budget set --global --mode enforce") {
+		t.Fatalf("observe: exit %d: %s", ExitCode(err), out)
+	}
+	// A vendor/model no provider serves.
+	path = budgetProject(t, "budget: { mode: observe }\n", coder)
+	if out, _, err = execute(t, "validate", path); ExitCode(err) != ExitUserError || !strings.Contains(out, "no provider serves it") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
 	}
 }

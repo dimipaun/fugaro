@@ -17,6 +17,8 @@ agent:
   auth: vertex                # vertex | api-key | oauth
   # model: claude-opus-5-5    # defaults to Claude Code's default model
   review_rounds: 2            # review → fix rounds before the PR is opened
+  # first_line_review: auto   # auto | on | off: the coder's model reviews (and fixes) before the senior review; auto is on only with a provider coder
+  # first_line_rounds: 1      # 1 to 3, apart from review_rounds
   max_budget_usd: 25          # per stage, passed to claude --max-budget-usd
   # models:                   # a model per stage role; a role left out uses agent.model
   #   coder: claude-opus-5-5          # implement and fix; a budget needs an explicit model ID with a price

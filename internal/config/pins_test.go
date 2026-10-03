@@ -121,3 +121,52 @@ func TestCheckAllowedQuotesModelNames(t *testing.T) {
 		t.Fatalf("CodeSpan = %q", got)
 	}
 }
+
+func providerAgent(coder string) Agent {
+	return Agent{Models: ModelRoles{Coder: coder, Reviewer: "claude-sonnet-5-5", Background: coder}}
+}
+
+func TestUnpricedModelRefused(t *testing.T) {
+	// A provider model with no price anywhere is refused at the pin check,
+	// never silently charged.
+	ps := CheckPins(providerAgent("qwen/qwen3-coder"), pricing.Embedded())
+	if paths(ps) != "agent.models.coder,agent.models.background" || !strings.Contains(ps[0].Message, "no price") {
+		t.Fatalf("problems: %v", ps)
+	}
+	// The embedded starter row for the first model is a price, so it passes.
+	if ps := CheckPins(providerAgent("deepseek/deepseek-v4-flash"), pricing.Embedded()); len(ps) != 0 {
+		t.Fatalf("starter row refused: %v", ps)
+	}
+	// A variant suffix is a different model: no price.
+	if ps := CheckPins(providerAgent("deepseek/deepseek-v4-flash:free"), pricing.Embedded()); len(ps) == 0 {
+		t.Fatal("a variant suffix was priced")
+	}
+}
+
+func TestUnverifiedPriceWarns(t *testing.T) {
+	ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), pricing.Embedded())
+	if paths(ws) != "agent.models.coder,agent.models.background" || ws[0].Code != CodeUnverifiedPrice ||
+		!strings.Contains(ws[0].Message, "unverified") || !strings.Contains(ws[0].Message, "model_prices") {
+		t.Fatalf("warnings: %v", ws)
+	}
+	if ws := PinWarnings(pinnedAgent(), pricing.Embedded()); len(ws) != 0 {
+		t.Fatalf("Claude pins warned: %v", ws)
+	}
+	// The owner's price wins and silences the warning.
+	tbl, err := pricing.Embedded().With(pricing.Overrides{"deepseek/deepseek-v4-flash": {InputPerM: 0.1, OutputPerM: 0.2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ...but leaving the cache multipliers at 0 is its own warning.
+	ws = PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), tbl)
+	if paths(ws) != "agent.models.coder,agent.models.background" || ws[0].Code != pricing.CodeCacheRateDefaulted {
+		t.Fatalf("an override without cache rates: %v", ws)
+	}
+	full, err := pricing.Embedded().With(pricing.Overrides{"deepseek/deepseek-v4-flash": {InputPerM: 0.1, OutputPerM: 0.2, CacheWrite5m: 1, CacheWrite1h: 1, CacheRead: 0.1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws := PinWarnings(providerAgent("deepseek/deepseek-v4-flash"), full); len(ws) != 0 {
+		t.Fatalf("an owner's full price still warns: %v", ws)
+	}
+}

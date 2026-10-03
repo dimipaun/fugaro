@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 
 	"github.com/dimipaun/fugaro/internal/pricing"
@@ -103,12 +104,40 @@ func (f *field) take(p *int64) {
 	}
 }
 
+// takeMax is take for a provider route: a later event never lowers a
+// count, so a call is never charged less than any event said. A negative
+// count sticks, so the call is still seen as unreadable.
+func (f *field) takeMax(p *int64) {
+	switch {
+	case p == nil:
+	case !f.set || *p < 0:
+		if !f.set || f.v >= 0 {
+			f.v, f.set = *p, true
+		} else {
+			f.v = min(f.v, *p)
+		}
+	case f.v >= 0:
+		f.v = max(f.v, *p)
+	}
+}
+
 // usageAcc accumulates usage: message_delta's usage is cumulative, so
-// the last value reported for each field wins.
+// the last value reported for each field wins (on a provider route, the
+// largest).
 type usageAcc struct {
+	provider                     bool // keep the largest count of each field, not the last
 	in, cc, cr, out, w5, w1, web field
 	speed, tier, geo             json.RawMessage
+	// reported is the cost a provider put in the usage object (OpenRouter's
+	// usage.cost, in USD), in micros. It is only recorded for comparison
+	// with the charge and never settles a call.
+	reported    pricing.Micros
+	hasReported bool
 }
+
+// maxReportedUSD bounds a provider-reported cost the gateway will record;
+// anything above it is a malformed field, not a price.
+const maxReportedUSD = 1e6
 
 type wireUsage struct {
 	InputTokens              *int64 `json:"input_tokens"`
@@ -122,22 +151,34 @@ type wireUsage struct {
 	ServerToolUse *struct {
 		WebSearchRequests *int64 `json:"web_search_requests"`
 	} `json:"server_tool_use"`
+	Cost         json.RawMessage `json:"cost"`
 	Speed        json.RawMessage `json:"speed"`
 	ServiceTier  json.RawMessage `json:"service_tier"`
 	InferenceGeo json.RawMessage `json:"inference_geo"`
 }
 
 func (a *usageAcc) merge(u *wireUsage) {
-	a.in.take(u.InputTokens)
-	a.cc.take(u.CacheCreationInputTokens)
-	a.cr.take(u.CacheReadInputTokens)
-	a.out.take(u.OutputTokens)
+	take := (*field).take
+	if a.provider {
+		take = (*field).takeMax
+	}
+	take(&a.in, u.InputTokens)
+	take(&a.cc, u.CacheCreationInputTokens)
+	take(&a.cr, u.CacheReadInputTokens)
+	take(&a.out, u.OutputTokens)
 	if c := u.CacheCreation; c != nil {
-		a.w5.take(c.W5)
-		a.w1.take(c.W1)
+		take(&a.w5, c.W5)
+		take(&a.w1, c.W1)
 	}
 	if t := u.ServerToolUse; t != nil {
-		a.web.take(t.WebSearchRequests)
+		take(&a.web, t.WebSearchRequests)
+	}
+	// A null cost is no cost: it must not read as a reported zero.
+	if len(u.Cost) > 0 && string(bytes.TrimSpace(u.Cost)) != "null" {
+		var usd float64
+		if json.Unmarshal(u.Cost, &usd) == nil && usd >= 0 && usd <= maxReportedUSD {
+			a.reported, a.hasReported = pricing.Micros(math.Round(usd*1e6)), true
+		}
 	}
 	for _, x := range []struct {
 		dst *json.RawMessage
@@ -147,6 +188,12 @@ func (a *usageAcc) merge(u *wireUsage) {
 			*x.dst = append(json.RawMessage(nil), x.src...)
 		}
 	}
+}
+
+// hasInput reports whether the usage names an input count worth settling
+// on: on a provider route a zero input is a reply that didn't say.
+func (a *usageAcc) hasInput() bool {
+	return a.in.set && !(a.provider && a.in.v == 0)
 }
 
 // negative reports whether any reported count is below zero.
@@ -207,8 +254,9 @@ func (a *usageAcc) surprise() string {
 // usageTee reads usage from a copy of the response the client already
 // got: SSE events for a stream, the whole body otherwise.
 type usageTee struct {
-	sse bool
-	p   sseParser
+	sse      bool
+	provider bool // set before reading: usage is merged conservatively
+	p        sseParser
 
 	buf      []byte
 	overflow bool
@@ -222,6 +270,8 @@ type usageTee struct {
 	errorType string
 }
 
+// newUsageTee reads a Claude response; a provider's sets tee.provider
+// before reading.
 func newUsageTee(sse bool) *usageTee {
 	t := &usageTee{sse: sse}
 	t.p.onEvent = t.onEvent
@@ -271,9 +321,10 @@ func (t *usageTee) onEvent(name string, data []byte) {
 			return
 		}
 		t.model = ev.Message.Model
+		t.acc.provider = t.provider
 		t.acc.merge(ev.Message.Usage)
 		// Partial settlement charges the reported input: it must be there.
-		t.started = t.acc.in.set && !t.acc.negative()
+		t.started = t.acc.hasInput() && !t.acc.negative()
 	case "message_delta":
 		if !t.started {
 			return // unparsed either way: the call settles at its reservation
@@ -341,8 +392,9 @@ func (t *usageTee) parseJSON() {
 		return
 	}
 	t.model = body.Model
+	t.acc.provider = t.provider
 	t.acc.merge(body.Usage)
-	if !t.acc.in.set || !t.acc.out.set || t.acc.negative() {
+	if !t.acc.hasInput() || !t.acc.out.set || t.acc.negative() {
 		return // counts missing or negative: settled at the reservation
 	}
 	t.started, t.complete = true, true

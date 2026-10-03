@@ -356,3 +356,37 @@ func TestReadSecret(t *testing.T) {
 		}
 	}
 }
+
+// TestSecretsSetProviderKey: a model provider's key is stored from anywhere,
+// like a reserved secret, but only for a repository the owner allowed to
+// send code to that provider.
+func TestSecretsSetProviderKey(t *testing.T) {
+	sm := secretsFixture(t)
+	t.Chdir(t.TempDir())
+	path := os.Getenv("FUGARO_CONFIG")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov := `providers:
+  openrouter: { kind: anthropic-compat, base_url: "https://openrouter.ai/api", auth: bearer, secret: openrouter-api-key, models: ["deepseek/*"], allow_data_to: ["acme/app"] }
+  elsewhere: { kind: anthropic-compat, base_url: "https://other.example", auth: bearer, secret: other-key, models: ["qwen/*"], allow_data_to: ["acme/other"] }
+`
+	if _, err := f.WriteString(prov); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	const key = "or-not-a-real-key-1234"
+	out, errOut, err := executeStdin(t, key, "secrets", "set", "openrouter-api-key", "--repo", "acme/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := gcp.SecretID(appSlug, "openrouter-api-key")
+	if string(sm.Latest(id)) != key || strings.Contains(out+errOut, key) {
+		t.Fatalf("stored %q, out %q %q", sm.Latest(id), out, errOut)
+	}
+	if _, _, err := executeStdin(t, key, "secrets", "set", "other-key", "--repo", "acme/app"); ExitCode(err) != ExitUserError ||
+		!strings.Contains(err.Error(), "allow_data_to") {
+		t.Fatalf("a provider the repository may not use: %v", err)
+	}
+}

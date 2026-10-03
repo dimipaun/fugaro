@@ -89,6 +89,10 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 	// The budget, parsed once; a malformed one reaches the runner, which
 	// reports it as the run's infra_error after claiming the record.
 	spend, spendErr := runner.SpendFromEnv(os.LookupEnv)
+	providers, provErr := runner.ProvidersFromEnv(os.LookupEnv)
+	if spendErr == nil {
+		spendErr = provErr
+	}
 	// The budget backend (the project's Firebase database): a local run may
 	// point it at a loopback database, a job on Cloud Run never.
 	be, beErr := runner.BackendFromEnv(os.LookupEnv, !backend.OnCloudRun(os.Getenv))
@@ -180,7 +184,7 @@ func runExec(cmd *cobra.Command, o execOptions) error {
 		WorkDir: workDir, Remote: o.remote, StateDir: stateDir, Env: env,
 		PathPrepend: filepath.Dir(exe), Log: log, CancelPoll: o.cancelPoll,
 		Bucket: bucket, Execution: execName, BaseImage: os.Getenv("FUGARO_BASE_IMAGE"),
-		Prices: prices, Spend: spend, SpendErr: spendErr, Backend: be, BackendErr: beErr,
+		Prices: prices, Spend: spend, SpendErr: spendErr, Providers: providers, Backend: be, BackendErr: beErr,
 		GatewayUpstream: o.gatewayUpstream, ManagedSettingsPath: o.managedSettings,
 		// A job belongs to one Fugaro project; on Cloud Run a job that
 		// doesn't say which is refused at bootstrap.

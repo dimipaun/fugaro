@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // Micros are integer micro-dollars (µ$). A price of $X per million tokens
@@ -54,7 +55,38 @@ type Model struct {
 	MaxOutputTokens int64    // the model's output maximum; 0: DefaultMaxOutputTokens (more is refused)
 	ImageTokens     int64    // per-image token ceiling (conservative); 0: images refused
 	Rates           Rates
+	// Unverified marks a placeholder row nobody has checked against the
+	// provider's price: it caps money but is not trusted, so pins on it
+	// warn until the owner sets the real price under model_prices (which
+	// replaces the row and clears this). PriceSource and PriceCheckedAt say
+	// where the row came from and when; empty on a row the table's own
+	// Source and CheckedAt cover.
+	Unverified     bool
+	PriceSource    string
+	PriceCheckedAt string
+	// CacheDefaulted names the cache multipliers an owner's override left
+	// at 0 on a provider row and With raised to 1 (the input rate), so
+	// cache tokens are never free there: a provider that reports cache
+	// tokens bills them, and 0 is almost always a field left out.
+	CacheDefaulted []string
 }
+
+// CodeCacheRateDefaulted marks the warning CacheWarning returns, for callers
+// that report pin warnings by code.
+const CodeCacheRateDefaulted = "cache_rate_defaulted"
+
+// CacheWarning is the warning for a row whose cache rates were defaulted, or
+// "" when none were.
+func (m Model) CacheWarning() string {
+	if len(m.CacheDefaulted) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s: %s left at 0 in model_prices; counted at the input price (1x) so cache tokens are not free: set the real multipliers",
+		m.ID, strings.Join(m.CacheDefaulted, ", "))
+}
+
+// isProviderID reports whether a model ID is a provider's "vendor/model".
+func isProviderID(id string) bool { return strings.Contains(id, "/") }
 
 const (
 	// DefaultMaxOutputTokens is a model's output maximum when the table
@@ -150,17 +182,23 @@ func (t *Table) Max() Rates {
 			CacheWrite1h: MaxMultiplier, CacheRead: MaxMultiplier, WebSearchPer1k: MaxWebSearchPer1k}
 	}
 	for _, m := range t.Models {
-		x := m.Rates
-		r.InputPerM = max(r.InputPerM, x.InputPerM)
-		r.OutputPerM = max(r.OutputPerM, x.OutputPerM)
-		if x.LongContext != nil {
-			r.InputPerM = max(r.InputPerM, x.LongContext.InputPerM)
-			r.OutputPerM = max(r.OutputPerM, x.LongContext.OutputPerM)
+		r = MaxOf(r, m.Rates)
+	}
+	return r
+}
+
+// MaxOf is the highest of each rate of a and b, flat: a long-context tier's
+// rates count towards the input and output maximum, and the result has none.
+func MaxOf(a, b Rates) Rates {
+	r := Rates{
+		InputPerM: max(a.InputPerM, b.InputPerM), OutputPerM: max(a.OutputPerM, b.OutputPerM),
+		CacheWrite5m: max(a.CacheWrite5m, b.CacheWrite5m), CacheWrite1h: max(a.CacheWrite1h, b.CacheWrite1h),
+		CacheRead: max(a.CacheRead, b.CacheRead), WebSearchPer1k: max(a.WebSearchPer1k, b.WebSearchPer1k),
+	}
+	for _, t := range []*Tier{a.LongContext, b.LongContext} {
+		if t != nil {
+			r.InputPerM, r.OutputPerM = max(r.InputPerM, t.InputPerM), max(r.OutputPerM, t.OutputPerM)
 		}
-		r.CacheWrite5m = max(r.CacheWrite5m, x.CacheWrite5m)
-		r.CacheWrite1h = max(r.CacheWrite1h, x.CacheWrite1h)
-		r.CacheRead = max(r.CacheRead, x.CacheRead)
-		r.WebSearchPer1k = max(r.WebSearchPer1k, x.WebSearchPer1k)
 	}
 	return r
 }
@@ -199,12 +237,37 @@ func (t *Table) With(o Overrides) (*Table, error) {
 		r := o[key].clone()
 		if m, ok := out.Lookup(key); ok {
 			m.Rates = r
+			m.Unverified, m.PriceSource, m.PriceCheckedAt = false, "", ""
+			m.CacheDefaulted = defaultCacheRates(m.ID, &m.Rates)
 			out.Models[m.ID] = m
 			continue
 		}
-		out.Models[key] = Model{ID: key, Rates: r}
+		m := Model{ID: key, Rates: r}
+		m.CacheDefaulted = defaultCacheRates(key, &m.Rates)
+		out.Models[key] = m
 	}
 	return out, nil
+}
+
+// defaultCacheRates raises a provider row's cache multipliers left at 0 to 1,
+// the input rate, and names them: a cache token is never cheaper than an
+// input token unless the owner says so with a real number, and a missing
+// field must not make it free. Claude rows keep what the owner set.
+func defaultCacheRates(id string, r *Rates) []string {
+	if !isProviderID(id) {
+		return nil
+	}
+	var names []string
+	for _, f := range []struct {
+		name string
+		p    *float64
+	}{{"cache_write_5m", &r.CacheWrite5m}, {"cache_write_1h", &r.CacheWrite1h}, {"cache_read", &r.CacheRead}} {
+		if *f.p == 0 {
+			*f.p = 1
+			names = append(names, f.name)
+		}
+	}
+	return names
 }
 
 func (t *Table) clone() *Table {
@@ -215,6 +278,7 @@ func (t *Table) clone() *Table {
 	out.Source, out.CheckedAt = t.Source, t.CheckedAt
 	for id, m := range t.Models {
 		m.Aliases = append([]string(nil), m.Aliases...)
+		m.CacheDefaulted = append([]string(nil), m.CacheDefaulted...)
 		m.Rates = m.Rates.clone()
 		out.Models[id] = m
 	}
@@ -271,6 +335,32 @@ func (r Rates) UnsplitCacheWrites(tokens int64, cacheTTL string) (w5m, w1h int64
 		return tokens, 0
 	}
 	return 0, tokens
+}
+
+// WithFee adds a route fee of pct percent to an amount. The fee is rounded
+// up so it is never under-charged, and the sum saturates at the largest
+// Micros like the rest of the arithmetic: a fee too big to count (+Inf, or a
+// product past the range) saturates rather than leaving the amount alone. A
+// fee that is negative, zero or not a number adds nothing.
+func WithFee(m Micros, pct float64) Micros {
+	if m <= 0 || !(pct > 0) {
+		return max(m, 0)
+	}
+	fee := math.Ceil(float64(m) * pct / 100)
+	if math.IsNaN(fee) || fee >= math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return Micros(satAdd(int64(m), int64(fee)))
+}
+
+// WithoutFee takes a route fee of pct percent back out of a charge made with
+// WithFee: what the provider itself would have charged. Rounded down, so a
+// report is never excused by rounding.
+func WithoutFee(m Micros, pct float64) Micros {
+	if m <= 0 || !(pct > 0) {
+		return max(m, 0)
+	}
+	return Micros(math.Floor(float64(m) * 100 / (100 + pct)))
 }
 
 // toMicros converts a non-negative float amount of µ$, saturating.

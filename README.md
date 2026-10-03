@@ -141,6 +141,41 @@ A repository can also commit cost and model policy: an optional `budget:` block 
 
 With a Firebase project behind the installation (`fugaro init --firebase`), runs also share a **project-wide budget**: daily caps per repository and for the project, kill switches (`fugaro budget kill`), a live list of the runs in flight, and the notional spend of `oauth` runs. It starts in `observe` (counts, refuses nothing), you set caps from what you saw with `fugaro budget set`, and only then switch to `enforce`. The caps live in the database and only budget admins change them; a committed `budget.per_day_usd` can only tighten the repository's own day cap. A run that cannot reach the backend for three minutes halts. `fugaro watch` is the live view of it: the project and each repository against their caps, the burn rate, one row per running agent, and keys to kill or resume a repository (`k`, `r`) or the whole project (`K`, `R`); `--plain`, `--json` and `--once` print instead of drawing a screen. `fugaro ls --watch` stays for "did my runs finish". See [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-shared-budget-on-m9b).
 
+## Other models (experimental)
+
+A run's coder can be a non-Anthropic model, routed through OpenRouter's Anthropic-compatible endpoint, while Claude Code stays the harness and Claude stays the reviewer. It goes through the same gateway, so pinning, the dollar caps and the kill switches hold. It is an opt-in experiment: `agent.models` stays Claude by default, and a cheaper run is never "more ready" than a Claude one.
+
+The **owner** enables it, in the project's local config (`~/.config/fugaro/projects/<project>.yaml`), because it sends a repository's code to a third party. A repository's `fugaro.yaml` cannot add a provider, a URL or a price; it can only name a model the owner has opened to it.
+
+```yaml
+# local project config (owner only)
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key     # the secret's name; the key itself is stored with `fugaro secrets set`
+    route_fee_pct: 5.5             # the account's fee, added to every charge
+    models: ["deepseek/*"]
+    allow_data_to: [edgeappinc/fugarosandbox, dimipaun/fugaro]   # only these repositories may send code here
+model_prices:                      # the embedded deepseek row is an unverified placeholder: set the real prices
+  deepseek/deepseek-v4-flash: { input_per_m: 0.14, output_per_m: 0.28, cache_read: 0.1 }   # example numbers; cache_read is a multiplier of input_per_m (default 0.1)
+budget: { mode: enforce, per_run_usd: 2 }  # a provider model needs enforce
+```
+
+```yaml
+# fugaro.yaml of an allowed repository
+agent:
+  auth: api-key                    # required: oauth and vertex are refused for a provider model
+  models:
+    coder: deepseek/deepseek-v4-flash
+    reviewer: claude-sonnet-5-5
+    background: claude-haiku-4-5   # optional: with a provider coder it defaults to the coder's model
+  first_line_review: auto          # auto | on | off; auto = the coder's model reviews first when a provider serves it
+```
+
+With a provider coder, `first_line_review` makes the cheap model review (and fix) its own work before the Claude review, which alone decides readiness. A run on a repository the provider does not list, with a variant (`:free`, `:online`) or alias pin, or without `agent.auth: api-key`, is refused before any model call. The account-side prerequisites (a credit-limited key per project, no fallbacks, the data policy), the key and what `diagnose` shows are in [docs/multi-model.md](docs/multi-model.md); the design is [docs/design/m10-multi-model.md](docs/design/m10-multi-model.md).
+
 ## Launching a task
 
 A task is a small hand-off spec: what to do, which repo, which branch, and which workflow. It can be launched directly or by your local coding agent, which builds the spec and starts the job through the `fugaro` CLI. Many tasks can run at once, independently.

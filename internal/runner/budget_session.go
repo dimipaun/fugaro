@@ -279,7 +279,7 @@ func (r *run) beginBudgetStage(name string, n int, deadline time.Time) {
 	now := r.d.Now().UnixMilli()
 	sess.Update(func(e *budget.AgentEntry) {
 		e.Stage, e.StageStartedAt, e.StageDeadline = name, now, deadline.UnixMilli()
-		if name == "review" {
+		if name == "review" || name == "review_first" {
 			e.Round = n
 		}
 	})

@@ -30,6 +30,12 @@ func applyDefaults(c *Config) {
 	if c.Agent.ReviewRounds == 0 {
 		c.Agent.ReviewRounds = 2
 	}
+	if c.Agent.FirstLineReview == "" {
+		c.Agent.FirstLineReview = FirstLineAuto
+	}
+	if c.Agent.FirstLineRounds == 0 {
+		c.Agent.FirstLineRounds = 1
+	}
 	if c.Agent.MaxBudgetUSD == 0 {
 		c.Agent.MaxBudgetUSD = 25
 	}

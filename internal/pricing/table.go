@@ -61,9 +61,27 @@ func Embedded() *Table {
 		// Claude Fable 5.1: $10 / $50; cache hits $0.25 (0.025x). Pricing page, model pricing table, footnote 1.
 		{ID: "claude-fable-5-1", ContextTokens: context1M, MaxOutputTokens: output128k, ImageTokens: imageHighRes, Rates: rates(10, 50, 0.025)},
 	}
+	models = append(models, providerRows()...)
 	t := &Table{Source: source, CheckedAt: checkedAt, Models: make(map[string]Model, len(models))}
 	for _, m := range models {
 		t.Models[m.ID] = m
 	}
 	return t
+}
+
+// providerRows are the starter rows for models served by a provider
+// (OpenRouter), all Unverified. The numbers are PLACEHOLDERS, not a quote:
+// no price for them has been checked (design m10-multi-model.md §5, §13).
+// They are set above what a model of that class is expected to cost so a
+// cap over-counts rather than under-counts; the owner sets the real price
+// under model_prices, which always wins and clears the flag. The fee the
+// provider adds is a route setting, not part of these rows.
+func providerRows() []Model {
+	const src = "placeholder, not verified: no provider price was read; set model_prices (openrouter.ai model page)"
+	const checked = "2026-10-03"
+	return []Model{{
+		ID: "deepseek/deepseek-v4-flash", ContextTokens: context200k, MaxOutputTokens: output64k,
+		Rates:      rates(1, 4, 0.1),
+		Unverified: true, PriceSource: src, PriceCheckedAt: checked,
+	}}
 }
