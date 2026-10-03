@@ -1054,7 +1054,7 @@ type stageOpts struct {
 // failure is already recorded, unless it is a recoveredError.
 func (r *run) stage(ctx context.Context, name string, req agent.Request, opts stageOpts) (agent.Result, bool, error) {
 	if ctx.Err() != nil {
-		r.fail(StageError(name, ctx, r.budget, ctx.Err()))
+		r.fail(r.stageReason(ctx, name, StageError(name, ctx, r.budget, ctx.Err())))
 		if errors.Is(context.Cause(ctx), ErrCancelled) {
 			r.markCancelled()
 		}
@@ -1200,7 +1200,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		r.save(ctx)
 		return res, false, recoveredError{err}
 	case err != nil:
-		reason := StageError(name, stageCtx, r.budget, err)
+		reason := r.stageReason(ctx, name, StageError(name, stageCtx, r.budget, err))
 		if w := r.lastWaited(); w > 0 && r.gw != nil {
 			reason += fmt.Sprintf(" (the budget gateway told the agent to retry %d call(s) with a 429 because calls in flight held the run's budget; the run cap may be too small for parallel work)", w)
 		}
@@ -1217,6 +1217,26 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	}
 	r.save(ctx)
 	return res, true, nil
+}
+
+// stageReason turns an "interrupted" stage reason into the cancel --now one
+// when the cancel marker is there: cancel --now writes the marker, then stops
+// the execution, so the runner gets SIGTERM before its poll sees the marker.
+// Any other reason, and the recorded status, are left as they are.
+func (r *run) stageReason(ctx context.Context, name, reason string) string {
+	if !strings.HasPrefix(reason, interruptedPrefix) {
+		return reason
+	}
+	marked := r.isCancelled()
+	if !marked {
+		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), statusCallTimeout)
+		defer cancel()
+		marked, _ = r.d.Store.CancelRequested(cctx)
+	}
+	if marked {
+		return cancelNowPrefix + " during " + name
+	}
+	return reason
 }
 
 // keepTail remembers the failing stage's output for the draft PR (design
