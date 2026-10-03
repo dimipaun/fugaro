@@ -65,11 +65,15 @@ type Upstream struct {
 // Options configure a gateway.
 type Options struct {
 	Upstream Upstream
-	Prices   *pricing.Table
-	Mode     Mode
-	Cap      pricing.Micros // enforce: > 0; observe: 0 accounts only
-	Log      *slog.Logger   // the runner's, which redacts; nil discards
-	Client   *http.Client   // nil: a default with no overall timeout (streams are long)
+	// Routes send the models they claim to a provider, each with its own
+	// credential; every other model goes to Upstream. Only with the
+	// anthropic upstream.
+	Routes []Route
+	Prices *pricing.Table
+	Mode   Mode
+	Cap    pricing.Micros // enforce: > 0; observe: 0 accounts only
+	Log    *slog.Logger   // the runner's, which redacts; nil discards
+	Client *http.Client   // nil: a default with no overall timeout (streams are long)
 	// Lease, when set, is where the gateway's budget comes from: it holds
 	// only what the lease granted, asks for more when a call doesn't fit,
 	// and releases what is unused at Close. Cap is then ignored (the lease
@@ -240,6 +244,9 @@ func (o Options) validate() error {
 	}
 	u := o.Upstream
 	if err := checkBaseURL(u.BaseURL); err != nil {
+		return err
+	}
+	if err := validateRoutes(u, o.Routes); err != nil {
 		return err
 	}
 	switch u.Kind {
@@ -436,6 +443,10 @@ type route struct {
 	count     bool   // a token count: free, forwarded without a reservation
 	upstream  string // the upstream URL, query included
 	pathModel string // vertex: the model the path names
+	// anthropic upstream: the request's path and query, so a pinned
+	// provider model can be sent to its own base instead (see withRoute).
+	path, query string
+	provider    *Route // the provider the model is routed to; nil: Options.Upstream
 }
 
 // ServeHTTP routes on URL.Path only; the raw query is forwarded as is.
@@ -458,7 +469,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnauthorized, "authentication_error", "fugaro: the gateway token is missing or wrong")
 			return
 		}
-		rt = route{count: p == "/v1/messages/count_tokens", upstream: anthropicBase(s.o.Upstream) + p + query(r)}
+		rt = route{count: p == "/v1/messages/count_tokens", upstream: anthropicBase(s.o.Upstream) + p + s.upstreamQuery(r), path: p, query: s.upstreamQuery(r)}
 	case "vertex":
 		var ok bool
 		var why string

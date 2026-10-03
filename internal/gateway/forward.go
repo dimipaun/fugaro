@@ -415,6 +415,9 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 	if !s.sameModel(p.model, st.Model) && !s.sameModel(p.model, st.Background) {
 		return fmt.Sprintf("model %s is not pinned for stage %s", logValue(p.model), st.Name)
 	}
+	if s.routeFor(p.model) != nil && hasVariantSuffix(p.model) {
+		return fmt.Sprintf("model %s carries a variant suffix, which changes the provider's routing and price: pin the plain model ID", logValue(p.model))
+	}
 	if p.violation != "" {
 		return p.violation
 	}
@@ -435,13 +438,17 @@ func (s *Server) check(st Stage, p parsed, m pricing.Model) string {
 }
 
 // sameModel: the same ID, or two spellings the table resolves to one
-// model. A prefix never matches.
+// model. A prefix never matches, and a provider's model matches only
+// itself: the alias rule is Claude's.
 func (s *Server) sameModel(a, pin string) bool {
 	if a == "" || pin == "" {
 		return false
 	}
 	if a == pin {
 		return true
+	}
+	if s.routeFor(a) != nil || s.routeFor(pin) != nil {
+		return false
 	}
 	ma, okA := s.o.Prices.Lookup(a)
 	mp, okP := s.o.Prices.Lookup(pin)
@@ -492,6 +499,10 @@ func (s *Server) handleMessages(w http.ResponseWriter, r *http.Request, rt route
 		s.log.Warn("budget: request refused", "stage", st.st.Name, "violation", v)
 		refuse(http.StatusBadRequest, "invalid_request_error", "fugaro: "+v)
 		return
+	}
+	rt = s.withRoute(rt, p.model)
+	if rt.provider != nil {
+		cl.route = rt.provider.Name
 	}
 	w0 := m.WorstCase(pricing.Request{
 		BodyBytes: int64(len(body)), HasPDF: p.pdf, ImageCount: p.images, MaxTokens: p.maxTokens, CacheTTL: p.cacheTTL,
@@ -575,6 +586,13 @@ func (s *Server) forward(w http.ResponseWriter, r *http.Request, rt route, body 
 		return reserved
 	}
 	defer resp.Body.Close()
+	if rt.provider != nil && isRedirect(resp.StatusCode) {
+		// Never handed to the agent (its Location is another host's) and
+		// never followed: the provider answered with nothing usable.
+		*status = http.StatusBadGateway
+		writeError(w, http.StatusBadGateway, "api_error", "fugaro: the provider answered with a redirect, which the gateway does not follow")
+		return zeroOutcome(p.model, true)
+	}
 	*status = resp.StatusCode
 
 	src, closeSrc, decoded, readable := decodeBody(resp)
@@ -684,6 +702,13 @@ func (s *Server) upstreamRequest(ctx context.Context, r *http.Request, rt route,
 	up.ContentLength = int64(len(body))
 	up.GetBody = nil // never replayed: the gateway never retries
 	up.Header = forwardHeaders(r.Header)
+	s.scrubToken(up.Header)
+	if rt.provider != nil {
+		if err := rt.provider.attachCredential(up.Header); err != nil {
+			return nil, nil, err
+		}
+		return up, sent, nil
+	}
 	switch s.o.Upstream.Kind {
 	case "anthropic":
 		up.Header.Set("x-api-key", s.o.Upstream.APIKey)
@@ -852,6 +877,8 @@ func pump(w io.Writer, rc *http.ResponseController, src io.Reader, tee func([]by
 	}
 }
 
+func isRedirect(status int) bool { return status >= 300 && status <= 399 }
+
 // maxCountsInFlight bounds the token counts forwarded at once: they are
 // free, but each spends the organization's rate limit with the real key.
 const maxCountsInFlight = 4
@@ -870,6 +897,14 @@ func (s *Server) forwardFree(w http.ResponseWriter, r *http.Request, rt route) {
 	body, status, msg := readBody(r)
 	if status != 0 {
 		writeError(w, status, errorTypeFor(status), msg)
+		return
+	}
+	if m := s.countRoutedModel(body); m != "" {
+		// The only upstream here is Anthropic's, and a provider's model's
+		// conversation is not sent there; counting is not proven on the
+		// provider, so the agent estimates by itself.
+		writeError(w, http.StatusNotFound, "not_found_error", "fugaro: token counting isn't available for model "+logValue(m))
+		s.log.Info("token count", "stage", s.stageName(), "status", http.StatusNotFound, "request_bytes", len(body), "response_bytes", 0)
 		return
 	}
 	ctx, cancel := context.WithCancel(r.Context())
@@ -913,4 +948,23 @@ func errorTypeFor(status int) string {
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
+}
+
+// countRoutedModel is the model of a count_tokens body when a route claims
+// it ("" otherwise, and for a body that isn't an object: Anthropic refuses
+// that). Any spelling of the key "model" counts.
+func (s *Server) countRoutedModel(body []byte) string {
+	if len(s.o.Routes) == 0 || checkKeys(body) != nil {
+		return ""
+	}
+	var top map[string]any
+	if json.Unmarshal(body, &top) != nil {
+		return ""
+	}
+	for k, v := range top {
+		if m, ok := v.(string); ok && strings.EqualFold(k, "model") && s.routeFor(m) != nil {
+			return m
+		}
+	}
+	return ""
 }
