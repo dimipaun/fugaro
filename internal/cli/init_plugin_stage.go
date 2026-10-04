@@ -22,11 +22,18 @@ import (
 // dev build has no tag to pin to and the stage is skipped saying so; outside a
 // checkout it prints the settings to add. It never commits.
 
-// pluginFirstRun ends the wiring: Claude Code offers the plugin only after the
-// folder-trust prompt (design §4.7).
-const pluginFirstRun = "Teammates are offered the plugin when they open this folder in Claude Code and trust it. To install it now,\n" +
-	"run `claude plugin install fugaro@fugaro --scope project` (or /plugin install fugaro@fugaro in Claude Code);\n" +
-	"if its skills are not listed, restart Claude Code in this folder.\n"
+// pluginFirstRun ends the wiring. Verified live with Claude Code 2.1.289: once
+// the settings are committed, the plugin installs by itself, with no install
+// prompt, when the folder is trusted (the trust dialog does not mention it),
+// and its skills are there in the first session, no restart (design §4.7).
+const pluginFirstRun = "Once this is committed, the plugin installs by itself, silently, when someone opens this folder in Claude Code and trusts it\n" +
+	"(the trust dialog does not mention it), and its skills are there in the first session. A repository's settings can install a plugin\n" +
+	"from the marketplace they name, so only trust folders you trust. To install it now: claude plugin install fugaro@fugaro --scope project\n"
+
+// pluginRefresh follows a changed pin: Claude Code reports the new version but
+// shows the plugin as "not cached" and its skills disappear until the
+// marketplace is updated (verified live, V2); no restart is needed.
+const pluginRefresh = "In Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
 
 type pluginStage struct {
 	e       *initEngine
@@ -198,7 +205,7 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	if err := ch.Apply(); err != nil {
 		return initflow.Outcome{}, err
 	}
-	fmt.Fprintf(r.w, "Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s", ch.Path, ch.Tag, pluginFirstRun)
+	fmt.Fprintf(r.w, "Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s%s", ch.Path, ch.Tag, pluginRefresh, pluginFirstRun)
 	return initflow.Outcome{Changed: true, Detail: "wired " + ch.Path + " to " + ch.Tag}, nil
 }
 
