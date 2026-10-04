@@ -30,6 +30,8 @@ The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quaran
    ```
 
    `go test ./plugin/` only requires a non-empty version; the release workflow enforces `version == tag` (`scripts/bump-plugin-version.sh --check X.Y.Z`).
+
+   **The plugin is pinned to this tag (M11, [design §4.3](design/m11-setup-and-skills.md)).** `fugaro init` and `fugaro update-skills` write the release tag `vX.Y.Z` of the running binary as the `ref` of the Fugaro marketplace in a repository's `.claude/settings.json`, so the binary, the plugin and the pin agree only if the plugin at that tag has version `X.Y.Z`: that is what the gate above enforces, and why a published tag is never moved or re-cut (a pin to it would silently change). When M11 lands, `bump-plugin-version.sh` also rewrites, and `--check` also verifies, the version in each skill's do-not-edit header. A private fork hosts its own marketplace and plugin at its own tags and its users pin to those.
 3. Rehearse if the pipeline changed: Actions, `release`, Run workflow (`workflow_dispatch`). It runs `goreleaser release --snapshot --skip=publish,sign` and uploads `dist/` as the `goreleaser-dist` artifact. Locally: `goreleaser release --snapshot --clean --skip=publish,sign` with `HOMEBREW_TAP_GITHUB_TOKEN=` set (empty), and syft on the PATH (or add `sbom` to `--skip`).
 4. Tag the merged commit and push:
 

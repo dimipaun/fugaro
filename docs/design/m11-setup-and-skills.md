@@ -1,21 +1,21 @@
 # Fugaro M11: simple setup and Fugaro-owned skills
 
-*Status: 2026-10-04, design check and plan. Source: the user's brief, [setup-and-skills-spec-source.md](setup-and-skills-spec-source.md), and the dogfooding friction log (the first real install of Fugaro on a fresh project, §6). Background: [v1.md](v1.md) (§5.2 onboarding, §7.2 images, §8 init, §9 CLI and plugin), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D3 revised 2026-10-04: one project may hold the installation and Firebase; D19), [../gcp-setup.md](../gcp-setup.md), [../dogfooding.md](../dogfooding.md), [../git-providers.md](../git-providers.md). Claims about Google, GitHub and registry APIs, and about how Claude Code loads skills, are **from memory and unverified**; each is an item in §14 to check against the real service before it is relied on. The plan is [2026-10-04-m11-setup-and-skills.md](../plans/2026-10-04-m11-setup-and-skills.md).*
+*Status: 2026-10-04, design check and plan. Source: the user's brief, [setup-and-skills-spec-source.md](setup-and-skills-spec-source.md), and the dogfooding friction log (the first real install of Fugaro on a fresh project, §6). Background: [v1.md](v1.md) (§5.2 onboarding, §7.2 images, §8 init, §9 CLI and plugin), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (D3 revised 2026-10-04: one project may hold the installation and Firebase; D19), [../gcp-setup.md](../gcp-setup.md), [../dogfooding.md](../dogfooding.md), [../git-providers.md](../git-providers.md). Claims about Google, GitHub and registry APIs, and about how Claude Code loads plugins and skills, are **from memory and unverified**; each is an item in §14 to check against the real service before it is relied on (§14 marks which are already checked). **Amended 2026-10-04 (user ruling): the Claude Code plugin is kept and `fugaro init` wires it into the repository's project settings; the earlier "embedded skills installed as `.claude/skills/fugaro-*` files, retire the plugin" design is withdrawn (§4).** The plan is [2026-10-04-m11-setup-and-skills.md](../plans/2026-10-04-m11-setup-and-skills.md).*
 
 ## 0. Summary and recommendations
 
-The brief's target README is two lines: `fugaro init`, then `/fugaro-setup` in the coding agent. Most of the machinery exists already, but split into three commands you must run in a precise order with flags you must know (§2). M11 makes it one command and one skill.
+The brief's target README is two lines: `fugaro init`, then `/fugaro:setup` in the coding agent. Most of the machinery exists already, but split into three commands you must run in a precise order with flags you must know (§2). M11 makes it one command and one skill.
 
 1. **One re-runnable `fugaro init`, built as a converge loop over stages**, not a rewrite. The three commands we have (`init`, `init --firebase`, `init --repo`) stay as the engines of the stages; the new top level decides the order, runs what is needed, stops at the first thing only the user can do, and ends with "what is left for you". Re-running continues from there. (§3)
 2. **Stay "adopt" by default; add project creation behind its own flags, later.** Today `init` never creates a project or links billing. Recommend: creation (`--create-project`) and billing linkage (`--link-billing ACCOUNT`) each need their own explicit flag *and* their own typed confirmation (`--yes` alone never does either); without the flag, init prints the exact one-line command and the console URL. This is slice C, after the adopt-only converge (slice B). (§3.1)
 3. **The base images are mirrored into the project's own registry by init, from the CLI's own credentials, in Go, with no Docker daemon.** The published ghcr images cannot be pulled by Cloud Build or Cloud Run, and build accounts must not be able to write the base registry (a security property), so the copy runs as the user. Digest-verified, idempotent, lazy per base kind (a repository's workflows say which kinds it needs), and the history image goes the same way. (§3.3)
 4. **Secrets: values only ever from the user's terminal.** Init prompts for the provider credential and the Claude credential at a hidden prompt, refuses to read them from a non-terminal, skips what is already stored. The agent (the skill) only lists names and tells the user what to type. (§3.5, §9)
-5. **Repo onboarding after `/fugaro-setup`:** `init` never writes `fugaro.yaml`. The skill ends by running `fugaro init --repo --plan-only` (read-only) and tells the user to run **`fugaro init`** again in their terminal once the setup PR is merged: run in a checkout whose default branch has a valid `fugaro.yaml`, `init` adds the repo stage (job, first image build, schedule) to the same converge. The README therefore stays two lines and the skill carries the "then run it again" step. (§3.6)
-6. **Skills are embedded in the binary, installed as project-level `.claude/skills/fugaro-*/`, stamped with the CLI version and a content hash, and overwritten cleanly.** `fugaro update-skills` works with no cloud access; `fugaro init` calls the same code. Staleness and local edits are reported on regular commands and by a new `fugaro doctor`. The existing `plugin/` is retired: two sources of truth would drift. (§4)
-7. **`/fugaro-setup` keeps the `image:` block as the default and a `.fugaro/<workflow>.Dockerfile` as the escape hatch.** The brief's "agent authors a Dockerfile and fugaro.yaml together" is satisfied by the existing contract (a Dockerfile built `FROM` a Fugaro base), not by letting the agent replace the security-critical template. Every line the agent adds that executes in Cloud Build is shown to the user before it is committed. (§5)
+5. **Repo onboarding after `/fugaro:setup`:** `init` never writes `fugaro.yaml`. The skill ends by running `fugaro init --repo --plan-only` (read-only) and tells the user to run **`fugaro init`** again in their terminal once the setup PR is merged: run in a checkout whose default branch has a valid `fugaro.yaml`, `init` adds the repo stage (job, first image build, schedule) to the same converge. The README therefore stays two lines and the skill carries the "then run it again" step. (§3.6)
+6. **The skills stay in the Claude Code plugin (`plugin/skills`, single source), and `fugaro init` wires the plugin into the repository's project `.claude/settings.json`** so every teammate is prompted to install it when they open and trust the project: it merges (never overwrites) the Fugaro marketplace under `extraKnownMarketplaces` and `"fugaro@fugaro": true` under `enabledPlugins`. The marketplace source is **pinned to the release tag of the binary that ran init** (the release gate already forces plugin version equal to tag), so binary, plugin and pin agree. Updating is `fugaro init` or `fugaro update-skills`, which bumps the pin: one diff in `settings.json`. `fugaro doctor` and a one-line warning on regular commands compare the pin (and, if readable, the installed plugin version) with the running binary. (§4)
+7. **`/fugaro:setup` keeps the `image:` block as the default and a `.fugaro/<workflow>.Dockerfile` as the escape hatch.** The brief's "agent authors a Dockerfile and fugaro.yaml together" is satisfied by the existing contract (a Dockerfile built `FROM` a Fugaro base), not by letting the agent replace the security-critical template. Every line the agent adds that executes in Cloud Build is shown to the user before it is committed. (§5)
 8. **The pluggable backend seam: keep what exists, add only a name, a stage grouping and a conformance test.** The interface covers the run lifecycle only; secrets, image builds and provisioning are GCP-direct. M11 does not widen it; it makes init's stages the per-backend unit and adds the contributor docs and a conformance suite. No AWS work. (§7)
-9. **Skills are instructions executed with the user's credentials.** They are Fugaro-owned and travel in a signed binary, which helps, but a committed skill is also a prompt-injection target, and a skill can tell an agent to do something expensive. §9 lists what a skill must never tell an agent to do, and the tests that enforce it.
-10. **First slice, shippable alone (A): the skills system** (embedding, install, stamp, staleness, `update-skills`, `doctor`, the four skills, the plugin retired). It touches no cloud, fixes none of the cloud friction, and is what the brief calls the reason to dogfood. Slice B (converge init with the image mirror and secrets prompts) is a parallel lane. The milestone is done only when B has been dogfooded (§11).
+9. **Skills are instructions executed with the user's credentials.** They are Fugaro-owned and travel in a release-tagged plugin, pinned from the repository, which helps, but a skill is still a prompt-injection target, a skill can tell an agent to do something expensive, and a plugin is code that runs with the user's rights. §9 lists what a skill must never tell an agent to do, what the plugin may contain, and the tests that enforce it.
+10. **First slice, shippable alone (A): the skills restructure and the wiring** (the four skills in the plugin, the do-not-edit header and version in each, the settings merge and pin, `update-skills`, `doctor --plugin`, the lint tests). It touches no cloud, fixes none of the cloud friction, and is what the brief calls the reason to dogfood. Before any of it is built, four **verification spikes** (V1 to V4, plan) check the assumptions the wiring rests on; two are already checked (§14). Slice B (converge init with the image mirror and secrets prompts) is a parallel lane. The milestone is done only when B has been dogfooded (§11).
 
 ## 1. What the brief asks, and how it maps onto what exists
 
@@ -26,12 +26,12 @@ The brief's target README is two lines: `fugaro init`, then `/fugaro-setup` in t
 | `init`: create or adopt the Firebase project | Adopt only; refuses missing or unbilled projects | Create (flagged), billing guided or flagged |
 | `init`: enable services, seed RTDB budget nodes | Done by `init`, `init --firebase` (APIs, RTDB rules, mark, mode, lease, Firestore, Identity Platform) | Three commands, three applies, manual order |
 | `init`: secrets if first on the team; detect and skip | `fugaro secrets set NAME --repo R`, value from stdin or hidden prompt; `secrets ls` | Not part of init; containers are per repository (§3.5) |
-| `init`: install skills (project-level) | Plugin in `plugin/` installed by `/plugin install` | New: embedded skills, install by init |
+| `init`: install skills (project-level) | Plugin in `plugin/` installed by `/plugin install`, per person | Kept as the single source. New: init merges the marketplace and `enabledPlugins` into the repository's `.claude/settings.json`, pinned to the binary's tag (§4) |
 | `init` idempotent, re-run refreshes skills | Each step re-runnable ("a rerun plans no change") | The whole flow is not; no skills |
 | `init` does not create `fugaro.yaml` or a Dockerfile | `init --repo` *requires* a committed `fugaro.yaml` | Ordering: who runs repo onboarding (§3.6) |
-| `/fugaro-setup`: inspect the repo, author Dockerfile and `fugaro.yaml` together, ask the human the open choices | `fugaro:onboard` skill: writes `fugaro.yaml` and `image:`; Dockerfile only when `image:` cannot express it; validate and local build loops | Services, human decisions, handoff to init, project-level install (§5) |
+| `/fugaro:setup`: inspect the repo, author Dockerfile and `fugaro.yaml` together, ask the human the open choices | `fugaro:onboard` skill: writes `fugaro.yaml` and `image:`; Dockerfile only when `image:` cannot express it; validate and local build loops | Services, human decisions, handoff to init, being wired by init (§5) |
 | Four skills: setup, working, routing, parallelism | Six plugin skills (onboard, launch, status, logs, diagnose, followup) | Routing and parallelism are new; working merges five |
-| Do-not-edit header, version stamp, staleness detection, clean overwrite | None; `fugaro version` exists | New (§4) |
+| Do-not-edit header, version, staleness detection, clean overwrite | None; `fugaro version` exists | Header and version inside each skill; staleness is the pin in `settings.json` against the binary; "overwrite" is the plugin update (§4) |
 | Dogfood on Fugaro's own repository | `docs/dogfooding.md`, 9 manual steps, "untested end to end" until the friction log | The acceptance test (§11) |
 
 ## 2. What the three commands do today
@@ -51,7 +51,7 @@ Stages, in order. Each stage has a **check** (read-only: is it done?), a **plan*
 
 | # | Stage | Reuses | New |
 |---|---|---|---|
-| 0 | **Preflight** | `checkEnv`, ADC and quota checks, readiness | Shared with `fugaro doctor`: Cloud Billing API on the quota project, the default Compute SA's `roles/editor` warning (friction log), Terraform version, Docker (only if a local base build is needed), skills state |
+| 0 | **Preflight** | `checkEnv`, ADC and quota checks, readiness | Shared with `fugaro doctor`: Cloud Billing API on the quota project, the default Compute SA's `roles/editor` warning (friction log), Terraform version, Docker (only if a local base build is needed), plugin wiring state |
 | 1 | **Project** | adopt: the project exists, has billing | `--create-project`, `--link-billing` (flagged, slice C) |
 | 2 | **Services** | `resourceManager`, the installation's API list | enable the rest in one place (Service Usage), Firebase Management for the Firebase side |
 | 3 | **Installation** | `install` (state bucket, runs bucket, base registry, roles, scheduler account, logs) | none |
@@ -59,7 +59,7 @@ Stages, in order. Each stage has a **check** (read-only: is it done?), a **plan*
 | 5 | **Images** | history job's image existence check | mirror the history image; mirror base kinds on demand (§3.3) |
 | 6 | **Installation, second pass** | the history job and its scheduler | run automatically when stage 5 has made the image exist (today a manual `init --firebase` again) |
 | 7 | **Secrets** | `secrets set`, `secrets ls` | prompts and skip-if-present (§3.5) |
-| 8 | **Skills** | none | `update-skills` code (§4) |
+| 8 | **Plugin wiring** | none | merge the marketplace and `enabledPlugins` into `.claude/settings.json` at the binary's tag (§4.3); outside a checkout, print the snippet |
 | 9 | **Repository** (only inside a checkout whose default branch has a valid `fugaro.yaml`) | `runInitRepo` | wired as a stage; first build waits for stage 7's secrets |
 
 Order is the dependency order the dogfooding run discovered by hand: installation, Firebase, images, history job, secrets, repository.
@@ -123,7 +123,7 @@ Phase 1 cannot store every secret: today's containers are per repository, create
 - **Init stores, for the checkout it runs in, what it can know without `fugaro.yaml`:** the provider credential (the checkout's origin says GitHub or Bitbucket: `github-app-key` as a hidden multi-line paste or a file path the user names, or `bitbucket-token`) and one Claude credential, chosen by a prompt with `claude-oauth-token` as the default (the user's stated direction; `claude setup-token` is run by the user in their own terminal, and init says so), `anthropic-api-key` as the alternative. It does not ask for Vertex.
 - **Detect and skip:** `secrets ls` shows what exists for the repository; a present secret is `done` and is never overwritten by init (rotating is `secrets set`).
 - **Hidden prompts only.** The value is read with `golang.org/x/term` from a terminal. If stdin is not a terminal, init does not read secret values from it (a pipe could be an agent holding a value it should not have); it prints the one-line `fugaro secrets set <name> --repo <slug>` command to run in a terminal. The existing `secrets set` keeps its pipe and file forms for the user's own scripts. No value is ever echoed, logged, written to `result` JSON, put in an error, or kept in the local config. (The existing minimum-length and size rules apply.)
-- **`/fugaro-setup` closes the loop:** once it knows `agent.auth` and the workflows' own `secrets:`, it compares them with `fugaro secrets ls --json` and tells the user which one-liners to run. It never handles a value (§9).
+- **`/fugaro:setup` closes the loop:** once it knows `agent.auth` and the workflows' own `secrets:`, it compares them with `fugaro secrets ls --json` and tells the user which one-liners to run. It never handles a value (§9).
 - **Not a Fugaro job:** creating the GitHub App or a Bitbucket repository access token happens in a browser. Init prints the steps and the facts that bit the dogfooding run: **GitHub App names are globally unique** (the example name `Fugaro` is taken: the docs example must say so and suggest `Fugaro <org>`), the name is shown as the author of every PR, and it cannot be changed later. (Docs fix in T20; the same for Bitbucket token names.)
 
 ### 3.6 How a repository gets onboarded
@@ -131,91 +131,112 @@ Phase 1 cannot store every secret: today's containers are per repository, create
 The brief says init does not create `fugaro.yaml`, yet today `init --repo` needs it. The ordering, resolved:
 
 1. `fugaro init` (phase 1): installation, backend, images, secrets, skills. Stage 9 reports "skipped: no fugaro.yaml on the default branch".
-2. `/fugaro-setup` (phase 2): the agent writes `fugaro.yaml`, optionally `.fugaro/<workflow>.Dockerfile`, validates, builds locally, and shows `fugaro init --repo --plan-only` (a read-only command the skill may run) to the user. The skill puts `fugaro.yaml`, the Dockerfile and `.claude/skills/fugaro-*` in one pull request and **tells the user to merge it**: `fugaro.yaml` is read from the default branch at every run and the Cloud Build image build clones the default branch, so neither can be provisioned from an unmerged file (§5.5 names a pre-merge build as slice D).
+2. `/fugaro:setup` (phase 2): the agent writes `fugaro.yaml`, optionally `.fugaro/<workflow>.Dockerfile`, validates, builds locally, and shows `fugaro init --repo --plan-only` (a read-only command the skill may run) to the user. The skill puts `fugaro.yaml`, the Dockerfile and the `.claude/settings.json` change that init made in stage 8 in one pull request and **tells the user to merge it**: `fugaro.yaml` is read from the default branch at every run and the Cloud Build image build clones the default branch, so neither can be provisioned from an unmerged file (§5.5 names a pre-merge build as slice D). A teammate gets the plugin only once `settings.json` is merged and they trust the folder (§4.7).
 3. After the merge, the user runs **`fugaro init`** again in the checkout. The converge sees stage 9 applicable and onboards the repository: registry, build account, jobs, first image build (billable, own confirmation), second apply, check unpaused. `fugaro init --repo` stays as the explicit form for scripts and for onboarding a repository from another directory.
 4. `fugaro doctor` (and the skill's last step) confirm: validate, image status, a smoke `fugaro run` suggestion the user decides on.
 
-README "Getting started" is then: 1. `fugaro init`, 2. `/fugaro-setup` in your coding agent (it will tell you when to run `fugaro init` once more). That keeps the brief's two lines and puts the third in the skill, where an agent can explain it. Alternative considered and rejected: the skill running `init --repo` itself with `--yes` (cloud resources and a billable build applied by an agent, which §9 forbids).
+README "Getting started" is then: 1. `fugaro init`, 2. `/fugaro:setup` in your coding agent (it will tell you when to run `fugaro init` once more). Because the plugin appears only after the folder-trust prompt (§4.7), `fugaro init` ends by saying so: open or restart Claude Code in the folder, trust it, accept the plugin. That keeps the brief's two lines and puts the third in the skill, where an agent can explain it. Alternative considered and rejected: the skill running `init --repo` itself with `--yes` (cloud resources and a billable build applied by an agent, which §9 forbids).
 
 ## 4. The skills system
 
+*Amended 2026-10-04 (user ruling, binding): the plugin is kept. The earlier design of this section (skills embedded in the binary, installed as `.claude/skills/fugaro-*` files, per-file version and hash stamps, a six-state machine) is withdrawn.*
+
 ### 4.1 The set
 
-| Skill (dir under `.claude/skills/`) | Trigger | Content |
-|---|---|---|
-| `fugaro-setup` | the user runs `/fugaro-setup`, or asks to set Fugaro up for this repository | §5 |
-| `fugaro-working` | the user wants to hand a task to Fugaro, check on runs, read logs, understand a result, continue a PR | `SKILL.md` is the decision tree and the rules of a good task; `reference/launch.md`, `status.md`, `logs.md`, `diagnose.md`, `followup.md` carry what the five plugin skills say today (migrated, trimmed), plus the dashboard (`fugaro watch`, `budget show`), cancel and retry, draft PR versus ready |
-| `fugaro-routing` | the agent is about to decide where a piece of work should run | the judgment table of §4.2 |
-| `fugaro-parallelism` | the agent plans work that could be split | wide for independent work, narrow for coupled, optionally redundant attempts for a hard single task; short (about 60 lines) |
+The skills live **only** in `plugin/skills/<name>/` (single source), as markdown with `reference/` files. Plugin skills are namespaced by the plugin name, so the directory `setup` is invoked as `/fugaro:setup` (the brief's `/fugaro-setup`, today's `fugaro:onboard`).
 
-Recommendation on the brief's "may be folded into #2 if short": **keep parallelism separate.** Its trigger is planning, not operating, and the description (what Claude Code matches on) differs. It stays small. Everything operational is one skill with reference files so the agent loads the manual only when it is working with runs; the per-command granularity of the five plugin skills is kept as reference sections, not as five triggers.
+| Skill (`plugin/skills/<dir>`) | Trigger | Content |
+|---|---|---|
+| `setup` (`/fugaro:setup`) | the user runs it, or asks to set Fugaro up for this repository | §5 |
+| `working` (`/fugaro:working`) | the user wants to hand a task to Fugaro, check on runs, read logs, understand a result, continue a PR | `SKILL.md` is the decision tree and the rules of a good task; `reference/launch.md`, `status.md`, `logs.md`, `diagnose.md`, `followup.md` carry what the five plugin skills say today (migrated, trimmed), plus the dashboard (`fugaro watch`, `budget show`), cancel and retry, draft PR versus ready |
+| `routing` | the agent is about to decide where a piece of work should run | the judgment table of §4.2 |
+| `parallelism` | the agent plans work that could be split | wide for independent work, narrow for coupled, optionally redundant attempts for a hard single task; short (about 60 lines) |
+
+The five operational skills (`launch`, `status`, `logs`, `diagnose`, `followup`) merge into `working`; `onboard` becomes `setup`. Recommendation on the brief's "may be folded into #2 if short": **keep parallelism separate.** Its trigger is planning, not operating, and the description (what Claude Code matches on) differs. Everything operational is one skill with reference files so the agent loads the manual only when it is working with runs.
 
 ### 4.2 Cloud versus local (the routing judgment)
 
 Self-contained coding tasks with clear acceptance criteria, that build and test inside the repository's image: cloud. Local: anything needing credentials or state that exist only on the developer's machine (investigating live cloud resources, a database with local data, VPN-only services, a task reading a private path), anything interactive or exploratory ("look at this and tell me"), anything that touches money or security (`docs/dogfooding.md` already says which parts of Fugaro itself go through a local review loop), and anything the image cannot run (Docker-in-Docker, Testcontainers, Android builds; Cloud Run has no Docker daemon). Cloud jobs' credentials deliberately do not grant machine access, so a task that "needs" them is the wrong task for the cloud. When unsure: split, with the self-contained part to the cloud.
 
-### 4.3 Where they live: project-level, not the plugin
+### 4.3 How the plugin reaches the team: project settings, pinned to the tag
 
-Recommendation: **`.claude/skills/fugaro-*/` committed in the repository, written by the CLI; retire the plugin's skills.**
+`fugaro init` (stage 8) and `fugaro update-skills` merge two entries into the checkout's `.claude/settings.json`:
 
-| | Project-level (`.claude/skills`) | Plugin (`plugin/`, `/plugin install`) |
-|---|---|---|
-| Version coupling | The skill is the CLI's own text; `update-skills` writes exactly what the installed CLI knows | The plugin updates on its own schedule and can skew from the CLI |
-| Team | Committed: every teammate gets the same, reviewed in a PR | Per person install |
-| Brief | Matches: "project-level skills", "Git shows the diff" | Does not |
-| Cost | Files in each repository; an upgrade is a PR of generated text | None per repository |
-| Trust | A PR editing them is visible and detectable (§9) | The marketplace is trusted by name |
-
-Two sources of truth is the worst case (a `fugaro:launch` and a `fugaro-working` giving different advice), and the pre-release rule applies (no backward compatibility, only two installs): `plugin/skills/` and its tests are removed, with `.claude-plugin/` kept only if the user wants a personal-install convenience (Q1; default: remove both). Other coding agents: `.claude/skills` is Claude Code's directory; whether other agents read it is **unverified** (§14), so the skill text is written agent-neutral (plain markdown, no Claude-specific tool names) and `fugaro update-skills --dir` can write elsewhere.
-
-When `fugaro init` runs outside a git checkout it skips the skills stage with a note (Q5: the alternative, `~/.claude/skills`, is user-level and not committed, so it does not match the brief).
-
-### 4.4 Header, stamp, and states
-
-The embedded sources hold no version. The installer renders each file as: the frontmatter (`name` equals the directory, a `description` that says when to use it), then
-
-```
-<!-- fugaro-skill name=fugaro-setup fugaro-version=0.2.0 sha256=<hash of the body below> -->
-> **Fugaro-owned skill (Fugaro 0.2.0). Do not edit this file.** `fugaro init` and `fugaro update-skills` overwrite it. To change how your agent behaves, write your own skill in a separate directory.
+```json
+{
+  "extraKnownMarketplaces": {
+    "fugaro": { "source": { "source": "github", "repo": "dimipaun/fugaro", "ref": "v0.2.0" } }
+  },
+  "enabledPlugins": { "fugaro@fugaro": true }
+}
 ```
 
-then the body. The comment line is the machine stamp (a frontmatter key could be rejected by the loader: unverified, §14, hence the comment); the visible line is for the agent and the human who opens it. Every file under a skill directory (reference files too) carries the stamp, and the hash covers that file's body.
+(The shape, including `ref`, is what `claude plugin marketplace add dimipaun/fugaro#<tag> --scope project` and `claude plugin install fugaro@fugaro --scope project` wrote with Claude Code 2.1.289; see §14.) Teammates are prompted to install the plugin when they open and trust the project. The marketplace lists the plugin by a relative path (`./plugin`), so the plugin loads from the marketplace copy at the pinned ref, with no second install source.
 
-States, from the stamp, the embedded text and the CLI's version:
+- **The pin is the binary's release tag** (`fugaro version` is `0.2.0`, the ref is `v0.2.0`). The release gate already forces `plugin/.claude-plugin/plugin.json` version equal to the tag (`scripts/release-gate.sh`, `scripts/bump-plugin-version.sh --check`), so the binary, the plugin and the pin agree by construction. A `dev` binary has no tag: init writes no pin, says so, and prints the snippet with a placeholder.
+- **Merge, never overwrite.** The file is parsed as JSON; every other key, and every other marketplace or plugin entry, is kept. Only `extraKnownMarketplaces.fugaro` and `enabledPlugins["fugaro@fugaro"]` are set. The diff is shown and written after the stage's confirmation; a file that does not parse is never rewritten (init prints the snippet and the parse error). `settings.local.json` and user settings are never touched. A `fugaro` marketplace entry that names a different repository (a private fork hosting its own marketplace) keeps its repository and only its `ref` is moved, with a note. Init never commits; the user reviews `git diff`.
+- **Updating** is `fugaro init` or `fugaro update-skills` after upgrading the binary: it bumps the `ref`, one line in `settings.json`, reviewed in a PR like any other. `update-skills [--check] [--dir D] [--json]` needs no credentials, no network and no Terraform; `--check` prints the state and exits 1 when it is not `ok`. Whether an existing install moves to the new ref on its own, and how a teammate refreshes it, is §14 item 1d.
+- **Outside a checkout** there is nothing to install: init prints the settings snippet and says where it belongs (Q5, decided).
+- **Skills stay agent-neutral** (plain markdown, no Claude-specific tool names), but the wiring is Claude Code's; other coding agents are not wired by init.
 
-| State | Meaning | Action |
+### 4.4 Header, version and the staleness states
+
+Each skill file keeps a visible header and the version it ships with:
+
+```
+<!-- fugaro-skill name=setup fugaro-version=0.2.0 -->
+> **Fugaro-owned skill (Fugaro 0.2.0). Do not edit this file.** It comes from the Fugaro plugin and is replaced when the plugin updates. To change how your agent behaves, write your own skill in a separate directory.
+```
+
+The version in the header is rewritten by `scripts/bump-plugin-version.sh` with `plugin.json`, and checked by `--check` (so the release gate fails on a header that disagrees with the tag) and by a test. There is no hash and no per-file state machine: the skills are not copied into repositories, so they cannot be edited in place there.
+
+What the CLI compares is the **pin** in `.claude/settings.json` (and, where readable, the installed plugin version) with the running binary:
+
+| State | Meaning | Severity |
 |---|---|---|
-| `ok` | stamp equals this CLI, hash matches | none |
-| `outdated` | stamp older than the CLI (semver), or a `dev` stamp differing from this build's embedded hash | warn: run `fugaro update-skills` |
-| `newer` | stamp newer than the CLI | warn: the skills were written by a newer Fugaro, upgrade the CLI (never downgrade them) |
-| `edited` | hash does not match the body | warn loudly (it is also what tampering looks like), overwritten by the next update |
-| `missing` | an embedded skill is absent | warn (init and update-skills create it) |
-| `foreign` | a `fugaro-*` directory without a stamp | never touched; update-skills names it and refuses to write over it |
+| `ok` | the pin equals the binary's tag | none |
+| `outdated` | the pin is older than the binary (semver) | warning: run `fugaro update-skills` |
+| `newer` | the pin is newer than the binary | warning: upgrade the CLI (the pin is never moved down) |
+| `unpinned` | the `fugaro` marketplace entry has no `ref` (it tracks the default branch, so skills can be ahead of or behind any binary) | warning |
+| `foreign` | the marketplace entry names a repository other than the expected one | warning (a private fork is legitimate; an unexpected change in a PR is not): named, never rewritten |
+| `not wired` | no marketplace entry or the plugin is not enabled in the project settings | warning: run `fugaro init` or `fugaro update-skills` |
+| `installed differs` | the installed plugin version differs from the pin | warning: update or reload the plugin |
+| `not installed` | wired, but this person has not installed or has declined the plugin | **informational**, never a failure |
+| `cannot compare` | a `dev` binary, or the installed version is unreadable | informational |
 
-**Clean overwrite.** `update-skills` writes every embedded file, removes files and directories that carry a Fugaro stamp and are no longer embedded (a renamed or dropped skill), and touches nothing else. No merge. It writes to temporary names and renames, so an interrupted run never leaves half a skill. It prints the list of changed files and says "review with `git diff`". It never commits.
+The installed version is read from `~/.claude/plugins/installed_plugins.json` (the `fugaro@fugaro` entry's `version`, `scope` and `projectPath`, observed with Claude Code 2.1.289; the file's format is not a documented contract, so an unreadable or unexpected file means `cannot compare`, silently).
 
 ### 4.5 Staleness detection in the CLI
 
-- **Regular commands** (`run`, `ls` without `--watch`, `validate`, `status`-like commands, `init`): one stderr line at most per process, `warning: the Fugaro skills in this repository are outdated (0.1.0, this is 0.2.0): run fugaro update-skills`. Stdout is untouched, `--json` output is untouched, no network, never an error, silenced by `FUGARO_NO_SKILL_WARNING=1`. It does nothing inside a Cloud Run job (`backend.OnCloudRun`). The check reads at most the handful of small files under the nearest enclosing `.claude/skills` it finds walking up from the working directory; the cost is a few `stat`s.
-- **`fugaro doctor`** (new, read-only, `--json`, exit 1 when any check fails): the shared preflight checks (§3.1 stage 0), the local config and the installation it names, whether the base images and the history image are mirrored, the stored secrets by name (never values), `fugaro.yaml` validity, and the skills table above. Every failing check prints the one-line fix. `fugaro doctor --skills --strict` is the one a repository can put in CI: it fails on `outdated`, `edited` and `missing`, which is the supply-chain control of §9.
-- **`fugaro update-skills [--check] [--dir D] [--json]`**: `--check` prints states and exits 1 on any stale one without writing. It needs no credentials, no network and no Terraform, so a `brew upgrade` followed by `fugaro update-skills` is cheap. `fugaro init` runs the same code as its stage 8.
+- **Regular commands** (`run`, `ls` without `--watch`, `validate`, status-like commands, `init`): one stderr line at most per process, `warning: the Fugaro plugin pinned in .claude/settings.json is 0.1.0, this is 0.2.0: run fugaro update-skills`. Stdout and `--json` are untouched, no network, never an error, silenced by `FUGARO_NO_SKILL_WARNING=1`, nothing inside a Cloud Run job (`backend.OnCloudRun`). Cost: reading one small JSON file found by walking up from the working directory (and the installed-plugins file).
+- **`fugaro doctor`** (new, read-only, `--json`, exit 1 when any check fails): the shared preflight checks (§3.1 stage 0), the local config and the installation it names, whether the base images and the history image are mirrored, the stored secrets by name (never values), `fugaro.yaml` validity, and the plugin table above. Every failing check prints the one-line fix.
+- **`fugaro doctor --plugin --strict`** is the one a repository puts in CI: offline (no credentials), only the plugin checks, and **every warning state fails it** (`outdated`, `newer`, `unpinned`, `foreign`, `not wired`); the informational states (`not installed`, `cannot compare`) never do, and `installed differs` is not evaluated there (a CI runner has no install). This is the supply-chain control of §9.
 
 ### 4.6 Authoring and testing in this repository
 
-- **Source and embedding:** `internal/skills/content/<skill>/**` (markdown), `//go:embed all:content`. A single `Render(version)` produces the installed bytes. The repository's own `.claude/skills/fugaro-*` is generated by the same code (`go run ./cmd/fugaro update-skills` in this checkout, committed), so Fugaro dogfoods its own skills and the stale-skill test (below) keeps them current.
+- **Source:** `plugin/skills/<skill>/**` only. A contributor tries a change with `claude --plugin-dir plugin` (a documented flag). The repository's own `.claude/settings.json` is wired by `fugaro init` like any other (pinned to the last tag); nothing is generated or committed per skill.
 - **Tests that make the skills a checked artifact** (all offline, in CI):
-  1. every skill renders with frontmatter (`name` equals the directory, a description of bounded length that contains a trigger phrase), the visible header, and a stamp whose hash verifies; no unresolved placeholder;
-  2. **every `fugaro` command and flag a skill names exists** (the existing `TestSkillCommandsExist` pattern, pointed at the embedded content and extended to flags and to commands in reference files);
-  3. **every fenced `yaml` example labelled `fugaro.yaml` in a skill validates** against the real schema (`config.Load`), so an example cannot rot;
+  1. every skill has frontmatter (`name` equals the directory, a description of bounded length that contains a trigger phrase), the visible header, and a header version equal to `plugin.json`'s; no unresolved placeholder;
+  2. **every `fugaro` command and flag a skill names exists** (the existing `TestSkillCommandsExist` pattern, extended to flags and to reference files);
+  3. **every fenced `yaml` example labelled `fugaro.yaml` in a skill validates** against the real schema (`config.Load`);
   4. **JSON field claims are real:** a table in the test lists each field a skill reads from `--json` output (`valid`, `problems`, `smoke.checks[].ok`, ...) and checks it against the structs;
   5. **forbidden-instruction lint** (§9): no skill contains `--yes` next to `init`, a secret value pattern, `secrets set` with an inline value, `print-access-token`, `curl | sh`, `--allow-delete`, `--forget`, `budget set`/`resume` as an instruction (a skill may *describe* them and say the user runs them; the lint allows them only inside a block marked `user-runs`);
-  6. a size budget per skill file (the loaded text costs the agent's context): `SKILL.md` at most 400 lines, reference files at most 300;
-  7. `TestSkillsInRepoAreCurrent`: this repository's committed `.claude/skills` equals the render, so a content change without regeneration fails CI.
-- **Staying truthful as the CLI changes:** tests 2 to 4 fail when a flag or field is renamed, and a CLI change that touches a command a skill documents shows up as a skill diff in the same PR (the PR template gets a checkbox). The stamp is the CLI version, so a release always ships skills that match its commands; the staleness check handles installs that lag.
+  6. a size budget per skill file: `SKILL.md` at most 400 lines, reference files at most 300;
+  7. **the plugin carries skills only:** no hooks, MCP servers, commands, agents or `bin/` (a plugin is code that runs with the user's rights; §9), and the marketplace entry carries no version (existing test);
+  8. the settings merge (§4.3) and the pin states (§4.4) as table tests: merge into an empty file, into a file with other keys and other marketplaces, into an invalid file (refused), a fork entry, idempotent re-run, `dev` binary.
+- **Staying truthful as the CLI changes:** tests 2 to 4 fail when a flag or field is renamed, and a CLI change that touches a command a skill documents shows up as a skill diff in the same PR (the PR template gets a checkbox). The version is the release's, so a release always ships skills that match its commands; the pin check handles installs that lag.
 
-## 5. `/fugaro-setup`
+### 4.7 Limits, stated honestly
 
-It is today's `fugaro:onboard` grown in four directions: services, the human decisions, the handoff to init, and being project-installed.
+- **The marketplace repository must be readable by the user's Claude Code.** Fine while `dimipaun/fugaro` is public. A private fork hosts its own marketplace and plugin at its own tags; init then keeps the fork's repository in the entry (§4.3) and every teammate needs git access to it.
+- **First-run experience.** The marketplace entry applies only after the user trusts the folder, so the plugin appears after the folder-trust prompt, not immediately after `fugaro init`. Init says so and prints the two commands for the person who ran it and wants it now (`/plugin install fugaro@fugaro` in Claude Code, or `claude plugin install fugaro@fugaro --scope project`). Whether the skill is usable in that same first session after trust is §14 item 1d.
+- **Teammates can decline the prompt.** Then there are no Fugaro skills for them; `fugaro doctor` reports `not installed` as informational, and the CLI works as before.
+- **Other agents** are not wired.
+- **Pre-0.1 pins.** Until a binary has a tag the pin cannot be written (`dev`).
+
+## 5. `/fugaro:setup`
+
+It is today's `fugaro:onboard` grown in four directions: services, the human decisions, the handoff to init, and being wired into the project by init.
 
 ### 5.1 What it must discover
 
@@ -248,7 +269,7 @@ The brief wants the agent to author "Dockerfile and `fugaro.yaml` together". Rec
 
 ### 5.5 Validation and the end of the skill
 
-`fugaro validate --json` clean; `fugaro image build --local --json` with `smoke.passed`; `fugaro init --repo --plan-only` shown to the user (read-only); `fugaro secrets ls --json` compared with what the config needs (§3.5); one PR with `fugaro.yaml`, the Dockerfile if any, and the skills, never committed or merged by the agent unless the user says to; then the instruction to run `fugaro init` after the merge and a suggested first `fugaro run`.
+`fugaro validate --json` clean; `fugaro image build --local --json` with `smoke.passed`; `fugaro init --repo --plan-only` shown to the user (read-only); `fugaro secrets ls --json` compared with what the config needs (§3.5); one PR with `fugaro.yaml`, the Dockerfile if any, and the `.claude/settings.json` change init made, never committed or merged by the agent unless the user says to; then the instruction to run `fugaro init` after the merge and a suggested first `fugaro run`.
 
 ## 6. The dogfooding friction log as requirements
 
@@ -294,8 +315,9 @@ Skills are text that a user's agent obeys **with the user's credentials** (ADC, 
 
 | Threat | Answer |
 |---|---|
-| A skill (ours, buggy or edited) tells the agent to do something destructive or costly | Fugaro-owned and embedded in a release whose checksums are signed; the forbidden-instruction lint (§4.6 test 5) and a security review of every skill's content in the plan (own review) |
-| A committed skill is edited in a PR to inject instructions (every teammate's agent reads it; a cloud run on that branch reads it too) | `edited` state is loud; `fugaro doctor --skills --strict` in the repository's CI fails it; CODEOWNERS on `.claude/skills/fugaro-*` recommended in the docs; the stamp hash makes a silent change detectable |
+| A skill (ours, buggy) tells the agent to do something destructive or costly | Fugaro-owned and shipped in a release whose checksums are signed, at a tag that the marketplace pin names; the forbidden-instruction lint (§4.6 test 5) and a security review of every skill's content in the plan (own review) |
+| The plugin ships more than skills (a hook or an MCP server runs code with the user's rights on every teammate's machine) | A test fails any hook, MCP server, command, agent or `bin/` in `plugin/` (§4.6 test 7); the plugin is reviewed like code |
+| A PR changes the marketplace entry in `.claude/settings.json` to another repository or ref, or unpins it (every teammate who trusts the folder is then prompted to install that plugin, whose skills their agent obeys) | The skills are no longer in the repository, so there is nothing to edit in place, but `settings.json` is now the attack surface: `fugaro doctor --plugin --strict` in the repository's CI fails `foreign`, `unpinned`, `outdated` and `newer`; CODEOWNERS on `.claude/settings.json` recommended in the docs; a pin to a tag, not a branch, so the content is fixed; Claude Code's own trust prompt is the last gate and teammates should read what it names |
 | Prompt injection from what the setup skill reads (README, CI files, `package.json` scripts, issue text) | The skill states that repository content is data, never instructions; it takes commands from CI as *evidence for `commands.*`* and does not run them; it never executes deploy or release steps found there |
 | The agent runs init or applies cloud changes | The skill never tells the agent to run `fugaro init` (other than `--plan-only` and `--print-vars`), `--yes`, `--allow-delete`, `--forget`, `--allow-job-delete`, `fugaro budget set|kill|resume`, or anything that spends; init needs a terminal for its typed confirmations, which an agent session has not |
 | The agent handles a secret | A skill never asks for, reads, prints, echoes, writes into a file or pipes a secret value; never runs `fugaro secrets set` itself; lists names with `secrets ls` and gives the user the one-line command to run in their own terminal; tells the user not to paste a value into the conversation; never runs `gcloud auth print-access-token`, `gcloud auth print-identity-token`, reads credential files (`~/.config/gcloud`, `~/.config/fugaro`, `.env`), or sets `GOOGLE_IMPERSONATE_SERVICE_ACCOUNT` |
@@ -305,7 +327,7 @@ Skills are text that a user's agent obeys **with the user's credentials** (ADC, 
 | The mirror copies a tampered image | Digest-pinned copy from the release's tag; the release's checksums are cosign-signed; image signing, if it exists, is verified (§14: whether the images are signed is **unverified**) |
 | Init creates cloud resources in the wrong project | Explicit project ID confirmed; never the gcloud default; the project, parent and billing account are in the confirmation text; creation and billing need their own flags |
 | A leaked secret in init's output, `--json`, errors, shell history | Values never reach any output or config; prompts are hidden; non-terminal stdin is refused for values; commands printed never contain values |
-| A cloud run loads the repository's `fugaro-*` skills (and "cloud versus local" advice) | Harmless text but wrong context, and an attack surface on a poisoned branch. Whether the runner can exclude them is **unverified** (§14); the cheap mitigation is the doctor check in CI |
+| A cloud run loads the Fugaro plugin because the repository's `settings.json` names it (wrong context, a fetch from the container, an attack surface on a poisoned branch) | With Claude Code 2.1.289 an untrusted `-p` run registered no marketplace, fetched nothing and loaded no Fugaro skill (§14 item 1c); the runner's launch contract is pinned by a test and, if the container proves otherwise, the runner disables it (plan V3) |
 
 ## 10. Risks
 
@@ -313,13 +335,13 @@ Skills are text that a user's agent obeys **with the user's credentials** (ADC, 
 - **Project creation and billing linkage depend on Google behaviours and permissions that vary by organisation** (policies, quotas, who may link billing). Mitigation: slice C last, flagged, errors verbatim, a printed fallback; live-tested on a throwaway project.
 - **A new dependency for the registry copy.** Reviewed like any other (licence, size, maintenance); the alternative is a thin client of the registry HTTP API that we would then own.
 - **The skill is the product's second UI** and an agent may follow it loosely. The tests pin commands, flags and fields, not behaviour; the live check (§11) runs the skill end to end on real repositories, and a skill revision is cheap to ship.
-- **Skills loaded in cloud runs** (§9, §14).
+- **The plugin or its fetch reached from a cloud run** (§9, §14 item 1c).
 - **Scope creep into AWS:** only the seam of §7.
 - **Unverified API facts** (§14): each is checked before its stage ships.
 
 ## 11. Phases
 
-**Slice A (first slice, shippable alone): the skills system.** Embedding, install, stamp, states, `update-skills`, staleness warnings, `doctor` (skills, environment, config, secrets by name), the four skills with `/fugaro-setup` handing provisioning to today's commands with exact one-liners, the plugin retired, README "Getting started" updated, the friction fixes that are docs only. No cloud calls. After it, an agent can already set a repository up and operate Fugaro, and every skill claim is tested against the CLI.
+**Slice A (first slice, shippable alone): the skills restructure and the plugin wiring.** First the verification spikes V1 to V4 (§14 item 1). Then the four skills in `plugin/skills` with the header and version, the lint tests, the settings merge and pin (`internal/pluginwire`), `update-skills` and the staleness warning, `doctor --plugin --strict` and `doctor`, `/fugaro:setup` handing provisioning to today's commands with exact one-liners, README "Getting started" updated, the friction fixes that are docs only. No cloud calls. After it, an agent can already set a repository up and operate Fugaro, and every skill claim is tested against the CLI.
 
 **Slice B: converge `fugaro init` (adopt mode).** Stage orchestrator, single plan view, `--non-interactive`, the image mirror (base kinds and history) with the release changes, the secrets stage, the repository stage, adopt mode for teammates, the output hygiene. Lane-parallel with A. **Acceptance: the dogfooding run of §12's last task**, from a clean project, with the number of manual rounds and flags remembered recorded.
 
@@ -331,23 +353,28 @@ The brief's validation sentence ("if that isn't smooth, onboarding isn't ready f
 
 ## 12. Release and docs changes this implies
 
-The images workflow publishes `fugaro-history` and fails when an image is not anonymously pullable (a `docker manifest inspect` without login); `fugaro-go` is published from the first tag after it exists (already true of the workflow); the release notes carry the base digests. README: "Getting started" is the two lines, and the long Quickstart moves under a "Manual setup" heading in `docs/gcp-setup.md` (the deep reference stays: it is what `init`'s stages are). `docs/design/v1.md` §5.2, §8 and §9.2 are updated (the onboard skill becomes `fugaro-setup`; `init`'s converge and the mirror; the plugin is retired). `docs/dogfooding.md` becomes the two-command flow.
+The images workflow publishes `fugaro-history` and fails when an image is not anonymously pullable (a `docker manifest inspect` without login); `fugaro-go` is published from the first tag after it exists (already true of the workflow); the release notes carry the base digests. README: "Getting started" is the two lines, and the long Quickstart moves under a "Manual setup" heading in `docs/gcp-setup.md` (the deep reference stays: it is what `init`'s stages are). `docs/design/v1.md` §5.2, §8 and §9.2 are updated (the onboard skill becomes `fugaro:setup`; `init`'s converge and the mirror; the plugin is kept and wired through project settings, pinned to the tag). `docs/dogfooding.md` becomes the two-command flow. `docs/release.md` gains one paragraph: the plugin version, its skills' header versions and the tag the pin names must agree (§4.3), and a tag is never moved.
 
 ## 13. Open questions for the user (proposed defaults, none blocking)
 
 | # | Question | Default |
 |---|---|---|
-| Q1 | Remove `plugin/` and `.claude-plugin/` entirely, or keep the marketplace for a personal install of the same embedded skills? | Remove both (one source of truth; two installs exist) |
+| Q1 | Remove `plugin/` and `.claude-plugin/` entirely, or keep them? | **DECIDED 2026-10-04 (user): keep.** The plugin is the single source of the skills and `init` wires it through project settings (§4.3). The embedded-skills design is withdrawn |
 | Q2 | How far should init go on project creation: `--create-project` and `--link-billing` in M11 (slice C), or print-the-command only? | Slice C after B, each flag explicit, billing guided by default |
 | Q3 | Pre-mirror all three base kinds, or only the kinds a repository's workflows need? | Only what is needed (lazy), `--base` to pre-mirror |
 | Q4 | Keep secrets per repository (default) or add project-level containers for the credentials that are the same for every repository (Claude oauth token, the GitHub App key)? It changes who can read what | Per repository now; project-level is slice D if the repeated prompting hurts. (Whether one subscription token may be shared across a team is also yours to rule on: unverified) |
-| Q5 | `fugaro init` outside a checkout: skip the skills stage (default), or install to `~/.claude/skills`? | Skip with a note |
+| Q5 | `fugaro init` outside a checkout | **Simplified:** nothing to install outside a checkout; init prints the settings snippet and where it belongs (§4.3) |
 | Q6 | Add `fugaro image build --ref BRANCH` (non-promoting) so a Dockerfile can be proven in the cloud before the setup PR merges? | Yes, slice D |
-| Q7 | Skill directory names: `fugaro-setup`, `fugaro-working`, `fugaro-routing`, `fugaro-parallelism`? | As listed |
+| Q7 | Skill names: `setup`, `working`, `routing`, `parallelism`, invoked `/fugaro:setup` etc. (the plugin namespace replaces the brief's `fugaro-` prefix)? | As listed |
 
 ## 14. Assumptions to verify (before the stage that relies on them ships)
 
-1. Claude Code's handling of `.claude/skills/<name>/SKILL.md`: unknown frontmatter keys, supporting files loaded on demand, an HTML comment as the first body line, whether other agents read `.claude/skills`, and whether a headless cloud run can be told to ignore project skills.
+1. **The plugin wiring (user ruling 2026-10-04). Four checks, plan tasks V1 to V4, nothing relied on until marked checked.**
+   - **(a) The settings keys.** `extraKnownMarketplaces` and `enabledPlugins` in the project `.claude/settings.json` work as described, including the install prompt at folder trust. *Checked with Claude Code 2.1.289 (agent-run, isolated config directory, no cloud):* `claude plugin marketplace add dimipaun/fugaro#<ref> --scope project` followed by `claude plugin install fugaro@fugaro --scope project` writes exactly the snippet of §4.3, and the documentation says `extraKnownMarketplaces` entries apply only after the contributor accepts the workspace trust dialog and that a plugin listed by a relative path loads from the marketplace copy. **Unverified (user-run, needs the real UI):** that a teammate is actually prompted to install at folder trust. *Fallback if it fails:* init prints `claude plugin marketplace add dimipaun/fugaro#<tag> --scope project` and the install command for each person, README says so, and `doctor` reports `not installed`.
+   - **(b) Pinning to a tag.** *Checked (agent-run):* `ref` as a tag works in the same command: with `#v0.1.0` the settings hold `"ref": "v0.1.0"` and the installed plugin's `gitCommitSha` is the tag's commit. **Unverified (user-run):** that changing the `ref` in `settings.json` makes an existing install move to the new tag (and how a teammate refreshes it: `/plugin marketplace update`, a restart, or an update only when the plugin `version` changes, as the documentation suggests). *Fallback:* `update-skills` also prints the refresh command and `doctor` reports `installed differs`.
+   - **(c) A headless cloud run must not fetch or install the plugin because of that file.** *Checked locally (agent-run, `claude -p` in a folder with that `settings.json`, fresh untrusted config directory, fake key, no model call):* no marketplace registered, no clone, no plugin loaded, no Fugaro skill, matching the documentation (marketplaces in repository settings apply to `-p` runs only in a folder already trusted). **Unverified (user-run, sandbox, the image's pinned Claude Code, as the runner starts it):** the same inside the container. The runner starts `claude -p ... --dangerously-skip-permissions` with a scrubbed environment and no settings flags (`internal/agent/agent.go`, `Args`). *Fallback if the container fetches or loads it:* the runner disables it: `--setting-sources user` (but this also drops the project settings the run may rely on: check first) or a `--settings` override with `enabledPlugins: {"fugaro@fugaro": false}`; `--bare` is not an option because it never reads OAuth. Either way the plan adds a runner test.
+   - **(d) First use in a fresh checkout after trust.** **Unverified (user-run):** a plugin skill is usable the first time in a fresh checkout after the trust prompt, or only after a restart or `/reload-plugins`; what init must tell the user. *Fallback:* init says "restart Claude Code in this folder" and prints the one-line manual install.
+   - Also unverified: behaviour on Claude Code versions other than 2.1.289 (the images pin 2.1.283).
 2. Why the published ghcr images are unreadable by Cloud Build and Cloud Run in the user's project (private package visibility, or Cloud Run's registry rules), and whether making the packages public is enough for an anonymous copy; whether the images are signed (cosign) and can be verified before the copy.
 3. Cloud Resource Manager `projects.create` with user ADC (quota project needs, parent, organisation policy errors), `firebase.googleapis.com` `projects:addFirebase`, Cloud Billing `projects.updateBillingInfo` and the permission it needs, and that the Cloud Billing API is needed on the quota project (as observed).
 4. Whether an Artifact Registry remote repository over ghcr is a viable alternative to copying (supported upstreams, auth).
