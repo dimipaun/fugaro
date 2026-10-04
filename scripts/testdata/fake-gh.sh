@@ -20,12 +20,31 @@
 #   FAKE_GH_CORRUPT_MERGE  non-empty: the merge commit lacks the plugin bump
 #   FAKE_GH_AUTOMERGE_FAIL  non-empty: "gh pr merge" fails (auto-merge off)
 #   FAKE_GH_PR_CREATE_FAIL  non-empty: "gh pr create" fails
+#   FAKE_GH_IDENTICAL_PR  non-empty: after the merge, the commit's pulls api
+#                    lists the PR (head = the pushed release branch); unset,
+#                    it lists none (the identical-tree lookup finds nothing)
+#   FAKE_GH_HEAD_TEST / _TERRAFORM / _RULES   success (default) | failed |
+#                    missing | pending | cancelled on that PR head
+#   FAKE_GH_HEAD_TREE      override the tree sha the api reports for the PR head
+#   FAKE_GH_PULL_UNMERGED  non-empty: the listed PR has merged_at null
+#   FAKE_GH_PULL_MERGE_SHA the merge_commit_sha the listed PR reports
+#                    (default: the real merge commit)
 # The api asserts that, once a PR has merged, it is only asked about the
-# merge commit.
+# merge commit and that PR's head (checks and tree).
 set -eu
 dir=$FAKE_GH_DIR
 printf '%s\n' "$*" >>"$dir/log"
 repo=${FAKE_GH_REPO:-o/r}
+
+head_sha() { git -C "$FAKE_GH_ORIGIN" rev-parse "refs/heads/$(cat "$dir/pr_branch")"; }
+
+head_conclusion() {
+  case "$1" in
+    test) printf '%s' "${FAKE_GH_HEAD_TEST:-success}" ;;
+    terraform) printf '%s' "${FAKE_GH_HEAD_TERRAFORM:-success}" ;;
+    rules) printf '%s' "${FAKE_GH_HEAD_RULES:-success}" ;;
+  esac
+}
 
 check_conclusion() {
   case "$1" in
@@ -135,9 +154,38 @@ case "$1 ${2:-}" in
     exit 0
     ;;
   "api "*)
-    sha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/]*\)/check-runs.*|\1|p')
-    if [ -s "$dir/pr_merge_sha" ] && [ "$sha" != "$(cat "$dir/pr_merge_sha")" ]; then
-      echo "fake-gh.sh: api asked about $sha, but the merge commit is $(cat "$dir/pr_merge_sha")" >&2
+    sha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/check-runs.*|\1|p')
+    gsha=$(printf '%s' "$2" | sed -n 's|.*/git/commits/\([^/?]*\)$|\1|p')
+    psha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/pulls.*|\1|p')
+    merge=$(cat "$dir/pr_merge_sha" 2>/dev/null || true)
+    if [ -n "$gsha" ]; then
+      if [ -n "${FAKE_GH_HEAD_TREE:-}" ] && [ -s "$dir/pr_branch" ] && [ "$gsha" = "$(head_sha)" ]; then
+        printf '%s\n' "$FAKE_GH_HEAD_TREE"
+      else
+        git -C "$FAKE_GH_ORIGIN" rev-parse "$gsha^{tree}"
+      fi
+      exit 0
+    fi
+    if [ -n "$psha" ]; then
+      if [ -n "${FAKE_GH_IDENTICAL_PR:-}" ] && [ -n "$merge" ] && [ "$psha" = "$merge" ]; then
+        merged_at=2026-01-01T00:00:00Z
+        [ -z "${FAKE_GH_PULL_UNMERGED:-}" ] || merged_at=-
+        printf '%s\t%s\t%s\n' "$merged_at" "${FAKE_GH_PULL_MERGE_SHA:-$merge}" "$(head_sha)"
+      fi
+      exit 0
+    fi
+    if [ -n "$merge" ] && [ -s "$dir/pr_branch" ] && [ "$sha" = "$(head_sha)" ]; then
+      for name in test terraform rules; do
+        case "$*" in
+          *".name == \"$name\""*)
+            head_conclusion "$name"
+            exit 0
+            ;;
+        esac
+      done
+    fi
+    if [ -n "$merge" ] && [ "$sha" != "$merge" ]; then
+      echo "fake-gh.sh: api asked about $sha, but the merge commit is $merge" >&2
       exit 1
     fi
     for name in test terraform rules; do
