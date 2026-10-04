@@ -106,6 +106,9 @@ func (e *initEngine) options() initflow.Options {
 func (e *initEngine) converge(ctx context.Context) error {
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), newImagesStage(e), newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e))
+	if e.r.o.createProject {
+		stages = append(stages, newProjectStage(e))
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	return e.outcome(res, err)
 }

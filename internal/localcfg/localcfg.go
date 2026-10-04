@@ -330,6 +330,9 @@ type Endpoints struct {
 	CloudBilling string `yaml:"cloud_billing,omitempty"`
 	// FirebaseDatabase lists the Firebase project's databases (init --firebase).
 	FirebaseDatabase string `yaml:"firebase_database,omitempty"`
+	// FirebaseManagement is where init --create-project adds Firebase to a
+	// project it creates (Firebase Management v1beta1).
+	FirebaseManagement string `yaml:"firebase_management,omitempty"`
 	// IdentityToolkit is where init --firebase ensures Identity Platform is
 	// initialized in the Firebase project (Identity Toolkit's REST API).
 	IdentityToolkit string `yaml:"identity_toolkit,omitempty"`
@@ -691,7 +694,7 @@ func (c *Config) validate() error {
 		{"storage", c.Endpoints.Storage}, {"iam", c.Endpoints.IAM},
 		{"artifact_registry", c.Endpoints.ArtifactRegistry}, {"resource_manager", c.Endpoints.ResourceManager},
 		{"cloud_scheduler", c.Endpoints.CloudScheduler}, {"service_usage", c.Endpoints.ServiceUsage},
-		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase},
+		{"cloud_billing", c.Endpoints.CloudBilling}, {"firebase_database", c.Endpoints.FirebaseDatabase}, {"firebase_management", c.Endpoints.FirebaseManagement},
 		{"iam_credentials", c.Endpoints.IAMCredentials}, {"identity_toolkit", c.Endpoints.IdentityToolkit},
 		{"firestore", c.Endpoints.Firestore}, {"firebase_rules", c.Endpoints.FirebaseRules},
 	} {
