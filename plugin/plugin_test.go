@@ -249,6 +249,22 @@ func copyTree(t *testing.T, src string) string {
 	return dst
 }
 
+// manifestVersion reads the version of a plugin.json.
+func manifestVersion(t *testing.T, path string) string {
+	t.Helper()
+	var m struct {
+		Version string `json:"version"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &m); err != nil || m.Version == "" {
+		t.Fatalf("%s: no version: %v", path, err)
+	}
+	return m.Version
+}
+
 func runBumpScript(t *testing.T, root string, args ...string) (string, error) {
 	t.Helper()
 	bash, err := exec.LookPath("bash")
@@ -295,20 +311,22 @@ func TestBumpScriptRewritesHeaders(t *testing.T) {
 // plugin.json itself is right.
 func TestBumpScriptCheckFailsOnStaleHeader(t *testing.T) {
 	root := copyTree(t, "..")
-	current, err := runBumpScript(t, root, "--check", "0.1.0")
+	// The tree's own version, whatever release it is at.
+	v := manifestVersion(t, filepath.Join(root, "plugin", ".claude-plugin", "plugin.json"))
+	current, err := runBumpScript(t, root, "--check", v)
 	if err != nil {
-		t.Fatalf("baseline --check 0.1.0: %v\n%s", current, err)
+		t.Fatalf("baseline --check %s: %v\n%s", v, current, err)
 	}
 	stale := filepath.Join(root, "plugin", "skills", "setup", "SKILL.md")
 	data, err := os.ReadFile(stale)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = bytes.Replace(data, []byte("fugaro-version=0.1.0"), []byte("fugaro-version=0.0.9"), 1)
+	data = bytes.Replace(data, []byte("fugaro-version="+v), []byte("fugaro-version=0.0.0"), 1)
 	if err := os.WriteFile(stale, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runBumpScript(t, root, "--check", "0.1.0")
+	out, err := runBumpScript(t, root, "--check", v)
 	if err == nil {
 		t.Fatalf("--check passed with a stale header:\n%s", out)
 	}
