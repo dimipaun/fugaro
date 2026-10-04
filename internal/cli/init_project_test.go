@@ -10,6 +10,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
 const (
@@ -500,3 +501,161 @@ func TestOneProjectPerRun(t *testing.T) {
 }
 
 func initflowEnv() initflow.Env { return initflow.Env{Interactive: true} }
+
+// Billing is never replaced: an unreadable state or a link that is only
+// disabled is guided, never written; a project this run created is linked.
+func TestRelinkNeverHappens(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(false)
+	r.bill.HideBilling(newProj)
+	out, _, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	r.nothingDone(t, "unreadable billing")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be read") || !strings.Contains(out, "gcloud billing projects link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	}
+
+	r = newProjectRig(t)
+	r.existing(false)
+	r.bill.SetSuspended(newProj, "AAAAAA-BBBBBB-CCCCCC")
+	out, _, err = r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	r.nothingDone(t, "a suspended link")
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "never replaces an existing link") {
+		t.Errorf("exit %d\n%s", ExitCode(err), out)
+	}
+
+	r = newProjectRig(t)
+	r.bill.AddAccount(billingAcc, true)
+	_, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	if len(r.bill.Links()) != 1 {
+		t.Errorf("a project created by this run was not linked: %v", r.bill.Links())
+	}
+}
+
+// A foreign, readable project is adopted only with every change said to be
+// to an EXISTING project, each behind its own typed confirmation.
+func TestExistingProjectBannersSayExisting(t *testing.T) {
+	r := newProjectRig(t)
+	r.crm.AddProject(newProj, 424242)
+	r.gcs.AddProject(newProj, 424242)
+	r.bill.SetBilling(newProj, false)
+	out, _, _ := r.run(t, true, "", "--create-project", "--link-billing", billingAcc, "--plan-only")
+	if !strings.Contains(out, "adopting an EXISTING project "+newProj) {
+		t.Errorf("the plan does not say the project exists:\n%s", out)
+	}
+	r.nothingDone(t, "the plan")
+
+	out, _, _ = r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	if n := strings.Count(out, "⚠ CONFIRM: adopting an EXISTING project"); n != 2 {
+		t.Errorf("%d confirmations say existing, want 2 (Firebase, billing):\n%s", n, out)
+	}
+	if len(r.crm.Creates()) != 0 || len(r.fb.Adds()) != 1 || len(r.bill.Links()) != 1 {
+		t.Errorf("adds %v links %v", r.fb.Adds(), r.bill.Links())
+	}
+
+	// The ID alone is not enough for billing; and nothing typed does nothing.
+	r = newProjectRig(t)
+	r.crm.AddProject(newProj, 424242)
+	r.gcs.AddProject(newProj, 424242)
+	r.bill.SetBilling(newProj, false)
+	_, _, _ = r.run(t, true, "", "--create-project", "--link-billing", billingAcc)
+	r.nothingDone(t, "no typed confirmation")
+}
+
+func TestCreateWithOtherFirebaseRefused(t *testing.T) {
+	r := newProjectRig(t)
+	_, _, err := r.run(t, true, newProj+"\n", "--create-project", "--firebase", "other-fp-1234")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp-1234") {
+		t.Errorf("err = %v", err)
+	}
+	if n := len(r.crm.Requests()); n != 0 {
+		t.Errorf("%d calls", n)
+	}
+}
+
+// A create that times out says what to wait for, and a taken ID's text
+// first asks whether an earlier run created it.
+func TestCreatedButNotReadableSaysWait(t *testing.T) {
+	r := newProjectRig(t)
+	r.crm.PropagationReads = 1000
+	out, _, err := r.run(t, true, newProj+"\n", "--create-project")
+	if err == nil || !strings.Contains(out, "operation operations/cp.") || !strings.Contains(out, "wait a few minutes and rerun with the same ID") {
+		t.Errorf("err %v\n%s", err, out)
+	}
+	if strings.Contains(out, "such as") {
+		t.Errorf("a new ID is suggested for a project this run created:\n%s", out)
+	}
+
+	r = newProjectRig(t)
+	r.crm.AddForeign(newProj)
+	out, _, _ = r.run(t, true, newProj+"\n", "--create-project")
+	if !strings.Contains(out, "created "+newProj+" a moment ago") {
+		t.Errorf("taken ID text:\n%s", out)
+	}
+}
+
+func TestCredentialNoteInBanner(t *testing.T) {
+	write := func(t *testing.T, body string) {
+		t.Helper()
+		f := t.TempDir() + "/key.json"
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", f)
+	}
+	banner := func(t *testing.T) string {
+		out, _, _ := newProjectRig(t).run(t, true, "no\n", "--create-project")
+		return out
+	}
+	r := newProjectRig(t)
+	_ = r
+	t.Run("service account", func(t *testing.T) {
+		write(t, `{"type":"service_account","private_key":"SECRETKEY","quota_project_id":"qp-1"}`)
+		out := banner(t)
+		if !strings.Contains(out, "SERVICE ACCOUNT") || strings.Contains(out, "SECRETKEY") || strings.Contains(out, "key.json") || !strings.Contains(out, "quota project qp-1") {
+			t.Errorf("%s", out)
+		}
+	})
+	t.Run("user", func(t *testing.T) {
+		write(t, `{"type":"authorized_user","quota_project_id":"qp-2"}`)
+		if out := banner(t); !strings.Contains(out, "as you (your own user credentials") || !strings.Contains(out, "quota project qp-2") {
+			t.Errorf("%s", out)
+		}
+	})
+	t.Run("no quota project", func(t *testing.T) {
+		write(t, `{"type":"authorized_user"}`)
+		if out := banner(t); !strings.Contains(out, "set-quota-project") {
+			t.Errorf("%s", out)
+		}
+	})
+	t.Run("environment's quota is sanitized", func(t *testing.T) {
+		t.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "bad\x1b[31m;proj")
+		out := banner(t)
+		if strings.Contains(out, "\x1b") || !strings.Contains(out, "quota project bad??31m?proj") {
+			t.Errorf("%q", out)
+		}
+	})
+}
+
+// The stage's ID is the flag's and nothing else: an engine whose config
+// holds another project (a default from anywhere) still reads and creates
+// only the flag's.
+func TestStageIDIsTheFlagAlone(t *testing.T) {
+	r := newProjectRig(t)
+	e := &initEngine{r: &initRun{o: &initOptions{createProject: true, cloud: cloudOptions{gcpProject: newProj}}},
+		lc: &localcfg.Config{GCPProject: "their-default-9999"}}
+	e.lc.Endpoints = localcfg.Endpoints{ResourceManager: r.crm.URL + "/", FirebaseManagement: r.fb.URL + "/", CloudBilling: r.bill.URL + "/", NoAuth: true}
+	s := newProjectStage(e)
+	if _, err := s.Check(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	for _, sv := range []*gcpfake.Server{r.crm.Server, r.fb.Server, r.bill.Server} {
+		for _, q := range sv.Requests() {
+			if strings.Contains(q.Path, "their-default") {
+				t.Errorf("a call names the other project: %s", q.Path)
+			}
+		}
+	}
+	if s.id != newProj {
+		t.Errorf("id %q", s.id)
+	}
+}

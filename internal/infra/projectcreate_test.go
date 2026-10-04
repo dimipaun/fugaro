@@ -218,3 +218,14 @@ func TestLinkBillingRefusals(t *testing.T) {
 		t.Errorf("links %d", n)
 	}
 }
+
+// A 403 that is not "missing" says what it is.
+func TestUserProjectDeniedIsNotMissing(t *testing.T) {
+	f := newProjectFakes(t)
+	f.crm.Refuse(403, "PERMISSION_DENIED", "USER_PROJECT_DENIED", "Caller does not have required permission to use project qp-1")
+	_, err := ReadProject(context.Background(), f.pc, "fugaro-up-1")
+	var pe *ProjectError
+	if !errors.As(err, &pe) || pe.Kind != ProjectDenied || !strings.Contains(pe.Fix, "set-quota-project") || !strings.Contains(pe.Error(), "USER_PROJECT_DENIED") {
+		t.Errorf("err = %v", err)
+	}
+}

@@ -17,6 +17,17 @@ package infra
 // calls use the one in the user's Application Default Credentials (or
 // GOOGLE_CLOUD_QUOTA_PROJECT), which the confirmation states.
 //
+// Deliberate deviations from the design text: init does not list the
+// caller's billing accounts (billingAccounts.list) even to guide, because
+// that reveals every account the user can reach and the account is theirs to
+// name; it prints the gcloud line with a placeholder, and the user names the
+// account. Adopting an existing project is "readable", not "ours or empty":
+// there is no cheap, read-only emptiness or Fugaro-mark check at this stage
+// (the marks live in the runs bucket, the database and Firestore, which an
+// installation that does not exist yet has not made), so every change to a
+// pre-existing project says so in its own typed confirmation, and billing is
+// linked to one only when it has no link at all.
+//
 // UNVERIFIED against the real services (the design's §14 items 3 and 6;
 // the fakes in internal/gcpfake encode what the documentation says, not
 // what was observed):
@@ -188,6 +199,10 @@ type ProjectInfo struct {
 	// billing; BillingEnabled is meaningful only when it is true. The
 	// account the project is linked to is deliberately not read out.
 	BillingKnown, BillingEnabled bool
+	// BillingLinked is whether a billing account is named at all, enabled
+	// or not (a suspended or closed account keeps its link): such a link is
+	// never replaced.
+	BillingLinked bool
 }
 
 // ReadProject reads the project, its Firebase resource and its billing
@@ -213,7 +228,7 @@ func ReadProject(ctx context.Context, pc *ProjectClients, id string) (ProjectInf
 	bi, err := pc.Billing.Projects.GetBillingInfo("projects/" + id).Context(ctx).Do()
 	switch {
 	case err == nil:
-		info.BillingKnown, info.BillingEnabled = true, bi.BillingEnabled
+		info.BillingKnown, info.BillingEnabled, info.BillingLinked = true, bi.BillingEnabled, bi.BillingAccountName != ""
 	case isAbsent(err):
 		// Billing cannot be read: unknown, never assumed on or off.
 	default:
@@ -232,9 +247,24 @@ func isAbsent(err error) bool {
 	}
 	if ge.Code == http.StatusForbidden {
 		_, off := disabledAny(err)
-		return !off
+		return !off && errorReason(err) != "USER_PROJECT_DENIED"
 	}
 	return false
+}
+
+// errorReason is the ErrorInfo reason of a Google error, if it has one.
+func errorReason(err error) string {
+	var ge *googleapi.Error
+	if !errors.As(err, &ge) {
+		return ""
+	}
+	for _, d := range ge.Details {
+		if m, ok := d.(map[string]any); ok && m["@type"] == "type.googleapis.com/google.rpc.ErrorInfo" {
+			r, _ := m["reason"].(string)
+			return r
+		}
+	}
+	return ""
 }
 
 // disabledAny is the service a SERVICE_DISABLED answer names and the
@@ -281,6 +311,11 @@ func classify(err error, what string) error {
 		}
 		return &ProjectError{Kind: ProjectAPIOff, Err: wrapped, Hint: hint, Fix: fix}
 	}
+	if errorReason(err) == "USER_PROJECT_DENIED" {
+		return &ProjectError{Kind: ProjectDenied, Err: wrapped,
+			Hint: "you may not use the quota project of your credentials (USER_PROJECT_DENIED), which is not the same as the project being missing; you need roles/serviceusage.serviceUsageConsumer on it",
+			Fix:  "gcloud auth application-default set-quota-project <a project you may use>"}
+	}
 	switch ge.Code {
 	case http.StatusForbidden, http.StatusBadRequest, http.StatusTooManyRequests:
 		return &ProjectError{Kind: ProjectDenied, Err: wrapped}
@@ -294,6 +329,9 @@ type CreateSpec struct {
 	// Parent is organizations/N or folders/N; empty means no parent (the
 	// project is created outside any organization). It is never guessed.
 	Parent string
+	// OnOperation, when set, is told the create's operation name as soon as
+	// it is known, so a run that then times out can say what to wait for.
+	OnOperation func(name string)
 }
 
 // Wait is how the operation polls and the reads wait for a new project to
@@ -345,11 +383,14 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 	var ge *googleapi.Error
 	if errors.As(err, &ge) && ge.Code == http.StatusConflict {
 		return &ProjectError{Kind: ProjectTaken, Err: fmt.Errorf("creating project %s: %w", s.ID, err),
-			Hint: "the ID is held by another project (possibly one in someone else's account, or one deleted in the last 30 days), and project IDs are global and never reused",
-			Fix:  "choose another --gcp-project, such as " + SuggestProjectID(s.ID)}
+			Hint: "the ID is held by another project (possibly one in someone else's account, one deleted in the last 30 days, or one you created a moment ago that cannot be read yet), and project IDs are global and never reused",
+			Fix:  "if an earlier run of yours created " + s.ID + " a moment ago (it said \"created but cannot be read yet\" or timed out), wait a few minutes and rerun with the same ID; only if not, choose another --gcp-project, such as " + SuggestProjectID(s.ID)}
 	}
 	if err != nil {
 		return orgPolicyHint(classify(err, "creating project "+s.ID))
+	}
+	if s.OnOperation != nil {
+		s.OnOperation(op.Name)
 	}
 	for i := 0; !op.Done; i++ {
 		if i >= Wait.Tries {

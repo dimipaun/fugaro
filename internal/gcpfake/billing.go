@@ -22,6 +22,7 @@ type Billing struct {
 	// none registered any account is accepted.
 	accounts map[string]bool
 	crm      *CRM
+	hidden   map[string]bool
 	links    []Link
 	failLink *apiError
 }
@@ -34,7 +35,7 @@ var billingInfoRE = regexp.MustCompile(`^/v1/projects/([^/:]+)/billingInfo$`)
 // NewBilling starts a Cloud Billing fake that lives until the test ends.
 func NewBilling(t *testing.T) *Billing {
 	t.Helper()
-	f := &Billing{enabled: map[string]bool{}, account: map[string]string{}, accounts: map[string]bool{}}
+	f := &Billing{enabled: map[string]bool{}, account: map[string]string{}, accounts: map[string]bool{}, hidden: map[string]bool{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -52,6 +53,22 @@ func (f *Billing) UseCRM(c *CRM) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.crm = c
+}
+
+// SetSuspended makes the project keep a link to account while billing is
+// disabled (a suspended or closed account).
+func (f *Billing) SetSuspended(project, account string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.enabled[project], f.account[project] = false, "billingAccounts/"+account
+}
+
+// HideBilling makes reads and links of the project's billing answer 403, as
+// for a caller without billing.resourceAssociations.list.
+func (f *Billing) HideBilling(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hidden[project] = true
 }
 
 // AddAccount makes billing account id one the caller may link projects to;
@@ -90,6 +107,10 @@ func (f *Billing) handle(w http.ResponseWriter, r *http.Request, req []byte) {
 	if _, known := f.enabled[m[1]]; !known && f.crm != nil && f.crm.Has(m[1]) {
 		f.enabled[m[1]] = false
 	}
+	if f.hidden[m[1]] {
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+		return
+	}
 	if r.Method == http.MethodPut {
 		f.link(w, m[1], req)
 		return
@@ -100,7 +121,7 @@ func (f *Billing) handle(w http.ResponseWriter, r *http.Request, req []byte) {
 		return
 	}
 	body := map[string]any{"name": "projects/" + m[1] + "/billingInfo", "projectId": m[1], "billingEnabled": on}
-	if on {
+	if on || f.account[m[1]] != "" {
 		body["billingAccountName"] = cmpOr(f.account[m[1]], "billingAccounts/000000-000000-000000")
 	}
 	writeJSON(w, http.StatusOK, body)
@@ -109,6 +130,12 @@ func (f *Billing) handle(w http.ResponseWriter, r *http.Request, req []byte) {
 func (f *Billing) link(w http.ResponseWriter, project string, body []byte) {
 	if _, ok := f.enabled[project]; !ok {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+		return
+	}
+	if f.account[project] != "" || f.enabled[project] {
+		// Replacing a link needs more than creating one; the fake grants
+		// the caller only the latter, so an existing link is never replaced.
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller may not replace the project's existing billing link")
 		return
 	}
 	if f.failLink != nil {
