@@ -1,6 +1,7 @@
 package tf
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -87,6 +88,22 @@ func TestApplyUsesSavedPlanOnly(t *testing.T) {
 	}
 	if got := len(r.calls(t)); got != n {
 		t.Errorf("a refused apply still ran terraform (%d calls, want %d)", got, n)
+	}
+}
+
+// TestRunWritesProgressWithoutRacing covers a command whose Out is a
+// bytes.Buffer (as in the real-terraform test, and as the cli wires it up in
+// tests): os/exec copies stdout and stderr on two separate goroutines unless
+// cmd.Stdout and cmd.Stderr are the same value, so run must make any writes
+// they both make into t.Out safe to interleave.
+func TestRunWritesProgressWithoutRacing(t *testing.T) {
+	r := newRig(t)
+	r.script["plan"] = map[string]any{"exit": 0, "stdout": strings.Repeat("o", 1<<12), "stderr": strings.Repeat("e", 1<<12)}
+	tf := r.tf(t, nil)
+	var out bytes.Buffer
+	tf.Out = &out
+	if _, err := tf.Plan(context.Background(), filepath.Join(r.dir, "tfplan")); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -29,7 +29,7 @@ workflows:
       # GitHub CI is (go test -race ./..., the docker-tests, rules and terraform jobs).
       # Left out here: Docker (docker-tests) and the Firebase emulator (rules), which the
       # container can't run; -race; the live-tagged tests; and internal/runner and
-      # internal/e2e, about 12 and 6 minutes each, and internal/image, whose self-test needs
+      # internal/e2e, about 12 and 6 minutes each, internal/image and images (the base-image builds), whose tests need
       # Docker and a git checkout the container doesn't have. A change to those packages
       # should run them (CI does).
       build: |
@@ -38,6 +38,6 @@ workflows:
         go vet ./...
         test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
       test: |
-        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image)
+        go test -timeout 15m $(go list ./... | grep -v -e /internal/runner -e /internal/e2e -e /internal/image -e /fugaro/images)
     resources: { cpu: 4, memory: 8Gi }
     timeouts: { total: 90m, stage: 40m, verify: 25m, finalize_reserve: 5m }

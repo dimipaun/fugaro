@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -138,7 +139,7 @@ func (t *TF) Init(ctx context.Context, backendConfig map[string]string) error {
 	for _, k := range keys {
 		args = append(args, "-backend-config="+k+"="+backendConfig[k])
 	}
-	_, err := t.run(ctx, args, t.Out)
+	_, err := t.run(ctx, args, nil)
 	return err
 }
 
@@ -147,7 +148,7 @@ func (t *TF) Init(ctx context.Context, backendConfig map[string]string) error {
 // 1 (or anything else) is a failure.
 func (t *TF) Plan(ctx context.Context, out string) (changed bool, err error) {
 	args := []string{"plan", "-input=false", "-no-color", lockTimeout, "-detailed-exitcode", "-out=" + out, "-var-file=terraform.tfvars.json"}
-	code, err := t.run(ctx, args, t.Out)
+	code, err := t.run(ctx, args, nil)
 	var ee *ExitError
 	if errors.As(err, &ee) && code == 2 {
 		return true, nil
@@ -245,7 +246,7 @@ func (t *TF) Apply(ctx context.Context, planFile string) error {
 	if !st.Mode().IsRegular() {
 		return fmt.Errorf("terraform apply: %s is not a saved plan file", planFile)
 	}
-	_, err = t.run(ctx, []string{"apply", "-input=false", "-no-color", lockTimeout, planFile}, t.Out)
+	_, err = t.run(ctx, []string{"apply", "-input=false", "-no-color", lockTimeout, planFile}, nil)
 	return err
 }
 
@@ -278,7 +279,7 @@ func (t *TF) StateRm(ctx context.Context, addrs ...string) error {
 			return fmt.Errorf("terraform state rm: bad address %q", a)
 		}
 	}
-	_, err := t.run(ctx, append([]string{"state", "rm", lockTimeout}, addrs...), t.Out)
+	_, err := t.run(ctx, append([]string{"state", "rm", lockTimeout}, addrs...), nil)
 	return err
 }
 
@@ -292,21 +293,26 @@ func (t *TF) capture(ctx context.Context, args ...string) ([]byte, error) {
 }
 
 // run runs terraform with args and returns its exit code; any code but 0 is
-// an *ExitError (Plan reads 2 as "changes").
+// an *ExitError (Plan reads 2 as "changes"). A nil stdout routes stdout to
+// progress (t.Out) alongside stderr, as capture's non-nil stdout doesn't.
 func (t *TF) run(ctx context.Context, args []string, stdout io.Writer) (int, error) {
-	if stdout == nil {
-		stdout = io.Discard
-	}
 	progress := t.Out
 	if progress == nil {
 		progress = io.Discard
+	}
+	// os/exec starts one copy goroutine per distinct Stdout/Stderr value, so
+	// when stdout also routes to progress, two goroutines would write it
+	// concurrently; syncWriter makes that safe.
+	safeProgress := &syncWriter{w: progress}
+	if stdout == nil {
+		stdout = safeProgress
 	}
 	var stderr tailBuffer
 	cmd := exec.CommandContext(ctx, t.bin, args...)
 	cmd.Dir = t.dir
 	cmd.Env = slices.Clone(t.env) // never nil, which would inherit ours
 	cmd.Stdout = stdout
-	cmd.Stderr = io.MultiWriter(&stderr, progress)
+	cmd.Stderr = io.MultiWriter(&stderr, safeProgress)
 	cmd.WaitDelay = 5 * time.Second
 	name := args[0]
 	if name == "state" && len(args) > 1 {
@@ -321,6 +327,19 @@ func (t *TF) run(ctx context.Context, args []string, stdout io.Writer) (int, err
 		return -1, fmt.Errorf("terraform %s: %w", name, err)
 	}
 	return 0, nil
+}
+
+// syncWriter serializes writes to w, so the stdout and stderr copy
+// goroutines os/exec runs concurrently can both target it safely.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // tailBuffer keeps the last stderrTail bytes written to it.

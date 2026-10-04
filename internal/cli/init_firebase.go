@@ -411,6 +411,9 @@ func (r *initRun) confirmLocation() error {
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return nil
 	}
+	if r.o.nonInteractive {
+		return userErr("the Firestore database's location, %s, is permanent and needs its own confirmation: run fugaro init --firebase at a terminal and type it, or pass --yes once you have read this; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
+	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
 	line, err := r.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
