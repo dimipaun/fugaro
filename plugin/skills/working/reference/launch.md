@@ -68,7 +68,7 @@ The CLI exits 1 and says why, and you don't work around it. Report the message a
 
 | The CLI says | What to do |
 |---|---|
-| `the budget refuses the launch` | The budget has a kill switch on, no cap, or no headroom. Show the message. The owner can change it: `fugaro budget show` shows the state; changing a cap or a kill switch is the owner's, so tell the user to ask them. The user may choose `fugaro run --no-budget-check`, which still holds the run to the same limits when it starts. Don't choose it for them. |
+| `the budget refuses the launch` | The budget has a kill switch on, no cap, or no headroom. Show the message. The owner can change it: `fugaro budget show` shows the state; changing a cap or a kill switch is the owner's, so tell the user to ask them. The user may choose to skip the launch pre-check (`--no-budget-check`), which still holds the run to the same limits when it starts. Don't choose it for them. |
 | `the budget database could not be read` | The launch fails closed. Tell the user; they may retry later, or choose `--no-budget-check` themselves. |
 | `a launch of … is still in flight` | Another launch of this run ID may still be starting. Wait a few minutes, then repeat the same command. |
 | `run ID <id> already holds a different task` | You reused a run ID for another task. Choose a new ID. |

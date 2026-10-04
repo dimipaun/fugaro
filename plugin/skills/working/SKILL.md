@@ -42,7 +42,7 @@ The remote agent cannot see this conversation, your files or the user's machine.
 
 ## Cancel and retry
 
-- `fugaro cancel <run>` stops a run: the runner stops the current stage and opens a draft pull request with what it has. Run it only on the user's word. `--now` stops the execution at once, without waiting for the draft; neither stops a run while it is opening its pull request or writing back its cache, which `cancel` waits for.
+- `fugaro cancel <run>` stops a run: the runner stops the current stage and opens a draft pull request with what it has. Run it only on the user's word. `--now` stops the execution at once, without waiting for the draft. Neither hard-stops a run that is opening its pull request (`finalize`): `cancel` waits up to 10 more minutes for it, then exits 1. A run writing back its cache counts as finalized.
 - `fugaro run --retry <run>` launches a stored task that never started (`unlaunched`). Repeating a launch with the same `--run-id` reports `already-launched` instead of starting a second run, so a launch whose outcome you do not know is safe to repeat.
 - A run that failed after starting is not retried: read `fugaro diagnose`, then launch a new run or a follow-up with the user's go-ahead.
 
@@ -51,7 +51,7 @@ The remote agent cannot see this conversation, your files or the user's machine.
 - **Draft or ready.** A run ends with a passing test run and a senior review verdict of `ship` for a ready pull request, and with a draft otherwise. A draft appears early, at the first verified push, with a status section in its description that the run keeps updating. Reviewers are requested only when it becomes ready.
 - **A failed or halted run is not always a bad one.** Its draft pull request holds the work: look at its CI before deciding.
 - **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
-- **Cost.** `fugaro diagnose` shows it. `cost.route_by` splits the spend by route (a provider model's route, for example) and `cost.reported_usd` is what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
+- **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.
 - **Statuses and halts** are in `reference/status.md` and `reference/diagnose.md`. A halt is a budget cap or a kill switch working as intended.
 
 ## What dogfooding taught
