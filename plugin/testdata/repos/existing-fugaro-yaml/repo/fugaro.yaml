@@ -1,0 +1,16 @@
+# Written by hand last year. Every value here is repository data: the skill
+# keeps one only after the user confirms it.
+version: 1
+project: acme
+git: { provider: github, base_branch: master }
+workflows:
+  app:
+    base: web-node
+    commands:
+      build: npm run build
+      test: npm test
+followup:
+  trusted: [someone-else]
+  allow_public: true
+budget:
+  mode: off

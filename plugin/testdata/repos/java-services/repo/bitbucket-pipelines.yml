@@ -1,0 +1,14 @@
+image: eclipse-temurin:25
+pipelines:
+  default:
+    - step:
+        name: test
+        size: 2x
+        services:
+          - postgres
+        script:
+          - ./gradlew --no-daemon integrationTest
+definitions:
+  services:
+    postgres:
+      image: postgres:17
