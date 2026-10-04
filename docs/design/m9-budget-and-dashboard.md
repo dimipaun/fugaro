@@ -24,7 +24,7 @@ This document maps the source spec onto Fugaro as it stands after M6. The user h
   - its people lists (`launchers`, `operators`, `budget_admins`);
   - one local project config (§2.4).
 
-  A different project (say *Borealis*) has its own GCP project, its own FP, its own config and its own people. Nothing is shared between the two.
+  A different project (say *Borealis*) has its own GCP project (or projects), its own FP, its own config and its own people. Nothing is shared between the two.
 - **Installation.** The technical name for a project's cloud-side setup: what `fugaro init` creates, and the name M5's docs and the Terraform root `installation` use. It appears in this document only in that sense.
 - **Repository.** A member of a project, for example `aurora-server`, `aurora-android`, `aurora-ios` and `aurora-web`, on Bitbucket or GitHub. It is what the source spec calls `project-a` or `project-b`, and it is the unit of budget caps and kill switches below the project.
 - **Global** (in the spec and in cap names) means **the Fugaro project**. There is no live state spanning projects.
@@ -260,7 +260,7 @@ Freeing *project* for the Fugaro project means renaming everything that means th
 - **The gateway** is a `net/http` handler inside `fugaro exec`. It starts at bootstrap when `FUGARO_BUDGET_MODE` is set, and holds the lease, the price table and the real credential. It forwards requests byte for byte and streams responses back without buffering.
 - **The run's Firebase identity** comes from a custom token that the launcher minted. The runner exchanges it for an ID token at bootstrap and keeps the ID token and refresh token only in memory.
 - **The history job** is a Cloud Run job in the project's GCP project with its own distroless image (D11), running `fugaro budget history`. Cloud Scheduler starts it daily for the rollover and every 15 minutes for the sweep. **It is a scheduled, admin-privileged job, not a long-running service.** It is the one exception to "no budget service": it holds `firebasedatabase.admin` on the FP. The optional budget service remains a documented later hardening (§11).
-- **RTDB and Firestore** live in the project's own Firebase project (FP), which is a separate GCP project (§6.0). The runs bucket, jobs, the history job and Scheduler stay in the installation project.
+- **RTDB and Firestore** live in the project's own Firebase project (FP), which is either a GCP project of its own or the installation's own project (§6.0). The runs bucket, jobs, the history job and Scheduler stay in the installation project.
 
 ---
 
@@ -448,9 +448,31 @@ These record where the build settled something the design left open. The authori
 
 ## 6. Firebase
 
-### 6.0 Where Firebase lives (D3, settled)
+### 6.0 Where Firebase lives (D3, revised by the user's ruling of 2026-10-04)
 
-**Each installation gets its own dedicated Firebase project (FP).** One Fugaro project is one GCP project and exactly one FP, shared by all its repositories and all its people.
+**Each Fugaro project has exactly one Firebase project (FP), shared by all its repositories and all its people. The FP is either a GCP project of its own or the installation's own GCP project: both layouts are supported, and the same-project one is the simplest.** `fugaro init --firebase <id>` takes either; nothing else in the setup changes.
+
+> **Revision (2026-10-04).** D3 originally required a dedicated FP and refused the installation's own project ("V2" below). The user ruled that wrong: a Fugaro project must be able to run on **one** project that holds both the installation (Cloud Run jobs, the runs bucket, registries, secrets, Scheduler, the Terraform state bucket) and the budget backend. The old rationale is kept below because it was a security argument, and the new boundary says how it is met without a second project.
+
+**The old rationale (what a second project bought).** A compromised job's service account sat in a project that had no IAM on the budget at all, so even a broad grant added to the workload project by mistake could not reach the database. It also gave separate billing for the backend.
+
+**The boundary in one project.** Nothing else is needed for the budget to stay out of a job's reach, because the separation was never the project boundary alone: it is that **no job, build or scheduler account holds any role that reaches the backend**, and the database's own rules decide what a run's token can do.
+
+- A job account holds, at project level, only `roles/aiplatform.user` (a Vertex workflow); a build account only `roles/logging.logWriter` and `fugaroBuildSubmitter` (`cloudbuild.builds.create` and `get`); the scheduler account nothing at project level (`roles/run.invoker` on the check and history jobs). **No** role on RTDB, Firestore, Identity Platform, API keys or IAM credentials, and never a primitive role (`owner`, `editor`, `viewer`).
+- The token signer (`fugaro-token-signer`) holds no roles. Its one IAM grant is `fugaroTokenMinter` (`iam.serviceAccounts.signJwt` only) **on the signer account**, for launchers and operators. No project-level grant names it.
+- The budget admins are unchanged: the project's `roles/owner` and `roles/editor` users and groups, plus `terraform.budget_admins`, get `roles/firebasedatabase.admin` (and `datastore.viewer`, `serviceUsageConsumer`). The history account's four roles are unchanged (`firebasedatabase.admin`, `firebaseauth.admin`, `datastore.user`, `serviceUsageConsumer`).
+- A run holds a Firebase ID token, which is not an IAM identity; the rules (§6.4) bound what it can read and write.
+- Pinned by tests: the Terraform text checks in `deploy/terraform/terraform_test.go` (`TestJobAccountsProjectRolesAreExactly` lists the roles any job, build or scheduler account holds; `TestBudgetBackendRolesOnlyInFirebaseModule`; `TestCustomRolesNeverReachTheBackend`; `TestSignerIAMIsMinterOnly`; `TestHistoryAccountBackendRolesAreExactly`) and the mock-provider plans `same_project_apis` and `same_project_grants` in the Firebase root's tests.
+
+**Residual risk in one project (be honest about it).**
+
+- **Project Owners and Editors** can already read and write the RTDB (and are budget admins by D6). With two projects the same was true of the *installation's* Owners and Editors, who were made admins of the FP; one project removes the case where someone is an owner of the workload project but not of the FP.
+- **The workloads share a project with the database.** A *new* grant that someone adds by hand to a job account (a primitive role, `roles/firebase.admin`, `roles/firebasedatabase.*`, `roles/datastore.*`) would now reach the backend directly, where with two projects it would have had to be made in the FP. Terraform in this repository never does it, and the tests above fail if it ever tries; a hand-made grant is outside what they can see. Google's default Compute and App Engine accounts may hold `roles/editor` in an older project: no Fugaro job runs as them, but a person who deploys something as one of them in that project gets that reach.
+- **The boundary is therefore per-resource roles and the database rules**, not the project. A compromised agent still cannot lift caps (the rules; admins only over IAM) or use the backend through its own identity (no role).
+- **Quota and billing are shared.** The backend's cost is on the installation's billing account, and a job that exhausts a project-wide quota (Identity Toolkit, Secure Token) can slow sign-ins of its siblings; the 3-minute grace (D14) covers it.
+- The Firestore and RTDB marks, `init`'s refusal of a database that holds unmarked data, and the Identity Platform public-sign-up refusal apply in both layouts.
+
+**What creating the FP takes (two-project layout).** With one project, steps 1 and 2 are already done (the project exists and has billing, because the installation needs it), and `--firebase <the installation's project>` adopts it.
 
 - **"Global" means the Fugaro project,** and its repositories are the spec's "projects".
 - **There is no live state across Fugaro projects.** Aggregating across an organization comes later and is read-only: for example, each project's history job exports its daily `spendDaily` roll-up to one shared place.
@@ -473,7 +495,7 @@ These record where the build settled something the design left open. The authori
 
 **Considered and rejected:**
 
-- **V2: Firebase inside the project's own GCP project.** Rejected because the user wants a separate project.
+- **V2: Firebase inside the project's own GCP project.** Originally rejected because the user wanted a separate project; **accepted on 2026-10-04** (revised D3). Both layouts are supported.
 - **V3: one FP shared by several Fugaro projects.** Rejected because it adds a shared blast radius, a project level in the rules, and cross-project admin ambiguity. Cross-project views come later, read-only, as described above.
 
 ### 6.1 APIs, region and IAM
@@ -690,7 +712,7 @@ Where a counter's cap is missing, the value comes back `null`. `N ≤ null` is f
   ```yaml
   budget:
     mode: enforce                    # off | observe | enforce
-    firebase_project: my-fugaro-fp   # the installation's dedicated Firebase project (D3)
+    firebase_project: my-fugaro-fp   # the Firebase project: a project of its own, or the installation's gcp_project (D3, revised)
     rtdb_url: https://<instance>.firebaseio.com
     firebase_api_key: <web-api-key>  # not a secret; restricted to identitytoolkit and securetoken
     token_signer: fugaro-token-signer@<fp>.iam.gserviceaccount.com
@@ -954,7 +976,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 |---|---|---|---|
 | D1 | Who writes budget state | **Per-run Firebase custom tokens, minted by the launcher, bounded by database rules.** No budget service; only a scheduled, admin-privileged history and sweeper job | Rules carry the security (§6.4) and need the emulator in CI. Launchers need `signJwt` on the signer. A compromised run can fill up to its per-run cap (denial of service). A budget service stays as later hardening |
 | D2 | How hard the caps are | **A guardrail now. An external gateway later** | A compromised agent can spend around the gateway. The backstops are provider-side (§11) |
-| D3 | Where Firebase lives | **A dedicated FP per Fugaro project (V1).** The user creates the project and links billing; `fugaro init --firebase` adopts it. V2 and V3 were rejected | "Global" is the Fugaro project. Grants from the GCP project onto the FP, a third Terraform state, and separate billing. Organization-wide aggregation comes later and read-only |
+| D3 | Where Firebase lives (**revised, user ruling 2026-10-04**) | **One FP per Fugaro project, and it may be the installation's own GCP project or a project of its own.** The user creates the project (if separate) and links billing; `fugaro init --firebase` adopts it. V3 (one FP for several Fugaro projects) stays rejected. *Superseded text:* "a dedicated FP per Fugaro project, never the installation's GCP project (V1; V2 rejected)" | "Global" is the Fugaro project. A third Terraform state either way; the two roots enable no API twice (`skip_apis`). **Old rationale, kept:** a second project meant a compromised job's account had no IAM at all on the budget. **New boundary:** no job, build or scheduler account holds any role that reaches the backend (tested), the signer has no roles, and the rules bound a run's token; residual risk in §6.0. Organization-wide aggregation comes later and read-only |
 | D4 | Regions | **RTDB `us-central1`. Firestore `us-east5`** (to be confirmed supported by check 23; no `nam5` fallback is built) | RTDB can't be moved later. About 25 ms from `us-east5` jobs, which is negligible next to model latency |
 | D5 | The budget day | **UTC** | Epoch-day keys. No days of 23 or 25 hours |
 | D6 | Budget admins | **The GCP project's owners and editors, plus an optional `budget_admins` list.** Terraform grants them `firebasedatabase.admin` on the FP | Launchers, operators and job accounts can't change caps or switches. The owner list is discovered at `init`, so re-run `init --firebase` after changing owners |
@@ -970,7 +992,7 @@ Sizes: **S** is up to a day, **M** a few days, **L** about a week.
 | D16 | Project identity | **Each repository's `fugaro.yaml` names its project (`project: <slug>`)**, required by `init --repo` from M9 on and checked by the runner against the job's `FUGARO_PROJECT`. `fugaro init --name` sets the name once, in the cloud setup; project configs copy it; `fugaro use` is dropped. Renaming is unsupported in M9 | Mistakes can't cross projects. Existing repositories need one PR each, plus `init --repo`. The name is a label, not a boundary |
 | D17 | One word | **"Project" means only the Fugaro project, everywhere.** `--project <name>`, `FUGARO_PROJECT=<name>`, `projects/<name>.yaml` with `name:`; no profiles. The GCP ID becomes `--gcp-project`, `gcp_project:` and `FUGARO_GCP_PROJECT`. Terraform's `project` variable is the one exception | Breaking CLI, config and environment renames, applied directly (D18). `--gcp-project` can't override a selected project |
 | D18 | Compatibility | **None.** The runner and CLI understand only the new shapes, and strict decoding rejects the old ones with a clear message. The two existing installs are migrated once (§13.1) | No dual-shape code, no transition releases. Old configs and jobs fail loudly until migrated. Launches freeze during the migration |
-| D19 | Where the `belong` installation lives (**planned, user, 2026-10-02**) | **Move everything under `fugaro-belong`.** Today the installation (Cloud Run jobs, runs bucket, registries, secrets, Scheduler, Terraform state) is in the shared dev project `edge-devel-dimi`, and the budget backend is in the new Firebase project `fugaro-belong` (created 2026-10-02, billing linked). The intent is for the Belong Fugaro project to have its own GCP project, `fugaro-belong`, for everything, and for `edge-devel-dimi` to go back to being a throwaway dev project | **Not scheduled; M9b ships with the two-project layout.** Doing it needs: (1) a decision on D3: it separated the Firebase project from the workload project so that a compromised job's service account has no IAM on the budget; with one project, the budget admin grants and the job accounts share a project, so the separation has to come from per-resource roles (the rules and the signer already do most of it) or from a second project (`fugaro-belong-run`) holding the workloads; (2) a fresh `fugaro init --name belong --gcp-project <new>` (no migration code, D18): new bucket, registries, secrets (Bitbucket tokens, the oauth token), image builds, and re-onboarding EdgeWeb and the sandbox (`init --repo`, a PR each if `fugaro.yaml` changes); (3) retiring the resources in `edge-devel-dimi` once the new installation has run. Natural moment: with the M7 release or a first real Belong rollout |
+| D19 | Where the `belong` installation lives (**planned, user, 2026-10-02; simplified 2026-10-04**) | **Move everything under `fugaro-belong`.** Today the installation (Cloud Run jobs, runs bucket, registries, secrets, Scheduler, Terraform state) is in the shared dev project `edge-devel-dimi`, and the budget backend is in the Firebase project `fugaro-belong` (created 2026-10-02, billing linked). The intent is for the Belong Fugaro project to have its own GCP project, `fugaro-belong`, for everything, and for `edge-devel-dimi` to go back to being a throwaway dev project | **Not scheduled; M9b ships with the two-project layout, which stays supported.** The D3 question that blocked this is settled (revised 2026-10-04): the same-project layout is supported, so **no second project (`fugaro-belong-run`) is needed**. Doing it needs: (1) a fresh `fugaro init --name belong --gcp-project fugaro-belong` (no migration code, D18): new bucket, registries, secrets (Bitbucket tokens, the oauth token), image builds, and re-onboarding EdgeWeb and the sandbox (`init --repo`, a PR each if `fugaro.yaml` changes), then `init --firebase fugaro-belong`; (2) retiring the resources in `edge-devel-dimi` once the new installation has run. **Caveat for belong's existing backend:** the Firebase root's resources (signer account, `fugaroTokenMinter`, the API key, the RTDB instance) already exist in `fugaro-belong` under the old state in `edge-devel-dimi`'s state bucket, and the database's and Firestore's marks name `gcp_project: edge-devel-dimi`, which init refuses to change. A move therefore has to carry the `fugaro/firebase` state to the new bucket (`terraform state` copy) and rewrite those two marks by hand, or start from an empty backend. Natural moment: with the M7 release or a first real Belong rollout |
 | A1 | `oauth` and Anthropic's terms | **The user accepts the risk.** `oauth` stays as it is and is never proxied. Dollar caps apply to API-key and Vertex only | §5.8 lists exactly what `oauth` runs get |
 
 ## 17. Assumptions to verify before building

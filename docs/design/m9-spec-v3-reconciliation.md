@@ -6,7 +6,7 @@
 
 | # | Ruling | Effect on the design |
 |---|---|---|
-| 1 | Each Fugaro project keeps its own Firebase project | D3 stays. v3's single RTDB with a global cap across projects is not adopted. A "global" cap is the Fugaro project's own total. Org-wide aggregation comes later and read-only |
+| 1 | Each Fugaro project keeps its own Firebase project | D3 stays (revised 2026-10-04: the Firebase project may be the installation's own GCP project; still one per Fugaro project). v3's single RTDB with a global cap across projects is not adopted. A "global" cap is the Fugaro project's own total. Org-wide aggregation comes later and read-only |
 | 2 | Caps count model dollars only | D7 stays. v3 §7.4 (a 60 s heartbeat charging compute into the caps) is not adopted. Compute is reported separately as `computeUsd` and shown in `watch` and history |
 | 3 | Multi-model work is deferred to **M10**, with its own design | See below |
 | 4 | D15 revised: draft PR after the first push | New milestone **M9e** (below) |
