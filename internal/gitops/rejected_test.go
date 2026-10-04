@@ -28,6 +28,7 @@ func TestClassifyPush(t *testing.T) {
 		{"protected", "remote: error: GH006: Protected branch update failed for refs/heads/fugaro/x.\n ! [remote rejected] HEAD -> fugaro/x (protected branch hook declined)", RejectProtectedBranch, nil},
 		{"large file", "remote: error: GH001: Large files detected. You may want to try Git Large File Storage\nremote: error: File big.bin is 150.00 MB; this exceeds GitHub's file size limit of 100.00 MB\n ! [remote rejected] HEAD -> fugaro/x (pre-receive hook declined)", RejectLargeFile, nil},
 		{"secret scanning", "remote: error: GH013: Repository rule violations found for refs/heads/fugaro/x.\nremote: - GITHUB PUSH PROTECTION\nremote:   Push cannot contain secrets\n ! [remote rejected] HEAD -> fugaro/x (push declined due to repository rule violations)", RejectSecretScanning, nil},
+		{"generic repository rules", "remote: error: GH013: Repository rule violations found for refs/heads/fugaro/x.\nremote: - Commits must have verified signatures.\n ! [remote rejected] HEAD -> fugaro/x (push declined due to repository rule violations)", RejectRepoRules, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -110,7 +111,7 @@ func TestWorkflowFiles(t *testing.T) {
 	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := repo.WorkflowFiles(ctx, "main"); err != nil || len(got) != 0 {
+	if got, err := repo.WorkflowFiles(ctx, "origin/main"); err != nil || len(got) != 0 {
 		t.Fatalf("clean branch: %v, %v", got, err)
 	}
 	testutil.WriteFiles(t, repo.Dir, map[string]string{
@@ -123,7 +124,7 @@ func TestWorkflowFiles(t *testing.T) {
 	if _, err := repo.CommitAll(ctx, "work"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := repo.WorkflowFiles(ctx, "main")
+	got, err := repo.WorkflowFiles(ctx, "origin/main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +143,7 @@ func TestBundleHoldsOnlyTheRunsCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 	head, _ := repo.HeadSHA(ctx)
-	data, err := repo.Bundle(ctx, "main")
+	data, err := repo.Bundle(ctx, "origin/main")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,136 @@ func TestBundleSizeCap(t *testing.T) {
 	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.BundleMax(ctx, "main", 100); !errors.Is(err, ErrBundleTooLarge) {
+	if _, err := repo.BundleMax(ctx, "origin/main", 100); !errors.Is(err, ErrBundleTooLarge) {
 		t.Fatalf("BundleMax = %v, want ErrBundleTooLarge", err)
+	}
+}
+
+// commitRange makes a branch with the given commits, each a map of files
+// (an empty value deletes) with its message, and returns the repo.
+type commitSpec struct {
+	msg   string
+	files map[string]string
+	del   []string
+}
+
+func branchWith(t *testing.T, commits ...commitSpec) *Repo {
+	t.Helper()
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range commits {
+		testutil.WriteFiles(t, repo.Dir, c.files)
+		for _, d := range c.del {
+			if err := os.Remove(filepath.Join(repo.Dir, d)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := repo.CommitAll(ctx, c.msg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo
+}
+
+func hasSecret(text string) bool { return strings.Contains(text, "S3CRET-VALUE") }
+
+func TestScanWorkSeesAValueCommittedThenRemoved(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "add", files: map[string]string{"k.txt": "token=S3CRET-VALUE\n"}},
+		commitSpec{msg: "remove it", del: []string{"k.txt"}},
+	)
+	// The net diff is clean, but the bundle holds the first commit.
+	if net := testutil.Git(t, repo.Dir, "diff", "origin/main...HEAD"); strings.Contains(net, "S3CRET") {
+		t.Fatalf("the test's net diff is not clean: %s", net)
+	}
+	res, err := repo.ScanWork(ctx, "origin/main", hasSecret)
+	if err != nil || !res.Hit {
+		t.Fatalf("ScanWork = %+v, %v; want a hit", res, err)
+	}
+}
+
+func TestScanWorkReadsCommitMessages(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "uses S3CRET-VALUE", files: map[string]string{"a.txt": "a\n"}})
+	if res, err := repo.ScanWork(ctx, "origin/main", hasSecret); err != nil || !res.Hit {
+		t.Fatalf("ScanWork = %+v, %v; want a hit", res, err)
+	}
+}
+
+func TestScanWorkCleanRangeAndSinceBoundary(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "old", files: map[string]string{"k.txt": "S3CRET-VALUE\n"}},
+		commitSpec{msg: "new", files: map[string]string{"b.txt": "b\n"}},
+	)
+	start := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
+	res, err := repo.ScanWork(ctx, start, hasSecret)
+	if err != nil || res.Hit || res.Unscannable {
+		t.Fatalf("a range after the secret: %+v, %v", res, err)
+	}
+}
+
+func TestScanWorkBinaryIsUnscannable(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "bin", files: map[string]string{"x.bin": "a\x00b\x00S3CRET"}})
+	res, err := repo.ScanWork(ctx, "origin/main", hasSecret)
+	if err != nil || !res.Unscannable {
+		t.Fatalf("ScanWork = %+v, %v; want unscannable", res, err)
+	}
+}
+
+func TestScanWorkAttributesCannotHideText(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "hidden", files: map[string]string{
+		".gitattributes": "*.txt -diff\n", "k.txt": "S3CRET-VALUE\n"}})
+	res, err := repo.ScanWork(ctx, "origin/main", hasSecret)
+	if err != nil || !(res.Hit || res.Unscannable) {
+		t.Fatalf("a -diff file passed the scan: %+v, %v", res, err)
+	}
+}
+
+func TestScanWorkMatchesAcrossChunks(t *testing.T) {
+	filler := strings.Repeat("x", 1<<20-5)
+	repo := branchWith(t, commitSpec{msg: "big", files: map[string]string{"k.txt": filler + "S3CRET-VALUE\n"}})
+	if res, err := repo.ScanWork(ctx, "origin/main", hasSecret); err != nil || !res.Hit {
+		t.Fatalf("ScanWork = %+v, %v; want a hit across the read boundary", res, err)
+	}
+}
+
+// diff.external and a textconv in the checkout's config, which the agent
+// controls, never run for anything the runner does.
+func TestHostileDiffConfigNeverRuns(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	repo := branchWith(t, commitSpec{msg: "w", files: map[string]string{
+		".gitattributes": "*.txt diff=evil\n", "a.txt": "a\n", ".github/workflows/ci.yml": "x\n"}})
+	hook := "touch " + marker
+	testutil.Git(t, repo.Dir, "config", "diff.external", hook)
+	testutil.Git(t, repo.Dir, "config", "diff.evil.textconv", hook)
+	testutil.Git(t, repo.Dir, "config", "diff.evil.command", hook)
+	if _, err := repo.WorkflowFiles(ctx, "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ScanWork(ctx, "origin/main", hasSecret); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Bundle(ctx, "origin/main"); err != nil {
+		t.Fatal(err)
+	}
+	if exists(marker) {
+		t.Fatal("a configured diff program ran")
+	}
+}
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+func TestWorkflowFilesSinceAFollowUpStart(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "person", files: map[string]string{".github/workflows/p.yml": "p\n"}},
+		commitSpec{msg: "run", files: map[string]string{"a.txt": "a\n"}},
+	)
+	start := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
+	if got, err := repo.WorkflowFiles(ctx, start); err != nil || len(got) != 0 {
+		t.Fatalf("since the start: %v, %v", got, err)
+	}
+	if got, _ := repo.WorkflowFiles(ctx, "origin/main"); len(got) != 1 {
+		t.Fatalf("since the base: %v", got)
 	}
 }

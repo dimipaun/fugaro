@@ -1470,13 +1470,10 @@ func (r *run) finalize(ctx context.Context) error {
 			return err
 		}
 	} else if rej := r.workflowGuard(ctx); rej != nil {
-		r.endRefused(ctx, rej, r.prNumber(), records)
-		return nil
+		return r.endRefused(ctx, rej, r.prNumber(), records)
 	} else if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
-		var rejected *gitops.PushRejected
-		if errors.As(err, &rejected) {
-			r.endRefused(ctx, rejected, r.prNumber(), records)
-			return nil
+		if rejected := r.asRefusal(err); rejected != nil {
+			return r.endRefused(ctx, rejected, r.prNumber(), records)
 		}
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}

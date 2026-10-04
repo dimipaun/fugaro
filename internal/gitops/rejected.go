@@ -1,12 +1,15 @@
 package gitops
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -23,6 +26,10 @@ const (
 	RejectProtectedBranch RejectKind = "protected_branch"
 	RejectLargeFile       RejectKind = "large_file"
 	RejectSecretScanning  RejectKind = "secret_scanning"
+	// RejectRepoRules is GitHub's generic "Repository rule violations
+	// found" (GH013): signed commits, linear history, branch naming and so
+	// on. Only a message that also speaks of secrets is RejectSecretScanning.
+	RejectRepoRules RejectKind = "repository_rules"
 )
 
 // PushRejected is a push the host refused for a permanent reason. It wraps
@@ -34,7 +41,14 @@ type PushRejected struct {
 	err   error
 }
 
-func (e *PushRejected) Error() string { return fmt.Sprintf("push rejected (%s): %v", e.Kind, e.err) }
+// Error is the git error's own text, so a caller that doesn't act on Kind
+// reports what it always did.
+func (e *PushRejected) Error() string {
+	if e.err == nil {
+		return "push rejected (" + string(e.Kind) + ")"
+	}
+	return e.err.Error()
+}
 func (e *PushRejected) Unwrap() error { return e.err }
 
 var workflowFileRE = regexp.MustCompile("workflow `([^`]+)`")
@@ -58,8 +72,10 @@ func ClassifyPush(err error) *PushRejected {
 			rej.Files = []string{m[1]}
 		}
 		return rej
-	case strings.Contains(msg, "GH013") || strings.Contains(low, "push cannot contain secrets") || strings.Contains(low, "push protection"):
+	case strings.Contains(low, "secret") || strings.Contains(low, "push protection"):
 		return &PushRejected{Kind: RejectSecretScanning, err: err}
+	case strings.Contains(msg, "GH013") || strings.Contains(low, "repository rule violations"):
+		return &PushRejected{Kind: RejectRepoRules, err: err}
 	case strings.Contains(msg, "GH001") || strings.Contains(low, "exceeds github's file size limit"):
 		return &PushRejected{Kind: RejectLargeFile, err: err}
 	case strings.Contains(msg, "GH006") || strings.Contains(low, "protected branch hook declined"):
@@ -82,10 +98,13 @@ func classified(err error) error {
 const WorkflowDir = ".github/workflows/"
 
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
-// run's commits change against origin/<base>: what GitHub refuses to take
-// from an App without the `workflows` permission.
-func (r *Repo) WorkflowFiles(ctx context.Context, base string) ([]string, error) {
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "origin/"+base+"...HEAD", "--", WorkflowDir)
+// commits since changed: since...HEAD, the changes on HEAD's side of their
+// merge base. since is origin/<base> for a first run and the commit a
+// follow-up started from, so a workflow edit a person made earlier on the
+// branch is not this run's. It is what GitHub refuses to take from an App
+// without the `workflows` permission.
+func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
+	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", since+"...HEAD", "--", WorkflowDir)
 	if err != nil {
 		return nil, err
 	}
@@ -101,19 +120,23 @@ func (r *Repo) WorkflowFiles(ctx context.Context, base string) ([]string, error)
 // MaxBundleBytes caps the bundle of a run's work that is saved.
 const MaxBundleBytes = 256 << 20
 
+// MaxScanBytes caps how much of the commits' text ScanWork reads; more is
+// reported as unscannable.
+const MaxScanBytes = 1 << 30
+
 // ErrBundleTooLarge means the run's commits are bigger than the cap.
 var ErrBundleTooLarge = errors.New("the run's commits are too large to bundle")
 
 // Bundle is BundleMax with MaxBundleBytes.
-func (r *Repo) Bundle(ctx context.Context, base string) ([]byte, error) {
-	return r.BundleMax(ctx, base, MaxBundleBytes)
+func (r *Repo) Bundle(ctx context.Context, since string) ([]byte, error) {
+	return r.BundleMax(ctx, since, MaxBundleBytes)
 }
 
-// BundleMax packs the commits HEAD has and origin/<base> doesn't into a git
+// BundleMax packs the commits HEAD has and since doesn't into a git
 // bundle, so a run's work survives a push that can't succeed. It holds only
-// those commits' objects (the base is a prerequisite, not included), never
+// those commits' objects (since is a prerequisite, not included), never
 // the checkout's config, credentials, reflog or untracked files.
-func (r *Repo) BundleMax(ctx context.Context, base string, max int64) ([]byte, error) {
+func (r *Repo) BundleMax(ctx context.Context, since string, max int64) ([]byte, error) {
 	dir, err := r.git(ctx, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return nil, err
@@ -121,7 +144,7 @@ func (r *Repo) BundleMax(ctx context.Context, base string, max int64) ([]byte, e
 	// Inside .git, never in the working tree, and removed after.
 	tmp := filepath.Join(dir, "fugaro-work.bundle")
 	defer os.Remove(tmp)
-	if _, err := r.gitRaw(ctx, "bundle", "create", "--quiet", tmp, "HEAD", "^origin/"+base); err != nil {
+	if _, err := r.gitRaw(ctx, "bundle", "create", "--quiet", tmp, "HEAD", "^"+since); err != nil {
 		return nil, err
 	}
 	fi, err := os.Stat(tmp)
@@ -134,9 +157,83 @@ func (r *Repo) BundleMax(ctx context.Context, base string, max int64) ([]byte, e
 	return os.ReadFile(tmp)
 }
 
-// Patch is the run's diff against origin/<base>, as text: what a secret
-// scan reads before the work is copied anywhere.
-func (r *Repo) Patch(ctx context.Context, base string) (string, error) {
-	out, err := r.gitRaw(ctx, "diff", "origin/"+base+"...HEAD")
-	return string(out), err
+// WorkScan is what ScanWork found.
+type WorkScan struct {
+	// Hit: scan returned true for some text of the range.
+	Hit bool
+	// Unscannable: the range changes a file git treats as binary (by its
+	// content or by .gitattributes, which the agent controls) or is more
+	// than MaxScanBytes of text, so a secret in it could go unseen.
+	Unscannable bool
+}
+
+// scanOverlap is how much of one chunk is read again with the next, so a
+// secret split across two reads is still seen whole.
+const scanOverlap = 64 << 10
+
+// ScanWork streams every commit's message and patch in since..HEAD (each
+// commit, not the net diff: a value committed and then removed is still in
+// a bundle) through scan, which reports whether the text holds something
+// that must not be copied. Nothing external runs for the diff: not
+// diff.external, not a textconv, which the agent could set in .git/config
+// or .gitattributes. The text is never held whole.
+func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string) bool) (WorkScan, error) {
+	var res WorkScan
+	rng := []string{"^" + since, "HEAD"}
+	// A binary change shows as "-<TAB>-" in numstat.
+	nums, err := r.gitRaw(ctx, append([]string{"log", "-m", "--numstat", "--format=", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)
+	if err != nil {
+		return res, err
+	}
+	for _, l := range strings.Split(string(nums), "\n") {
+		if strings.HasPrefix(l, "-\t-\t") {
+			res.Unscannable = true
+			return res, nil
+		}
+	}
+	sctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	cmd := exec.CommandContext(sctx, "git", append(slices.Clone(noHooks), append([]string{"log", "-m", "-p", "--format=%B", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)...)
+	cmd.Dir, cmd.Env, cmd.WaitDelay = r.Dir, r.processEnv(), gitWaitDelay
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return res, err
+	}
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return res, err
+	}
+	var total int64
+	tail := ""
+	buf := make([]byte, 1<<20)
+	for {
+		n, rerr := out.Read(buf)
+		if n > 0 {
+			total += int64(n)
+			window := tail + string(buf[:n])
+			if scan(window) {
+				res.Hit = true
+				cancel()
+				break
+			}
+			tail = window[max(0, len(window)-scanOverlap):]
+			if total > MaxScanBytes {
+				res.Unscannable = true
+				cancel()
+				break
+			}
+		}
+		if rerr != nil {
+			break
+		}
+	}
+	werr := cmd.Wait()
+	if res.Hit || res.Unscannable {
+		return res, nil
+	}
+	if werr != nil {
+		return res, fmt.Errorf("git log -p: %w: %s", werr, strings.TrimSpace(stderr.String()))
+	}
+	return res, nil
 }
