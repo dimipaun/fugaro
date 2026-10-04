@@ -942,3 +942,24 @@ func TestCanConfirm(t *testing.T) {
 		}
 	}
 }
+
+// The refusal for a coding agent's session is text an agent reads: it carries
+// no recipe for getting past the check, except the IDE extension's marker, for
+// the person whose own terminal it is.
+func TestAgentRefusalHint(t *testing.T) {
+	for _, m := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT", IDEMarker} {
+		msg := AgentRefusal(m)
+		if !strings.Contains(msg, m+" is set") || strings.Contains(msg, "--yes") {
+			t.Errorf("%s: %q", m, msg)
+		}
+		if got := strings.Contains(msg, "unset"); got != (m == IDEMarker) {
+			t.Errorf("%s: the unset hint is for %s only: %q", m, IDEMarker, msg)
+		}
+	}
+	if msg := AgentRefusal(IDEMarker); !strings.Contains(msg, "if this is your own IDE terminal") {
+		t.Errorf("not worded for the person: %q", msg)
+	}
+	if msg := (&NoTerminalError{Stage: "x", Agent: "CLAUDECODE"}).Error(); strings.Contains(msg, "unset") {
+		t.Errorf("%q", msg)
+	}
+}

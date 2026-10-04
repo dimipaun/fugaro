@@ -29,6 +29,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov/providers"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -436,6 +437,12 @@ func jobGitEnv(ctx context.Context, s infra.CheckJobSpec) ([]string, error) {
 // runImageCheckJob is fugaro image check --job.
 func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
+	// The job submits billable rebuilds with no one to type: it runs in Cloud
+	// Run, where no coding agent's marker is set. In a session that has one,
+	// it submits nothing (--dry-run still decides).
+	if m := agentMarker(os.Getenv); m != "" && !o.dryRun {
+		return userErr("%s", initflow.AgentRefusal(m))
+	}
 	now := time.Now().UTC().Truncate(time.Second)
 	lg := &checkLogger{w: cmd.OutOrStdout(), dryRun: o.dryRun}
 	e, err := readJobEnv()
