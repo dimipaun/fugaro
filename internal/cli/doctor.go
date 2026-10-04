@@ -147,7 +147,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	_, tf := preflight.Terraform(exec.LookPath)
 	o.Checks = append(o.Checks, fromPreflight(tf))
-	o.Checks = append(o.Checks, fromPreflight(preflight.Docker(exec.LookPath, false)))
+	// preflight.Docker is deliberately not run here: it is only meaningful
+	// with needed=true (a local base-image build is actually pending), and
+	// nothing yet computes that (it depends on the image mirror stage, M11
+	// T2, which hasn't landed). Calling it with needed=false would always
+	// report ok, which is not a check at all; wire it in once that state
+	// exists.
 
 	crmSvc, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
 	if err != nil {

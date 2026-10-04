@@ -240,6 +240,59 @@ func TestDoctorNotInstalledIsInformational(t *testing.T) {
 	}
 }
 
+// TestDoctorFugaroYAML: a checkout's fugaro.yaml validity is both its own
+// check (fugaro-yaml, with a fix line) and the fugaro_yaml detail, and an
+// invalid file fails doctor's overall result, not just that one field.
+func TestDoctorFugaroYAML(t *testing.T) {
+	t.Run("valid", func(t *testing.T) {
+		newDoctorRig(t)
+		checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+		out, _, err := execute(t, "doctor", "--json")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		c, ok := doctorCheckByID(o.Checks, "fugaro-yaml")
+		if !ok || !c.OK || c.Problem != "" || c.Fix != "" {
+			t.Fatalf("fugaro-yaml check = %+v", c)
+		}
+		if o.FugaroYAML == nil || !o.FugaroYAML.Valid || len(o.FugaroYAML.Problems) != 0 {
+			t.Fatalf("fugaro_yaml = %+v", o.FugaroYAML)
+		}
+	})
+
+	t.Run("invalid", func(t *testing.T) {
+		newDoctorRig(t)
+		invalid := strings.Replace(cliMinimalYAML, "sh build.sh", "./build.sh", 1)
+		checkoutWith(t, map[string]string{"fugaro.yaml": invalid})
+		out, _, err := execute(t, "doctor", "--json")
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d, err %v, out %s", ExitCode(err), err, out)
+		}
+		var o doctorOutput
+		if jerr := json.Unmarshal([]byte(out), &o); jerr != nil {
+			t.Fatalf("json: %v\n%s", jerr, out)
+		}
+		if o.OK {
+			t.Fatalf("an invalid fugaro.yaml must fail doctor's overall result: %+v", o)
+		}
+		c, ok := doctorCheckByID(o.Checks, "fugaro-yaml")
+		if !ok || c.OK {
+			t.Fatalf("fugaro-yaml check = %+v", c)
+		}
+		if !strings.Contains(c.Problem, "1 problem") || c.Fix == "" {
+			t.Fatalf("fugaro-yaml check didn't name the problem and a fix: %+v", c)
+		}
+		if o.FugaroYAML == nil || o.FugaroYAML.Valid || len(o.FugaroYAML.Problems) != 1 ||
+			!strings.Contains(o.FugaroYAML.Problems[0].Message, "does not exist") {
+			t.Fatalf("fugaro_yaml = %+v", o.FugaroYAML)
+		}
+	})
+}
+
 // TestDoctorNeverPrintsSecretValues: doctor lists a repository's secrets by
 // name (design: "secrets by name from secrets ls"), and the value never
 // reaches stdout, stderr or --json, in either outcome.
