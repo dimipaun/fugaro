@@ -185,6 +185,12 @@ func TestPreconditionFailures(t *testing.T) {
 			want:    "not strict SemVer",
 		},
 		{
+			name:    "not strict semver (leading zero)",
+			version: "01.2.3",
+			mutate:  func(t *testing.T, r *releaseRepo, g *ghState) {},
+			want:    "not strict SemVer",
+		},
+		{
 			name:    "dirty working tree",
 			version: "1.0.0",
 			mutate: func(t *testing.T, r *releaseRepo, g *ghState) {
@@ -427,6 +433,45 @@ func TestResumeAfterMerge(t *testing.T) {
 	tagSHA := testutil.Git(t, r.bare, "rev-parse", "v1.0.0^{commit}")
 	if tagSHA != mergeSHA {
 		t.Errorf("tag v1.0.0 (%s) does not point at the pre-merged commit (%s)", tagSHA, mergeSHA)
+	}
+}
+
+// TestResumeRebuildsStaleLocalBranch simulates an interrupted run that left
+// a local, never-pushed release/vX.Y.Z branch behind, with main having
+// since advanced (the user pulled before re-running). A fresh run must
+// rebuild that branch on top of the new main rather than basing the PR on
+// the stale history it already had checked out.
+func TestResumeRebuildsStaleLocalBranch(t *testing.T) {
+	r := newReleaseRepo(t)
+
+	testutil.Git(t, r.local, "switch", "--quiet", "-c", "release/v1.0.0")
+	testutil.Git(t, r.local, "switch", "--quiet", "main")
+
+	// Main advances independently of the stale local branch above.
+	advancer := filepath.Join(t.TempDir(), "advancer")
+	testutil.Git(t, filepath.Dir(advancer), "clone", "--quiet", r.bare, advancer)
+	testutil.Git(t, advancer, "commit", "--quiet", "--allow-empty", "-m", "unrelated main commit")
+	testutil.Git(t, advancer, "push", "--quiet", "origin", "HEAD:refs/heads/main")
+	newMain := testutil.Git(t, advancer, "rev-parse", "HEAD")
+
+	// As if the user had pulled main before re-running: local main now
+	// matches origin/main, but the stale local release branch does not.
+	testutil.Git(t, r.local, "fetch", "--quiet", "origin", "main")
+	testutil.Git(t, r.local, "merge", "--quiet", "--ff-only", "origin/main")
+
+	g := newGHState(t, r, greenChecks())
+	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res.requireSuccess(t)
+
+	if !strings.Contains(res.out, "predates main") {
+		t.Errorf("expected a message about rebuilding the stale branch, got:\n%s", res.out)
+	}
+	branchCommits := testutil.Git(t, r.bare, "rev-list", "--count", newMain+"..refs/heads/release/v1.0.0")
+	if branchCommits != "1" {
+		t.Errorf("want exactly one commit on the rebuilt release branch on top of the new main, got %s", branchCommits)
+	}
+	if base := testutil.Git(t, r.bare, "merge-base", "v1.0.0", newMain); base != newMain {
+		t.Errorf("tag v1.0.0 is not based on the new main (%s); merge-base was %s", newMain, base)
 	}
 }
 

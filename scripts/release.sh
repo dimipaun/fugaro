@@ -87,8 +87,8 @@ latest_released_version() {
 }
 
 # 1. Preconditions, checked in order; the first failure stops the script.
-if ! printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  echo "version '$version' is not strict SemVer X.Y.Z (no leading v, no pre-release suffix)" >&2
+if ! printf '%s\n' "$version" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; then
+  echo "version '$version' is not strict SemVer X.Y.Z (no leading v, no pre-release suffix, no leading zeros in a component)" >&2
   exit 1
 fi
 tag="v$version"
@@ -165,14 +165,26 @@ if [ -n "$pr_number" ]; then
   pr_url="https://github.com/$repo/pull/$pr_number"
   echo "resuming existing pull request $pr_url"
 else
+  base_ref=""
+  base_desc=""
   if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-    echo "resuming pushed branch $branch (no pull request yet)"
     git fetch --quiet origin "$branch"
-    git switch --quiet -C "$branch" "origin/$branch"
+    base_ref="origin/$branch"
+    base_desc="pushed branch $branch (no pull request yet)"
   elif git show-ref --quiet --verify "refs/heads/$branch"; then
-    git switch --quiet "$branch"
+    base_ref="refs/heads/$branch"
+    base_desc="local branch $branch (not yet pushed)"
+  fi
+
+  # A branch from an earlier, interrupted run is only safe to resume if it
+  # is still based on the current origin/main; otherwise (main advanced
+  # since) rebuild it fresh rather than opening a PR against stale history.
+  if [ -n "$base_ref" ] && [ "$(git merge-base "$base_ref" origin/main)" = "$origin_main" ]; then
+    echo "resuming $base_desc"
+    git switch --quiet -C "$branch" "$base_ref"
   else
-    git switch --quiet -c "$branch" origin/main
+    [ -n "$base_ref" ] && echo "$base_desc predates main ($origin_main); rebuilding $branch from origin/main" >&2
+    git switch --quiet -C "$branch" origin/main
   fi
 
   if ! scripts/bump-plugin-version.sh --check "$version" >/dev/null 2>&1; then
@@ -207,7 +219,10 @@ poll_pr() {
         return 1
         ;;
     esac
-    failed=$(gh pr checks "$n" --json name,state --jq '([.[] | select(.state == "FAILURE")][0].name) // empty' 2>/dev/null || true)
+    # Any terminal-but-not-ok state, not just FAILURE: a cancelled or
+    # timed-out required check otherwise keeps this polling silently until
+    # --timeout-minutes, instead of stopping right away and naming it.
+    failed=$(gh pr checks "$n" --json name,state --jq '([.[] | select(.state == "FAILURE" or .state == "ERROR" or .state == "CANCELLED" or .state == "TIMED_OUT" or .state == "ACTION_REQUIRED" or .state == "STARTUP_FAILURE" or .state == "STALE")][0].name) // empty' 2>/dev/null || true)
     if [ -n "$failed" ]; then
       echo "check '$failed' failed on pull request #$n ($pr_url)" >&2
       return 1
