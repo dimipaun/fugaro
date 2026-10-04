@@ -14,6 +14,13 @@ git:
 agent:
   auth: oauth
 
+# Follow-ups (fugaro run --pr N) act on PR comments, which on a public repository anyone can
+# write: only the listed GitHub accounts (numeric IDs) are obeyed, and allow_public is the
+# owner's explicit decision (2026-10-04: the maintainer only, dimipaun = 625256).
+followup:
+  trusted: ["625256"]
+  allow_public: true
+
 # oauth is a subscription, so there is no per-token price to cap: observe records usage only.
 budget:
   mode: observe
