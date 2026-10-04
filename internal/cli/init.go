@@ -108,6 +108,13 @@ project Viewers' read access to the runs bucket, each after its own
 confirmation. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
+On a first run in a terminal it asks, once, for the project's name, the GCP
+project's ID and the region, each with a suggestion (the name from the
+repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
+project, never gcloud's default project; us-east5) and writes the local config,
+so later runs ask nothing; without a terminal, or with --non-interactive,
+--yes or --json, it names every missing flag in one error.
+
 init runs as a converge of stages (preflight, installation, and with
 --firebase the Firebase backend), each with its own confirmation, in order,
 and stops at the first that fails or needs you; a rerun resumes, and one
@@ -226,7 +233,7 @@ never changed.`,
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
-	f.StringVar(&o.githubAppID, "github-app-id", "", "with --repo: the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config)")
+	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
 	return cmd
@@ -303,6 +310,9 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 		if err := refuseHTTP2Debug(os.Getenv); err != nil {
 			return err
 		}
+	}
+	if err := r.gatherInputs(cmd.Context()); err != nil {
+		return err
 	}
 	lc, path, old, err := loadInitConfig(cmd.Context(), o)
 	if err != nil {
@@ -423,8 +433,8 @@ func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, e
 
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	if o.githubAppID != "" || o.noBuild || o.allowJobDelete {
-		return userErr("--github-app-id, --no-build and --allow-job-delete are for fugaro init --repo")
+	if o.noBuild || o.allowJobDelete {
+		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
 	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget} {
