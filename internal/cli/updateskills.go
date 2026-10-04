@@ -28,9 +28,11 @@ type updateSkillsOutput struct {
 	Error    string `json:"error,omitempty"`
 	// Notices are what else the settings file says (hooks, permissions, other
 	// plugins...), shown before the file is blessed.
-	Notices []string           `json:"notices,omitempty"`
-	Release *releaseInfo       `json:"release,omitempty"` // the binary's tag and commit, and how to verify the tag
-	Report  *pluginwire.Report `json:"report,omitempty"`
+	Notices []string `json:"notices,omitempty"`
+	// NoticesNote says the notices are not exhaustive; set whenever they are shown.
+	NoticesNote string             `json:"notices_note,omitempty"`
+	Release     *releaseInfo       `json:"release,omitempty"` // the binary's tag and commit, and how to verify the tag
+	Report      *pluginwire.Report `json:"report,omitempty"`
 }
 
 func newUpdateSkillsCmd() *cobra.Command {
@@ -107,7 +109,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 	// warnFork says it loudly, in every output mode: the file points agents at
 	// someone else's plugin repository.
 	warnFork := func(repo string) {
-		fmt.Fprintf(errOut, "WARNING: the %q marketplace in this repository's settings is %s, not %s. Its skills are not Fugaro's; teammates who trust the folder are offered that plugin. Check it is yours.\n", pluginwire.Marketplace, repo, pluginwire.Repo)
+		fmt.Fprintf(errOut, "WARNING: the %q marketplace in this repository's settings is %s, not %s. Its skills are not Fugaro's; that plugin installs by itself, without a prompt, for anyone who trusts the folder. Check it is yours.\n", pluginwire.Marketplace, repo, pluginwire.Repo)
 	}
 	if l := releaseLine(); l != "" {
 		say("%s\n", l)
@@ -128,6 +130,8 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 		for _, n := range o.Notices {
 			say("heads-up: %s\n", n)
 		}
+		say("heads-up: %s\n", pluginwire.NoticesCaveat)
+		o.NoticesNote = pluginwire.NoticesCaveat
 		if r.Pin == pluginwire.Foreign {
 			o.Foreign = r.Repo
 			warnFork(r.Repo)
@@ -171,14 +175,14 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 		if err := ch.Apply(); err != nil {
 			return err
 		}
-		say("Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n", loc.Settings, ch.Tag)
+		say("Updated %s to pin the Fugaro plugin at %s. Review it with git diff and commit it like any change.\n%s", loc.Settings, ch.Tag, pluginRefresh)
 	}
 	r := pluginwire.Status(loc.Settings, Version, installedPlugins())
 	if r.Pin == pluginwire.Foreign || ch.Disabled {
 		say("%s\n", describeReport(loc.Settings, r))
 	}
 	say("%s", pluginFirstRun)
-	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Notices: ch.Notices, Report: &r})
+	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Notices: ch.Notices, NoticesNote: pluginwire.NoticesCaveat, Report: &r})
 }
 
 func joinStates(ss []pluginwire.State) string {

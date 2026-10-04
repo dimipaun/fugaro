@@ -39,6 +39,7 @@ type memStore struct {
 	mu      sync.Mutex
 	secrets map[string]*memSecret
 	sets    int
+	lists   int
 	listErr error
 	// setHook, when set, is called with each value before it is stored; its
 	// error fails the store, leaving nothing.
@@ -65,6 +66,7 @@ func (m *memStore) seed(slug, name string, value string) {
 func (m *memStore) List(_ context.Context, labels map[string]string) ([]gcp.SecretInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.lists++
 	if m.listErr != nil {
 		return nil, m.listErr
 	}

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -21,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -81,7 +83,11 @@ func newImageBuildCmd() *cobra.Command {
 			"smoke-tests it without network, and only then points latest at it and\n" +
 			"records what it was built from, unless a newer build is already\n" +
 			"recorded. Run it from the repository's checkout: the checkout's\n" +
-			"fugaro.yaml and origin say what to build.",
+			"fugaro.yaml and origin say what to build.\n\n" +
+			"A Cloud Build is billable, so it asks for the project's name typed at a real\n" +
+			"terminal: --json, a pipe and a coding agent's session never confirm it (it\n" +
+			"prints the one line to run in your own terminal window and exits 1).\n" +
+			"--local builds with your own Docker and costs nothing in the cloud.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageBuild(cmd, o) },
 	}
@@ -94,7 +100,7 @@ func newImageBuildCmd() *cobra.Command {
 	f.StringVar(&o.platform, "platform", "linux/amd64", "image platform; Cloud Run runs linux/amd64")
 	f.BoolVar(&o.noSmoke, "no-smoke", false, "skip the smoke test of the built image (on Cloud Build, latest is then promoted unsmoked)")
 	f.BoolVar(&o.noWait, "no-wait", false, "submit the Cloud Build build and return without waiting for it")
-	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
+	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output (--local only: a Cloud Build is never submitted with --json, nobody can type its confirmation)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -149,6 +155,17 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 // fugaro.yaml and origin are read here.
 func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
+	// A Cloud Build is billable: the project's name typed at a real
+	// terminal, never --json, a pipe or a coding agent's session. A run that
+	// can't take it is refused first, before the local config, the bucket or
+	// anything else in the cloud is touched.
+	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv)}
+	if !initflow.CanConfirm(initflow.Typed, conds) {
+		return buildNotConfirmable(conds, o.repo, o.workflow)
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -231,6 +248,9 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	case !exists:
 		return userErr("project %s has no image registry %s for %s yet, so the build would have nowhere to push. fugaro init --repo creates it: run that from this checkout first", lc.GCPProject, rs.RegistryPath, repo)
 	}
+	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
+		return err
+	}
 	res, err := b.Submit(ctx, spec)
 	switch {
 	case errors.Is(err, gcp.ErrBadBuildSpec):
@@ -249,16 +269,8 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		}
 		res = done
 		if waitErr != nil {
-			if o.asJSON {
-				if err := printBuildResult(cmd.OutOrStdout(), lc.Name, res); err != nil {
-					return err
-				}
-			}
 			return remote(waitErr)
 		}
-	}
-	if o.asJSON {
-		return printBuildResult(cmd.OutOrStdout(), lc.Name, res)
 	}
 	if o.noWait {
 		fmt.Fprintf(cmd.OutOrStdout(), "submitted Cloud Build build %s of %s; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
@@ -276,6 +288,46 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return nil
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "built %s@%s (Cloud Build build %s)\n", oneLine(strings.TrimSuffix(res.Image, ":latest")), oneLine(res.Digest), oneLine(res.ID))
+	return nil
+}
+
+// cloudBuildBanner is what a Cloud Build confirmation says it does: the one
+// text fugaro image build and fugaro init's first build share.
+func cloudBuildBanner(repo, workflow, machineType, account, registry string) string {
+	return fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
+		repo, workflow, machineType, account, registry)
+}
+
+// buildNotConfirmable is the one-line refusal of a Cloud Build that cannot be
+// confirmed under conds: in a coding agent's session the agent refusal, else
+// the route to the typed confirmation.
+func buildNotConfirmable(conds initflow.Conditions, repo, workflow string) error {
+	if conds.Agent != "" {
+		return userErr("%s", initflow.AgentRefusal(conds.Agent))
+	}
+	cmd := "fugaro image build"
+	if repo != "" {
+		cmd += " --repo " + quoteWord(repo)
+	}
+	if workflow != "" {
+		cmd += " --workflow " + quoteWord(workflow)
+	}
+	return userErr("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
+}
+
+// confirmBuild shows the ⚠ CONFIRM banner on stderr and reads the project's
+// name from the terminal; anything else declines.
+func confirmBuild(cmd *cobra.Command, project, gcpProject, what string) error {
+	w := cmd.ErrOrStderr()
+	fmt.Fprintf(w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", project, gcpProject, what)
+	fmt.Fprintf(w, "Type %s to submit the build: ", project)
+	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && !errors.Is(err, io.EOF) {
+		return userErr("reading the confirmation: %v", err)
+	}
+	if strings.TrimSpace(line) != project {
+		return userErr("not confirmed (the project's name was not typed); no build was submitted")
+	}
 	return nil
 }
 
@@ -310,16 +362,6 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 		WorkflowSecrets: cfg.Workflows[name].Secrets,
 		Bucket:          bucket,
 	}, nil
-}
-
-// printBuildResult prints a Cloud Build build of project's as JSON.
-func printBuildResult(w io.Writer, project string, res gcp.BuildResult) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(struct {
-		Project string `json:"project"`
-		gcp.BuildResult
-	}{project, res})
 }
 
 // originURL is the checkout's origin as an https URL without credentials,

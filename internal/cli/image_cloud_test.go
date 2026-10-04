@@ -31,7 +31,7 @@ func TestImageBuildCloudPinsTheProviderHost(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			fb, _ := cloudBuildCheckout(t, false)
 			testutil.Git(t, ".", "remote", "set-url", "origin", origin)
-			_, _, err := execute(t, "image", "build", "--base", "b:1")
+			_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "bitbucket") {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -58,7 +58,7 @@ func buildPosts(fb *gcpfake.Build) int {
 // submitted.
 func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, true)
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro init --repo") || !strings.Contains(err.Error(), "proj-1234") ||
 		!strings.Contains(err.Error(), gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app"))) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
@@ -84,7 +84,7 @@ func TestImageBuildCloudGitHub(t *testing.T) {
 		t.Fatal(err)
 	}
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(appSlug))
-	if _, _, err := execute(t, "image", "build", "--base", "b:1"); err != nil {
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
 		t.Fatal(err)
 	}
 	last := fb.Last()
@@ -115,7 +115,7 @@ func TestImageBuildCloudGitHubNeedsAppID(t *testing.T) {
 	fb := gcpfake.NewBuild(t)
 	newCloudFixture(t, "cloud_build: "+fb.URL+"/")
 	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(appSlug))
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "GitHub App ID") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -130,7 +130,7 @@ func TestImageBuildCloudGitHubNeedsAppID(t *testing.T) {
 func TestImageBuildIgnoresDeprecatedBuildSA(t *testing.T) {
 	fb, f := cloudBuildCheckout(t, false)
 	f.appendConfig(t, "build: { service_account: fugaro-build@proj-1234.iam.gserviceaccount.com }\n")
-	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +148,7 @@ func TestImageBuildIgnoresDeprecatedBuildSA(t *testing.T) {
 // from the project config and still resolves.
 func TestImageBuildResolvesSpecWithoutOutputs(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
-	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}
@@ -163,7 +163,7 @@ func TestImageBuildResolvesSpecWithoutOutputs(t *testing.T) {
 func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 	fb, f := cloudBuildCheckout(t, false)
 	f.appendConfig(t, "registry_host: us-east5-docker.pkg.dev/proj-1234\n")
-	_, _, err := execute(t, "image", "build", "--base", "b:1", "--gcp-project", "other-proj")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1", "--gcp-project", "other-proj")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-proj") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -178,7 +178,7 @@ func TestImageBuildCloudRefusesOtherProjectRegistry(t *testing.T) {
 func TestImageBuildCloudRegistryForbidden(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.ForbidRegistries = true
-	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,19 +283,16 @@ func TestUntagFailureIsOnlyAWarning(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	bucket := recordFlow(t, fb)
 	fb.UntagDenied = true
-	out, stderr, err := execute(t, "image", "build", "--json", "--base", "b:1")
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
-	var res gcp.BuildResult
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatal(err)
-	}
 	latest := fb.Tag(appImage(), "latest")
-	if res.Status != "SUCCESS" || latest == "" || res.Digest != latest || res.Superseded {
-		t.Fatalf("result = %+v, latest %q", res, latest)
+	const id = "b0001"
+	if latest == "" || !strings.Contains(out, "@"+latest+" (Cloud Build build "+id+")") {
+		t.Fatalf("output %q, latest %q", out, latest)
 	}
-	if fb.Tag(appImage(), "candidate-"+res.ID) != latest {
+	if fb.Tag(appImage(), "candidate-"+id) != latest {
 		t.Error("the candidate tag was removed although the delete was refused")
 	}
 	rec := readImageRecord(t, bucket)
@@ -304,8 +301,8 @@ func TestUntagFailureIsOnlyAWarning(t *testing.T) {
 		rec.BaseDigest != "sha256:"+strings.Repeat("b", 64) || rec.BaseRef != "b:1" || rec.Adopted {
 		t.Fatalf("record = %+v", rec)
 	}
-	if !slices.ContainsFunc(fb.Log(res.ID), func(l string) bool { return strings.Contains(l, "warning: could not remove candidate-"+res.ID) }) {
-		t.Errorf("log = %v", fb.Log(res.ID))
+	if !slices.ContainsFunc(fb.Log(id), func(l string) bool { return strings.Contains(l, "warning: could not remove candidate-"+id) }) {
+		t.Errorf("log = %v", fb.Log(id))
 	}
 }
 
@@ -317,7 +314,7 @@ func TestFailedSmokeLeavesLatest(t *testing.T) {
 	old := "sha256:" + strings.Repeat("0", 63) + "a"
 	fb.SetTag(appImage(), "latest", old)
 	fb.FailStep = "smoke"
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -339,7 +336,7 @@ func TestGateSkipsWhenRecordNewer(t *testing.T) {
 		BuiltAt: at.Add(2 * time.Hour), ImageDigest: "sha256:" + strings.Repeat("c", 64)}
 	writeImageRecord(t, bucket, newer)
 	fb.SetTag(appImage(), "latest", newer.ImageDigest)
-	out, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
@@ -367,7 +364,7 @@ func TestGateSameCommitLaterBuiltAt(t *testing.T) {
 	later := imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "app", SourceCommit: commit, SourceCommitTime: at,
 		BuiltAt: time.Now().Add(time.Hour).UTC(), ImageDigest: "sha256:" + strings.Repeat("d", 64)}
 	writeImageRecord(t, bucket, later)
-	if _, stderr, err := execute(t, "image", "build", "--base", "b:1"); err != nil {
+	if _, stderr, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
 	if fb.Tag(appImage(), "latest") != "" || readImageRecord(t, bucket).ImageDigest != later.ImageDigest {
@@ -378,7 +375,7 @@ func TestGateSameCommitLaterBuiltAt(t *testing.T) {
 	earlier := later
 	earlier.BuiltAt = at.Add(-time.Hour)
 	writeImageRecord(t, bucket, earlier)
-	if _, stderr, err := execute(t, "image", "build", "--base", "b:1"); err != nil {
+	if _, stderr, err := executeBuild(t, "image", "build", "--base", "b:1"); err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
 	if rec := readImageRecord(t, bucket); rec.ImageDigest == earlier.ImageDigest || rec.ImageDigest != fb.Tag(appImage(), "latest") {
@@ -396,7 +393,7 @@ func TestGatePromotesWhenRecordOlder(t *testing.T) {
 		BuiltAt: time.Now().Add(time.Hour).UTC(), ImageDigest: "sha256:" + strings.Repeat("e", 64)}
 	writeImageRecord(t, bucket, older)
 	fb.SetTag(appImage(), "latest", older.ImageDigest)
-	out, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	out, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, stderr)
 	}
@@ -421,7 +418,7 @@ func TestRecordGenerationMatched(t *testing.T) {
 	concurrent := older
 	concurrent.SourceCommit, concurrent.SourceCommitTime = "c0ncurrent", at.Add(time.Hour)
 	fb.Steps["promote"] = func(string) error { writeImageRecord(t, bucket, concurrent); return nil }
-	_, _, err := execute(t, "image", "build", "--base", "b:1")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -437,7 +434,7 @@ func TestRecordGenerationMatched(t *testing.T) {
 	fb2, _ := cloudBuildCheckout(t, false)
 	bucket = recordFlow(t, fb2)
 	fb2.Steps["promote"] = func(string) error { writeImageRecord(t, bucket, concurrent); return nil }
-	if _, _, err := execute(t, "image", "build", "--base", "b:1"); ExitCode(err) != ExitRemoteError {
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if rec := readImageRecord(t, bucket); rec.SourceCommit != "c0ncurrent" {
@@ -528,7 +525,7 @@ func TestImageRenderCloudOutputs(t *testing.T) {
 // TestImageBuildCloudNoSmoke: --no-smoke leaves out the smoke step.
 func TestImageBuildCloudNoSmoke(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
-	if _, _, err := execute(t, "image", "build", "--no-smoke", "--no-wait", "--base", "b:1"); err != nil {
+	if _, _, err := executeBuild(t, "image", "build", "--no-smoke", "--no-wait", "--base", "b:1"); err != nil {
 		t.Fatal(err)
 	}
 	steps, _ := fb.Last()["steps"].([]any)

@@ -189,17 +189,14 @@ func cloudBuildCheckout(t *testing.T, bare bool) (*gcpfake.Build, *cloudFixture)
 func TestImageBuildCloud(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	const base = "us-east5-docker.pkg.dev/proj-1234/fugaro/fugaro-web-node:dev-abc"
-	out, _, err := execute(t, "image", "build", "--json", "--base", base)
+	out, _, err := executeBuild(t, "image", "build", "--base", base)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var res gcp.BuildResult
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
 	slug := mustSlug("bitbucket", "acme/app")
-	if res.Status != "SUCCESS" || res.Digest == "" || res.Image != gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")+":latest" {
-		t.Fatalf("result = %+v", res)
+	image := gcp.ImageName("us-east5-docker.pkg.dev/proj-1234/"+gcp.RegistryRepoID(slug), slug, "app")
+	if !strings.HasPrefix(out, "built "+image+"@sha256:") {
+		t.Fatalf("output = %q", out)
 	}
 	subs, _ := fb.Last()["substitutions"].(map[string]any)
 	if subs["_REPO_URL"] != "https://bitbucket.org/acme/app.git" || subs["_FUGARO_BASE"] != base || subs["_WORKFLOW"] != "app" ||
@@ -213,7 +210,7 @@ func TestImageBuildCloud(t *testing.T) {
 
 func TestImageBuildCloudNoWait(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
-	out, _, err := execute(t, "image", "build", "--no-wait", "--base", "b:1")
+	out, _, err := executeBuild(t, "image", "build", "--no-wait", "--base", "b:1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +226,7 @@ func TestImageBuildCloudNoWait(t *testing.T) {
 
 func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
-	_, _, err := execute(t, "image", "build", "--base", "b:1", "--repo", "acme/other")
+	_, _, err := executeBuild(t, "image", "build", "--base", "b:1", "--repo", "acme/other")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "origin") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -241,13 +238,9 @@ func TestImageBuildCloudRepoMustBeTheCheckout(t *testing.T) {
 func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.Outcome = "FAILURE"
-	out, _, err := execute(t, "image", "build", "--json", "--base", "b:1")
-	if ExitCode(err) != ExitRemoteError {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
-	}
-	var res gcp.BuildResult
-	if json.Unmarshal([]byte(out), &res) != nil || res.Status != "FAILURE" || res.LogURL == "" {
-		t.Fatalf("output = %s", out)
+	_, errOut, err := executeBuild(t, "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(errOut, "log: ") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut)
 	}
 }
 
@@ -257,17 +250,12 @@ func TestImageBuildCloudFailureIsRemote(t *testing.T) {
 func TestImageBuildCloudDigestUnknown(t *testing.T) {
 	fb, _ := cloudBuildCheckout(t, false)
 	fb.NoResults = true
-	out, _, err := execute(t, "image", "build", "--base", "b:1")
+	out, _, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out, "@ ") || strings.HasSuffix(strings.TrimSpace(out), "@") || !strings.Contains(out, "digest unknown") {
 		t.Errorf("output = %q", out)
-	}
-	out, _, err = execute(t, "image", "build", "--json", "--base", "b:1")
-	var res gcp.BuildResult
-	if err != nil || json.Unmarshal([]byte(out), &res) != nil || res.Status != "SUCCESS" || res.Digest != "" || strings.Contains(out, `"digest"`) {
-		t.Errorf("json output = %s, %v", out, err)
 	}
 }
 
@@ -305,7 +293,7 @@ func TestBuildRecordBucketAgreesWithReaders(t *testing.T) {
 func TestImageBuildRecordsToTheRunsBucket(t *testing.T) {
 	fb, f := cloudBuildCheckout(t, false)
 	setBucketURL(t, f, "gs://other-bucket")
-	_, stderr, err := execute(t, "image", "build", "--base", "b:1")
+	_, stderr, err := executeBuild(t, "image", "build", "--base", "b:1")
 	if err != nil {
 		t.Fatalf("%v (%s)", err, stderr)
 	}

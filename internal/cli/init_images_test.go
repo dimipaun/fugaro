@@ -580,3 +580,16 @@ func TestDefaultMirrorRefusesFakeAuth(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// --replace-image for a kind this run does not copy is an error, like an
+// unused --expect-digest: an intent that is not used would read as done.
+func TestReplaceImageUnusedKindIsAnError(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	_, _, err := executeStdin(t, "", "init", "--yes", "--base", "go", "--replace-image", "web-node")
+	if err == nil || !strings.Contains(err.Error(), "--replace-image web-node matches no image this run copies") || ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, err = %v", ExitCode(err), err)
+	}
+	if r.dst.puts != 0 {
+		t.Fatal("copied with an unused --replace-image")
+	}
+}

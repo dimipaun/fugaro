@@ -28,6 +28,7 @@ type fake struct {
 	planSummary string
 	planEmpty   bool
 	gotEnv      *Env
+	planEnv     *Env
 }
 
 func (f *fake) Name() string { return f.name }
@@ -41,8 +42,9 @@ func (f *fake) Check(context.Context) (Status, error) {
 	}
 	return f.status, nil
 }
-func (f *fake) Plan(context.Context, Env) (Plan, error) {
+func (f *fake) Plan(_ context.Context, env Env) (Plan, error) {
 	f.rec("plan")
+	f.planEnv = &env
 	return Plan{Detail: f.planSummary, NothingToDo: f.planEmpty}, nil
 }
 func (f *fake) Apply(_ context.Context, env Env) (Outcome, error) {
@@ -940,5 +942,39 @@ func TestCanConfirm(t *testing.T) {
 		if got := CanConfirm(tc.class, tc.cond); got != tc.want {
 			t.Errorf("%s: CanConfirm = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// The refusal for a coding agent's session is text an agent reads: it carries
+// no recipe for getting past the check, except the IDE extension's marker, for
+// the person whose own terminal it is.
+func TestAgentRefusalHint(t *testing.T) {
+	for _, m := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT", IDEMarker} {
+		msg := AgentRefusal(m)
+		if !strings.Contains(msg, m+" is set") || strings.Contains(msg, "--yes") {
+			t.Errorf("%s: %q", m, msg)
+		}
+		if got := strings.Contains(msg, "unset"); got != (m == IDEMarker) {
+			t.Errorf("%s: the unset hint is for %s only: %q", m, IDEMarker, msg)
+		}
+	}
+	if msg := AgentRefusal(IDEMarker); !strings.Contains(msg, "if this is your own IDE terminal") {
+		t.Errorf("not worded for the person: %q", msg)
+	}
+	if msg := (&NoTerminalError{Stage: "x", Agent: "CLAUDECODE"}).Error(); strings.Contains(msg, "unset") {
+		t.Errorf("%q", msg)
+	}
+}
+
+// A plan-only run never hands --yes to a stage's plan: it must not create
+// what the plan needs (the state bucket, an API) on the flag's word.
+func TestPlanOnlyNeverPassesYes(t *testing.T) {
+	var log []string
+	f := &fake{name: Installation, log: &log}
+	if _, err := Run(context.Background(), []Stage{f}, Options{Yes: true, PlanOnly: true, Terminal: true, Out: &bytes.Buffer{}}); err != nil {
+		t.Fatal(err)
+	}
+	if f.planEnv == nil || f.planEnv.Yes || count(log, "apply") != 0 {
+		t.Fatalf("plan env %+v, log %v", f.planEnv, log)
 	}
 }

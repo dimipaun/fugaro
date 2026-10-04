@@ -52,9 +52,9 @@ func (s State) Fix() string {
 	case Foreign:
 		return "check that the marketplace repository is the one you intend; fugaro never rewrites it"
 	case InstalledDiffers:
-		return "update or reload the plugin in Claude Code (/plugin marketplace update fugaro)"
+		return "in Claude Code run /plugin marketplace update fugaro"
 	case NotInstalled:
-		return "open Claude Code in this folder, trust it and accept the Fugaro plugin"
+		return "open Claude Code in this folder and trust it: the plugin installs by itself, without a prompt"
 	}
 	return ""
 }

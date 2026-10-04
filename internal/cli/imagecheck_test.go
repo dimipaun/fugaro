@@ -217,7 +217,7 @@ func checkLines(t *testing.T, out string) []checkLine {
 
 func runCheckJob(t *testing.T, args ...string) ([]checkLine, error) {
 	t.Helper()
-	out, stderr, err := execute(t, append([]string{"image", "check", "--job"}, args...)...)
+	out, stderr, err := executeJob(t, append([]string{"image", "check", "--job"}, args...)...)
 	if stderr != "" {
 		t.Logf("stderr: %s", stderr)
 	}
@@ -349,7 +349,7 @@ func TestCheckJobBacksOffAfterFailure(t *testing.T) {
 func TestCheckFailureIsLogged(t *testing.T) {
 	f := newCheckJob(t, checkFiles(), bitbucketYAML)
 	f.pointGitAt(t, "file://"+filepath.Join(t.TempDir(), "missing.git"))
-	out, stderr, err := execute(t, "image", "check", "--job")
+	out, stderr, err := executeJob(t, "image", "check", "--job")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
 	}
@@ -373,7 +373,7 @@ func TestCheckFailureIsLogged(t *testing.T) {
 func TestCheckJobNeedsItsSpec(t *testing.T) {
 	newCheckJob(t, checkFiles(), bitbucketYAML)
 	t.Setenv(infra.CheckSpecEnv, "")
-	_, _, err := execute(t, "image", "check", "--job")
+	_, _, err := executeJob(t, "image", "check", "--job")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), infra.CheckSpecEnv) {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
@@ -623,7 +623,7 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 		}
 		return os.WriteFile(key, []byte(`{"version":1,"decision":"skip"}`), 0o644)
 	}}
-	out, stderr, err := execute(t, "image", "check", "--job")
+	out, stderr, err := executeJob(t, "image", "check", "--job")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
 	}
@@ -646,7 +646,7 @@ func TestCheckJobUnreadableStateFailsSafe(t *testing.T) {
 	if err := os.WriteFile(key, []byte("{"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := execute(t, "image", "check", "--job")
+	out, _, err := executeJob(t, "image", "check", "--job")
 	if ExitCode(err) != ExitRemoteError {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
@@ -734,7 +734,7 @@ func TestCheckJobReadsGCPProject(t *testing.T) {
 	}
 	t.Setenv("FUGARO_GCP_PROJECT", "")
 	t.Setenv("FUGARO_PROJECT", "proj-1234") // the pre-M9a job
-	_, _, err = execute(t, "image", "check", "--job")
+	_, _, err = executeJob(t, "image", "check", "--job")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "FUGARO_GCP_PROJECT") || !strings.Contains(err.Error(), "fugaro init --repo") {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
@@ -807,4 +807,12 @@ func TestCheckJobResolvesSpecWithAKindAddedSinceInstall(t *testing.T) {
 	if want := e.spec.BaseImages["web-node"]; want != checkBase || e.spec.BaseImages["java-services"] != "" {
 		t.Errorf("spec base images = %v", e.spec.BaseImages)
 	}
+}
+
+// executeJob runs a command as the Cloud Run check job does: its environment
+// names the job.
+func executeJob(t *testing.T, args ...string) (string, string, error) {
+	t.Helper()
+	t.Setenv("CLOUD_RUN_JOB", "fugaro-check")
+	return execute(t, args...)
 }

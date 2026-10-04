@@ -20,7 +20,7 @@ func withRelease(t *testing.T, version, commit string) {
 func TestReleaseLineNamesTheCommitAndTheVerification(t *testing.T) {
 	withRelease(t, "0.2.0", testCommit)
 	line := releaseLine()
-	for _, want := range []string{"v0.2.0", testCommit, "git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/v0.2.0^{}'"} {
+	for _, want := range []string{"v0.2.0", testCommit, "git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/v0.2.0^{}' 'refs/tags/v0.2.0'", "lightweight tag"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("%q lacks %q", line, want)
 		}

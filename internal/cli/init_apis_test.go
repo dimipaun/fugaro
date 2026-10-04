@@ -23,16 +23,18 @@ func noEnableWait(t *testing.T, n int) {
 	t.Cleanup(func() { resourceManagerRetries = old })
 }
 
-// With Cloud Resource Manager disabled, --yes enables it through Service
-// Usage (a change even under --plan-only), waits for the enable to
-// propagate, and carries on.
+// With Cloud Resource Manager disabled, the project's name typed at a terminal
+// enables it through Service Usage (a change even under --plan-only), waits
+// for the enable to propagate, and carries on. --yes never does it under
+// --plan-only (TestPlanOnlyYesChangesNothing).
 func TestInitEnablesResourceManager(t *testing.T) {
 	noEnableWait(t, 5)
 	r := newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Propagation = 2
-	out, errOut, err := executeStdin(t, "", "init", "--plan-only", "--yes")
+	fakeTerminal(t)
+	out, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
@@ -54,7 +56,7 @@ func TestInitEnablesResourceManager(t *testing.T) {
 	r = newInitRig(t)
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
-	out, _, err = executeStdin(t, "", "init", "--plan-only", "--yes", "--json")
+	out, _, err = executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,8 @@ func TestInitResourceManagerEnableRefused(t *testing.T) {
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "AUTH_PERMISSION_DENIED", "Permission denied to enable service [cloudresourcemanager.googleapis.com]")
-	_, _, err := executeStdin(t, "", "init", "--plan-only", "--yes")
+	fakeTerminal(t)
+	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "Permission denied to enable service") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -127,7 +130,8 @@ func TestInitResourceManagerNeverPropagates(t *testing.T) {
 	r.stateBucket()
 	r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
 	r.su.Propagation = 100
-	_, _, err := executeStdin(t, "", "init", "--plan-only", "--yes")
+	fakeTerminal(t)
+	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only")
 	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "rerun fugaro init") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -181,5 +185,73 @@ func TestInitStorageDisabledIsRemote(t *testing.T) {
 				t.Errorf("calls = %q", r.calls(t))
 			}
 		})
+	}
+}
+
+// --plan-only never creates anything on --yes: not the state bucket, not an
+// enabled API. What the plan needs first is the project's name typed at a
+// terminal, or the run stops with the route (no "pass --yes" among it).
+func TestPlanOnlyYesChangesNothing(t *testing.T) {
+	noEnableWait(t, 1)
+	t.Run("Resource Manager disabled", func(t *testing.T) {
+		r := newInitRig(t)
+		r.stateBucket()
+		r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
+		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) || strings.Contains(err.Error(), "or pass --yes") {
+			t.Fatalf("exit %d, err %v", ExitCode(err), err)
+		}
+		if len(r.su.Enables()) != 0 {
+			t.Fatalf("enables = %q", r.su.Enables())
+		}
+	})
+	t.Run("no state bucket", func(t *testing.T) {
+		r := newInitRig(t) // no r.stateBucket()
+		_, _, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only", "--yes")
+		if ExitCode(err) != ExitUserError || strings.Contains(err.Error(), "or pass --yes") {
+			t.Fatalf("exit %d, err %v", ExitCode(err), err)
+		}
+		for _, q := range r.gcs.Requests() {
+			if q.Method != http.MethodGet {
+				t.Fatalf("a write reached storage: %s %s", q.Method, q.Path)
+			}
+		}
+	})
+}
+
+// --plan-only never lets --yes confirm anything, in any mode: the converge,
+// --firebase, --repo, with or without --json and --non-interactive. With the
+// Cloud Resource Manager API disabled no enable call is made.
+func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
+	noEnableWait(t, 1)
+	for name, args := range map[string][]string{
+		"converge":                 {"init", "--plan-only", "--yes"},
+		"--json":                   {"init", "--plan-only", "--yes", "--json"},
+		"--non-interactive":        {"init", "--plan-only", "--yes", "--non-interactive"},
+		"--firebase":               {"init", "--plan-only", "--yes", "--firebase", initProject},
+		"--repo":                   {"init", "--repo", "--plan-only", "--yes"},
+		"--repo --non-interactive": {"init", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newInitRig(t)
+			r.stateBucket()
+			r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
+			_, _, _ = executeStdin(t, "", args...)
+			if got := r.su.Enables(); len(got) != 0 {
+				t.Fatalf("enables = %q", got)
+			}
+			if len(r.ran(t, "apply")) != 0 {
+				t.Fatalf("applied: %q", r.calls(t))
+			}
+		})
+	}
+	// The one place --yes is read, in any path that reaches it.
+	var out strings.Builder
+	r := &initRun{o: &initOptions{yes: true, planOnly: true}, w: &out, cmd: NewRootCmd()}
+	if ok, err := r.ask("changes something"); err != nil || ok {
+		t.Fatalf("ask under --plan-only --yes: %v, %v", ok, err)
+	}
+	if r.conditions().Yes {
+		t.Error("conditions carry --yes under --plan-only")
 	}
 }

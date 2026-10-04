@@ -263,6 +263,11 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 			return nil, userErr("--expect-digest %s=... matches no image this run copies (it copies: %s): a pin that is not used would be a false assurance", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
 		}
 	}
+	for _, k := range slices.Sorted(slices.Values(s.e.r.o.replaceImages)) {
+		if !have[k] {
+			return nil, userErr("--replace-image %s matches no image this run copies (it copies: %s): an intent that is not used would read as done", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
+		}
+	}
 	var out []planned
 	for _, it := range items {
 		p, err := m.Plan(ctx, it.src, it.dst, expect[it.key()])

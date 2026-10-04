@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -284,9 +285,12 @@ func validateFollowup(provider string, f Followup) []Problem {
 // checkDockerfile reports a workflow's repository Dockerfile if it is
 // missing or breaks the derived-image contract (LintDockerfile).
 func checkDockerfile(p, root string, w Workflow) []Problem {
-	data, err := os.ReadFile(filepath.Join(root, w.Dockerfile))
-	if err != nil {
+	data, err := ReadRegular(filepath.Join(root, w.Dockerfile), MaxCheckoutFile)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
 		return []Problem{{Path: p + ".dockerfile", Message: w.Dockerfile + " does not exist"}}
+	case err != nil:
+		return []Problem{{Path: p + ".dockerfile", Message: w.Dockerfile + " cannot be read: it must be a regular file of at most 1 MiB, not a link"}}
 	}
 	var ps []Problem
 	for _, msg := range LintDockerfile(data, w.Base) {

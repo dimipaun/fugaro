@@ -260,11 +260,30 @@ func (e *NoTerminalError) Error() string {
 // environment): it stops the accident, not the adversary.
 const AgentAdvice = "run this in your own terminal window, not through a coding agent"
 
+// IDEMarker is the one marker the Claude Code IDE extension also sets in a
+// person's own integrated terminal (VS Code, JetBrains).
+const IDEMarker = "CLAUDE_CODE_SSE_PORT"
+
+// IDEHint is the sentence for a person whose own IDE terminal tripped the
+// check, and only for IDEMarker: for any other marker it is "", because a
+// recipe for getting past the check has no business in text an agent reads.
+// It is worded for the person, and says to do it themselves.
+func IDEHint(marker string) string {
+	if marker != IDEMarker {
+		return ""
+	}
+	return "if this is your own IDE terminal and not a coding agent's, you can unset " + IDEMarker + " there yourself"
+}
+
 // AgentRefusal is why a run in a coding agent's session applies nothing; it
-// names the marker (the IDE extension also sets one in a person's own IDE
-// terminal) and never offers --yes.
+// names the marker, never offers --yes, and carries the IDE hint only for the
+// marker an IDE extension also sets.
 func AgentRefusal(marker string) string {
-	return "a coding agent's session is present (" + marker + " is set), so nothing is applied: " + AgentAdvice + " (in your own IDE terminal, unset " + marker + ")"
+	msg := "a coding agent's session is present (" + marker + " is set), so nothing is applied: " + AgentAdvice
+	if h := IDEHint(marker); h != "" {
+		msg += " (" + h + ")"
+	}
+	return msg
 }
 
 // AgentError is the refusal of an applying step in a coding agent's session:

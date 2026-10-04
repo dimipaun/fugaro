@@ -5,7 +5,6 @@ package image
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -100,7 +99,7 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		return nil, "", err
 	}
 	if w.Dockerfile != "" {
-		data, err := os.ReadFile(filepath.Join(root, w.Dockerfile))
+		data, err := config.ReadRegular(filepath.Join(root, w.Dockerfile), config.MaxCheckoutFile)
 		if err != nil {
 			return nil, "", fmt.Errorf("workflows.%s.dockerfile: %w", name, err)
 		}

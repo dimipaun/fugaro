@@ -79,13 +79,14 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 // run that adopted an installation: adopt mode is for a teammate's machine,
 // whose plan from empty defaults must not be applied (adoptNotes says so). The
 // owner applies; a rerun here, with the config in place, is the ordinary
-// converge. The plugin wiring writes a local file only and is not guarded.
+// converge. The plugin wiring writes a local file only (.claude/settings.json) and is not
+// guarded: an adopting run still wires the plugin, with its own confirmation.
 func (e *initEngine) adoptGuard(stage string) error {
 	if e.adopted == "" || stage == initflow.Installation || stage == initflow.Plugin {
 		return nil
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
-		Text:     "this run adopted an existing installation and applied nothing; it applies nothing more from here: an owner applies changes (the notes above say how), then rerun this once your roles are granted",
+		Text:     "this run adopted an existing installation and changed nothing in the cloud; it changes nothing more there from here (only the plugin wiring still writes a local .claude/settings.json): an owner applies changes (the notes above say how), then rerun this once your roles are granted",
 		Commands: []string{selfCommand() + " init"}}}
 }
 

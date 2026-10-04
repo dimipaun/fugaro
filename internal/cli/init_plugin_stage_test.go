@@ -98,7 +98,7 @@ func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 			t.Errorf("the merged file lacks %s:\n%s", want, data)
 		}
 	}
-	for _, want := range []string{"Updated", "git diff", "restart Claude Code"} {
+	for _, want := range []string{"Updated", "git diff", "installs by itself", "/plugin marketplace update fugaro"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
@@ -202,3 +202,42 @@ func TestWiringStageLeavesWhatIsNotItsOwn(t *testing.T) {
 		t.Fatalf("invalid: %+v left %v\n%s", res.Stages, res.Left, got)
 	}
 }
+
+// A fugaro.yaml that cannot be read (a symlink, a FIFO, an oversize file) is
+// unknown, not a pass: the stage cannot tell the checkout is this project's,
+// so nothing is wired and the user is told why. A missing one is the
+// first-run flow and is wired.
+func TestWiringStageUnreadableConfigIsUnknown(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	for name, make := range map[string]func(t *testing.T, p string){
+		"a symlink": func(t *testing.T, p string) {
+			target := filepath.Join(t.TempDir(), "other.yaml")
+			if err := os.WriteFile(target, []byte(checkoutYAML("github", "oauth", "borealis", "")), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, p); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"oversize": func(t *testing.T, p string) {
+			if err := os.WriteFile(p, make1MiB(), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			settings := wiringCheckout(t, settingsWithOthers)
+			make(t, filepath.Join(filepath.Dir(filepath.Dir(settings)), "fugaro.yaml"))
+			e, _ := stageEngine(t, "", &initOptions{yes: true})
+			res := runPlugin(t, e)
+			if got, _ := os.ReadFile(settings); string(got) != settingsWithOthers {
+				t.Errorf("wired in a checkout whose fugaro.yaml could not be read:\n%s", got)
+			}
+			if stateOf(res, "plugin") != initflow.NeedsYou || len(res.Left) != 1 || !strings.Contains(res.Stages[0].Detail, "fugaro.yaml") {
+				t.Fatalf("%+v left %+v", res.Stages, res.Left)
+			}
+		})
+	}
+}
+
+func make1MiB() []byte { return []byte(strings.Repeat("#", maxFugaroYAML+2)) }

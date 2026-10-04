@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"strings"
 	"testing"
 )
@@ -35,8 +36,15 @@ func TestUpdateSkillsShowsWhatElseTheSettingsFileCarries(t *testing.T) {
 		}
 	}
 	js, _, _ := executeStdin(t, "", "update-skills", "--check", "--json")
-	if !strings.Contains(js, `"notices"`) {
-		t.Errorf("--json has no notices:\n%s", js)
+	if !strings.Contains(js, `"notices"`) || !strings.Contains(js, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("--json has no notices or no caveat:\n%s", js)
+	}
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("the diff screen has no caveat:\n%s", out)
+	}
+	// --check says it too, and a file with no notices is no exception.
+	if txt, _, _ := executeStdin(t, "", "update-skills", "--check"); !strings.Contains(txt, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("--check has no caveat:\n%s", txt)
 	}
 }
 
@@ -49,11 +57,50 @@ func TestDoctorStrictDoesNotFailOnSettingsNotices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--strict failed on notices: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "the file defines hooks") {
-		t.Errorf("doctor does not show them:\n%s", out)
+	if !strings.Contains(out, "the file defines hooks") || !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("doctor does not show them, or the caveat:\n%s", out)
 	}
 	js, _, err := executeStdin(t, "", "doctor", "--plugin", "--strict", "--json")
 	if err != nil || !strings.Contains(js, `"plugin-settings-1"`) || !strings.Contains(js, `"severity": "info"`) {
 		t.Errorf("%v\n%s", err, js)
+	}
+}
+
+// A clean file is no assurance either: the caveat is there with no notices.
+func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	wiringCheckout(t, `{"model":"opus"}`)
+	out, _, _ := executeStdin(t, "", "doctor", "--plugin")
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("doctor:\n%s", out)
+	}
+	out, _, _ = executeStdin(t, "", "update-skills", "--check")
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("update-skills --check:\n%s", out)
+	}
+}
+
+// Verified live (Claude Code 2.1.289): the plugin installs by itself on trust,
+// and a changed pin needs /plugin marketplace update fugaro. The outputs say
+// exactly that, and never that teammates are offered or prompted.
+func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
+	releaseBuild(t, "0.3.0")
+	wiringCheckout(t, hookedSettings) // pinned to v0.2.0: update-skills moves it
+	out, _, err := executeStdin(t, "", "update-skills")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "installs by itself, silently", "only trust folders you trust"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("update-skills lacks %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"offered", "prompted", "restart Claude Code"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("update-skills says %q:\n%s", bad, out)
+		}
+	}
+	if got := pluginwire.InstalledDiffers.Fix(); !strings.Contains(got, "run /plugin marketplace update fugaro") {
+		t.Errorf("fix = %q", got)
 	}
 }

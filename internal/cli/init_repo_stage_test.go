@@ -394,3 +394,25 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 		t.Errorf("calls %q", r.calls(t))
 	}
 }
+
+// A run that adopted an installation is told so before it is asked anything:
+// an unlisted repository's typed opt-in would be a prompt for a step that is
+// then refused.
+func TestRepoStageAdoptRefusalComesBeforeTheTypedPrompt(t *testing.T) {
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+	t.Chdir(dir)
+	fakeTerminal(t)
+	e, out := stageEngine(t, "acme/app\n", nil)
+	e.lc.Repos = nil // not listed: it would ask for owner/name
+	e.adopted = "adopted"
+	s := newRepositoryStage(e)
+	s.engineStage.run = func(context.Context) error { t.Error("the engine ran after an adopt"); return nil }
+	_, err := s.Apply(t.Context(), initflow.Env{Interactive: true})
+	var ny *initflow.NeedsYouError
+	if !errors.As(err, &ny) || !strings.Contains(ny.Left.Text, "adopted") {
+		t.Fatalf("err %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "Type") || strings.Contains(out.String(), "CONFIRM") {
+		t.Errorf("asked before refusing:\n%s", out.String())
+	}
+}

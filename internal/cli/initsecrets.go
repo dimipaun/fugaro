@@ -127,8 +127,8 @@ func (e *initEngine) hold(value []byte) (release func(), err error) {
 // With any of them present the stage never prompts: the person typing must be
 // at their own terminal, not behind an agent. CLAUDE_CODE_SSE_PORT is also set
 // by the Claude Code IDE extension in the integrated terminals of VS Code and
-// JetBrains, so a person's own IDE terminal can be refused: the refusal says
-// how to get past it.
+// JetBrains, so a person's own IDE terminal can be refused: only for that
+// marker the refusal tells the person (not the agent) what to do about it.
 var agentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
 
 // agentMarker is the first marker getenv shows set, or "" with none: a coding
@@ -355,13 +355,17 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Skipped, Detail: s.skip}, nil
 	}
 	// Before any cloud call: a repository the project does not list yet is
-	// not asked about.
+	// not asked about, not even for metadata. At a terminal the typed opt-in
+	// comes when the stage runs; until then nothing is read.
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return initflow.Status{}, err
 	case a == authNeeded:
 		lf := onboardLeft(s.origin)
 		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin), Left: &lf}, nil
+	case a == authAsk:
+		s.checked = false
+		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read after you confirm the repository " + pluginwire.Printable(s.origin.typed())}, nil
 	}
 	st, err := s.open(ctx)
 	if err == nil {
@@ -382,7 +386,10 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	detail := describeNeeds(s.missing) + note
 	if !s.canPrompt() {
 		if m := agentMarker(os.Getenv); m != "" {
-			detail += "; a coding agent's session is present (" + m + " is set), so " + initflow.NeedsTerminal("typing the values") + "; if this is your own IDE terminal, unset " + m + " or run " + selfCommand() + " secrets set"
+			detail += "; a coding agent's session is present (" + m + " is set), so " + initflow.NeedsTerminal("typing the values") + "; run " + selfCommand() + " secrets set in your own terminal window"
+			if h := initflow.IDEHint(m); h != "" {
+				detail += " (" + h + ")"
+			}
 		} else {
 			detail += "; " + initflow.NeedsTerminal("typing the values")
 		}

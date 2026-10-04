@@ -141,16 +141,23 @@ func TestAgentEnvNeverPrompts(t *testing.T) {
 			if !strings.Contains(res.Left[0].Text, "not through a coding agent") {
 				t.Errorf("left = %q", res.Left[0].Text)
 			}
-			// An IDE extension sets some markers in a person's own terminal:
-			// the refusal says how to get past it.
+			// An IDE extension sets one marker in a person's own terminal: only
+			// that refusal says how to get past it, and in no text an agent
+			// could take as a recipe for the other markers.
 			detail := ""
 			for _, st := range res.Stages {
 				if st.Name == "secrets" {
 					detail = st.Detail
 				}
 			}
-			if !strings.Contains(detail, "if this is your own IDE terminal, unset "+marker+" or run fugaro secrets set") {
+			if !strings.Contains(detail, "run fugaro secrets set in your own terminal window") {
 				t.Errorf("detail = %q", detail)
+			}
+			if hint := strings.Contains(detail, "unset"); hint != (marker == "CLAUDE_CODE_SSE_PORT") {
+				t.Errorf("the unset hint is for CLAUDE_CODE_SSE_PORT only: %s: %q", marker, detail)
+			}
+			if marker == "CLAUDE_CODE_SSE_PORT" && !strings.Contains(detail, "if this is your own IDE terminal") {
+				t.Errorf("the hint is not worded for the person: %q", detail)
 			}
 			if queued(t, f) != before || before == 0 {
 				t.Error("the terminal was read")
@@ -321,5 +328,26 @@ func TestJSONNeverPrompts(t *testing.T) {
 	}
 	if after := queued(t, f); after != before || before == 0 {
 		t.Error("the terminal was read")
+	}
+}
+
+// Check is cloud-free until the repository is authorized: a repository the
+// project does not list yet, at a terminal where the typed opt-in could be
+// asked, is not asked about (no Secret Manager call, not even a metadata one).
+func TestSecretsCheckMakesNoCloudCallBeforeTheGate(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.e.lc.Repos = nil // not listed
+	fakeTerminal(t)
+	opened := 0
+	r.stage.open = func(context.Context) (secretStore, error) { opened++; return r.store, nil }
+	st, err := r.stage.Check(t.Context())
+	if err != nil || st.State != initflow.Todo || opened != 0 || r.store.lists != 0 {
+		t.Fatalf("state %+v, err %v, opened %d, lists %d", st, err, opened, r.store.lists)
+	}
+	if !strings.Contains(st.Detail, "after") {
+		t.Errorf("detail %q does not say when it is read", st.Detail)
+	}
+	if plan, err := r.stage.Plan(t.Context(), initflow.Env{}); err != nil || plan.NothingToDo || r.store.lists != 0 {
+		t.Fatalf("plan %+v, err %v, lists %d", plan, err, r.store.lists)
 	}
 }
