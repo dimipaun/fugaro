@@ -263,7 +263,8 @@ func routeOf(d *Diagnosis, rec *runstore.Record, lc *localcfg.Config, red func(s
 			if lc != nil {
 				fee = lc.Providers[r].RouteFeePct
 			}
-			bare += v / (1 + fee/100)
+			m, _ := pricing.FromUSD(v)
+			bare += pricing.WithoutFee(m, fee).USD()
 		}
 		d.Reported, d.Charge = c.ReportedUSD, charge
 		// Only a report above the charge is a sign of under-pricing: a lower
