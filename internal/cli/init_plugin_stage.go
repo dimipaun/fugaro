@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dimipaun/fugaro/internal/config"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -82,10 +83,16 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	if !ok {
 		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to wire", nil)
 	}
-	if data, rerr := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml")); rerr == nil {
+	switch data, rerr := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml")); {
+	case rerr == nil:
 		if p, perr := config.ProjectOf(data); perr != nil || p != e.lc.Name {
 			return status(initflow.Skipped, "this checkout's fugaro.yaml names another project (or none), not "+pluginwire.Printable(e.lc.Name)+": the plugin is not wired here", nil)
 		}
+	case !errors.Is(rerr, os.ErrNotExist):
+		// Unknown is not a pass: a file that cannot be read (a symlink, a
+		// device, an oversize file) could name any project.
+		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "make fugaro.yaml a regular file of at most 1 MiB (or remove it), then rerun fugaro init"}
+		return status(initflow.NeedsYou, "this checkout's fugaro.yaml cannot be read, so which project it names is unknown and the plugin is not wired: "+pluginwire.Printable(oneLineCLI(rerr.Error())), &lf)
 	}
 	switch a, err := e.authState(repo); {
 	case err != nil:
