@@ -96,6 +96,20 @@ func Table(w io.Writer, rep Report, m Meta) error {
 		return err
 	}
 	fmt.Fprintln(w, "~ notional: a subscription's list-price figure, never billed and never added to MODEL $")
+	if rep.By == ByModel && rep.Totals.Notional > 0 {
+		fmt.Fprintln(w, "a subscription model's notional is priced from its tokens and can differ slightly from the run's recorded notional total in the other views")
+	}
+	if rep.By == ByModel && rep.MixedModelDays {
+		fmt.Fprintln(w, "a day with both billed and notional spend splits each model's dollars in that day's proportion (the runner records one figure per model)")
+	}
+	if rep.By == ByPerson {
+		for _, row := range rep.Rows {
+			if row.Key == budget.UnknownPerson {
+				fmt.Fprintln(w, "unknown: spend and runs with no requester recorded")
+				break
+			}
+		}
+	}
 	if rep.By != ByModel && rep.By != ByPerson {
 		fmt.Fprintln(w, "compute counts runs whose compute was estimated; n/a means none was")
 	}

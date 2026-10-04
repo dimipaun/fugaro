@@ -79,6 +79,30 @@ func TestWatchOnceJSON(t *testing.T) {
 	}
 }
 
+// A repository row shows the readable name the local config gives (as
+// `budget show` does), not its slug; the slug stays its own JSON field.
+func TestWatchShowsReadableRepoName(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Repos []struct{ Slug, Repo string }
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil || len(doc.Repos) != 1 {
+		t.Fatalf("err %v out %s", err, out)
+	}
+	if r := doc.Repos[0]; r.Repo != "acme/app" || r.Slug != appSlug {
+		t.Fatalf("repo %+v, want name acme/app and slug %s", r, appSlug)
+	}
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil || !strings.Contains(plain, "acme/app") || strings.Contains(plain, appSlug) {
+		t.Fatalf("err %v plain:\n%s", err, plain)
+	}
+}
+
 func TestWatchPlainNoEscapes(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "fix \x1b]52;c;AAAA\x07the bug\x1b[2J\u202e")

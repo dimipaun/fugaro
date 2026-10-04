@@ -27,6 +27,10 @@ type Config struct {
 	// nil means the effective daily cap spread over DefaultBurnHours (none
 	// when there is no cap).
 	BurnAlertPerHour *budget.Micros
+	// RepoNames maps a repository's wire slug key to the readable name the
+	// local config gives it (as `fugaro budget show` prints it); a repository
+	// not listed is named by its decoded slug.
+	RepoNames map[string]string
 }
 
 // Connection is the state of the link, for the header.
@@ -275,7 +279,12 @@ func Build(s *State, now time.Time, cfg Config) View {
 		}
 		// The name is the wire key decoded: the authenticated identity. The
 		// job-written repo field is free text and never names a block.
+		// A readable name from the local config (trusted, still sanitised)
+		// wins over the decoded slug; the slug stays in Slug.
 		b.Name = clean(unkey(slug))
+		if n := clean(cfg.RepoNames[slug]); n != "" {
+			b.Name = n
+		}
 		if b.Name == "" {
 			b.Name = "-"
 		}
@@ -292,7 +301,13 @@ func Build(s *State, now time.Time, cfg Config) View {
 				v.Project.RunHours += r.Age.Hours()
 			}
 		}
+		if len(b.Runs) == 0 {
+			b.Burn = Burn{} // the window still holds the spend of runs that ended
+		}
 		v.Repos = append(v.Repos, b)
+	}
+	if v.Project.Runs == 0 {
+		v.Project.Burn = Burn{} // no run is live: a decaying trailing value is no rate
 	}
 
 	sort.SliceStable(v.Repos, func(i, j int) bool {

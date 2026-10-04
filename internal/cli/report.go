@@ -62,7 +62,9 @@ func newReportCmd() *cobra.Command {
 			"exact (integer micro-dollars). Model $, NOTIONAL~ (a subscription's list-price\n" +
 			"figure, never billed) and COMPUTE $ are separate columns and never summed;\n" +
 			"compute reads n/a when no run's compute was estimated. A person is the stored\n" +
-			"requester address; `unknown` is spend with no known requester.\n\n" +
+			"requester address; `unknown` is spend, and runs, with no requester recorded.\n" +
+			"By model, a subscription model's dollars are notional (priced from its tokens,\n" +
+			"so they can differ slightly from the run's recorded notional total).\n\n" +
 			"--csv writes RFC 4180 with spreadsheet-safe cells (a cell starting with = + - @\n" +
 			"is prefixed with '). --json prints {project, source, degraded, by, since, until,\n" +
 			"weeks, rows[{key, start, end, partial, model_micros, model_usd, notional_micros,\n" +

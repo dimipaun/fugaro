@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -156,7 +157,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		repoKey = budget.Key(slug)
 	}
 	d := &WatchDeps{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), Err: cmd.ErrOrStderr(), LC: lc, DB: db,
-		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert()}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
+		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
 
 	if o.once {
 		return watchOnce(ctx, d, o)
@@ -173,6 +174,18 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		return err
 	}
 	return watchStream(ctx, d, o)
+}
+
+// repoNames maps each configured repository's wire slug key to its name, the
+// way `fugaro budget show` names a repository.
+func repoNames(lc *localcfg.Config) map[string]string {
+	names := map[string]string{}
+	for name, r := range lc.Repos {
+		if s, err := task.Slug(r.Provider, name); r.Provider != "" && err == nil {
+			names[budget.Key(s)] = name
+		}
+	}
+	return names
 }
 
 // emit writes one frame or document of v.
