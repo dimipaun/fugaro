@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"os"
@@ -19,6 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/creack/pty"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -331,11 +334,49 @@ func (c cliResult) String() string {
 // checkout, with no terminal on stdin.
 func (r *initRepoRig) fugaroInit(t *testing.T, args ...string) cliResult {
 	t.Helper()
+	return r.fugaroInitIn(t, nil, args...)
+}
+
+// fugaroInitTyped is fugaro init run at a (pseudo) terminal where typed is
+// what the person types, line by line: the typed-only confirmations (a billable
+// first image build) are given nowhere else.
+func (r *initRepoRig) fugaroInitTyped(t *testing.T, typed string, args ...string) cliResult {
+	t.Helper()
+	master, tty, err := pty.Open()
+	if err != nil {
+		t.Skipf("no pty: %v", err)
+	}
+	defer master.Close()
+	defer tty.Close()
+	go func() { _, _ = io.Copy(io.Discard, master) }() // the terminal's echo
+	if _, err := master.WriteString(typed); err != nil {
+		t.Fatal(err)
+	}
+	return r.fugaroInitIn(t, tty, args...)
+}
+
+func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string) cliResult {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	// fugaro init applies nothing in a coding agent's session, and these tests
+	// may be run from one: the markers are cleared, as a person's terminal has none.
+	env := os.Environ()
+	for _, k := range []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"} {
+		env = append(env, k+"=")
+	}
+	// The repository is the checkout's own, and these tests mean to onboard
+	// it: the one non-interactive opt-in for a repository the local config does
+	// not list (the gate itself is tested in internal/cli).
+	if slices.Contains(args, "--repo") && !slices.Contains(args, "--print-vars") && !slices.Contains(args, "--plan-only") && !slices.Contains(args, "--forget") && !slices.Contains(args, "--onboard-repo") {
+		args = append(slices.Clone(args), "--onboard-repo", r.repo)
+	}
 	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"init"}, args...)...)
 	cmd.Dir = r.dir
-	cmd.Env = os.Environ()
+	cmd.Env = env
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -637,7 +678,7 @@ func TestInitRepoBuildsThenDeploys(t *testing.T) {
 			map[string]any{"address": "module.repo.google_cloud_scheduler_job.check[0]", "type": "google_cloud_scheduler_job",
 				"change": map[string]any{"actions": []string{"update"}, "before": map[string]any{"paused": true}, "after": map[string]any{"paused": false}}})},
 	})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInitTyped(t, strings.Repeat(initRepoProjectName+"\n", 3), "--repo", r.checkout)
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -768,7 +809,7 @@ func TestInitRepoFailedBuildStillRecordsRepo(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
 	r.build.SetStep("build", func(string) error { return errors.New("the build broke") })
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInitTyped(t, strings.Repeat(initRepoProjectName+"\n", 3), "--repo", r.checkout)
 	if res.code != 2 {
 		t.Fatalf("want exit 2:\n%s", res)
 	}
@@ -796,7 +837,7 @@ func TestInitRepoAdoptedSwitchesImageAfterBuild(t *testing.T) {
 				"after":  map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{map[string]any{"image": "new"}}}}}}}},
 		})},
 	})
-	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
+	res := r.fugaroInitTyped(t, strings.Repeat(initRepoProjectName+"\n", 3), "--repo", r.checkout)
 	if res.code != 0 {
 		t.Fatal(res)
 	}
@@ -1284,8 +1325,10 @@ func TestInitRepoRefusesInstallationFlags(t *testing.T) {
 	}
 }
 
-// With no terminal and no --yes, the billable build is not started: the
-// banner and a warning are shown, and the run still exits 0.
+// The billable first build is typed at a real terminal and nowhere else:
+// with no terminal, or with --yes (or --json, --non-interactive, a coding
+// agent's environment), it is not started: the banner and a warning are
+// shown, everything else is done, and the run exits 1, the build left for you.
 func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 	r := sandboxRig(t)
 	r.storedSecrets()
@@ -1294,21 +1337,26 @@ func TestInitRepoBuildNeedsConfirmation(t *testing.T) {
 		t.Fatal(res)
 	}
 	r.script(t, "repo", -1, map[string]any{"plan": map[string]any{"exit": 0}})
-	res := r.fugaroInit(t, "--repo", r.checkout)
-	if res.code != 0 {
-		t.Fatalf("want exit 0:\n%s", res)
-	}
-	if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") {
-		t.Errorf("no build banner:\n%s", res)
-	}
-	if !strings.Contains(res.stdout, "warning: the first image build of acme/sandbox/web was not confirmed") {
-		t.Errorf("no warning:\n%s", res)
-	}
-	if n := r.builds.Load(); n != 0 {
-		t.Errorf("builds = %d without a confirmation", n)
-	}
-	if len(r.build.Requests()) != 0 {
-		t.Errorf("Cloud Build was called: %d request(s)", len(r.build.Requests()))
+	for _, args := range [][]string{{"--repo", r.checkout}, {"--repo", r.checkout, "--yes"}, {"--repo", r.checkout, "--yes", "--json"}} {
+		res := r.fugaroInit(t, args...)
+		if res.code != 1 {
+			t.Fatalf("%v: want exit 1, the build left for the user:\n%s", args, res)
+		}
+		if !strings.Contains(res.stdout, "⚠ CONFIRM (project "+initRepoProjectName+", GCP project "+initRepoProject+"): submits a Cloud Build for acme/sandbox/web") && !strings.Contains(res.stderr, "submits a Cloud Build for acme/sandbox/web") {
+			t.Errorf("%v: no build banner:\n%s", args, res)
+		}
+		if !strings.Contains(res.stdout+res.stderr, "the first image build of acme/sandbox/web is billable and was not confirmed") || !strings.Contains(res.stderr, "type the project's name") {
+			t.Errorf("%v: no warning or typed route:\n%s", args, res)
+		}
+		if strings.Contains(res.stdout+res.stderr, "pass --yes") {
+			t.Errorf("%v: --yes is suggested:\n%s", args, res)
+		}
+		if n := r.builds.Load(); n != 0 {
+			t.Errorf("%v: builds = %d without a typed confirmation", args, n)
+		}
+		if len(r.build.Requests()) != 0 {
+			t.Errorf("%v: Cloud Build was called: %d request(s)", args, len(r.build.Requests()))
+		}
 	}
 }
 

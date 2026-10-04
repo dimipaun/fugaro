@@ -1781,15 +1781,15 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
-		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable) after running", "init", "--repo")
+		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
 		if embedded {
-			left = promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable) after running", "init")
+			left = promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", "init")
 			return &initflow.NeedsYouError{Left: left}
 		}
 		if err := finish(); err != nil {
 			return err
 		}
-		return userErr("the first image build of %s is billable and needs the project's name typed at a real terminal: %s; %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
+		return userErr("the first image build of %s is billable and needs the project's name typed at a real terminal: %s: %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
 	}
 	return finish()
 }
