@@ -1,0 +1,275 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"os"
+
+	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+)
+
+// The converge (internal/initflow) over the engines fugaro init already
+// has. The stages here only call them: what init, init --firebase and the
+// rest do, their flags, confirmations and messages, are the engines' own.
+// Stages that have no engine yet (project, services, images, the history
+// job's second pass, secrets, plugin wiring, repository) are registered
+// when the tasks that write them land.
+
+// initEngine is what the engines need, built in the order fugaro init has
+// always built it: the environment check, then the Terraform workdir, the
+// Google clients and the Cloud Resource Manager readiness.
+type initEngine struct {
+	r    *initRun
+	lc   *localcfg.Config
+	spec infra.InstallationSpec
+	path string
+	old  []byte
+
+	bin    string
+	envErr error // the environment check's refusal, kept as the error init always returned
+	envRan bool
+
+	ready bool
+	c     *infra.Clients
+	t     *tf.TF
+	wd    *infra.Workdir
+}
+
+// environment runs the environment check once (it prints the local
+// config's warnings when it passes).
+func (e *initEngine) environment() error {
+	if !e.envRan {
+		e.envRan = true
+		e.bin, e.envErr = e.r.checkEnv(e.lc)
+	}
+	return e.envErr
+}
+
+// setup is the workdir, the clients and the Resource Manager readiness
+// every installation engine needs, done once.
+func (e *initEngine) setup(ctx context.Context) error {
+	if e.ready {
+		return nil
+	}
+	if err := e.environment(); err != nil {
+		return err
+	}
+	dir, err := infra.InstallationWorkdir(os.Getenv, e.lc.GCPProject)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	e.wd, e.t, err = e.r.terraform(e.bin, dir, "installation")
+	if err != nil {
+		return err
+	}
+	e.r.res.Workdir = e.wd.Dir
+	if e.c, err = newInitClients(ctx, e.lc); err != nil {
+		return err
+	}
+	if err := e.r.resourceManager(ctx, e.c); err != nil {
+		return err
+	}
+	e.ready = true
+	return nil
+}
+
+// secretsHeld lists values the process holds that must never reach an
+// output (the secrets stage will return the ones it prompted for); none
+// yet. Tests replace it.
+var secretsHeld = func() []string { return nil }
+
+// options is the loop's configuration from the flags.
+func (e *initEngine) options() initflow.Options {
+	r, o := e.r, e.r.o
+	return initflow.Options{
+		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
+		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), Out: r.w,
+		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
+		Redact: secretsHeld(),
+	}
+}
+
+// converge runs fugaro init's default and --firebase modes through the
+// loop and maps its result to what init returns.
+func (e *initEngine) converge(ctx context.Context) error {
+	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e)}
+	res, err := initflow.Run(ctx, stages, e.options())
+	return e.outcome(res, err)
+}
+
+// outcome maps a loop result to init's error, keeping the exit codes the
+// engines always had: an engine's own error is returned as it is (its
+// ExitError code, else 1), a refusal before anything ran is a user error
+// (1), and a run that is unfinished only because the user has to act is 1
+// too. Only an engine's coded remote failures are 2. With --json the
+// result is printed first, whatever the outcome, so CI gets the account.
+func (e *initEngine) outcome(res *initflow.Result, runErr error) error {
+	r, o := e.r, e.r.o
+	if res != nil {
+		r.res.Stages, r.res.LeftForYou, r.res.Failed, r.res.Note = res.Stages, res.Left, res.Failed, res.Note
+	}
+	switch {
+	case e.envErr != nil:
+		_ = r.printResult()
+		return e.envErr // as init always refused: the problem and its fix
+	case runErr != nil:
+		_ = r.printResult()
+		return userErr("%v", runErr)
+	case res.Failed != nil:
+		_ = r.printResult()
+		return res.Cause
+	}
+	if err := r.printResult(); err != nil {
+		return err
+	}
+	if len(res.Left) > 0 && !o.planOnly {
+		return userErr("fugaro init is not finished: %d step(s) left for you, listed above", len(res.Left))
+	}
+	return nil
+}
+
+// planned is the one-line summary of the installation plan the engine
+// just showed, if it showed one.
+func (e *initEngine) planned() initflow.Plan {
+	if c := e.r.res.Changes; c != nil && *c != (infra.PlanCounts{}) {
+		return initflow.Plan{Detail: c.String()}
+	}
+	if e.r.res.Changes != nil {
+		return initflow.Plan{NothingToDo: true, Detail: "No changes"}
+	}
+	return initflow.Plan{}
+}
+
+// preflightStage is the environment check (stage 0): read-only, nothing to
+// apply, and a failing check stops the loop with the check's own message,
+// problem and fix in one line.
+type preflightStage struct{ e *initEngine }
+
+func (preflightStage) Name() string { return initflow.Preflight }
+func (s preflightStage) Check(context.Context) (initflow.Status, error) {
+	if err := s.e.environment(); err != nil {
+		lf := initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftCommand, Text: err.Error()}
+		return initflow.Status{State: initflow.NeedsYou, Detail: "the environment is not ready", Left: &lf}, nil
+	}
+	return initflow.Status{State: initflow.Done}, nil
+}
+func (preflightStage) Plan(context.Context, initflow.Env) (initflow.Plan, error) {
+	return initflow.Plan{NothingToDo: true}, nil
+}
+func (preflightStage) Apply(context.Context, initflow.Env) (initflow.Outcome, error) {
+	return initflow.Outcome{}, errors.New("the environment check changes nothing")
+}
+func (preflightStage) Verify(context.Context) error { return nil }
+func (preflightStage) Left() initflow.Left {
+	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftCommand, Text: "fix the environment problem named above and rerun fugaro init"}
+}
+
+// engineStage is a stage that calls one of init's engines. The engines read
+// the run's options (r.o.yes, r.o.planOnly) directly, so the adapter, not
+// the engine, is where the loop's decision is enforced: during Plan and
+// Apply r.o.yes is what the loop said (env.Yes: never true for a stage
+// --yes does not cover, whatever the flag says) and Plan forces the
+// engine's own plan-only mode.
+//
+// It cannot know without planning whether anything is missing, so its
+// check says it plans when applied, and an apply that finds nothing is
+// reported "No changes". Verify has nothing more to read: the engines
+// apply the plan they showed and read the outputs back, and a failure
+// there is the apply's own error.
+type engineStage struct {
+	e    *initEngine
+	name string
+	// skip is why the stage does not apply to this run ("" when it does).
+	skip func() string
+	run  func(ctx context.Context) error
+	left initflow.Left
+}
+
+func (s *engineStage) Name() string                 { return s.name }
+func (s *engineStage) SelfConfirming()              {}
+func (s *engineStage) Verify(context.Context) error { return nil }
+func (s *engineStage) Left() initflow.Left          { return s.left }
+
+func (s *engineStage) Check(context.Context) (initflow.Status, error) {
+	if why := s.skip(); why != "" {
+		return initflow.Status{State: initflow.Skipped, Detail: why}, nil
+	}
+	return initflow.Status{State: initflow.Todo, Detail: "plans when applied"}, nil
+}
+
+// with runs the engine with the options the loop's env allows, restoring
+// them after.
+func (s *engineStage) with(ctx context.Context, env initflow.Env, planOnly bool) error {
+	o := s.e.r.o
+	yes, plan := o.yes, o.planOnly
+	defer func() { o.yes, o.planOnly = yes, plan }()
+	o.yes = env.Yes
+	o.planOnly = o.planOnly || planOnly
+	return s.run(ctx)
+}
+
+func (s *engineStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
+	if err := s.with(ctx, env, true); err != nil {
+		return initflow.Plan{}, err
+	}
+	return s.e.planned(), nil
+}
+
+func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	if err := s.with(ctx, env, false); err != nil {
+		return initflow.Outcome{}, err
+	}
+	r := s.e.r
+	switch {
+	case !r.res.Applied:
+		return initflow.Outcome{Detail: "No changes"}, nil
+	case r.res.Changes != nil:
+		return initflow.Outcome{Changed: true, Detail: "applied: " + r.res.Changes.String()}, nil
+	}
+	return initflow.Outcome{Changed: true, Detail: "applied"}, nil
+}
+
+// newInstallationStage is stage 3: init's installation engine. With
+// --firebase the installation is the Firebase engine's first apply, so the
+// stage is skipped.
+func newInstallationStage(e *initEngine) *engineStage {
+	return &engineStage{e: e, name: initflow.Installation,
+		skip: func() string {
+			if e.r.o.firebase != "" {
+				return "applied as the first step of the firebase backend"
+			}
+			return ""
+		},
+		run: func(ctx context.Context) error {
+			if err := e.setup(ctx); err != nil {
+				return err
+			}
+			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
+		},
+		left: initflow.Left{Stage: initflow.Installation, Kind: initflow.LeftPrompt, Text: "run fugaro init in your own terminal and type the project's name to apply"},
+	}
+}
+
+// newFirebaseStage is stage 4: init --firebase's engine, which is three
+// confirmed applies (the installation's history account, the Firebase root,
+// the installation again for the history job) and the database steps.
+func newFirebaseStage(e *initEngine) *engineStage {
+	return &engineStage{e: e, name: initflow.Firebase,
+		skip: func() string {
+			if e.r.o.firebase == "" {
+				return "no --firebase given"
+			}
+			return ""
+		},
+		run: func(ctx context.Context) error {
+			if err := e.setup(ctx); err != nil {
+				return err
+			}
+			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
+		},
+		left: initflow.Left{Stage: initflow.Firebase, Kind: initflow.LeftPrompt, Text: "run fugaro init --firebase <firebase-project-id> in your own terminal and type the project's name at each apply"},
+	}
+}
