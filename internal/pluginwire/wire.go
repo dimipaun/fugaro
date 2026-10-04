@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // InvalidError is returned for a settings file that cannot be merged into:
@@ -27,7 +29,31 @@ func (e *InvalidError) Unwrap() error { return e.Err }
 type ForeignError struct{ Path, Kind string }
 
 func (e *ForeignError) Error() string {
-	return fmt.Sprintf("the %q marketplace in %s has a %q source, which fugaro does not rewrite; set its ref to a release tag by hand", Marketplace, e.Path, e.Kind)
+	return fmt.Sprintf("the %q marketplace in %s has a %s source, which fugaro does not rewrite; set its ref to a release tag by hand", Marketplace, e.Path, Printable(e.Kind))
+}
+
+// ForkError is returned when the change would move the ref of, or enable the
+// plugin from, a marketplace repository that is not Repo and the caller did
+// not allow forks. Nothing is written.
+type ForkError struct{ Path, Repo string }
+
+func (e *ForkError) Error() string {
+	return fmt.Sprintf("the %q marketplace in %s names the repository %s, not %s; it is left as it is (pass --allow-fork to move its ref to this release's tag)", Marketplace, e.Path, Printable(e.Repo), Repo)
+}
+
+// Printable makes a string from a repository's files safe to print to a
+// terminal: control characters (escape sequences) and invisible or
+// direction-changing format characters (bidi overrides) become \uXXXX.
+func Printable(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
+			fmt.Fprintf(&b, "\\u%04x", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // Change is a planned update of one settings file.
@@ -38,17 +64,23 @@ type Change struct {
 	After   []byte
 	Changed bool   // false: the file already says this, nothing to write
 	Note    string // for the user, such as a fork's repository kept
-	existed bool
-	perm    fs.FileMode
+	Foreign string // the marketplace repository when it is not Repo (printable)
+	// Disabled: the repository sets enabledPlugins["fugaro@fugaro"] to false,
+	// which is kept.
+	Disabled bool
+	existed  bool
+	perm     fs.FileMode
 }
 
 // Plan computes the merge of the plugin's two entries into the settings file
 // at path (a project's .claude/settings.json) for a binary of the given
 // version, without writing. Every other key and entry is kept; a fork's
-// repository is kept and only its ref moved. It returns ErrDev for a dev
-// build, ErrNotRelease for any other version that is not X.Y.Z, and
-// *InvalidError or *ForeignError when the file cannot be merged into.
-func Plan(path, version string) (*Change, error) {
+// repository is kept and only its ref moved, and only with allowFork
+// (otherwise *ForkError and nothing changes); a plugin the repository
+// disables stays disabled. It returns ErrDev for a dev build, ErrNotRelease
+// for any other version that is not X.Y.Z, and *InvalidError or
+// *ForeignError when the file cannot be merged into.
+func Plan(path, version string, allowFork bool) (*Change, error) {
 	tag, err := Tag(version)
 	if err != nil {
 		return nil, err
@@ -70,11 +102,27 @@ func Plan(path, version string) (*Change, error) {
 		}
 	}
 	ch := &Change{Path: path, Tag: tag, Before: before, existed: existed, perm: perm}
-	dirty, note, err := merge(&top, path, tag)
+	dirty, foreign, disabled, err := merge(&top, path, tag)
 	if err != nil {
 		return nil, err
 	}
-	ch.Note = note
+	if foreign != "" {
+		ch.Foreign = Printable(foreign)
+		ch.Note = fmt.Sprintf("the %q marketplace names the repository %s, not %s", Marketplace, ch.Foreign, Repo)
+		if dirty && !allowFork {
+			return nil, &ForkError{path, foreign}
+		}
+		if dirty {
+			ch.Note += "; only its ref was moved"
+		}
+	}
+	if disabled {
+		ch.Disabled = true
+		if ch.Note != "" {
+			ch.Note += "\n"
+		}
+		ch.Note += "the plugin is disabled by this repository (enabledPlugins " + PluginID + " is false); it was left disabled"
+	}
 	ch.Changed = dirty
 	if dirty {
 		ch.After = pretty(top)
@@ -85,37 +133,37 @@ func Plan(path, version string) (*Change, error) {
 }
 
 // merge sets the two entries in top and reports whether anything changed.
-func merge(top *object, path, tag string) (dirty bool, note string, err error) {
+func merge(top *object, path, tag string) (dirty bool, foreign string, disabled bool, err error) {
 	bad := func(e error) error { return &InvalidError{path, e} }
 
 	markets, _, err := objectAt(*top, "extraKnownMarketplaces")
 	if err != nil {
-		return false, "", bad(err)
+		return false, "", false, bad(err)
 	}
 	entry, present, err := objectAt(markets, Marketplace)
 	if err != nil {
-		return false, "", bad(fmt.Errorf("extraKnownMarketplaces.%s: %w", Marketplace, err))
+		return false, "", false, bad(fmt.Errorf("extraKnownMarketplaces.%s: %w", Marketplace, err))
 	}
 	var source object
 	if present {
 		var hasSource bool
 		source, hasSource, err = objectAt(entry, "source")
 		if err != nil {
-			return false, "", bad(fmt.Errorf("extraKnownMarketplaces.%s.source: %w", Marketplace, err))
+			return false, "", false, bad(fmt.Errorf("extraKnownMarketplaces.%s.source: %w", Marketplace, err))
 		}
 		if !hasSource {
-			return false, "", bad(fmt.Errorf("extraKnownMarketplaces.%s has no source", Marketplace))
+			return false, "", false, bad(fmt.Errorf("extraKnownMarketplaces.%s has no source", Marketplace))
 		}
 		kind := stringAt(source, "source")
 		if kind != "github" {
-			return false, "", &ForeignError{path, kind}
+			return false, "", false, &ForeignError{path, kind}
 		}
 		repo := stringAt(source, "repo")
 		if repo == "" {
-			return false, "", bad(fmt.Errorf("extraKnownMarketplaces.%s.source has no repo", Marketplace))
+			return false, "", false, bad(fmt.Errorf("extraKnownMarketplaces.%s.source has no repo", Marketplace))
 		}
 		if !strings.EqualFold(repo, Repo) {
-			note = fmt.Sprintf("kept the repository %s of the %q marketplace and moved only its ref", repo, Marketplace)
+			foreign = repo
 		}
 	} else {
 		source = object{{"source", marshalString("github")}, {"repo", marshalString(Repo)}}
@@ -135,15 +183,17 @@ func merge(top *object, path, tag string) (dirty bool, note string, err error) {
 
 	plugins, _, err := objectAt(*top, "enabledPlugins")
 	if err != nil {
-		return false, "", bad(err)
+		return false, "", false, bad(err)
 	}
-	if plugins.set(PluginID, json.RawMessage("true")) {
+	if raw, ok := plugins.get(PluginID); ok && string(raw) == "false" {
+		disabled = true // a repository's explicit "no" is not flipped
+	} else if plugins.set(PluginID, json.RawMessage("true")) {
 		dirty = true
 	}
 	if top.set("enabledPlugins", plugins.raw()) {
 		dirty = true
 	}
-	return dirty, note, nil
+	return dirty, foreign, disabled, nil
 }
 
 func stringAt(o object, key string) string {
@@ -158,9 +208,11 @@ func stringAt(o object, key string) string {
 	return s
 }
 
-// Apply writes the change atomically, keeping the file's mode (0644 when
-// new). It writes nothing when the change is empty, and refuses, writing
-// nothing, if the file changed since Plan read it. It never commits.
+// Apply writes the change atomically (temporary file, then rename), keeping
+// the file's mode (0644 when new). It writes nothing when the change is
+// empty, and checks just before the rename that the file is still what Plan
+// read, refusing otherwise. That check-then-rename is not a lock: an edit in
+// the instant between them is not detected. It never commits.
 func (c *Change) Apply() error {
 	if !c.Changed {
 		return nil
@@ -169,8 +221,8 @@ func (c *Change) Apply() error {
 }
 
 // Wire is Plan followed by Apply, for a caller that has already confirmed.
-func Wire(path, version string) (*Change, error) {
-	c, err := Plan(path, version)
+func Wire(path, version string, allowFork bool) (*Change, error) {
+	c, err := Plan(path, version, allowFork)
 	if err != nil {
 		return nil, err
 	}
@@ -202,25 +254,31 @@ type Location struct {
 }
 
 // Locate finds the project settings for start: walking up, the nearest
-// directory that holds .claude/settings.json, or else the top of the
-// checkout (the nearest directory with .git, a file in a worktree) where one
-// would be created. The walk stops at the checkout's top, and the user's own
-// home directory is never a project. ok is false outside a checkout.
+// directory that holds .claude/settings.json, provided the walk then finds
+// .git (a file in a worktree) at or above it; or else the top of the checkout
+// where one would be created. The walk stops at the checkout's top, and the
+// user's own home directory is never a project. ok is false outside a
+// checkout, whatever settings files lie above.
 func Locate(start string) (loc Location, ok bool) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return Location{}, false
 	}
 	home, _ := os.UserHomeDir()
+	var found *Location
 	for {
 		if home != "" && sameDir(dir, home) {
 			return Location{}, false
 		}
 		s := filepath.Join(dir, ".claude", "settings.json")
-		if _, err := os.Lstat(s); err == nil {
-			return Location{Root: dir, Settings: s, Exists: true}, true
+		if _, err := os.Lstat(s); err == nil && found == nil {
+			found = &Location{Root: dir, Settings: s, Exists: true}
 		}
 		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			// A settings file counts only inside a checkout: .git at or above it.
+			if found != nil {
+				return *found, true
+			}
 			return Location{Root: dir, Settings: s}, true
 		}
 		up := filepath.Dir(dir)
@@ -245,14 +303,27 @@ func (c *Change) Diff() string {
 	if !c.Changed {
 		return ""
 	}
-	return lineDiff(strings.Split(strings.TrimSuffix(string(c.Before), "\n"), "\n"), strings.Split(strings.TrimSuffix(string(c.After), "\n"), "\n"), c.existed)
+	lines := func(b []byte) []string {
+		ls := strings.Split(strings.TrimSuffix(string(b), "\n"), "\n")
+		for i, l := range ls {
+			ls[i] = Printable(l)
+		}
+		return ls
+	}
+	return lineDiff(lines(c.Before), lines(c.After), c.existed)
 }
+
+// maxDiffCells bounds the diff table: a settings file is a few dozen lines.
+const maxDiffCells = 4_000_000
 
 func lineDiff(a, b []string, existed bool) string {
 	if !existed {
 		a = nil
 	}
 	n, m := len(a), len(b)
+	if n*m > maxDiffCells {
+		return fmt.Sprintf("(the file changed: %d lines before, %d after; too long to diff here, use git diff)\n", n, m)
+	}
 	lcs := make([][]int, n+1)
 	for i := range lcs {
 		lcs[i] = make([]int, m+1)

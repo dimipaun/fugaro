@@ -72,7 +72,7 @@ func TestMergeIntoEmptyFile(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		if _, err := Wire(p, "0.2.0"); err != nil {
+		if _, err := Wire(p, "0.2.0", false); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
 		m := read(t, p)
@@ -95,7 +95,7 @@ func TestMergeIntoEmptyFile(t *testing.T) {
 func TestMergeKeepsEveryOtherKey(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, `{"permissions":{"allow":["Bash(go test:*)"],"deny":[]},"env":{"A":"1"},"model":"opus","n":1.50,"list":[1,2,{"x":null}],"extraKnownMarketplaces":{}}`)
-	if _, err := Wire(p, "0.2.0"); err != nil {
+	if _, err := Wire(p, "0.2.0", false); err != nil {
 		t.Fatal(err)
 	}
 	b, _ := os.ReadFile(p)
@@ -113,7 +113,7 @@ func TestMergeKeepsEveryOtherKey(t *testing.T) {
 func TestMergeKeepsOtherMarketplacesAndPlugins(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, `{"extraKnownMarketplaces":{"acme":{"source":{"source":"github","repo":"acme/tools"}}},"enabledPlugins":{"acme@acme":true,"old@x":false}}`)
-	if _, err := Wire(p, "0.2.0"); err != nil {
+	if _, err := Wire(p, "0.2.0", false); err != nil {
 		t.Fatal(err)
 	}
 	m := read(t, p)
@@ -148,7 +148,7 @@ func TestMergeNeverRewritesInvalidJSON(t *testing.T) {
 		"trailing object": `{"a":1}{"b":2}`,
 	} {
 		p := project(t, content)
-		_, err := Wire(p, "0.2.0")
+		_, err := Wire(p, "0.2.0", false)
 		if !IsInvalid(err) {
 			t.Errorf("%s: err = %v, want an InvalidError", name, err)
 		}
@@ -161,8 +161,17 @@ func TestMergeNeverRewritesInvalidJSON(t *testing.T) {
 func TestForeignMarketplaceKeptNotRewritten(t *testing.T) {
 	noUserConfig(t)
 	// A fork's repository is kept; only its ref moves, other fields stay.
-	p := project(t, `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"acme/fugaro-fork","ref":"v0.1.0"},"autoUpdate":false}}}`)
-	ch, err := Wire(p, "0.2.0")
+	content := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"acme/fugaro-fork","ref":"v0.1.0"},"autoUpdate":false}}}`
+	p := project(t, content)
+	// Without explicit permission the fork's ref is not moved, nothing is written.
+	var fk *ForkError
+	if _, err := Wire(p, "0.2.0", false); !errors.As(err, &fk) || fk.Repo != "acme/fugaro-fork" {
+		t.Fatalf("without allowFork: %v", err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != content {
+		t.Fatalf("rewritten without allowFork: %s", b)
+	}
+	ch, err := Wire(p, "0.2.0", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,8 +182,12 @@ func TestForeignMarketplaceKeptNotRewritten(t *testing.T) {
 	if at(t, m, "extraKnownMarketplaces", "fugaro", "autoUpdate") != false {
 		t.Error("lost a field of the entry")
 	}
-	if !strings.Contains(ch.Note, "acme/fugaro-fork") {
-		t.Errorf("note = %q", ch.Note)
+	if !strings.Contains(ch.Note, "acme/fugaro-fork") || ch.Foreign != "acme/fugaro-fork" {
+		t.Errorf("note = %q foreign = %q", ch.Note, ch.Foreign)
+	}
+	// A fork already at our tag changes nothing but is still reported.
+	if ch, err := Plan(p, "0.2.0", false); err != nil || ch.Changed || ch.Foreign != "acme/fugaro-fork" {
+		t.Errorf("fork at the tag: %v %+v", err, ch)
 	}
 	// Any other kind of source is not ours to rewrite: nothing is written.
 	for _, content := range []string{
@@ -182,7 +195,7 @@ func TestForeignMarketplaceKeptNotRewritten(t *testing.T) {
 		`{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"directory","path":"/tmp/x"}}}}`,
 	} {
 		p := project(t, content)
-		_, err := Wire(p, "0.2.0")
+		_, err := Wire(p, "0.2.0", false)
 		var fe *ForeignError
 		if !errors.As(err, &fe) {
 			t.Errorf("%s: err = %v", content, err)
@@ -196,11 +209,11 @@ func TestForeignMarketplaceKeptNotRewritten(t *testing.T) {
 func TestWireIdempotent(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, `{"model":"opus"}`)
-	if _, err := Wire(p, "0.2.0"); err != nil {
+	if _, err := Wire(p, "0.2.0", false); err != nil {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(p)
-	ch, err := Wire(p, "0.2.0")
+	ch, err := Wire(p, "0.2.0", false)
 	if err != nil || ch.Changed || ch.Diff() != "" {
 		t.Fatalf("second run: %v changed=%v", err, ch != nil && ch.Changed)
 	}
@@ -211,14 +224,14 @@ func TestWireIdempotent(t *testing.T) {
 	own := `{"enabledPlugins": {"fugaro@fugaro": true},
 	"extraKnownMarketplaces": {"fugaro": {"source": {"source": "github", "repo": "dimipaun/fugaro", "ref": "v0.2.0"}}}}`
 	p = project(t, own)
-	if ch, err := Wire(p, "0.2.0"); err != nil || ch.Changed {
+	if ch, err := Wire(p, "0.2.0", false); err != nil || ch.Changed {
 		t.Fatalf("wired file: %v %v", err, ch)
 	}
 	if b, _ := os.ReadFile(p); string(b) != own {
 		t.Error("reformatted a wired file")
 	}
 	// Moving the ref up and "down" (a lower binary) are both only a ref.
-	ch, err = Wire(p, "0.3.0")
+	ch, err = Wire(p, "0.3.0", false)
 	if err != nil || !ch.Changed || !strings.Contains(ch.Diff(), `"ref": "v0.3.0"`) {
 		t.Fatalf("bump: %v\n%s", err, ch.Diff())
 	}
@@ -227,14 +240,14 @@ func TestWireIdempotent(t *testing.T) {
 func TestDevBinaryWritesNoPin(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, "")
-	if _, err := Wire(p, "dev"); !errors.Is(err, ErrDev) {
+	if _, err := Wire(p, "dev", false); !errors.Is(err, ErrDev) {
 		t.Fatalf("err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Dir(p)); !os.IsNotExist(err) {
 		t.Error("a dev binary created .claude")
 	}
 	p = project(t, `{"a":1}`)
-	if _, err := Wire(p, ""); !errors.Is(err, ErrDev) {
+	if _, err := Wire(p, "", false); !errors.Is(err, ErrDev) {
 		t.Fatalf("err = %v", err)
 	}
 	if b, _ := os.ReadFile(p); string(b) != `{"a":1}` {
@@ -251,7 +264,7 @@ func TestPinsOnlyStrictTags(t *testing.T) {
 	noUserConfig(t)
 	for _, v := range []string{"main", "0.2", "0.2.0-rc1", "0.2.0+dirty", "v0.2.0-dirty", "0.2.0\n", "../v0.2.0", "01.2.3", "1.2.3.4", "latest", `0.2.0","x":"`, " 0.2.0", "1234567890.0.0", "v v0.2.0"} {
 		p := project(t, "")
-		_, err := Wire(p, v)
+		_, err := Wire(p, v, false)
 		if !errors.Is(err, ErrNotRelease) {
 			t.Errorf("%q: err = %v", v, err)
 		}
@@ -288,7 +301,7 @@ func TestRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(outside, p); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Wire(p, "0.2.0"); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, err := Wire(p, "0.2.0", false); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("file symlink: err = %v", err)
 	}
 	// .claude a symlink to a directory elsewhere
@@ -297,7 +310,7 @@ func TestRefusesSymlinks(t *testing.T) {
 	if err := os.Symlink(other, filepath.Dir(p2)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Wire(p2, "0.2.0"); err == nil || !strings.Contains(err.Error(), "symlink") {
+	if _, err := Wire(p2, "0.2.0", false); err == nil || !strings.Contains(err.Error(), "symlink") {
 		t.Errorf("dir symlink: err = %v", err)
 	}
 	if es, _ := os.ReadDir(other); len(es) != 0 {
@@ -315,7 +328,7 @@ func TestRefusesSymlinks(t *testing.T) {
 	if err := os.MkdirAll(p3, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Wire(p3, "0.2.0"); err == nil {
+	if _, err := Wire(p3, "0.2.0", false); err == nil {
 		t.Error("wrote over a directory")
 	}
 }
@@ -328,7 +341,7 @@ func TestOnlyProjectSettingsJSON(t *testing.T) {
 		filepath.Join(root, "settings.json"),
 		filepath.Join(root, "other", "settings.json"),
 	} {
-		if _, err := Wire(p, "0.2.0"); err == nil {
+		if _, err := Wire(p, "0.2.0", false); err == nil {
 			t.Errorf("%s: wired", p)
 		}
 	}
@@ -338,7 +351,7 @@ func TestOnlyProjectSettingsJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	userConfigDir = func() string { return user }
-	if _, err := Wire(filepath.Join(user, "settings.json"), "0.2.0"); err == nil || !strings.Contains(err.Error(), "user settings") {
+	if _, err := Wire(filepath.Join(user, "settings.json"), "0.2.0", false); err == nil || !strings.Contains(err.Error(), "user settings") {
 		t.Errorf("user settings: err = %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(user, "settings.json")); !os.IsNotExist(err) {
@@ -352,7 +365,7 @@ func TestFileModeKeptAndNoTempLeft(t *testing.T) {
 	if err := os.Chmod(p, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Wire(p, "0.2.0"); err != nil {
+	if _, err := Wire(p, "0.2.0", false); err != nil {
 		t.Fatal(err)
 	}
 	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o600 {
@@ -367,7 +380,7 @@ func TestFileModeKeptAndNoTempLeft(t *testing.T) {
 func TestConcurrentEditIsNotOverwritten(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, `{"a":1}`)
-	ch, err := Plan(p, "0.2.0")
+	ch, err := Plan(p, "0.2.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -383,7 +396,7 @@ func TestConcurrentEditIsNotOverwritten(t *testing.T) {
 	}
 	// The file appearing after a plan against a missing one is refused too.
 	p = project(t, "")
-	ch, err = Plan(p, "0.2.0")
+	ch, err = Plan(p, "0.2.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +410,7 @@ func TestConcurrentEditIsNotOverwritten(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
-		go func() { defer wg.Done(); _, _ = Wire(p, "0.2.0") }()
+		go func() { defer wg.Done(); _, _ = Wire(p, "0.2.0", false) }()
 	}
 	wg.Wait()
 	m := read(t, p)
@@ -455,12 +468,103 @@ func TestLocateNeverTheHome(t *testing.T) {
 func TestLineDiff(t *testing.T) {
 	noUserConfig(t)
 	p := project(t, `{"a":1}`)
-	ch, err := Plan(p, "0.2.0")
+	ch, err := Plan(p, "0.2.0", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	d := ch.Diff()
 	if !strings.Contains(d, `+   "extraKnownMarketplaces": {`) || !strings.Contains(d, `- {"a":1}`) || !strings.Contains(d, `"v0.2.0"`) {
 		t.Errorf("diff:\n%s", d)
+	}
+}
+
+func TestDisabledPluginStaysDisabled(t *testing.T) {
+	noUserConfig(t)
+	p := project(t, `{"enabledPlugins":{"fugaro@fugaro":false}}`)
+	ch, err := Wire(p, "0.2.0", false)
+	if err != nil || !ch.Disabled || !strings.Contains(ch.Note, "disabled by this repository") {
+		t.Fatalf("%v %+v", err, ch)
+	}
+	m := read(t, p)
+	if at(t, m, "enabledPlugins", "fugaro@fugaro") != false {
+		t.Error("flipped a disabled plugin to enabled")
+	}
+	if r := Status(p, "0.2.0", ""); r.Pin != NotWired || !strings.Contains(r.Detail, "disabled by the repository") {
+		t.Errorf("status = %+v", r)
+	}
+}
+
+func TestPrintableEscapesTerminalControls(t *testing.T) {
+	for _, in := range []string{"a\u001b[2Jb", "x\u202eevil", "a\u2066b", "nul\x00", "bell\a", "del\x7f", "line\u2028sep"} {
+		out := Printable(in)
+		for _, r := range out {
+			if r < ' ' && r != '\t' || r == 0x7f || (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069) || r == 0x2028 {
+				t.Errorf("Printable(%q) = %q still has %U", in, out, r)
+			}
+		}
+	}
+	if Printable("acme/fork-1.x") != "acme/fork-1.x" || Printable("tab\there") != "tab\there" {
+		t.Error("ordinary text changed")
+	}
+	// Repo-controlled strings reach no output raw: report, note and diff.
+	noUserConfig(t)
+	evil := "a\u001b[2Jb\u202ec"
+	p := project(t, `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"`+"a\\u001b[2Jb\\u202ec"+`","ref":"v0.1.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}`)
+	r := Status(p, "0.2.0", "")
+	if r.Pin != Foreign || strings.ContainsAny(r.Repo+r.Detail, "\x1b\u202e") {
+		t.Errorf("report = %+v", r)
+	}
+	ch, err := Wire(p, "0.2.0", true)
+	if err != nil || strings.ContainsAny(ch.Note+ch.Diff()+ch.Foreign, "\x1b\u202e") {
+		t.Errorf("note/diff unescaped: %v %q %q", err, ch.Note, ch.Diff())
+	}
+	_ = evil
+	// A raw bidi character inside a JSON string is escaped in the diff too.
+	p = project(t, "{\"k\": \"x\u202ey\"}")
+	ch, _ = Plan(p, "0.2.0", false)
+	if strings.ContainsRune(ch.Diff(), 0x202e) {
+		t.Error("the diff has a raw bidi override")
+	}
+	fe := (&ForeignError{Path: "p", Kind: "g\u001bit"}).Error()
+	if strings.Contains(fe, "\x1b") {
+		t.Error("ForeignError unescaped")
+	}
+}
+
+func TestMalformedSourceIsNotForeign(t *testing.T) {
+	noUserConfig(t)
+	for _, src := range []string{`"x"`, `{}`, `{"source":"github"}`, `{"source":5}`, `null`} {
+		p := project(t, `{"extraKnownMarketplaces":{"fugaro":{"source":`+src+`}},"enabledPlugins":{"fugaro@fugaro":true}}`)
+		r := Status(p, "0.2.0", "")
+		if r.Pin != NotWired || !strings.Contains(r.Detail, "malformed source") {
+			t.Errorf("%s: %+v", src, r)
+		}
+	}
+}
+
+func TestDiffIsBounded(t *testing.T) {
+	big := make([]string, 5000)
+	for i := range big {
+		big[i] = `"k` + strings.Repeat("x", i%7) + `": 1`
+	}
+	d := lineDiff(big, big[:4999], true)
+	if !strings.Contains(d, "too long to diff") {
+		t.Errorf("diff = %.80s", d)
+	}
+}
+
+func TestLocateIgnoresSettingsOutsideACheckout(t *testing.T) {
+	outer := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(outer, ".claude"), 0o755)
+	_ = os.WriteFile(filepath.Join(outer, ".claude", "settings.json"), []byte(`{}`), 0o644)
+	sub := filepath.Join(outer, "sub")
+	_ = os.Mkdir(sub, 0o755)
+	if loc, ok := Locate(sub); ok {
+		t.Errorf("settings with no .git above: %+v", loc)
+	}
+	// With .git above the settings it is found; below it, the settings win.
+	_ = os.Mkdir(filepath.Join(outer, ".git"), 0o755)
+	if loc, ok := Locate(sub); !ok || !loc.Exists || loc.Root != outer {
+		t.Errorf("loc = %+v", loc)
 	}
 }

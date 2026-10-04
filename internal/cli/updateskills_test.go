@@ -124,7 +124,7 @@ func TestUpdateSkillsOutsideCheckoutPrintsSnippet(t *testing.T) {
 	if es, _ := os.ReadDir(dir); len(es) != 0 {
 		t.Errorf("wrote into %s: %v", dir, es)
 	}
-	if _, _, err := execute(t, "update-skills", "--check", "--dir", dir); err != nil {
+	if _, _, err := execute(t, "update-skills", "--check", "--dir", dir); ExitCode(err) != 1 || !strings.Contains(err.Error(), "not in a checkout") {
 		t.Errorf("--check outside a checkout: %v", err)
 	}
 }
@@ -145,7 +145,7 @@ func TestUpdateSkillsInvalidFileLeftAlone(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, settings := skillCheckout(t, "{ // mine\n}")
 	_, errOut, err := execute(t, "update-skills", "--dir", root)
-	if ExitCode(err) != 1 || !strings.Contains(errOut, `"ref": "v0.2.0"`) || !strings.Contains(errOut, "not valid JSON") {
+	if ExitCode(err) != 1 || !strings.Contains(errOut, `"ref": "v0.2.0"`) || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Fatalf("err=%v stderr=%q", err, errOut)
 	}
 	if b, _ := os.ReadFile(settings); string(b) != "{ // mine\n}" {
@@ -303,5 +303,101 @@ func TestNoWarningForWatchOrOtherCommands(t *testing.T) {
 	}
 	if _, errOut, _ := execute(t, "update-skills", "--check"); strings.Contains(errOut, "warning: the Fugaro plugin pinned") {
 		t.Errorf("update-skills duplicated the line: %q", errOut)
+	}
+}
+
+func forkAt(repo, ref string) string {
+	return `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"` + repo + `","ref":"` + ref + `"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
+}
+
+func TestForkAlreadyAtOurTagIsStillNamed(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, _ := skillCheckout(t, forkAt("acme/fugaro-fork", "v0.2.0"))
+	out, errOut, err := execute(t, "update-skills", "--dir", root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "WARNING") || !strings.Contains(errOut, "acme/fugaro-fork") || !strings.Contains(out, "foreign") {
+		t.Errorf("stdout=%q stderr=%q", out, errOut)
+	}
+	// --json: the object says it, stderr still warns.
+	out, errOut, err = execute(t, "update-skills", "--json", "--dir", root)
+	var got updateSkillsOutput
+	if err != nil || json.Unmarshal([]byte(out), &got) != nil || got.Foreign != "acme/fugaro-fork" || !strings.Contains(errOut, "WARNING") {
+		t.Errorf("json: err=%v out=%q stderr=%q", err, out, errOut)
+	}
+	// --check says it too and exits 1.
+	_, errOut, err = execute(t, "update-skills", "--check", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(errOut, "acme/fugaro-fork") {
+		t.Errorf("check: err=%v stderr=%q", err, errOut)
+	}
+}
+
+func TestForkRefNeedsAllowFork(t *testing.T) {
+	withVersion(t, "0.2.0")
+	content := forkAt("acme/fugaro-fork", "v0.1.0")
+	root, settings := skillCheckout(t, content)
+	_, errOut, err := execute(t, "update-skills", "--dir", root)
+	if ExitCode(err) != 1 || !strings.Contains(errOut, "acme/fugaro-fork") || !strings.Contains(err.Error(), "--allow-fork") {
+		t.Fatalf("err=%v stderr=%q", err, errOut)
+	}
+	if b, _ := os.ReadFile(settings); string(b) != content {
+		t.Fatalf("written without --allow-fork: %s", b)
+	}
+	out, _, _ := execute(t, "update-skills", "--json", "--dir", root)
+	var got updateSkillsOutput
+	if json.Unmarshal([]byte(out), &got) != nil || got.Error == "" || got.Foreign != "acme/fugaro-fork" {
+		t.Errorf("json refusal: %q", out)
+	}
+	if _, errOut, err := execute(t, "update-skills", "--allow-fork", "--dir", root); err != nil || !strings.Contains(errOut, "WARNING") {
+		t.Fatalf("allow-fork: err=%v stderr=%q", err, errOut)
+	}
+	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), `"v0.2.0"`) || !strings.Contains(string(b), "acme/fugaro-fork") {
+		t.Errorf("settings = %s", b)
+	}
+}
+
+func TestRepoStringsAreEscaped(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, _ := skillCheckout(t, forkAt(`a\u001b[2Jb\u202ec`, "v0.2.0"))
+	for _, args := range [][]string{{"update-skills"}, {"update-skills", "--check"}} {
+		out, errOut, _ := execute(t, append(args, "--dir", root)...)
+		if strings.ContainsAny(out+errOut, "\x1b\u202e") || !strings.Contains(out+errOut, `\u001b`) {
+			t.Errorf("%v: raw control characters or no escape: %q %q", args, out, errOut)
+		}
+	}
+}
+
+func TestDisabledPluginReported(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, settings := skillCheckout(t, `{"enabledPlugins":{"fugaro@fugaro":false}}`)
+	out, errOut, err := execute(t, "update-skills", "--dir", root)
+	if err != nil || !strings.Contains(errOut, "disabled by this repository") || !strings.Contains(out, "not wired") {
+		t.Fatalf("err=%v out=%q stderr=%q", err, out, errOut)
+	}
+	if b, _ := os.ReadFile(settings); !strings.Contains(string(b), `"fugaro@fugaro": false`) {
+		t.Errorf("settings = %s", b)
+	}
+}
+
+func TestUpdateSkillsRefusalsAreUserErrorsWithJSONObject(t *testing.T) {
+	withVersion(t, "0.2.0")
+	for name, content := range map[string]string{
+		"invalid": "{ // mine\n}",
+		"git":     `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"git","url":"https://x.invalid/r.git"}}}}`,
+	} {
+		root, settings := skillCheckout(t, content)
+		_, errOut, err := execute(t, "update-skills", "--dir", root)
+		if ExitCode(err) != 1 || !strings.Contains(errOut, `"ref": "v0.2.0"`) {
+			t.Errorf("%s: err=%v stderr=%q", name, err, errOut)
+		}
+		out, _, err := execute(t, "update-skills", "--json", "--dir", root)
+		var got updateSkillsOutput
+		if ExitCode(err) != 1 || json.Unmarshal([]byte(out), &got) != nil || got.Error == "" || got.Snippet == "" {
+			t.Errorf("%s json: err=%v out=%q", name, err, out)
+		}
+		if b, _ := os.ReadFile(settings); string(b) != content {
+			t.Errorf("%s: rewritten", name)
+		}
 	}
 }

@@ -188,21 +188,28 @@ func readPin(path string) (ref, repo string, wired bool, detail string) {
 	if err != nil || !present {
 		return "", "", false, "no " + Marketplace + " marketplace in " + path
 	}
-	source, _, _ := objectAt(entry, "source")
-	if raw, ok := (object(source)).get("source"); ok {
-		var kind string
-		_ = json.Unmarshal(raw, &kind)
-		if kind != "github" {
-			// Not ours to compare: shown as foreign with the kind as the repo.
-			repo = kind + " source"
+	malformed := "malformed source of the " + Marketplace + " marketplace in " + path
+	source, hasSource, err := objectAt(entry, "source")
+	if err != nil || !hasSource {
+		return "", "", false, malformed
+	}
+	switch kind := stringAt(source, "source"); {
+	case kind == "":
+		return "", "", false, malformed
+	case kind != "github":
+		// Not ours to compare: shown as foreign with the kind as the repo.
+		repo = Printable(kind) + " source"
+	default:
+		if repo = Printable(stringAt(source, "repo")); repo == "" {
+			return "", "", false, malformed
 		}
 	}
-	if repo == "" {
-		repo = stringAt(source, "repo")
-	}
-	ref = stringAt(source, "ref")
+	ref = Printable(stringAt(source, "ref"))
 	plugins, _, _ := objectAt(top, "enabledPlugins")
 	if raw, ok := plugins.get(PluginID); !ok || string(raw) != "true" {
+		if ok && string(raw) == "false" {
+			return ref, repo, false, "the plugin " + PluginID + " is disabled by the repository (enabledPlugins is false in " + path + ")"
+		}
 		return ref, repo, false, "the plugin " + PluginID + " is not enabled in " + path
 	}
 	return ref, repo, true, ""
