@@ -435,11 +435,10 @@ func TestOrgPolicyErrorVerbatim(t *testing.T) {
 	r := newProjectRig(t)
 	const msg = "Constraint constraints/gcp.restrictProjectCreation violated for the organization"
 	r.crm.FailCreates(403, "PERMISSION_DENIED", msg)
-	out, _, err := r.run(t, true, newProj+"\n", "--create-project")
+	_, _, err := r.run(t, true, newProj+"\n", "--create-project")
 	if err == nil || !strings.Contains(err.Error(), msg) || !strings.Contains(err.Error(), "organization policy") {
 		t.Errorf("err = %v: want the service's text and the likely cause", err)
 	}
-	t.Log(out)
 	if len(r.fb.Adds()) != 0 {
 		t.Error("Firebase was added after a refused creation")
 	}
