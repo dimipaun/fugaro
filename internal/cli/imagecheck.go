@@ -69,7 +69,9 @@ func newImageCheckCmd() *cobra.Command {
 			"Run from a checkout, it uses your own git access and ADC and only prints each\n" +
 			"workflow's decision: it never submits a build (--dry-run is accepted, and is what\n" +
 			"it always does). Start a rebuild with fugaro image build.\n\n" +
-			"With --job, as the repository's daily check job runs it, it reads the job's\n" +
+			"With --job, as the repository's daily check job runs it (it refuses to submit\n" +
+			"unless CLOUD_RUN_JOB or CLOUD_RUN_EXECUTION is set, as Cloud Run sets them, and\n" +
+			"in a coding agent's session; --dry-run is always allowed), it reads the job's\n" +
 			"spec from " + infra.CheckSpecEnv + ", submits a Cloud Build rebuild when a trigger fires\n" +
 			"(not with --dry-run), writes builds/<slug>/<workflow>/check.json, and logs one\n" +
 			"JSON line per workflow. It exits 2 when the check itself failed.",
@@ -438,10 +440,17 @@ func jobGitEnv(ctx context.Context, s infra.CheckJobSpec) ([]string, error) {
 func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	ctx := cmd.Context()
 	// The job submits billable rebuilds with no one to type: it runs in Cloud
-	// Run, where no coding agent's marker is set. In a session that has one,
-	// it submits nothing (--dry-run still decides).
-	if m := agentMarker(os.Getenv); m != "" && !o.dryRun {
-		return userErr("%s", initflow.AgentRefusal(m))
+	// Run, where CLOUD_RUN_JOB (or CLOUD_RUN_EXECUTION) is set and no coding
+	// agent's marker is. Anywhere else, or in a session with an agent marker,
+	// it submits nothing (--dry-run still decides). Not a barrier: an
+	// environment can be set by hand.
+	if !o.dryRun {
+		if m := agentMarker(os.Getenv); m != "" {
+			return userErr("%s", initflow.AgentRefusal(m))
+		}
+		if os.Getenv("CLOUD_RUN_JOB") == "" && os.Getenv("CLOUD_RUN_EXECUTION") == "" {
+			return userErr("fugaro image check --job submits billable rebuilds and runs only as the repository's Cloud Run job (CLOUD_RUN_JOB is not set here); from a checkout, fugaro image check only prints the decision, and fugaro image build starts a rebuild, which you confirm by typing")
+		}
 	}
 	now := time.Now().UTC().Truncate(time.Second)
 	lg := &checkLogger{w: cmd.OutOrStdout(), dryRun: o.dryRun}

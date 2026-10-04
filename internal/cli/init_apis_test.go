@@ -218,3 +218,40 @@ func TestPlanOnlyYesChangesNothing(t *testing.T) {
 		}
 	})
 }
+
+// --plan-only never lets --yes confirm anything, in any mode: the converge,
+// --firebase, --repo, with or without --json and --non-interactive. With the
+// Cloud Resource Manager API disabled no enable call is made.
+func TestPlanOnlyYesNeverConfirmsInAnyMode(t *testing.T) {
+	noEnableWait(t, 1)
+	for name, args := range map[string][]string{
+		"converge":                 {"init", "--plan-only", "--yes"},
+		"--json":                   {"init", "--plan-only", "--yes", "--json"},
+		"--non-interactive":        {"init", "--plan-only", "--yes", "--non-interactive"},
+		"--firebase":               {"init", "--plan-only", "--yes", "--firebase", initProject},
+		"--repo":                   {"init", "--repo", "--plan-only", "--yes"},
+		"--repo --non-interactive": {"init", "--repo", "--plan-only", "--yes", "--non-interactive", "--json"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newInitRig(t)
+			r.stateBucket()
+			r.su.Disable(infra.ServiceResourceManager, r.crm.Server)
+			_, _, _ = executeStdin(t, "", args...)
+			if got := r.su.Enables(); len(got) != 0 {
+				t.Fatalf("enables = %q", got)
+			}
+			if len(r.ran(t, "apply")) != 0 {
+				t.Fatalf("applied: %q", r.calls(t))
+			}
+		})
+	}
+	// The one place --yes is read, in any path that reaches it.
+	var out strings.Builder
+	r := &initRun{o: &initOptions{yes: true, planOnly: true}, w: &out, cmd: NewRootCmd()}
+	if ok, err := r.ask("changes something"); err != nil || ok {
+		t.Fatalf("ask under --plan-only --yes: %v, %v", ok, err)
+	}
+	if r.conditions().Yes {
+		t.Error("conditions carry --yes under --plan-only")
+	}
+}

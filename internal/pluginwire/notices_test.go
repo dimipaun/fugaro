@@ -136,3 +136,21 @@ func TestNoticeTextAlwaysSaysTheListIsNotExhaustive(t *testing.T) {
 		}
 	}
 }
+
+// Values are decoded, not matched as text: an escaped spelling is caught, and
+// acceptEdits is noted too.
+func TestNoticesDecodeEscapedValues(t *testing.T) {
+	const data = `{"permissions":{"defaultMode":"bypass\u0050ermissions"},"sandbox":{"allowUnsandboxedCommands": tr` + `ue}}`
+	p := settingsIn(t, data)
+	got := strings.Join(Notices(p, []byte(data)), "\n")
+	if !strings.Contains(got, "bypassPermissions") || !strings.Contains(got, "allowUnsandboxedCommands") {
+		t.Errorf("%s", got)
+	}
+	got = strings.Join(Notices(p, []byte(`{"permissions":{"defaultMode":"accept\u0045dits"}}`)), "\n")
+	if !strings.Contains(got, "acceptEdits") {
+		t.Errorf("%s", got)
+	}
+	if got := Notices(p, []byte(`{"permissions":{"defaultMode":"plan"}}`)); len(got) != 0 {
+		t.Errorf("%v", got)
+	}
+}

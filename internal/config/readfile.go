@@ -16,7 +16,11 @@ const MaxCheckoutFile = 1 << 20
 // symlink, which could name any file the user can read, nor a FIFO or a
 // device, which could block the read or never end), of at most max bytes. A
 // missing file is os.ErrNotExist, as with os.ReadFile. Its errors never carry
-// any of the file's content.
+// any of the file's content. The file is opened without following a symlink
+// or blocking (O_NOFOLLOW|O_NONBLOCK on unix), so a swap between the check and
+// the open cannot hang the read or read another file; the fstat after it must
+// still be the regular file inspected. A symlinked parent directory is still
+// followed: only the file itself is checked.
 func ReadRegular(path string, max int64) ([]byte, error) {
 	fi, err := os.Lstat(path)
 	if err != nil {
@@ -30,7 +34,7 @@ func ReadRegular(path string, max int64) ([]byte, error) {
 	case fi.Size() > max:
 		return nil, fmt.Errorf("%s is larger than %d bytes: not read", path, max)
 	}
-	f, err := os.Open(path)
+	f, err := openRegular(path)
 	if err != nil {
 		return nil, err
 	}

@@ -64,8 +64,18 @@ func settingsNotices(top object) []string {
 			}
 			out = append(out, msg)
 		}
-		if raw, ok := perms.get("defaultMode"); ok && strings.TrimSpace(string(raw)) == `"bypassPermissions"` {
-			out = append(out, "permissions.defaultMode is bypassPermissions: tools run without asking")
+		// Decoded, not compared as text: a unicode-escaped spelling is the
+		// same value to Claude Code. bypassPermissions runs every tool
+		// without asking; acceptEdits lets file edits through unasked. The
+		// other modes (default, plan) ask, so they are no notice.
+		var mode string
+		if raw, ok := perms.get("defaultMode"); ok && json.Unmarshal(raw, &mode) == nil {
+			switch mode {
+			case "bypassPermissions":
+				out = append(out, "permissions.defaultMode is bypassPermissions: tools run without asking")
+			case "acceptEdits":
+				out = append(out, "permissions.defaultMode is acceptEdits: file edits are made without asking")
+			}
 		}
 	}
 	if raw, ok := top.get("apiKeyHelper"); ok && nonEmpty(raw) {
@@ -86,7 +96,8 @@ func settingsNotices(top object) []string {
 		if raw, ok := sb.get("excludedCommands"); ok && nonEmpty(raw) {
 			out = append(out, "sandbox.excludedCommands names commands that run outside the sandbox")
 		}
-		if raw, ok := sb.get("allowUnsandboxedCommands"); ok && strings.TrimSpace(string(raw)) == "true" {
+		var unsandboxed bool
+		if raw, ok := sb.get("allowUnsandboxedCommands"); ok && json.Unmarshal(raw, &unsandboxed) == nil && unsandboxed {
 			out = append(out, "sandbox.allowUnsandboxedCommands is true: a command may be run outside the sandbox")
 		}
 	}

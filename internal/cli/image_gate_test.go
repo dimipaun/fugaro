@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -54,7 +55,7 @@ func TestImageBuildCloudMatrix(t *testing.T) {
 			if buildPosts(fb) != 0 {
 				t.Fatalf("a build was submitted")
 			}
-			// Refused before it is asked, nothing at all reaches Cloud Build.
+			// A refusal that cannot be typed makes no cloud call at all.
 			typedAtTerminal := tc.terminal && tc.marker == "" && !strings.Contains(strings.Join(tc.args, " "), "--json")
 			if !typedAtTerminal && len(fb.Requests()) != 0 {
 				t.Fatalf("Cloud Build was reached: %d requests", len(fb.Requests()))
@@ -88,12 +89,53 @@ func TestImageBuildLocalNeedsNoConfirmation(t *testing.T) {
 	}
 }
 
-// The check job runs in Cloud Run with no terminal and submits the daily
-// rebuild; the same command in a coding agent's session submits nothing.
-func TestImageCheckJobRefusesInAnAgentSession(t *testing.T) {
+// The check job runs in Cloud Run, where CLOUD_RUN_JOB is set and no coding
+// agent's marker is: anywhere else it submits nothing. --dry-run submits
+// nothing either, so it is always allowed.
+func TestImageCheckJobRefusals(t *testing.T) {
+	for _, tc := range []struct {
+		name, job, agent string
+		args             []string
+		refused          string
+	}{
+		{"an agent session, in a job", "j", "CLAUDECODE", []string{"--force"}, "CLAUDECODE is set"},
+		{"no job marker", "", "", []string{"--force"}, "Cloud Run job"},
+		{"no job marker, an agent", "", "CLAUDECODE", nil, "CLAUDECODE is set"},
+		{"--dry-run, an agent, no marker", "", "CLAUDECODE", []string{"--dry-run"}, ""},
+		{"--dry-run, no marker", "", "", []string{"--dry-run"}, ""},
+		{"the marker set", "j", "", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, k := range append([]string{"CLOUD_RUN_JOB", "CLOUD_RUN_EXECUTION"}, agentMarkers...) {
+				t.Setenv(k, "")
+			}
+			if tc.job != "" {
+				t.Setenv("CLOUD_RUN_JOB", tc.job)
+			}
+			if tc.agent != "" {
+				t.Setenv(tc.agent, "1")
+			}
+			_, _, err := execute(t, append([]string{"image", "check", "--job"}, tc.args...)...)
+			if tc.refused != "" {
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), tc.refused) {
+					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				}
+				return
+			}
+			// Past the gate: the job's own spec is what is missing here.
+			if err == nil || !strings.Contains(err.Error(), "is not set") {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
+}
+
+// The refusal comes before the local config or the bucket is read at all.
+func TestImageBuildRefusalPrecedesTheCloud(t *testing.T) {
+	t.Setenv("FUGARO_CONFIG", filepath.Join(t.TempDir(), "missing.yaml"))
 	t.Setenv("CLAUDECODE", "1")
-	_, _, err := execute(t, "image", "check", "--job", "--force")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "CLAUDECODE is set") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	_, _, err := execute(t, "image", "build")
+	if err == nil || !strings.Contains(err.Error(), "CLAUDECODE is set") {
+		t.Fatalf("err = %v", err)
 	}
 }

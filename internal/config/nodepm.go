@@ -97,11 +97,18 @@ func DetectNodePM(root string) (*NodePM, error) {
 	case "yarn":
 		major, _ := strconv.Atoi(strings.SplitN(version, ".", 2)[0])
 		pm.Berry = major >= 2 || (version == "" && exists(".yarnrc.yml"))
+		global := false
+		if pm.Berry {
+			var err error
+			if global, err = yarnGlobalCache(root, major); err != nil {
+				return nil, fmt.Errorf(".yarnrc.yml: %w", err)
+			}
+		}
 		switch {
 		case !pm.Berry:
 			pm.Install = "yarn install --frozen-lockfile"
 			pm.Cache = []string{"~/.cache/yarn"}
-		case yarnGlobalCache(root, major):
+		case global:
 			pm.Install = "yarn install --immutable"
 			pm.Cache = []string{"~/.yarn/berry/cache"}
 		default:
@@ -115,17 +122,22 @@ func DetectNodePM(root string) (*NodePM, error) {
 // yarnGlobalCache reports whether Yarn Berry keeps its cache in the user's
 // home: .yarnrc.yml's enableGlobalCache when set, otherwise Yarn's default,
 // which is true from Yarn 4 (major 0 means the version is unknown).
-func yarnGlobalCache(root string, major int) bool {
+// A .yarnrc.yml that exists but is not a regular file within the cap (a
+// symlink, say) is an error, not a silent fall back to the default.
+func yarnGlobalCache(root string, major int) (bool, error) {
 	var rc struct {
 		EnableGlobalCache *bool `yaml:"enableGlobalCache"`
 	}
-	if data, err := ReadRegular(filepath.Join(root, ".yarnrc.yml"), MaxCheckoutFile); err == nil {
-		_ = yaml.Unmarshal(data, &rc) // an unreadable .yarnrc.yml falls back to the default
+	switch data, err := ReadRegular(filepath.Join(root, ".yarnrc.yml"), MaxCheckoutFile); {
+	case err == nil:
+		_ = yaml.Unmarshal(data, &rc) // invalid YAML falls back to the default
+	case !errors.Is(err, fs.ErrNotExist):
+		return false, err
 	}
 	if rc.EnableGlobalCache != nil {
-		return *rc.EnableGlobalCache
+		return *rc.EnableGlobalCache, nil
 	}
-	return major == 0 || major >= 4
+	return major == 0 || major >= 4, nil
 }
 
 // DefaultCache is the cache entry a workflow gets when fugaro.yaml declares

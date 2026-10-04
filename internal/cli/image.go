@@ -155,6 +155,14 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 // fugaro.yaml and origin are read here.
 func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
+	// A Cloud Build is billable: the project's name typed at a real
+	// terminal, never --json, a pipe or a coding agent's session. A run that
+	// can't take it is refused first, before the local config, the bucket or
+	// anything else in the cloud is touched.
+	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv)}
+	if !initflow.CanConfirm(initflow.Typed, conds) {
+		return buildNotConfirmable(conds, o.repo, o.workflow)
+	}
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
 		return err
@@ -222,13 +230,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 		return err
 	}
 	spec.NoSmoke = o.noSmoke
-	// A Cloud Build is billable: the project's name typed at a real
-	// terminal, never --json, a pipe or a coding agent's session. A run that
-	// can't take it is refused here, before any cloud call.
-	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv)}
-	if !initflow.CanConfirm(initflow.Typed, conds) {
-		return buildNotConfirmable(conds, repo, name)
-	}
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
 		return remote(err)
@@ -301,7 +302,14 @@ func buildNotConfirmable(conds initflow.Conditions, repo, workflow string) error
 	if conds.Agent != "" {
 		return userErr("%s", initflow.AgentRefusal(conds.Agent))
 	}
-	return userErr("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run fugaro image build --repo %s --workflow %s in your own terminal window", repo, workflow)
+	cmd := "fugaro image build"
+	if repo != "" {
+		cmd += " --repo " + quoteWord(repo)
+	}
+	if workflow != "" {
+		cmd += " --workflow " + quoteWord(workflow)
+	}
+	return userErr("a Cloud Build is billable, so its confirmation (the project's name) is typed at a real terminal: --json, a pipe and a coding agent never give it; run %s in your own terminal window", cmd)
 }
 
 // confirmBuild shows the ⚠ CONFIRM banner on stderr and reads the project's

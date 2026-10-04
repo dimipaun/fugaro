@@ -369,6 +369,12 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
+	// --plan-only creates and changes nothing: --yes confirms nothing under
+	// it, in any path (the converge, --firebase, --repo, the embedded repo
+	// engine). What a plan needs made first takes the typed confirmation.
+	if o.planOnly {
+		o.yes = false
+	}
 	if err := o.check(); err != nil {
 		return err
 	}
@@ -764,7 +770,7 @@ var canConfirmTyped = initflow.CanConfirm
 // conditions is what this run says about who is there.
 func (r *initRun) conditions() initflow.Conditions {
 	o := r.o
-	return initflow.Conditions{Yes: o.yes, NonInteractive: o.nonInteractive, JSON: o.asJSON,
+	return initflow.Conditions{Yes: o.yes && !o.planOnly, NonInteractive: o.nonInteractive, JSON: o.asJSON,
 		Terminal: r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
 }
 
@@ -804,7 +810,7 @@ func (r *initRun) ask(what string) (bool, error) {
 		return false, &initflow.AgentError{Marker: m}
 	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
-	if r.o.yes {
+	if r.o.yes && !r.o.planOnly {
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return true, nil
 	}

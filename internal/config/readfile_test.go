@@ -7,6 +7,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 func TestReadRegularRefusesWhatIsNotARegularFile(t *testing.T) {
@@ -75,7 +76,47 @@ func TestCheckoutFileReadsRefuseSymlinks(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(root, ".yarnrc.yml")); err != nil {
 		t.Fatal(err)
 	}
-	if !yarnGlobalCache(root, 4) {
-		t.Error("yarnGlobalCache read a .yarnrc.yml symlink")
+	if _, err := yarnGlobalCache(root, 4); err == nil {
+		t.Error("yarnGlobalCache read a .yarnrc.yml symlink, or fell back silently")
+	}
+	if g, err := yarnGlobalCache(t.TempDir(), 4); err != nil || !g {
+		t.Errorf("no .yarnrc.yml: %v, %v", g, err)
+	}
+}
+
+// A FIFO swapped in after the Lstat must not block the open: openRegular
+// returns at once, and the fstat check refuses it.
+func TestOpenRegularDoesNotBlockOnAFIFO(t *testing.T) {
+	fifo := filepath.Join(t.TempDir(), "fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		f, err := openRegular(fifo)
+		if err == nil {
+			fi, _ := f.Stat()
+			if fi.Mode().IsRegular() {
+				err = errors.New("a FIFO is regular")
+			}
+			f.Close()
+		}
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("openRegular blocked on a FIFO")
+	}
+	link := filepath.Join(t.TempDir(), "l")
+	if err := os.Symlink(fifo, link); err != nil {
+		t.Fatal(err)
+	}
+	if f, err := openRegular(link); err == nil {
+		f.Close()
+		t.Error("openRegular followed a symlink")
 	}
 }
