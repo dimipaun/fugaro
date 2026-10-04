@@ -226,17 +226,25 @@ func TestHeaderVersionEqualsPluginVersion(t *testing.T) {
 	}
 }
 
-// copyTree copies src into a fresh temp directory and returns its path, so
-// the bump script's tests can rewrite files without touching the checkout.
+// copyTree copies the bump script and the plugin from the repository at src
+// into a fresh temp directory and returns its path, so the script's tests can
+// rewrite files without touching the checkout. (cp -R with a directory
+// source behaves the same on GNU and BSD cp, unlike cp -r on a bare "..".)
 func copyTree(t *testing.T, src string) string {
 	t.Helper()
-	dst := t.TempDir()
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cp, err := exec.LookPath("cp")
 	if err != nil {
 		t.Skip("no cp")
 	}
-	if out, err := exec.Command(cp, "-r", src, dst).CombinedOutput(); err != nil {
-		t.Fatalf("cp -r %s %s: %v\n%s", src, dst, err, out)
+	dst := t.TempDir()
+	for _, name := range []string{"scripts", "plugin"} {
+		if out, err := exec.Command(cp, "-R", filepath.Join(abs, name), dst).CombinedOutput(); err != nil {
+			t.Fatalf("cp -R %s %s: %v\n%s", name, dst, err, out)
+		}
 	}
 	return dst
 }
