@@ -158,7 +158,9 @@ func openCloudFor(ctx context.Context, lc *localcfg.Config) (*cloudEnv, error) {
 	opts := gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region, LogView: lc.LogView, Endpoints: gcp.Endpoints{
 		Run: lc.Endpoints.Run, Logging: lc.Endpoints.Logging, SecretManager: lc.Endpoints.SecretManager,
 		CloudBuild: lc.Endpoints.CloudBuild, NoAuth: lc.Endpoints.NoAuth}}
-	be, err := gcp.New(ctx, opts)
+	be, err := backend.Open(ctx, lc.Backend(), map[string]backend.Opener{
+		backend.CloudRun: func(ctx context.Context) (backend.Backend, error) { return gcp.New(ctx, opts) },
+	})
 	if err != nil {
 		return nil, remote(err)
 	}

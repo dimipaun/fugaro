@@ -517,7 +517,7 @@ func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *co
 	root = strings.TrimSpace(string(out))
 	data, err := os.ReadFile(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
-		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:onboard or fugaro config example", err)}
+		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
 	}
 	cfg, problems := config.Parse(data)
 	if cfg != nil {

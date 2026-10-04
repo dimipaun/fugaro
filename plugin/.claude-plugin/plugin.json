@@ -1,7 +1,7 @@
 {
   "name": "fugaro",
   "version": "0.1.0",
-  "description": "Skills for Fugaro: onboard a repository (fugaro.yaml and its image), launch a run, check status, read logs, diagnose a run and follow up a Fugaro pull request.",
+  "description": "Skills for Fugaro: set a repository up (fugaro.yaml and its image), decide cloud versus local, work with runs (launch, status, logs, diagnose, follow up a pull request), and plan work in parallel.",
   "author": { "name": "Dimi Paun" },
   "repository": "https://github.com/dimipaun/fugaro",
   "license": "MIT"
