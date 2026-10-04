@@ -168,3 +168,15 @@ func TestReportCarriesMarker(t *testing.T) {
 		t.Fatalf("FugaroRun(report) = %q, %v", id, ok)
 	}
 }
+
+func TestPromptWorkflowRule(t *testing.T) {
+	d := PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}
+	if got := SystemPrompt(d, ""); strings.Contains(got, ".github/workflows") {
+		t.Errorf("a prompt without NoWorkflows names workflow files: %s", got)
+	}
+	d.NoWorkflows = true
+	got := SystemPrompt(d, "")
+	if !strings.Contains(got, ".github/workflows/") || strings.Count(got, ".github/workflows") != 1 {
+		t.Errorf("the rule is missing or repeated: %s", got)
+	}
+}

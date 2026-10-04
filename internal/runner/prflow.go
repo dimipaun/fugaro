@@ -157,6 +157,9 @@ func (r *run) pushBranch(ctx context.Context, sha string) error {
 	if err != nil {
 		r.warnAuthRefresh(err)
 	}
+	if rej := r.workflowGuard(ctx); rej != nil {
+		return rej // no network call for a push GitHub is sure to refuse
+	}
 	pctx, cancel := context.WithTimeout(ctx, pushTimeout)
 	defer cancel()
 	if err := r.repo.Push(pctx, r.rec.Branch); err != nil {

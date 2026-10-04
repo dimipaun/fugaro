@@ -432,8 +432,13 @@ func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done b
 	// What finalize changes is the state people see now, which they may
 	// have changed during the run: the report's "was ready" is about it.
 	r.follow.wasReady = !pr.Draft
+	if rej := r.workflowGuard(ctx); rej != nil {
+		return true, r.endRefused(ctx, rej, n, records)
+	}
 	err = r.repo.PushExisting(ctx, branch, r.follow.startSHA)
-	switch {
+	switch rejected := r.asRefusal(err); {
+	case rejected != nil:
+		return true, r.endRefused(ctx, rejected, n, records)
 	case err == nil:
 		return false, nil
 	case errors.Is(err, gitops.ErrBranchGone):
@@ -530,6 +535,11 @@ func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.
 		r.rec.Reason = (&HaltError{*h}).Error() + "; " + reason
 	}
 	r.d.Log.Warn("the pull request was not updated", "reason", reason)
+	r.storeEnded(ctx, records)
+}
+
+// storeEnded stores the report of a run that ends without posting it.
+func (r *run) storeEnded(ctx context.Context, records []verify.Record) {
 	r.updateCost()
 	var fu *FollowUpSection
 	if r.follow != nil {

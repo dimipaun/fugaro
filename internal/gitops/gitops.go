@@ -318,7 +318,7 @@ func (r *Repo) Push(ctx context.Context, branch string) error {
 		}
 	}
 	_, err = r.git(ctx, "push", "--quiet", "--force-with-lease="+ref+":"+tip, "origin", "HEAD:"+ref)
-	return err
+	return classified(err)
 }
 
 // PushExisting pushes HEAD to a branch that must still be on origin at
@@ -358,7 +358,7 @@ func (r *Repo) PushExisting(ctx context.Context, branch, expected string) error 
 		case rerr == nil && now != tip:
 			return fmt.Errorf("%s on origin moved to %s during the push: %w, so it is not overwritten (%v)", branch, now, ErrForeignTip, err)
 		}
-		return err
+		return classified(err)
 	}
 	return nil
 }
