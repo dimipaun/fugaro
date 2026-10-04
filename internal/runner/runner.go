@@ -966,7 +966,8 @@ func (r *run) readRepoFile(rel string) (string, error) {
 }
 
 func (r *run) agentLoop(ctx context.Context) {
-	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir}
+	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
+		NoWorkflows: r.providerKind == gitprov.KindGitHub}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
@@ -1468,7 +1469,15 @@ func (r *run) finalize(ctx context.Context) error {
 		if done, err := r.pushFollowUp(ctx, records); done || err != nil {
 			return err
 		}
+	} else if rej := r.workflowGuard(ctx); rej != nil {
+		r.endRefused(ctx, rej, r.prNumber(), records)
+		return nil
 	} else if err := r.repo.Push(ctx, r.rec.Branch); err != nil {
+		var rejected *gitops.PushRejected
+		if errors.As(err, &rejected) {
+			r.endRefused(ctx, rejected, r.prNumber(), records)
+			return nil
+		}
 		return fmt.Errorf("pushing %s: %w", r.rec.Branch, err)
 	}
 	// Saved at once, before anything is posted, so a run killed after

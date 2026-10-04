@@ -432,8 +432,16 @@ func (r *run) pushFollowUp(ctx context.Context, records []verify.Record) (done b
 	// What finalize changes is the state people see now, which they may
 	// have changed during the run: the report's "was ready" is about it.
 	r.follow.wasReady = !pr.Draft
+	if rej := r.workflowGuard(ctx); rej != nil {
+		r.endRefused(ctx, rej, n, records)
+		return true, nil
+	}
 	err = r.repo.PushExisting(ctx, branch, r.follow.startSHA)
+	var rejected *gitops.PushRejected
 	switch {
+	case errors.As(err, &rejected):
+		r.endRefused(ctx, rejected, n, records)
+		return true, nil
 	case err == nil:
 		return false, nil
 	case errors.Is(err, gitops.ErrBranchGone):
@@ -517,7 +525,13 @@ func (r *run) giveUpNoteAllowed(ctx context.Context) bool {
 // updates: failed, with outcome none. Its report is stored, not posted,
 // so diagnose still shows what the run did.
 func (r *run) endUnchanged(ctx context.Context, reason string, records []verify.Record) {
-	r.rec.Status, r.rec.Outcome, r.rec.Reason = runstore.StatusFailed, runstore.OutcomeNone, reason
+	r.endUnchangedAs(ctx, runstore.StatusFailed, reason, records)
+}
+
+// endUnchangedAs is endUnchanged with the status the run ends in when it
+// was neither cancelled nor halted.
+func (r *run) endUnchangedAs(ctx context.Context, status runstore.Status, reason string, records []verify.Record) {
+	r.rec.Status, r.rec.Outcome, r.rec.Reason = status, runstore.OutcomeNone, reason
 	if r.follow == nil && r.isCancelled() {
 		// A cancelled run stays cancelled (design 4.2a, E10); the PR note
 		// is its reason.
