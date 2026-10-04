@@ -26,6 +26,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
@@ -53,6 +54,7 @@ type initOptions struct {
 	registryCleanup                     string
 	planOnly, printVars, configOnly     bool
 	forget, yes, asJSON                 bool
+	nonInteractive                      bool
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
@@ -167,6 +169,7 @@ Terraform's state, destroying nothing.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
+	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt: a step that needs you is listed under left_for_you, and applying needs --yes (else the run only plans); --yes never covers creating a project, linking billing or a secret")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "with --repo: the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config)")
@@ -214,6 +217,10 @@ type initResult struct {
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
 	Warnings   []string                   `json:"warnings,omitempty"`
+	// Stages and LeftForYou are the converge's account (initflow): each
+	// stage's state, and what only the user can do.
+	Stages     []initflow.StageResult `json:"stages,omitempty"`
+	LeftForYou []initflow.Left        `json:"left_for_you"`
 	// Firebase and RTDBURL are set by init --firebase.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`
@@ -265,41 +272,24 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 		return err
 	}
 
-	// 1. The environment.
-	bin, err := r.checkEnv(lc)
-	if err != nil {
-		return err
+	e := &initEngine{r: r, lc: lc, spec: spec, path: path, old: old}
+	if !o.forget && !o.configOnly {
+		// The default and --firebase modes: the converge loop over the
+		// engines (init_stages.go).
+		return e.converge(cmd.Context())
 	}
 
-	// 2. The workdir, and terraform in it.
-	dir, err := infra.InstallationWorkdir(os.Getenv, lc.GCPProject)
-	if err != nil {
-		return userErr("%v", err)
-	}
-	wd, t, err := r.terraform(bin, dir, "installation")
-	if err != nil {
-		return err
-	}
-	r.res.Workdir = wd.Dir
-
+	// 1. The environment, 2. the workdir, the clients and Cloud Resource
+	// Manager.
 	ctx := cmd.Context()
-	c, err := newInitClients(ctx, lc)
-	if err != nil {
+	if err := e.setup(ctx); err != nil {
 		return err
 	}
-	if err := r.resourceManager(ctx, c); err != nil {
-		return err
-	}
-
-	switch {
-	case o.firebase != "":
-		err = r.initFirebase(ctx, c, t, wd, bin, lc, spec, path, old)
-	case o.forget:
+	c, t, wd := e.c, e.t, e.wd
+	if o.forget {
 		err = r.forget(ctx, c, t, wd, spec)
-	case o.configOnly:
+	} else {
 		err = r.configOnly(ctx, c, t, wd, lc, spec, path, old)
-	default:
-		err = r.install(ctx, c, t, wd, lc, spec, path, old)
 	}
 	if err != nil {
 		return err
@@ -576,7 +566,7 @@ func (r *initRun) confirm(what, undone string) error {
 		return err
 	}
 	if !ok {
-		if !stdinIsTerminal(r.cmd.InOrStdin()) {
+		if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
 			return userErr("this step needs a confirmation: run fugaro init at a terminal and type the project's name, or pass --yes once you have read what it does; %s", undone)
 		}
 		return userErr("not confirmed (the project's name was not typed); %s", undone)
@@ -592,7 +582,7 @@ func (r *initRun) ask(what string) (bool, error) {
 		fmt.Fprintln(r.w, "  confirmed by --yes")
 		return true, nil
 	}
-	if !stdinIsTerminal(r.cmd.InOrStdin()) {
+	if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
 		return false, nil
 	}
 	fmt.Fprintf(r.w, "Type %s to apply to GCP project %s: ", r.projectName, r.gcpProject)
@@ -629,7 +619,7 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 	}
 	if !ok {
 		why := "this step needs a confirmation: rerun at a terminal and type the project's name, or pass --yes once you have read what it does, or"
-		if stdinIsTerminal(r.cmd.InOrStdin()) {
+		if !r.o.nonInteractive && stdinIsTerminal(r.cmd.InOrStdin()) {
 			why = "not confirmed (the project's name was not typed):"
 		}
 		return userErr("%s enable the Cloud Resource Manager API yourself with %s and rerun; fugaro init needs it to read the project's number. Nothing was enabled or applied",
@@ -1295,6 +1285,9 @@ func (r *initRun) forget(ctx context.Context, c *infra.Clients, t *tf.TF, wd *in
 func (r *initRun) printResult() error {
 	if !r.o.asJSON {
 		return nil
+	}
+	if r.res.LeftForYou == nil {
+		r.res.LeftForYou = []initflow.Left{} // an array, never null
 	}
 	enc := json.NewEncoder(r.cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
