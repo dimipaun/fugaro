@@ -11,6 +11,12 @@ A push of a strict `vX.Y.Z` tag triggers two independent workflows:
 
 Neither workflow runs the test suite; CI already did on main. Both workflows run `scripts/release-gate.sh` first, so a tag on an off-main or red commit publishes nothing (no binaries, no images). It refuses unless the tagged commit is reachable from `origin/main` and the GitHub Actions checks `test`, `terraform` and `rules` all succeeded on it (a check of that name from another app does not count); if CI is still running, re-run the failed job once it is green. `release.yml` also requires the plugin version to equal the tag.
 
+## One-time checklist
+
+- **A tag ruleset protecting `v*`.** Repository settings, Rules, Rulesets, New tag ruleset: pattern `v*`, restrict updates and restrict deletions, no bypass list. Without it, a tag could be moved or deleted by anyone with push access, defeating "a published tag is never moved or re-cut" below and the Go module proxy's and the images' caching of it.
+- **Making a new image package public**, the first time each of the four is published: see the next section.
+- **Keeping the price table current.** `internal/pricing/table.go`'s `checkedAt` records the day its rates were last compared against <https://platform.claude.com/docs/en/about-claude/pricing>; refresh the rows and bump it when a release changes a model's price, so `fugaro`'s cost estimates don't quietly drift from what the Console actually bills.
+
 ## Making the image packages public (one time per package)
 
 A package that a workflow creates on ghcr.io is private. The mirror (below) reads the source with no credentials, and a plain `docker pull` has none either, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
@@ -45,6 +51,22 @@ The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quaran
 - **Turn on tag protection and immutable releases (the repository owner's setting; Fugaro does not change repository settings).** A git tag is mutable, and the plugin pin and the image tags are anchored to it, so: add a GitHub ruleset that restricts updates and deletions of `v*` tags (Settings, Rules, Rulesets, target tags `v*`, restrict updates and deletions), and enable immutable releases. Without them, anyone who can push tags can move `vX.Y.Z` after users pin to it.
 - **Refresh `internal/pricing`'s `checkedAt` date** after checking the vendor's price page (`fugaro budget prices` warns that the table is older than 90 days: the table was last checked 2026-09-30, so it warns from 2026-12-29).
 - The binary prints the commit it was built from (`fugaro doctor --plugin`, `fugaro update-skills`) with the one line that checks the tag: `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print that commit: on the `^{}` line for an annotated tag, on the only line for a lightweight tag (the `^{}` pattern alone prints nothing for one, which is why both are given). Run it once after tagging.
+
+`scripts/release.sh X.Y.Z` does the whole thing from a clean `main`: it checks every precondition below, bumps the plugin through a PR, waits for it to merge, verifies the merge commit, then asks before tagging. It needs `gh` installed and authenticated (`gh auth login`) and nothing else; it never force-pushes, never pushes to `main` directly, and never deletes or re-tags a release.
+
+1. Preconditions, checked in order and stopping at the first failure: `X.Y.Z` is strict SemVer (no `v`, no pre-release suffix); the working tree is clean; the current branch is `main` and equals `origin/main` after a fetch; `gh` is installed and authenticated; the tag `vX.Y.Z` doesn't already exist locally or on origin (a release is never re-tagged, see "Rolling back" below); `X.Y.Z` is greater than the latest released tag; and `test`, `terraform` and `rules` all succeeded on the tip of `main` (reusing `scripts/release-gate.sh`).
+2. It creates `release/vX.Y.Z` from `main`, runs `scripts/bump-plugin-version.sh X.Y.Z` (below), commits and pushes it, opens a PR to `main` and turns on squash auto-merge.
+3. It polls (every 30s, 45 minutes by default — `--timeout-minutes` to change it) until that PR merges, stopping immediately if it's closed unmerged or one of its checks fails.
+4. Once merged, it pulls `main`, re-checks the plugin version and the release gate against the merge commit, then prints a summary (tag, commit, checks) and the standard reminder that a pushed tag is permanent, and asks `Create and push tag vX.Y.Z? [y/N]` (default no; `--yes` answers it, nothing else).
+5. On yes, it creates and pushes the annotated tag and prints the two workflow run URLs to watch, plus this page's post-release checklist (verify-public, making a new image package public once, verifying the release).
+
+`--dry-run` stops after printing the plan for step 2, changing nothing. Re-running after an interruption (including Ctrl-C, which it catches) is safe: it looks for an existing `release/vX.Y.Z` branch or PR — merged, open or closed — before creating anything, and continues from there.
+
+`scripts/release_test.go` covers this against a local bare repository and a fake `gh`: every precondition, `--dry-run`, the full happy path (exactly one branch, one commit, one PR, the tag only once the prompt is answered `y`), `--yes`, resuming after the PR already merged, a closed-unmerged PR, and a failed check.
+
+### Manual steps (fallback)
+
+Only needed if `scripts/release.sh` can't run (no `gh`, or something it doesn't handle):
 
 1. Main is green: `test`, `terraform` and `rules` passed on the commit to be released (`gh run list --branch main`).
 2. Bump the plugin and commit it through a PR to main:
