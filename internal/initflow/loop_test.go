@@ -663,3 +663,100 @@ func TestPlanOnlyEmptyPlanIsDone(t *testing.T) {
 		t.Errorf("firebase %+v, log %v", res.Stages[2], log)
 	}
 }
+
+func TestValidateRejectsNilStage(t *testing.T) {
+	if _, err := Validate([]Stage{nil}); err == nil {
+		t.Error("a nil stage was accepted")
+	}
+}
+
+func TestPanickingStageFailsInsteadOfCrashing(t *testing.T) {
+	var log []string
+	f := &panicky{fake: &fake{name: Installation, log: &log}}
+	res, err := Run(context.Background(), []Stage{f, &fake{name: Firebase, log: &log}}, yesOpts())
+	if err != nil || res.Failed == nil || res.Failed.Stage != Installation || !strings.Contains(res.Failed.Error, "panicked") {
+		t.Fatalf("%v %+v", err, res.Failed)
+	}
+	if count(log, "apply "+Firebase) != 0 {
+		t.Error("the stage after a panic ran")
+	}
+}
+
+type panicky struct{ *fake }
+
+func (panicky) Apply(context.Context, Env) (Outcome, error) { panic("boom") }
+
+func TestCheckMayNotReturnChangedFailedOrUnknown(t *testing.T) {
+	for _, st := range []State{Changed, Failed, "", "weird"} {
+		var log []string
+		f := &fake{name: Installation, log: &log}
+		g := &stateStage{fake: f, st: st}
+		res, err := Run(context.Background(), []Stage{g}, yesOpts())
+		if err != nil || res.Failed == nil || !strings.Contains(res.Failed.Error, "Check returned the state") || count(log, "apply") != 0 {
+			t.Errorf("state %q: %v %+v %v", st, err, res.Failed, log)
+		}
+	}
+}
+
+type stateStage struct {
+	*fake
+	st State
+}
+
+func (s *stateStage) Check(context.Context) (Status, error) { return Status{State: s.st}, nil }
+
+func TestCancelledContextStopsWithAClearResult(t *testing.T) {
+	var log []string
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := Run(ctx, fakes(&log, Preflight, Installation), yesOpts())
+	if err != nil || res.Failed == nil || !strings.Contains(res.Failed.Error, "cancelled") || count(log, "apply") != 0 {
+		t.Fatalf("%v %+v %v", err, res.Failed, log)
+	}
+}
+
+func TestBlockedStageHoldsBackLaterPlans(t *testing.T) {
+	var log []string
+	stages := fakes(&log, Preflight, Installation, Firebase)
+	stages[0].(*fake).status = Status{State: Done}
+	stages[1].(*fake).status = Status{State: Blocked, Detail: "waits for the API"}
+	opts := yesOpts()
+	opts.PlanOnly = true
+	res, _ := Run(context.Background(), stages, opts)
+	if count(log, "plan") != 0 || res.Stages[2].After != Installation {
+		t.Errorf("planned past a blocked stage: %v %+v", log, res.Stages[2])
+	}
+}
+
+func TestNoTerminalComesWithThePartialResult(t *testing.T) {
+	var log []string
+	res, err := Run(context.Background(), fakes(&log, Preflight), Options{Out: &bytes.Buffer{}})
+	var nt *NoTerminalError
+	if !errors.As(err, &nt) || res == nil || len(res.Stages) != 0 && res.Failed != nil {
+		t.Fatalf("%v %+v", err, res)
+	}
+}
+
+func TestOneLineStripsEscapesAndBlankLead(t *testing.T) {
+	got := oneLine("\n\n  \x1b]0;pwned\x07oops \x1b[31mred\x1b[0m\x9b\nsecond")
+	if strings.ContainsAny(got, "\x1b\x07\x9b\n") || !strings.HasPrefix(got, "]0;pwnedoops") {
+		t.Errorf("%q", got)
+	}
+	if got := oneLine("\n\nreal line\nnext"); got != "real line" {
+		t.Errorf("%q", got)
+	}
+}
+
+func TestCauseIsRedactedButKeepsItsType(t *testing.T) {
+	const secret = "tok-123"
+	var log []string
+	f := &fake{name: Installation, log: &log, applyErr: &StageError{Err: errors.New("bad " + secret)}}
+	res, _ := Run(context.Background(), []Stage{f}, Options{Yes: true, Terminal: true, Out: &bytes.Buffer{}, Redact: []string{secret}})
+	if strings.Contains(res.Cause.Error(), secret) {
+		t.Errorf("the cause carries the secret: %v", res.Cause)
+	}
+	var se *StageError
+	if !errors.As(res.Cause, &se) {
+		t.Error("the cause lost its type")
+	}
+}

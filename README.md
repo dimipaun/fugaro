@@ -36,7 +36,7 @@ Or download an archive from [GitHub Releases](https://github.com/dimipaun/fugaro
 fugaro init --name <project> --gcp-project <gcp-project-id> --region <region>
 ```
 
-`init` shows its Terraform plan and applies it after you confirm by typing the project's name. Details, what it creates and how to roll back: [docs/gcp-setup.md](docs/gcp-setup.md).
+`init` shows its Terraform plan and applies it after you confirm by typing the project's name. `init` is a rerunnable converge: it stops at the first stage that fails or needs you, a rerun resumes, and one with nothing to do says `No changes`. `--non-interactive` never prompts (applying then needs `--yes`, which never covers a secret, project creation or billing), `--json` prints each stage and what is left for you; exit 0 done, 1 refused or left for you, 2 a cloud failure. Details, what it creates and how to roll back: [docs/gcp-setup.md](docs/gcp-setup.md).
 
 ### 4. Onboard a repository
 

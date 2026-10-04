@@ -58,6 +58,10 @@ type slot struct {
 	noYes bool
 }
 
+// Gating is linear: a stage runs only when every registered stage before it
+// is done or skipped. needs records why the order is what it is, and the
+// tests check it against the order; it does not gate anything itself.
+//
 // order is the dependency order the dogfooding run discovered by hand:
 // installation, Firebase, images, the history job, secrets, repository.
 var order = []slot{
@@ -229,6 +233,9 @@ func Validate(stages []Stage) ([]Stage, error) {
 	}
 	byName := map[string]Stage{}
 	for _, s := range stages {
+		if s == nil {
+			return nil, fmt.Errorf("initflow: a nil stage")
+		}
 		if _, ok := pos[s.Name()]; !ok {
 			return nil, fmt.Errorf("initflow: unknown stage %q", s.Name())
 		}

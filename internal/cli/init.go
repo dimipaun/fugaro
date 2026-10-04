@@ -96,6 +96,14 @@ project Viewers' read access to the runs bucket, each after its own
 confirmation. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
+init runs as a converge of stages (preflight, installation, and with
+--firebase the Firebase backend), each with its own confirmation, in order,
+and stops at the first that fails or needs you; a rerun resumes, and one
+with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
+only planned), 1 a refusal, or a step left for you (see left_for_you in
+--json), 2 a cloud failure; --json prints the stages, left_for_you and the
+failed stage on every outcome.
+
 --forget is the rollback: it turns log isolation and registry cleanup off
 with a guarded apply, then removes every address from Terraform's state,
 destroying nothing else.
@@ -169,7 +177,7 @@ Terraform's state, destroying nothing.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
-	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt: a step that needs you is listed under left_for_you, and applying needs --yes (else the run only plans); --yes never covers creating a project, linking billing or a secret")
+	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "with --repo: the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config)")
@@ -221,6 +229,10 @@ type initResult struct {
 	// stage's state, and what only the user can do.
 	Stages     []initflow.StageResult `json:"stages,omitempty"`
 	LeftForYou []initflow.Left        `json:"left_for_you"`
+	// Failed is the stage the converge stopped at, with the one-line fix;
+	// Note says why a run only planned.
+	Failed *initflow.Failure `json:"failed,omitempty"`
+	Note   string            `json:"note,omitempty"`
 	// Firebase and RTDBURL are set by init --firebase.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // Options is how one run behaves; the CLI fills it from the flags.
@@ -139,11 +140,11 @@ func Run(ctx context.Context, stages []Stage, o Options) (*Result, error) {
 		l.finish()
 		return l.res, nil
 	}
-	if err := l.converge(ctx, stages); err != nil {
-		return nil, err
-	}
+	err = l.converge(ctx, stages)
 	l.finish()
-	return l.res, nil
+	// A refusal comes with the partial result: nothing was applied before
+	// it, and a caller printing JSON still has the account to print.
+	return l.res, err
 }
 
 type loop struct {
@@ -169,12 +170,22 @@ func (l *loop) redactAll(in []string) []string {
 	return out
 }
 
-// oneLine keeps text to its first line, with no continuation backslash: a
-// stage's one-line instruction is one line wherever it is printed.
+// oneLine keeps text to its first non-blank line, with no continuation
+// backslash and no control character (an escape sequence in an error from a
+// remote service must not reach the terminal): a stage's one-line
+// instruction is one line wherever it is printed.
 func oneLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
+	s = strings.TrimLeft(s, "\r\n \t")
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
 		s = s[:i]
 	}
+	s = strings.ToValidUTF8(s, "")
+	s = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 	return strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "\\"))
 }
 
@@ -187,8 +198,6 @@ func (l *loop) left(stage string, lf Left) Left {
 	return lf
 }
 
-func satisfied(s State) bool { return s == Done || s == Changed || s == Skipped }
-
 // preview checks every stage (read-only) and, in a plan-only run, plans the
 // first one with something to do. A stage that waits for one with something
 // to do is shown as will-do with the stage it waits for. It prints the view
@@ -197,14 +206,21 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	var waiting string // the first stage with something to do or someone to wait for
 	for _, s := range stages {
 		name := s.Name()
-		st, err := s.Check(ctx)
+		if l.cancelled(ctx, name) {
+			return nil
+		}
+		st, err := checkStage(ctx, s)
 		if err != nil {
 			l.fail(name, err)
 			return nil
 		}
 		r := StageResult{Name: name, State: st.State, Detail: l.redact(oneLine(st.Detail))}
 		switch st.State {
-		case Done, Skipped, Blocked:
+		case Done, Skipped:
+		case Blocked:
+			if waiting == "" {
+				waiting = name
+			}
 		case NeedsYou:
 			lf := s.Left()
 			if st.Left != nil {
@@ -218,7 +234,7 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 			} else {
 				waiting = name
 				if l.o.PlanOnly {
-					p, err := s.Plan(ctx, l.env(name))
+					p, err := planStage(ctx, s, l.env(name))
 					if err != nil {
 						l.fail(name, err)
 						return nil
@@ -255,12 +271,12 @@ func (l *loop) env(stage string) Env {
 
 // fail records a failed stage and blocks what follows it.
 func (l *loop) fail(stage string, err error) {
-	f := &Failure{Stage: stage, Error: l.redact(oneLine(err.Error())), Fix: "fix the error above and rerun fugaro init: it resumes at " + stage}
+	f := &Failure{Stage: stage, Error: l.redact(oneLine(err.Error())), Fix: "fix what the error says and rerun fugaro init: it resumes at " + stage}
 	var se *StageError
 	if errors.As(err, &se) && se.Fix != "" {
 		f.Fix = l.redact(oneLine(se.Fix))
 	}
-	l.res.Failed, l.res.Cause = f, err
+	l.res.Failed, l.res.Cause = f, l.redactedCause(err)
 	l.res.Stages = append(l.res.Stages, StageResult{Name: stage, State: Failed, Detail: f.Error})
 }
 
@@ -276,7 +292,10 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Blocked, Detail: "waits for " + stopped})
 			continue
 		}
-		st, err := s.Check(ctx)
+		if l.cancelled(ctx, name) {
+			return nil
+		}
+		st, err := checkStage(ctx, s)
 		if err != nil {
 			l.fail(name, err)
 			stopped = name
@@ -311,7 +330,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		if _, self := s.(SelfConfirming); !l.o.Yes && !l.interactive && !(self && YesCovers(name)) {
 			return &NoTerminalError{Stage: name}
 		}
-		out, err := s.Apply(ctx, l.env(name))
+		out, err := applyStage(ctx, s, l.env(name))
 		var ny *NeedsYouError
 		if errors.As(err, &ny) {
 			l.needsYou(name, "", ny.Left)
@@ -319,7 +338,7 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 			continue
 		}
 		if err == nil {
-			err = s.Verify(ctx)
+			err = verifyStage(ctx, s)
 		}
 		if err != nil {
 			l.fail(name, err)
@@ -379,6 +398,68 @@ func (l *loop) finish() {
 		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lf.Text)
 	}
 	if f := l.res.Failed; f != nil {
-		fmt.Fprintf(l.o.Out, "failed at %s: %s\n  fix: %s\n", f.Stage, f.Error, f.Fix)
+		// The error itself is the caller's to print (the CLI returns it).
+		fmt.Fprintf(l.o.Out, "stopped at %s; fix: %s\n", f.Stage, f.Fix)
 	}
+}
+
+// redactedError is a cause whose message is redacted but whose type chain
+// (an ExitError's code) is kept.
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
+
+func (l *loop) redactedCause(err error) error {
+	if msg := l.redact(err.Error()); msg != err.Error() {
+		return &redactedError{msg: msg, err: err}
+	}
+	return err
+}
+
+// cancelled records a cancelled context as the failure of the stage about
+// to run, so nothing after it starts.
+func (l *loop) cancelled(ctx context.Context, stage string) bool {
+	if err := ctx.Err(); err != nil {
+		l.fail(stage, &StageError{Err: fmt.Errorf("cancelled: %w", err), Fix: "rerun fugaro init: it resumes at " + stage})
+		return true
+	}
+	return false
+}
+
+// A stage's panic is its failure, not the process's.
+func recovered(err *error, stage, what string) {
+	if p := recover(); p != nil {
+		*err = fmt.Errorf("stage %s panicked in %s: %v", stage, what, p)
+	}
+}
+
+func checkStage(ctx context.Context, s Stage) (st Status, err error) {
+	defer recovered(&err, s.Name(), "Check")
+	if st, err = s.Check(ctx); err != nil {
+		return st, err
+	}
+	switch st.State {
+	case Todo, Done, Skipped, Blocked, NeedsYou:
+		return st, nil
+	}
+	return st, fmt.Errorf("stage %s: Check returned the state %q, which a check may not (done, will-do, blocked, needs-you or skipped)", s.Name(), st.State)
+}
+
+func planStage(ctx context.Context, s Stage, env Env) (p Plan, err error) {
+	defer recovered(&err, s.Name(), "Plan")
+	return s.Plan(ctx, env)
+}
+
+func applyStage(ctx context.Context, s Stage, env Env) (o Outcome, err error) {
+	defer recovered(&err, s.Name(), "Apply")
+	return s.Apply(ctx, env)
+}
+
+func verifyStage(ctx context.Context, s Stage) (err error) {
+	defer recovered(&err, s.Name(), "Verify")
+	return s.Verify(ctx)
 }
