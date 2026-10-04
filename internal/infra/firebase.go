@@ -324,13 +324,14 @@ func ProjectAdmins(ctx context.Context, c *Clients, gcpProject string) (admins, 
 // CheckFirebaseProject refuses a Firebase project that doesn't exist (or
 // can't be read), isn't active, or has no billing. It may be the
 // installation's own GCP project (design D3, revised 2026-10-04). It reads
-// only: fugaro never creates the project or links billing.
+// only: it never creates the project or links billing (the project stage
+// does, only behind --create-project and --link-billing).
 func CheckFirebaseProject(ctx context.Context, c *Clients, fp string) error {
 	p, err := c.CRM.Projects.Get(fp).Context(ctx).Do()
 	var ge *googleapi.Error
 	switch {
 	case errors.As(err, &ge) && (ge.Code == 403 || ge.Code == 404):
-		return userErr("project %s does not exist, or you can't read it. Create it as a new GCP project and link a billing account (Blaze); fugaro init never creates a project or enables billing", fp)
+		return userErr("project %s does not exist, or you can't read it. Create it as a new GCP project and link a billing account (Blaze), or let fugaro init --create-project --gcp-project <id> do it (typed confirmation)", fp)
 	case err != nil:
 		return fmt.Errorf("reading project %s: %w", fp, err)
 	case p.LifecycleState != "" && p.LifecycleState != "ACTIVE":
@@ -350,7 +351,7 @@ func CheckFirebaseProject(ctx context.Context, c *Clients, fp string) error {
 	case err != nil:
 		return fmt.Errorf("reading project %s's billing: %w", fp, err)
 	case !bi.BillingEnabled:
-		return userErr("project %s has no billing. Link a billing account (Blaze: the Spark plan's 100 connection limit would make a busy fleet fail closed); fugaro init never enables billing", fp)
+		return userErr("project %s has no billing. Link a billing account (Blaze: the Spark plan's 100 connection limit would make a busy fleet fail closed); fugaro init links one only with --create-project and --link-billing <account>, each typed", fp)
 	}
 	return nil
 }

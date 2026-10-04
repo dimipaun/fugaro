@@ -72,6 +72,13 @@ type initOptions struct {
 	budgetAdmins        []string
 	budgetAdminsChanged bool
 
+	// --create-project creates the GCP project --gcp-project names (and adds
+	// Firebase to it), behind its own typed confirmation; --link-billing
+	// links that billing account to it, behind a second one. --yes covers
+	// neither (internal/initflow, init_project.go).
+	createProject                    bool
+	displayName, parent, linkBilling string
+
 	// name is the project's name, for a project config fugaro init
 	// creates; with one, it must be that config's name.
 	name string
@@ -116,8 +123,9 @@ destroying nothing else.
 init --firebase <firebase-project-id> builds the project's budget backend in a
 Firebase project you created and linked to billing. It may be the project's
 own GCP project (one project for everything) or a project of its own (init
-never creates a project or enables billing, and refuses one that is missing,
-has no billing, or whose database holds data and no Fugaro mark). It runs three applies, each
+creates a project or links billing only with --create-project and
+--link-billing, and refuses one that is missing, has no billing, or whose
+database holds data and no Fugaro mark). It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or
@@ -157,7 +165,17 @@ it or run fugaro secrets set). A pasted private key may have at most 120 lines. 
 secret's container, before the repository stage, with the labels
 init --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
 --forget removes the repository from
-Terraform's state, destroying nothing.`,
+Terraform's state, destroying nothing.
+
+--create-project --gcp-project <id> creates that GCP project and adds Firebase
+to it, as you, after you type its ID at a terminal; --link-billing <account>
+then links that billing account (it may incur charges), after you type the
+account's ID. Each is its own typed confirmation, never given by --yes,
+--non-interactive or --json, and the ID is never the gcloud default project.
+Without --link-billing, init prints the one gcloud command that links billing
+and stops. An existing project you can read is adopted; one that is held by
+someone else, or pending deletion, is refused; its existing billing link is
+never changed.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
@@ -192,9 +210,13 @@ Terraform's state, destroying nothing.`,
 	f.StringVar(&o.alertEmail, "alert-email", "", "where failed image checks and rebuilds are reported (default: the local config's)")
 	f.BoolVar(&o.noLogIsolation, "no-log-isolation", false, "leave Fugaro job logs in _Default instead of their own log bucket")
 	f.StringVar(&o.registryCleanup, "registry-cleanup", "", "Artifact Registry cleanup: dry-run (the default), on or off")
-	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing; init never creates it) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
+	f.StringVar(&o.firebase, "firebase", "", "adopt this Firebase project (the one you created and linked to billing, or created with --create-project) and build the budget backend in it: three confirmed applies, the database's rules and mark, the Firestore history database (permanent us-east5 location, typed confirmation) and the config")
 	f.StringVar(&o.budgetMode, "budget-mode", "", "with --firebase: off, observe or enforce: the jobs' budget mode in the project config, and for observe and enforce the project-wide mode in the database (an absent one is seeded observe)")
 	f.StringArrayVar(&o.budgetAdmins, "budget-admin", nil, "with --firebase: an IAM member who may change caps and kill switches besides the GCP project's owners and editors (repeatable; default: the local config's terraform.budget_admins)")
+	f.BoolVar(&o.createProject, "create-project", false, "create the GCP project --gcp-project names and add Firebase to it, as you, after you type its ID at a terminal (never with --yes, --non-interactive or --json). An ID that exists and you can read is adopted; one held by someone else is refused. Billing is not linked unless --link-billing is also given; without it init prints the one gcloud command that links it")
+	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
+	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
+	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
@@ -245,6 +267,7 @@ type initResult struct {
 	Forgotten  bool                       `json:"forgotten,omitempty"`
 	Deleted    []string                   `json:"deleted,omitempty"`
 	Enabled    []string                   `json:"enabled,omitempty"`
+	Created    string                     `json:"created_project,omitempty"`
 	Undelete   string                     `json:"undelete,omitempty"`
 	Builds     []string                   `json:"builds,omitempty"`
 	Missing    []string                   `json:"missing,omitempty"`
@@ -432,6 +455,9 @@ func (o *initOptions) check() error {
 		if err := mirror.ValidSourcePrefix(o.imageSource); err != nil {
 			return userErr("--image-source: %v", err)
 		}
+	}
+	if err := o.checkCreateProject(); err != nil {
+		return err
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
 		return userErr("--budget-mode and --budget-admin are for fugaro init --firebase <firebase-project-id>")
@@ -1363,6 +1389,7 @@ func (o *initOptions) checkRepo() error {
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": o.replaceImage, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
+		"--create-project": o.createProject, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
 	}
 	var set []string
 	for _, f := range slices.Sorted(maps.Keys(installationOnly)) {
