@@ -56,10 +56,13 @@ func NewRootCmd() *cobra.Command {
 		Short:         "Fleeting cloud workers for coding agents",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// The plugin staleness line (design 4.5). No command defines its own
+		// PersistentPreRun, which would replace this one.
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) { warnStaleSkills(cmd) },
 	}
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),
-		newRunCmd(), newLsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(),
+		newRunCmd(), newLsCmd(), newLogsCmd(), newDiagnoseCmd(), newCancelCmd(), newSecretsCmd(), newInitCmd(), newBudgetCmd(), newWatchCmd(), newReportCmd(), newUpdateSkillsCmd(),
 	)
 	return root
 }
