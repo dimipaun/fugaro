@@ -228,6 +228,13 @@ func (s *imagesStage) Check(ctx context.Context) (initflow.Status, error) {
 	return initflow.Status{State: initflow.Todo, Detail: "copies the release images that are missing from your registry"}, nil
 }
 
+func unpinnedText(u []string) string {
+	if len(u) == 0 {
+		return "none (every image copied is pinned)"
+	}
+	return strings.Join(u, ", ")
+}
+
 // planned is one image's read-only plan.
 type planned struct {
 	item imageItem
@@ -247,18 +254,29 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
+	have := map[string]bool{}
+	for _, it := range items {
+		have[it.key()] = true
+	}
+	for _, k := range slices.Sorted(maps.Keys(expect)) {
+		if !have[k] {
+			return nil, userErr("--expect-digest %s=... matches no image this run copies (it copies: %s): a pin that is not used would be a false assurance", k, strings.Join(slices.Sorted(maps.Keys(have)), ", "))
+		}
+	}
 	var out []planned
 	for _, it := range items {
 		p, err := m.Plan(ctx, it.src, it.dst, expect[it.key()])
 		if err != nil {
 			return nil, remote(fmt.Errorf("%s: %w", it.label, err))
 		}
-		// A release tag is never moved without --replace-image; history:latest
-		// is a moving tag and is replaced visibly, after the confirmation.
-		if it.kind != "" && p.DestDigest != "" && !p.Present && !s.e.r.o.replaceImage {
-			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: a release tag is never moved; pass --replace-image to replace it, or --base-image KIND=IMAGE to point at your own", it.label, it.dst, p.DestDigest, p.Digest)
+		// A tag in your registry that names another image is never moved
+		// without --replace-image: a release tag, and history:latest too (the
+		// live installs have a hand-pushed one, and we cannot tell a copy this
+		// tool made from one an older CLI or a person made).
+		if p.DestDigest != "" && !p.Present && !s.e.r.o.replaceImage {
+			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image to replace it (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest)
 		}
-		p.AllowReplace = it.kind == "" || s.e.r.o.replaceImage
+		p.AllowReplace = s.e.r.o.replaceImage
 		out = append(out, planned{it, p})
 	}
 	return out, nil
@@ -347,13 +365,20 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	s.show(pl)
 	n, bytes := pending(pl)
 	changed := false
+	expect, _ := parseExpectDigests(r.o.expectDigests)
+	var unpinned []string
+	for _, p := range pl {
+		if !p.plan.Present && expect[p.item.key()] == "" {
+			unpinned = append(unpinned, p.item.key())
+		}
+	}
 	var done []planned // the plans whose destination tag is, now, the release image
 	if n > 0 {
 		o := r.o
 		yes := o.yes
 		o.yes = env.Yes
-		err := r.confirm(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature: pin one with --expect-digest",
-			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth), "nothing was copied")
+		err := r.confirm(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s",
+			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth, unpinnedText(unpinned)), "nothing was copied")
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err

@@ -3,6 +3,7 @@ package mirror
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -491,9 +492,18 @@ func TestRedirectHandling(t *testing.T) {
 			t.Fatalf("err = %v, hit = %v", err, hit)
 		}
 	})
-	t.Run("a token endpoint on a sibling host of the registry's site is asked", func(t *testing.T) {
-		if !sameSite("token.ghcr.io", "ghcr.io") || sameSite("ghcr.io.evil.example", "ghcr.io") || sameSite("evil.io", "ghcr.io") {
-			t.Fatal("sameSite")
+	t.Run("sameSite is the registry's host or its subdomain only", func(t *testing.T) {
+		for h, want := range map[string]bool{
+			"ghcr.io": true, "token.ghcr.io": true, "a.b.ghcr.io": true,
+			"github.io": false, "evil.co.uk": false, "pkg.dev": false, "us-east5-docker.pkg.dev": false,
+			"ghcr.io.evil.example": false, "evilghcr.io": false, "": false,
+		} {
+			if got := sameSite(h, "ghcr.io"); got != want {
+				t.Errorf("sameSite(%q, ghcr.io) = %v", h, got)
+			}
+		}
+		if sameSite("x.pkg.dev", "pkg.dev") != true || sameSite("foo.pkg.dev", "bar.pkg.dev") {
+			t.Error("pkg.dev")
 		}
 	})
 	t.Run("the destination's redirects are not followed", func(t *testing.T) {
@@ -704,5 +714,90 @@ func TestEmptyLayerIsAccepted(t *testing.T) {
 	e := newEnv(t, "")
 	if _, err := e.copy(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestGuardTouchAfterStopAndDoubleFire(t *testing.T) {
+	m := &Mirror{Idle: 20 * time.Millisecond}
+	_, g := m.guard(context.Background())
+	g.stop()
+	g.touch() // a late read after the body was closed
+	time.Sleep(60 * time.Millisecond)
+	select {
+	case <-g.fired:
+		t.Fatal("a stopped guard fired")
+	default:
+	}
+	_, g2 := m.guard(context.Background())
+	g2.fire()
+	g2.fire() // twice: must not panic
+	g2.stop()
+}
+
+func TestStalledDestinationPatchIsCancelled(t *testing.T) {
+	e := newEnv(t)
+	e.m.Idle = 200 * time.Millisecond
+	inner := e.dst.srv.Config.Handler
+	e.dst.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PATCH" {
+			_, _ = io.Copy(io.Discard, r.Body)
+			<-r.Context().Done() // accepts the bytes, never answers
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	start := time.Now()
+	_, err := e.copy()
+	if err == nil || !strings.Contains(err.Error(), "no data for") || time.Since(start) > 10*time.Second {
+		t.Fatalf("err = %v after %s", err, time.Since(start))
+	}
+	if e.destTag() != "" {
+		t.Fatal("a tag moved")
+	}
+}
+
+// A slow finalize (the registry assembling a big blob) is not an idle
+// transfer: it has its own, longer limit.
+func TestSlowFinalizeIsNotCutByTheIdleGuard(t *testing.T) {
+	e := newEnv(t)
+	e.m.Idle = 150 * time.Millisecond
+	inner := e.dst.srv.Config.Handler
+	e.dst.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" && strings.Contains(r.URL.Path, "/blobs/uploads/") {
+			time.Sleep(400 * time.Millisecond)
+		}
+		inner.ServeHTTP(w, r)
+	})
+	if _, err := e.copy(); err != nil {
+		t.Fatalf("a slow finalize failed: %v", err)
+	}
+	e2 := newEnv(t)
+	e2.m.Idle, e2.m.FinalizeIdle = 150*time.Millisecond, 150*time.Millisecond
+	inner2 := e2.dst.srv.Config.Handler
+	e2.dst.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PUT" && strings.Contains(r.URL.Path, "/blobs/uploads/") {
+			time.Sleep(400 * time.Millisecond)
+		}
+		inner2.ServeHTTP(w, r)
+	})
+	if _, err := e2.copy(); err == nil {
+		t.Fatal("the finalize limit is not enforced")
+	}
+}
+
+// The destination's early rejection shows its status, not a short read.
+func TestDestinationRejectionShowsItsStatus(t *testing.T) {
+	e := newEnv(t, strings.Repeat("x", 1<<20))
+	inner := e.dst.srv.Config.Handler
+	e.dst.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "PATCH" {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	_, err := e.copy()
+	if err == nil || !strings.Contains(err.Error(), "HTTP 413") || strings.Contains(err.Error(), "ended after") {
+		t.Fatalf("err = %v", err)
 	}
 }

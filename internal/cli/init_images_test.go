@@ -24,15 +24,16 @@ import (
 // is written (the AR fake learns of the history image that way). The
 // mirror's own tests (internal/mirror) cover the protocol.
 type imagesRegistry struct {
-	srv   *httptest.Server
-	mu    sync.Mutex
-	blobs map[string][]byte
-	mans  map[string][]byte
-	types map[string]string
-	tags  map[string]string // repo:tag -> digest
-	ups   map[string][]byte
-	puts  int // manifest and blob writes
-	onTag func(repo, tag string)
+	srv    *httptest.Server
+	mu     sync.Mutex
+	blobs  map[string][]byte
+	mans   map[string][]byte
+	types  map[string]string
+	tags   map[string]string // repo:tag -> digest
+	ups    map[string][]byte
+	puts   int // manifest and blob writes
+	onTag  func(repo, tag string)
+	onBlob func()
 }
 
 func cdg(b []byte) string { h := sha256.Sum256(b); return "sha256:" + hex.EncodeToString(h[:]) }
@@ -84,6 +85,9 @@ func (r *imagesRegistry) handle(w http.ResponseWriter, q *http.Request) {
 				return
 			}
 			r.blobs[d] = r.ups[id]
+			if r.onBlob != nil {
+				r.onBlob()
+			}
 			w.WriteHeader(201)
 		}
 	case strings.Contains(p, "/blobs/"):
@@ -364,19 +368,100 @@ func TestReleaseTagIsNotMovedWithoutReplaceImage(t *testing.T) {
 	}
 }
 
-// history:latest is a moving tag: replaced after the confirmation, and
-// visibly, naming both digests.
-func TestHistoryLatestReplacedVisibly(t *testing.T) {
+// A hand-pushed history:latest (the live installs have one) is not replaced
+// by --yes alone; --replace-image does it, visibly, naming both digests.
+func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
 	other := cdg([]byte("hand pushed history"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[initProject+"/fugaro-base/history:latest"] = other
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	if err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "--replace-image") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.dst.tags[initProject+"/fugaro-base/history:latest"] != other || r.dst.puts != 0 {
+		t.Fatal("history:latest was replaced")
+	}
+	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--replace-image")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if !strings.Contains(out, "REPLACES "+other+" with sha256:") || r.dst.tags[initProject+"/fugaro-base/history:latest"] == other {
 		t.Fatalf("not replaced visibly:\n%s", out)
+	}
+}
+
+// --replace-image is not a confirmation: without --yes the stage still asks.
+func TestReplaceImageStillAsks(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	r.stateBucket()
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.save(t)
+	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	other := cdg([]byte("hand pushed"))
+	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
+	r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other
+	out, _, err := executeStdin(t, "", "init", "--base", "go", "--replace-image")
+	if err == nil || !strings.Contains(err.Error(), "needs a confirmation") || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
+		t.Fatalf("err %v, %d writes\n%s", err, r.dst.puts, out)
+	}
+	if !strings.Contains(out, "REPLACES "+other) {
+		t.Errorf("the plan does not say what is replaced:\n%s", out)
+	}
+}
+
+// A pin that matches nothing is an error, and the confirmation says which
+// images are not pinned.
+func TestExpectDigestUnusedAndUnpinnedListed(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	good := r.src.tags["dimipaun/fugaro-go:1.2.3"]
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "go", "--expect-digest", "web-node="+good); err == nil || !strings.Contains(err.Error(), "matches no image") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.dst.puts != 0 {
+		t.Fatal("copied with an unused pin")
+	}
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "go,web-node", "--expect-digest", "go="+good)
+	if err != nil || !strings.Contains(out, "NOT pinned with --expect-digest: web-node") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// One kind is copied and a later one fails in Copy (its release tag moved
+// after the plan): nothing is recorded, and the stage fails with ErrTagMoved.
+func TestLaterKindTagMovedRecordsNothing(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	// go is copied first; its tag write moves web-node's source tag.
+	r.dst.onTag = func(repo, tag string) {
+		if strings.HasSuffix(repo, "/fugaro-go") {
+			r.src.tags["dimipaun/fugaro-web-node:1.2.3"] = cdg([]byte("moved"))
+			r.src.mans[cdg([]byte("moved"))] = []byte("moved")
+			r.src.types[cdg([]byte("moved"))] = "application/vnd.oci.image.index.v1+json"
+		}
+	}
+	_, _, err := executeStdin(t, "", "init", "--yes", "--base", "go,web-node")
+	if err == nil || !strings.Contains(err.Error(), "moved") {
+		t.Fatalf("err = %v", err)
+	}
+	if bi := r.localConfig(t).BaseImages; len(bi) != 0 {
+		t.Errorf("base_images = %v", bi)
+	}
+}
+
+// The destination tag changing after the plan is refused at the stage too.
+func TestDestinationMovedAtStageLevel(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	other := cdg([]byte("someone else"))
+	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
+	r.dst.onBlob = func() { r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other }
+	_, _, err := executeStdin(t, "", "init", "--yes", "--base", "go", "--replace-image")
+	if err == nil || !strings.Contains(err.Error(), "changed while") {
+		t.Fatalf("err = %v", err)
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || len(r.localConfig(t).BaseImages) != 0 {
+		t.Fatal("overwritten or recorded")
 	}
 }
 

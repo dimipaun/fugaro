@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -63,8 +64,12 @@ type Mirror struct {
 
 	// Idle is how long a transfer may make no progress (no byte read or
 	// written) before it is cancelled; 0 is 2 minutes.
-	Idle   time.Duration
-	tokens map[string]string
+	Idle time.Duration
+	// FinalizeIdle is the same for the call that finalizes a blob, which
+	// the registry may take long to answer for a multi-GB layer; 0 is 30
+	// minutes.
+	FinalizeIdle time.Duration
+	tokens       map[string]string
 }
 
 func (m *Mirror) allow() []string {
@@ -86,6 +91,13 @@ func (m *Mirror) idle() time.Duration {
 		return m.Idle
 	}
 	return 2 * time.Minute
+}
+
+func (m *Mirror) finalizeIdle() time.Duration {
+	if m.FinalizeIdle > 0 {
+		return m.FinalizeIdle
+	}
+	return 30 * time.Minute
 }
 
 func (m *Mirror) logf(format string, a ...any) {
@@ -419,17 +431,46 @@ type guard struct {
 	t      *time.Timer
 	d      time.Duration
 	fired  chan struct{}
+
+	mu      sync.Mutex
+	stopped bool
+	once    sync.Once
 }
 
 func (m *Mirror) guard(ctx context.Context) (context.Context, *guard) {
+	return m.guardFor(ctx, m.idle())
+}
+
+func (m *Mirror) guardFor(ctx context.Context, d time.Duration) (context.Context, *guard) {
 	ctx, cancel := context.WithCancel(ctx)
-	g := &guard{cancel: cancel, d: m.idle(), fired: make(chan struct{})}
-	g.t = time.AfterFunc(g.d, func() { close(g.fired); cancel() })
+	g := &guard{cancel: cancel, d: d, fired: make(chan struct{})}
+	g.t = time.AfterFunc(d, g.fire)
 	return ctx, g
 }
 
-func (g *guard) touch() { g.t.Reset(g.d) }
-func (g *guard) stop()  { g.t.Stop(); g.cancel() }
+func (g *guard) fire() {
+	g.once.Do(func() { close(g.fired) })
+	g.cancel()
+}
+
+// touch re-arms the timer; after stop it does nothing, so a late read can
+// neither revive the timer nor fire it.
+func (g *guard) touch() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.stopped {
+		g.t.Reset(g.d)
+	}
+}
+
+func (g *guard) stop() {
+	g.mu.Lock()
+	g.stopped = true
+	g.t.Stop()
+	g.mu.Unlock()
+	g.cancel()
+}
+
 func (g *guard) err(err error) error {
 	select {
 	case <-g.fired:
@@ -536,9 +577,14 @@ func (m *Mirror) srcGet(ctx context.Context, src Ref, path, accept string) (*htt
 
 // urlErr drops the URL (and so any query) from a transport error.
 func urlErr(err error) error {
+	if ue, ok := err.(*url.Error); ok {
+		return fmt.Errorf("%s %s: %w", ue.Op, redactStr(ue.URL), ue.Err)
+	}
+	// Wrapped (the idle guard's message around one): keep the wrapper's
+	// text but never the URL's query.
 	var ue *url.Error
 	if errors.As(err, &ue) {
-		return fmt.Errorf("%s %s: %w", ue.Op, redactStr(ue.URL), ue.Err)
+		return errors.New(strings.ReplaceAll(err.Error(), ue.URL, redactStr(ue.URL)))
 	}
 	return err
 }
@@ -554,8 +600,8 @@ func (m *Mirror) anonymousToken(ctx context.Context, hc *http.Client, header str
 	params := parseChallenge(header[len("bearer "):])
 	realm, err := url.Parse(params["realm"])
 	reg, _ := url.Parse(m.base(src.Host))
-	// The token endpoint is https on the registry's own site (its host or a
-	// sibling under the same two-label domain, as ghcr.io's is), or exactly
+	// The token endpoint is https on the registry's own host or a subdomain
+	// of it, or exactly
 	// the registry's own scheme and host. Anything else is never asked.
 	if err != nil || realm.Host == "" || reg == nil || !(realm.Scheme == reg.Scheme && realm.Host == reg.Host || realm.Scheme == "https" && sameSite(realm.Hostname(), reg.Hostname())) {
 		return "", fmt.Errorf("%w: %s's token endpoint %q is not an https URL", ErrUnreadableSource, src.Host, params["realm"])
@@ -594,17 +640,10 @@ func (m *Mirror) anonymousToken(ctx context.Context, hc *http.Client, header str
 	return body.Token, nil
 }
 
-// sameSite reports whether two hosts share their last two labels
-// (ghcr.io and token.ghcr.io), a cheap stand-in for a registrable domain.
-func sameSite(a, b string) bool {
-	last2 := func(h string) string {
-		p := strings.Split(strings.TrimSuffix(h, "."), ".")
-		if len(p) < 2 {
-			return h
-		}
-		return strings.Join(p[len(p)-2:], ".")
-	}
-	return a != "" && b != "" && last2(a) == last2(b)
+// sameSite reports whether host is the registry's host or a subdomain of it
+// (token.ghcr.io for ghcr.io); nothing else is "the same site".
+func sameSite(host, regHost string) bool {
+	return host != "" && regHost != "" && (host == regHost || strings.HasSuffix(host, "."+regHost))
 }
 
 func parseChallenge(s string) map[string]string {
@@ -739,7 +778,11 @@ func (m *Mirror) dstDo(ctx context.Context, dst Ref, method, path string, hdr ma
 }
 
 func (m *Mirror) dstDoURL(ctx context.Context, dst Ref, method, u string, hdr map[string]string, body io.Reader, size int64) (*http.Response, error) {
-	gctx, g := m.guard(ctx)
+	return m.dstDoIdle(ctx, dst, method, u, hdr, body, size, m.idle())
+}
+
+func (m *Mirror) dstDoIdle(ctx context.Context, dst Ref, method, u string, hdr map[string]string, body io.Reader, size int64, idle time.Duration) (*http.Response, error) {
+	gctx, g := m.guardFor(ctx, idle)
 	if body != nil {
 		body = guardReader{body, g}
 	}
@@ -857,6 +900,14 @@ func (m *Mirror) copyBlob(ctx context.Context, src, dst Ref, b Blob) error {
 		return err
 	}
 	drain(patch)
+	// The destination's own refusal first: an early rejection shows its
+	// status, not a short read of the source.
+	if patch.StatusCode == http.StatusUnauthorized || patch.StatusCode == http.StatusForbidden {
+		return authRefusal(dst, patch.StatusCode)
+	}
+	if patch.StatusCode != http.StatusAccepted && patch.StatusCode != http.StatusNoContent && patch.StatusCode != http.StatusCreated {
+		return fmt.Errorf("uploading %s to %s: HTTP %d", b.Digest, dst, patch.StatusCode)
+	}
 	if n != b.Size {
 		return fmt.Errorf("%w: %s's blob %s ended after %d of %d bytes", ErrDigestMismatch, src, b.Digest, n, b.Size)
 	}
@@ -866,12 +917,6 @@ func (m *Mirror) copyBlob(ctx context.Context, src, dst Ref, b Blob) error {
 	if got := "sha256:" + hex.EncodeToString(h.Sum(nil)); got != b.Digest {
 		// Not finalized: the upload session is abandoned and nothing names it.
 		return fmt.Errorf("%w: %s's blob %s hashes to %s; it was not committed", ErrDigestMismatch, src, b.Digest, got)
-	}
-	if patch.StatusCode == http.StatusUnauthorized || patch.StatusCode == http.StatusForbidden {
-		return authRefusal(dst, patch.StatusCode)
-	}
-	if patch.StatusCode != http.StatusAccepted && patch.StatusCode != http.StatusNoContent && patch.StatusCode != http.StatusCreated {
-		return fmt.Errorf("uploading %s to %s: HTTP %d", b.Digest, dst, patch.StatusCode)
 	}
 	next, err := m.location(dst, patch, loc)
 	if err != nil {
@@ -884,7 +929,7 @@ func (m *Mirror) copyBlob(ctx context.Context, src, dst Ref, b Blob) error {
 	q := pu.Query()
 	q.Set("digest", b.Digest)
 	pu.RawQuery = q.Encode()
-	put, err := m.dstDoURL(ctx, dst, http.MethodPut, pu.String(), nil, nil, 0)
+	put, err := m.dstDoIdle(ctx, dst, http.MethodPut, pu.String(), nil, nil, 0, m.finalizeIdle())
 	if err != nil {
 		return err
 	}
