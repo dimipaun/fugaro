@@ -355,13 +355,17 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Skipped, Detail: s.skip}, nil
 	}
 	// Before any cloud call: a repository the project does not list yet is
-	// not asked about.
+	// not asked about, not even for metadata. At a terminal the typed opt-in
+	// comes when the stage runs; until then nothing is read.
 	switch a, err := s.e.authState(s.origin); {
 	case err != nil:
 		return initflow.Status{}, err
 	case a == authNeeded:
 		lf := onboardLeft(s.origin)
 		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin), Left: &lf}, nil
+	case a == authAsk:
+		s.checked = false
+		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read after you confirm the repository " + pluginwire.Printable(s.origin.typed())}, nil
 	}
 	st, err := s.open(ctx)
 	if err == nil {

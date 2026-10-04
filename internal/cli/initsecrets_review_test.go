@@ -330,3 +330,24 @@ func TestJSONNeverPrompts(t *testing.T) {
 		t.Error("the terminal was read")
 	}
 }
+
+// Check is cloud-free until the repository is authorized: a repository the
+// project does not list yet, at a terminal where the typed opt-in could be
+// asked, is not asked about (no Secret Manager call, not even a metadata one).
+func TestSecretsCheckMakesNoCloudCallBeforeTheGate(t *testing.T) {
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.e.lc.Repos = nil // not listed
+	fakeTerminal(t)
+	opened := 0
+	r.stage.open = func(context.Context) (secretStore, error) { opened++; return r.store, nil }
+	st, err := r.stage.Check(t.Context())
+	if err != nil || st.State != initflow.Todo || opened != 0 || r.store.lists != 0 {
+		t.Fatalf("state %+v, err %v, opened %d, lists %d", st, err, opened, r.store.lists)
+	}
+	if !strings.Contains(st.Detail, "after") {
+		t.Errorf("detail %q does not say when it is read", st.Detail)
+	}
+	if plan, err := r.stage.Plan(t.Context(), initflow.Env{}); err != nil || plan.NothingToDo || r.store.lists != 0 {
+		t.Fatalf("plan %+v, err %v, lists %d", plan, err, r.store.lists)
+	}
+}
