@@ -29,7 +29,7 @@ Run from the repository root (`git rev-parse --show-toplevel`). Check that `fuga
 
 Read `fugaro config example`. It annotates every field. Write `fugaro.yaml` in the same shape, with only the fields you have evidence for.
 
-The example's `project:` line names the Fugaro project this repository belongs to. `fugaro config example` prints the selected project's name there; when it shows `example`, no project is selectable, so ask the user which project this repository belongs to (`fugaro init --config-only` writes a project's config). Never invent a project name: a wrong one makes every run of this repository refuse.
+The example's `project:` line names the Fugaro project this repository belongs to. `fugaro config example` prints the selected project's name there; when it shows `example`, no project is selectable, so ask the user which project this repository belongs to (the installation's init step writes a project's config). Never invent a project name: a wrong one makes every run of this repository refuse.
 
 ## 2. Decide the workflows
 
@@ -118,7 +118,7 @@ Match what the repo's CI gives its build and test steps today. Read the CI machi
 
 ### Optional: a budget block
 
-Offer, don't write unprompted, a `budget:` block for a team that wants its own cost limits committed: `mode` (`off | observe | enforce`), `per_run_usd`, `per_day_usd` and `allowed_models` (explicit model IDs, no aliases). Add it only when the user asks for one, with numbers they give you. It can only tighten the ceiling in the project's config: the runner reads it from the default branch, a branch can only tighten further, and an invalid block there blocks every run. It cannot raise a cap, and it cannot set prices (they are the owner's). Tell the user it takes effect once merged to the default branch, and that a value above the project's ceiling is clamped with a warning (`fugaro validate` shows which). `per_day_usd` is this repository's own day cap: it can only tighten the cap the owner sets in the project's budget database (`fugaro budget set`), and the runner enforces it against this repository's day counter only. The project-wide mode (observe or enforce) and the shared caps are set in the database by a budget admin, not in `fugaro.yaml`; a committed `enforce` can only make this repository stricter. Never invent a cap.
+Offer, don't write unprompted, a `budget:` block for a team that wants its own cost limits committed: `mode` (`off | observe | enforce`), `per_run_usd`, `per_day_usd` and `allowed_models` (explicit model IDs, no aliases). Add it only when the user asks for one, with numbers they give you. It can only tighten the ceiling in the project's config: the runner reads it from the default branch, a branch can only tighten further, and an invalid block there blocks every run. It cannot raise a cap, and it cannot set prices (they are the owner's). Tell the user it takes effect once merged to the default branch, and that a value above the project's ceiling is clamped with a warning (`fugaro validate` shows which). `per_day_usd` is this repository's own day cap: it can only tighten the cap the owner sets in the project's budget database (`budget set`, an owner's command that you never run), and the runner enforces it against this repository's day counter only. The project-wide mode (observe or enforce) and the shared caps are set in the database by a budget admin, not in `fugaro.yaml`; a committed `enforce` can only make this repository stricter. Never invent a cap.
 
 ## 6. Validate until clean
 
@@ -159,7 +159,14 @@ If the same failure survives three different fixes, stop and ask the user.
 Tell the user, briefly:
 - the workflows, their commands and report globs, each with the file it came from
 - the image settings with the evidence for each, and anything you couldn't express
-- the secrets to create, by logical name, and where each is used. The user stores each one with `fugaro secrets set <name> --repo <owner/name>`, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. When the user creates the provider credential, tell them to name it (for example `Fugaro`): a Bitbucket repository access token's name, or a GitHub App's name, is shown as the author of every pull request and comment, and a token can't be renamed after it is created. Granting the job access to them is part of provisioning, which is `fugaro init --repo` run from the committed checkout: it creates the repository's jobs, accounts, registry and secret containers with Terraform, shows the plan and asks before applying, offers the first image build, and prints the `fugaro secrets set` commands still needed. Don't run it yourself; the user runs it, after the installation has been set up once (`fugaro init`, docs/gcp-setup.md).
+- the secrets to create, by logical name, and where each is used. The user stores each one with the command in the block at the end, which reads the value from stdin or a hidden prompt; never ask for the value or pass it on a command line. When the user creates the provider credential, tell them to name it (for example `Fugaro`): a Bitbucket repository access token's name, or a GitHub App's name, is shown as the author of every pull request and comment, and a token can't be renamed after it is created. Granting the job access to them is part of provisioning, which is the repository step of init, run from the committed checkout: it creates the repository's jobs, accounts, registry and secret containers with Terraform, shows the plan and asks before applying, offers the first image build, and prints the secret commands still needed. Don't run it yourself; the user runs it, after the installation has been set up once (docs/gcp-setup.md).
 - the `project:` you wrote, and that `fugaro.yaml` on the base branch must carry it before runs work (every run checks it)
-- that they should commit `fugaro.yaml`, and `.fugaro/*.Dockerfile` if you wrote one, in a pull request, and then run `fugaro init --repo` from the merged checkout
+- that they should commit `fugaro.yaml`, and `.fugaro/*.Dockerfile` if you wrote one, in a pull request, and then run the repository step of init from the merged checkout (the block at the end)
 - any `rebuild.paths` you proposed, with its evidence
+
+The user runs these in their own terminal, never you:
+
+```bash user-runs
+fugaro secrets set <name> --repo <owner/name>
+fugaro init --repo
+```

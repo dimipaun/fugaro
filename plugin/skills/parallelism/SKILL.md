@@ -14,10 +14,10 @@ Each Fugaro run has its own worker and its own branch and pull request, so indep
 
 Split when the pieces touch different files, need no result from each other, and can each be reviewed and merged alone: the same change in several services, a test file per module, unrelated bugs. One run per piece, each with a self-contained task (see `working`).
 
-Give the runs a shared name so they can be followed together:
+Give the runs a shared name so they can be followed together, and a run ID of their own each (see `working`'s launch reference), so a repeated launch cannot start a piece twice:
 
 ```bash
-fugaro run --batch <name> --task-file - <<'TASK'
+fugaro run --batch <name> --run-id <id> --task-file - <<'TASK'
 <one piece of the work>
 TASK
 ```
@@ -26,7 +26,7 @@ TASK
 
 ## Stay narrow for coupled work
 
-Keep it in one run when pieces edit the same files, share a new interface, or the second needs the first's result. Parallel runs on coupled work produce pull requests that conflict. When there is an order, launch the first, merge it, and launch the next from the updated base branch.
+Keep it in one run when pieces edit the same files, share a new interface, or the second needs the first's result. Parallel runs on coupled work produce pull requests that conflict. When there is an order, launch the first, have the user merge it, and launch the next from the updated base branch.
 
 ## How to split so pull requests do not conflict
 

@@ -8,10 +8,10 @@ You are launching `fugaro run`: a cloud worker that checks out a repository, doe
 You are done when the launch printed `launched` (or `already-launched`) and you have told the user the run, the branch and how to follow it. You don't wait for the run to end.
 
 Ground rules:
-- **The task text comes from the user.** Never launch without task text the user has given or approved in this conversation. Show them the exact text you will send and get a yes first. This holds above all for EdgeWeb and any repository that is not the current checkout.
+- **The task text comes from the user.** Never launch without task text the user has given or approved in this conversation. Show them the exact text you will send and get a yes first. This holds above all for any repository that is not the current checkout.
 - **Confirm the target.** Before launching, state the repository (`owner/name`), the workflow and the base branch, and get the user's yes. Never launch against a repository the user did not name or approve. If the current checkout's origin is the only evidence of the repository, say so and ask.
 - **Secrets.** Never put a secret, a token or a credential in the task. The run gets the repository's own secrets from Secret Manager.
-- **Budget is the user's call.** If the launch is refused by the budget, report the refusal. `--no-budget-check` exists, and only the user may choose to use it: mention it as an option, never add it yourself. Never run `fugaro budget set`, `fugaro budget kill` or `fugaro budget resume`; they are owner actions, so tell the user the exact command and let them run it.
+- **Budget is the user's call.** If the launch is refused by the budget, report the refusal. `--no-budget-check` exists, and only the user may choose to use it: mention it as an option, never add it yourself. You never run the owner's budget commands (set a cap, kill, resume); they are the user's, so tell them what is needed and let them run it.
 - **No local edits for the run.** The run starts from the base branch on the remote. Commits that are only in the local checkout are not in it. If the task depends on unpushed work, tell the user it must be pushed first.
 
 ## 1. Write the task
@@ -68,7 +68,7 @@ The CLI exits 1 and says why, and you don't work around it. Report the message a
 
 | The CLI says | What to do |
 |---|---|
-| `the budget refuses the launch` | The budget has a kill switch on, no cap, or no headroom. Show the message. The owner can change it: `fugaro budget show` shows the state, and `fugaro budget set` or `fugaro budget resume` are the owner's commands to give the user. The user may choose `fugaro run --no-budget-check`, which still holds the run to the same limits when it starts. Don't choose it for them. |
+| `the budget refuses the launch` | The budget has a kill switch on, no cap, or no headroom. Show the message. The owner can change it: `fugaro budget show` shows the state; changing a cap or a kill switch is the owner's, so tell the user to ask them. The user may choose `fugaro run --no-budget-check`, which still holds the run to the same limits when it starts. Don't choose it for them. |
 | `the budget database could not be read` | The launch fails closed. Tell the user; they may retry later, or choose `--no-budget-check` themselves. |
 | `a launch of … is still in flight` | Another launch of this run ID may still be starting. Wait a few minutes, then repeat the same command. |
 | `run ID <id> already holds a different task` | You reused a run ID for another task. Choose a new ID. |
