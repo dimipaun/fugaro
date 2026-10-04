@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,10 @@ func ClassifyPush(err error) *PushRejected {
 	if errors.As(err, &already) {
 		return already
 	}
-	msg := err.Error()
+	// Only what the host said counts: git's own text carries the remote's
+	// URL and the refspec, which can hold any word (a repository called
+	// "secrets-api") and say nothing about why a push failed.
+	msg := remoteText(err.Error())
 	low := strings.ToLower(msg)
 	switch {
 	case strings.Contains(low, "without `workflows` permission"):
@@ -72,7 +76,8 @@ func ClassifyPush(err error) *PushRejected {
 			rej.Files = []string{m[1]}
 		}
 		return rej
-	case strings.Contains(low, "secret") || strings.Contains(low, "push protection"):
+	case strings.Contains(low, "push cannot contain secrets") || strings.Contains(low, "github push protection") ||
+		((strings.Contains(msg, "GH013") || strings.Contains(low, "push protection")) && strings.Contains(low, "secret")):
 		return &PushRejected{Kind: RejectSecretScanning, err: err}
 	case strings.Contains(msg, "GH013") || strings.Contains(low, "repository rule violations"):
 		return &PushRejected{Kind: RejectRepoRules, err: err}
@@ -82,6 +87,21 @@ func ClassifyPush(err error) *PushRejected {
 		return &PushRejected{Kind: RejectProtectedBranch, err: err}
 	}
 	return nil
+}
+
+// remoteText is the lines of git's push output the remote wrote: its
+// "remote:" lines and the "! [remote rejected]" status lines.
+func remoteText(s string) string {
+	var keep []string
+	for _, l := range strings.Split(s, "\n") {
+		t := strings.TrimSpace(l)
+		if i := strings.Index(t, "remote:"); i >= 0 && (i == 0 || strings.HasSuffix(strings.TrimSpace(t[:i]), ":")) {
+			keep = append(keep, t)
+		} else if strings.Contains(t, "[remote rejected]") {
+			keep = append(keep, t)
+		}
+	}
+	return strings.Join(keep, "\n")
 }
 
 // classified wraps a failed push's error as a *PushRejected when it is a
@@ -97,6 +117,11 @@ func classified(err error) error {
 // guards exactly this directory at the repository root.
 const WorkflowDir = ".github/workflows/"
 
+// The check is the net diff since the merge base, which has two blind
+// spots, both left to GitHub's own refusal: a follow-up that rebases
+// commits from before its start can attribute a person's workflow commit
+// to the run, and a workflow file added and removed within the run passes.
+//
 // WorkflowFiles lists, sorted, the files under .github/workflows/ that the
 // commits since changed: since...HEAD, the changes on HEAD's side of their
 // merge base. since is origin/<base> for a first run and the commit a
@@ -162,14 +187,20 @@ type WorkScan struct {
 	// Hit: scan returned true for some text of the range.
 	Hit bool
 	// Unscannable: the range changes a file git treats as binary (by its
-	// content or by .gitattributes, which the agent controls) or is more
-	// than MaxScanBytes of text, so a secret in it could go unseen.
+	// content or by .gitattributes, which the agent controls), so a secret
+	// in it could go unseen.
 	Unscannable bool
+	// TooLarge: the range is more than MaxScanBytes of text; the scan
+	// stopped without a verdict.
+	TooLarge bool
 }
 
 // scanOverlap is how much of one chunk is read again with the next, so a
 // secret split across two reads is still seen whole.
-const scanOverlap = 64 << 10
+var scanOverlap = 64 << 10
+
+// scanChunk is how much of git's output is read, and scanned, at a time.
+var scanChunk = 1 << 20
 
 // ScanWork streams every commit's message and patch in since..HEAD (each
 // commit, not the net diff: a value committed and then removed is still in
@@ -178,10 +209,14 @@ const scanOverlap = 64 << 10
 // diff.external, not a textconv, which the agent could set in .git/config
 // or .gitattributes. The text is never held whole.
 func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string) bool) (WorkScan, error) {
+	return r.scanWork(ctx, since, scan, MaxScanBytes)
+}
+
+func (r *Repo) scanWork(ctx context.Context, since string, scan func(text string) bool, maxBytes int64) (WorkScan, error) {
 	var res WorkScan
 	rng := []string{"^" + since, "HEAD"}
 	// A binary change shows as "-<TAB>-" in numstat.
-	nums, err := r.gitRaw(ctx, append([]string{"log", "-m", "--numstat", "--format=", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)
+	nums, err := r.gitRaw(ctx, append([]string{"log", "-m", "--numstat", "--format=", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)
 	if err != nil {
 		return res, err
 	}
@@ -193,7 +228,7 @@ func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string
 	}
 	sctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	cmd := exec.CommandContext(sctx, "git", append(slices.Clone(noHooks), append([]string{"log", "-m", "-p", "--format=%B", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)...)
+	cmd := exec.CommandContext(sctx, "git", append(slices.Clone(noHooks), append([]string{"log", "-m", "-p", "--format=%an <%ae> %cn <%ce>%n%B", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)...)
 	cmd.Dir, cmd.Env, cmd.WaitDelay = r.Dir, r.processEnv(), gitWaitDelay
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -206,9 +241,10 @@ func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string
 	}
 	var total int64
 	tail := ""
-	buf := make([]byte, 1<<20)
+	buf := make([]byte, scanChunk)
 	for {
-		n, rerr := out.Read(buf)
+		// Whole chunks, so where one ends doesn't depend on the pipe.
+		n, rerr := io.ReadFull(out, buf)
 		if n > 0 {
 			total += int64(n)
 			window := tail + string(buf[:n])
@@ -218,8 +254,8 @@ func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string
 				break
 			}
 			tail = window[max(0, len(window)-scanOverlap):]
-			if total > MaxScanBytes {
-				res.Unscannable = true
+			if total > maxBytes {
+				res.TooLarge = true
 				cancel()
 				break
 			}
@@ -229,7 +265,7 @@ func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string
 		}
 	}
 	werr := cmd.Wait()
-	if res.Hit || res.Unscannable {
+	if res.Hit || res.TooLarge {
 		return res, nil
 	}
 	if werr != nil {

@@ -28,6 +28,8 @@ func TestClassifyPush(t *testing.T) {
 		{"protected", "remote: error: GH006: Protected branch update failed for refs/heads/fugaro/x.\n ! [remote rejected] HEAD -> fugaro/x (protected branch hook declined)", RejectProtectedBranch, nil},
 		{"large file", "remote: error: GH001: Large files detected. You may want to try Git Large File Storage\nremote: error: File big.bin is 150.00 MB; this exceeds GitHub's file size limit of 100.00 MB\n ! [remote rejected] HEAD -> fugaro/x (pre-receive hook declined)", RejectLargeFile, nil},
 		{"secret scanning", "remote: error: GH013: Repository rule violations found for refs/heads/fugaro/x.\nremote: - GITHUB PUSH PROTECTION\nremote:   Push cannot contain secrets\n ! [remote rejected] HEAD -> fugaro/x (push declined due to repository rule violations)", RejectSecretScanning, nil},
+		{"secret scanning, GH013 wording", "remote: error: GH013: Repository rule violations found for refs/heads/fugaro/x.\nremote: - Secret detected in commit abc123", RejectSecretScanning, nil},
+		{"push protection wording", "remote: error: Push protection blocked this push: secrets were found", RejectSecretScanning, nil},
 		{"generic repository rules", "remote: error: GH013: Repository rule violations found for refs/heads/fugaro/x.\nremote: - Commits must have verified signatures.\n ! [remote rejected] HEAD -> fugaro/x (push declined due to repository rule violations)", RejectRepoRules, nil},
 	}
 	for _, c := range cases {
@@ -39,6 +41,8 @@ func TestClassifyPush(t *testing.T) {
 		})
 	}
 	for _, msg := range []string{
+		"git push --force-with-lease=refs/heads/fugaro/x: origin HEAD:refs/heads/fugaro/x: exit status 128: fatal: unable to access 'https://github.com/org/secrets-api/': Could not resolve host: github.com",
+		"git push https://github.com/org/secrets-api.git: exit status 1: ! [rejected] HEAD -> fugaro/x (fetch first)",
 		"git push: exit status 128: fatal: unable to access: Could not resolve host",
 		"! [rejected] HEAD -> fugaro/x (stale info)",
 		"",
@@ -259,11 +263,43 @@ func TestScanWorkAttributesCannotHideText(t *testing.T) {
 	}
 }
 
+// The value sits across the boundary of two chunks: found only because
+// the chunks overlap.
 func TestScanWorkMatchesAcrossChunks(t *testing.T) {
-	filler := strings.Repeat("x", 1<<20-5)
-	repo := branchWith(t, commitSpec{msg: "big", files: map[string]string{"k.txt": filler + "S3CRET-VALUE\n"}})
+	repo := branchWith(t, commitSpec{msg: "m", files: map[string]string{"k.txt": "token=S3CRET-VALUE\n"}})
+	full := testutil.Git(t, repo.Dir, "log", "-m", "-p", "--format=%an <%ae> %cn <%ce>%n%B", "--no-show-signature", "^origin/main", "HEAD")
+	at := strings.Index(full, "S3CRET-VALUE")
+	if at < 0 {
+		t.Fatal("the value is not in git's output")
+	}
+	defer func(c, o int) { scanChunk, scanOverlap = c, o }(scanChunk, scanOverlap)
+	scanChunk, scanOverlap = at+4, 32 // the first chunk ends 4 bytes into the value
 	if res, err := repo.ScanWork(ctx, "origin/main", hasSecret); err != nil || !res.Hit {
-		t.Fatalf("ScanWork = %+v, %v; want a hit across the read boundary", res, err)
+		t.Fatalf("ScanWork = %+v, %v; want a hit across the chunk boundary", res, err)
+	}
+	scanOverlap = 0
+	if res, _ := repo.ScanWork(ctx, "origin/main", hasSecret); res.Hit {
+		t.Fatal("without an overlap the split value was found: the test does not prove the overlap")
+	}
+}
+
+func TestScanWorkReadsAuthorHeaders(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "m", files: map[string]string{"a.txt": "a\n"}})
+	t.Setenv("GIT_AUTHOR_NAME", "S3CRET-VALUE")
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "--amend", "--reset-author", "--no-edit")
+	if res, err := repo.ScanWork(ctx, "origin/main", hasSecret); err != nil || !res.Hit {
+		t.Fatalf("ScanWork = %+v, %v; want a hit in the author", res, err)
+	}
+}
+
+func TestScanWorkTooLargeIsNotBinary(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "m", files: map[string]string{"a.txt": strings.Repeat("a", 4096)}})
+	defer func(c int) { scanChunk = c }(scanChunk)
+	scanChunk = 512
+	// Reads of 512 bytes against a cap of 1 byte: stops after the first.
+	res, err := repo.scanWork(ctx, "origin/main", func(string) bool { return false }, 1)
+	if err != nil || !res.TooLarge || res.Unscannable {
+		t.Fatalf("scanWork = %+v, %v", res, err)
 	}
 }
 

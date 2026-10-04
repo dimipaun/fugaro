@@ -123,6 +123,8 @@ func (r *run) saveWork(ctx context.Context, kind gitops.RejectKind) string {
 		return "the work was not saved because it could not be checked for secrets"
 	case scan.Hit:
 		return "the work was not saved because its commits hold a secret value; it is lost with the container"
+	case scan.TooLarge:
+		return "the work was not saved because its commits are too large to check for secrets; it is lost with the container"
 	case scan.Unscannable:
 		return "the work was not saved because it changes binary files, which can't be checked for secrets; it is lost with the container"
 	}
