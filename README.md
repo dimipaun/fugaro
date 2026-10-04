@@ -21,9 +21,11 @@ Or download an archive from [GitHub Releases](https://github.com/dimipaun/fugaro
 1. Run `fugaro init`.
 2. Open your coding agent and run `/fugaro:setup`.
 
+This two-step flow is on `main` and ships with the release after v0.1.0: v0.1.0 does not include the converging `fugaro init` or `/fugaro:setup`, so with v0.1.0 follow [Manual setup](#manual-setup). Parts of the new flow (project creation, image mirroring, the plugin install prompt) are not yet verified against real cloud services.
+
 `fugaro init` converges the installation (a first run names it: `--name`, `--gcp-project`, `--region`; `--create-project` and `--link-billing` create the project and link billing, each behind a confirmation you type), copies the release's base images into your registry, asks for secrets at hidden prompts in your own terminal, and wires the Fugaro plugin into the repository's `.claude/settings.json`, pinned to the release. `/fugaro:setup` reads the repository, writes `fugaro.yaml` (and a Dockerfile only when `image:` can't express the build) with you, and opens a pull request; merge it, then run `fugaro init` again to add the repository's job, first image build and schedule. Details and rollback: [docs/gcp-setup.md](docs/gcp-setup.md).
 
-The plugin gives your agent four skills: `setup`, `working` (run, watch, diagnose, follow up), `routing` (cloud or local) and `parallelism`. Commit the `.claude/settings.json` change; teammates get a prompt to install the plugin when they open the folder in Claude Code and trust it, so open or restart Claude Code in the folder, trust it and accept the plugin. To install it yourself, run `/plugin marketplace add dimipaun/fugaro`, then `/plugin install fugaro@fugaro`. `fugaro doctor` checks the pin and the rest of the setup, and `fugaro update-skills` moves the pin to your binary's release.
+The plugin gives your agent four skills: `setup`, `working` (run, watch, diagnose, follow up), `routing` (cloud or local) and `parallelism`. Commit the `.claude/settings.json` change; teammates should be offered the plugin when they open the folder in Claude Code and trust it (not yet verified: if you are not offered it, restart Claude Code in the folder or use the commands below). To install it yourself, run `/plugin marketplace add dimipaun/fugaro`, then `/plugin install fugaro@fugaro`. `fugaro doctor` checks the pin and the rest of the setup, and `fugaro update-skills` moves the pin to your binary's release.
 
 ## Manual setup
 
