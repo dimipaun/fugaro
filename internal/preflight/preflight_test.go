@@ -144,6 +144,32 @@ func TestTerraformUnsupportedVersion(t *testing.T) {
 	}
 }
 
+// supportedTerraform is a byte-for-byte mirror of internal/infra/tf's
+// unexported checkVersion (by design: preflight stays a leaf package, see
+// google.go's quotaProjectIfDisabled comment for the same tradeoff), so the
+// two can drift independently. This is internal/infra/tf/tf_test.go's own
+// TestVersionTooOld table, so an edit that silently breaks either copy's
+// boundary logic is caught here too.
+func TestSupportedTerraform(t *testing.T) {
+	for _, tc := range []struct {
+		version string
+		ok      bool
+	}{
+		{"1.6.6", false},
+		{"1.7.0-beta1", false},
+		{"0.15.5", false},
+		{"2.0.0", false},
+		{"2.0.0-alpha1", false},
+		{"garbage", false},
+		{"1.7.0", true},
+		{"1.16.4", true},
+	} {
+		if got := supportedTerraform(tc.version); got != tc.ok {
+			t.Errorf("supportedTerraform(%q) = %v, want %v", tc.version, got, tc.ok)
+		}
+	}
+}
+
 // Every Fix a person might read from a terminal or a plan view is one
 // line: no printed command may wrap or hide a second line when pasted.
 func TestFixesAreSingleLine(t *testing.T) {
