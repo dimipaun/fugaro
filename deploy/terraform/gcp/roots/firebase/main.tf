@@ -1,5 +1,6 @@
 # The Firebase root: everything that lives in the Fugaro project's own
-# Firebase project (the FP, a GCP project of its own): the APIs, Firebase,
+# Firebase project (the FP: a GCP project of its own, or the installation's
+# own project, design D3 revised 2026-10-04): the APIs, Firebase,
 # the Realtime Database, the sign-in API key, the token signer and every
 # grant onto the FP. fugaro init --firebase writes it into a workdir with
 # terraform.tfvars.json and a backend config naming the installation's state
@@ -42,6 +43,7 @@ module "firebase" {
   fugaro_project  = var.fugaro_project
   names           = var.names
   manage_apis     = var.manage_apis
+  skip_apis       = var.skip_apis
   launchers       = var.launchers
   operators       = var.operators
   admins          = var.admins

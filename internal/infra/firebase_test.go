@@ -4,14 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 
+	"github.com/dimipaun/fugaro/deploy/terraform"
 	"github.com/dimipaun/fugaro/internal/budget/rules"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -161,9 +164,8 @@ func TestCheckFirebaseMembers(t *testing.T) {
 func TestFirebaseSpecRefusals(t *testing.T) {
 	inst := installationSpec(t)
 	for name, in := range map[string]FirebaseInputs{
-		"the installation's own project": {FP: "proj-1234"},
-		"not an id":                      {FP: "Not A Project"},
-		"job account admin":              {FP: "aurora-fp", BudgetAdmins: []string{"serviceAccount:fugaro-x@proj-1234.iam.gserviceaccount.com"}},
+		"not an id":         {FP: "Not A Project"},
+		"job account admin": {FP: "aurora-fp", BudgetAdmins: []string{"serviceAccount:fugaro-x@proj-1234.iam.gserviceaccount.com"}},
 	} {
 		if _, err := Firebase(inst, in); err == nil {
 			t.Errorf("%s accepted", name)
@@ -172,6 +174,80 @@ func TestFirebaseSpecRefusals(t *testing.T) {
 	inst.Launchers = []string{"domain:example.com"}
 	if _, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp"}); err == nil {
 		t.Error("a domain: launcher reached the Firebase project")
+	}
+}
+
+// The Firebase project may be the installation's own GCP project (user
+// ruling 2026-10-04, design D3 revised): the same checks apply, the Firebase
+// root leaves the two APIs the installation root enables to it, and the
+// two-project layout's tfvars carry no such field.
+func TestFirebaseSameProject(t *testing.T) {
+	inst := installationSpec(t)
+	in := FirebaseInputs{FP: inst.Project, Admins: []string{"user:owner@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"}
+	spec, err := Firebase(inst, in)
+	if err != nil {
+		t.Fatalf("the installation's own project refused: %v", err)
+	}
+	if spec.Project != inst.Project || !slices.Equal(spec.SkipAPIs, SharedAPIs) {
+		t.Errorf("spec = %+v", spec)
+	}
+	data, err := FirebaseVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkGolden(t, "firebase-same-project.tfvars.json", data)
+
+	// A Fugaro-managed account is still refused as a budget admin: in one
+	// project the job, build, scheduler, history and signer accounts all
+	// live in the FP.
+	for _, m := range []string{"fugaro-x@proj-1234.iam.gserviceaccount.com", "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"} {
+		in.BudgetAdmins = []string{"serviceAccount:" + m}
+		if _, err := Firebase(inst, in); err == nil {
+			t.Errorf("%s accepted as a budget admin of the same project", m)
+		}
+	}
+
+	// Two projects: no skip_apis in the tfvars (belong's stay as they were).
+	two, err := Firebase(inst, FirebaseInputs{FP: "aurora-fp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := FirebaseVars(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "skip_apis") {
+		t.Errorf("two-project tfvars name skip_apis: %s", b)
+	}
+}
+
+var googleAPIRE = regexp.MustCompile(`"([a-z0-9]+\.googleapis\.com)"`)
+
+// SharedAPIs is exactly the overlap of the APIs the two modules enable, read
+// from the embedded Terraform: a new overlap would make both roots own one
+// google_project_service in a same-project layout.
+func TestSharedAPIsAreTheOverlap(t *testing.T) {
+	apis := func(path string) map[string]bool {
+		b, err := fs.ReadFile(terraform.FS, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, m := range googleAPIRE.FindAllStringSubmatch(string(b), -1) {
+			out[m[1]] = true
+		}
+		return out
+	}
+	inst, fb := apis("gcp/modules/installation/apis.tf"), apis("gcp/modules/firebase/apis.tf")
+	var overlap []string
+	for a := range fb {
+		if inst[a] {
+			overlap = append(overlap, a)
+		}
+	}
+	slices.Sort(overlap)
+	if !slices.Equal(overlap, SharedAPIs) {
+		t.Errorf("SharedAPIs = %v, but the two modules both enable %v", SharedAPIs, overlap)
 	}
 }
 

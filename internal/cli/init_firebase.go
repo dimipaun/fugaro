@@ -136,11 +136,11 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		return userErr("--budget-mode enforce needs budget.per_run_usd in the project config (more than 0): it is the per-run cap the jobs enforce")
 	}
 	if lc.Budget != nil && lc.Budget.FirebaseProject != "" && lc.Budget.FirebaseProject != fp {
-		return userErr("project %s already uses Firebase project %s (budget.firebase_project); one Fugaro project has one Firebase project (design D3), so --firebase %s is refused", lc.Name, lc.Budget.FirebaseProject, fp)
+		return userErr("project %s already uses Firebase project %s (budget.firebase_project); one Fugaro project has one Firebase project (design D3, which may be the installation's own GCP project), so --firebase %s is refused", lc.Name, lc.Budget.FirebaseProject, fp)
 	}
 
 	// 0. Discovery.
-	if err := infra.CheckFirebaseProject(ctx, c, lc.GCPProject, fp); err != nil {
+	if err := infra.CheckFirebaseProject(ctx, c, fp); err != nil {
 		return initErr(err)
 	}
 	admins, skipped, err := infra.ProjectAdmins(ctx, c, lc.GCPProject)

@@ -116,7 +116,16 @@ type FirebaseSpec struct {
 	Admins         []string `json:"admins"`
 	BudgetAdmins   []string `json:"budget_admins"`
 	HistoryAccount string   `json:"history_account"`
+	// SkipAPIs are the APIs the Firebase root leaves to the installation
+	// root: set (to SharedAPIs) only when the Firebase project is the
+	// installation's own project, and left out of the tfvars otherwise.
+	SkipAPIs []string `json:"skip_apis,omitempty"`
 }
+
+// SharedAPIs are the APIs both the installation module and the Firebase
+// module enable (a test pins this to the Terraform). In a same-project
+// layout only the installation root enables them.
+var SharedAPIs = []string{"cloudresourcemanager.googleapis.com", "iam.googleapis.com"}
 
 // FirebaseNames are the Firebase root's singleton names.
 type FirebaseNames struct {
@@ -147,9 +156,6 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 	if !fpIDRE.MatchString(in.FP) {
 		return FirebaseSpec{}, userErr("%q is not a Firebase project ID (6-30 characters of a-z, 0-9 and -, starting with a letter)", in.FP)
 	}
-	if in.FP == inst.Project {
-		return FirebaseSpec{}, userErr("the Firebase project must be a project of its own, not the installation's GCP project %s (design D3)", inst.Project)
-	}
 	history := in.HistoryAccount
 	if history == "" {
 		history = serviceAccountEmail(HistoryAccountID, inst.Project)
@@ -164,6 +170,13 @@ func Firebase(inst InstallationSpec, in FirebaseInputs) (FirebaseSpec, error) {
 		Admins:         sortedUnique(in.Admins),
 		BudgetAdmins:   sortedUnique(in.BudgetAdmins),
 		HistoryAccount: history,
+	}
+	if in.FP == inst.Project {
+		// One project holds the installation and the Firebase backend (design
+		// D3, revised 2026-10-04): the installation root, applied first,
+		// enables the APIs both roots need, so the Firebase root skips them
+		// and no API is owned by two states.
+		s.SkipAPIs = slices.Clone(SharedAPIs)
 	}
 	if err := CheckFirebaseMembers(inst.Project, in.FP, map[string][]string{
 		"launchers": s.Launchers, "operators": s.Operators, "admins": s.Admins, "budget admins": s.BudgetAdmins,
@@ -283,13 +296,10 @@ func ProjectAdmins(ctx context.Context, c *Clients, gcpProject string) (admins, 
 }
 
 // CheckFirebaseProject refuses a Firebase project that doesn't exist (or
-// can't be read), isn't active, is the installation's own project, or has
-// no billing. It reads only: fugaro never creates the project or links
-// billing (design D3).
-func CheckFirebaseProject(ctx context.Context, c *Clients, gcpProject, fp string) error {
-	if fp == gcpProject {
-		return userErr("the Firebase project must be a project of its own, not the installation's GCP project %s (design D3)", gcpProject)
-	}
+// can't be read), isn't active, or has no billing. It may be the
+// installation's own GCP project (design D3, revised 2026-10-04). It reads
+// only: fugaro never creates the project or links billing.
+func CheckFirebaseProject(ctx context.Context, c *Clients, fp string) error {
 	p, err := c.CRM.Projects.Get(fp).Context(ctx).Do()
 	var ge *googleapi.Error
 	switch {

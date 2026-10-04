@@ -34,18 +34,25 @@ type fbRig struct {
 	idt     *gcpfake.IdentityToolkit
 	fs      *gcpfake.Firestore
 	rules   *gcpfake.FirebaseRules
+	fp      string
 }
 
-func newFBRig(t *testing.T) *fbRig {
+func newFBRig(t *testing.T) *fbRig { return newFBRigFor(t, fpID) }
+
+// newFBRigFor is the rig with the Firebase project fp: another project than
+// the installation's (the two-project layout), or initProject itself.
+func newFBRigFor(t *testing.T, fp string) *fbRig {
 	t.Helper()
-	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t)}
-	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fpID)
-	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fpID)
+	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t), fp: fp}
+	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fp)
+	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fp)
 	r.fs.RemoveDatabase() // a fresh Firebase project has none
-	r.fbdb.AddInstance(fpID, r.db.URL)
+	r.fbdb.AddInstance(fp, r.db.URL)
 	r.stateBucket()
-	r.crm.AddProject(fpID, 987654321098)
-	r.billing.SetBilling(fpID, true)
+	if fp != initProject {
+		r.crm.AddProject(fp, 987654321098)
+	}
+	r.billing.SetBilling(fp, true)
 	r.crm.SetPolicy(initProject,
 		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com", "group:owners@example.com", "domain:example.com"}},
 		gcpfake.Binding{Role: "roles/editor", Members: []string{"user:editor@example.com", "serviceAccount:123456789012-compute@developer.gserviceaccount.com",
@@ -69,7 +76,7 @@ func newFBRig(t *testing.T) *fbRig {
 func (r *fbRig) firebaseOutputs(t *testing.T) string {
 	t.Helper()
 	out := map[string]any{}
-	for k, v := range map[string]string{"rtdb_url": r.db.URL, "firebase_api_key": fpAPIKey, "token_signer": fpSigner, "firebase_project": fpID} {
+	for k, v := range map[string]string{"rtdb_url": r.db.URL, "firebase_api_key": fpAPIKey, "token_signer": "fugaro-token-signer@" + r.fp + ".iam.gserviceaccount.com", "firebase_project": r.fp} {
 		out[k] = map[string]any{"value": v, "type": "string", "sensitive": false}
 	}
 	b, err := json.Marshal(out)
@@ -260,10 +267,67 @@ func TestInitFirebaseNoBilling(t *testing.T) {
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("calls = %q", r.calls(t))
 	}
-	// And a project of its own: not the installation's.
-	_, _, err = executeStdin(t, "", "init", "--firebase", initProject, "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "project of its own") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+}
+
+// The Firebase project may be the installation's own GCP project (design D3,
+// revised 2026-10-04): the three applies run as ever, the Firebase root's
+// tfvars name the one project and leave iam and cloudresourcemanager to the
+// installation root, and the database, mark and config are written.
+func TestInitFirebaseSameProject(t *testing.T) {
+	r := newFBRigFor(t, initProject)
+	r.historyImage()
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "init", "--firebase", initProject, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got, want := r.applies(t), []string{"installation", "firebase", "installation"}; !slices.Equal(got, want) {
+		t.Fatalf("applies in %v, want %v", got, want)
+	}
+	v := r.fbVars(t)
+	if v["project"] != initProject || v["history_account"] != historyAccount {
+		t.Errorf("tfvars project %v, history account %v", v["project"], v["history_account"])
+	}
+	if got := strs(v["skip_apis"]); !slices.Equal(got, infra.SharedAPIs) {
+		t.Errorf("skip_apis = %v, want %v", got, infra.SharedAPIs)
+	}
+	lc := r.localConfig(t)
+	if lc.Budget == nil || lc.Budget.FirebaseProject != initProject || lc.GCPProject != initProject || lc.Budget.RTDBURL != r.db.URL {
+		t.Errorf("budget config = %+v (gcp_project %s)", lc.Budget, lc.GCPProject)
+	}
+	if r.db.RulePuts() != 1 || r.db.Value("fugaro") == nil {
+		t.Errorf("the database was not written: rules %d, fugaro %v", r.db.RulePuts(), r.db.Value("fugaro"))
+	}
+	for _, want := range []string{"to the Firebase project " + initProject, "(the history job and its sweep schedule)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}
+
+// --plan-only with the Firebase project the installation's own makes the same
+// checks and applies nothing.
+func TestInitFirebaseSameProjectPlanOnly(t *testing.T) {
+	r := newFBRigFor(t, initProject)
+	out, _, err := executeStdin(t, "", "init", "--firebase", initProject, "--plan-only")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.applies(t); len(got) != 0 {
+		t.Errorf("applies = %v", got)
+	}
+}
+
+// A two-project layout (belong's) writes tfvars with no skip_apis.
+func TestInitFirebaseTwoProjectsNoSkipAPIs(t *testing.T) {
+	r := newFBRig(t)
+	r.historyImage()
+	fakeTerminal(t)
+	if out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "init", "--firebase", fpID, "--budget-mode", "observe"); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if _, ok := r.fbVars(t)["skip_apis"]; ok {
+		t.Errorf("a two-project layout wrote skip_apis: %v", r.fbVars(t))
 	}
 }
 

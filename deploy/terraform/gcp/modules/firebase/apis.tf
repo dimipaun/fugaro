@@ -19,8 +19,11 @@ locals {
   ])
 }
 
+# In a same-project layout (the FP is the installation's own GCP project) the
+# installation root enables iam and cloudresourcemanager, so fugaro init lists
+# them in skip_apis and exactly one state owns each API. Otherwise it is empty.
 resource "google_project_service" "this" {
-  for_each = var.manage_apis ? local.apis : toset([])
+  for_each = var.manage_apis ? setsubtract(local.apis, var.skip_apis) : toset([])
 
   project                    = var.project
   service                    = each.value

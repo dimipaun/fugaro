@@ -105,9 +105,10 @@ with a guarded apply, then removes every address from Terraform's state,
 destroying nothing else.
 
 init --firebase <firebase-project-id> builds the project's budget backend in a
-Firebase project you created and linked to billing (init never creates a
-project or enables billing, and refuses one that is missing, has no billing,
-or whose database holds data and no Fugaro mark). It runs three applies, each
+Firebase project you created and linked to billing. It may be the project's
+own GCP project (one project for everything) or a project of its own (init
+never creates a project or enables billing, and refuses one that is missing,
+has no billing, or whose database holds data and no Fugaro mark). It runs three applies, each
 with its own plan and confirmation: the installation (the history account),
 the Firebase root (the database, a restricted sign-in key, the token signer,
 and the budget admins: the GCP project's owners and editors who are users or

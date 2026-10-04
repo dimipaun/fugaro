@@ -129,13 +129,21 @@ func History0(t *testing.T, deploy bool) HistorySpec {
 // TestFirebaseVarsPlan plans the Firebase root with the tfvars fugaro init
 // --firebase writes, against mock providers.
 func TestFirebaseVarsPlan(t *testing.T) {
+	// aurora-fp is the two-project layout; proj-1234 is the installation's
+	// own project (the same-project layout).
+	for _, fp := range []string{"aurora-fp", "proj-1234"} {
+		t.Run(fp, func(t *testing.T) { firebaseVarsPlan(t, fp) })
+	}
+}
+
+func firebaseVarsPlan(t *testing.T, fp string) {
 	if _, err := exec.LookPath("terraform"); err != nil {
 		t.Fatalf("this test needs terraform on PATH: %v", err)
 	}
 	spec := installationSpec(t)
 	spec.Launchers = []string{"user:launcher@example.com"}
 	spec.Operators = []string{"user:operator@example.com"}
-	fs, err := Firebase(spec, FirebaseInputs{FP: "aurora-fp", Admins: []string{"user:owner@example.com", "group:editors@example.com"},
+	fs, err := Firebase(spec, FirebaseInputs{FP: fp, Admins: []string{"user:owner@example.com", "group:editors@example.com"},
 		BudgetAdmins: []string{"user:extra@example.com"}, HistoryAccount: "fugaro-history@proj-1234.iam.gserviceaccount.com"})
 	if err != nil {
 		t.Fatal(err)
@@ -151,8 +159,8 @@ func TestFirebaseVarsPlan(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("mock_provider \"google\" {}\nmock_provider \"google-beta\" {}\n\n")
 	for _, o := range []struct{ target, values string }{
-		{"module.firebase.google_service_account.signer", "name = \"projects/aurora-fp/serviceAccounts/fugaro-token-signer@aurora-fp.iam.gserviceaccount.com\"\n      email = \"fugaro-token-signer@aurora-fp.iam.gserviceaccount.com\""},
-		{"module.firebase.google_firebase_database_instance.this", "database_url = \"https://aurora-fp-default-rtdb.firebaseio.com\""},
+		{"module.firebase.google_service_account.signer", "name = \"projects/" + fp + "/serviceAccounts/fugaro-token-signer@" + fp + ".iam.gserviceaccount.com\"\n      email = \"fugaro-token-signer@" + fp + ".iam.gserviceaccount.com\""},
+		{"module.firebase.google_firebase_database_instance.this", "database_url = \"https://" + fp + "-default-rtdb.firebaseio.com\""},
 		{"module.firebase.google_apikeys_key.web", "key_string = \"AIzaSyMockKey\""},
 	} {
 		b.WriteString("override_resource {\n  target          = " + o.target + "\n  override_during = plan\n  values = {\n      " + o.values + "\n  }\n}\n\n")
@@ -161,7 +169,7 @@ func TestFirebaseVarsPlan(t *testing.T) {
 	for _, k := range slices.Sorted(maps.Keys(vars)) {
 		b.WriteString("  " + k + " = " + string(vars[k]) + "\n")
 	}
-	b.WriteString("}\n\nrun \"plan\" {\n  command = plan\n\n  assert {\n    condition     = output.firebase_project == \"aurora-fp\"\n    error_message = \"the Firebase project is not the tfvars'\"\n  }\n}\n")
+	b.WriteString("}\n\nrun \"plan\" {\n  command = plan\n\n  assert {\n    condition     = output.firebase_project == \"" + fp + "\"\n    error_message = \"the Firebase project is not the tfvars'\"\n  }\n}\n")
 	dir := t.TempDir()
 	writeTree(t, dir)
 	root := filepath.Join(dir, "gcp/roots/firebase")
