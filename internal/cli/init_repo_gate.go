@@ -66,7 +66,7 @@ func onboardLeft(o originInfo) initflow.Left {
 	if o.standardHost() && !o.Rewritten {
 		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " init --onboard-repo " + quoteWord(o.Repo)}
 	}
-	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "run fugaro init in your own terminal and type " + pluginwire.Printable(o.typed()) + " at the prompt, or in a fresh clone of the real remote"}
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " init"}}
 }
 
 // unknownDetail says why the stage waits for the user.

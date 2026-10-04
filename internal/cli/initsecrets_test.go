@@ -308,8 +308,8 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 		origin string
 		want   []string
 	}{
-		{githubOrigin, []string{"fugaro secrets set github-app-key --repo acme/app < PATH-TO-THE-KEY-FILE", "claude setup-token; fugaro secrets set claude-oauth-token --repo acme/app"}},
-		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token --repo acme/app", "claude setup-token; fugaro secrets set claude-oauth-token --repo acme/app"}},
+		{githubOrigin, []string{"fugaro secrets set github-app-key --repo acme/app < PATH-TO-THE-KEY-FILE", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
+		{bitbucketOrigin, []string{"fugaro secrets set bitbucket-token --repo acme/app", "claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/app"}},
 	} {
 		r := newSecretsRig(t, tc.origin, strings.NewReader(""))
 		res, err := r.run(t)
@@ -317,15 +317,18 @@ func TestPrintedCommandsHaveNoValues(t *testing.T) {
 			t.Fatalf("%v, left %v", err, res.Left)
 		}
 		text := res.Left[0].Text
-		if strings.ContainsAny(text, "\n\r\\") || strings.Contains(text, "<<") || res.Left[0].Kind != initflow.LeftCommand {
+		if strings.ContainsAny(text, "\n\r\\") || res.Left[0].Kind != initflow.LeftCommand {
 			t.Errorf("not one plain line: %+v", res.Left[0])
 		}
-		for _, w := range tc.want {
-			if !strings.Contains(text, w) {
-				t.Errorf("%q lacks %q", text, w)
+		if got := res.Left[0].Commands; fmt.Sprint(got) != fmt.Sprint(tc.want) {
+			t.Errorf("commands %q, want %q", got, tc.want)
+		}
+		for _, c := range res.Left[0].Commands {
+			if strings.ContainsAny(c, "\n\r\\;") || strings.Contains(c, "<<") || strings.Contains(c, "&&") {
+				t.Errorf("not one plain command: %q", c)
 			}
 		}
-		if !strings.Contains(r.out.String(), "left for you (secrets, command): "+text+"\n") {
+		if !strings.Contains(r.out.String(), "left for you (secrets, command): "+text+"\n    "+strings.Join(tc.want, "\n    ")+"\n") {
 			t.Errorf("not printed once, whole: %q", r.out.String())
 		}
 	}
@@ -360,7 +363,7 @@ func TestSecretsArePerRepository(t *testing.T) {
 	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou {
 		t.Fatalf("%v, %+v", err, res.Stages)
 	}
-	if !strings.Contains(res.Left[0].Text, "--repo acme/app") || strings.Contains(res.Left[0].Text, "other") {
+	if !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "--repo acme/app") || strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "other") {
 		t.Errorf("left = %q", res.Left[0].Text)
 	}
 	if gcp.SecretID(bitbucketSlug, "bitbucket-token") == gcp.SecretID(other, "bitbucket-token") {
@@ -378,7 +381,7 @@ func TestSecretsCheckToleratesAnUnreadableStore(t *testing.T) {
 	if err != nil || res.Failed != nil {
 		t.Fatalf("%v, %+v", err, res.Failed)
 	}
-	if stateOf(res, "secrets") != initflow.NeedsYou || !strings.Contains(res.Left[0].Text, "github-app-key") || !strings.Contains(res.Left[0].Text, "claude-oauth-token") {
+	if stateOf(res, "secrets") != initflow.NeedsYou || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "github-app-key") || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "claude-oauth-token") {
 		t.Errorf("stages %+v, left %v", res.Stages, res.Left)
 	}
 }
@@ -444,7 +447,7 @@ func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 	}
 	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}
 	res, err := r.run(t)
-	if err != nil || len(res.Left) != 1 || strings.Contains(res.Left[0].Text, "claude") || !strings.Contains(res.Left[0].Text, "bitbucket-token") {
+	if err != nil || len(res.Left) != 1 || strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "claude") || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "bitbucket-token") {
 		t.Fatalf("%v, %+v", err, res)
 	}
 	var detail string
@@ -538,7 +541,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		}
 		if len(res.Left) > 0 {
 			last := res.Left[len(res.Left)-1]
-			if last["stage"] == "secrets" && !strings.Contains(last["text"], "secrets set bitbucket-token --repo acme/sandbox") {
+			if last["stage"] == "secrets" && !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 				t.Fatalf("%v: left %v", flags, res.Left)
 			}
 		}

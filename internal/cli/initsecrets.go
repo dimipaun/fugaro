@@ -10,7 +10,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -75,17 +74,17 @@ type secretStore interface {
 	Set(ctx context.Context, id string, value []byte, labels map[string]string) (string, error)
 }
 
-// selfCommand is how the one-line commands name the binary: the path the
-// user ran, quoted for one shell word. Tests replace it.
+// selfCommand is how every command init prints names the binary: the one
+// rule is the program as the user ran it (os.Args[0], so a bare "fugaro" from
+// the PATH stays "fugaro", and a path stays the path), as one shell word
+// through quoteWord; plain "fugaro" when that cannot be one line. Tests
+// replace it.
 var selfCommand = func() string {
 	arg := os.Args[0]
-	switch {
-	case arg == "" || strings.ContainsAny(arg, "\r\n\x00"):
+	if arg == "" || strings.ContainsAny(arg, "\r\n\x00") {
 		return "fugaro"
-	case regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`).MatchString(arg):
-		return arg
 	}
-	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
+	return quoteWord(arg)
 }
 
 // hold registers value with the loop's redaction until release: the whole
@@ -327,7 +326,9 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	detail := describeNeeds(s.missing) + note
 	if !s.canPrompt() {
 		if m := agentMarker(os.Getenv); m != "" {
-			detail += "; a coding agent's session is present (" + m + " is set): run the commands in your own terminal, not through a coding agent; if this is your own IDE terminal, unset " + m + " or run fugaro secrets set"
+			detail += "; a coding agent's session is present (" + m + " is set), so " + initflow.NeedsTerminal("typing the values") + "; if this is your own IDE terminal, unset " + m + " or run " + selfCommand() + " secrets set"
+		} else {
+			detail += "; " + initflow.NeedsTerminal("typing the values")
 		}
 		lf := s.Left()
 		return initflow.Status{State: initflow.NeedsYou, Detail: detail, Left: &lf}, nil
@@ -345,11 +346,11 @@ func (s *secretsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 
 // Left is the one line the user runs in their own terminal: each missing
 // secret's command (all the candidates when the listing did not work),
-// joined on one line. None holds a value: the value is typed at the hidden
+// each on a line of its own. None holds a value: the value is typed at the hidden
 // prompt, or the PEM is redirected from a file the user names.
 func (s *secretsStage) Left() initflow.Left {
 	if s.tg == nil {
-		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "run fugaro init in a checkout of the repository, in your own terminal"}
+		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "in a checkout of the repository, in your own terminal window, run", Commands: []string{selfCommand() + " init"}}
 	}
 	needs := s.missing
 	if !s.checked {
@@ -357,21 +358,21 @@ func (s *secretsStage) Left() initflow.Left {
 	}
 	var cmds []string
 	for _, name := range needs {
-		set := selfCommand() + " secrets set " + name + " --repo " + s.tg.repo
+		set := selfCommand() + " secrets set " + quoteWord(name) + " --repo " + quoteWord(s.tg.repo)
 		switch name {
 		case "claude-oauth-token":
-			cmds = append(cmds, "claude setup-token; "+set)
+			cmds = append(cmds, "claude setup-token", set)
 		case multilineSecret:
 			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:
 			cmds = append(cmds, set)
 		}
 	}
-	text := strings.Join(cmds, "; ")
+	text := "run these in your own terminal window, one line at a time, in this order"
 	if agentEnv(os.Getenv) {
-		text = "run this in your own terminal, not through a coding agent: " + text
+		text = "run these in your own terminal window, not through a coding agent, one line at a time, in this order"
 	}
-	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text}
+	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text, Commands: cmds}
 }
 
 // terminal is stdin as a real terminal file, else nil. The stage reads
@@ -391,9 +392,9 @@ func (s *secretsStage) smProblem(err error) *initflow.NeedsYouError {
 	if !errors.As(err, &ae) || ae.Code != 403 {
 		return nil
 	}
-	text := "Secret Manager refused: you need roles/secretmanager.viewer to list, secretmanager.secrets.create to create a secret's container (roles/secretmanager.admin or a custom role) and roles/secretmanager.secretVersionAdder to store a value, on the project's secrets (ask the project owner), then rerun fugaro init"
+	text := "Secret Manager refused: you need roles/secretmanager.viewer to list, secretmanager.secrets.create to create a secret's container (roles/secretmanager.admin or a custom role) and roles/secretmanager.secretVersionAdder to store a value, on the project's secrets (ask the project owner), then rerun " + selfCommand() + " init"
 	if m := strings.ToLower(ae.Message); strings.Contains(m, "has not been used") || strings.Contains(m, "is disabled") || strings.Contains(m, "service_disabled") {
-		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro init does), then rerun fugaro init"
+		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro init does), then rerun " + selfCommand() + " init"
 	}
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftConsole, Text: text}}
 }

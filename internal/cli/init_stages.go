@@ -167,7 +167,7 @@ type preflightStage struct{ e *initEngine }
 func (preflightStage) Name() string { return initflow.Preflight }
 func (s preflightStage) Check(context.Context) (initflow.Status, error) {
 	if err := s.e.environment(); err != nil {
-		lf := initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftCommand, Text: err.Error()}
+		lf := initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: err.Error()}
 		return initflow.Status{State: initflow.NeedsYou, Detail: "the environment is not ready", Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Done}, nil
@@ -180,7 +180,7 @@ func (preflightStage) Apply(context.Context, initflow.Env) (initflow.Outcome, er
 }
 func (preflightStage) Verify(context.Context) error { return nil }
 func (preflightStage) Left() initflow.Left {
-	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftCommand, Text: "fix the environment problem named above and rerun fugaro init"}
+	return initflow.Left{Stage: initflow.Preflight, Kind: initflow.LeftConsole, Text: "fix the environment problem named above, then rerun", Commands: []string{selfCommand() + " init"}}
 }
 
 // engineStage is a stage that calls one of init's engines. The engines read
@@ -299,7 +299,7 @@ func newInstallationStage(e *initEngine) *engineStage {
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
-		left: initflow.Left{Stage: initflow.Installation, Kind: initflow.LeftPrompt, Text: "run fugaro init in your own terminal and type the project's name to apply"},
+		left: promptLeft(initflow.Installation, "type the project's name to apply", "init"),
 	}
 }
 
@@ -321,7 +321,7 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
-		left: initflow.Left{Stage: initflow.Firebase, Kind: initflow.LeftPrompt, Text: "run fugaro init --firebase <firebase-project-id> in your own terminal and type the project's name at each apply"},
+		left: promptLeft(initflow.Firebase, "type the project's name at each apply", "init", "--firebase", "<firebase-project-id>"),
 	}
 }
 
@@ -343,6 +343,6 @@ func newInstallation2Stage(e *initEngine) *engineStage {
 			}
 			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
 		},
-		left: initflow.Left{Stage: initflow.Installation2, Kind: initflow.LeftPrompt, Text: "run fugaro init --firebase <firebase-project-id> in your own terminal and type the project's name to apply the history job"},
+		left: promptLeft(initflow.Installation2, "type the project's name to apply the history job", "init", "--firebase", "<firebase-project-id>"),
 	}
 }

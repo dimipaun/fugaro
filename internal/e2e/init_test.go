@@ -614,15 +614,15 @@ func TestInitRepoFreshPrintsSecrets(t *testing.T) {
 		t.Errorf("a build was submitted with no secret stored")
 	}
 	for logical, id := range r.spec.Secrets {
-		line := "fugaro secrets set " + logical + " --repo acme/sandbox"
+		line := " secrets set " + logical + " --repo acme/sandbox"
 		if !strings.Contains(res.stdout, line) || !strings.Contains(res.stdout, id) {
 			t.Errorf("no command for %s:\n%s", logical, res)
 		}
 	}
-	if !strings.Contains(res.stdout, "(you, in your own terminal) claude setup-token, then: fugaro secrets set claude-oauth-token") {
+	if !strings.Contains(res.stdout, "\n    claude setup-token\n") || strings.Contains(res.stdout, "claude setup-token;") {
 		t.Errorf("claude setup-token isn't the user's step:\n%s", res)
 	}
-	if !strings.Contains(res.stdout, "rerun fugaro init --repo when they are stored") {
+	if !strings.Contains(res.stdout, " init --repo when they are stored") {
 		t.Errorf("no rerun hint:\n%s", res)
 	}
 }

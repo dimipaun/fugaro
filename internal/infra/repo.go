@@ -171,23 +171,34 @@ func NeedsBuild(ctx context.Context, c *Clients, spec RepoSpec, versions map[str
 	return out, nil
 }
 
-// SecretCommands are the fugaro secrets set commands of the repository's
-// secrets that have no version, sorted by name, as the bootstrap printed
-// them: the value comes from stdin or a hidden prompt, never argv, and the
-// Claude token is made by the user, in their own terminal.
-func SecretCommands(spec RepoSpec, versions map[string]bool) []string {
-	var out []string
+// SecretStep is one secret of a repository that has no version, and the
+// command lines that store it.
+type SecretStep struct {
+	Name, What string
+	// Commands are run in order, each one complete line: no chaining, no
+	// comment, no value. The Claude token is made by the user first.
+	Commands []string
+}
+
+// SecretCommands are the fugaro secrets set steps of the repository's
+// secrets that have no version, sorted by name: the value comes from stdin or
+// a hidden prompt, never argv, and the Claude token is made by the user, in
+// their own terminal. bin names the binary and quote makes one shell word of
+// a name, both as the caller prints commands.
+func SecretCommands(spec RepoSpec, versions map[string]bool, bin string, quote func(string) string) []SecretStep {
+	var out []SecretStep
 	for _, logical := range slices.Sorted(maps.Keys(spec.Secrets)) {
 		if versions[logical] {
 			continue
 		}
-		set := "fugaro secrets set " + logical + " --repo " + spec.Name
-		id := "   # " + spec.Secrets[logical]
+		set := bin + " secrets set " + quote(logical) + " --repo " + quote(spec.Name)
+		st := SecretStep{Name: logical, What: spec.Secrets[logical]}
 		if logical == "claude-oauth-token" {
-			out = append(out, "(you, in your own terminal) claude setup-token, then: "+set+id)
+			st.Commands = []string{"claude setup-token", set}
 		} else {
-			out = append(out, set+" < <file holding the value>"+id)
+			st.Commands = []string{set + " < PATH-TO-THE-VALUE-FILE"}
 		}
+		out = append(out, st)
 	}
 	return out
 }

@@ -27,7 +27,7 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 		if err != nil || len(res.Left) != 1 {
 			t.Fatalf("%v, %+v", err, res)
 		}
-		return res.Left[0].Text
+		return strings.Join(res.Left[0].PrintedCommands(), "\n")
 	}
 	t.Run("vertex", func(t *testing.T) {
 		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
@@ -48,7 +48,7 @@ func TestNeededSecretsFollowAuth(t *testing.T) {
 		r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
 		r.e.lc.Providers = map[string]config.ModelProvider{"openrouter": {Secret: "openrouter-api-key", AllowDataTo: []string{"acme/app"}}}
 		text := left(t, r)
-		if !strings.Contains(text, "bitbucket-token") || !strings.Contains(text, "claude setup-token; fugaro secrets set claude-oauth-token") ||
+		if !strings.Contains(text, "bitbucket-token") || !strings.Contains(text, "claude setup-token\nfugaro secrets set claude-oauth-token") ||
 			strings.Contains(text, "anthropic") || strings.Contains(text, "openrouter") {
 			t.Errorf("left = %q", text)
 		}
@@ -138,7 +138,7 @@ func TestAgentEnvNeverPrompts(t *testing.T) {
 			if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
 				t.Fatalf("%v, %+v, stderr %q", err, res.Stages, r.errOut.String())
 			}
-			if !strings.HasPrefix(res.Left[0].Text, "run this in your own terminal, not through a coding agent: ") {
+			if !strings.Contains(res.Left[0].Text, "not through a coding agent") {
 				t.Errorf("left = %q", res.Left[0].Text)
 			}
 			// An IDE extension sets some markers in a person's own terminal:
@@ -316,7 +316,7 @@ func TestJSONNeverPrompts(t *testing.T) {
 	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
 		t.Fatalf("%v, %+v, stderr %q", err, res, r.errOut.String())
 	}
-	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "secrets set bitbucket-token --repo acme/") {
+	if len(res.Left) != 1 || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "secrets set bitbucket-token --repo acme/") {
 		t.Errorf("left = %+v", res.Left)
 	}
 	if after := queued(t, f); after != before || before == 0 {

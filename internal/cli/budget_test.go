@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
@@ -224,7 +225,7 @@ func TestSetRaiseNeedsConfirmation(t *testing.T) {
 	seedCaps(f, 100, 20)
 	// No terminal, no --yes: refused, nothing written.
 	_, _, err := execute(t, "budget", "set", "--global", "--daily", "150")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "confirmation") {
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) {
 		t.Fatalf("err = %v", err)
 	}
 	if v := f.db.Value(nodeCG).(map[string]any)["dailyMicros"].(json.Number).String(); v != "100000000" {
