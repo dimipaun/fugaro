@@ -306,7 +306,8 @@ func TestInitGCPCallsUseID(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), enableCommand) {
 		t.Fatalf("the enable hint: exit %d, err %v", ExitCode(err), err)
 	}
-	if _, errOut, err := executeStdin(t, "", "init", "--plan-only", "--yes"); err != nil {
+	fakeTerminal(t)
+	if _, errOut, err := executeStdin(t, initProjectName+"\n", "init", "--plan-only"); err != nil {
 		t.Fatalf("%v\n%s", err, errOut)
 	}
 	sawID := false
