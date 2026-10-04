@@ -97,6 +97,9 @@ release:
     - `ghcr.io/dimipaun/fugaro-web-node:{{ .Major }}` (moves to the highest release of the major)
     - `ghcr.io/dimipaun/fugaro-go:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-go:{{ .Major }}`
     - `ghcr.io/dimipaun/fugaro-java-services:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-java-services:{{ .Major }}`
+    - `ghcr.io/dimipaun/fugaro-history:{{ .Version }}` and `ghcr.io/dimipaun/fugaro-history:{{ .Major }}` (the sweeper and history job's image)
+
+    The images workflow then pulls each one with no login and fails if it is not public or lacks `linux/amd64`; each image's digest is in that run's summary.
 
     The Terraform modules, the schemas and the plugin are versioned by this same tag.
 

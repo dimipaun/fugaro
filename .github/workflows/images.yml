@@ -118,8 +118,8 @@ jobs:
           name: fugaro-${{ matrix.base }}-image
           path: fugaro-${{ matrix.base }}.tar.gz
           retention-days: 1
-  # The history job's image (design D11): built and checked on every run, not
-  # published until M7 publishes images; the operator builds and pushes it by hand (docs/gcp-setup.md, "The history image").
+  # The history job's image (design D11): built and checked on every run and
+  # published with the bases on a release tag (the publish job below).
   history:
     needs: version
     permissions:
@@ -145,10 +145,19 @@ jobs:
       - name: Scan
         if: github.event_name != 'pull_request'
         run: images/scan.sh fugaro-history:ci
+      - name: Save the image for the publish job
+        if: needs.version.outputs.publish == 'true'
+        run: docker save "fugaro-history:ci" | gzip > "fugaro-history.tar.gz"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: needs.version.outputs.publish == 'true'
+        with:
+          name: fugaro-history-image
+          path: fugaro-history.tar.gz
+          retention-days: 1
   # Only this job ever needs packages:write, and it never runs on
   # pull_request: `version.outputs.publish` is forced false there.
   publish:
-    needs: [version, base]
+    needs: [version, base, history]
     if: needs.version.outputs.publish == 'true'
     # Publishes queue rather than race: move_major is decided from the tags
     # present when the version job ran, so two close tag pushes in one major
@@ -162,7 +171,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        base: [web-node, go, java-services]
+        base: [web-node, go, java-services, history]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -188,6 +197,39 @@ jobs:
             docker tag "fugaro-${{ matrix.base }}:ci" "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
             docker push "ghcr.io/dimipaun/fugaro-${{ matrix.base }}:$t"
           done
+  # A new ghcr.io package is private until its owner makes it public once by
+  # hand (docs/release.md). This job has no packages permission and never logs
+  # in, so it sees what an anonymous user (the mirror, a plain docker pull)
+  # sees, and it fails the release when a published image is not pullable or
+  # has no linux/amd64 build. Digests go to the run summary.
+  verify-public:
+    needs: [version, publish]
+    if: needs.version.outputs.publish == 'true'
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Pull-check every published image without a login
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          MAJOR: ${{ needs.version.outputs.major }}
+          MOVE_MAJOR: ${{ needs.version.outputs.move_major }}
+        run: |
+          set -eu
+          refs=""
+          for img in web-node go java-services history; do
+            refs="$refs ghcr.io/dimipaun/fugaro-$img:$VERSION"
+            if [ "$MOVE_MAJOR" = true ]; then
+              refs="$refs ghcr.io/dimipaun/fugaro-$img:$MAJOR"
+            fi
+          done
+          # shellcheck disable=SC2086
+          images/verify-public.sh $refs | tee verify.log
+          { echo '### Published images'; echo; sed 's/^verify-public: /- /' verify.log; } >> "$GITHUB_STEP_SUMMARY"
   docker-tests:
     if: github.event_name != 'push'
     permissions:
