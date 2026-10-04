@@ -24,6 +24,13 @@ type Options struct {
 	// Terminal is whether stdin is a terminal, where a confirmation can be
 	// typed.
 	Terminal bool
+	// JSON is --json: it never prompts for what --yes does not cover.
+	JSON bool
+	// Agent is the environment marker of a coding agent's session (CLAUDECODE
+	// and the like), "" for none. With one set nothing is applied, --yes or
+	// not: every applying stage is needs-you ("run this in your own terminal
+	// window"); checks and plans still run. A mitigation, not a barrier.
+	Agent string
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
@@ -327,17 +334,34 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		}
 
 		// Something to apply.
-		if !YesCovers(name) && !l.interactive {
+		if l.o.Agent != "" {
+			if done, err := l.agentStage(ctx, s); err != nil {
+				l.fail(name, err)
+				stopped = name
+				continue
+			} else if done {
+				continue
+			}
+			stopped = name
+			continue
+		}
+		if !YesCovers(name) && (!l.interactive || l.o.JSON) {
 			// Never auto-confirmed, never prompted: left for the user.
 			l.needsYou(name, "needs your own confirmation, which --yes does not give", s.Left())
 			stopped = name
 			continue
 		}
 		if _, self := s.(SelfConfirming); !l.o.Yes && !l.interactive && !(self && YesCovers(name)) {
-			return &NoTerminalError{Stage: name}
+			return &NoTerminalError{Stage: name, Agent: l.o.Agent}
 		}
 		out, err := applyStage(ctx, s, l.env(name))
 		var ny *NeedsYouError
+		var ag *AgentError
+		if errors.As(err, &ag) {
+			l.needsYou(name, ag.Error(), s.Left())
+			stopped = name
+			continue
+		}
 		if errors.As(err, &ny) {
 			l.needsYou(name, "", ny.Left)
 			stopped = name
@@ -358,6 +382,36 @@ func (l *loop) converge(ctx context.Context, stages []Stage) error {
 		l.res.Stages = append(l.res.Stages, r)
 	}
 	return nil
+}
+
+// agentStage is a stage's turn in a coding agent's session, which applies
+// nothing. A stage that can only say what it would do by planning (an engine)
+// plans, read-only: an empty plan is done, anything else is the user's. done
+// is true when the stage needs nothing and the loop goes on.
+func (l *loop) agentStage(ctx context.Context, s Stage) (done bool, err error) {
+	name := s.Name()
+	if _, self := s.(SelfConfirming); self {
+		p, perr := planStage(ctx, s, l.env(name))
+		var ag *AgentError
+		var ny *NeedsYouError
+		switch {
+		case errors.As(perr, &ag):
+		case errors.As(perr, &ny):
+			l.needsYou(name, "", ny.Left)
+			return false, nil
+		case perr != nil:
+			return false, perr
+		case p.NothingToDo:
+			d := oneLine(p.Detail)
+			if d == "" {
+				d = "No changes"
+			}
+			l.res.Stages = append(l.res.Stages, StageResult{Name: name, State: Done, Detail: l.redact(d)})
+			return true, nil
+		}
+	}
+	l.needsYou(name, AgentRefusal(l.o.Agent), s.Left())
+	return false, nil
 }
 
 func (l *loop) needsYou(stage, detail string, lf Left) {

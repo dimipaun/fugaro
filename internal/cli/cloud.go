@@ -382,7 +382,7 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if err != nil {
 		return nil, nil
 	}
-	data, err := os.ReadFile(filepath.Join(strings.TrimSpace(string(out)), "fugaro.yaml"))
+	data, err := readFugaroYAML(filepath.Join(strings.TrimSpace(string(out)), "fugaro.yaml"))
 	if err != nil {
 		return nil, nil
 	}

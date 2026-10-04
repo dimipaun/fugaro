@@ -82,7 +82,9 @@ func hostileAll() string {
 // helpers: ls, logs, diagnose, cancel and run.
 func TestViewsStripTerminalControls(t *testing.T) {
 	f := newCloudFixture(t)
-	const id = "20260927-100000-abcd"
+	// Today's, so ls (which lists a recent window) really shows the run: a
+	// fixed date outside the window made the ls assertion check nothing.
+	id := time.Now().UTC().Add(-time.Minute).Format("20060102-150405") + "-abcd"
 	evil := hostileAll()
 	exec := seedRun(t, f, id, "", "someone@example.com", true)
 	f.run.SetState(exec, backend.StateRunning)
@@ -98,6 +100,9 @@ func TestViewsStripTerminalControls(t *testing.T) {
 		out, errOut, err := execute(t, args...)
 		if err != nil {
 			t.Fatalf("%v: %v (%s)", args, err, errOut)
+		}
+		if args[0] == "ls" && !strings.Contains(out, id) {
+			t.Fatalf("ls does not list the run it was to be checked on:\n%s", out)
 		}
 		noControls(t, strings.Join(args, " "), out)
 		noControls(t, strings.Join(args, " ")+" stderr", errOut)

@@ -331,7 +331,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 	const val = "bb-secret-value-EXAMPLE"
 	session := func(t *testing.T, sm *gcpfake.Secrets, f *ttyFixture) loopResult {
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
-		r.e.lc = &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
+		r.e.lc = &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}, Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
 		r.stage = newSecretsStage(r.e) // the real client, not the memStore
 		sm.Seed(gcp.SecretID(bitbucketSlug, "claude-oauth-token"), map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: mustLabel(t, bitbucketSlug), gcp.LabelSecret: "claude-oauth-token"}, []byte(tokenValue))
@@ -410,11 +410,14 @@ func initOnTTY(t *testing.T, asJSON bool) {
 	r.save(t)
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
 	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(checkoutYAML("bitbucket", "oauth", "aurora", "")), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	testutil.Git(t, dir, "add", "fugaro.yaml")
+	testutil.Git(t, dir, "commit", "-q", "-m", "fugaro.yaml")
+	fetched(t, dir) // the stages read the default branch's file
 	for _, k := range agentMarkers {
 		t.Setenv(k, "")
 	}
@@ -482,7 +485,9 @@ func initOnTTY(t *testing.T, asJSON bool) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("init did not return")
 	}
-	if err != nil {
+	// The repository stage after the secrets is not what is under test: this
+	// rig has no base image for it, which it refuses before any cloud call.
+	if err != nil && !strings.Contains(err.Error(), "no base_images entry") {
 		t.Fatalf("%v\n%s", err, errOut.String())
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")

@@ -21,4 +21,5 @@ shift "$n"
 DOCKER_BUILDKIT=1 docker build --progress plain \
   --platform "${PLATFORM:-linux/amd64}" \
   --build-arg "FUGARO_VERSION=${FUGARO_VERSION:-dev}" \
+  --build-arg "FUGARO_COMMIT=${FUGARO_COMMIT:-$(git -C "$root" rev-parse HEAD 2>/dev/null || echo unknown)}" \
   --file "$root/images/$base/Dockerfile" "$@" "$root"

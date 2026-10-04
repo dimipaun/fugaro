@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 )
 
 // Adopt mode (design §3.1, "A new team member"): the installation exists
@@ -72,6 +73,20 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 	}
 	e.adopted = "adopted the existing installation: wrote the local config, applied nothing"
 	return nil
+}
+
+// adoptGuard refuses, for a stage that would change the cloud, to apply in the
+// run that adopted an installation: adopt mode is for a teammate's machine,
+// whose plan from empty defaults must not be applied (adoptNotes says so). The
+// owner applies; a rerun here, with the config in place, is the ordinary
+// converge. The plugin wiring writes a local file only and is not guarded.
+func (e *initEngine) adoptGuard(stage string) error {
+	if e.adopted == "" || stage == initflow.Installation || stage == initflow.Plugin {
+		return nil
+	}
+	return &initflow.NeedsYouError{Left: initflow.Left{Stage: stage, Kind: initflow.LeftConsole,
+		Text:     "this run adopted an existing installation and applied nothing; it applies nothing more from here: an owner applies changes (the notes above say how), then rerun this once your roles are granted",
+		Commands: []string{selfCommand() + " init"}}}
 }
 
 // adoptNotes is what the person is told after adopting: that the config is a

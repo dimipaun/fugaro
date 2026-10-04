@@ -18,9 +18,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -158,6 +160,8 @@ type secretsStage struct {
 	out func() io.Writer
 
 	tg      *secretTarget
+	origin  originInfo // the checkout's origin, for the hostile-checkout gate
+	root    string     // the checkout's top
 	skip    string
 	checked bool
 	missing []string // names with no stored value
@@ -209,11 +213,13 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		return
 	}
 	lc := s.e.lc
-	repo, err := originRepo(ctx)
-	if err != nil {
+	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+	oi, ok := readOrigin(ctx, root)
+	if err != nil || !ok {
 		s.skip = "not in a checkout of a repository: run fugaro init there to take its secrets"
 		return
 	}
+	repo := oi.Repo
 	var local localcfg.Repo
 	known := false
 	if want, err := task.CanonicalRepo(repo); err == nil {
@@ -223,7 +229,9 @@ func (s *secretsStage) resolve(ctx context.Context) {
 			}
 		}
 	}
-	cfg := checkoutConfig(ctx, repo)
+	// The default branch's file, as the repository stage reads it: not the
+	// working tree's, which whoever made the checkout could have changed.
+	cfg := defaultBranchConfig(ctx, root)
 	if cfg != nil && cfg.Project != lc.Name {
 		s.skip = "this checkout's fugaro.yaml names another project (or none): its secrets are not taken here"
 		return
@@ -275,7 +283,46 @@ func (s *secretsStage) resolve(ctx context.Context) {
 			}
 		}
 	}
-	s.tg = tg
+	s.tg, s.origin, s.root = tg, oi, root
+}
+
+// defaultBranchConfig is the fugaro.yaml of the checkout's default branch
+// (origin/HEAD, main or master, as last fetched), read from git; nil with none
+// or one that does not parse.
+func defaultBranchConfig(ctx context.Context, root string) *config.Config {
+	ref := defaultBranchRef(ctx, root)
+	if ref == "" {
+		return nil
+	}
+	data, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml").Output()
+	if err != nil {
+		return nil
+	}
+	cfg, _ := config.Parse(data)
+	return cfg
+}
+
+// authorize is the hostile-checkout gate (init_repo_gate.go) in front of the
+// stage's cloud calls and prompts: a repository the local config does not
+// list takes a value for nobody until it is opted in, by --onboard-repo or by
+// typing its owner/name at the user's own terminal. A checkout whose default
+// branch names this project is no proof of anything.
+func (s *secretsStage) authorize(env initflow.Env) error {
+	switch a, err := s.e.authState(s.origin); {
+	case err != nil:
+		return err
+	case a == authNeeded || (a == authAsk && !env.Interactive):
+		return &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+	case a == authAsk:
+		ok, err := s.e.confirmRepo(s.root, s.origin)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
+		}
+	}
+	return nil
 }
 
 // find lists the repository's secrets (metadata only) and returns what its
@@ -307,6 +354,15 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	if s.skip != "" {
 		return initflow.Status{State: initflow.Skipped, Detail: s.skip}, nil
 	}
+	// Before any cloud call: a repository the project does not list yet is
+	// not asked about.
+	switch a, err := s.e.authState(s.origin); {
+	case err != nil:
+		return initflow.Status{}, err
+	case a == authNeeded:
+		lf := onboardLeft(s.origin)
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.origin), Left: &lf}, nil
+	}
 	st, err := s.open(ctx)
 	if err == nil {
 		s.missing, err = s.find(ctx, st)
@@ -318,7 +374,7 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	s.checked = true
 	note := ""
 	if s.tg.noConfig {
-		note = " (no fugaro.yaml in this checkout, so the Claude credential is not assumed)"
+		note = " (no fugaro.yaml on the default branch as last fetched, so the Claude credential is not assumed; git fetch, then rerun)"
 	}
 	if len(s.missing) == 0 {
 		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
@@ -408,9 +464,15 @@ func (s *secretsStage) apiErr(err error) error {
 
 func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.resolve(ctx)
+	if err := s.e.adoptGuard(initflow.Secrets); err != nil {
+		return initflow.Outcome{}, err
+	}
 	f := s.terminal()
 	if s.skip != "" || s.tg == nil || !env.Interactive || !s.canPrompt() || f == nil {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.Left()}
+	}
+	if err := s.authorize(env); err != nil {
+		return initflow.Outcome{}, err
 	}
 	st, err := s.open(ctx)
 	if err != nil {
@@ -442,6 +504,7 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		value []byte
 		err   error
 	)
+	fmt.Fprintf(w, "%s for %s on %s (stored in project %s's Secret Manager):\n", name, pluginwire.Printable(s.origin.Repo), pluginwire.Printable(s.origin.Host), pluginwire.Printable(s.e.lc.GCPProject))
 	if name == "claude-oauth-token" {
 		fmt.Fprintln(w, "claude-oauth-token: run claude setup-token in your own terminal first, then paste the token it prints")
 	}

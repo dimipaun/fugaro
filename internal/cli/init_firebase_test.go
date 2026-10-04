@@ -43,6 +43,7 @@ func newFBRig(t *testing.T) *fbRig { return newFBRigFor(t, fpID) }
 // the installation's (the two-project layout), or initProject itself.
 func newFBRigFor(t *testing.T, fp string) *fbRig {
 	t.Helper()
+	typedThroughYes(t)
 	r := &fbRig{initRig: newInitRig(t), billing: gcpfake.NewBilling(t), db: gcpfake.NewRTDB(t), fbdb: gcpfake.NewFirebaseDB(t), fp: fp}
 	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fp)
 	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fp)
@@ -210,7 +211,7 @@ func TestInitFirebaseThreeAppliesConfirmedSeparately(t *testing.T) {
 // The Firebase project is only read: never created, no billing linked.
 func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	for name, reqs := range map[string][]gcpfake.Request{"crm": r.crm.Requests(), "billing": r.billing.Requests()} {
@@ -224,7 +225,7 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 
 	// A project that isn't there stops before any plan.
 	r2 := newFBRig(t)
-	_, _, err := executeStdin(t, "", "init", "--firebase", "aurora-missing", "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", "aurora-missing", "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "--create-project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -243,7 +244,7 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
 	r := newFBRig(t)
 	r.su.Disable("cloudbilling.googleapis.com", r.billing.Server)
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -260,7 +261,7 @@ func TestInitFirebaseBillingAPIDisabled(t *testing.T) {
 func TestInitFirebaseNoBilling(t *testing.T) {
 	r := newFBRig(t)
 	r.billing.SetBilling(fpID, false)
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no billing") || !strings.Contains(err.Error(), "--link-billing") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -344,7 +345,7 @@ func TestInitFirebaseTwoProjectsNoSkipAPIs(t *testing.T) {
 func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	r := newFBRig(t)
 	r.db.Set("somebody/else", "data")
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no Fugaro mark") || !strings.Contains(err.Error(), "somebody") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -358,7 +359,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	// Another Fugaro project's mark.
 	r2 := newFBRig(t)
 	r2.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": "other", "gcp_project": "proj-1234", "version": 1})
-	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), `mark of project "other"`) {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -366,7 +367,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	// The same Fugaro name in another GCP project is another installation.
 	r4 := newFBRig(t)
 	r4.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": "other-gcp-project", "version": 1})
-	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-gcp-project") || len(r4.applies(t)) != 0 {
 		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r4.applies(t))
 	}
@@ -375,7 +376,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 	r3 := newFBRig(t)
 	r3.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r3.db.Set("fugaro/project", "other")
-	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "belongs to another Fugaro project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -389,7 +390,7 @@ func TestInitFirebaseRefusesUnmarkedData(t *testing.T) {
 // deleted members are left out, and nothing Fugaro manages is accepted.
 func TestInitFirebaseOwnersToTfvars(t *testing.T) {
 	r := newFBRig(t)
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-admin", "user:boss@example.com",
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-admin", "user:boss@example.com",
 		"--launcher", "user:l@example.com", "--operator", "user:op@example.com")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -438,7 +439,7 @@ func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
-			_, _, err := executeStdin(t, "", append([]string{"init", "--firebase", fpID, "--yes"}, args...)...)
+			_, _, err := executeStdin(t, "us-east5\n", append([]string{"init", "--firebase", fpID, "--yes"}, args...)...)
 			if ExitCode(err) != ExitUserError {
 				t.Fatalf("exit %d, err %v", ExitCode(err), err)
 			}
@@ -454,7 +455,7 @@ func TestInitFirebaseRefusesBadMembers(t *testing.T) {
 func TestRulesDeployedAfterSecondApply(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	want, err := rules.Generate()
@@ -488,7 +489,7 @@ func TestRulesDeployedAfterSecondApply(t *testing.T) {
 // lease are written.
 func TestMarkAndProjectWritten(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	mark, _ := r.db.Value("fugaro/mark").(map[string]any)
@@ -515,7 +516,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// Without the flag an absent mode is seeded observe, and the jobs'
 	// mode (the local config) is left alone.
 	r := newFBRig(t)
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -527,7 +528,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	}
 	// ... and a mode set since is kept by a run without the flag.
 	r.db.Set("config/mode", "enforce")
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	if mode(r) != "enforce" {
@@ -536,7 +537,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// observe on a fresh project sets both.
 	r = newFBRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	if mode(r) != "observe" || r.localConfig(t).BudgetMode() != localcfg.BudgetObserve {
@@ -545,7 +546,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// enforce needs the per-run cap the jobs enforce; refused before any apply.
 	r = newFBRig(t)
-	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "per_run_usd") || len(r.ran(t, "apply")) != 0 {
 		t.Fatalf("exit %d, err %v, calls %q", ExitCode(err), err, r.calls(t))
 	}
@@ -553,7 +554,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// caps (an absent cap is a refusal in the rules: every run would halt),
 	// before anything is applied or written, and says what to do instead.
 	r.appendConfig(t, "budget: { per_run_usd: 5 }\n")
-	_, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro budget set --global") || !strings.Contains(err.Error(), "--budget-mode observe") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -563,12 +564,12 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 	// Half the caps is no caps (on a database that is ours: marked).
 	r.db.Set("fugaro/mark", map[string]any{"managed_by": "fugaro", "project": initProjectName, "gcp_project": initProject, "version": 1})
 	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000})
-	if _, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce"); ExitCode(err) != ExitUserError {
+	if _, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce"); ExitCode(err) != ExitUserError {
 		t.Fatalf("daily cap alone: exit %d, err %v", ExitCode(err), err)
 	}
 	// Both caps: enforce is allowed and written.
 	r.db.Set("config/caps/global", map[string]any{"dailyMicros": 150_000_000, "perRunMicros": 20_000_000})
-	out, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	out, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +582,7 @@ func TestBudgetModeSeedsRTDB(t *testing.T) {
 
 	// off turns the jobs' backend off in the config and leaves the database's
 	// mode as it is; it still deploys the database, and says so.
-	out, _, err = executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "off")
+	out, _, err = executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "off")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -603,12 +604,12 @@ func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(b), "firebase_database: "+r.fbdb.URL, "firebase_database: "+empty.URL, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "enforce")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--budget-mode observe") || len(r.applies(t)) != 0 {
 		t.Fatalf("exit %d, err %v, applies %v", ExitCode(err), err, r.applies(t))
 	}
 	// Observe is fine, and the post-apply path would check the new database.
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -618,7 +619,7 @@ func TestBudgetModeEnforceRefusedOnFirstRun(t *testing.T) {
 func TestInitFirebaseIdempotent(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	cfgBefore, _ := os.ReadFile(r.cfg)
@@ -659,7 +660,7 @@ func TestInitFirebaseIdempotent(t *testing.T) {
 // asked; the history job waits for its image.
 func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--budget-mode", "observe"); err != nil {
 		t.Fatal(err)
 	}
 	b := r.localConfig(t).Budget
@@ -677,7 +678,7 @@ func TestInitFirebaseWritesConfigAndHistoryJob(t *testing.T) {
 
 	r = newFBRig(t)
 	r.historyImage()
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	h, _ = r.tfvars(t)["history"].(map[string]any)
@@ -722,7 +723,7 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	r.script["plan@installation"] = map[string]any{"exit": 0}
 	r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
 	r.save(t)
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
@@ -735,7 +736,7 @@ func TestGuardListsRemovedAdminGrant(t *testing.T) {
 	if len(r.applies(t)) != 0 {
 		t.Errorf("applied: %v", r.applies(t))
 	}
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--allow-delete", addr); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--allow-delete", addr); err != nil {
 		t.Fatal(err)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {
@@ -761,7 +762,7 @@ func TestInitFirebaseFlagsRefused(t *testing.T) {
 	}
 	// Another Firebase project than the one the config records.
 	r.appendConfig(t, "budget: { firebase_project: other-fp }\n")
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "other-fp") {
 		t.Errorf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -834,7 +835,7 @@ func TestInitRepoPassesRTDBEnv(t *testing.T) {
 func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
 	r := newFBRig(t)
 	_ = r
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -848,7 +849,7 @@ func TestInitFirebasePrintsHistoryImageCommands(t *testing.T) {
 func TestIdentityPlatformInitializedWhenMissing(t *testing.T) {
 	r := newFBRig(t)
 	r.idt.UninitializeIdentityPlatform()
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -882,7 +883,7 @@ func TestIdentityPlatformStepNotRunWithoutConfirmation(t *testing.T) {
 
 func TestIdentityPlatformAlreadyInitializedNoPost(t *testing.T) {
 	r := newFBRig(t)
-	if _, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil {
+	if _, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
 		t.Fatal(err)
 	}
 	if n := r.idt.InitializeAuthCalls(); n != 0 {
@@ -894,7 +895,7 @@ func TestIdentityPlatformAlreadyEnabledRaceIsOK(t *testing.T) {
 	r := newFBRig(t)
 	r.idt.UninitializeIdentityPlatform()
 	r.idt.RaceInitialize()
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -913,7 +914,7 @@ func TestIdentityPlatformRefusesPublicSignUp(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := newFBRig(t)
 			r.idt.SetIdentityPlatformConfig(cfg)
-			_, stderr, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+			_, stderr, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error()+stderr, "public sign-up") {
 				t.Fatalf("err = %v, stderr = %s", err, stderr)
 			}

@@ -273,10 +273,11 @@ func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageI
 		// without --replace-image: a release tag, and history:latest too (the
 		// live installs have a hand-pushed one, and we cannot tell a copy this
 		// tool made from one an older CLI or a person made).
-		if p.DestDigest != "" && !p.Present && !s.e.r.o.replaceImage {
-			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image to replace it (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest)
+		replace := slices.Contains(s.e.r.o.replaceImages, it.key())
+		if p.DestDigest != "" && !p.Present && !replace {
+			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: it is never replaced silently; pass --replace-image %s to replace it, and type the project's name at a real terminal to confirm (a base kind can instead be pointed at your own image with --base-image KIND=IMAGE)", it.label, it.dst, p.DestDigest, p.Digest, it.key())
 		}
-		p.AllowReplace = s.e.r.o.replaceImage
+		p.AllowReplace = replace
 		out = append(out, planned{it, p})
 	}
 	return out, nil
@@ -350,6 +351,9 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 }
 
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	if err := s.e.adoptGuard(initflow.Images); err != nil {
+		return initflow.Outcome{}, err
+	}
 	r := s.e.r
 	m, items, err := s.prepare(ctx)
 	if err != nil {
@@ -371,6 +375,9 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		if !p.plan.Present && expect[p.item.key()] == "" {
 			unpinned = append(unpinned, p.item.key())
 		}
+	}
+	if err := s.confirmReplace(pl); err != nil {
+		return initflow.Outcome{}, err
 	}
 	var done []planned // the plans whose destination tag is, now, the release image
 	if n > 0 {
@@ -404,6 +411,46 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	return initflow.Outcome{Changed: true, Detail: "images copied and verified by digest"}, nil
+}
+
+// confirmReplace is the typed-only confirmation (initflow.Typed) of moving a
+// tag in the registry that names another image, a release tag or
+// history:latest. --replace-image KIND names the intent; the project's name
+// typed at a real terminal confirms it, and --yes, --non-interactive, --json,
+// a pipe and a coding agent never do. It is asked before anything is copied.
+func (s *imagesStage) confirmReplace(pl []planned) error {
+	var kinds, lines []string
+	for _, p := range pl {
+		if !p.plan.Present && p.plan.DestDigest != "" {
+			kinds = append(kinds, p.item.key())
+			lines = append(lines, fmt.Sprintf("%s (%s) from %s to %s", p.item.dst, p.item.label, p.plan.DestDigest, p.plan.Digest))
+		}
+	}
+	if len(kinds) == 0 {
+		return nil
+	}
+	r := s.e.r
+	ok, reachable, err := r.askTyped("REPLACES " + strings.Join(lines, "; ") + " in your registry: whatever uses those tags (jobs, builds) then runs the new image, and the old digest is no longer named by the tag")
+	if err != nil {
+		return err
+	}
+	if !reachable {
+		args := []string{"init"}
+		if r.o.firebase != "" {
+			args = append(args, "--firebase", quoteWord(r.o.firebase))
+		}
+		for _, k := range kinds {
+			if k != "history" {
+				args = append(args, "--base", quoteWord(k))
+			}
+			args = append(args, "--replace-image", quoteWord(k))
+		}
+		return &initflow.NeedsYouError{Left: promptLeft(initflow.Images, "type the project's name to confirm replacing "+strings.Join(kinds, ", ")+" when asked, after running", args...)}
+	}
+	if !ok {
+		return userErr("not confirmed (the project's name was not typed); nothing was copied")
+	}
+	return nil
 }
 
 // record writes the base images whose destination tag is the release image

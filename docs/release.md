@@ -38,6 +38,14 @@ The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quaran
 
 ## Cutting a release
 
+**Before you tag (the checklist; each item has been missed or is easy to miss):**
+
+- **Run `scripts/bump-plugin-version.sh X.Y.Z` and commit it** (through a PR to main). The release gate refuses a tag whose plugin version or any skill header differs from it, and a repository pinned to the tag would otherwise load a plugin that disagrees with the binary.
+- **Make each new ghcr.io package public, once** (see "Making the image packages public"): the first release that publishes `fugaro-go`, `fugaro-java-services` and `fugaro-history` leaves them private, and `verify-public` fails until you do.
+- **Turn on tag protection and immutable releases (the repository owner's setting; Fugaro does not change repository settings).** A git tag is mutable, and the plugin pin and the image tags are anchored to it, so: add a GitHub ruleset that restricts updates and deletions of `v*` tags (Settings, Rules, Rulesets, target tags `v*`, restrict updates and deletions), and enable immutable releases. Without them, anyone who can push tags can move `vX.Y.Z` after users pin to it.
+- **Refresh `internal/pricing`'s `checkedAt` date** after checking the vendor's price page (`fugaro budget prices` warns that the table is older than 90 days: the table was last checked 2026-09-30, so it warns from 2026-12-29).
+- The binary prints the commit it was built from (`fugaro doctor --plugin`, `fugaro update-skills`) with the one line that checks the tag: `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}'` must print that commit. Run it once after tagging.
+
 1. Main is green: `test`, `terraform` and `rules` passed on the commit to be released (`gh run list --branch main`).
 2. Bump the plugin and commit it through a PR to main:
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 )
 
 // project makes a checkout (a .git directory) and returns the path of its
@@ -566,5 +567,25 @@ func TestLocateIgnoresSettingsOutsideACheckout(t *testing.T) {
 	_ = os.Mkdir(filepath.Join(outer, ".git"), 0o755)
 	if loc, ok := Locate(sub); !ok || !loc.Exists || loc.Root != outer {
 		t.Errorf("loc = %+v", loc)
+	}
+}
+
+// A hostile repository can make any string long: what is printed from its
+// files (a URL, a name) is cut, in the human text and in --json alike.
+func TestPrintableTruncatesHostileStrings(t *testing.T) {
+	long := strings.Repeat("x", 5000)
+	out := Printable(long)
+	if n := len([]rune(out)); n > MaxPrintable+16 || !strings.HasSuffix(out, "(truncated)") {
+		t.Fatalf("%d runes: %.40q...", n, out)
+	}
+	if Printable(strings.Repeat("y", MaxPrintable)) != strings.Repeat("y", MaxPrintable) {
+		t.Error("a string at the limit was cut")
+	}
+	// Escaped controls count once each, and a cut never splits a rune.
+	if out := Printable(strings.Repeat("\x1b", 5000)); len([]rune(out)) > 20*MaxPrintable || !utf8.ValidString(out) {
+		t.Errorf("%d runes", len([]rune(out)))
+	}
+	if out := Printable(strings.Repeat("é", 5000)); !utf8.ValidString(out) || !strings.HasSuffix(out, "(truncated)") {
+		t.Errorf("%q", out[:20])
 	}
 }

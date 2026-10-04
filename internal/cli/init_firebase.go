@@ -417,16 +417,14 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 }
 
 // confirmLocation is the Firestore database's own confirmation: its location
-// is permanent, so the person types the location itself (--yes confirms it, as
-// it does every step).
+// is permanent, so the person types the location itself, at a real terminal.
+// --yes, --non-interactive, --json, a pipe and a coding agent never confirm it
+// (initflow.Typed): the step is then the user's, with the one-line route.
 func (r *initRun) confirmLocation() error {
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s): the Firestore database is created in %s, and a database's location can NEVER be changed.\n", r.projectName, infra.FirestoreLocation)
-	if r.o.yes {
-		fmt.Fprintln(r.w, "  confirmed by --yes")
-		return nil
-	}
-	if r.o.nonInteractive {
-		return userErr("the Firestore database's location, %s, is permanent and needs its own confirmation: %s, or pass --yes once you have read this; the Firestore database was not created (nothing was written)", infra.FirestoreLocation, initflow.NeedsTerminal("typing it"))
+	if !canConfirmTyped(initflow.Typed, r.conditions()) {
+		lf := promptLeft(initflow.Firebase, "type "+infra.FirestoreLocation+" to confirm the Firestore database's permanent location when asked, after running", "init", "--firebase", quoteWord(r.o.firebase))
+		return &initflow.NeedsYouError{Left: lf}
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
 	line, err := r.in.ReadString('\n')

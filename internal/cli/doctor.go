@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -70,6 +71,12 @@ type doctorOutput struct {
 	// whose repository and Secret Manager are both reachable.
 	Secrets []secretEntry     `json:"secrets,omitempty"`
 	Plugin  pluginwire.Report `json:"plugin"`
+	// Release is the binary's tag and commit, and the command that checks the
+	// tag still names the commit (no network call here).
+	Release *releaseInfo `json:"release,omitempty"`
+	// Error is why doctor could not run its checks (an unreadable or invalid
+	// local config, no credentials), so --json prints an object on every outcome.
+	Error string `json:"error,omitempty"`
 }
 
 // doctorLookPath finds executables for doctor's checks; a package variable so
@@ -129,6 +136,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			pluginReport.Install, pluginReport.Version = "", ""
 		}
 		pluginChecks = pluginDoctorChecks(pluginReport)
+		// Informational only, whatever --strict says: what else the settings
+		// file carries is the repository's business to review, and a CI that
+		// failed on every hook would be turned off.
+		for i, n := range pluginwire.NoticesFor(loc.Settings) {
+			pluginChecks = append(pluginChecks, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
+				Fix: "review " + pluginwire.Printable(loc.Settings) + " (git blame it): wiring the plugin blesses the whole file"})
+		}
 	} else {
 		// Not inside a checkout there is no wiring to find: a warning (so
 		// --strict fails, as update-skills --check does), never silence.
@@ -136,7 +150,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
 			Fix:     "run doctor inside the repository, or pass --dir"}}
 	}
-	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks}
+	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks, Release: release()}
 
 	if pluginOnly {
 		o.OK = !checksFail(o.Checks, strict)
@@ -154,9 +168,23 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.OK = !checksFail(o.Checks, strict)
 		return emitDoctor(cmd, o, asJSON)
 	}
+	// failed is a refusal after the checks began: --json still prints the
+	// object, with the reason; the error is returned as it was.
+	failed := func(err error) error {
+		if asJSON {
+			o.OK, o.Error = false, err.Error()
+			if o.Checks == nil {
+				o.Checks = []doctorCheck{}
+			}
+			enc := json.NewEncoder(cmd.OutOrStdout())
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(o)
+		}
+		return err
+	}
 	_, lc, err := selectProject(ctx, cloudOpts)
 	if err != nil {
-		return err
+		return failed(err)
 	}
 
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
@@ -173,11 +201,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	crmSvc, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
 	if err != nil {
-		return remote(err)
+		return failed(remote(err))
 	}
 	billingSvc, err := billing.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudBilling)...)
 	if err != nil {
-		return remote(err)
+		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
 	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
@@ -221,9 +249,15 @@ func doctorAPIOpts(lc *localcfg.Config, endpoint string) []option.ClientOption {
 // config.Check, as fugaro validate does), nil when there is no such file.
 func fugaroYAMLCheck(root string) (*doctorCheck, *doctorFugaroYAML) {
 	path := filepath.Join(root, "fugaro.yaml")
-	data, err := os.ReadFile(path)
-	if err != nil {
+	data, err := readFugaroYAML(path)
+	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
+	}
+	if err != nil {
+		// Present and not a file to read (a link, a FIFO, too large): reported,
+		// never followed.
+		return &doctorCheck{ID: "fugaro-yaml", OK: false, Problem: oneLineCLI(err.Error()),
+			Fix: "replace it with a regular fugaro.yaml of the repository's own"}, &doctorFugaroYAML{Path: path, Problems: []config.Problem{{Message: "not read"}}}
 	}
 	cfg, problems := config.Parse(data)
 	if cfg != nil {
@@ -377,6 +411,9 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
 		}
 	} else {
 		out := cmd.OutOrStdout()
+		if l := releaseLine(); l != "" {
+			fmt.Fprintln(out, l)
+		}
 		printDoctorChecks(out, o.Checks)
 		if p := o.Project; p != nil {
 			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)

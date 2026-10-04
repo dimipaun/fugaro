@@ -6,7 +6,7 @@
 
 **Amended 2026-10-04 (user ruling): the plugin is kept, not retired.** The embedded-skills tasks (embedding, stamps and hashes, a six-state installer, `.claude/skills/fugaro-*` files) are dropped; four verification spikes (V1 to V4) come first.
 
-**Status 2026-10-04 (T20).** Merged: V3's code half (#85), T1 (#86), T17 (#87), T5 (#88), T11 (#90), T8 (#91), T4 and T9 (#92), T6 (#93), T14 (#97, minors #99), T2 (#98), T16 (#102), T10 (#101), T15 and T13 (#104), T19 and T7 (#105); T20 is this documentation pass. **Not merged:** T12 (output hygiene: in review), T18 (optional, not built), F1 (signing, not built), and every user-run item: V1, V2, V4, V3's container check, and T21 (written up as Check 27 in [gcp-live-checklist.md](../gcp-live-checklist.md), **not run**). Where the code differs from the text below, [the design](../design/m11-setup-and-skills.md) marks "Decided differently" in the section concerned.
+**Status 2026-10-04 (T20).** Merged: V3's code half (#85), T1 (#86), T17 (#87), T5 (#88), T11 (#90), T8 (#91), T4 and T9 (#92), T6 (#93), T14 (#97, minors #99), T2 (#98), T16 (#102), T10 (#101), T15 and T13 (#104), T19 and T7 (#105), T12 (#106), T20 (#107); the final-fixes wave follows ([design §15](../design/m11-setup-and-skills.md)). **Not merged:** T18 (optional, not built), F1 (signing, not built), and every user-run item: V1, V2, V4, V3's container check, and T21 (written up as Check 27 in [gcp-live-checklist.md](../gcp-live-checklist.md), **not run**). Where the code differs from the text below, [the design](../design/m11-setup-and-skills.md) marks "Decided differently" in the section concerned.
 
 **Spec:** [m11-setup-and-skills.md](../design/m11-setup-and-skills.md), the user's brief [setup-and-skills-spec-source.md](../design/setup-and-skills-spec-source.md), [v1.md](../design/v1.md) §5.2, §7.2, §8, §9.
 
@@ -278,8 +278,9 @@ The wiring rests on four facts about Claude Code. Each is recorded here with its
 
 **Files:** tests over every printed "next step" in init, doctor, update-skills; the skills and docs.
 - Every command printed is one line (no backslash continuation, no heredoc); long values go through files or prompts; the message for no terminal is the same everywhere.
-- [ ] **Failing tests first:** `TestPrintedNextStepsAreOneLine` (golden over the stage outputs), `TestSkillCommandsAreOneLine` (T4 extension), `TestNoTerminalMessageUniform`.
-- [ ] Commit: `cli: every printed command is a single line`
+*Merged: #106* (the skills' half, `TestSkillCommandsAreOneLine`, came with the final-fixes wave).
+- [x] **Failing tests first:** `TestPrintedNextStepsAreOneLine` (golden over the stage outputs), `TestPrintedCommandsGolden`, `TestSkillCommandsAreOneLine` (T4 extension), `TestNoTerminalMessageUniform`.
+- [x] Commit: `cli: every printed command is a single line`
 
 ### Task 16 (L, lane P, slice C): Create the project, link billing **(critical: own review)**
 

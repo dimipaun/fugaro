@@ -12,6 +12,7 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS fugaro
 ARG TARGETOS
 ARG TARGETARCH
 ARG FUGARO_VERSION=dev
+ARG FUGARO_COMMIT=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -21,7 +22,7 @@ COPY images ./images
 COPY deploy/terraform ./deploy/terraform
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
-      -ldflags "-s -w -X github.com/dimipaun/fugaro/internal/cli.Version=${FUGARO_VERSION}" \
+      -ldflags "-s -w -X github.com/dimipaun/fugaro/internal/cli.Version=${FUGARO_VERSION} -X github.com/dimipaun/fugaro/internal/cli.Commit=${FUGARO_COMMIT}" \
       -o /out/fugaro ./cmd/fugaro
 
 # Ubuntu 24.04 matches the images Playwright publishes, so

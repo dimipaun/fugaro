@@ -240,11 +240,69 @@ func (e *MissingInputsError) Error() string {
 	return "--non-interactive: missing " + strings.Join(e.Flags, "; ")
 }
 
-// NoTerminalError is the refusal to prompt without a terminal.
-type NoTerminalError struct{ Stage string }
+// NoTerminalError is the refusal to prompt without a terminal. With an
+// agent's marker set it never suggests --yes: a coding agent does not get to
+// confirm anything.
+type NoTerminalError struct {
+	Stage string
+	Agent string // the coding agent's environment marker, "" for none
+}
 
 func (e *NoTerminalError) Error() string {
+	if e.Agent != "" {
+		return AgentRefusal(e.Agent)
+	}
 	return NeedsTerminal("typing the confirmation for "+e.Stage) + ", or pass --yes (with --non-interactive in scripts) once you have read what it does"
+}
+
+// AgentAdvice is the one sentence a refusal for a coding agent's session
+// says. The check is a mitigation, not a barrier (an agent can unset its own
+// environment): it stops the accident, not the adversary.
+const AgentAdvice = "run this in your own terminal window, not through a coding agent"
+
+// AgentRefusal is why a run in a coding agent's session applies nothing; it
+// names the marker (the IDE extension also sets one in a person's own IDE
+// terminal) and never offers --yes.
+func AgentRefusal(marker string) string {
+	return "a coding agent's session is present (" + marker + " is set), so nothing is applied: " + AgentAdvice + " (in your own IDE terminal, unset " + marker + ")"
+}
+
+// AgentError is the refusal of an applying step in a coding agent's session:
+// the loop reports it as the user's to do, not as a failure.
+type AgentError struct{ Marker string }
+
+func (e *AgentError) Error() string { return AgentRefusal(e.Marker) }
+
+// ConfirmClass is who may confirm a step.
+type ConfirmClass int
+
+const (
+	// YesOrTyped steps take --yes, or the typed confirmation at a terminal:
+	// the Terraform applies, the plugin wiring, a known repository.
+	YesOrTyped ConfirmClass = iota
+	// Typed steps are money or permanent: a new project, billing, a secret, a
+	// Firestore location, a billable image build, replacing a registry tag. A
+	// person types the confirmation at a real terminal; --yes,
+	// --non-interactive, --json, a pipe and a coding agent never give it.
+	Typed
+)
+
+// Conditions are what a run says about who is there.
+type Conditions struct {
+	Yes, NonInteractive, JSON, Terminal bool
+	Agent                               string // a coding agent's environment marker, "" for none
+}
+
+// CanConfirm reports whether a step of the class can be confirmed under the
+// conditions. A coding agent's environment confirms nothing.
+func CanConfirm(class ConfirmClass, c Conditions) bool {
+	switch {
+	case c.Agent != "":
+		return false
+	case class == Typed:
+		return c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON
+	}
+	return c.Yes || (c.Terminal && !c.NonInteractive)
 }
 
 // Validate checks stages are registered once each, under a known name, and

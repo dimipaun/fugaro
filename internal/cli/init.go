@@ -50,7 +50,7 @@ type initOptions struct {
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
 	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
-	replaceImage                        bool     // --replace-image: move a release tag that names another image
+	replaceImages                       []string // --replace-image KIND: kinds (history, or a base kind) whose tag in your registry may be replaced, each still behind a typed confirmation
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -149,7 +149,9 @@ largest lease, after a confirmation of their own, then writes the local
 config. The same step creates the Firestore database for the spend history
 (fugaro report) if the project has none: its location, us-east5, is permanent
 (chosen once, never changed or deleted by Fugaro), so init asks you to type
-the location to confirm it (--yes confirms it too), and it refuses to adopt a
+the location to confirm it, at a real terminal (--yes, --non-interactive,
+--json and a pipe never confirm it: the step is then left for you), and it
+refuses to adopt a
 database that holds data or is in another location; it also deploys
 deny-everything Firestore rules and the Fugaro mark. --plan-only stops after the installation's plan. Each repository then
 needs fugaro init --repo to pick up the jobs' environment.
@@ -159,10 +161,27 @@ the current directory), whose fugaro.yaml says what it needs, into the
 installation fugaro init applied. It adopts what the bootstrap made for it
 (checking each resource's marks and live grants first), creates the rest,
 and deploys each workflow's job once its secrets are stored and its image is
-built. It offers each workflow's first image build (billable, confirmed
-separately), then deploys the built image and unpauses the daily check. It
+built. It offers each workflow's first image build (billable: the project's name
+typed at a real terminal, never --yes), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
-repository to the local config.
+repository to the local config. A repository the local config does not list
+takes the same opt-in as the converge's stages (below): its owner/name typed at
+your own terminal, or --onboard-repo.
+
+What --yes covers: the ordinary steps, which are the installation's and the
+Firebase root's Terraform applies, the images' copy, the local config's
+writes, the plugin wiring and a known repository's steps. It never covers
+creating a project or linking billing, a secret, a repository the project does
+not list, the Firestore database's permanent location, a billable first image
+build, or replacing a tag in your registry (--replace-image KIND names the
+intent; the project's name is typed at a real terminal): with --yes,
+--non-interactive, --json or a pipe each of those is left for you, with the one
+line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
+CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) init
+applies nothing, --yes included, and says to run it in your own terminal
+window; --plan-only and the read-only checks still work. That is a mitigation,
+not a barrier: an agent can unset its own environment. A run that adopted an
+existing installation applies nothing more in the same run.
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
@@ -202,21 +221,33 @@ and keeps its own confirmations, the first image build's included.
 Both stages act only on a repository the project's local config already lists,
 or one you opt in: a repository not listed yet needs its owner/name typed at
 your own terminal (naming the checkout's path), or --onboard-repo owner/name,
-which must equal the origin; --yes and --non-interactive never cover it, so a
-cloned third-party repository cannot onboard itself.`,
+which must equal the origin (init --repo takes both too); --yes,
+--non-interactive and a coding agent's environment never cover it (the flag is
+refused there), so a cloned third-party repository cannot onboard itself. The
+secrets stage is behind the same gate.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
 			o.launchersChanged, o.operatorsChanged = f.Changed("launcher"), f.Changed("operator")
 			o.alertEmailChanged, o.baseImageChanged = f.Changed("alert-email"), f.Changed("base-image")
 			o.budgetAdminsChanged = f.Changed("budget-admin")
-			if o.repo {
-				return runInitRepo(cmd, o, args)
+			r := newInitRun(cmd, o)
+			var err error
+			switch {
+			case o.repo:
+				err = runInitRepo(r, args)
+			case len(args) > 0:
+				err = userErr("a checkout path is for --repo; fugaro init for the installation takes no argument")
+			default:
+				err = runInit(r)
 			}
-			if len(args) > 0 {
-				return userErr("a checkout path is for --repo; fugaro init for the installation takes no argument")
+			if err != nil && o.asJSON && !r.printed {
+				// A refusal before any stage ran: --json still prints one
+				// object, with the reason (the exit code is the error's).
+				r.res.Error = err.Error()
+				_ = r.printResult()
 			}
-			return runInit(cmd, o)
+			return err
 		},
 	}
 	addCloudFlags(cmd, &o.cloud)
@@ -229,7 +260,7 @@ cloned third-party repository cannot onboard itself.`,
 	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds (go, java-services, web-node) whose release image init copies into the project's registry now, besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
-	f.BoolVar(&o.replaceImage, "replace-image", false, "let init replace a tag in your registry that names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once; it still asks for its confirmation)")
+	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history, go, java-services or web-node; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -250,10 +281,10 @@ cloned third-party repository cannot onboard itself.`,
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
-	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
-	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it; any other origin takes the typed confirmation)")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal), and does nothing in a coding agent's environment")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
-	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
+	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
@@ -281,6 +312,12 @@ type initRun struct {
 	mutate       func(*localcfg.Config)
 	installLabel string
 	historyNoted bool
+	printed      bool // the --json result has been printed
+
+	// buildsLeft is the workflows whose first image build was not offered
+	// because this run cannot take a typed confirmation (--yes, --json, a pipe
+	// or a coding agent): the run ends needs-you, with the typed route.
+	buildsLeft []string
 }
 
 // initResult is what --json prints.
@@ -310,6 +347,9 @@ type initResult struct {
 	// Note says why a run only planned.
 	Failed *initflow.Failure `json:"failed,omitempty"`
 	Note   string            `json:"note,omitempty"`
+	// Error is why a run refused before any stage ran (missing inputs, bad
+	// flags), so --json prints an object on every outcome.
+	Error string `json:"error,omitempty"`
 	// Firebase and RTDBURL are set by init --firebase.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`
@@ -323,8 +363,8 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 	return r
 }
 
-func runInit(cmd *cobra.Command, o *initOptions) error {
-	r := newInitRun(cmd, o)
+func runInit(r *initRun) error {
+	cmd, o := r.cmd, r.o
 	if err := o.check(); err != nil {
 		return err
 	}
@@ -465,6 +505,22 @@ func (o *initOptions) checkAppID() error {
 	return nil
 }
 
+// checkOnboardRepo validates --onboard-repo. It opts a repository the project
+// does not list in to cloud changes, so a coding agent's session never passes
+// it: whoever drives from there gets the typed route instead.
+func (o *initOptions) checkOnboardRepo() error {
+	if o.onboardRepo == "" {
+		return nil
+	}
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("--onboard-repo opts a repository in to cloud changes and is not accepted in a coding agent's session (%s is set): %s, and type the repository's owner/name at the prompt", m, initflow.AgentAdvice)
+	}
+	if _, err := task.CanonicalRepo(o.onboardRepo); err != nil {
+		return userErr("--onboard-repo %q is not owner/name", o.onboardRepo)
+	}
+	return nil
+}
+
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
 	if o.noBuild || o.allowJobDelete {
@@ -473,10 +529,10 @@ func (o *initOptions) check() error {
 	if err := o.checkAppID(); err != nil {
 		return err
 	}
+	if err := o.checkOnboardRepo(); err != nil {
+		return err
+	}
 	if o.onboardRepo != "" {
-		if _, err := task.CanonicalRepo(o.onboardRepo); err != nil {
-			return userErr("--onboard-repo %q is not owner/name", o.onboardRepo)
-		}
 		if o.forget || o.configOnly || o.printVars {
 			return userErr("--onboard-repo opts the checkout's repository in to the converge; it excludes --forget, --config-only and --print-vars")
 		}
@@ -508,6 +564,11 @@ func (o *initOptions) check() error {
 	}
 	if _, err := parseExpectDigests(o.expectDigests); err != nil {
 		return userErr("%v", err)
+	}
+	for _, k := range o.replaceImages {
+		if k != "history" && !slices.Contains(config.Bases, k) {
+			return userErr("--replace-image %q is not an image kind (history, %s)", k, strings.Join(config.Bases, ", "))
+		}
 	}
 	if o.imageSource != "" {
 		if err := mirror.ValidSourcePrefix(o.imageSource); err != nil {
@@ -690,9 +751,23 @@ func (r *initRun) warn(msg string) {
 	fmt.Fprintln(r.w, "warning: "+msg)
 }
 
+// canConfirmTyped is initflow.CanConfirm, the one rule of who may give a
+// money or permanent confirmation. A package variable only so a test that is
+// about something else can type through --yes: the tests of the rule itself
+// (the matrix) use the real one.
+var canConfirmTyped = initflow.CanConfirm
+
+// conditions is what this run says about who is there.
+func (r *initRun) conditions() initflow.Conditions {
+	o := r.o
+	return initflow.Conditions{Yes: o.yes, NonInteractive: o.nonInteractive, JSON: o.asJSON,
+		Terminal: r.cmd != nil && stdinIsTerminal(r.cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
+}
+
 // confirm shows the ⚠ CONFIRM banner for what, and returns nil once it is
 // confirmed: by --yes, or by the project's name typed at a terminal. Without a
-// terminal and without --yes it refuses; undone says what that leaves.
+// terminal and without --yes it refuses; undone says what that leaves. A
+// coding agent's session confirms nothing, --yes included.
 func (r *initRun) confirm(what, undone string) error {
 	ok, err := r.ask(what)
 	if err != nil {
@@ -708,8 +783,13 @@ func (r *initRun) confirm(what, undone string) error {
 }
 
 // ask shows the banner and reports whether the step is confirmed; without
-// a terminal and without --yes it isn't.
+// a terminal and without --yes it isn't. In a coding agent's session it is
+// an *initflow.AgentError before anything is shown as confirmed: nothing a
+// run applies is confirmed there.
 func (r *initRun) ask(what string) (bool, error) {
+	if m := agentMarker(os.Getenv); m != "" {
+		return false, &initflow.AgentError{Marker: m}
+	}
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 	if r.o.yes {
 		fmt.Fprintln(r.w, "  confirmed by --yes")
@@ -718,12 +798,32 @@ func (r *initRun) ask(what string) (bool, error) {
 	if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
 		return false, nil
 	}
-	fmt.Fprintf(r.w, "Type %s to apply to GCP project %s: ", r.projectName, r.gcpProject)
+	return r.typed("Type " + r.projectName + " to apply to GCP project " + r.gcpProject + ": ")
+}
+
+// typed reads one line at the terminal after prompt and reports whether it is
+// the project's name.
+func (r *initRun) typed(prompt string) (bool, error) {
+	fmt.Fprint(r.w, prompt)
 	line, err := r.in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return false, userErr("reading the confirmation: %v", err)
 	}
 	return strings.TrimSpace(line) == r.projectName, nil
+}
+
+// askTyped is the confirmation of a step that is money or permanent
+// (initflow.Typed): the project's name typed at a real terminal, never --yes,
+// --non-interactive, --json, a pipe or a coding agent. It shows the banner,
+// and reachable says whether it could be asked at all; when it could not,
+// nothing was asked and the caller leaves the step for the user.
+func (r *initRun) askTyped(what string) (confirmed, reachable bool, err error) {
+	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+	if !canConfirmTyped(initflow.Typed, r.conditions()) {
+		return false, false, nil
+	}
+	ok, err := r.typed("Type " + r.projectName + " to confirm: ")
+	return ok, true, err
 }
 
 // resourceManagerRetries are the waits between reads of the project's
@@ -1422,6 +1522,7 @@ func (r *initRun) printResult() error {
 	if r.res.LeftForYou == nil {
 		r.res.LeftForYou = []initflow.Left{} // an array, never null
 	}
+	r.printed = true
 	enc := json.NewEncoder(r.cmd.OutOrStdout())
 	enc.SetIndent("", "  ")
 	return enc.Encode(r.res)
@@ -1432,8 +1533,8 @@ func (o *initOptions) checkRepo() error {
 	if err := o.checkAppID(); err != nil {
 		return err
 	}
-	if o.onboardRepo != "" {
-		return userErr("--onboard-repo is for fugaro init without --repo (init --repo is the explicit onboarding already)")
+	if err := o.checkOnboardRepo(); err != nil {
+		return err
 	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
@@ -1450,7 +1551,7 @@ func (o *initOptions) checkRepo() error {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": o.replaceImage, "--no-log-isolation": o.noLogIsolation,
+		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 		"--create-project": o.createProject, "--display-name": o.displayName != "", "--parent": o.parent != "", "--link-billing": o.linkBilling != "",
@@ -1470,8 +1571,8 @@ func (o *initOptions) checkRepo() error {
 // runInitRepo onboards the repository of a checkout: its resources are
 // adopted or created, its first images built and its jobs deployed, each
 // step confirmed; then the local config records it.
-func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
-	r := newInitRun(cmd, o)
+func runInitRepo(r *initRun, args []string) error {
+	cmd, o := r.cmd, r.o
 	if err := o.checkRepo(); err != nil {
 		return err
 	}
@@ -1521,6 +1622,11 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 	r.setProject(lc)
 	r.res.Repo = repo
+	if !embedded && !o.planOnly && !o.forget && !o.printVars {
+		if err := r.gateRepo(ctx, root, lc); err != nil {
+			return err
+		}
+	}
 	if !o.forget {
 		if err := checkVertexBudget(lc, cfg); err != nil {
 			return err
@@ -1672,6 +1778,18 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// 8. The local config.
 	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
 		return err
+	}
+	if len(r.buildsLeft) > 0 {
+		// Everything else is done; the billable build is the user's to type.
+		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
+		if embedded {
+			left = promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", "init")
+			return &initflow.NeedsYouError{Left: left}
+		}
+		if err := finish(); err != nil {
+			return err
+		}
+		return userErr("the first image build of %s is billable and needs the project's name typed at a real terminal: %s: %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
 	}
 	return finish()
 }
@@ -1913,10 +2031,17 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 				return built, userErr("%v", err)
 			}
 		}
-		ok, err := r.ask(fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
+		// Billable: the typed confirmation of a real terminal, never --yes
+		// (initflow.Typed). A run that cannot take it leaves the build.
+		ok, reachable, err := r.askTyped(fmt.Sprintf("submits a Cloud Build for %s/%s on %s, as %s (billable per build-minute: a 13-minute build on E2_HIGHCPU_8 is about $0.21); it builds, smoke-tests and promotes the image into %s and records it",
 			spec.Name, name, lc.Build.MachineType, spec.BuildServiceAccountEmail, spec.RegistryPath))
 		if err != nil {
 			return built, err
+		}
+		if !reachable {
+			r.buildsLeft = append(r.buildsLeft, name)
+			r.warn(fmt.Sprintf("the first image build of %s/%s is billable and was not confirmed: it needs the project's name typed at a real terminal (--yes, --non-interactive, --json, a pipe and a coding agent never confirm it), so its job waits for it", spec.Name, name))
+			continue
 		}
 		if !ok {
 			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed, so its job waits for it: build it with fugaro image build --repo %s --workflow %s, then rerun fugaro init --repo", spec.Name, name, spec.Name, name))
