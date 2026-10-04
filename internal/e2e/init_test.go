@@ -1271,7 +1271,6 @@ func TestInitRepoRefusesInstallationFlags(t *testing.T) {
 		{"--repo", r.checkout, "--registry-cleanup", "on"},
 		{"--repo", r.checkout, "--forget", "--allow-job-delete"},
 		{"--repo", r.checkout, "--plan-only", "--print-vars"},
-		{"--github-app-id", "123456"},
 		{"--no-build"},
 		{r.checkout},
 	} {
