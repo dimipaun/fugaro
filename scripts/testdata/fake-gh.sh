@@ -26,6 +26,10 @@
 #   FAKE_GH_HEAD_TEST / _TERRAFORM / _RULES   success (default) | failed |
 #                    missing | pending | cancelled on that PR head
 #   FAKE_GH_HEAD_TREE      override the tree sha the api reports for the PR head
+#   FAKE_GH_PULLS_FAIL    non-empty: the pulls api call fails
+#   FAKE_GH_GIT_FAIL      non-empty: the git commits (tree) api call fails
+#   FAKE_GH_BAD_PR_FIRST  non-empty: the pulls api lists first a merged PR
+#                    for the same merge commit whose head has another tree
 #   FAKE_GH_PULL_UNMERGED  non-empty: the listed PR has merged_at null
 #   FAKE_GH_PULL_MERGE_SHA the merge_commit_sha the listed PR reports
 #                    (default: the real merge commit)
@@ -159,6 +163,7 @@ case "$1 ${2:-}" in
     psha=$(printf '%s' "$2" | sed -n 's|.*/commits/\([^/?]*\)/pulls.*|\1|p')
     merge=$(cat "$dir/pr_merge_sha" 2>/dev/null || true)
     if [ -n "$gsha" ]; then
+      [ -z "${FAKE_GH_GIT_FAIL:-}" ] || { echo "fake-gh.sh: git commits api down" >&2; exit 1; }
       if [ -n "${FAKE_GH_HEAD_TREE:-}" ] && [ -s "$dir/pr_branch" ] && [ "$gsha" = "$(head_sha)" ]; then
         printf '%s\n' "$FAKE_GH_HEAD_TREE"
       else
@@ -167,8 +172,11 @@ case "$1 ${2:-}" in
       exit 0
     fi
     if [ -n "$psha" ]; then
+      [ -z "${FAKE_GH_PULLS_FAIL:-}" ] || { echo "fake-gh.sh: pulls api down" >&2; exit 1; }
       if [ -n "${FAKE_GH_IDENTICAL_PR:-}" ] && [ -n "$merge" ] && [ "$psha" = "$merge" ]; then
         merged_at=2026-01-01T00:00:00Z
+        # The merge commit's parent: a different tree, no checks of its own.
+        [ -z "${FAKE_GH_BAD_PR_FIRST:-}" ] || printf '%s\t%s\t%s\n' "$merged_at" "$merge" "$(git -C "$FAKE_GH_ORIGIN" rev-parse "$merge^")"
         [ -z "${FAKE_GH_PULL_UNMERGED:-}" ] || merged_at=-
         printf '%s\t%s\t%s\n' "$merged_at" "${FAKE_GH_PULL_MERGE_SHA:-$merge}" "$(head_sha)"
       fi

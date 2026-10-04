@@ -733,6 +733,39 @@ func TestIdenticalTreeNotAccepted(t *testing.T) {
 	}
 }
 
+// TestIdenticalTreeLookupFailureNeverPasses: a failing pulls or git api call
+// is noted once on stderr and the gate behaves as without the shortcut.
+func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
+	for _, c := range []struct{ env, call string }{
+		{"FAKE_GH_PULLS_FAIL=1", "pulls of"},
+		{"FAKE_GH_GIT_FAIL=1", "git commit"},
+	} {
+		t.Run(c.env, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.env)
+			res := runRelease(t, r, g, "", "1.0.0", "--yes")
+			res.requireFailureContaining(t, "required check 'test' is missing")
+			if n := strings.Count(res.out, "identical-tree lookup unavailable ("+c.call); n != 1 {
+				t.Errorf("want the note exactly once, got %d:\n%s", n, res.out)
+			}
+			requireNoTag(t, r, res)
+		})
+	}
+}
+
+// TestIdenticalTreeSecondPRCanVouch: a first associated PR that does not
+// qualify does not stop a later one that does.
+func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_BAD_PR_FIRST=1")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v1.0.0")
+	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
+		t.Errorf("expected the second PR's head to be used:\n%s", res.out)
+	}
+}
+
 // TestIdenticalTreeNeverOverridesTargetFailure: a conclusive failure on the
 // target fails the gate at once, even next to a green identical-tree head.
 func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
