@@ -683,7 +683,7 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 | Key revoked, file deleted, sandbox PRs declined | |
 | Unverified (not tested): DeepSeek's own Anthropic endpoint, other models (Qwen, Kimi), header-based provider preferences | still unverified |
 
-## Check 26: the same-project layout (never run)
+## Check 26: the same-project layout (step 4 run 2026-10-04; 6 and 7 open)
 
 The Firebase project may be the installation's own GCP project (design `m9-budget-and-dashboard.md` §6.0, D3 revised 2026-10-04). Everything about it ran **offline only** (fake terraform, mock-provider plans, text checks on the IAM): no real apply has used one project for both roots. Run it on a **scratch project with billing, never `belong`**, as you, one ⚠ CONFIRM per step.
 
@@ -695,6 +695,16 @@ The Firebase project may be the installation's own GCP project (design `m9-budge
 6. **The Cloud Build pivot.** From an image build step (a scratch repository's Dockerfile), run `gcloud builds submit` (or the Cloud Build API) without `serviceAccount` and, in that build, fetch the metadata token and call `<rtdb_url>/.json?access_token=...`, Firestore and Identity Toolkit. Record the answer, and `gcloud projects get-iam-policy <p>` for the default Compute (`<number>-compute@developer`), Cloud Build (`<number>@cloudbuild`) and App Engine accounts: with `roles/editor` the call succeeds (that is the risk; strip the role and repeat, it must be refused). Confirm `init --firebase` printed the warning for it.
 7. **Token forgery by another account.** Sign a JWT as a service account of the project that is not the signer (`signJwt` with `uid`, the run claims and audience `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`) and call `signInWithCustomToken` with the web API key: expect refusal or, if it is accepted, record it (Firebase accepts any account of the project).
 8. `terraform destroy` is not part of this check; nothing disables an API on destroy (`disable_on_destroy = false`).
+
+### Results of the run of 2026-10-04 (`fugaro-dev`, the real dogfood installation)
+
+Run by the maintainer with temporary Token Creator grants (removed by the script on exit). `fugaro-dev` already runs the same-project layout (steps 1 to 3 and 5 happened for real during its setup).
+
+- **Step 4, static:** no job, build or scheduler account holds a Firebase, datastore or primitive role; the default Compute account has no `roles/editor` (removed by hand); only `fugaro-history` holds Firebase roles, by design.
+- **Step 4, runtime, impersonating the run job, build, scheduler and default Compute accounts:** RTDB answered 401, Firestore 403 and Identity Toolkit `accounts:query` `INSUFFICIENT_PERMISSION` (HTTP 400) for each. PASS.
+- **Step 6 (Cloud Build pivot with a real build) and step 7 (token forgery): NOT RUN.**
+- Lesson: allow a minute or two for Token Creator propagation; probe Firestore on a collection path, not the documents root (404).
+
 
 ## Check 27: M11's simple setup (throwaway project, run by you; NOT RUN)
 
