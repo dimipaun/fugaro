@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"slices"
 	"strings"
 	"testing"
@@ -758,5 +759,186 @@ func TestCauseIsRedactedButKeepsItsType(t *testing.T) {
 	var se *StageError
 	if !errors.As(res.Cause, &se) {
 		t.Error("the cause lost its type")
+	}
+}
+
+// The conditions of a run, as the matrix names them.
+type mode struct {
+	name string
+	opts Options
+}
+
+func modes() []mode {
+	out := func() io.Writer { return &bytes.Buffer{} }
+	return []mode{
+		{"--yes", Options{Yes: true, Terminal: true, Out: out()}},
+		{"--non-interactive", Options{NonInteractive: true, Terminal: true, Out: out()}},
+		{"--non-interactive --yes", Options{NonInteractive: true, Yes: true, Terminal: true, Out: out()}},
+		{"--json", Options{JSON: true, Terminal: true, Out: out()}},
+		{"--json --yes", Options{JSON: true, Yes: true, Terminal: true, Out: out()}},
+		{"no terminal", Options{Out: out()}},
+		{"no terminal --yes", Options{Yes: true, Out: out()}},
+		{"agent env", Options{Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env --yes", Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"agent env --yes --non-interactive", Options{Yes: true, NonInteractive: true, Terminal: true, Agent: "CLAUDECODE", Out: out()}},
+		{"terminal", Options{Terminal: true, Out: out()}},
+	}
+}
+
+// selfStage is an engine-like stage: it is let run without a terminal and
+// refuses itself unless it was given --yes or may prompt.
+type selfStage struct {
+	*fake
+	refused bool
+}
+
+func (*selfStage) SelfConfirming() {}
+func (s *selfStage) Apply(ctx context.Context, env Env) (Outcome, error) {
+	if !env.Yes && !env.Interactive {
+		s.refused = true
+		return Outcome{}, errors.New("needs a terminal or --yes")
+	}
+	return s.fake.Apply(ctx, env)
+}
+
+// TestApplyMatrix: every stage in every mode, and what could apply. The
+// truth the help and the README state: --yes covers every stage but the
+// project, billing and the secrets; --non-interactive alone only plans; a
+// coding agent's environment applies nothing at all, whatever flags it passes.
+func TestApplyMatrix(t *testing.T) {
+	for _, name := range Names() {
+		for _, m := range modes() {
+			t.Run(name+"/"+m.name, func(t *testing.T) {
+				var log []string
+				f := &selfStage{fake: &fake{name: name, log: &log}}
+				var st Stage = f
+				if !YesCovers(name) {
+					st = f.fake // never self-confirming: a stage --yes does not cover
+				}
+				res, _ := Run(context.Background(), []Stage{st}, m.opts)
+				applied := count(log, "apply") > 0
+				var want bool
+				switch {
+				case m.opts.Agent != "":
+					want = false
+				case !YesCovers(name):
+					// A typed confirmation at a real terminal: never --yes (the
+					// stage is told it was not given), --non-interactive, --json or a pipe.
+					want = m.opts.Terminal && !m.opts.NonInteractive && !m.opts.JSON
+				case m.opts.Yes:
+					want = true
+				case m.opts.NonInteractive:
+					want = false // only plans
+				default:
+					want = m.opts.Terminal // typed at the terminal, else refused
+				}
+				if applied != want {
+					t.Fatalf("applied=%v want %v (log %v, result %+v)", applied, want, log, res)
+				}
+				if m.opts.Agent != "" {
+					if res == nil || res.ExitCode() == 0 && !m.opts.PlanOnly {
+						t.Fatalf("an agent's run applied nothing and reported success: %+v", res)
+					}
+					for _, lf := range res.Left {
+						if strings.Contains(lf.Text, "--yes") || slices.ContainsFunc(lf.Commands, func(c string) bool { return strings.Contains(c, "--yes") }) {
+							t.Errorf("an agent session was told to pass --yes: %+v", lf)
+						}
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAgentEnvLeavesTheOneLineTypedRoute(t *testing.T) {
+	var log []string
+	f := &fake{name: Installation, log: &log}
+	res, err := Run(context.Background(), []Stage{f}, Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: &bytes.Buffer{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count(log, "apply") != 0 || len(res.Left) != 1 || res.ExitCode() != 1 {
+		t.Fatalf("log %v left %+v exit %d", log, res.Left, res.ExitCode())
+	}
+	var detail string
+	for _, s := range res.Stages {
+		if s.Name == Installation {
+			detail = s.Detail
+		}
+	}
+	for _, want := range []string{"your own terminal window", "not through a coding agent", "CLAUDECODE"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("detail %q lacks %q", detail, want)
+		}
+	}
+}
+
+func TestAgentEnvStillPlans(t *testing.T) {
+	var log []string
+	f := &fake{name: Installation, log: &log, planSummary: "2 to create"}
+	res, err := Run(context.Background(), []Stage{f}, Options{PlanOnly: true, Terminal: true, Agent: "CLAUDECODE", Out: &bytes.Buffer{}})
+	if err != nil || count(log, "apply") != 0 || count(log, "plan") != 1 || res.ExitCode() != 0 {
+		t.Fatalf("err %v log %v exit %d", err, log, res.ExitCode())
+	}
+}
+
+func TestAgentEnvAnEmptyEnginePlanIsDone(t *testing.T) {
+	// A converged installation is "No changes" for an agent too: the stage
+	// plans (read-only) and finds nothing to apply.
+	var log []string
+	f := &selfStage{fake: &fake{name: Installation, log: &log, planEmpty: true}}
+	res, err := Run(context.Background(), []Stage{f}, Options{Yes: true, Terminal: true, Agent: "CLAUDECODE", Out: &bytes.Buffer{}})
+	if err != nil || count(log, "apply") != 0 || res.ExitCode() != 0 {
+		t.Fatalf("err %v log %v res %+v", err, log, res)
+	}
+	if states(res)[Installation] != Done {
+		t.Errorf("states %v", states(res))
+	}
+}
+
+func TestAgentErrorFromAStageIsNeedsYou(t *testing.T) {
+	// A refusal inside an engine (its confirmation) is the same needs-you.
+	var log []string
+	f := &fake{name: Installation, log: &log, applyErr: &AgentError{Marker: "CURSOR_AGENT"}}
+	res, err := Run(context.Background(), []Stage{f}, Options{Yes: true, Terminal: true, Out: &bytes.Buffer{}})
+	if err != nil || res.Failed != nil || len(res.Left) != 1 {
+		t.Fatalf("err %v res %+v", err, res)
+	}
+}
+
+func TestNoTerminalErrorDropsTheYesHintForAnAgent(t *testing.T) {
+	plain := (&NoTerminalError{Stage: "installation"}).Error()
+	if !strings.Contains(plain, "--yes") {
+		t.Errorf("%q: without an agent the hint stays", plain)
+	}
+	agent := (&NoTerminalError{Stage: "installation", Agent: "CLAUDECODE"}).Error()
+	if strings.Contains(agent, "--yes") || !strings.Contains(agent, "coding agent") {
+		t.Errorf("%q", agent)
+	}
+}
+
+func TestCanConfirm(t *testing.T) {
+	type c = Conditions
+	term := c{Terminal: true}
+	for _, tc := range []struct {
+		name  string
+		class ConfirmClass
+		cond  Conditions
+		want  bool
+	}{
+		{"typed at a terminal", Typed, term, true},
+		{"typed, --yes", Typed, c{Terminal: true, Yes: true}, false},
+		{"typed, --non-interactive", Typed, c{Terminal: true, NonInteractive: true}, false},
+		{"typed, --json", Typed, c{Terminal: true, JSON: true}, false},
+		{"typed, no terminal", Typed, c{}, false},
+		{"typed, agent", Typed, c{Terminal: true, Agent: "CLAUDECODE"}, false},
+		{"yes covers", YesOrTyped, c{Yes: true}, true},
+		{"yes is not enough for an agent", YesOrTyped, c{Yes: true, Terminal: true, Agent: "AI_AGENT"}, false},
+		{"typed route for the covered class", YesOrTyped, term, true},
+		{"covered class, nothing", YesOrTyped, c{}, false},
+	} {
+		if got := CanConfirm(tc.class, tc.cond); got != tc.want {
+			t.Errorf("%s: CanConfirm = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
