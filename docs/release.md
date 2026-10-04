@@ -11,12 +11,6 @@ A push of a strict `vX.Y.Z` tag triggers two independent workflows:
 
 Neither workflow runs the test suite; CI already did on main. Both workflows run `scripts/release-gate.sh` first, so a tag on an off-main or red commit publishes nothing (no binaries, no images). It refuses unless the tagged commit is reachable from `origin/main` and the GitHub Actions checks `test`, `terraform` and `rules` all succeeded on it (a check of that name from another app does not count); if CI is still running, re-run the failed job once it is green. `release.yml` also requires the plugin version to equal the tag.
 
-## One-time checklist
-
-- **A tag ruleset protecting `v*`.** Repository settings, Rules, Rulesets, New tag ruleset: pattern `v*`, restrict updates and restrict deletions, no bypass list. Without it, a tag could be moved or deleted by anyone with push access, defeating "a published tag is never moved or re-cut" below and the Go module proxy's and the images' caching of it.
-- **Making a new image package public**, the first time each of the four is published: see the next section.
-- **Keeping the price table current.** `internal/pricing/table.go`'s `checkedAt` records the day its rates were last compared against <https://platform.claude.com/docs/en/about-claude/pricing>; refresh the rows and bump it when a release changes a model's price, so `fugaro`'s cost estimates don't quietly drift from what the Console actually bills.
-
 ## Making the image packages public (one time per package)
 
 A package that a workflow creates on ghcr.io is private. The mirror (below) reads the source with no credentials, and a plain `docker pull` has none either, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
