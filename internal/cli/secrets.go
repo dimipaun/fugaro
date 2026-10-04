@@ -252,21 +252,32 @@ func readSecret(ctx context.Context, in io.Reader, prompt io.Writer, name string
 			fmt.Fprintln(prompt, "note: dropped the value's trailing newline")
 		}
 	}
-	switch {
-	case len(raw) == 0:
-		return nil, userErr("the value is empty; pipe it in on stdin or paste it at the prompt")
-	case len(raw) < minSecretBytes:
-		return nil, userErr("the value is shorter than %d bytes, too short to redact from logs", minSecretBytes)
-	case len(raw) > maxSecretBytes:
-		return nil, userErr("the value is over Secret Manager's 64 KiB limit")
-	case bytes.IndexByte(raw, 0) >= 0:
-		return nil, userErr("the value holds a NUL byte")
-	case !multiline && bytes.ContainsAny(raw, "\r\n"):
-		return nil, userErr("the value spans several lines; only %s (a PEM) may", multilineSecret)
-	case !multiline && len(bytes.TrimSpace(raw)) != len(raw):
-		return nil, userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
+	if err := validateSecret(raw, multiline); err != nil {
+		return nil, err
 	}
 	return raw, nil
+}
+
+// validateSecret is the rules every stored value meets, whatever way it
+// came in: not empty, at least the redaction floor, within Secret Manager's
+// limit, no NUL, and, unless multiline, one line with no whitespace at either
+// end. Errors never quote the value.
+func validateSecret(raw []byte, multiline bool) error {
+	switch {
+	case len(raw) == 0:
+		return userErr("the value is empty; pipe it in on stdin or paste it at the prompt")
+	case len(raw) < minSecretBytes:
+		return userErr("the value is shorter than %d bytes, too short to redact from logs", minSecretBytes)
+	case len(raw) > maxSecretBytes:
+		return userErr("the value is over Secret Manager's 64 KiB limit")
+	case bytes.IndexByte(raw, 0) >= 0:
+		return userErr("the value holds a NUL byte")
+	case !multiline && bytes.ContainsAny(raw, "\r\n"):
+		return userErr("the value spans several lines; only %s (a PEM) may", multilineSecret)
+	case !multiline && len(bytes.TrimSpace(raw)) != len(raw):
+		return userErr("the value starts or ends with whitespace, most likely a copy-and-paste slip")
+	}
+	return nil
 }
 
 // errCancelled is a read abandoned by Ctrl-C (or SIGTERM). It is exit 1,
@@ -285,12 +296,17 @@ var errCancelled = &ExitError{Code: ExitUserError, Err: errors.New("cancelled; n
 // long-lived caller would leak the goroutine, and the abandoned read would
 // take (and discard) the next line typed at the terminal.
 func readHidden(ctx context.Context, f *os.File, prompt io.Writer, name string) ([]byte, error) {
+	return readHiddenLine(ctx, f, prompt, "Paste the value for "+name+" (input hidden), then press Enter: ")
+}
+
+// readHiddenLine is readHidden with the prompt's own text.
+func readHiddenLine(ctx context.Context, f *os.File, prompt io.Writer, text string) ([]byte, error) {
 	fd := int(f.Fd())
 	state, err := term.GetState(fd)
 	if err != nil {
 		return nil, userErr("reading the terminal's state: %v", err)
 	}
-	fmt.Fprintf(prompt, "Paste the value for %s (input hidden), then press Enter: ", name)
+	fmt.Fprint(prompt, text)
 	type result struct {
 		b   []byte
 		err error

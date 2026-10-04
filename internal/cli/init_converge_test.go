@@ -277,8 +277,18 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 	t.Cleanup(func() { secretsHeld = old })
 	r := &initRun{o: &initOptions{}, w: io.Discard, cmd: NewRootCmd()}
 	e := &initEngine{r: r, lc: &localcfg.Config{}}
-	if got := e.options().Redact; len(got) != 1 || got[0] != "s3cret" {
-		t.Errorf("redact = %v", got)
+	got := e.options().Redact
+	if len(got) == 0 || got[0] != "s3cret" {
+		t.Errorf("redact = %q", got)
+	}
+	// The slots a stage fills with a value it holds are in the same list.
+	release := e.hold([]byte("held-value"))
+	if !slices.Contains(got, "held-value") {
+		t.Errorf("a held value is not in the loop's list: %q", got)
+	}
+	release()
+	if slices.Contains(got, "held-value") {
+		t.Errorf("a released value is still in the loop's list: %q", got)
 	}
 }
 

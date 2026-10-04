@@ -136,7 +136,19 @@ and deploys each workflow's job once its secrets are stored and its image is
 built. It offers each workflow's first image build (billable, confirmed
 separately), then deploys the built image and unpauses the daily check. It
 prints the fugaro secrets set commands still needed, and adds the
-repository to the local config. --forget removes the repository from
+repository to the local config.
+
+In a checkout of a repository of this project, the converge's secrets stage
+asks, at hidden prompts, for the secrets its jobs mount (the git credential,
+the Claude credential agent.auth names, none for vertex, the allowed model
+providers' keys, the workflows' own), and skips what is already stored. It
+prompts only in your own terminal: never with --yes or --non-interactive
+(it then exits 1 with the one-line fugaro secrets set commands), never when
+stdin, stdout or stderr is not a terminal (a pipe is never read), and never
+through a coding agent (CLAUDECODE and the like are set). It creates each
+secret's container, before the repository stage, with the labels
+init --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
+--forget removes the repository from
 Terraform's state, destroying nothing.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
