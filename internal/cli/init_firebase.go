@@ -102,7 +102,7 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 		return false, true, nil
 	}
-	if err := r.confirm("applies "+counts.String()+" "+what, "nothing was applied"); err != nil {
+	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", planNotCovered(plan)); err != nil {
 		return false, false, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -387,7 +387,7 @@ func (r *initRun) deployDatabase(ctx context.Context, db *infra.DB, fp string, i
 	if fs.CreatesDatabase() {
 		what += fmt.Sprintf("; it also creates the Firestore database in %s, whose location is permanent and can never be changed", infra.FirestoreLocation)
 	}
-	if err := r.confirm(what, "the database was not written"); err != nil {
+	if err := r.confirmOrdinary(what, "the database was not written", ""); err != nil {
 		return false, err
 	}
 	if fs.CreatesDatabase() {

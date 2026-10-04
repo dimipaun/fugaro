@@ -389,8 +389,14 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		o := r.o
 		yes := o.yes
 		o.yes = env.Yes
-		err := r.confirm(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s",
-			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth, unpinnedText(unpinned)), "nothing was copied")
+		notCovered := ""
+		for _, p := range pl {
+			if !p.plan.Present && p.plan.DestDigest != "" {
+				notCovered = "it replaces a tag in your registry"
+			}
+		}
+		err := r.confirmOrdinary(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature. NOT pinned with --expect-digest: %s",
+			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth, unpinnedText(unpinned)), "nothing was copied", notCovered)
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err
@@ -504,4 +510,34 @@ func (s *imagesStage) record(pl []planned) error {
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.
 	return r.writeLocalConfig(&next, s.e.path, old, true)
+}
+
+// reviewLine is the images stage's line of the run's review screen: what it
+// will copy and at what size, read now (read-only), else what it does in
+// general when the registries cannot be read yet.
+func (s *imagesStage) reviewLine(ctx context.Context) string {
+	general := "images:         copies the release images that are missing from your registry (sizes are shown when it copies)"
+	items, _, err := s.items(ctx)
+	if err != nil || len(items) == 0 || releaseVersion() == "" {
+		return general
+	}
+	m, err := newMirror(ctx, s.e.lc, s.allow())
+	if err != nil {
+		return general
+	}
+	pl, err := s.read(ctx, m, items) // m.Log is nil: nothing printed
+	if err != nil {
+		return general
+	}
+	n, bytes := pending(pl)
+	if n == 0 {
+		return "images:         nothing to copy (the release images are in your registry)"
+	}
+	var names []string
+	for _, p := range pl {
+		if !p.plan.Present {
+			names = append(names, strings.TrimPrefix(p.item.label, "base ")+" "+p.item.dst.Tag)
+		}
+	}
+	return fmt.Sprintf("images:         copy %s (%.1f MB, about $%.2f/month)", strings.Join(names, ", "), float64(bytes)/1e6, float64(bytes)/1e9*storagePerGBMonth)
 }

@@ -1,0 +1,16 @@
+
+Review: project aurora (GCP proj-1234) is Fugaro's own (created by this run), so its ordinary steps share ONE confirmation.
+Will do, each step printing its own exact plan first:
+  firebase:       Terraform applies of the installation root and of the Firebase root in aurora-fp, then the budget database's marks and rules and Identity Platform (planned when applied)
+  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)
+  repository:     Terraform apply onboarding acme/web (planned when applied)
+  also, where missing or changed: the Terraform state bucket (cents a month), the Cloud Resource Manager API, the local config (its diff is shown first)
+IAM changes announced: removes project Viewers' read access to the runs bucket gs://fugaro-runs-proj-1234 and the state bucket gs://fugaro-tfstate-proj-1234 when they have it; each Terraform plan lists the service accounts and roles it adds.
+A plan that destroys or replaces anything, or removes any other IAM grant, is not covered: that step stops and asks for its own typed confirmation.
+Still asks separately, never covered by this confirmation:
+  - the Firestore database's creation (its location is permanent)
+  - replacing a tag in your registry (--replace-image)
+  - each first Cloud Build of an image (billable)
+  - onboarding acme/web, which is not one of the project's yet (type owner/name)
+  - the secrets (hidden prompts)
+  - the plugin wiring (its own y/N)

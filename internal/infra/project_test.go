@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -160,5 +161,51 @@ func TestM4GoldenEnvRenamed(t *testing.T) {
 	}
 	if !strings.Contains(string(readme), "the env names changed in M9a: FUGARO_PROJECT is the project name, the GCP ID is FUGARO_GCP_PROJECT") {
 		t.Error("testdata/README.md has no note about the renamed env names")
+	}
+}
+
+func TestReadProjectMarker(t *testing.T) {
+	ctx := context.Background()
+	write := func(f *cloud, bucket, body string) {
+		t.Helper()
+		if err := f.gcs.Bucket(t, bucket).Bucket.WriteAll(ctx, ProjectMarkerObject, []byte(body), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		seed func(f *cloud)
+		want *ProjectMarker
+	}{
+		"no bucket": {func(f *cloud) {}, nil},
+		"no object": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, nil) }, nil},
+		"marker": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, &ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"}},
+		"not json": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, nil); write(f, "runs", "nope") }, nil},
+		"wrong version": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":2,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"no name": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":1,"gcp_project":"proj-1234"}`)
+		}, nil},
+		"oversized": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234","x":"`+strings.Repeat("a", 5000)+`"}`)
+		}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloud(t)
+			tc.seed(f)
+			got, err := ReadProjectMarker(ctx, f.c, "runs")
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %+v, err %v; want %+v", got, err, tc.want)
+			}
+		})
+	}
+	if m, err := ReadProjectMarker(ctx, newCloud(t).c, ""); m != nil || err != nil {
+		t.Fatalf("no bucket name: %v, %v", m, err)
 	}
 }

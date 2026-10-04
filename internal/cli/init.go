@@ -112,6 +112,12 @@ confirmation. --plan-only never takes --yes: what the plan needs made first
 the run stops and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
+A new project config grants the launcher and operator roles to you, the
+authenticated user (user:<your email> from the Application Default
+Credentials), so that fugaro run works; --launcher or --operator replaces that,
+an existing or adopted config is never changed by it, and with a service
+account's credentials it stops and names the two flags.
+
 On a first run in a terminal it asks, once, for the project's name, the GCP
 project's ID and the region, each with a suggestion (the name from the
 repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
@@ -169,6 +175,27 @@ prints the fugaro secrets set commands still needed, and adds the
 repository to the local config. A repository the local config does not list
 takes the same opt-in as the converge's stages (below): its owner/name typed at
 your own terminal, or --onboard-repo.
+
+One confirmation per run, in a project Fugaro owns. A project is Fugaro's own
+when this run created it (--create-project) or its runs bucket carries Fugaro's
+mark (fugaro/project.json naming this project and this GCP project; read-only
+check). There, at a terminal, the ordinary steps (the Terraform applies of the
+installation, the Firebase root, the history job and the repository, the state
+bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
+that only add tags, the Firestore marks and rules, the local config) share one
+review screen and ONE typed project name, asked when the first of them has
+something to change (so a rerun with nothing to do asks nothing). Each step
+still prints its own exact plan. It never covers creating a project, linking
+billing, the Firestore database's permanent location, a Cloud Build, replacing
+a registry tag (--replace-image), an unlisted repository or a secret: each
+keeps its own typed confirmation. A plan that destroys or replaces anything,
+or removes an IAM grant other than the announced Viewer-read removal, is not
+covered: that step asks for its own typed name. A wrong name applies nothing.
+The confirmation is per run and never stored. Any other project (adopted,
+unmarked, or a mark that fails to read) keeps a typed name at each step;
+--yes covers the ordinary steps as ever and takes no review; --non-interactive,
+--json, a pipe and a coding agent never take it; --plan-only shows the review
+and applies nothing.
 
 What --yes covers: the ordinary steps, which are the installation's and the
 Firebase root's Terraform applies, the images' copy, the local config's
@@ -265,8 +292,8 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
 	f.StringArrayVar(&o.replaceImages, "replace-image", nil, "KIND (history, go, java-services or web-node; repeatable): let init replace that image's tag in your registry when it names another image, a release tag or history:latest (never done otherwise, so a hand-pushed history:latest needs it once). It names the intent only: replacing is confirmed by typing the project's name at a real terminal, never by --yes, --non-interactive or --json")
-	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
-	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
+	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's, and for a new config you, the authenticated user)")
+	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's, and for a new config you, the authenticated user)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
 	f.StringVar(&o.budgetCurrency, "budget-currency", "", "the budget's currency, such as USD")
 	f.StringVar(&o.billingAccount, "billing-account", "", "the billing account the budget is on")
@@ -322,6 +349,10 @@ type initRun struct {
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
 	// or a coding agent): the run ends needs-you, with the typed route.
 	buildsLeft []string
+
+	// review is the run's one confirmation, set only by the converge
+	// (init_review.go).
+	review *runReview
 }
 
 // initResult is what --json prints.
@@ -784,12 +815,17 @@ func (r *initRun) confirm(what, undone string) error {
 		return err
 	}
 	if !ok {
-		if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
-			return userErr("%s%s; %s", initflow.NeedsTerminal("the typed confirmation of this step"), r.yesRoute(), undone)
-		}
-		return userErr("not confirmed (the project's name was not typed); %s", undone)
+		return r.notConfirmed(undone)
 	}
 	return nil
+}
+
+// notConfirmed is the refusal of a step that was not confirmed.
+func (r *initRun) notConfirmed(undone string) error {
+	if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
+		return userErr("%s%s; %s", initflow.NeedsTerminal("the typed confirmation of this step"), r.yesRoute(), undone)
+	}
+	return userErr("not confirmed (the project's name was not typed); %s", undone)
 }
 
 // yesRoute is what follows "needs a real terminal" when a step cannot be
@@ -865,7 +901,7 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 		return initErr(err)
 	}
 	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + quoteWord(r.gcpProject)
-	ok, err := r.ask("enables the Cloud Resource Manager API (" + infra.ServiceResourceManager + "), which is disabled: fugaro init reads the project's number through it before Terraform enables it (free, and nothing fugaro does disables it again)")
+	ok, err := r.askOrdinary("enables the Cloud Resource Manager API ("+infra.ServiceResourceManager+"), which is disabled: fugaro init reads the project's number through it before Terraform enables it (free, and nothing fugaro does disables it again)", "")
 	if err != nil {
 		return err
 	}
@@ -975,8 +1011,8 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		return outs, false, initErr(err)
 	}
 	if !exists {
-		if err := r.confirm(fmt.Sprintf("creates gs://%s in %s with versioning, for Terraform state (cents a month)", spec.StateBucket, spec.Region),
-			"nothing was created or applied"); err != nil {
+		if err := r.confirmOrdinary(fmt.Sprintf("creates gs://%s in %s with versioning, for Terraform state (cents a month)", spec.StateBucket, spec.Region),
+			"nothing was created or applied", ""); err != nil {
 			return outs, false, err
 		}
 		if err := infra.CreateStateBucket(ctx, c, spec.Project, spec.Region, spec.StateBucket); err != nil {
@@ -995,7 +1031,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			if r.o.planOnly {
 				r.warn("--plan-only changes no IAM; without it, fugaro init " + what)
 			} else {
-				if err := r.confirm(what, "nothing was applied"); err != nil {
+				if err := r.confirmOrdinary(what, "nothing was applied", ""); err != nil {
 					return outs, false, err
 				}
 				if err := infra.RemoveProjectViewers(ctx, c, spec.StateBucket, p); err != nil {
@@ -1062,7 +1098,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, true, nil
 		}
 		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirm("applies "+counts.String()+r.installLabel, "nothing was applied"); err != nil {
+		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", planNotCovered(plan)); err != nil {
 			return outs, false, err
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -1115,7 +1151,7 @@ func (r *initRun) runsBucketViewers(ctx context.Context, c *infra.Clients, spec 
 		r.warn(fmt.Sprintf("--plan-only changes no IAM; without it, fugaro init asks to remove project Viewers' read access to gs://%s (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
 		return nil
 	}
-	ok, err := r.ask(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")))
+	ok, err := r.askOrdinary(fmt.Sprintf("removes project Viewers' read access to gs://%s, which holds transcripts and caches (%s)", spec.RunsBucket, strings.Join(grants, ", ")), "")
 	if err != nil {
 		return err
 	}
@@ -1323,7 +1359,7 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 	}
 	fmt.Fprintf(r.w, "The local config %s changes:\n%s", path, lineDiff(string(old), string(data)))
 	if !confirmed {
-		if err := r.confirm("writes the local config "+path+" as shown", "the local config was not changed"); err != nil {
+		if err := r.confirmOrdinary("writes the local config "+path+" as shown", "the local config was not changed", ""); err != nil {
 			return err
 		}
 	}
@@ -2022,7 +2058,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !first {
 		what += ", deploying the images just built"
 	}
-	if err := r.confirm(what, "nothing was applied"); err != nil {
+	if err := r.confirmOrdinary(what, "nothing was applied", planNotCovered(plan)); err != nil {
 		return nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"unicode"
 )
@@ -31,6 +32,10 @@ type Options struct {
 	// not: every applying stage is needs-you ("run this in your own terminal
 	// window"); checks and plans still run. A mitigation, not a barrier.
 	Agent string
+	// OnPreview, when set, receives the read-only preview's stages before the
+	// first apply of an applying run (the one confirmation's review screen
+	// says what is left to do, and what asks separately, from it).
+	OnPreview func([]StageResult)
 	// Out receives the human-readable account (the plan view and the
 	// closing lines); with --json the CLI points it at stderr.
 	Out io.Writer
@@ -272,6 +277,9 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	}
 	if !l.o.PlanOnly {
 		l.view(l.res.Stages)
+		if l.o.OnPreview != nil {
+			l.o.OnPreview(slices.Clone(l.res.Stages))
+		}
 		// The execution pass owns the final account.
 		l.res.Stages, l.res.Left = nil, []Left{}
 	}

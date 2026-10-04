@@ -77,6 +77,23 @@ var order = []slot{
 	{name: Repository, needs: []string{Installation2, Secrets}},
 }
 
+// runCovered are the stages whose ordinary steps the run's one confirmation
+// covers (design m11 §9, "one confirmation"): the Terraform applies of the
+// installation, the Firebase root, the history job and the repository, and
+// what goes with them (the state bucket, the Viewer-read removal, the
+// Firestore marks and rules, the image copies that add tags, the local
+// config). Everything else is never covered by it: the project's creation and
+// billing, a secret, the plugin wiring (its own y/N), and within a covered
+// stage the Firestore database's location, a Cloud Build, replacing a
+// registry tag and onboarding an unlisted repository, which stay Typed.
+var runCovered = map[string]bool{
+	Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true,
+}
+
+// RunCovers reports whether the run's one confirmation may cover the stage's
+// ordinary steps. A stage --yes does not cover (noYes) is never covered.
+func RunCovers(name string) bool { return runCovered[name] && YesCovers(name) }
+
 // Names is the canonical order of every stage name.
 func Names() []string {
 	out := make([]string, len(order))
@@ -323,6 +340,15 @@ func CanConfirm(class ConfirmClass, c Conditions) bool {
 	}
 	return c.Yes || (c.Terminal && !c.NonInteractive)
 }
+
+// CanConfirmRun reports whether the run's one confirmation (the project's
+// name typed once for all the ordinary steps) can be taken under the
+// conditions: a person at a real terminal, as for a Typed step. --yes does
+// not take it (it already covers the ordinary steps, with no review),
+// --non-interactive, --json, a pipe and a coding agent never do, and under a
+// coding agent's marker nothing applies at all. Plan-only runs show the
+// review and never take it (the caller's; Yes is false there).
+func CanConfirmRun(c Conditions) bool { return CanConfirm(Typed, c) }
 
 // Validate checks stages are registered once each, under a known name, and
 // returns them in the canonical order. A stage's predecessors that are not

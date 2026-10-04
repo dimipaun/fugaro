@@ -978,3 +978,55 @@ func TestPlanOnlyNeverPassesYes(t *testing.T) {
 		t.Fatalf("plan env %+v, log %v", f.planEnv, log)
 	}
 }
+
+// The run's one confirmation covers the ordinary stages and nothing that is
+// money, permanent, a secret or someone else's repository.
+func TestRunCovers(t *testing.T) {
+	want := map[string]bool{Installation: true, Firebase: true, Images: true, Installation2: true, Repository: true}
+	for _, name := range Names() {
+		if got := RunCovers(name); got != want[name] {
+			t.Errorf("RunCovers(%s) = %v, want %v", name, got, want[name])
+		}
+		if RunCovers(name) && !YesCovers(name) {
+			t.Errorf("%s: the run confirmation covers a stage --yes does not", name)
+		}
+	}
+	for _, never := range []string{Project, Secrets, Plugin, Preflight, "unknown"} {
+		if RunCovers(never) {
+			t.Errorf("RunCovers(%s) is true", never)
+		}
+	}
+}
+
+// Over every mode: the one confirmation is taken by a person at a real
+// terminal and by nothing else, exactly like a Typed step.
+func TestCanConfirmRunMatrix(t *testing.T) {
+	for _, m := range modes() {
+		t.Run(m.name, func(t *testing.T) {
+			c := Conditions{Yes: m.opts.Yes && !m.opts.PlanOnly, NonInteractive: m.opts.NonInteractive, JSON: m.opts.JSON, Terminal: m.opts.Terminal, Agent: m.opts.Agent}
+			want := c.Terminal && !c.Yes && !c.NonInteractive && !c.JSON && c.Agent == ""
+			if got := CanConfirmRun(c); got != want {
+				t.Errorf("CanConfirmRun(%+v) = %v, want %v", c, got, want)
+			}
+			if CanConfirmRun(c) != CanConfirm(Typed, c) {
+				t.Errorf("the run confirmation is not the Typed rule")
+			}
+		})
+	}
+}
+
+func TestOnPreviewSeesTheStagesOfAnApplyingRunOnly(t *testing.T) {
+	for _, planOnly := range []bool{false, true} {
+		var log []string
+		var seen []StageResult
+		f := &selfStage{fake: &fake{name: Installation, log: &log}}
+		_, err := Run(context.Background(), []Stage{f}, Options{Yes: true, PlanOnly: planOnly, Terminal: true, Out: &bytes.Buffer{},
+			OnPreview: func(rs []StageResult) { seen = rs }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := len(seen) == 1 && seen[0].Name == Installation && seen[0].State == Todo; got == planOnly {
+			t.Errorf("plan-only %v: preview seen %+v", planOnly, seen)
+		}
+	}
+}

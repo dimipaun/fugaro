@@ -39,7 +39,14 @@ type initEngine struct {
 	wd    *infra.Workdir
 
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
+	defaulted  string          // the member a new config's launchers and operators defaulted to (init_members.go)
 	adopted    string          // set when the installation stage adopted an existing installation instead of applying
+
+	// The one confirmation's review screen is built from the preview's stages
+	// and the two stages it asks about (init_review.go).
+	previewed []initflow.StageResult
+	images    *imagesStage
+	repo      *repositoryStage
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
@@ -100,19 +107,24 @@ func (e *initEngine) options() initflow.Options {
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
-		Redact: e.redact,
+		Redact: e.redact, OnPreview: func(rs []initflow.StageResult) { e.previewed = rs },
 	}
 }
 
 // converge runs fugaro init's default and --firebase modes through the
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
-	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), newImagesStage(e), newInstallation2Stage(e)}
-	stages = append(stages, newSecretsStage(e), newPluginStage(e), newRepositoryStage(e))
+	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
+	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
+	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
+	e.r.review = &runReview{owner: e.owner, screen: e.reviewScreen}
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}
 	res, err := initflow.Run(ctx, stages, e.options())
+	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
+		e.planOnlyReview(ctx, res.Stages)
+	}
 	return e.outcome(res, err)
 }
 
@@ -299,6 +311,9 @@ func newInstallationStage(e *initEngine) *engineStage {
 				case ok:
 					return e.r.adopt(ctx, e)
 				}
+				if err := e.defaultMembers(ctx); err != nil {
+					return err
+				}
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},
@@ -321,6 +336,15 @@ func newFirebaseStage(e *initEngine) *engineStage {
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
 				return err
+			}
+			if e.old == nil { // a first run with --firebase: the same default, unless the installation exists
+				if ok, err := e.r.installationExists(ctx, e.c, e.spec); err != nil {
+					return err
+				} else if !ok {
+					if err := e.defaultMembers(ctx); err != nil {
+						return err
+					}
+				}
 			}
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
