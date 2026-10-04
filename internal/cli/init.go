@@ -142,10 +142,13 @@ In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,
 the Claude credential agent.auth names, none for vertex, the allowed model
 providers' keys, the workflows' own), and skips what is already stored. It
-prompts only in your own terminal: never with --yes or --non-interactive
-(it then exits 1 with the one-line fugaro secrets set commands), never when
-stdin, stdout or stderr is not a terminal (a pipe is never read), and never
-through a coding agent (CLAUDECODE and the like are set). It creates each
+prompts only in your own terminal: never with --yes, --non-interactive or
+--json (--json never prompts; the stage then exits 1 with the one-line
+fugaro secrets set commands), never when stdin, stdout or stderr is not a
+terminal (a pipe is never read), and never through a coding agent (CLAUDECODE
+and the like are set; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
+extension in VS Code and JetBrains terminals: in your own IDE terminal, unset
+it or run fugaro secrets set). A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
 init --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
 --forget removes the repository from

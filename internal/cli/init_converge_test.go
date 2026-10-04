@@ -282,7 +282,10 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 		t.Errorf("redact = %q", got)
 	}
 	// The slots a stage fills with a value it holds are in the same list.
-	release := e.hold([]byte("held-value"))
+	release, err := e.hold([]byte("held-value"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !slices.Contains(got, "held-value") {
 		t.Errorf("a held value is not in the loop's list: %q", got)
 	}
