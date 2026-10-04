@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,7 +116,7 @@ func TestAdoptModeNamesMissingRole(t *testing.T) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
 	}
-	for _, line := range roleNotes(infra.InstallationOutputs{}) {
+	for _, line := range adoptNotes(infra.InstallationOutputs{}) {
 		if strings.Contains(line, "\n") || strings.Contains(line, "\\") {
 			t.Errorf("not one line: %q", line)
 		}
@@ -137,35 +136,30 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 	releaseBuild(t, "0.2.0")
 	// A checkout of a repository this project has not onboarded, whose
 	// settings already carry the plugin at this release.
-	settings := wiringCheckout(t, "")
+	settings := wiringCheckoutAt(t, "https://bitbucket.org/acme/sandbox.git", "")
 	if err := os.MkdirAll(filepath.Dir(settings), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(settings, []byte(`{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"dimipaun/fugaro","ref":"v0.2.0"}}},"enabledPlugins":{"fugaro@fugaro":true}}`+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, _, err := executeStdin(t, "", "init", "--yes", "--json")
+	e := rigEngine(t, r, &initOptions{yes: true})
+	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newPluginStage(e), newRepositoryStage(e)}, e.options())
 	if err != nil {
-		t.Fatalf("%v\n%s", err, out)
+		t.Fatal(err)
 	}
-	var res convergeJSON
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
-		t.Fatalf("%v:\n%s", err, out)
-	}
-	if res.Applied || len(r.ran(t, "apply")) != 0 {
+	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("a rerun applied: %q", r.calls(t))
 	}
 	for _, s := range res.Stages {
 		if s.State != "done" && s.State != "skipped" {
 			t.Errorf("stage %s is %s (%s), want done or skipped", s.Name, s.State, s.Detail)
 		}
-	}
-	if res.state("installation") != "done" || res.state("plugin") != "done" || res.state("repository") != "skipped" {
-		t.Errorf("stages %+v", res.Stages)
-	}
-	for _, s := range res.Stages {
 		if (s.Name == "installation" || s.Name == "plugin") && !strings.Contains(s.Detail, "No changes") {
 			t.Errorf("stage %s: %q does not say No changes", s.Name, s.Detail)
 		}
+	}
+	if stateOf(res, "installation") != "done" || stateOf(res, "plugin") != "done" || stateOf(res, "repository") != "skipped" {
+		t.Errorf("stages %+v", res.Stages)
 	}
 }

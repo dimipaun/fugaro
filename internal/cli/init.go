@@ -60,7 +60,8 @@ type initOptions struct {
 	planOnly, printVars, configOnly     bool
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
-	allowFork                           bool // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
+	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
+	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
@@ -192,11 +193,17 @@ never changed.
 The plugin-wiring stage merges the Fugaro marketplace and plugin into the
 checkout's .claude/settings.json, pinned to this release's tag, after showing
 the diff and asking (--yes confirms it); see update-skills. The repository
-stage runs init --repo for the checkout, after the secrets, when its default
-branch has a fugaro.yaml naming this project (else it is skipped and says
-why); it asks once for the GitHub App's ID of a GitHub repository (or take
---github-app-id) and keeps its own confirmations, the first image build's
-included.`,
+stage runs init --repo for the checkout, after the secrets, when its
+origin's default branch (origin/HEAD, main or master, as last fetched) has a
+fugaro.yaml naming this project (else it is skipped and says why); it asks
+once for the GitHub App's ID of a GitHub repository (or take --github-app-id)
+and keeps its own confirmations, the first image build's included.
+
+Both stages act only on a repository the project's local config already lists,
+or one you opt in: a repository not listed yet needs its owner/name typed at
+your own terminal (naming the checkout's path), or --onboard-repo owner/name,
+which must equal the origin; --yes and --non-interactive never cover it, so a
+cloned third-party repository cannot onboard itself.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
@@ -244,6 +251,7 @@ included.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository: the one non-interactive opt-in to wire and onboard a repository the project does not list yet (--yes never covers it; it must equal the origin exactly)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
@@ -446,10 +454,35 @@ func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, e
 	return c, nil
 }
 
+func (o *initOptions) registryCleanupSet() bool { return o.registryCleanup != "" }
+
+// checkAppID validates --github-app-id where it is given, not only where it
+// is used.
+func (o *initOptions) checkAppID() error {
+	if o.githubAppID != "" && !appIDRE.MatchString(o.githubAppID) {
+		return userErr("--github-app-id %q is not a GitHub App ID (1 to 20 digits)", o.githubAppID)
+	}
+	return nil
+}
+
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
 	if o.noBuild || o.allowJobDelete {
 		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
+	}
+	if err := o.checkAppID(); err != nil {
+		return err
+	}
+	if o.onboardRepo != "" {
+		if _, err := task.CanonicalRepo(o.onboardRepo); err != nil {
+			return userErr("--onboard-repo %q is not owner/name", o.onboardRepo)
+		}
+		if o.forget || o.configOnly || o.printVars {
+			return userErr("--onboard-repo opts the checkout's repository in to the converge; it excludes --forget, --config-only and --print-vars")
+		}
+	}
+	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
+		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget} {
@@ -614,8 +647,8 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	opts := infra.InstallOptions{
 		StateBucket:     o.stateBucket,
 		AlertEmail:      o.alertEmail,
-		RegistryCleanup: o.registryCleanup,
-		NoLogIsolation:  o.noLogIsolation,
+		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.launchersChanged {
 		opts.Launchers = append([]string{}, o.launchers...)
@@ -626,7 +659,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	// The installation carries the history account (and, once it can, the
 	// sweeper's job) from the first --firebase on, and a plain fugaro init
 	// keeps them while the config records the Firebase project.
-	opts.BudgetBackend = o.firebase != "" || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
+	opts.BudgetBackend = o.firebase != "" || lc.Terraform.BudgetBackend || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
@@ -1396,6 +1429,12 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if err := o.checkAppID(); err != nil {
+		return err
+	}
+	if o.onboardRepo != "" {
+		return userErr("--onboard-repo is for fugaro init without --repo (init --repo is the explicit onboarding already)")
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
 		if b {

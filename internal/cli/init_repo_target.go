@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -72,24 +73,67 @@ func anyStoredAppID(lc *localcfg.Config) string {
 	return id
 }
 
-func gitRead(ctx context.Context, dir string, args ...string) (string, error) {
-	c := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
+// gitHardening is put before every git call on a checkout that may be
+// somebody else's: no hook runs, no fsmonitor command, no prompt, no
+// optional lock; the user's and the system's git config are still read, but
+// nothing here runs what the repository's own config names.
+var gitHardening = []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-c", "protocol.ext.allow=never"}
+
+func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, "git", append(append([]string{"-C", dir}, gitHardening...), args...)...)
+	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	c.WaitDelay = 5 * time.Second
-	out, err := c.Output()
+	return c
+}
+
+func gitRead(ctx context.Context, dir string, args ...string) (string, error) {
+	out, err := gitCmd(ctx, dir, args...).Output()
 	return strings.TrimSpace(string(out)), err
 }
 
-// defaultBranchRef is the ref of the checkout's default branch: where origin
-// says HEAD is, else origin/main or origin/master, else a local main or
-// master. It reads no network.
+// quoteWord is s as one shell word: unchanged when it is made of safe
+// characters, else in single quotes (a branch name may hold ; $ ( | & and
+// more, and the text is printed to be copied into a shell).
+func quoteWord(s string) string {
+	if regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`).MatchString(s) {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// repoKnown reports whether the local config already lists repo.
+func repoKnown(lc *localcfg.Config, repo string) bool {
+	want, err := task.CanonicalRepo(repo)
+	if err != nil {
+		return false
+	}
+	for name := range lc.Repos {
+		if c, err := task.CanonicalRepo(name); err == nil && c == want {
+			return true
+		}
+	}
+	return false
+}
+
+// sameRepo compares two owner/name strings the way the config does.
+func sameRepo(a, b string) bool {
+	x, err1 := task.CanonicalRepo(a)
+	y, err2 := task.CanonicalRepo(b)
+	return err1 == nil && err2 == nil && x == y
+}
+
+// defaultBranchRef is the remote-tracking ref of the checkout's default
+// branch: where origin says HEAD is, else origin/main or origin/master. It
+// reads no network and never falls back to a local branch, whose content
+// anyone could have written: no origin ref, no default branch.
 func defaultBranchRef(ctx context.Context, root string) string {
 	var cands []string
-	if ref, err := gitRead(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && ref != "" {
+	if ref, err := gitRead(ctx, root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"); err == nil && strings.HasPrefix(ref, "origin/") {
 		cands = append(cands, ref)
 	}
-	cands = append(cands, "origin/main", "origin/master", "main", "master")
+	cands = append(cands, "origin/main", "origin/master")
 	for _, c := range cands {
-		if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", c+"^{commit}"); err == nil {
+		if _, err := gitRead(ctx, root, "rev-parse", "--verify", "--quiet", "refs/remotes/"+c+"^{commit}"); err == nil {
 			return c
 		}
 	}
@@ -109,20 +153,21 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	if err != nil {
 		return skip("not in a checkout: run fugaro init in a checkout of the repository to onboard it")
 	}
-	repo, err := checkoutRepo(ctx, root)
-	if err != nil {
+	origin, err := gitRead(ctx, root, "remote", "get-url", "origin")
+	repo, ok := repoFromOrigin(origin)
+	if err != nil || !ok {
 		return skip("this checkout has no origin repository to onboard")
 	}
 	ref := defaultBranchRef(ctx, root)
 	if ref == "" {
-		return skip("cannot tell this checkout's default branch (no origin/HEAD, main or master): run git remote set-head origin --auto, then rerun fugaro init")
+		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro init")
 	}
 	branch := strings.TrimPrefix(ref, "origin/")
-	c := exec.CommandContext(ctx, "git", "-C", root, "cat-file", "blob", ref+":fugaro.yaml")
-	c.WaitDelay = 5 * time.Second
-	data, err := c.Output()
+	shown := pluginwire.Printable(branch)
+	out, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml").Output()
+	data := out
 	if err != nil {
-		return skip("no fugaro.yaml on the default branch (" + branch + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
+		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
 	}
 	cfg, problems := config.Parse(data)
 	if cfg == nil {
@@ -131,21 +176,24 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 			why = problems[0].String()
 		}
 		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "fugaro validate"}
-		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "fugaro.yaml on the default branch (" + branch + ") is not valid: " + oneLineCLI(why), Left: &lf}
+		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "fugaro.yaml on the default branch (" + shown + ") is not valid: " + pluginwire.Printable(oneLineCLI(why)), Left: &lf}
 	}
 	if project != "" && cfg.Project != project {
-		return skip("fugaro.yaml on the default branch (" + branch + ") names another project (or none): " + project + " is not its project")
+		return skip("fugaro.yaml on the default branch (" + shown + ") names another project (or none): " + pluginwire.Printable(project) + " is not its project")
 	}
-	// The engine reads the working tree: it must be the default branch's file.
-	if wt, err := os.ReadFile(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(wt, data) {
-		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch " + branch + " && git pull && " + selfCommand() + " init"}
-		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + ref + "): the repository is onboarded from the default branch, so switch to it and update it", Left: &lf}
+	// The engine reads the working tree: it must be the default branch's
+	// file (line endings aside).
+	if wt, err := os.ReadFile(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(data)) {
+		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch " + quoteWord(branch)}
+		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
 	}
 	return &repoTarget{root: root, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
 }
 
+func normalEOL(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }
+
 // oneLineCLI keeps s to its first line.
 func oneLineCLI(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
-	return line
+	return pluginwire.Printable(line)
 }

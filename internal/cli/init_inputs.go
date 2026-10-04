@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // The inputs a first run needs (design §3.1, "Inputs and defaults"): the
@@ -57,12 +58,25 @@ func sanitiseName(s string) string {
 // checkout's origin repository, else the checkout's (or the working
 // directory's) own name, sanitised.
 func suggestName(ctx context.Context) string {
+	_, n, _ := originOwner(ctx)
+	if n != "" {
+		return n
+	}
+	return dirName(ctx)
+}
+
+// originOwner is the checkout's origin repository's owner, sanitised.
+func originOwner(ctx context.Context) (repo, name string, ok bool) {
 	if repo, err := originRepo(ctx); err == nil {
 		owner, _, _ := strings.Cut(repo, "/")
 		if n := sanitiseName(owner); n != "" {
-			return n
+			return repo, n, true
 		}
 	}
+	return "", "", false
+}
+
+func dirName(ctx context.Context) string {
 	dir, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -131,19 +145,30 @@ func (m missingInput) String() string { return m.flag + " (" + m.what + ")" }
 // firstRunMissing is what creating the project config still needs: the name
 // (not with --config-only, which takes it from the installation), the GCP
 // project and the region, or none when a config is selected.
-func (r *initRun) firstRunMissing(ctx context.Context) (name string, missing []missingInput, creating bool) {
+func (r *initRun) firstRunMissing(ctx context.Context) (name, fromCheckout string, missing []missingInput, creating bool) {
 	o := r.o
 	co, err := checkoutProject(ctx, "")
 	if err != nil {
-		return "", nil, false // loadInitConfig reports it
+		return "", "", nil, false // loadInitConfig reports it
 	}
 	sel, lc, err := selectFrom(o.cloud, co, true)
 	if err != nil || lc != nil {
-		return "", nil, false
+		return "", "", nil, false
 	}
-	name = cmp.Or(sel.Name, o.name)
+	name = o.name
+	if name == "" && sel.From == "checkout" {
+		// A checkout's own fugaro.yaml must not name a brand-new, permanent
+		// installation: it is somebody's file, perhaps a clone's.
+		fromCheckout = sel.Name
+	} else if name == "" {
+		name = sel.Name
+	}
 	if name == "" && !o.configOnly {
-		missing = append(missing, missingInput{"--name <name>", "the Fugaro project's name"})
+		what := "the Fugaro project's name"
+		if fromCheckout != "" {
+			what = "this checkout's fugaro.yaml says " + pluginwire.Printable(fromCheckout) + ", which does not by itself name a new installation (the name is permanent): pass --name " + pluginwire.Printable(fromCheckout) + " to confirm it, or another name"
+		}
+		missing = append(missing, missingInput{"--name <name>", what})
 	}
 	if o.cloud.gcpProject == "" {
 		missing = append(missing, missingInput{"--gcp-project <id>", "the GCP project ID"})
@@ -151,7 +176,7 @@ func (r *initRun) firstRunMissing(ctx context.Context) (name string, missing []m
 	if o.cloud.region == "" {
 		missing = append(missing, missingInput{"--region <region>", "the GCP region, such as " + defaultRegion})
 	}
-	return name, missing, true
+	return name, fromCheckout, missing, true
 }
 
 // canAsk is whether the run may show a prompt for an input: a terminal on
@@ -167,7 +192,7 @@ func (r *initRun) canAsk() bool {
 // every missing flag (the GitHub App's ID too, when the checkout's
 // repository needs it) in one error. With a project config nothing is asked.
 func (r *initRun) gatherInputs(ctx context.Context) error {
-	name, missing, creating := r.firstRunMissing(ctx)
+	name, fromCheckout, missing, creating := r.firstRunMissing(ctx)
 	if !creating || len(missing) == 0 {
 		return nil
 	}
@@ -177,7 +202,7 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 			flags[i] = m.String()
 		}
 		if r.o.githubAppID == "" {
-			if t, _ := resolveRepoTarget(ctx, name); t != nil && t.needsAppID(nil, r.o) {
+			if t, _ := resolveRepoTarget(ctx, name); t != nil && t.needsAppID(nil, r.o) && sameRepo(r.o.onboardRepo, t.repo) {
 				flags = append(flags, appIDFlag)
 			}
 		}
@@ -189,7 +214,18 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 	fmt.Fprintln(r.w, "fugaro init: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	o := r.o
 	if name == "" && !o.configOnly {
-		v, err := r.prompt("Fugaro project name (names the installation, permanent)", suggestName(ctx), func(s string) error {
+		def, label := suggestName(ctx), "Fugaro project name (permanent"
+		switch _, _, ok := originOwner(ctx); {
+		case fromCheckout != "":
+			// No default: the file may be a clone's, so the name is typed.
+			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
+		case ok:
+			label += "; suggested from the origin's owner"
+		case def != "":
+			label += "; suggested from this directory's name"
+		}
+		label += ")"
+		v, err := r.prompt(label, def, func(s string) error {
 			if !config.ProjectNameRE.MatchString(s) {
 				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 			}

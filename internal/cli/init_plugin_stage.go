@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dimipaun/fugaro/internal/config"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -28,6 +31,10 @@ const pluginFirstRun = "Teammates are offered the plugin when they open this fol
 type pluginStage struct {
 	e       *initEngine
 	printed bool // the outside-a-checkout snippet, said once
+	// ask: the checkout's repository is not the project's yet and has to be
+	// typed in before anything is written (set by plan); repo and root name it.
+	ask        bool
+	repo, root string
 }
 
 func newPluginStage(e *initEngine) *pluginStage { return &pluginStage{e: e} }
@@ -40,9 +47,18 @@ func (s *pluginStage) Left() initflow.Left {
 
 // plan is the read-only merge for the working directory's checkout: the
 // change, or the status that says why there is none.
-func (s *pluginStage) plan() (*pluginwire.Change, *initflow.Status) {
-	status := func(st initflow.State, detail string, left *initflow.Left) (*pluginwire.Change, *initflow.Status) {
-		return nil, &initflow.Status{State: st, Detail: detail, Left: left}
+func (s *pluginStage) plan(ctx context.Context) (*pluginwire.Change, *initflow.Status, error) {
+	ch, st, err := s.plan1(ctx)
+	if st != nil && st.State == initflow.NeedsYou && !strings.Contains(st.Detail, "repository stage was not reached") {
+		st.Detail += "; the repository stage was not reached"
+	}
+	return ch, st, err
+}
+
+func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.Status, error) {
+	s.ask = false
+	status := func(st initflow.State, detail string, left *initflow.Left) (*pluginwire.Change, *initflow.Status, error) {
+		return nil, &initflow.Status{State: st, Detail: detail, Left: left}, nil
 	}
 	loc, ok := pluginwire.Locate(".")
 	if !ok {
@@ -52,12 +68,34 @@ func (s *pluginStage) plan() (*pluginwire.Change, *initflow.Status) {
 		}
 		return status(initflow.Skipped, "not in a checkout: the settings to add are printed above", nil)
 	}
+	if _, err := pluginwire.Tag(Version); err != nil {
+		return status(initflow.Skipped, "this fugaro build has no release tag to pin the plugin to, so nothing is wired (a release build adds it)", nil)
+	}
+	// Only the checkout the project's own repository stage would target.
+	e := s.e
+	origin, oerr := gitRead(ctx, loc.Root, "remote", "get-url", "origin")
+	repo, ok := repoFromOrigin(origin)
+	if oerr != nil || !ok {
+		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to wire", nil)
+	}
+	if data, rerr := os.ReadFile(filepath.Join(loc.Root, "fugaro.yaml")); rerr == nil {
+		if p, perr := config.ProjectOf(data); perr != nil || p != e.lc.Name {
+			return status(initflow.Skipped, "this checkout's fugaro.yaml names another project (or none), not "+pluginwire.Printable(e.lc.Name)+": the plugin is not wired here", nil)
+		}
+	}
+	switch a, err := e.authState(repo); {
+	case err != nil:
+		return nil, nil, err
+	case a == authNeeded:
+		lf := onboardLeft(repo)
+		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo), &lf)
+	case a == authAsk:
+		s.repo, s.root, s.ask = repo, loc.Root, true
+	}
 	ch, err := pluginwire.Plan(loc.Settings, Version, s.e.r.o.allowFork)
 	var fe *pluginwire.ForeignError
 	var fk *pluginwire.ForkError
 	switch {
-	case errors.Is(err, pluginwire.ErrDev), errors.Is(err, pluginwire.ErrNotRelease):
-		return status(initflow.Skipped, "this fugaro build has no release tag to pin the plugin to, so nothing is wired (a release build adds it)", nil)
 	case errors.As(err, &fk):
 		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills --allow-fork"}
 		return status(initflow.NeedsYou, fmt.Sprintf("the %q marketplace in %s names %s, not %s: not moved without --allow-fork", pluginwire.Marketplace, loc.Settings, pluginwire.Printable(fk.Repo), pluginwire.Repo), &lf)
@@ -65,14 +103,16 @@ func (s *pluginStage) plan() (*pluginwire.Change, *initflow.Status) {
 		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "fix " + loc.Settings + " (or merge the settings by hand: " + selfCommand() + " update-skills prints them), then rerun fugaro init"}
 		return status(initflow.NeedsYou, pluginwire.Printable(oneLineCLI(err.Error())), &lf)
 	case err != nil:
-		return nil, &initflow.Status{State: initflow.NeedsYou, Detail: pluginwire.Printable(oneLineCLI(err.Error())), Left: nil}
+		return nil, &initflow.Status{State: initflow.NeedsYou, Detail: pluginwire.Printable(oneLineCLI(err.Error())), Left: nil}, nil
 	}
-	return ch, nil
+	return ch, nil, nil
 }
 
-func (s *pluginStage) Check(context.Context) (initflow.Status, error) {
-	ch, st := s.plan()
+func (s *pluginStage) Check(ctx context.Context) (initflow.Status, error) {
+	ch, st, err := s.plan(ctx)
 	switch {
+	case err != nil:
+		return initflow.Status{}, err
 	case st != nil:
 		return *st, nil
 	case !ch.Changed:
@@ -82,12 +122,18 @@ func (s *pluginStage) Check(context.Context) (initflow.Status, error) {
 		}
 		return initflow.Status{State: initflow.Done, Detail: d}, nil
 	}
-	return initflow.Status{State: initflow.Todo, Detail: "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag}, nil
+	d := "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag
+	if s.ask {
+		d += "; asks you to type the repository's name first (it is not the project's yet)"
+	}
+	return initflow.Status{State: initflow.Todo, Detail: d}, nil
 }
 
-func (s *pluginStage) Plan(context.Context, initflow.Env) (initflow.Plan, error) {
-	ch, st := s.plan()
+func (s *pluginStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, error) {
+	ch, st, err := s.plan(ctx)
 	switch {
+	case err != nil:
+		return initflow.Plan{}, err
 	case st != nil:
 		return initflow.Plan{Detail: st.Detail, NothingToDo: st.State != initflow.NeedsYou}, nil
 	case !ch.Changed:
@@ -97,8 +143,12 @@ func (s *pluginStage) Plan(context.Context, initflow.Env) (initflow.Plan, error)
 	return initflow.Plan{Detail: "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag}, nil
 }
 
-func (s *pluginStage) Apply(_ context.Context, env initflow.Env) (initflow.Outcome, error) {
-	ch, st := s.plan()
+func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	s.ask = false
+	ch, st, err := s.plan(ctx)
+	if err != nil {
+		return initflow.Outcome{}, err
+	}
 	if st != nil {
 		return initflow.Outcome{}, &initflow.NeedsYouError{Left: s.leftFor(st)}
 	}
@@ -106,6 +156,18 @@ func (s *pluginStage) Apply(_ context.Context, env initflow.Env) (initflow.Outco
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	r := s.e.r
+	if s.ask { // not the project's repository yet: its own typed confirmation, which --yes never gives
+		if !env.Interactive {
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.repo)}
+		}
+		ok, err := s.e.confirmRepo(s.root, s.repo)
+		if err != nil {
+			return initflow.Outcome{}, err
+		}
+		if !ok {
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.repo)}
+		}
+	}
 	fmt.Fprintf(r.w, "%s\n%s", ch.Path, ch.Diff())
 	if ch.Note != "" {
 		fmt.Fprintf(r.w, "note: %s\n", ch.Note)
@@ -138,9 +200,11 @@ func (s *pluginStage) leftFor(st *initflow.Status) initflow.Left {
 
 // Verify re-reads the file: the merge is in, and a second merge changes
 // nothing.
-func (s *pluginStage) Verify(context.Context) error {
-	ch, st := s.plan()
+func (s *pluginStage) Verify(ctx context.Context) error {
+	ch, st, err := s.plan(ctx)
 	switch {
+	case err != nil:
+		return err
 	case st != nil:
 		return fmt.Errorf("the plugin wiring cannot be read back: %s", st.Detail)
 	case ch.Changed:

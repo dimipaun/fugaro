@@ -38,7 +38,8 @@ type initEngine struct {
 	t     *tf.TF
 	wd    *infra.Workdir
 
-	adopted string // set when the installation stage adopted an existing installation instead of applying
+	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
+	adopted    string          // set when the installation stage adopted an existing installation instead of applying
 
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }

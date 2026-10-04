@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -36,13 +37,26 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 	if r.o.planOnly {
 		return nil
 	}
+	if _, err := os.Lstat(e.path); err == nil {
+		return userErr("%s already exists: adopt mode writes only a new local config and never overwrites one; use fugaro init --config-only to update it", e.path)
+	}
 	outs, err := r.readOutputs(ctx, e.c, e.t, e.wd, e.spec)
 	if err != nil {
 		return initErr(err)
 	}
-	// The installation's own launchers and operators are what a later plan
-	// compares with: an empty list here would plan their removal.
+	// What the installation's outputs say about it is what a later plan
+	// compares with: an empty launcher list would plan their removal, and a
+	// default cleanup mode or log isolation would plan a change back.
 	next := *e.lc
+	if !r.o.registryCleanupSet() && next.Terraform.RegistryCleanup == "" && outs.RegistryCleanupDryRun != nil && !*outs.RegistryCleanupDryRun {
+		next.Terraform.RegistryCleanup = "on" // the outputs say a dry run is off: cleanup is on
+	}
+	if !r.o.noLogIsolation && outs.LogView == "" {
+		next.Terraform.NoLogIsolation = true
+	}
+	if outs.HistoryServiceAccount != "" {
+		next.Terraform.BudgetBackend = true
+	}
 	if !r.o.launchersChanged && len(next.Terraform.Launchers) == 0 {
 		next.Terraform.Launchers = slices.Clone(outs.Launchers)
 	}
@@ -53,11 +67,22 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 		return err
 	}
 	r.res.Applied = false
-	for _, line := range roleNotes(outs) {
+	for _, line := range adoptNotes(outs) {
 		fmt.Fprintln(r.w, line)
 	}
 	e.adopted = "adopted the existing installation: wrote the local config, applied nothing"
 	return nil
+}
+
+// adoptNotes is what the person is told after adopting: that the config is a
+// copy of what the outputs expose, which flags the owner passes for what they
+// do not, that a plan from here must not be applied, and the roles.
+func adoptNotes(outs infra.InstallationOutputs) []string {
+	lines := []string{
+		"the local config was copied from the installation's outputs: launchers, operators, registry cleanup (on, or dry-run when the outputs say a dry run), log isolation and the budget backend's history account; they do not carry the alert email, the scheduler region, whether cleanup is dry-run or off, or the Firebase project,",
+		"so a plan from this machine can differ from what the owner applied and look noisy: do not apply an installation plan from here; ask an owner to run fugaro init, passing --alert-email, --scheduler-region, --registry-cleanup and --firebase as they did",
+	}
+	return append(lines, roleNotes(outs)...)
 }
 
 // roleNotes names the roles a new member may lack and the one-line command

@@ -22,6 +22,9 @@ import (
 // the stdin and the local config's name.
 func stageEngine(t *testing.T, stdin string, o *initOptions) (*initEngine, *syncBuf) {
 	t.Helper()
+	for _, k := range agentMarkers {
+		t.Setenv(k, "") // this session may be a coding agent's
+	}
 	out := &syncBuf{}
 	cmd := NewRootCmd()
 	cmd.SetIn(strings.NewReader(stdin))
@@ -29,7 +32,7 @@ func stageEngine(t *testing.T, stdin string, o *initOptions) (*initEngine, *sync
 	if o == nil {
 		o = &initOptions{}
 	}
-	return &initEngine{r: &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: cmd}, lc: &localcfg.Config{Name: "aurora"}}, out
+	return &initEngine{r: &initRun{o: o, w: out, in: bufio.NewReader(strings.NewReader(stdin)), cmd: cmd}, lc: &localcfg.Config{Name: "aurora", Repos: map[string]localcfg.Repo{"acme/app": {Provider: "github"}}}}, out
 }
 
 func commit(t *testing.T, dir, msg string) {
@@ -87,6 +90,7 @@ func TestRepoStageUsesDefaultBranchConfig(t *testing.T) {
 	}
 	testutil.Git(t, dir, "switch", "-q", "main")
 	testutil.Git(t, dir, "merge", "-q", "setup")
+	fetched(t, dir)
 	testutil.Git(t, dir, "switch", "-q", "setup")
 	// Merged: on the feature branch with the same file, it applies.
 	if st := check(); st.State != initflow.Todo || !strings.Contains(st.Detail, "acme/app") {
@@ -116,6 +120,7 @@ func TestRepoStageUsesDefaultBranchConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	commit(t, dir, "broken")
+	fetched(t, dir)
 	e, _ = stageEngine(t, "", nil)
 	if st, _ := newRepositoryStage(e).Check(t.Context()); st.State != initflow.NeedsYou || !strings.Contains(st.Detail, "not valid") {
 		t.Errorf("invalid: %+v", st)
@@ -294,9 +299,19 @@ func TestInitRepoUnchanged(t *testing.T) {
 			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
 		}
 	}
-	// --github-app-id is now also init's own flag (the converge asks for it).
-	if _, _, err := execute(t, "init", "--github-app-id", "42", "--print-vars", "--project", "aurora"); err != nil {
-		t.Errorf("init --github-app-id: %v", err)
+	// --github-app-id is init's own flag (the converge asks for it), but not
+	// with the modes that never reach the repository; a bad value is refused
+	// where it is given.
+	for _, tc := range [][]string{
+		{"init", "--github-app-id", "42", "--print-vars", "--project", "aurora"},
+		{"init", "--github-app-id", "42", "--config-only"},
+		{"init", "--github-app-id", "42", "--forget"},
+		{"init", "--github-app-id", "forty-two", "--plan-only"},
+		{"init", "--repo", "--github-app-id", "4 2", root},
+	} {
+		if _, _, err := execute(t, tc...); ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "github-app-id") {
+			t.Errorf("%v: exit %d, err %v", tc, ExitCode(err), err)
+		}
 	}
 }
 
@@ -321,9 +336,9 @@ func TestRepoStageRunsTheEngine(t *testing.T) {
 	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
 	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"project_name": "borealis"})}
 	r.save(t)
-	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
 	t.Chdir(dir)
-	e := rigEngine(t, r, &initOptions{yes: true, githubAppID: "12345"})
+	e := rigEngine(t, r, &initOptions{yes: true})
 	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newRepositoryStage(e)}, e.options())
 	if err != nil {
 		t.Fatal(err)
@@ -371,7 +386,7 @@ func TestNonInteractiveNamesAppIDFromTheStage(t *testing.T) {
 	r.stateBucket()
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
-	_, _, err := executeStdin(t, "", "init", "--non-interactive", "--yes")
+	_, _, err := executeStdin(t, "", "init", "--non-interactive", "--yes", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--non-interactive: missing") || !strings.Contains(err.Error(), "--github-app-id") {
 		t.Fatalf("%v", err)
 	}

@@ -185,8 +185,19 @@ func TestNonInteractiveNamesAppIDToo(t *testing.T) {
 	firstRunEnv(t)
 	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
 	t.Chdir(root)
+	// A checkout's own fugaro.yaml does not name a new installation by itself.
 	_, _, err := executeStdin(t, "", "init", "--non-interactive", "--region", "us-east5")
+	if err == nil || !strings.Contains(err.Error(), "--name <name>") || !strings.Contains(err.Error(), "fugaro.yaml says aurora") || !strings.Contains(err.Error(), "--gcp-project") {
+		t.Errorf("%v", err)
+	}
+	// Named, and the repository opted in: the App ID is one more.
+	_, _, err = executeStdin(t, "", "init", "--non-interactive", "--region", "us-east5", "--name", "aurora", "--onboard-repo", "acme/app")
 	if err == nil || !strings.Contains(err.Error(), "--gcp-project") || !strings.Contains(err.Error(), "--github-app-id") || strings.Contains(err.Error(), "--name") {
+		t.Errorf("%v", err)
+	}
+	// A repository that is not opted in is never asked about here.
+	_, _, err = executeStdin(t, "", "init", "--non-interactive", "--region", "us-east5", "--name", "aurora")
+	if err == nil || strings.Contains(err.Error(), "--github-app-id") {
 		t.Errorf("%v", err)
 	}
 }
@@ -228,5 +239,36 @@ func repoCheckout(t *testing.T, origin, yaml string) string {
 	}
 	testutil.Git(t, dir, "add", ".")
 	testutil.Git(t, dir, "commit", "-q", "-m", "init")
+	fetched(t, dir)
 	return dir
+}
+
+// fetched makes origin/main what main is, as a fetch would (the stages read
+// only the remote-tracking ref).
+func fetched(t *testing.T, dir string) {
+	t.Helper()
+	testutil.Git(t, dir, "update-ref", "refs/remotes/origin/main", "main")
+	testutil.Git(t, dir, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+}
+
+// A checkout's fugaro.yaml does not silently name a new, permanent
+// installation: the name is typed (no default), or passed with --name.
+func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
+	firstRunEnv(t)
+	root := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "evil-project", ""))
+	t.Chdir(root)
+	fakeTerminal(t)
+	var out strings.Builder
+	r := &initRun{o: &initOptions{cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("\nmy-team\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if r.o.name != "my-team" || !strings.Contains(out.String(), "a value is needed") || strings.Contains(out.String(), "[evil-project]") || !strings.Contains(out.String(), "fugaro.yaml says evil-project") {
+		t.Errorf("name %q\n%s", r.o.name, out.String())
+	}
+	// With --name it is the user's own word.
+	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Errorf("--name: %v", err)
+	}
 }

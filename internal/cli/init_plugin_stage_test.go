@@ -30,7 +30,12 @@ func releaseBuild(t *testing.T, v string) {
 // ("" for none), and the path of that file.
 func wiringCheckout(t *testing.T, settings string) string {
 	t.Helper()
-	dir := repoCheckout(t, githubOrigin, "")
+	return wiringCheckoutAt(t, githubOrigin, settings)
+}
+
+func wiringCheckoutAt(t *testing.T, origin, settings string) string {
+	t.Helper()
+	dir := repoCheckout(t, origin, "")
 	t.Chdir(dir)
 	p := filepath.Join(dir, ".claude", "settings.json")
 	if settings != "" {
