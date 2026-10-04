@@ -225,7 +225,7 @@ func TestInitFirebaseNeverCreatesProject(t *testing.T) {
 	// A project that isn't there stops before any plan.
 	r2 := newFBRig(t)
 	_, _, err := executeStdin(t, "", "init", "--firebase", "aurora-missing", "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "never creates") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "does not exist") || !strings.Contains(err.Error(), "--create-project") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r2.ran(t, "plan")) != 0 || len(r2.ran(t, "apply")) != 0 {
@@ -261,7 +261,7 @@ func TestInitFirebaseNoBilling(t *testing.T) {
 	r := newFBRig(t)
 	r.billing.SetBilling(fpID, false)
 	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no billing") || !strings.Contains(err.Error(), "never enables billing") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no billing") || !strings.Contains(err.Error(), "--link-billing") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if len(r.ran(t, "apply")) != 0 {
