@@ -107,7 +107,9 @@ It enables the Cloud Resource Manager API when it is disabled (init reads
 the project's number through it before Terraform can enable it), creates
 the Terraform state bucket first when it doesn't exist, and offers to remove
 project Viewers' read access to the runs bucket, each after its own
-confirmation. A plan that would delete or replace anything is
+confirmation. --plan-only never takes --yes: what the plan needs made first
+(the state bucket, the API) takes the project's name typed at a terminal, or
+the run stops and says so. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
 On a first run in a terminal it asks, once, for the project's name, the GCP
@@ -192,10 +194,10 @@ providers' keys, the workflows' own), and skips what is already stored. It
 prompts only in your own terminal: never with --yes, --non-interactive or
 --json (--json never prompts; the stage then exits 1 with the one-line
 fugaro secrets set commands), never when stdin, stdout or stderr is not a
-terminal (a pipe is never read), and never through a coding agent (CLAUDECODE
-and the like are set; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
-extension in VS Code and JetBrains terminals: in your own IDE terminal, unset
-it or run fugaro secrets set). A pasted private key may have at most 120 lines. It creates each
+terminal (a pipe is never read), and never when a coding agent's variable is set (CLAUDECODE
+and the like; CLAUDE_CODE_SSE_PORT is also set by the Claude Code IDE
+extension in VS Code and JetBrains terminals, so a person's own IDE terminal
+can be refused: its refusal tells you what to do about it). A pasted private key may have at most 120 lines. It creates each
 secret's container, before the repository stage, with the labels
 init --repo's Terraform adopts (fugaro, fugaro_repo, fugaro_secret).
 --forget removes the repository from
@@ -278,15 +280,15 @@ secrets stage is behind the same gate.`,
 	f.StringVar(&o.displayName, "display-name", "", "with --create-project: the project's display name (default: its ID)")
 	f.StringVar(&o.parent, "parent", "", "with --create-project: organizations/<number> or folders/<number> to create the project under (default: no parent; an organization is never guessed)")
 	f.StringVar(&o.linkBilling, "link-billing", "", "with --create-project: link this billing account (an ID such as 0123AB-4567CD-89EF01) to the project, after you type the account's ID at a terminal. This may incur charges on that account; never with --yes. It never changes a project's existing billing link")
-	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan")
+	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal), and does nothing in a coding agent's environment")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included; that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
-	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
+	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
@@ -847,7 +849,7 @@ var resourceManagerRetries = []time.Duration{5 * time.Second, 10 * time.Second, 
 // discovery and the state bucket check need before any apply. When the
 // Cloud Resource Manager API is disabled (a fresh project: Terraform would
 // enable it only in the apply), it offers to enable it through Service
-// Usage, after its own confirmation, even under --plan-only. Without a
+// Usage, after its own confirmation (typed, under --plan-only: never --yes). Without a
 // terminal and without --yes it refuses with the gcloud command that does
 // it. Once enabled, it rereads the number until the enable propagates.
 func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {

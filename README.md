@@ -49,7 +49,7 @@ fugaro init                           # in your own terminal: asks, hidden, for 
 fugaro secrets set anthropic-api-key  # or by hand: value from stdin or a hidden prompt; also github-app-key, bitbucket-token, claude-oauth-token and the secrets your workflows declare
 ```
 
-`fugaro init` takes those secrets at hidden prompts only in your own terminal (never with `--yes`, never through a coding agent); otherwise it prints the one-line `fugaro secrets set` commands to run. `init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
+`fugaro init` takes those secrets at hidden prompts only in your own terminal (never with `--yes`; refused when a coding agent's environment variable is set, which stops an accident, not an agent that unsets its own variables: the real controls are the typed confirmations at a real terminal for money and permanent steps, and the skills' lint); otherwise it prints the one-line `fugaro secrets set` commands to run. `init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
 
 ### Run, watch, diagnose
 
