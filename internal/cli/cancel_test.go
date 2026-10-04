@@ -28,17 +28,29 @@ func cancelled(t *testing.T, f *cloudFixture, id string) bool {
 
 func TestCancelRunnerFinalizesInGrace(t *testing.T) {
 	f := newCloudFixture(t)
-	exec := seedRun(t, f, "20260927-100000-abcd", "", "", true)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
 	f.run.SetState(exec, backend.StateRunning)
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		writeFinal(t, f, "20260927-100000-abcd", exec)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	// Land the runner's finalize exactly after cancel's entry read sees the
+	// execution still running, in place of a sleeping goroutine racing the
+	// poll loop on wall-clock time.
+	env.be = onFirstExecutionRead(env.be, func() {
+		writeFinal(t, f, id, exec)
 		f.run.SetState(exec, backend.StateSucceeded)
-	}()
-	out, _, err := execute(t, "cancel", "--json", "--grace", "5s", "--poll", "10ms", "20260927-100000-abcd")
+	})
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
 	var res cancelResult
-	_ = json.Unmarshal([]byte(out), &res)
-	if err != nil || res.Status != "finalized" || res.Hard || !cancelled(t, f, "20260927-100000-abcd") {
+	if err := json.Unmarshal([]byte(out.String()), &res); err != nil || res.Status != "finalized" || res.Hard || !cancelled(t, f, id) {
 		t.Fatalf("cancel = %+v, %v", res, err)
 	}
 }
@@ -178,6 +190,29 @@ func TestCancelFinalizedReportsThePR(t *testing.T) {
 	}
 }
 
+// entryHook runs fire synchronously right after Execution's first call
+// returns: cancelRun's entry read, before it writes the marker or starts
+// its poll loop. Tests use it to land a state change exactly where a
+// sleeping goroutine used to race the poll loop on wall-clock time, making
+// the sequencing deterministic regardless of system load.
+type entryHook struct {
+	backend.Backend
+	calls atomic.Int32
+	fire  func()
+}
+
+func onFirstExecutionRead(be backend.Backend, fire func()) backend.Backend {
+	return &entryHook{Backend: be, fire: fire}
+}
+
+func (h *entryHook) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	e, err := h.Backend.Execution(ctx, name)
+	if h.calls.Add(1) == 1 {
+		h.fire()
+	}
+	return e, err
+}
+
 // raceBackend lets the execution finish just before cancel's Cancel call,
 // so the fake answers FAILED_PRECONDITION.
 type raceBackend struct {
@@ -266,18 +301,38 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	exec := seedRun(t, f, id, "", "", true)
 	f.run.SetState(exec, backend.StateRunning)
 	writeStage(t, f, id, exec, "implement")
-	go func() { time.Sleep(50 * time.Millisecond); f.run.SetState(exec, backend.StateFailed) }()
-	out, _, err := execute(t, "cancel", "--json", "--grace", "5s", "--grace-floor", "0", "--poll", "10ms", id)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	base := env.be
+	fail := func() { f.run.SetState(exec, backend.StateFailed) }
+
+	// Flip the execution to failed right after cancel's entry read sees it
+	// still running, instead of racing a sleeping goroutine against the
+	// poll loop on wall-clock time.
+	env.be = onFirstExecutionRead(base, fail)
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
 	var res cancelResult
-	_ = json.Unmarshal([]byte(out), &res)
-	if err != nil || res.Status != "ended-unfinalized" || res.Hard || !res.Marker {
+	if err := json.Unmarshal([]byte(out.String()), &res); err != nil || res.Status != "ended-unfinalized" || res.Hard || !res.Marker {
 		t.Fatalf("cancel = %+v, %v", res, err)
 	}
+
 	f.run.SetState(exec, backend.StateRunning)
-	go func() { time.Sleep(50 * time.Millisecond); f.run.SetState(exec, backend.StateFailed) }()
-	human, _, err := execute(t, "cancel", "--grace", "5s", "--grace-floor", "0", "--poll", "10ms", id)
-	if err != nil || !strings.Contains(human, "the run ended without finalizing; check fugaro diagnose") || strings.Contains(human, "finalized (") {
-		t.Fatalf("human cancel = %q, %v", human, err)
+	env.be = onFirstExecutionRead(base, fail)
+	var human strings.Builder
+	o2 := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond}
+	if err := cancelRun(context.Background(), env, o2, id, &human, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(human.String(), "the run ended without finalizing; check fugaro diagnose") || strings.Contains(human.String(), "finalized (") {
+		t.Fatalf("human cancel = %q", human.String())
 	}
 }
 
@@ -375,17 +430,29 @@ func TestCancelFollowUp(t *testing.T) {
 	root, id := runIDAt(1, "090000", "aaaa"), runIDAt(0, "000100", "bbbb")
 	exec := seedSpec(t, f, followUpSpec(id, root, root, 7), true)
 	f.run.SetState(exec, backend.StateRunning)
-	go func() {
-		time.Sleep(50 * time.Millisecond)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	// Land the runner's finalize exactly after cancel's entry read sees the
+	// execution still running, in place of a sleeping goroutine racing the
+	// poll loop on wall-clock time.
+	env.be = onFirstExecutionRead(env.be, func() {
 		rec := prRecord(id, exec, 7, 1)
 		rec.Status, rec.Stage, rec.Branch = runstore.StatusCancelled, "finalize", "fugaro/"+root
 		rec.FollowUp = &runstore.FollowUp{PR: 7, PreviousRun: root}
 		writeRecord(t, f, id, rec)
 		f.run.SetState(exec, backend.StateSucceeded)
-	}()
-	out, _, err := execute(t, "cancel", "--grace", "5s", "--poll", "10ms", id)
-	if err != nil || !strings.Contains(out, "finalized (draft PR https://github.com/acme/app/pull/7)") || !cancelled(t, f, id) {
-		t.Fatalf("cancel = %q, %v", out, err)
+	})
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "finalized (draft PR https://github.com/acme/app/pull/7)") || !cancelled(t, f, id) {
+		t.Fatalf("cancel = %q", out.String())
 	}
 	if f.run.State(exec) != backend.StateSucceeded {
 		t.Fatalf("the follow-up was hard-cancelled: %s", f.run.State(exec))
