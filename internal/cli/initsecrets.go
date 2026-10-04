@@ -32,8 +32,8 @@ import (
 //     is not a terminal is never read, not even a pipe (an agent could be
 //     holding the other end); the stage then leaves the user the one-line
 //     fugaro secrets set commands, which keep their own pipe and file forms.
-//   - --yes and --non-interactive never reach it: with either, it prompts
-//     for nothing and reads nothing.
+//   - --yes, --non-interactive and --json never reach it: with any of them,
+//     it prompts for nothing and reads nothing.
 //   - nothing is prompted when a coding agent's environment is present
 //     (agentMarkers), or when stdin, stdout or stderr is not a terminal (a
 //     redirected stderr would send the prompt to a file and make the user
@@ -63,6 +63,11 @@ import (
 // multi-line one).
 const maxHeldSecrets = 128
 
+// maxPEMLines is the most lines a pasted PEM may have: each long enough line
+// takes a redaction slot, and the whole value takes one (a 4096-bit RSA key is
+// about 52 lines).
+const maxPEMLines = 120
+
 // secretStore is what the stage needs of Secret Manager: metadata and
 // storing a value; it has no read of a value.
 type secretStore interface {
@@ -85,7 +90,10 @@ var selfCommand = func() string {
 
 // hold registers value with the loop's redaction until release: the whole
 // value and each of its lines (a PEM's body lines are as secret as the whole).
-func (e *initEngine) hold(value []byte) (release func()) {
+// It fails closed: when a slot is missing for any of them it registers
+// nothing and returns an error, so a value is never held in part. The error
+// does not carry the value.
+func (e *initEngine) hold(value []byte) (release func(), err error) {
 	vals := []string{string(value)}
 	if bytes.Contains(value, []byte("\n")) {
 		for _, l := range bytes.Split(value, []byte("\n")) {
@@ -94,32 +102,47 @@ func (e *initEngine) hold(value []byte) (release func()) {
 			}
 		}
 	}
-	var taken []int
-	for _, v := range vals {
-		for i := range e.held {
-			if e.held[i] == "" {
-				e.held[i] = v
-				taken = append(taken, i)
-				break
-			}
+	var free []int
+	for i := range e.held {
+		if e.held[i] == "" {
+			free = append(free, i)
 		}
+	}
+	if len(free) < len(vals) {
+		return nil, userErr("the value has more lines than can be kept out of the output (at most %d); nothing was stored", maxPEMLines)
+	}
+	taken := free[:len(vals)]
+	for n, v := range vals {
+		e.held[taken[n]] = v
 	}
 	return func() {
 		for _, i := range taken {
 			e.held[i] = ""
 		}
-	}
+	}, nil
 }
 
 // agentMarkers are the environment variables a coding agent's session sets.
 // With any of them present the stage never prompts: the person typing must be
-// at their own terminal, not behind an agent.
+// at their own terminal, not behind an agent. CLAUDE_CODE_SSE_PORT is also set
+// by the Claude Code IDE extension in the integrated terminals of VS Code and
+// JetBrains, so a person's own IDE terminal can be refused: the refusal says
+// how to get past it.
 var agentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
 
-// agentEnv reports whether getenv shows a coding agent's session.
-func agentEnv(getenv func(string) string) bool {
-	return slices.ContainsFunc(agentMarkers, func(k string) bool { return getenv(k) != "" })
+// agentMarker is the first marker getenv shows set, or "" with none: a coding
+// agent's session.
+func agentMarker(getenv func(string) string) string {
+	for _, k := range agentMarkers {
+		if getenv(k) != "" {
+			return k
+		}
+	}
+	return ""
 }
+
+// agentEnv reports whether getenv shows a coding agent's session.
+func agentEnv(getenv func(string) string) bool { return agentMarker(getenv) != "" }
 
 // writerIsTerminal reports whether w is a terminal. Tests replace it.
 var writerIsTerminal = func(w io.Writer) bool {
@@ -167,10 +190,11 @@ func (s *secretsStage) Name() string { return initflow.Secrets }
 // canPrompt is whether this run may show a hidden prompt: stdin, stdout and
 // stderr are terminals, no coding agent's environment is present, and
 // neither --non-interactive nor --yes (which never supplies a secret, and is
-// the flag of an unattended run) is set.
+// the flag of an unattended run) nor --json (the output of a caller that reads
+// it: a hard rule, --json never prompts) is set.
 func (s *secretsStage) canPrompt() bool {
 	o, cmd := s.e.r.o, s.e.r.cmd
-	return !o.nonInteractive && !o.yes && !agentEnv(os.Getenv) &&
+	return !o.nonInteractive && !o.yes && !o.asJSON && !agentEnv(os.Getenv) &&
 		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
@@ -219,7 +243,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 			provider = cfg.Git.Provider
 		}
 	}
-	if provider != "github" && provider != "bitbucket" {
+	if _, ok := infra.GitSecret(provider); !ok {
 		s.skip = "this checkout's git provider is not github or bitbucket"
 		return
 	}
@@ -234,10 +258,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		return
 	}
 	tg := &secretTarget{repo: repo, slug: slug, label: label, provider: provider}
-	gitSecret := "github-app-key"
-	if provider == "bitbucket" {
-		gitSecret = "bitbucket-token"
-	}
+	gitSecret, _ := infra.GitSecret(provider) // the provider is github or bitbucket here
 	tg.wanted = []string{gitSecret}
 	if cfg == nil {
 		tg.noConfig = true
@@ -305,8 +326,8 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	}
 	detail := describeNeeds(s.missing) + note
 	if !s.canPrompt() {
-		if agentEnv(os.Getenv) {
-			detail += "; a coding agent's session is present: run the commands in your own terminal, not through a coding agent"
+		if m := agentMarker(os.Getenv); m != "" {
+			detail += "; a coding agent's session is present (" + m + " is set): run the commands in your own terminal, not through a coding agent; if this is your own IDE terminal, unset " + m + " or run fugaro secrets set"
 		}
 		lf := s.Left()
 		return initflow.Status{State: initflow.NeedsYou, Detail: detail, Left: &lf}, nil
@@ -370,7 +391,7 @@ func (s *secretsStage) smProblem(err error) *initflow.NeedsYouError {
 	if !errors.As(err, &ae) || ae.Code != 403 {
 		return nil
 	}
-	text := "Secret Manager refused: you need roles/secretmanager.viewer and roles/secretmanager.secretVersionAdder on the project's secrets (ask the project owner), then rerun fugaro init"
+	text := "Secret Manager refused: you need roles/secretmanager.viewer to list, secretmanager.secrets.create to create a secret's container (roles/secretmanager.admin or a custom role) and roles/secretmanager.secretVersionAdder to store a value, on the project's secrets (ask the project owner), then rerun fugaro init"
 	if m := strings.ToLower(ae.Message); strings.Contains(m, "has not been used") || strings.Contains(m, "is disabled") || strings.Contains(m, "service_disabled") {
 		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro init does), then rerun fugaro init"
 	}
@@ -435,7 +456,11 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		return err
 	}
 	defer clear(value)
-	defer s.e.hold(value)()
+	release, err := s.e.hold(value)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	id := gcp.SecretID(s.tg.slug, name)
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: s.tg.label, gcp.LabelSecret: name}
@@ -480,9 +505,11 @@ func (s *secretsStage) Verify(ctx context.Context) error {
 // prompt is shown (a line-by-line read would turn echo back on between lines
 // and show what has already arrived). It ends at the "-----END" line once
 // Enter is pressed. Ctrl-C cancels (with nothing stored) and Ctrl-D ends the
-// input early; both restore the terminal, as does a panic. Escape sequences
-// (arrow keys, the bracketed-paste markers a terminal may wrap a paste in)
-// are dropped. The result has "\n" line ends and one trailing newline, and
+// input with the error "the input ended before the -----END line"; both
+// store nothing and restore the terminal, as does a panic. Escape sequences
+// (arrow keys, the bracketed-paste markers a terminal may wrap a paste in,
+// SS3 keys such as ESC O P) are dropped. More than maxPEMLines lines is
+// refused. The result has "\n" line ends and one trailing newline, and
 // is validated like any value; the paste's first line must be a -----BEGIN
 // line. Errors never quote the value. As readHidden, a cancelled read leaves
 // its goroutine blocked, for a process that exits soon after.
@@ -514,17 +541,24 @@ func readHiddenPEM(ctx context.Context, f *os.File, prompt io.Writer, name strin
 				fail(userErr("reading the value from the terminal failed"))
 			}
 		}()
-		esc := 0 // 1 after ESC, 2 inside a CSI sequence
+		esc := 0 // 1 after ESC, 2 inside a CSI sequence, 3 after ESC O (an SS3 key: one more byte)
+		lines := 0
 		for {
 			n, rerr := f.Read(buf)
 			for _, c := range buf[:n] {
 				switch {
 				case esc == 1:
-					if c == '[' {
+					switch c {
+					case '[':
 						esc = 2
-					} else {
+					case 'O':
+						esc = 3
+					default:
 						esc = 0
 					}
+					continue
+				case esc == 3:
+					esc = 0
 					continue
 				case esc == 2:
 					if c >= 0x40 && c <= 0x7e { // the sequence's final byte
@@ -546,6 +580,10 @@ func readHiddenPEM(ctx context.Context, f *os.File, prompt io.Writer, name strin
 					}
 					if len(all) == 0 && !bytes.HasPrefix(line, []byte("-----BEGIN ")) {
 						fail(userErr("the paste does not start with a -----BEGIN line"))
+						return
+					}
+					if lines++; lines > maxPEMLines {
+						fail(userErr("the paste has more than %d lines: nothing was stored; use fugaro secrets set github-app-key < PATH-TO-THE-KEY-FILE", maxPEMLines))
 						return
 					}
 					all = append(append(all, line...), '\n')

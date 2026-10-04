@@ -172,14 +172,18 @@ func TestMultilinePEMAccepted(t *testing.T) {
 // the terminal and never quote what was typed.
 func TestPEMPasteRefusedOrCancelled(t *testing.T) {
 	for name, input := range map[string]string{
-		"not a pem":    "just-some-text-EXAMPLE\r",
-		"ctrl-c":       "-----BEGIN RSA PRIVATE KEY-----\rMIIEEXAMPLEpartial0000\r\x03",
-		"ctrl-d":       "-----BEGIN RSA PRIVATE KEY-----\rMIIEEXAMPLEpartial0000\r\x04",
-		"over the cap": "",
+		"not a pem":      "just-some-text-EXAMPLE\r",
+		"ctrl-c":         "-----BEGIN RSA PRIVATE KEY-----\rMIIEEXAMPLEpartial0000\r\x03",
+		"ctrl-d":         "-----BEGIN RSA PRIVATE KEY-----\rMIIEEXAMPLEpartial0000\r\x04",
+		"over the cap":   "",
+		"too many lines": "",
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name == "over the cap" {
 				input = "-----BEGIN RSA PRIVATE KEY-----\r" + strings.Repeat("A", 70*1024) + "\r"
+			}
+			if name == "too many lines" {
+				input = strings.ReplaceAll(longPEM(200), "\n", "\r")
 			}
 			f := newTTY(t)
 			r := newSecretsRig(t, githubOrigin, f.tty)
@@ -208,6 +212,7 @@ func TestFlagsNeverPrompt(t *testing.T) {
 		"--yes":                   func(o *initOptions) { o.yes = true },
 		"--non-interactive":       func(o *initOptions) { o.nonInteractive = true },
 		"--yes --non-interactive": func(o *initOptions) { o.yes, o.nonInteractive = true, true },
+		"--json":                  func(o *initOptions) { o.asJSON = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newTTY(t)
@@ -385,8 +390,19 @@ func mustLabel(t *testing.T, slug string) string {
 
 // Through the init command on a terminal (the whole converge, the real
 // client against the fake): the values land in Secret Manager and in no
-// output, the terminal's display, the --json result or the error text.
-func TestSecretNeverInOutputOrJSON(t *testing.T) {
+// output, the terminal's display or the error text. (--json never prompts:
+// TestJSONNeverPromptsThroughTheCommand.)
+func TestSecretNeverInOutput(t *testing.T) {
+	initOnTTY(t, false)
+}
+
+// --json never prompts, on a terminal in every other way: the secrets stage
+// is needs-you with the one-line commands, nothing is read or stored.
+func TestJSONNeverPromptsThroughTheCommand(t *testing.T) {
+	initOnTTY(t, true)
+}
+
+func initOnTTY(t *testing.T, asJSON bool) {
 	const val = "bb-secret-value-EXAMPLE"
 	r := newInitRig(t)
 	r.stateBucket()
@@ -412,16 +428,52 @@ func TestSecretNeverInOutputOrJSON(t *testing.T) {
 	cmd.SetIn(f.tty)
 	cmd.SetOut(&out)
 	cmd.SetErr(&errOut)
-	cmd.SetArgs([]string{"init", "--json"})
+	args := []string{"init"}
+	if asJSON {
+		args = append(args, "--json")
+	}
+	cmd.SetArgs(args)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Execute() }()
 	rig := &secretsRig{errOut: &errOut}
-	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(errOut.String(), "Type aurora to apply"); time.Sleep(5 * time.Millisecond) {
+	for deadline := time.Now().Add(10 * time.Second); !strings.Contains(errOut.String()+out.String(), "Type aurora to apply"); time.Sleep(5 * time.Millisecond) {
 		if time.Now().After(deadline) {
 			t.Fatalf("no confirmation prompt: %q", errOut.String())
 		}
 	}
 	_, _ = f.master.WriteString("aurora\n") // the engine's own typed confirmation (the config rewrite)
+	if asJSON {
+		_, _ = f.master.WriteString(val + "\n") // typed ahead: must stay unread
+		time.Sleep(100 * time.Millisecond)
+		before := queued(t, f)
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(20 * time.Second):
+			t.Fatal("init did not return")
+		}
+		if ExitCode(err) != ExitUserError {
+			t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, errOut.String())
+		}
+		var res convergeJSON
+		if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.state("secrets") != "needs-you" {
+			t.Fatalf("%v:\n%s", jerr, out.String())
+		}
+		last := res.Left[len(res.Left)-1]
+		if last["stage"] != "secrets" || !strings.Contains(last["text"], "secrets set bitbucket-token --repo acme/sandbox") {
+			t.Fatalf("left %v", res.Left)
+		}
+		if strings.Contains(errOut.String(), "hidden") || queued(t, f) != before || before == 0 {
+			t.Fatalf("a prompt was shown or the terminal read: %q", errOut.String())
+		}
+		for _, rq := range r.sm.Requests() {
+			if rq.Method == "POST" {
+				t.Fatalf("the stage wrote to Secret Manager: %s", rq.Path)
+			}
+		}
+		noLeak(t, val, out.String(), errOut.String()) // the terminal's own echo of the typed-ahead line is not the program's
+		return
+	}
 	rig.answer(t, f, "bitbucket-token (input hidden)", 1, val+"\n")
 	rig.answer(t, f, "claude-oauth-token (input hidden)", 1, tokenValue+"\n")
 	var err error
@@ -432,10 +484,6 @@ func TestSecretNeverInOutputOrJSON(t *testing.T) {
 	}
 	if err != nil {
 		t.Fatalf("%v\n%s", err, errOut.String())
-	}
-	var res convergeJSON
-	if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.state("secrets") != "changed" {
-		t.Fatalf("%v:\n%s", jerr, out.String())
 	}
 	slug := mustSlug("bitbucket", "acme/sandbox")
 	if string(r.sm.Latest(gcp.SecretID(slug, "bitbucket-token"))) != val || string(r.sm.Latest(gcp.SecretID(slug, "claude-oauth-token"))) != tokenValue {

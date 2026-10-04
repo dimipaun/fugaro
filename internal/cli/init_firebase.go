@@ -124,8 +124,9 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 //  3. Identity Platform (initialized over REST when missing, never changed
 //     when there, refused when it enables public sign-up) and the database: the rules, the mark, the project name, the mode and the
 //     largest lease, and the local config;
-//  4. the installation root again, which deploys the history job with the
-//     Firebase outputs once its image exists.
+//  4. (firebaseHistory, the installation-2 stage) the installation root
+//     again, which deploys the history job with the Firebase outputs once
+//     its image exists.
 //
 // Each apply has its own plan and confirmation, and so does the database
 // step. Nothing creates the Firebase project or links billing.
@@ -299,13 +300,25 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 		r.warn("budget.mode is off in the project config, so jobs don't use the backend yet: fugaro init --firebase " + fp + " --budget-mode observe turns it on (then fugaro init --repo for each repository)")
 	}
 
-	// 4. The installation root again: the history job.
+	return nil
+}
+
+// firebaseHistory is init --firebase's last step, the installation root
+// again: it deploys the history job with the Firebase outputs once the
+// history image exists (the images stage, before it, mirrors that image).
+// It is the installation-2 stage's engine, split out of initFirebase so the
+// images stage can run between them; run straight after initFirebase it is
+// what initFirebase did.
+func (r *initRun) firebaseHistory(ctx context.Context, c *infra.Clients, t *tf.TF, wd *infra.Workdir, lc *localcfg.Config, spec infra.InstallationSpec) error {
+	if r.fb == nil {
+		return errors.New("the Firebase root's outputs are not known: the firebase stage did not run before the history job")
+	}
 	r.installLabel = " (the history job and its sweep schedule)"
-	_, stop, err = r.installRoot(ctx, c, t, wd, lc, spec)
+	_, stop, err := r.installRoot(ctx, c, t, wd, lc, spec)
 	if err != nil || stop {
 		return err
 	}
-	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro init --repo to pick up the jobs' environment.\n", lc.Name, fp)
+	fmt.Fprintf(r.w, "The budget backend of project %s is in Firebase project %s. Each repository needs fugaro init --repo to pick up the jobs' environment.\n", lc.Name, r.o.firebase)
 	return nil
 }
 

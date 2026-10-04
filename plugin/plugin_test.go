@@ -226,19 +226,43 @@ func TestHeaderVersionEqualsPluginVersion(t *testing.T) {
 	}
 }
 
-// copyTree copies src into a fresh temp directory and returns its path, so
-// the bump script's tests can rewrite files without touching the checkout.
+// copyTree copies the bump script and the plugin from the repository at src
+// into a fresh temp directory and returns its path, so the script's tests can
+// rewrite files without touching the checkout. (cp -R with a directory
+// source behaves the same on GNU and BSD cp, unlike cp -r on a bare "..".)
 func copyTree(t *testing.T, src string) string {
 	t.Helper()
-	dst := t.TempDir()
+	abs, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cp, err := exec.LookPath("cp")
 	if err != nil {
 		t.Skip("no cp")
 	}
-	if out, err := exec.Command(cp, "-r", src, dst).CombinedOutput(); err != nil {
-		t.Fatalf("cp -r %s %s: %v\n%s", src, dst, err, out)
+	dst := t.TempDir()
+	for _, name := range []string{"scripts", "plugin"} {
+		if out, err := exec.Command(cp, "-R", filepath.Join(abs, name), dst).CombinedOutput(); err != nil {
+			t.Fatalf("cp -R %s %s: %v\n%s", name, dst, err, out)
+		}
 	}
 	return dst
+}
+
+// manifestVersion reads the version of a plugin.json.
+func manifestVersion(t *testing.T, path string) string {
+	t.Helper()
+	var m struct {
+		Version string `json:"version"`
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &m); err != nil || m.Version == "" {
+		t.Fatalf("%s: no version: %v", path, err)
+	}
+	return m.Version
 }
 
 func runBumpScript(t *testing.T, root string, args ...string) (string, error) {
@@ -287,20 +311,22 @@ func TestBumpScriptRewritesHeaders(t *testing.T) {
 // plugin.json itself is right.
 func TestBumpScriptCheckFailsOnStaleHeader(t *testing.T) {
 	root := copyTree(t, "..")
-	current, err := runBumpScript(t, root, "--check", "0.1.0")
+	// The tree's own version, whatever release it is at.
+	v := manifestVersion(t, filepath.Join(root, "plugin", ".claude-plugin", "plugin.json"))
+	current, err := runBumpScript(t, root, "--check", v)
 	if err != nil {
-		t.Fatalf("baseline --check 0.1.0: %v\n%s", current, err)
+		t.Fatalf("baseline --check %s: %v\n%s", v, current, err)
 	}
 	stale := filepath.Join(root, "plugin", "skills", "setup", "SKILL.md")
 	data, err := os.ReadFile(stale)
 	if err != nil {
 		t.Fatal(err)
 	}
-	data = bytes.Replace(data, []byte("fugaro-version=0.1.0"), []byte("fugaro-version=0.0.9"), 1)
+	data = bytes.Replace(data, []byte("fugaro-version="+v), []byte("fugaro-version=0.0.0"), 1)
 	if err := os.WriteFile(stale, data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	out, err := runBumpScript(t, root, "--check", "0.1.0")
+	out, err := runBumpScript(t, root, "--check", v)
 	if err == nil {
 		t.Fatalf("--check passed with a stale header:\n%s", out)
 	}

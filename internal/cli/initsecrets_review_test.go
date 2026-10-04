@@ -4,6 +4,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"syscall"
@@ -81,10 +82,11 @@ func TestSecretManagerRefusalIsNeedsYou(t *testing.T) {
 		list, set error
 		want      string
 	}{
-		"list denied":   {list: denied("denied for " + val), want: "roles/secretmanager.viewer"},
-		"api disabled":  {list: denied("Secret Manager API has not been used in project 1 before or it is disabled"), want: "secretmanager.googleapis.com"},
-		"store denied":  {set: denied("denied; payload " + val), want: "roles/secretmanager.secretVersionAdder"},
-		"store API off": {set: denied("SERVICE_DISABLED " + val), want: "secretmanager.googleapis.com"},
+		"list denied":           {list: denied("denied for " + val), want: "roles/secretmanager.viewer"},
+		"api disabled":          {list: denied("Secret Manager API has not been used in project 1 before or it is disabled"), want: "secretmanager.googleapis.com"},
+		"store denied":          {set: denied("denied; payload " + val), want: "roles/secretmanager.secretVersionAdder"},
+		"store denied (create)": {set: denied("denied; payload " + val), want: "secretmanager.secrets.create"},
+		"store API off":         {set: denied("SERVICE_DISABLED " + val), want: "secretmanager.googleapis.com"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newTTY(t)
@@ -139,6 +141,17 @@ func TestAgentEnvNeverPrompts(t *testing.T) {
 			if !strings.HasPrefix(res.Left[0].Text, "run this in your own terminal, not through a coding agent: ") {
 				t.Errorf("left = %q", res.Left[0].Text)
 			}
+			// An IDE extension sets some markers in a person's own terminal:
+			// the refusal says how to get past it.
+			detail := ""
+			for _, st := range res.Stages {
+				if st.Name == "secrets" {
+					detail = st.Detail
+				}
+			}
+			if !strings.Contains(detail, "if this is your own IDE terminal, unset "+marker+" or run fugaro secrets set") {
+				t.Errorf("detail = %q", detail)
+			}
 			if queued(t, f) != before || before == 0 {
 				t.Error("the terminal was read")
 			}
@@ -179,7 +192,8 @@ func TestPEMPasteSurvivesEscapeSequences(t *testing.T) {
 	if !strings.Contains(r.errOut.String(), "then press Enter") {
 		t.Errorf("prompt: %q", r.errOut.String())
 	}
-	paste := "\x1b[200~" + strings.Replace(strings.ReplaceAll(pemValue, "\n", "\r"), "\rMIIE", "\r\x1b[AMIIE", 1) + "\x1b[201~\r"
+	paste := strings.Replace(strings.ReplaceAll(pemValue, "\n", "\r"), "\rMIIE", "\r\x1b[AMIIE", 1)
+	paste = "\x1b[200~" + strings.Replace(paste, "\rZmFr", "\r\x1bOPZmFr", 1) + "\x1b[201~\r" // an SS3 key (F1) mid-paste
 	if _, err := f.master.WriteString(paste); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +214,10 @@ func TestHeldValueLinesAreRedacted(t *testing.T) {
 	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
 	first := r.e.options().Redact
 	second := r.e.options().Redact
-	release := r.e.hold([]byte(pemValue))
+	release, err := r.e.hold([]byte(pemValue))
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, l := range strings.Split(pemValue, "\n") {
 		if len(l) >= minSecretBytes && !slices.Contains(second, l) && l != pemValue {
 			t.Errorf("line %q is not registered", l)
@@ -246,5 +263,63 @@ func TestNoCoreDumpsWhileHolding(t *testing.T) {
 	_ = syscall.Getrlimit(syscall.RLIMIT_CORE, &after)
 	if during.Cur != 0 || after.Cur != raised.Cur {
 		t.Errorf("core limit during %d, after %d (was %d)", during.Cur, after.Cur, raised.Cur)
+	}
+}
+
+// A PEM needing more redaction slots than the engine keeps is refused, never
+// held in part: a line left out of the redaction list could leak.
+func TestHoldFailsClosedWhenSlotsRunOut(t *testing.T) {
+	r := newSecretsRig(t, githubOrigin, strings.NewReader(""))
+	_ = r.e.options()
+	pem := longPEM(200)
+	release, err := r.e.hold([]byte(pem))
+	if err == nil {
+		release()
+		t.Fatal("a 200-line value was held in part")
+	}
+	if strings.Contains(err.Error(), "EXAMPLE") || strings.Contains(err.Error(), "\n") {
+		t.Errorf("the error carries the value: %q", err)
+	}
+	for _, v := range r.e.held {
+		if v != "" {
+			t.Errorf("%q is still held after the refusal", v)
+		}
+	}
+	// What fits is still held.
+	release, err = r.e.hold([]byte(longPEM(100)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
+
+// longPEM is a fake PEM of n lines in all, each one distinct.
+func longPEM(n int) string {
+	var b strings.Builder
+	b.WriteString("-----BEGIN RSA PRIVATE KEY-----\n")
+	for i := 0; i < n-2; i++ {
+		fmt.Fprintf(&b, "MIIEowIBAAKCAQEAfake%04dEXAMPLE0000\n", i)
+	}
+	b.WriteString("-----END RSA PRIVATE KEY-----\n")
+	return b.String()
+}
+
+// --json never prompts, even on a terminal in every other way: the stage is
+// needs-you with the one-line commands, and nothing is read.
+func TestJSONNeverPrompts(t *testing.T) {
+	f := newTTY(t)
+	r := newSecretsRig(t, bitbucketOrigin, f.tty, func(o *initOptions) { o.asJSON = true })
+	_, _ = f.master.WriteString(tokenValue + "\n")
+	time.Sleep(100 * time.Millisecond)
+	before := queued(t, f)
+	res, err := r.run(t)
+	if err != nil || stateOf(res, "secrets") != initflow.NeedsYou || r.store.setCalls() != 0 || strings.Contains(r.errOut.String(), "hidden") {
+		t.Fatalf("%v, %+v, stderr %q", err, res, r.errOut.String())
+	}
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "secrets set bitbucket-token --repo acme/") {
+		t.Errorf("left = %+v", res.Left)
+	}
+	if after := queued(t, f); after != before || before == 0 {
+		t.Error("the terminal was read")
 	}
 }

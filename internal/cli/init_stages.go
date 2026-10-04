@@ -104,8 +104,11 @@ func (e *initEngine) options() initflow.Options {
 // converge runs fugaro init's default and --firebase modes through the
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
-	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e)}
+	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), newImagesStage(e), newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e))
+	if e.r.o.createProject {
+		stages = append(stages, newProjectStage(e))
+	}
 	res, err := initflow.Run(ctx, stages, e.options())
 	return e.outcome(res, err)
 }
@@ -143,11 +146,11 @@ func (e *initEngine) outcome(res *initflow.Result, runErr error) error {
 
 // planned is the one-line summary of the installation plan the engine
 // just showed, if it showed one.
-func (e *initEngine) planned() initflow.Plan {
-	if c := e.r.res.Changes; c != nil && *c != (infra.PlanCounts{}) {
+func (e *initEngine) planned(c *infra.PlanCounts) initflow.Plan {
+	if c != nil && *c != (infra.PlanCounts{}) {
 		return initflow.Plan{Detail: c.String()}
 	}
-	if e.r.res.Changes != nil {
+	if c != nil {
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}
 	}
 	return initflow.Plan{}
@@ -196,6 +199,13 @@ type engineStage struct {
 	skip func() string
 	run  func(ctx context.Context) error
 	left initflow.Left
+	// isolate makes the stage judge "No changes" and its plan line by what
+	// it did itself, not by what the stages before it left in the run's
+	// result (the second installation apply, after the Firebase root's).
+	// The run's result still accumulates both.
+	isolate bool
+	applied bool
+	changes *infra.PlanCounts
 }
 
 func (s *engineStage) Name() string                 { return s.name }
@@ -218,26 +228,39 @@ func (s *engineStage) with(ctx context.Context, env initflow.Env, planOnly bool)
 	defer func() { o.yes, o.planOnly = yes, plan }()
 	o.yes = env.Yes
 	o.planOnly = o.planOnly || planOnly
-	return s.run(ctx)
+	res := &s.e.r.res
+	if !s.isolate {
+		err := s.run(ctx)
+		s.applied, s.changes = res.Applied, res.Changes
+		return err
+	}
+	prevApplied, prevChanges := res.Applied, res.Changes
+	res.Applied, res.Changes = false, nil
+	err := s.run(ctx)
+	s.applied, s.changes = res.Applied, res.Changes
+	res.Applied = res.Applied || prevApplied
+	if res.Changes == nil {
+		res.Changes = prevChanges
+	}
+	return err
 }
 
 func (s *engineStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan, error) {
 	if err := s.with(ctx, env, true); err != nil {
 		return initflow.Plan{}, err
 	}
-	return s.e.planned(), nil
+	return s.e.planned(s.changes), nil
 }
 
 func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	if err := s.with(ctx, env, false); err != nil {
 		return initflow.Outcome{}, err
 	}
-	r := s.e.r
 	switch {
-	case !r.res.Applied:
+	case !s.applied:
 		return initflow.Outcome{Detail: "No changes"}, nil
-	case r.res.Changes != nil:
-		return initflow.Outcome{Changed: true, Detail: "applied: " + r.res.Changes.String()}, nil
+	case s.changes != nil:
+		return initflow.Outcome{Changed: true, Detail: "applied: " + s.changes.String()}, nil
 	}
 	return initflow.Outcome{Changed: true, Detail: "applied"}, nil
 }
@@ -263,9 +286,10 @@ func newInstallationStage(e *initEngine) *engineStage {
 	}
 }
 
-// newFirebaseStage is stage 4: init --firebase's engine, which is three
-// confirmed applies (the installation's history account, the Firebase root,
-// the installation again for the history job) and the database steps.
+// newFirebaseStage is stage 4: init --firebase's engine, which is two
+// confirmed applies (the installation's history account, the Firebase root)
+// and the database steps. The installation again, for the history job, is
+// the installation-2 stage, after the images stage has mirrored the image.
 func newFirebaseStage(e *initEngine) *engineStage {
 	return &engineStage{e: e, name: initflow.Firebase,
 		skip: func() string {
@@ -281,5 +305,27 @@ func newFirebaseStage(e *initEngine) *engineStage {
 			return e.r.initFirebase(ctx, e.c, e.t, e.wd, e.bin, e.lc, e.spec, e.path, e.old)
 		},
 		left: initflow.Left{Stage: initflow.Firebase, Kind: initflow.LeftPrompt, Text: "run fugaro init --firebase <firebase-project-id> in your own terminal and type the project's name at each apply"},
+	}
+}
+
+// newInstallation2Stage is stage 6: the installation root once more, which
+// deploys the history job with the Firebase outputs now that the images
+// stage has put its image in the registry. Only --firebase has a history
+// job to deploy.
+func newInstallation2Stage(e *initEngine) *engineStage {
+	return &engineStage{e: e, name: initflow.Installation2, isolate: true,
+		skip: func() string {
+			if e.r.o.firebase == "" {
+				return "no --firebase given: nothing to deploy the history job with"
+			}
+			return ""
+		},
+		run: func(ctx context.Context) error {
+			if err := e.setup(ctx); err != nil {
+				return err
+			}
+			return e.r.firebaseHistory(ctx, e.c, e.t, e.wd, e.lc, e.spec)
+		},
+		left: initflow.Left{Stage: initflow.Installation2, Kind: initflow.LeftPrompt, Text: "run fugaro init --firebase <firebase-project-id> in your own terminal and type the project's name to apply the history job"},
 	}
 }
