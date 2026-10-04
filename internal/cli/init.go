@@ -49,6 +49,8 @@ type initOptions struct {
 	baseImages                          []string
 	baseKinds                           []string // --base: base kinds to mirror now
 	imageSource                         string   // --image-source: a fork's own release registry/owner
+	expectDigests                       []string // --expect-digest KIND=sha256:...: the digest a release tag must resolve to
+	replaceImage                        bool     // --replace-image: move a release tag that names another image
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -180,6 +182,8 @@ Terraform's state, destroying nothing.`,
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
 	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds (go, java-services, web-node) whose release image init copies into the project's registry now, besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
+	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a release image copied by init, KIND=sha256:<hex> (KIND is go, java-services, web-node or history; repeatable): the digest of the source tag's manifest (the index), obtained out of band such as from the release notes. Without it init trusts what the release tag in ghcr.io resolves to now, which is whoever can write that tag")
+	f.BoolVar(&o.replaceImage, "replace-image", false, "let init move a release tag in your registry that names another image (a release tag is never moved otherwise; history:latest is moved after its confirmation)")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -420,6 +424,9 @@ func (o *initOptions) check() error {
 		if !slices.Contains(config.Bases, k) {
 			return userErr("--base %q is not a base kind (%s)", k, strings.Join(config.Bases, ", "))
 		}
+	}
+	if _, err := parseExpectDigests(o.expectDigests); err != nil {
+		return userErr("%v", err)
 	}
 	if o.imageSource != "" {
 		if err := mirror.ValidSourcePrefix(o.imageSource); err != nil {
@@ -1353,7 +1360,7 @@ func (o *initOptions) checkRepo() error {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--no-log-isolation": o.noLogIsolation,
+		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": o.replaceImage, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 	}

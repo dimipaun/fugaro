@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func (e *env) plan() (*Plan, error) {
@@ -427,17 +428,72 @@ func TestRedirectHandling(t *testing.T) {
 			}
 		}
 	})
-	t.Run("a redirect to plain http elsewhere is refused", func(t *testing.T) {
+	t.Run("a same-host redirect drops Authorization too", func(t *testing.T) {
 		e := newEnv(t)
-		e.m.allowHTTPRedirect = false
-		cdn := newReg(t, e.sst)
+		e.src.redirectBlobTo = e.src.srv.URL // the registry's own /cdn/ path
+		if _, err := e.copy(); err != nil {
+			t.Fatal(err)
+		}
+		seen := 0
+		for _, q := range e.src.requests() {
+			if strings.HasPrefix(q.Path, "/cdn/") {
+				seen++
+				if q.Auth != "" {
+					t.Fatalf("Authorization kept across a redirect: %+v", q)
+				}
+			}
+		}
+		if seen == 0 {
+			t.Fatal("the redirect was not followed")
+		}
+	})
+	t.Run("an https registry may not redirect a blob to http", func(t *testing.T) {
+		e := newEnv(t)
+		tls := httptest.NewTLSServer(e.src.srv.Config.Handler)
+		defer tls.Close()
+		cdn := newReg(t, e.sst) // plain http
 		e.src.redirectBlobTo = cdn.srv.URL
+		e.m.Transport = tls.Client().Transport
+		old := e.m.Endpoint
+		e.m.Endpoint = func(h string) string {
+			if h == srcHost {
+				return tls.URL
+			}
+			return old(h)
+		}
+		e.src.srv.URL = tls.URL // the token realm names the https server
 		_, err := e.copy()
 		if err == nil || !strings.Contains(err.Error(), "not https") {
 			t.Fatalf("err = %v", err)
 		}
+		if cdn.count("GET", "/cdn/") != 0 {
+			t.Fatal("the downgrade was followed")
+		}
 		if strings.Contains(err.Error(), "SECRET-SIG") {
 			t.Fatalf("the redirect's signature is in the error: %v", err)
+		}
+	})
+	t.Run("a manifest may not redirect to another host", func(t *testing.T) {
+		e := newEnv(t)
+		hit := false
+		other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hit = true }))
+		defer other.Close()
+		inner := e.src.srv.Config.Handler
+		e.src.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.Contains(r.URL.Path, "/manifests/") {
+				http.Redirect(w, r, other.URL+"/m", http.StatusFound)
+				return
+			}
+			inner.ServeHTTP(w, r)
+		})
+		_, err := e.plan()
+		if err == nil || !strings.Contains(err.Error(), "another host") || hit {
+			t.Fatalf("err = %v, hit = %v", err, hit)
+		}
+	})
+	t.Run("a token endpoint on a sibling host of the registry's site is asked", func(t *testing.T) {
+		if !sameSite("token.ghcr.io", "ghcr.io") || sameSite("ghcr.io.evil.example", "ghcr.io") || sameSite("evil.io", "ghcr.io") {
+			t.Fatal("sameSite")
 		}
 	})
 	t.Run("the destination's redirects are not followed", func(t *testing.T) {
@@ -554,5 +610,99 @@ func TestUnauthorizedDestinationSaysWhatToDo(t *testing.T) {
 	_, err := e.plan()
 	if err == nil || !strings.Contains(err.Error(), "artifactregistry.writer") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCopyIsDecidedByPresentNotBytes(t *testing.T) {
+	// Every blob is already at the destination (a run that died at the
+	// manifest): the manifest alone is pushed.
+	e := newEnv(t)
+	for _, b := range append([][]byte{e.img.cfg}, e.img.layers...) {
+		e.dst2.blobs[dg(b)] = b
+	}
+	p, err := e.plan()
+	if err != nil || p.Present || p.TransferBytes != 0 {
+		t.Fatalf("plan %+v %v", p, err)
+	}
+	res, err := e.m.Copy(context.Background(), p)
+	if err != nil || !res.Changed || e.destTag() != e.img.digest {
+		t.Fatalf("copy %+v %v", res, err)
+	}
+	if e.dst.count("POST", "/blobs/uploads/") != 0 {
+		t.Fatal("blobs were sent again")
+	}
+}
+
+func TestDifferentDestinationTagIsNotReplacedSilently(t *testing.T) {
+	e := newEnv(t)
+	old := makeImage("amd64", "hand pushed")
+	e.dst2.put(old)
+	e.dst2.tags[dstRepo+":1.2.3"] = old.digest
+	p, err := e.plan()
+	if err != nil || p.DestDigest != old.digest || p.Present {
+		t.Fatalf("plan %+v %v", p, err)
+	}
+	if _, err := e.m.Copy(context.Background(), p); !errors.Is(err, ErrWouldReplace) || !strings.Contains(err.Error(), old.digest) || !strings.Contains(err.Error(), e.img.digest) {
+		t.Fatalf("err = %v", err)
+	}
+	if e.destTag() != old.digest || e.dst.count("POST", "/blobs/uploads/") != 0 {
+		t.Fatal("the tag moved or blobs were sent without permission")
+	}
+	p.AllowReplace = true
+	if _, err := e.m.Copy(context.Background(), p); err != nil || e.destTag() != e.img.digest {
+		t.Fatalf("replace: %v", err)
+	}
+}
+
+func TestDestinationTagMovedAfterPlanRefused(t *testing.T) {
+	e := newEnv(t)
+	p, err := e.plan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := makeImage("amd64", "someone else")
+	e.dst2.put(other)
+	e.dst2.tags[dstRepo+":1.2.3"] = other.digest
+	p.AllowReplace = true
+	if _, err := e.m.Copy(context.Background(), p); !errors.Is(err, ErrDestMoved) {
+		t.Fatalf("err = %v", err)
+	}
+	if e.destTag() != other.digest {
+		t.Fatal("the tag was overwritten")
+	}
+}
+
+func TestStalledTransferIsCancelled(t *testing.T) {
+	e := newEnv(t)
+	e.m.Idle = 200 * time.Millisecond
+	inner := e.src.srv.Config.Handler
+	e.src.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/blobs/") && r.URL.Path != "/token" {
+			w.Header().Set("Content-Length", "1000")
+			w.WriteHeader(200)
+			w.(http.Flusher).Flush()
+			<-r.Context().Done() // sends nothing, ever
+			return
+		}
+		inner.ServeHTTP(w, r)
+	})
+	start := time.Now()
+	_, err := e.plan()
+	if err == nil || time.Since(start) > 5*time.Second {
+		t.Fatalf("err = %v after %s", err, time.Since(start))
+	}
+	if !strings.Contains(err.Error(), "no data for") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestEmptyLayerIsAccepted(t *testing.T) {
+	raw := []byte(`{"schemaVersion":2,"config":{"digest":"` + dg([]byte("c")) + `","size":1},"layers":[{"digest":"` + dg(nil) + `","size":0}]}`)
+	if _, layers, err := parseImage(raw, mtOCIManifest, DefaultLimits); err != nil || len(layers) != 1 {
+		t.Fatalf("%v %v", layers, err)
+	}
+	e := newEnv(t, "")
+	if _, err := e.copy(); err != nil {
+		t.Fatal(err)
 	}
 }

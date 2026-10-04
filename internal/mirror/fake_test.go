@@ -184,6 +184,10 @@ func (r *reg) handle(w http.ResponseWriter, q *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"token": srcTok})
 		return
 	}
+	if strings.HasPrefix(q.URL.Path, "/cdn/") {
+		r.serveBlob(w, q, strings.TrimPrefix(q.URL.Path, "/cdn/"))
+		return
+	}
 	if r.bearer != "" && q.Header.Get("Authorization") != "Bearer "+r.bearer {
 		if r.anon {
 			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer realm="%s/token",service="fake"`, r.srv.URL))
@@ -346,7 +350,6 @@ func newEnv(t *testing.T, layers ...string) *env {
 			}
 			return "http://127.0.0.1:1" // anything else is unreachable
 		},
-		allowHTTPRedirect: true,
 	}
 	e.srcRef = Ref{srcHost, srcRepo, "1.2.3"}
 	e.dstRef = Ref{dstHost, dstRepo, "1.2.3"}

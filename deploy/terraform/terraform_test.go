@@ -159,6 +159,15 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 func TestMirrorRunsAsUserNotBuildAccount(t *testing.T) {
 	writers := 0
 	walk(t, func(path string, b []byte) {
+		// Nor may anything grant a registry write role on the whole project,
+		// which would cover fugaro-base.
+		for _, typ := range []string{"google_project_iam_member", "google_project_iam_binding"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				if regexp.MustCompile(`roles/artifactregistry\.(writer|admin|repoAdmin)`).MatchString(blk.body) {
+					t.Errorf("%s: %s grants an Artifact Registry write role on the whole project", path, blk.name)
+				}
+			}
+		}
 		for _, typ := range []string{"google_artifact_registry_repository_iam_member", "google_artifact_registry_repository_iam_binding", "google_artifact_registry_repository_iam_policy"} {
 			for _, blk := range resourceBlocks(t, path, b, typ) {
 				onBase := strings.Contains(blk.body, "repository.base.") || strings.Contains(blk.body, "base_registry") || strings.Contains(blk.body, `"fugaro-base"`)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -24,6 +25,14 @@ import (
 // and the base kinds that are asked for (--base) or that the checkout's
 // fugaro.yaml names. The copy is internal/mirror's: digest-verified,
 // idempotent, source-allowlisted, no credential to the source.
+//
+// ACCEPTED RISK (design §7, §12): the trust anchor is the release tag in
+// ghcr.io as it resolves now. Whoever can write ghcr.io/dimipaun/fugaro-*:X.Y.Z
+// can make the images this copies, and so the user's cloud, run their code.
+// Digest verification proves the copy equals what the registry served, not
+// that the registry served the release. --expect-digest pins a digest got
+// out of band; cosign verification and a signed digest list in the release
+// are the planned fix (plan, follow-up to T2), not in this change.
 //
 // A kind whose base image the local config already points elsewhere (a dev
 // tag, a hand-pushed image, --base-image) is left alone: nothing is
@@ -109,13 +118,46 @@ func (s *imagesStage) kinds(ctx context.Context) []string {
 	return slices.Sorted(maps.Keys(set))
 }
 
-// managed reports whether ref is a release image an earlier run copied into
-// this project's registry for kind (so a newer CLI may move it on), as
-// opposed to a dev tag or a hand-pushed image the config points at.
-func managed(ref, host, kind string) bool {
+// managedVersion is the release version of ref when it is a release image
+// an earlier run copied into this project's registry for kind (so a newer
+// CLI may move it on), as opposed to a dev tag or a hand-pushed image the
+// config points at.
+func managedVersion(ref, host, kind string) (string, bool) {
 	rest, ok := strings.CutPrefix(ref, host+"/"+mirror.BaseRepository+"/fugaro-"+kind+":")
-	return ok && releaseRE.MatchString(rest)
+	return rest, ok && releaseRE.MatchString(rest)
 }
+
+// newer reports whether release version a is newer than b.
+func newer(a, b string) bool {
+	pa, pb := strings.Split(a, "."), strings.Split(b, ".")
+	for i := 0; i < 3 && i < len(pa) && i < len(pb); i++ {
+		x, _ := strconv.Atoi(pa[i])
+		y, _ := strconv.Atoi(pb[i])
+		if x != y {
+			return x > y
+		}
+	}
+	return false
+}
+
+// parseExpectDigests reads --expect-digest KIND=sha256:<hex>.
+func parseExpectDigests(vs []string) (map[string]string, error) {
+	out := map[string]string{}
+	for _, v := range vs {
+		k, d, ok := strings.Cut(v, "=")
+		if !ok || !(k == "history" || slices.Contains(config.Bases, k)) || !expectRE.MatchString(d) {
+			return nil, fmt.Errorf("--expect-digest %q: want KIND=sha256:<64 hex digits>, KIND one of history, %s", v, strings.Join(config.Bases, ", "))
+		}
+		out[k] = d
+	}
+	return out, nil
+}
+
+var expectRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+func isManaged(ref, host, kind string) bool { _, ok := managedVersion(ref, host, kind); return ok }
+
+func curVersion(ref, host, kind string) string { v, _ := managedVersion(ref, host, kind); return v }
 
 // items are the images this run mirrors, and the notes of kinds it leaves
 // alone. Nothing is read from the network.
@@ -158,8 +200,10 @@ func (s *imagesStage) items(ctx context.Context) (items []imageItem, notes []str
 		switch cur := lc.BaseImage(k); {
 		case named[k]:
 			notes = append(notes, fmt.Sprintf("base %s: --base-image points it at its own image; nothing mirrored", k))
-		case cur != "" && !managed(cur, host, k):
+		case cur != "" && !isManaged(cur, host, k):
 			notes = append(notes, fmt.Sprintf("base %s: the local config's base image %s is used; nothing mirrored (--base-image KIND=IMAGE changes it)", k, cur))
+		case isManaged(cur, host, k) && newer(curVersion(cur, host, k), ver):
+			notes = append(notes, fmt.Sprintf("base %s: the local config has %s, newer than this CLI's %s; kept (an older CLI does not downgrade it)", k, cur, ver))
 		default:
 			if err := mk("base "+k, k, "fugaro-"+k, "fugaro-"+k, ver); err != nil {
 				return nil, nil, err
@@ -190,37 +234,65 @@ type planned struct {
 	plan *mirror.Plan
 }
 
+// key is what --expect-digest names the image by.
+func (it imageItem) key() string {
+	if it.kind == "" {
+		return "history"
+	}
+	return it.kind
+}
+
 func (s *imagesStage) read(ctx context.Context, m *mirror.Mirror, items []imageItem) ([]planned, error) {
+	expect, err := parseExpectDigests(s.e.r.o.expectDigests)
+	if err != nil {
+		return nil, userErr("%v", err)
+	}
 	var out []planned
 	for _, it := range items {
-		p, err := m.Plan(ctx, it.src, it.dst, "")
+		p, err := m.Plan(ctx, it.src, it.dst, expect[it.key()])
 		if err != nil {
 			return nil, remote(fmt.Errorf("%s: %w", it.label, err))
 		}
+		// A release tag is never moved without --replace-image; history:latest
+		// is a moving tag and is replaced visibly, after the confirmation.
+		if it.kind != "" && p.DestDigest != "" && !p.Present && !s.e.r.o.replaceImage {
+			return nil, userErr("%s: %s is %s in your registry and the release's image is %s: a release tag is never moved; pass --replace-image to replace it, or --base-image KIND=IMAGE to point at your own", it.label, it.dst, p.DestDigest, p.Digest)
+		}
+		p.AllowReplace = it.kind == "" || s.e.r.o.replaceImage
 		out = append(out, planned{it, p})
 	}
 	return out, nil
 }
 
-func (s *imagesStage) show(pl []planned) (transfer int64) {
-	w := s.e.r.w
+// pending is the plans that have something to do: the destination tag is
+// not yet the release image. Whether blobs are missing does not matter (a
+// copy may be the manifest alone).
+func pending(pl []planned) (n int, bytes int64) {
 	for _, p := range pl {
-		if p.plan.Present {
-			fmt.Fprintf(w, "  %s: %s is already the release image (%s), nothing to copy\n", p.item.label, p.item.dst, short(p.plan.Digest))
-			continue
+		if !p.plan.Present {
+			n++
+			bytes += p.plan.TransferBytes
 		}
-		fmt.Fprintf(w, "  %s: copy %s to %s as %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, p.item.dst.Host+"/"+p.item.dst.Repo+":"+p.item.dst.Tag, short(p.plan.Digest),
-			float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
-		transfer += p.plan.TransferBytes
 	}
-	return transfer
+	return n, bytes
 }
 
-func short(d string) string {
-	if len(d) > 19 {
-		return d[:19]
+func (s *imagesStage) show(pl []planned) {
+	w := s.e.r.w
+	for _, p := range pl {
+		d := p.item.dst
+		to := d.Host + "/" + d.Repo + ":" + d.Tag
+		switch {
+		case p.plan.Present:
+			fmt.Fprintf(w, "  %s: %s is already the release image %s, nothing to copy\n", p.item.label, to, p.plan.Digest)
+		case p.plan.DestDigest != "":
+			fmt.Fprintf(w, "  %s: copy %s to %s: REPLACES %s with %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.DestDigest, p.plan.Digest,
+				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
+		default:
+			fmt.Fprintf(w, "  %s: copy %s to %s: adds %s (%.1f MB to send of %.1f MB, %d blobs)\n", p.item.label, p.item.src, to, p.plan.Digest,
+				float64(p.plan.TransferBytes)/1e6, float64(p.plan.TotalBytes)/1e6, len(p.plan.Blobs))
+		}
 	}
-	return d
 }
 
 func (s *imagesStage) prepare(ctx context.Context) (*mirror.Mirror, []imageItem, error) {
@@ -251,11 +323,12 @@ func (s *imagesStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 	if err != nil {
 		return initflow.Plan{}, err
 	}
-	transfer := s.show(pl)
-	if transfer == 0 {
+	s.show(pl)
+	n, bytes := pending(pl)
+	if n == 0 {
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
 	}
-	return initflow.Plan{Detail: fmt.Sprintf("%.1f MB to copy", float64(transfer)/1e6)}, nil
+	return initflow.Plan{Detail: fmt.Sprintf("%d image(s) to copy, %.1f MB to send", n, float64(bytes)/1e6)}, nil
 }
 
 func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -271,29 +344,35 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	if err != nil {
 		return initflow.Outcome{}, err
 	}
-	transfer := s.show(pl)
+	s.show(pl)
+	n, bytes := pending(pl)
 	changed := false
-	if transfer > 0 {
+	var done []planned // the plans whose destination tag is, now, the release image
+	if n > 0 {
 		o := r.o
 		yes := o.yes
 		o.yes = env.Yes
-		err := r.confirm(fmt.Sprintf("copies %.1f MB from %s into your registry %s/%s, as you (about $%.2f a month of registry storage at $%.2f per GB)",
-			float64(transfer)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject+"/"+mirror.BaseRepository,
-			float64(transfer)/1e9*storagePerGBMonth, storagePerGBMonth), "nothing was copied")
+		err := r.confirm(fmt.Sprintf("copies %d image(s), %.1f MB, from %s into your registry %s/%s/%s as you, exactly as listed above (about $%.2f a month of registry storage at $%.2f per GB). The digests above are what the release tags resolve to now, which is what the registry says, not a signature: pin one with --expect-digest",
+			n, float64(bytes)/1e6, s.allow()[0], pl[0].item.dst.Host, r.gcpProject, mirror.BaseRepository, float64(bytes)/1e9*storagePerGBMonth, storagePerGBMonth), "nothing was copied")
 		o.yes = yes
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
-		for _, p := range pl {
-			res, err := m.Copy(ctx, p.plan)
-			if err != nil {
-				return initflow.Outcome{}, remote(fmt.Errorf("%s: %w (a rerun resumes: blobs already copied are not sent again, and no tag moved)", p.item.label, err))
-			}
-			fmt.Fprintf(r.w, "  %s: %s\n", p.item.label, res.Description)
-			changed = changed || res.Changed
-		}
 	}
-	if err := s.record(pl); err != nil {
+	for _, p := range pl {
+		if p.plan.Present {
+			done = append(done, p)
+			continue
+		}
+		res, err := m.Copy(ctx, p.plan)
+		if err != nil {
+			return initflow.Outcome{}, remote(fmt.Errorf("%s: %w (a rerun resumes: blobs already copied are not sent again)", p.item.label, err))
+		}
+		fmt.Fprintf(r.w, "  %s: %s\n", p.item.label, res.Description)
+		changed = changed || res.Changed
+		done = append(done, p)
+	}
+	if err := s.record(done); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if !changed {
@@ -302,16 +381,17 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	return initflow.Outcome{Changed: true, Detail: "images copied and verified by digest"}, nil
 }
 
-// record writes the mirrored base images into the local config's
-// base_images (what the image builds start from), re-reading the file the
-// earlier stages wrote. The history image is named by the installation, not
-// recorded.
+// record writes the base images whose destination tag is the release image
+// into the local config's base_images (what the image builds start from),
+// re-reading the file the earlier stages wrote, and prints the digest each
+// tag resolved to. The history image is named by the installation, not
+// recorded. A recorded mirrored image newer than this CLI's is kept.
 func (s *imagesStage) record(pl []planned) error {
 	r := s.e.r
-	want := map[string]string{}
+	want := map[string]planned{}
 	for _, p := range pl {
 		if p.item.kind != "" {
-			want[p.item.kind] = p.item.dst.String()
+			want[p.item.kind] = p
 		}
 	}
 	if len(want) == 0 {
@@ -330,8 +410,19 @@ func (s *imagesStage) record(pl []planned) error {
 	if next.BaseImages == nil {
 		next.BaseImages = map[string]string{}
 	}
-	for k, v := range want {
-		next.BaseImages[k] = v
+	host, err := infra.RegistryHost(s.e.lc)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	for _, k := range slices.Sorted(maps.Keys(want)) {
+		p := want[k]
+		if c := next.BaseImages[k]; c != "" && !isManaged(c, host, k) {
+			continue // pointed elsewhere since: not ours to change
+		} else if c != "" && newer(curVersion(c, host, k), p.item.dst.Tag) {
+			continue
+		}
+		next.BaseImages[k] = p.item.dst.String()
+		fmt.Fprintf(r.w, "  base_images.%s = %s (digest %s)\n", k, p.item.dst, p.plan.Digest)
 	}
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.

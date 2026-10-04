@@ -19,6 +19,13 @@
 //     leaves no tag moved (a rerun resumes: blobs already there are not
 //     sent again), and the pushed tag is read back and compared.
 //
+// ACCEPTED RISK: the trust anchor is the source tag as the registry resolves
+// it now. Digest verification proves the copy equals what the registry served,
+// not that it is the release: whoever can write ghcr.io/<owner>/fugaro-*:X.Y.Z
+// can make the user's cloud run their code. Plan's expect digest (init
+// --expect-digest) pins one obtained out of band; cosign verification and a
+// signed digest list in the release are the planned fix.
+//
 // Only the linux/amd64 image of a multi-platform index is copied (what
 // Cloud Build and Cloud Run run); the destination tag then names that
 // image manifest, whose digest is what is verified end to end.
@@ -29,7 +36,12 @@
 // credential for blob upload (POST, one PATCH, PUT) and manifest PUT, its
 // Location headers staying on its own host, and ghcr's blob redirect target
 // (a CDN host, followed without credentials). Cross-repository blob mount
-// is deliberately not used. The user checks these in the live check.
+// is deliberately not used. The user checks these in the live check. An
+// Artifact Registry access token lasts about an hour; it is read per request,
+// and a single upload that outlives it fails with a clear message and is
+// resumed by a rerun. A transfer that makes no progress for Mirror.Idle is
+// cancelled. A token endpoint is accepted on the registry's own host or a
+// sibling under the same two-label domain, never http elsewhere.
 package mirror
 
 import (
@@ -123,4 +135,6 @@ var (
 	ErrNoAmd64          = errors.New("the image has no linux/amd64 build")
 	ErrTagMoved         = errors.New("the source tag moved while it was being copied")
 	ErrDigestMismatch   = errors.New("digest mismatch")
+	ErrWouldReplace     = errors.New("the destination tag is another image")
+	ErrDestMoved        = errors.New("the destination tag changed while it was being copied")
 )

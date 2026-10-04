@@ -61,8 +61,10 @@ type Mirror struct {
 	// never a credential or a URL's query).
 	Log func(string)
 
-	allowHTTPRedirect bool // tests only: the fake CDN is plain http
-	tokens            map[string]string
+	// Idle is how long a transfer may make no progress (no byte read or
+	// written) before it is cancelled; 0 is 2 minutes.
+	Idle   time.Duration
+	tokens map[string]string
 }
 
 func (m *Mirror) allow() []string {
@@ -77,6 +79,13 @@ func (m *Mirror) limits() Limits {
 		return DefaultLimits
 	}
 	return m.Limits
+}
+
+func (m *Mirror) idle() time.Duration {
+	if m.Idle > 0 {
+		return m.Idle
+	}
+	return 2 * time.Minute
 }
 
 func (m *Mirror) logf(format string, a ...any) {
@@ -119,7 +128,15 @@ type Plan struct {
 	Manifest             []byte
 	Blobs                []Blob
 	// Present: the destination tag already is Digest; nothing to copy.
-	Present                   bool
+	Present bool
+	// DestDigest is what the destination tag is now ("" when it does not
+	// exist). When it is another digest, Copy replaces the tag, and refuses
+	// to unless AllowReplace is set by the caller.
+	DestDigest   string
+	AllowReplace bool
+	// TotalBytes is every blob, TransferBytes the ones missing at the
+	// destination. They inform; whether there is something to do is
+	// decided by Present alone (a copy may be the manifest alone).
 	TotalBytes, TransferBytes int64
 }
 
@@ -176,9 +193,12 @@ func (m *Mirror) Plan(ctx context.Context, src, dst Ref, expect string) (*Plan, 
 			p.TransferBytes += b.Size
 		}
 	}
-	if d, err := m.destDigest(ctx, dst); err != nil {
+	d, err := m.destDigest(ctx, dst)
+	if err != nil {
 		return nil, err
-	} else if d == p.Digest {
+	}
+	p.DestDigest = d
+	if d == p.Digest {
 		p.Present = true
 		p.TransferBytes = 0
 	}
@@ -219,6 +239,9 @@ func (m *Mirror) Copy(ctx context.Context, p *Plan) (Result, error) {
 	if err := checkDest(p.Dest); err != nil {
 		return Result{}, err
 	}
+	if p.DestDigest != "" && p.DestDigest != p.Digest && !p.AllowReplace {
+		return Result{}, fmt.Errorf("%w: %s is %s and the release's is %s", ErrWouldReplace, p.Dest, p.DestDigest, p.Digest)
+	}
 	var res Result
 	res.Digest = p.Digest
 	for _, b := range p.Blobs {
@@ -243,11 +266,18 @@ func (m *Mirror) Copy(ctx context.Context, p *Plan) (Result, error) {
 	if again != p.SourceDigest {
 		return res, fmt.Errorf("%w: %s was %s and is now %s; nothing was tagged", ErrTagMoved, p.Source, p.SourceDigest, again)
 	}
+	// The destination tag must still be what the plan (and the person's
+	// confirmation) saw.
+	if now, err := m.destDigest(ctx, p.Dest); err != nil {
+		return res, err
+	} else if now != p.DestDigest {
+		return res, fmt.Errorf("%w: %s was %q when planned and is %q now; nothing was tagged", ErrDestMoved, p.Dest, p.DestDigest, now)
+	}
 	if err := m.putManifest(ctx, p); err != nil {
 		return res, err
 	}
 	res.Changed = true
-	res.Description = fmt.Sprintf("copied %s as %s (%d blobs sent, %d already there)", p.Source, p.Dest, res.BlobsSent, res.BlobsKept)
+	res.Description = fmt.Sprintf("copied %s as %s, digest %s (%d blobs sent, %d already there)", p.Source, p.Dest, p.Digest, res.BlobsSent, res.BlobsKept)
 	return res, nil
 }
 
@@ -321,17 +351,17 @@ func parseImage(raw []byte, mediaType string, lim Limits) (cfg Blob, layers []Bl
 		return cfg, nil, fmt.Errorf("its manifest has %d layers (1 to %d allowed)", len(im.Layers), lim.Layers)
 	}
 	var total int64
-	check := func(d string, size int64, max int64) error {
+	check := func(d string, size int64, min, max int64) error {
 		switch {
 		case !digestRE.MatchString(d):
 			return fmt.Errorf("a blob has the digest %q", d)
-		case size <= 0 || size > max:
+		case size < min || size > max:
 			return fmt.Errorf("blob %s is %d bytes (at most %d)", d, size, max)
 		}
 		total += size
 		return nil
 	}
-	if err := check(im.Config.Digest, im.Config.Size, lim.Manifest); err != nil {
+	if err := check(im.Config.Digest, im.Config.Size, 1, lim.Manifest); err != nil {
 		return cfg, nil, err
 	}
 	cfg = Blob{Digest: im.Config.Digest, Size: im.Config.Size}
@@ -340,7 +370,7 @@ func parseImage(raw []byte, mediaType string, lim Limits) (cfg Blob, layers []Bl
 		if len(l.URLs) > 0 {
 			return cfg, nil, fmt.Errorf("layer %s is a foreign layer (urls): not copied", l.Digest)
 		}
-		if err := check(l.Digest, l.Size, lim.Blob); err != nil {
+		if err := check(l.Digest, l.Size, 0, lim.Blob); err != nil { // an empty layer is a valid blob
 			return cfg, nil, err
 		}
 		if !seen[l.Digest] {
@@ -361,20 +391,78 @@ func sum(b []byte) string {
 
 // ---- source side: anonymous ----
 
-// srcClient never carries a credential of ours; redirects (ghcr sends
-// blobs to a CDN) are followed to https only, with no Authorization.
-func (m *Mirror) srcClient(host string) *http.Client {
+// srcClient never carries a credential of ours. Redirects (ghcr sends blobs
+// to a CDN) are followed with no Authorization; they may not downgrade to
+// http (when the registry itself is https) and, for a manifest
+// (sameHostOnly), may not leave the registry's host at all. A blob that
+// came by redirect is checked by its digest like every other.
+func (m *Mirror) srcClient(host string, sameHostOnly bool) *http.Client {
 	base, _ := url.Parse(m.base(host))
 	return &http.Client{Transport: m.transport(), CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 5 {
+		switch {
+		case len(via) >= 5:
 			return errors.New("too many redirects")
-		}
-		if req.URL.Scheme != "https" && !m.allowHTTPRedirect && (base == nil || req.URL.Host != base.Host) {
+		case base != nil && base.Scheme == "https" && req.URL.Scheme != "https":
 			return fmt.Errorf("refusing a redirect to %s: not https", redact(req.URL))
+		case sameHostOnly && base != nil && req.URL.Host != base.Host:
+			return fmt.Errorf("refusing a manifest redirect to %s: another host", req.URL.Host)
 		}
 		req.Header.Del("Authorization")
 		return nil
 	}}
+}
+
+// guard cancels a request that makes no progress for the idle time: every
+// byte read or written resets it.
+type guard struct {
+	cancel context.CancelFunc
+	t      *time.Timer
+	d      time.Duration
+	fired  chan struct{}
+}
+
+func (m *Mirror) guard(ctx context.Context) (context.Context, *guard) {
+	ctx, cancel := context.WithCancel(ctx)
+	g := &guard{cancel: cancel, d: m.idle(), fired: make(chan struct{})}
+	g.t = time.AfterFunc(g.d, func() { close(g.fired); cancel() })
+	return ctx, g
+}
+
+func (g *guard) touch() { g.t.Reset(g.d) }
+func (g *guard) stop()  { g.t.Stop(); g.cancel() }
+func (g *guard) err(err error) error {
+	select {
+	case <-g.fired:
+		return fmt.Errorf("no data for %s, cancelled: %w", g.d, err)
+	default:
+		return err
+	}
+}
+
+type guardBody struct {
+	io.ReadCloser
+	g *guard
+}
+
+func (b guardBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.g.touch()
+	if err != nil && err != io.EOF {
+		err = b.g.err(err)
+	}
+	return n, err
+}
+func (b guardBody) Close() error { b.g.stop(); return b.ReadCloser.Close() }
+
+type guardReader struct {
+	io.Reader
+	g *guard
+}
+
+func (r guardReader) Read(p []byte) (int, error) {
+	n, err := r.Reader.Read(p)
+	r.g.touch()
+	return n, err
 }
 
 // redact is a URL without its query or credentials, safe to print.
@@ -388,11 +476,13 @@ func redact(u *url.URL) string {
 // the registry's own token endpoint when it asks for one (no credentials
 // go to it). The caller closes the body.
 func (m *Mirror) srcGet(ctx context.Context, src Ref, path, accept string) (*http.Response, error) {
-	hc := m.srcClient(src.Host)
+	hc := m.srcClient(src.Host, strings.HasPrefix(path, "/manifests/"))
 	u := m.base(src.Host) + "/v2/" + src.Repo + path
 	do := func(token string) (*http.Response, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		gctx, g := m.guard(ctx)
+		req, err := http.NewRequestWithContext(gctx, http.MethodGet, u, nil)
 		if err != nil {
+			g.stop()
 			return nil, err
 		}
 		if accept != "" {
@@ -401,7 +491,14 @@ func (m *Mirror) srcGet(ctx context.Context, src Ref, path, accept string) (*htt
 		if token != "" {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
-		return hc.Do(req)
+		resp, err := hc.Do(req)
+		if err != nil {
+			err = g.err(err)
+			g.stop()
+			return nil, err
+		}
+		resp.Body = guardBody{resp.Body, g}
+		return resp, nil
 	}
 	key := src.Host + "/" + src.Repo
 	resp, err := do(m.tokens[key])
@@ -457,7 +554,10 @@ func (m *Mirror) anonymousToken(ctx context.Context, hc *http.Client, header str
 	params := parseChallenge(header[len("bearer "):])
 	realm, err := url.Parse(params["realm"])
 	reg, _ := url.Parse(m.base(src.Host))
-	if err != nil || realm.Host == "" || (realm.Scheme != "https" && (reg == nil || realm.Scheme != reg.Scheme || realm.Host != reg.Host)) {
+	// The token endpoint is https on the registry's own site (its host or a
+	// sibling under the same two-label domain, as ghcr.io's is), or exactly
+	// the registry's own scheme and host. Anything else is never asked.
+	if err != nil || realm.Host == "" || reg == nil || !(realm.Scheme == reg.Scheme && realm.Host == reg.Host || realm.Scheme == "https" && sameSite(realm.Hostname(), reg.Hostname())) {
 		return "", fmt.Errorf("%w: %s's token endpoint %q is not an https URL", ErrUnreadableSource, src.Host, params["realm"])
 	}
 	q := realm.Query()
@@ -492,6 +592,19 @@ func (m *Mirror) anonymousToken(ctx context.Context, hc *http.Client, header str
 		return "", fmt.Errorf("%w: %s's token endpoint returned no token", ErrUnreadableSource, src.Host)
 	}
 	return body.Token, nil
+}
+
+// sameSite reports whether two hosts share their last two labels
+// (ghcr.io and token.ghcr.io), a cheap stand-in for a registrable domain.
+func sameSite(a, b string) bool {
+	last2 := func(h string) string {
+		p := strings.Split(strings.TrimSuffix(h, "."), ".")
+		if len(p) < 2 {
+			return h
+		}
+		return strings.Join(p[len(p)-2:], ".")
+	}
+	return a != "" && b != "" && last2(a) == last2(b)
 }
 
 func parseChallenge(s string) map[string]string {
@@ -626,25 +739,36 @@ func (m *Mirror) dstDo(ctx context.Context, dst Ref, method, path string, hdr ma
 }
 
 func (m *Mirror) dstDoURL(ctx context.Context, dst Ref, method, u string, hdr map[string]string, body io.Reader, size int64) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, method, u, body)
+	gctx, g := m.guard(ctx)
+	if body != nil {
+		body = guardReader{body, g}
+	}
+	req, err := http.NewRequestWithContext(gctx, method, u, body)
 	if err != nil {
+		g.stop()
 		return nil, err
 	}
 	if body != nil {
 		req.ContentLength = size
+		if size == 0 {
+			req.Body = http.NoBody
+		}
 	}
 	for k, v := range hdr {
 		req.Header.Set(k, v)
 	}
 	resp, err := m.dstClient(dst.Host).Do(req)
 	if err != nil {
+		err = g.err(err)
+		g.stop()
 		return nil, fmt.Errorf("%s %s: %w", method, dst, urlErr(err))
 	}
+	resp.Body = guardBody{resp.Body, g}
 	return resp, nil
 }
 
 func authRefusal(dst Ref, status int) error {
-	return fmt.Errorf("Artifact Registry refused %s (HTTP %d): your credentials need roles/artifactregistry.writer on the fugaro-base repository (the operator role has it), and gcloud auth application-default login must be current", dst, status)
+	return fmt.Errorf("Artifact Registry refused %s (HTTP %d): your credentials need roles/artifactregistry.writer on the fugaro-base repository (the operator role has it), and gcloud auth application-default login must be current (an access token lasts about an hour, so a very slow upload can outlive it: rerun, blobs already sent are kept)", dst, status)
 }
 
 func drain(r *http.Response) {

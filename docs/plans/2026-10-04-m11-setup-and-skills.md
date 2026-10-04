@@ -211,6 +211,13 @@ The wiring rests on four facts about Claude Code. Each is recorded here with its
 - [ ] **Failing tests first:** `TestMirrorVerifiesDigest`, `TestMirrorIdempotent`, `TestMirrorRefusesUnreadableSource`, `TestMirrorRefusesMissingAmd64`, `TestMirrorInterruptedResumes`, `TestDevBuildHasNoSilentFallback`, `TestMirrorRunsAsUserNotBuildAccount` (no build-account grant on `fugaro-base` in any generated Terraform: reuse the existing IAM tests), `TestBaseImagesRecordedInConfig`, `TestHistoryJobAppliedAfterMirror`.
 - [ ] Commit: `init: mirror the base and history images into the project's registry`
 
+### Follow-up F1 (M, lane I, after T11 and T2): Sign and verify the release images
+
+**Files:** `.github/workflows/images.yml`, `docs/release.md`, `internal/mirror` (verification), tests.
+- Accepted risk of T2: the mirror trusts the release tag as ghcr.io resolves it. Fix: the release workflow cosign-signs each image digest (keyless, the workflow's identity) and publishes a signed digest list with the release; the mirror verifies the signature (and, offline, the list) before it copies, and `--expect-digest` stays as the manual pin. Ordering note: the digest list must be produced and signed after the images are pushed and before `verify-public`, and a tag is never moved after it is signed. No cosign/sigstore dependency is added before this task.
+- [ ] **Failing tests first:** `TestMirrorRefusesUnsignedImage`, `TestMirrorRefusesWrongSigner`, `TestSignedDigestListMatchesImages`.
+- [ ] Commit: `release: sign the images; mirror: verify before copying`
+
 ### Task 13 (S, lane I): Inputs and defaults
 
 **Files:** `internal/cli/init.go` (prompts), `internal/localcfg`, tests.
