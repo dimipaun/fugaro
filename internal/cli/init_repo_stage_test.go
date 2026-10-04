@@ -102,7 +102,7 @@ func TestRepoStageUsesDefaultBranchConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := check()
-	if st.State != initflow.NeedsYou || st.Left == nil || !strings.Contains(st.Left.Text, "git switch main") || strings.Contains(st.Left.Text, "\n") {
+	if st.State != initflow.NeedsYou || st.Left == nil || !strings.Contains(st.Left.Text, "git switch -- main") || strings.Contains(st.Left.Text, "\n") {
 		t.Fatalf("edited: %+v %+v", st, st.Left)
 	}
 	// Another project's file is not this project's repository.

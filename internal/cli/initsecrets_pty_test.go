@@ -460,7 +460,7 @@ func initOnTTY(t *testing.T, asJSON bool) {
 			t.Fatalf("%v:\n%s", jerr, out.String())
 		}
 		last := res.Left[len(res.Left)-1]
-		if last["stage"] != "secrets" || !strings.Contains(last["text"], "secrets set bitbucket-token --repo acme/sandbox") {
+		if last["stage"] != "secrets" || !strings.Contains(last["commands"], "secrets set bitbucket-token --repo acme/sandbox") {
 			t.Fatalf("left %v", res.Left)
 		}
 		if strings.Contains(errOut.String(), "hidden") || queued(t, f) != before || before == 0 {

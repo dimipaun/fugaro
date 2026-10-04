@@ -700,7 +700,7 @@ func (r *initRun) confirm(what, undone string) error {
 	}
 	if !ok {
 		if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
-			return userErr("this step needs a confirmation: run fugaro init at a terminal and type the project's name, or pass --yes once you have read what it does; %s", undone)
+			return userErr("%s, or pass --yes once you have read what it does; %s", initflow.NeedsTerminal("the typed confirmation of this step"), undone)
 		}
 		return userErr("not confirmed (the project's name was not typed); %s", undone)
 	}
@@ -745,13 +745,13 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 	if !errors.As(err, &sd) {
 		return initErr(err)
 	}
-	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + r.gcpProject
+	command := "gcloud services enable " + infra.ServiceResourceManager + " --project " + quoteWord(r.gcpProject)
 	ok, err := r.ask("enables the Cloud Resource Manager API (" + infra.ServiceResourceManager + "), which is disabled: fugaro init reads the project's number through it before Terraform enables it (free, and nothing fugaro does disables it again)")
 	if err != nil {
 		return err
 	}
 	if !ok {
-		why := "this step needs a confirmation: rerun at a terminal and type the project's name, or pass --yes once you have read what it does, or"
+		why := initflow.NeedsTerminal("the typed confirmation of this step") + ", or pass --yes once you have read what it does, or"
 		if !r.o.nonInteractive && stdinIsTerminal(r.cmd.InOrStdin()) {
 			why = "not confirmed (the project's name was not typed):"
 		}
@@ -1949,7 +1949,7 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 // secrets set command, as the bootstrap printed them, and each workflow's
 // other gates.
 func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, missing []infra.Missing) {
-	cmds := infra.SecretCommands(spec, versions)
+	steps := infra.SecretCommands(spec, versions, selfCommand(), quoteWord)
 	var other []string
 	for _, m := range missing {
 		// Secrets are listed as commands below.
@@ -1957,19 +1957,24 @@ func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, mi
 			other = append(other, m.String())
 		}
 	}
-	if len(cmds) == 0 && len(other) == 0 {
+	if len(steps) == 0 && len(other) == 0 {
 		return
 	}
 	fmt.Fprintf(r.w, "Still missing for %s:\n", spec.Name)
 	for _, o := range other {
 		fmt.Fprintln(r.w, "  "+o)
 	}
-	if len(cmds) > 0 {
-		fmt.Fprintln(r.w, "  Store each secret with fugaro secrets set; the value comes from stdin or a hidden prompt, never argv:")
-		for _, c := range cmds {
-			fmt.Fprintln(r.w, "    "+c)
+	var cmds []string
+	if len(steps) > 0 {
+		fmt.Fprintln(r.w, "  Store each secret with its commands, run in your own terminal window one line at a time; the value comes from stdin or a hidden prompt, never argv:")
+		for _, st := range steps {
+			fmt.Fprintf(r.w, "  %s: %s\n", st.Name, oneLine(st.What))
+			for _, c := range st.Commands {
+				fmt.Fprintln(r.w, "    "+c)
+				cmds = append(cmds, c)
+			}
 		}
-		fmt.Fprintln(r.w, "  Then rerun fugaro init --repo when they are stored.")
+		fmt.Fprintln(r.w, "  Then rerun "+selfCommand()+" init --repo when they are stored.")
 	}
 	r.res.Missing = append(other, cmds...)
 }

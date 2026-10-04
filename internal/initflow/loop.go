@@ -195,6 +195,12 @@ func (l *loop) left(stage string, lf Left) Left {
 		lf.Kind = LeftCommand
 	}
 	lf.Text = l.redact(oneLine(lf.Text))
+	if len(lf.Commands) > 0 {
+		lf.Commands = l.redactAll(lf.Commands)
+		for i, c := range lf.Commands {
+			lf.Commands[i] = oneLine(c)
+		}
+	}
 	return lf
 }
 
@@ -396,6 +402,9 @@ func (l *loop) finish() {
 	}
 	for _, lf := range l.res.Left {
 		fmt.Fprintf(l.o.Out, "left for you (%s, %s): %s\n", lf.Stage, lf.Kind, lf.Text)
+		for _, c := range lf.Commands {
+			fmt.Fprintf(l.o.Out, "    %s\n", c)
+		}
 	}
 	if f := l.res.Failed; f != nil {
 		// The error itself is the caller's to print (the CLI returns it).

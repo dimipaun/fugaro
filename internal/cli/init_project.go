@@ -119,10 +119,12 @@ func (s *projectStage) clients(ctx context.Context) error {
 // guided is the one line that links billing: nothing is guessed about the
 // account, and no account is read.
 func (s *projectStage) guided() string {
-	return "gcloud billing projects link " + s.id + " --billing-account=BILLING_ACCOUNT_ID"
+	return "gcloud billing projects link " + quoteWord(s.id) + " --billing-account=BILLING_ACCOUNT_ID"
 }
 
-const billingHelp = "find the account's ID with gcloud billing accounts list, or in https://console.cloud.google.com/billing; then run the command, or rerun fugaro init with --create-project --link-billing BILLING_ACCOUNT_ID to type its confirmation here"
+func billingHelp() string {
+	return "find the account's ID with gcloud billing accounts list, or in https://console.cloud.google.com/billing; then run the command, or rerun " + selfCommand() + " init with --create-project --link-billing BILLING_ACCOUNT_ID to type its confirmation here"
+}
 
 // problem maps a refusal by the project APIs to a stage failure with its
 // one-line fix, or to the user's to do (an API off on the quota project).
@@ -199,7 +201,7 @@ func (s *projectStage) Check(ctx context.Context) (initflow.Status, error) {
 		if s.whyGuide != "" {
 			why = s.whyGuide + ". "
 		}
-		return initflow.Status{State: initflow.NeedsYou, Detail: "project " + s.id + " has no billing (or it cannot be read): " + why + billingHelp, Left: &lf}, nil
+		return initflow.Status{State: initflow.NeedsYou, Detail: "project " + s.id + " has no billing (or it cannot be read): " + why + billingHelp(), Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Done, Detail: "project " + s.id + " exists, has Firebase and billing" + note}, nil
 }
@@ -242,15 +244,14 @@ func (s *projectStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 
 func (s *projectStage) Left() initflow.Left {
 	if s.create || s.addFirebase || s.link {
-		text := "run fugaro init --create-project --gcp-project " + s.id
+		args := []string{"init", "--create-project", "--gcp-project", quoteWord(s.id)}
 		if p := s.o().parent; p != "" {
-			text += " --parent " + p
+			args = append(args, "--parent", quoteWord(p))
 		}
 		if s.o().linkBilling != "" {
-			text += " --link-billing " + s.o().linkBilling
+			args = append(args, "--link-billing", quoteWord(s.o().linkBilling))
 		}
-		text += " in your own terminal and type the ID(s) it asks for"
-		return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt, Text: text}
+		return promptLeft(initflow.Project, "type the ID(s) it asks for", args...)
 	}
 	return initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}
 }
@@ -369,7 +370,7 @@ func (s *projectStage) credentialNote() string {
 
 func (s *projectStage) declined(what string) error {
 	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftPrompt,
-		Text: "not confirmed (" + what + " was not typed): rerun fugaro init in your own terminal and type it, nothing further was done"}}
+		Text: "not confirmed (" + what + " was not typed): rerun " + selfCommand() + " init in your own terminal window and type it, nothing further was done"}}
 }
 
 func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -449,7 +450,7 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 			lead = existingNote(s.id) + ": "
 		}
 		ok, err := s.typed(fmt.Sprintf("%sthis LINKS billing account %s to project %s. Everything Fugaro runs in the project (Cloud Run jobs, builds, storage, Firestore, Vertex AI calls) may incur charges on that account. "+
-			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, s.id), acct, "to link it")
+			"It is not undone by deleting resources; unlink it with gcloud billing projects unlink %s.", lead, acct, s.id, quoteWord(s.id)), acct, "to link it")
 		if err != nil {
 			return initflow.Outcome{}, err
 		}

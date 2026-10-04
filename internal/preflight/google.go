@@ -11,6 +11,7 @@ import (
 	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 const serviceCloudBilling = "cloudbilling.googleapis.com"
@@ -27,7 +28,7 @@ func Billing(ctx context.Context, c *billing.APIService, project string) []Check
 		return []Check{{
 			ID:      "billing-api",
 			Problem: "the Cloud Billing API is disabled on " + quota + ", the quota project of your credentials",
-			Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + quota,
+			Fix:     "gcloud services enable cloudbilling.googleapis.com --project " + shellword.Quote(quota),
 		}}
 	}
 	var ge *googleapi.Error
@@ -44,7 +45,7 @@ func Billing(ctx context.Context, c *billing.APIService, project string) []Check
 		return []Check{{
 			ID:      "billing-linked",
 			Problem: "project " + project + " has no linked billing account",
-			Fix:     "gcloud billing projects link " + project + " --billing-account=ACCOUNT_ID",
+			Fix:     "gcloud billing projects link " + shellword.Quote(project) + " --billing-account=ACCOUNT_ID",
 		}}
 	}
 	return []Check{{ID: "billing-linked", OK: true}}
@@ -101,6 +102,6 @@ func IAMPolicy(ctx context.Context, c *crm.Service, project string, sameProjectF
 	return append(out, Check{
 		ID:      "default-service-accounts",
 		Problem: "the default service account(s) hold a primitive role: " + strings.Join(risks, ", "),
-		Fix:     "gcloud projects remove-iam-policy-binding " + project + " --member=serviceAccount:<account> --role=roles/editor",
+		Fix:     "gcloud projects remove-iam-policy-binding " + shellword.Quote(project) + " --member=serviceAccount:<account> --role=roles/editor",
 	})
 }

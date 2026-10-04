@@ -116,11 +116,36 @@ const (
 )
 
 // Left is one thing only the user can do: a single line of text, never a
-// continued or multi-line command and never a secret's value.
+// continued or multi-line command and never a secret's value. When there are
+// commands to paste, each is one complete line of its own in Commands, run in
+// order, never joined by && or ;, and Text is the sentence that introduces
+// them. A LeftCommand with no Commands is itself the one command.
 type Left struct {
-	Stage string   `json:"stage"`
-	Kind  LeftKind `json:"kind"`
-	Text  string   `json:"text"`
+	Stage    string   `json:"stage"`
+	Kind     LeftKind `json:"kind"`
+	Text     string   `json:"text"`
+	Commands []string `json:"commands,omitempty"`
+}
+
+// PrintedCommands is every command line the Left asks the user to run.
+func (l Left) PrintedCommands() []string {
+	if len(l.Commands) > 0 {
+		return l.Commands
+	}
+	if l.Kind == LeftCommand && l.Text != "" {
+		return []string{l.Text}
+	}
+	return nil
+}
+
+// NoTerminalAdvice is what to do when a typed confirmation or a hidden prompt
+// has no real terminal: the one sentence every refusal ends with.
+const NoTerminalAdvice = "run it in your own terminal window, not through a coding agent or a pipe"
+
+// NeedsTerminal is the one refusal for a step that has to be typed at a real
+// terminal; what names the step.
+func NeedsTerminal(what string) string {
+	return what + " needs a real terminal: " + NoTerminalAdvice
 }
 
 // Status is a stage's read-only check.
@@ -219,7 +244,7 @@ func (e *MissingInputsError) Error() string {
 type NoTerminalError struct{ Stage string }
 
 func (e *NoTerminalError) Error() string {
-	return "fugaro init needs a terminal to type the confirmation for " + e.Stage + ": run it in your own terminal, or pass --yes (with --non-interactive in scripts) once you have read what it does"
+	return NeedsTerminal("typing the confirmation for "+e.Stage) + ", or pass --yes (with --non-interactive in scripts) once you have read what it does"
 }
 
 // Validate checks stages are registered once each, under a known name, and

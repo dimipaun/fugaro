@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -174,7 +175,7 @@ func confirmTyped(cmd *cobra.Command, in *bufio.Reader, lc *localcfg.Config, yes
 		return nil
 	}
 	if !stdinIsTerminal(cmd.InOrStdin()) {
-		return userErr("this step needs a confirmation: run it at a terminal and type the project's name, or pass --yes once you have read what it does")
+		return userErr("%s, or pass --yes once you have read what it does", initflow.NeedsTerminal("the typed confirmation of this step"))
 	}
 	fmt.Fprintf(out, "Type %s to confirm: ", lc.Name)
 	line, err := in.ReadString('\n')

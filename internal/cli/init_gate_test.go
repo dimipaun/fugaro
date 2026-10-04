@@ -200,7 +200,7 @@ func TestHostileBranchAndProblemText(t *testing.T) {
 		t.Fatalf("%+v %v", st, err)
 	}
 	l := st.Left.Text
-	if want := `git switch 'x;touch${IFS}pwn|y&z$(id)'\''q'`; l != want {
+	if want := `git switch -- 'x;touch${IFS}pwn|y&z$(id)'\''q'`; l != want {
 		t.Errorf("left %q, want %q", l, want)
 	}
 	if strings.Contains(l, "&&") || strings.Contains(l, "\n") || strings.Contains(st.Detail, "&&") {

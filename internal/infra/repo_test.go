@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io/fs"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -221,18 +222,19 @@ func TestNeedsBuild(t *testing.T) {
 }
 
 // The commands are the bootstrap's: the value from stdin or a hidden
-// prompt, never argv, and claude setup-token run by the user.
+// prompt, never argv, and claude setup-token run by the user; every command
+// is a line of its own.
 func TestSecretCommands(t *testing.T) {
 	spec := sandboxSpec(t)
-	got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": false, "sandbox-probe": false})
-	want := []string{
-		"(you, in your own terminal) claude setup-token, then: fugaro secrets set claude-oauth-token --repo acme/sandbox   # " + spec.Secrets["claude-oauth-token"],
-		"fugaro secrets set sandbox-probe --repo acme/sandbox < <file holding the value>   # " + spec.Secrets["sandbox-probe"],
+	got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": false, "sandbox-probe": false}, "fugaro", func(s string) string { return s })
+	want := []SecretStep{
+		{Name: "claude-oauth-token", What: spec.Secrets["claude-oauth-token"], Commands: []string{"claude setup-token", "fugaro secrets set claude-oauth-token --repo acme/sandbox"}},
+		{Name: "sandbox-probe", What: spec.Secrets["sandbox-probe"], Commands: []string{"fugaro secrets set sandbox-probe --repo acme/sandbox < PATH-TO-THE-VALUE-FILE"}},
 	}
-	if !slices.Equal(got, want) {
-		t.Fatalf("commands:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("commands:\n%+v\nwant:\n%+v", got, want)
 	}
-	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}); len(got) != 0 {
+	if got := SecretCommands(spec, map[string]bool{"bitbucket-token": true, "claude-oauth-token": true, "sandbox-probe": true}, "fugaro", func(s string) string { return s }); len(got) != 0 {
 		t.Fatalf("every secret stored, still: %q", got)
 	}
 }

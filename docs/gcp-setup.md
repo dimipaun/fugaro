@@ -42,8 +42,7 @@ These are read-only checks, and yours to run and fix.
 
    ```bash
    gcloud builds get-default-service-account --project <gcp-project>
-   gcloud projects get-iam-policy <gcp-project> --flatten='bindings[].members' \
-     --filter='bindings.members:<that account>' --format='table(bindings.role)'
+   gcloud projects get-iam-policy <gcp-project> --flatten='bindings[].members' --filter='bindings.members:<that account>' --format='table(bindings.role)'
    ```
 
    If it is the legacy `<number>@cloudbuild.gserviceaccount.com` or holds `roles/editor`, that path is real in your project: weigh that before you onboard a repository whose code you don't trust.

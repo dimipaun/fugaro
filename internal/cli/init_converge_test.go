@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"strings"
@@ -21,7 +22,31 @@ type convergeJSON struct {
 		State  string `json:"state"`
 		Detail string `json:"detail"`
 	} `json:"stages"`
-	Left []map[string]string `json:"left_for_you"`
+	Left []leftJSON `json:"left_for_you"`
+}
+
+// leftJSON is one left-for-you entry; a list (the commands) reads as its
+// lines joined by newlines.
+type leftJSON map[string]string
+
+func (l *leftJSON) UnmarshalJSON(b []byte) error {
+	var raw map[string]any
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	*l = leftJSON{}
+	for k, v := range raw {
+		if list, ok := v.([]any); ok {
+			var lines []string
+			for _, x := range list {
+				lines = append(lines, fmt.Sprint(x))
+			}
+			(*l)[k] = strings.Join(lines, "\n")
+		} else {
+			(*l)[k] = fmt.Sprint(v)
+		}
+	}
+	return nil
 }
 
 func (c convergeJSON) state(name string) string {

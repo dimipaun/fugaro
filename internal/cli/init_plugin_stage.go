@@ -46,6 +46,11 @@ func (s *pluginStage) Left() initflow.Left {
 	return initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills"}
 }
 
+// forkLeft is the one line that moves a fork's marketplace pin.
+func forkLeft() initflow.Left {
+	return initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills --allow-fork"}
+}
+
 // plan is the read-only merge for the working directory's checkout: the
 // change, or the status that says why there is none.
 func (s *pluginStage) plan(ctx context.Context) (*pluginwire.Change, *initflow.Status, error) {
@@ -97,7 +102,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	var fk *pluginwire.ForkError
 	switch {
 	case errors.As(err, &fk):
-		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftCommand, Text: selfCommand() + " update-skills --allow-fork"}
+		lf := forkLeft()
 		return status(initflow.NeedsYou, fmt.Sprintf("the %q marketplace in %s names %s, not %s: not moved without --allow-fork", pluginwire.Marketplace, loc.Settings, pluginwire.Printable(fk.Repo), pluginwire.Repo), &lf)
 	case errors.As(err, &fe), pluginwire.IsInvalid(err):
 		lf := initflow.Left{Stage: initflow.Plugin, Kind: initflow.LeftConsole, Text: "fix " + loc.Settings + " (or merge the settings by hand: " + selfCommand() + " update-skills prints them), then rerun fugaro init"}
