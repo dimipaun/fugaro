@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // Which skill commands and flags exist is checked by the plugin's lint
@@ -43,6 +44,24 @@ var skillJSONFields = []jsonFieldClaim{
 	{"secrets ls", []secretEntry{}, "[].labels"},
 	{"secrets ls", []secretEntry{}, "[].versions"},
 	{"secrets ls", []secretEntry{}, "[].latest"},
+}
+
+func init() {
+	add := func(cmd string, typ any, paths ...string) {
+		for _, p := range paths {
+			skillJSONFields = append(skillJSONFields, jsonFieldClaim{cmd, typ, p})
+		}
+	}
+	add("run", launchResult{}, "run", "repo", "run_id", "branch", "execution", "log_url", "status")
+	add("ls", lsDoc{}, "project", "runs", "totals", "warnings",
+		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
+		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
+		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at")
+	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "halt", "verify", "failed", "flaky", "findings", "agent_message",
+		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd")
+	add("logs", logLine{}, "time", "severity", "stage", "stream", "event", "message")
+	add("cancel", cancelResult{}, "project", "run", "status", "marker", "hard", "pr")
+	add("watch --once", watch.BuildJSON("p", watch.View{}), "project")
 }
 
 // hasJSONField reports whether the JSON encoding of t has the dotted path.
