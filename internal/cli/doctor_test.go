@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -33,6 +34,10 @@ func newDoctorRig(t *testing.T) *doctorRig {
 		t.Setenv(k, "")
 		os.Unsetenv(k)
 	}
+	// Hermetic: a stand-in terraform (CI has none), no real Claude Code
+	// config, and a fixed binary version.
+	withVersion(t, "0.2.0")
+	doctorFakeTerraform(t, dir)
 	path := isolateProjects(t, dir)
 	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n" +
 		"user: someone@example.com\n" +
@@ -41,6 +46,20 @@ func newDoctorRig(t *testing.T) *doctorRig {
 		t.Fatal(err)
 	}
 	return r
+}
+
+// doctorFakeTerraform makes doctor find a supported terraform, whatever the
+// machine running the tests has installed.
+func doctorFakeTerraform(t *testing.T, dir string) {
+	t.Helper()
+	bin := filepath.Join(dir, "fake-terraform")
+	script := "#!/bin/sh\necho '{\"terraform_version\":\"1.9.0\"}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := doctorLookPath
+	doctorLookPath = func(string) (string, error) { return bin, nil }
+	t.Cleanup(func() { doctorLookPath = old })
 }
 
 // putSecret stores value for secret name of repository slug directly
@@ -223,7 +242,7 @@ func TestDoctorStrictFailsForeignAndUnpinned(t *testing.T) {
 func TestDoctorNotInstalledIsInformational(t *testing.T) {
 	withVersion(t, "0.2.0")
 	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
-	out, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	out, _, err := execute(t, "doctor", "--plugin", "--json", "--dir", root)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -237,6 +256,9 @@ func TestDoctorNotInstalledIsInformational(t *testing.T) {
 	}
 	if !o.OK {
 		t.Fatalf("an informational state failed doctor: %+v", o)
+	}
+	if _, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil {
+		t.Fatalf("--strict: %v", err)
 	}
 }
 
@@ -327,5 +349,95 @@ func TestDoctorNeverPrintsSecretValues(t *testing.T) {
 	}
 	if len(o.Secrets) != 1 || o.Secrets[0].Name != "claude-oauth-token" {
 		t.Fatalf("secrets = %+v", o.Secrets)
+	}
+}
+
+// TestDoctorPluginIsOffline: --plugin never touches the cloud: with a local
+// installation pointing at fakes, not one request reaches them, and no
+// installation or credentials are needed at all.
+func TestDoctorPluginIsOffline(t *testing.T) {
+	r := newDoctorRig(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/nonexistent")
+	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
+	if out, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", root); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := len(r.crm.Requests()) + len(r.billing.Requests()) + len(r.sm.Requests()); n != 0 {
+		t.Fatalf("--plugin made %d cloud calls", n)
+	}
+
+	isolateProjects(t, t.TempDir()) // and no installation configured
+	if out, _, err := execute(t, "doctor", "--plugin", "--dir", root); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// TestDoctorStrictIgnoresInstalledState: a CI runner has no Claude Code
+// install, so the installed state is not evaluated under --plugin --strict
+// (design 4.5), though plain doctor --plugin still reports it.
+func TestDoctorStrictIgnoresInstalledState(t *testing.T) {
+	withVersion(t, "0.2.0")
+	root, _ := skillCheckout(t, wiredAt("v0.2.0"))
+	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
+	if err := os.MkdirAll(filepath.Join(cfg, "plugins"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	rb, _ := json.Marshal(root)
+	installed := `{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"project","projectPath":` + string(rb) + `,"version":"0.1.0"}]}}`
+	if err := os.WriteFile(filepath.Join(cfg, "plugins", "installed_plugins.json"), []byte(installed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, _, _ := execute(t, "doctor", "--plugin", "--json", "--dir", root)
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "plugin-install"); !ok || c.OK || c.Severity != "warning" {
+		t.Fatalf("plain doctor must report the installed state as a warning: %+v", c)
+	}
+	out, _, err := execute(t, "doctor", "--plugin", "--strict", "--json", "--dir", root)
+	if err != nil {
+		t.Fatalf("--strict must not evaluate the installed state: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "plugin-install") {
+		t.Fatalf("--strict evaluated the installed state: %s", out)
+	}
+}
+
+// TestDoctorStrictOutsideCheckoutFails: no checkout means no wiring to
+// vouch for: a warning, so CI mis-pointed at a bare directory fails
+// rather than passing silently.
+func TestDoctorStrictOutsideCheckoutFails(t *testing.T) {
+	withVersion(t, "0.2.0")
+	dir := t.TempDir()
+	if _, _, err := execute(t, "doctor", "--plugin", "--dir", dir); err != nil {
+		t.Fatalf("without --strict: %v", err)
+	}
+	if _, _, err := execute(t, "doctor", "--plugin", "--strict", "--dir", dir); err == nil {
+		t.Fatal("--strict: want a failure outside a checkout")
+	}
+}
+
+// TestDoctorIsDeterministic: the same state prints the same bytes, with
+// several secrets stored, listed sorted by name.
+func TestDoctorIsDeterministic(t *testing.T) {
+	r := newDoctorRig(t)
+	dir := checkoutWith(t, map[string]string{"fugaro.yaml": cliMinimalYAML})
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/app.git")
+	for _, n := range []string{"zeta", "alpha", "mid"} {
+		putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), n, []byte("v-"+n))
+	}
+	first, _, _ := execute(t, "doctor", "--json")
+	for range 3 {
+		if again, _, _ := execute(t, "doctor", "--json"); again != first {
+			t.Fatalf("output differs between runs:\n%s\n---\n%s", first, again)
+		}
+	}
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(first), &o); err != nil {
+		t.Fatal(err)
+	}
+	if len(o.Secrets) != 3 || o.Secrets[0].Name != "alpha" || o.Secrets[2].Name != "zeta" {
+		t.Fatalf("secrets not sorted by name: %+v", o.Secrets)
 	}
 }

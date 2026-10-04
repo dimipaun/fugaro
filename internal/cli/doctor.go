@@ -72,6 +72,10 @@ type doctorOutput struct {
 	Plugin  pluginwire.Report `json:"plugin"`
 }
 
+// doctorLookPath finds executables for doctor's checks; a package variable so
+// tests never depend on what the machine running them has installed.
+var doctorLookPath = exec.LookPath
+
 func newDoctorCmd() *cobra.Command {
 	var (
 		cloud  cloudOptions
@@ -116,10 +120,23 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	ctx := cmd.Context()
 
 	var pluginReport pluginwire.Report
+	var pluginChecks []doctorCheck
 	if loc, ok := pluginwire.Locate(dir); ok {
 		pluginReport = pluginwire.Status(loc.Settings, Version, installedPlugins())
+		if pluginOnly && strict {
+			// CI mode: a runner has no Claude Code install, so "installed
+			// differs", "not installed" are not evaluated (design §4.5).
+			pluginReport.Install, pluginReport.Version = "", ""
+		}
+		pluginChecks = pluginDoctorChecks(pluginReport)
+	} else {
+		// Not inside a checkout there is no wiring to find: a warning (so
+		// --strict fails, as update-skills --check does), never silence.
+		pluginChecks = []doctorCheck{{ID: "plugin-pin", Severity: "warning",
+			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
+			Fix:     "run doctor inside the repository, or pass --dir"}}
 	}
-	o := doctorOutput{Plugin: pluginReport, Checks: pluginDoctorChecks(pluginReport)}
+	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks}
 
 	if pluginOnly {
 		o.OK = !checksFail(o.Checks, strict)
@@ -145,7 +162,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
-	_, tf := preflight.Terraform(exec.LookPath)
+	_, tf := preflight.Terraform(doctorLookPath)
 	o.Checks = append(o.Checks, fromPreflight(tf))
 	// preflight.Docker is deliberately not run here: it is only meaningful
 	// with needed=true (a local base-image build is actually pending), and
@@ -318,7 +335,11 @@ func printDoctorChecks(w io.Writer, checks []doctorCheck) {
 			continue
 		}
 		failed = true
-		line := c.ID + ": " + c.Problem
+		line := c.ID + ": "
+		if c.Severity != "" {
+			line = c.Severity + " " + line
+		}
+		line += c.Problem
 		if c.Fix != "" {
 			line += " (" + c.Fix + ")"
 		}
