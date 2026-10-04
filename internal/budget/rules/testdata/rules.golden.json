@@ -125,6 +125,10 @@
                   ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
                   ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
                 },
+                "notionalMicros": {
+                  ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
+                  ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= root.child('config/limits/maxReserveMicros').val()"
+                },
                 "in": {
                   ".write": "(auth != null && auth.token.fp != null && auth.token.fp == root.child('fugaro/project').val() && auth.token.fx > now) && auth.token.fs == $slug && ($day == ('' + ((now - now % 86400000) / 86400000)) || $day == ('' + ((now - now % 86400000) / 86400000 - 1))) && newData.exists()",
                   ".validate": "(newData.isNumber() && newData.val() >= 0 && newData.val() <= 10000000000000 && newData.val() % 1 == 0) && newData.val() >= (data.exists() ? data.val() : 0) && newData.val() - (data.exists() ? data.val() : 0) <= 1000000000"

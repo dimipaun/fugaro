@@ -42,7 +42,7 @@ func TestBuildGroupsByRepo(t *testing.T) {
 	 "acme%2Fapp":{"r2":`+agent("acme/app", "second", `,"auth":"api-key","spent":2000000`)+`,"r1":`+agent("acme/app", "first", `,"coder":"opus","reviewer":"sonnet","round":2,"stage":"coding","verify":"tests"`)+`},
 	 "lib":{"x":`+agent("lib", "t", "")+`}}`, t0)
 	put(t, s, SrcRepos, "/", `{"acme%2Fapp":{"counted":3000000,"spent":2000000},"lib":{"spent":500000}}`, t0)
-	put(t, s, SrcGlobal, "/", `{"counted":4000000,"spent":2500000,"notional":100}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":3000000,"spent":2500000}`, t0)
 	put(t, s, SrcConfig, "/", `{"mode":"enforce","caps":{"global":{"dailyMicros":10000000},"defaults":{"repoDailyMicros":6000000},"repos":{"lib":{"dailyMicros":1000000}}}}`, t0)
 	v := Build(s, t0, Config{})
 	if v.Mode != "enforce" || v.Day != "2026-10-03" {
@@ -66,11 +66,40 @@ func TestBuildGroupsByRepo(t *testing.T) {
 		t.Fatalf("lib bar %+v", lib.Bar)
 	}
 	p := v.Project
-	if p.Runs != 3 || p.Counted != 4*usd || p.Bar.Cap != 10*usd {
+	if p.Runs != 3 || p.Counted != 3*usd || p.Bar.Cap != 10*usd {
 		t.Fatalf("project %+v", p)
 	}
 	if p.RunHours < 0.49 || p.RunHours > 0.51 { // 3 runs * 10 min
 		t.Fatalf("run hours %v", p.RunHours)
+	}
+}
+
+// TestRepoNameFromConfig: a slug that isn't a readable "owner/name" once
+// decoded (long repositories are hashed into a short slug, design §3.2) must
+// show the project's own repo name, as `fugaro budget show` does, not the
+// opaque slug; a repo the config doesn't name falls back to the slug.
+func TestRepoNameFromConfig(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"dimipaun-fugaro-a6023ed":{"a":`+agent("evil-free-text", "t", "")+`},"other-slug":{"b":`+agent("x", "t", "")+`}}`, t0)
+	v := Build(s, t0, Config{Names: map[string]string{"dimipaun-fugaro-a6023ed": "dimipaun/fugaro"}})
+	var named, unnamed *RepoBlock
+	for i := range v.Repos {
+		switch v.Repos[i].Slug {
+		case "dimipaun-fugaro-a6023ed":
+			named = &v.Repos[i]
+		case "other-slug":
+			unnamed = &v.Repos[i]
+		}
+	}
+	if named == nil || named.Name != "dimipaun/fugaro" {
+		t.Fatalf("named repo = %+v, want dimipaun/fugaro", named)
+	}
+	if unnamed == nil || unnamed.Name != "other-slug" {
+		t.Fatalf("unnamed repo = %+v, want the slug as a fallback", unnamed)
+	}
+	// The job-written registry repo field is never trusted as a name.
+	if named.Name == "evil-free-text" || unnamed.Name == "x" {
+		t.Fatalf("the agent's own repo field must never name a block: %+v %+v", named, unnamed)
 	}
 }
 
@@ -106,6 +135,45 @@ func TestNotionalNeverInCapBar(t *testing.T) {
 	}
 	if r := v.Repos[0].Runs[0]; !r.Notional || r.Spent != 9*usd {
 		t.Fatalf("oauth run %+v", r)
+	}
+}
+
+// TestOtherRowReconciles: the project's counter and each repository's are
+// separate RTDB nodes (design §6.2), written together but read as two
+// independent streams. A repository the view never learned to attribute
+// (one whose own node a run's spend never reached, was pruned, or hasn't
+// streamed in) must not make the total look unexplained: an "other" row
+// carries the remainder, so the visible rows always add up to the total.
+func TestOtherRowReconciles(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"lib":{"a":`+agent("lib", "t", "")+`}}`, t0)
+	put(t, s, SrcRepos, "/", `{"lib":{"counted":1000000,"spent":1000000,"notional":200000}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"counted":1560000,"spent":1000000,"notional":756000}`, t0)
+	v := Build(s, t0, Config{})
+	if len(v.Repos) != 2 {
+		t.Fatalf("repos %+v", v.Repos)
+	}
+	var other *RepoBlock
+	for i := range v.Repos {
+		if v.Repos[i].Slug == "" {
+			other = &v.Repos[i]
+		}
+	}
+	if other == nil {
+		t.Fatal("no other row for the unattributed remainder")
+	}
+	if other.Counted != 560_000 || other.Spent != 0 || other.Notional != 556_000 {
+		t.Fatalf("other row = %+v, want the project minus lib's share", other)
+	}
+	// Nothing to reconcile: no other row at all.
+	s2 := newState(t)
+	put(t, s2, SrcRepos, "/", `{"lib":{"counted":1000000,"spent":1000000}}`, t0)
+	put(t, s2, SrcGlobal, "/", `{"counted":1000000,"spent":1000000}`, t0)
+	v2 := Build(s2, t0, Config{})
+	for _, r := range v2.Repos {
+		if r.Slug == "" {
+			t.Fatalf("spurious other row: %+v", r)
+		}
 	}
 }
 
@@ -166,6 +234,7 @@ func TestBurnWindow(t *testing.T) {
 func TestBurnFast(t *testing.T) {
 	s := newState(t)
 	put(t, s, SrcConfig, "/", `{"caps":{"global":{"dailyMicros":80000000}}}`, t0) // $10/h default alert
+	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`}}`, t0)
 	spend(t, s, t0, 0)
 	spend(t, s, t0.Add(2*time.Minute), 4_000_000) // $2/min = $120/h
 	v := Build(s, t0.Add(2*time.Minute), Config{})
@@ -178,6 +247,7 @@ func TestBurnFast(t *testing.T) {
 	}
 	// No cap, no alert: never fast.
 	s2 := newState(t)
+	put(t, s2, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`}}`, t0)
 	spend(t, s2, t0, 0)
 	spend(t, s2, t0.Add(2*time.Minute), 4_000_000)
 	if Build(s2, t0.Add(2*time.Minute), Config{}).Project.Burn.Fast {
@@ -455,6 +525,38 @@ func TestCleanDropsInvisibles(t *testing.T) {
 	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "ti\ttle", "")+`}}`, t0)
 	if got := Build(s, t0, Config{}).Repos[0].Runs[0].Title; got != "title" {
 		t.Fatalf("title %q", got)
+	}
+}
+
+// TestBurnHiddenWithNoLiveRuns: a rolling window still has a positive slope
+// for a while after every run of a repository (or the project) stops - a
+// trailing value decaying toward zero, not a burn rate - and must not be
+// shown once nothing is running.
+func TestBurnHiddenWithNoLiveRuns(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"r":{"a":`+agent("r", "t", "")+`}}`, t0)
+	put(t, s, SrcRepos, "/", `{"r":{"spent":0}}`, t0)
+	put(t, s, SrcGlobal, "/", `{"spent":0}`, t0)
+	at := t0.Add(2 * time.Minute)
+	put(t, s, SrcRepos, "/", `{"r":{"spent":4000000}}`, at)
+	put(t, s, SrcGlobal, "/", `{"spent":4000000}`, at)
+	live := Build(s, at, Config{})
+	if !live.Project.Burn.Known || !live.Repos[0].Burn.Known {
+		t.Fatalf("burn must be known while a run is live: project %+v repo %+v", live.Project.Burn, live.Repos[0].Burn)
+	}
+
+	// The run ends (a kill, or it finishes): the registry entry goes away,
+	// but the window still spans the spend that happened a moment ago.
+	put(t, s, SrcAgents, "/", `{}`, at)
+	v := Build(s, at, Config{})
+	if v.Project.Runs != 0 || len(v.Repos[0].Runs) != 0 {
+		t.Fatalf("no runs must be live: project %+v repo %+v", v.Project, v.Repos[0])
+	}
+	if v.Project.Burn.Known {
+		t.Fatalf("project burn must hide once no run is live: %+v", v.Project.Burn)
+	}
+	if v.Repos[0].Burn.Known {
+		t.Fatalf("repo burn must hide once no run is live: %+v", v.Repos[0].Burn)
 	}
 }
 

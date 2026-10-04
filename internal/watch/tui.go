@@ -183,7 +183,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.rebuild()
-		return m, nil
+		// A resize can shrink the frame (fewer lines, narrower columns); the
+		// renderer only diffs against the previous frame, so a full repaint
+		// is needed or a stale line (the footer's help text, typically)
+		// keeps showing past the end of the new, shorter frame.
+		return m, tea.ClearScreen
 	case actionDoneMsg:
 		m.flow.Done()
 		m.notice = msg.out.Notice

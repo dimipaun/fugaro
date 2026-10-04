@@ -101,6 +101,10 @@
                   ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
                   ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
                 },
+                "notionalMicros": {
+                  ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
+                  ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= MAXRES"
+                },
                 "in": {
                   ".write": "TOKEN && auth.token.fs == $slug && DAYOK && newData.exists()",
                   ".validate": "AMOUNT && NEW >= OLD && NEW - OLD <= {{.MaxTokensPerWrite}}"

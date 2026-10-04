@@ -195,7 +195,7 @@ func TestWritesOnlyAtNumericLeaves(t *testing.T) {
 			}
 			leaf := path[len(path)-1]
 			isLeaf := map[string]bool{"reserved": true, "released": true, "spent": true, "notional": true, "overrun": true, "tokens": true,
-				"exp": true, "counted": true, "calls": true, "micros": true, "in": true, "out": true, "cr": true, "cw": true}[leaf]
+				"exp": true, "counted": true, "calls": true, "micros": true, "notionalMicros": true, "in": true, "out": true, "cr": true, "cw": true}[leaf]
 			if has && !isLeaf {
 				t.Errorf("%s has a .write above a leaf: %v", where, w)
 			}

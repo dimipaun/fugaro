@@ -668,7 +668,7 @@ func TestOAuthReportsNotional(t *testing.T) {
 	}
 	defer s.Finish(context.Background(), "succeeded")
 	d := today()
-	err := s.AddNotional(context.Background(), 1_250_000, map[string]budget.ModelUse{"claude-sonnet-5-5": {Micros: 1_000_000, In: 100, Out: 50, CR: 7, CW: 3}})
+	err := s.AddNotional(context.Background(), 1_250_000, map[string]budget.ModelUse{"claude-sonnet-5-5": {NotionalMicros: 1_000_000, In: 100, Out: 50, CR: 7, CW: 3}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -680,6 +680,14 @@ func TestOAuthReportsNotional(t *testing.T) {
 	}
 	if got := f.num(budget.PathByModel(d, slug, "claude-sonnet-5-5") + "/in"); got != 100 {
 		t.Fatalf("byModel in = %d", got)
+	}
+	// A model's notional dollars have their own leaf: MODEL $ (byModel's
+	// "micros") must never pick up a subscription's list-price figure.
+	if got := f.num(budget.PathByModel(d, slug, "claude-sonnet-5-5") + "/notionalMicros"); got != 1_000_000 {
+		t.Fatalf("byModel notionalMicros = %d", got)
+	}
+	if got := f.num(budget.PathByModel(d, slug, "claude-sonnet-5-5") + "/micros"); got != 0 {
+		t.Fatalf("byModel micros must stay 0 for an oauth run, got %d", got)
 	}
 	// A notional figure is never a lease: nothing is counted.
 	if f.repo(d, "counted") != 0 || f.global(d, "counted") != 0 || f.run("reserved") != 0 {

@@ -62,7 +62,7 @@ var watchStdoutTTY = isTTY
 var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	// Who a kill is recorded as, asked before the screen takes the terminal.
 	// A failure must not block the screen: the identity then reads "unknown".
-	by, err := d.LC.Me(ctx)
+	by, err := actorIdentity(ctx, d.LC, d.DB)
 	if err != nil || by == "" {
 		by = "unknown"
 	}
@@ -156,7 +156,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		repoKey = budget.Key(slug)
 	}
 	d := &WatchDeps{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), Err: cmd.ErrOrStderr(), LC: lc, DB: db,
-		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert()}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
+		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), Names: lc.RepoNames()}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
 
 	if o.once {
 		return watchOnce(ctx, d, o)

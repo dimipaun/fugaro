@@ -186,6 +186,8 @@ func Build(recs []Rec, d Dim) Report {
 				a := get(k, "")
 				a.row.Key = Text(unkey(k))
 				a.row.Spent = satAdd(a.row.Spent, m.Micros)
+				a.row.Notional = satAdd(a.row.Notional, m.NotionalMicros)
+				a.row.NotionalTracked = true
 				a.row.In, a.row.Out = satN(a.row.In, m.In), satN(a.row.Out, m.Out)
 				a.row.CR, a.row.CW = satN(a.row.CR, m.CR), satN(a.row.CW, m.CW)
 				a.row.TokensTracked = true
@@ -224,7 +226,7 @@ func Build(recs []Rec, d Dim) Report {
 		})
 	}
 	// Totals: the sum of the rows, by the same rules.
-	tot.row = Row{Key: "TOTAL", NotionalTracked: d != ByModel, TokensTracked: d == ByModel}
+	tot.row = Row{Key: "TOTAL", NotionalTracked: true, TokensTracked: d == ByModel}
 	tot.row.ComputeState = ComputeNotEstimated
 	if d == ByModel || d == ByPerson {
 		tot.row.ComputeState = ComputeNotTracked

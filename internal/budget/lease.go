@@ -315,7 +315,7 @@ func (s *Session) AddNotional(ctx context.Context, notional Micros, byModel map[
 	for m, u := range byModel {
 		k := modelName(m)
 		c := s.pend.nby[k]
-		c.Micros, c.In, c.Out, c.CR, c.CW = add(c.Micros, u.Micros), c.In+u.In, c.Out+u.Out, c.CR+u.CR, c.CW+u.CW
+		c.NotionalMicros, c.In, c.Out, c.CR, c.CW = add(c.NotionalMicros, u.NotionalMicros), c.In+u.In, c.Out+u.Out, c.CR+u.CR, c.CW+u.CW
 		s.pend.nby[k] = c
 	}
 	s.mu.Unlock()
@@ -489,11 +489,11 @@ func (s *Session) plan(ctx context.Context) (upd map[string]any, took pending, m
 		}
 		for m, u := range p.nby {
 			cur := c.repo.ByModel[Key(m)]
-			n := ModelUse{Micros: min(u.Micros, maxRes), In: min(u.In, maxTokensPerWrite), Out: min(u.Out, maxTokensPerWrite),
+			n := ModelUse{NotionalMicros: min(u.NotionalMicros, maxRes), In: min(u.In, maxTokensPerWrite), Out: min(u.Out, maxTokensPerWrite),
 				CR: min(u.CR, maxTokensPerWrite), CW: min(u.CW, maxTokensPerWrite)}
 			base := PathByModel(today, slug, m)
-			if n.Micros > 0 {
-				upd[base+"/micros"] = add(cur.Micros, n.Micros)
+			if n.NotionalMicros > 0 {
+				upd[base+"/notionalMicros"] = add(cur.NotionalMicros, n.NotionalMicros)
 			}
 			if n.In > 0 {
 				upd[base+"/in"] = cur.In + n.In
@@ -530,7 +530,7 @@ func (s *Session) commit(took pending) {
 	}
 	for m, u := range took.nby {
 		c := p.nby[m]
-		c.Micros, c.In, c.Out, c.CR, c.CW = c.Micros-u.Micros, c.In-u.In, c.Out-u.Out, c.CR-u.CR, c.CW-u.CW
+		c.NotionalMicros, c.In, c.Out, c.CR, c.CW = c.NotionalMicros-u.NotionalMicros, c.In-u.In, c.Out-u.Out, c.CR-u.CR, c.CW-u.CW
 		if c == (ModelUse{}) {
 			delete(p.nby, m)
 		} else {

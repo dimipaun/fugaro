@@ -382,6 +382,23 @@ func TestWindowResizeAndTooNarrow(t *testing.T) {
 	}
 }
 
+// TestResizeForcesFullRepaint: the renderer only diffs against the previous
+// frame, so a resize that shrinks the frame (e.g. a shorter footer) must
+// force a full repaint (tea.ClearScreen) or a stale line from the larger
+// frame (the footer's help text, typically) keeps showing past the end of
+// the new one.
+func TestResizeForcesFullRepaint(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	_, cmd := x.m.Update(tea.WindowSizeMsg{Width: 90, Height: 25})
+	if cmd == nil {
+		t.Fatal("a resize must return a command that clears the screen")
+	}
+	if cmd() != tea.ClearScreen() {
+		t.Fatalf("resize command = %#v, want tea.ClearScreen()", cmd())
+	}
+}
+
 func TestRepoNarrowing(t *testing.T) {
 	x := newTM(t)
 	x.m.o.RepoKey, x.m.o.Repo = "acme%2Flib", "acme/lib"

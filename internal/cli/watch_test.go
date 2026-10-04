@@ -21,7 +21,7 @@ func seedWatch(f *budgetFixture, title string) {
 	d := today()
 	now := time.Now().UnixMilli()
 	f.db.Set(budget.PathSpendGlobal(d), map[string]any{"counted": 30 * usd1, "spent": 12 * usd1, "notional": 3 * usd1})
-	f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": 25 * usd1, "spent": 10 * usd1, "notional": 3 * usd1})
+	f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": 30 * usd1, "spent": 12 * usd1, "notional": 3 * usd1})
 	f.db.Set(budget.PathAgent(appSlug, "20261002-090000-aaaa"), map[string]any{
 		"repo": "acme/app", "title": title, "stage": "code", "round": 2, "auth": "api_key", "spent": 4 * usd1,
 		"startedAt": now - 600_000, "updatedAt": now, "requestedBy": "someone@example.com"})
@@ -91,7 +91,7 @@ func TestWatchPlainNoEscapes(t *testing.T) {
 			t.Fatalf("a control reached the output: %q", s)
 		}
 	}
-	for _, want := range []string{"project aurora", "the bug", "NOTIONAL", "counted $30.00 of $100.00", "counted $25.00, no cap", "20261002-090000-aaaa"} {
+	for _, want := range []string{"project aurora", "the bug", "NOTIONAL", "counted $30.00 of $100.00", "counted $30.00, no cap", "20261002-090000-aaaa"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("plain frame lacks %q:\n%s", want, out)
 		}

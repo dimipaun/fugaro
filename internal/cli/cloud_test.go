@@ -3,18 +3,22 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"gocloud.dev/blob/memblob"
+	"golang.org/x/oauth2"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -226,6 +230,74 @@ func TestCloudPricesFollowTheRegion(t *testing.T) {
 		}
 		env.Close()
 	}
+}
+
+// TestActorIdentity: a kill or resume's actor prefers the local config's
+// user, then the Google account the budget database connection is
+// authenticated as, and only then git config user.email (bug: it used to
+// read git config even when a budget database connection already proved a
+// Google account, which a scratch checkout's git config may not name at
+// all, or may misname).
+func TestActorIdentity(t *testing.T) {
+	testutil.IsolateGit(t)
+	t.Setenv("GIT_CONFIG_GLOBAL", filepath.Join(t.TempDir(), "gitconfig"))
+	testutil.Git(t, "", "config", "--global", "user.email", "git@example.com")
+	ctx := context.Background()
+
+	googleDB := func(t *testing.T, email string, status int) *rtdb.Client {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if status != http.StatusOK {
+				w.WriteHeader(status)
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]string{"email": email})
+		}))
+		t.Cleanup(srv.Close)
+		src := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: "t"})
+		db, err := rtdb.New("https://db.example.com", rtdb.Auth{Source: src}, rtdb.WithTokenInfoURL(srv.URL))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return db
+	}
+
+	t.Run("local config user wins", func(t *testing.T) {
+		lc := &localcfg.Config{User: "configured@example.com"}
+		db := googleDB(t, "google@example.com", http.StatusOK)
+		if me, err := actorIdentity(ctx, lc, db); err != nil || me != "configured@example.com" {
+			t.Fatalf("me = %q, %v", me, err)
+		}
+	})
+	t.Run("the authenticated Google account, before git config", func(t *testing.T) {
+		lc := &localcfg.Config{}
+		db := googleDB(t, "google@example.com", http.StatusOK)
+		if me, err := actorIdentity(ctx, lc, db); err != nil || me != "google@example.com" {
+			t.Fatalf("me = %q, %v, want the Google account over git config", me, err)
+		}
+	})
+	t.Run("git config, when nothing else names an identity", func(t *testing.T) {
+		lc := &localcfg.Config{}
+		db := googleDB(t, "", http.StatusForbidden) // a refused token, or no account email
+		if me, err := actorIdentity(ctx, lc, db); err != nil || me != "git@example.com" {
+			t.Fatalf("me = %q, %v", me, err)
+		}
+	})
+	t.Run("a run's ID-token client has no account to ask: falls through to git", func(t *testing.T) {
+		lc := &localcfg.Config{}
+		db := idAuthClient(t)
+		if me, err := actorIdentity(ctx, lc, db); err != nil || me != "git@example.com" {
+			t.Fatalf("me = %q, %v", me, err)
+		}
+	})
+}
+
+func idAuthClient(t *testing.T) *rtdb.Client {
+	t.Helper()
+	db, err := rtdb.New("https://db.example.com", rtdb.Auth{IDToken: func() string { return "idtok" }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return db
 }
 
 // "." and ".." are no slug: path.Join would take them out of runs/.

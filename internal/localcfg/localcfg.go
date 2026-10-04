@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 )
 
@@ -104,6 +105,23 @@ func (c *Config) BurnAlert() *pricing.Micros {
 		return nil // validate refused it
 	}
 	return &m
+}
+
+// RepoNames maps each configured repository's RTDB slug key (budget.Key of
+// its slug) to its owner/name, the readable form fugaro budget show prints.
+// A repository with no provider, or whose slug cannot be computed, is left
+// out: the caller falls back to the slug itself.
+func (c *Config) RepoNames() map[string]string {
+	out := map[string]string{}
+	for name, r := range c.Repos {
+		if r.Provider == "" {
+			continue
+		}
+		if s, err := task.Slug(r.Provider, name); err == nil {
+			out[budget.Key(s)] = name
+		}
+	}
+	return out
 }
 
 // Budget modes.
@@ -851,6 +869,16 @@ func (c *Config) Me(ctx context.Context) (string, error) {
 	if c.User != "" {
 		return c.User, nil
 	}
+	return c.GitUserEmail(ctx)
+}
+
+// GitUserEmail is the checkout's git config user.email: the last resort of
+// Me, and of identities recorded outside a run (budget kill/resume, a watch
+// kill), which ask first for the local config's user, then the Google
+// account a cloud command is authenticated as (see rtdb.Client.CallerEmail),
+// and only then this: a scratch checkout's git identity names whoever set up
+// the checkout, not necessarily the person typing the command.
+func (c *Config) GitUserEmail(ctx context.Context) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "config", "user.email")
 	cmd.WaitDelay = 5 * time.Second
 	out, err := cmd.Output()

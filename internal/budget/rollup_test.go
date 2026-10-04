@@ -155,6 +155,42 @@ func TestOauthIsNotionalOnly(t *testing.T) {
 	}
 }
 
+// TestByModelNotionalReconciles: a model's notional dollars are a re-derived
+// estimate (the owner's price table against the run's own token counts),
+// independent of the repository's own total (the subscription's own
+// reported figure); unlike billed model dollars, which share the gateway's
+// own ledger with the total, the two are not guaranteed to agree. Whatever
+// the breakdown falls short of explaining goes to "unknown", so byModel's
+// notional always sums to the repository's own (as byPerson already does).
+func TestByModelNotionalReconciles(t *testing.T) {
+	in := RollupInput{
+		Day: day,
+		Repos: map[string]RepoDay{"a-1": {Counters: Counters{Notional: 900, Calls: 1, ByModel: map[string]ModelUse{
+			Key("claude-sonnet-5"): {NotionalMicros: 700, In: 10}}}}},
+		Shares: map[string]map[string]RunLedger{"a-1": {"r1": {Notional: 900}}},
+		Runs:   []RunFact{{Slug: "a-1", Run: "r1", StartDay: day, RequestedBy: "ann@x.io"}},
+	}
+	r := Rollup(in)[0]
+	if got := r.ByModel[Key("claude-sonnet-5")].NotionalMicros; got != 700 {
+		t.Fatalf("claude-sonnet-5 notional = %d, want 700 unchanged", got)
+	}
+	if got := r.ByModel[UnknownModel].NotionalMicros; got != 200 {
+		t.Fatalf("unknown model notional = %d, want the 200 the breakdown didn't explain", got)
+	}
+	var sum Micros
+	for _, m := range r.ByModel {
+		sum += m.NotionalMicros
+	}
+	if sum != r.NotionalMicros {
+		t.Fatalf("byModel notional sums to %d, want the repository's %d", sum, r.NotionalMicros)
+	}
+	// Billed model dollars are untouched: no gap here, no "unknown" bucket
+	// gains a Micros share.
+	if r.ByModel[UnknownModel].Micros != 0 {
+		t.Fatalf("billed dollars must not be reconciled the same way: %+v", r.ByModel[UnknownModel])
+	}
+}
+
 func TestComputeNotEstimatedIsNA(t *testing.T) {
 	in := baseInput()
 	in.Runs = in.Runs[1:] // r2 and r3 are not estimated

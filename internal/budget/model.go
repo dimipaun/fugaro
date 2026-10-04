@@ -268,13 +268,19 @@ func (l RunLedger) Outstanding() Micros { return l.Reserved - l.Released }
 // less spent; a release may take at most this.
 func (l RunLedger) Unsettled() Micros { return l.Reserved - l.Released - l.Spent }
 
-// ModelUse is one model's usage under a repository's day counter.
+// ModelUse is one model's usage under a repository's day counter. Micros is
+// model dollars actually billed (the gateway's own settled spend, api-key or
+// vertex); NotionalMicros is an oauth run's own estimate of its share of the
+// subscription's list-price figure, re-derived from the price table and
+// never billed. The two are never added: a report's MODEL $ column is Micros
+// only, and NotionalMicros feeds NOTIONAL~.
 type ModelUse struct {
-	Micros Micros `json:"micros"`
-	In     int64  `json:"in"`
-	Out    int64  `json:"out"`
-	CR     int64  `json:"cr"`
-	CW     int64  `json:"cw"`
+	Micros         Micros `json:"micros"`
+	NotionalMicros Micros `json:"notionalMicros,omitempty"`
+	In             int64  `json:"in"`
+	Out            int64  `json:"out"`
+	CR             int64  `json:"cr"`
+	CW             int64  `json:"cw"`
 }
 
 // Counters is /spend/<day>/global or /spend/<day>/repos/<slug>. Counted is

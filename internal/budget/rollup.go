@@ -17,6 +17,11 @@ const DayRecordVersion = 1
 // UnknownPerson is the byPerson key of spend with no known requester.
 const UnknownPerson = "unknown"
 
+// UnknownModel is the byModel key of notional dollars a repository's own
+// total has that no model's own figure explains (modelName's own fallback,
+// lease.go, for an empty or oversized model name, agrees with this name).
+const UnknownModel = "unknown"
+
 // maxPersonBytes clips a requester address before it becomes a map key.
 const maxPersonBytes = 200
 
@@ -68,10 +73,13 @@ type RollupInput struct {
 	Runs     []RunFact
 }
 
-// ModelTotals is one model's usage in a DayRecord.
+// ModelTotals is one model's usage in a DayRecord. Micros is model dollars
+// actually billed; NotionalMicros is an oauth run's own re-derived estimate
+// of its share of the subscription's list-price figure. The two are never
+// summed: see the package doc.
 type ModelTotals struct {
-	Micros          Micros
-	In, Out, CR, CW int64
+	Micros, NotionalMicros Micros
+	In, Out, CR, CW        int64
 }
 
 // PersonTotals is one requester's spend in a DayRecord.
@@ -255,6 +263,7 @@ func Rollup(in RollupInput) []DayRecord {
 			key := Key(name)
 			t := r.ByModel[key]
 			t.Micros = satAdd(t.Micros, u.Micros)
+			t.NotionalMicros = satAdd(t.NotionalMicros, u.NotionalMicros)
 			t.In, t.Out = satAddN(t.In, u.In), satAddN(t.Out, u.Out)
 			t.CR, t.CW = satAddN(t.CR, u.CR), satAddN(t.CW, u.CW)
 			r.ByModel[key] = t
@@ -384,6 +393,22 @@ func Rollup(in RollupInput) []DayRecord {
 			t.NotionalMicros = satAdd(t.NotionalMicros, d)
 			r.ByPerson[UnknownPerson] = t
 		}
+		// A model's notional dollars are a re-derived estimate (the owner's
+		// price table against the run's own token counts), independent of
+		// the repository's own total (the subscription's own reported
+		// figure); unlike billed model dollars, which come from the same
+		// gateway ledger as the total, they are not guaranteed to agree.
+		// Whatever the per-model breakdown falls short of explaining goes to
+		// "unknown", so byModel's notional always sums to the repository's.
+		var modelNotional Micros
+		for _, t := range r.ByModel {
+			modelNotional = satAdd(modelNotional, t.NotionalMicros)
+		}
+		if d := r.NotionalMicros - modelNotional; d > 0 {
+			t := r.ByModel[UnknownModel]
+			t.NotionalMicros = satAdd(t.NotionalMicros, d)
+			r.ByModel[UnknownModel] = t
+		}
 		if !r.active() {
 			continue
 		}
@@ -421,7 +446,7 @@ func contains(s []string, v string) bool {
 func (r DayRecord) ToFields() map[string]any {
 	models := map[string]any{}
 	for k, m := range r.ByModel {
-		models[k] = map[string]any{"micros": int64(m.Micros), "in": m.In, "out": m.Out, "cr": m.CR, "cw": m.CW}
+		models[k] = map[string]any{"micros": int64(m.Micros), "notionalMicros": int64(m.NotionalMicros), "in": m.In, "out": m.Out, "cr": m.CR, "cw": m.CW}
 	}
 	people := map[string]any{}
 	for k, p := range r.ByPerson {
@@ -557,7 +582,8 @@ func FromFields(f map[string]any) (DayRecord, error) {
 	}
 	for k := range fr.sub(f, "byModel") {
 		m := fr.sub(fr.sub(f, "byModel"), k)
-		r.ByModel[k] = ModelTotals{Micros: Micros(fr.int(m, "micros")), In: fr.int(m, "in"), Out: fr.int(m, "out"), CR: fr.int(m, "cr"), CW: fr.int(m, "cw")}
+		r.ByModel[k] = ModelTotals{Micros: Micros(fr.int(m, "micros")), NotionalMicros: Micros(fr.int(m, "notionalMicros")),
+			In: fr.int(m, "in"), Out: fr.int(m, "out"), CR: fr.int(m, "cr"), CW: fr.int(m, "cw")}
 	}
 	for k := range fr.sub(f, "byPerson") {
 		p := fr.sub(fr.sub(f, "byPerson"), k)

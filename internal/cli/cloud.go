@@ -233,6 +233,27 @@ func newBudgetClient(ctx context.Context, url string, noAuth bool) (*rtdb.Client
 	return db, nil
 }
 
+// actorIdentity is who a kill or resume is recorded as: the project's own
+// user, else the Google account db is authenticated as (its ADC token, the
+// same credential the Viewer or admin role was checked against), else git
+// config user.email. Unlike requested_by at launch (lc.Me, used from a job
+// environment that may have no Google credential at all), this runs at a
+// terminal with a budget database connection already open, so the account
+// that connection proves is a better default than whatever a checkout's git
+// config happens to name (a scratch clone, or someone else's identity left
+// over in it).
+func actorIdentity(ctx context.Context, lc *localcfg.Config, db *rtdb.Client) (string, error) {
+	if lc.User != "" {
+		return lc.User, nil
+	}
+	if db != nil {
+		if email, err := db.CallerEmail(ctx); err == nil && email != "" {
+			return email, nil
+		}
+	}
+	return lc.GitUserEmail(ctx)
+}
+
 // locateRun resolves "<slug>/<run-id>" or a bare run ID to a run in the
 // bucket. A malformed reference, an unknown run or an ambiguous bare ID is
 // a user error; anything else is remote.

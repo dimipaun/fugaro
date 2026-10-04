@@ -768,6 +768,8 @@ These estimates assume 20 repositories, about 100 runs a day of about 45 minutes
 
 Caps must be finite, non-negative and at most $100,000, and a per-run cap can't exceed the daily cap in the same scope. An admin is someone Terraform granted `roles/firebasedatabase.admin` on the FP (§6.1): the GCP project's owners and editors, plus `terraform.budget_admins`.
 
+- **The actor a kill or resume records** (`by`, in `budget kill`/`resume` and `watch`'s kill keys): the project's own `user` (the local config), else the Google account the budget database connection is authenticated as (its ADC token's `userinfo.email`, the same credential the Viewer or admin role was checked against; `rtdb.Client.CallerEmail`), and only then git config `user.email`. This differs from `requested_by` at launch (`lc.Me`, §2.4), which has no database connection to ask and stops at git config: a kill is typed by a person at a terminal with the database already open, so the account that connection proves is a better default than a checkout's git config, which may name a different Google account, or none at all (a scratch clone).
+
 ## 9. History and `fugaro report`
 
 **Built in M9d** (plan: [2026-10-03-m9d-history-and-report.md](../plans/2026-10-03-m9d-history-and-report.md); v1.md §6.1 and §9.1 describe the behaviour). Unverified against the real services until check 23 in [gcp-live-checklist.md](../gcp-live-checklist.md) is run.

@@ -166,6 +166,40 @@ func TestShowSaysModeIsUnset(t *testing.T) {
 	}
 }
 
+// TestShowWarnsWithDollarsOfUnlistedRepos: by default, show scopes its repo
+// rows to this project config's own repos; a repository with spend that
+// isn't in the config still counts toward the project total. The warning
+// about it must say how much, so the total above and the rows below don't
+// look like they silently disagree.
+func TestShowWarnsWithDollarsOfUnlistedRepos(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	d := today()
+	f.db.Set(budget.PathSpendGlobal(d), map[string]any{"counted": 30 * usd1, "spent": 12 * usd1, "notional": 3 * usd1})
+	f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": 25 * usd1, "spent": 10 * usd1})
+	f.db.Set(budget.PathSpendRepo(d, "unlisted-repo"), map[string]any{"counted": 5 * usd1, "spent": 2 * usd1, "notional": 3 * usd1})
+
+	out, _, err := execute(t, "budget", "show")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1 more repositories") || !strings.Contains(out, "--all lists them") {
+		t.Fatalf("show must warn about the unlisted repository:\n%s", out)
+	}
+	if !strings.Contains(out, "counted $5") || !strings.Contains(out, "spent $2") || !strings.Contains(out, "notional $3") {
+		t.Fatalf("the warning must say how much is not broken out:\n%s", out)
+	}
+
+	// --all lists it as a row, and then there is nothing left to warn about.
+	allOut, _, err := execute(t, "budget", "show", "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(allOut, "unlisted-repo") || strings.Contains(allOut, "--all lists them") {
+		t.Fatalf("--all must list the repository and stop warning:\n%s", allOut)
+	}
+}
+
 func TestShowRefusesAnotherProjectsDatabase(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	f.db.Set("fugaro/project", "birch")

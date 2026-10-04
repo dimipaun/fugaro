@@ -190,6 +190,7 @@ func TestMidnightResubscribe(t *testing.T) {
 	c := newClk(time.UnixMilli((d+1)*86_400_000 - 2000)) // two seconds before midnight
 	seed(f, d, "r1")
 	f.Set(budget.PathSpendGlobal(d+1), map[string]any{"spent": 7000000})
+	f.Set(budget.PathSpendRepo(d+1, "lib"), map[string]any{"spent": 7000000})
 	f.Set(budget.PathSpendRepo(d, "old"), map[string]any{"spent": 5})
 	r := start(t, f, c, Options{}, false)
 	r.until("yesterday", func(v View) bool { return v.Project.Spent == usd && v.Day == budget.DayDate(d) })
@@ -198,8 +199,8 @@ func TestMidnightResubscribe(t *testing.T) {
 	if len(v.Repos) != 1 || v.Repos[0].Name != "lib" { // lib has agents; "old" and yesterday's counters are gone
 		t.Fatalf("repos %+v", v.Repos)
 	}
-	if v.Repos[0].Spent != 0 {
-		t.Fatalf("yesterday's repo counter leaked: %+v", v.Repos[0])
+	if v.Repos[0].Spent != 7*usd {
+		t.Fatalf("yesterday's repo counter leaked, or today's never arrived: %+v", v.Repos[0])
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for f.Streams() != 4 {

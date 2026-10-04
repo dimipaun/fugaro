@@ -388,12 +388,7 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 
 	// Which repositories: keys are the database's (escaped) slugs.
 	keys := map[string]bool{}
-	names := map[string]string{} // slug key -> repository, for those the config names
-	for name, r := range lc.Repos {
-		if s, err := task.Slug(r.Provider, name); r.Provider != "" && err == nil {
-			names[budget.Key(s)] = name
-		}
-	}
+	names := lc.RepoNames() // slug key -> repository, for those the config names
 	switch {
 	case o.repo != "":
 		keys[budget.Key(wantSlug)] = true
@@ -493,7 +488,21 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 			}
 		}
 		if extra := len(all) - countIn(all, keys); extra > 0 {
-			doc.Warnings = append(doc.Warnings, fmt.Sprintf("%d more repositories in the database are not in this project config's repos; --all lists them", extra))
+			// The global totals above count every repository, including
+			// these: say how much of them isn't in the rows above, so the
+			// project's totals and the listed repositories' don't look like
+			// they silently disagree.
+			var c, sp, n budget.Micros
+			for k := range all {
+				if keys[k] {
+					continue
+				}
+				u := repoSpend[k]
+				c, sp, n = c+u.Counted, sp+u.Spent, n+u.Notional
+			}
+			doc.Warnings = append(doc.Warnings, fmt.Sprintf(
+				"%d more repositories in the database are not in this project config's repos; they count toward the project total above (counted %s, spent %s, notional %s) but are not broken out as rows below; --all lists them",
+				extra, usdVal(c.USD()), usdVal(sp.USD()), usdVal(n.USD())))
 		}
 	}
 
@@ -1046,7 +1055,7 @@ func runBudgetKill(cmd *cobra.Command, o *budgetKillOptions, kill bool) error {
 	if err != nil {
 		return err
 	}
-	me, err := lc.Me(ctx)
+	me, err := actorIdentity(ctx, lc, db)
 	if err != nil {
 		return userErr("%v", err)
 	}

@@ -27,6 +27,11 @@ type Config struct {
 	// nil means the effective daily cap spread over DefaultBurnHours (none
 	// when there is no cap).
 	BurnAlertPerHour *budget.Micros
+	// Names maps a repository's RTDB slug key to its owner/name, the way
+	// `fugaro budget show` names it (localcfg.Config.RepoNames): the
+	// project's own, trusted list, never a job-written field. A slug with
+	// no entry falls back to the slug itself.
+	Names map[string]string
 }
 
 // Connection is the state of the link, for the header.
@@ -273,9 +278,19 @@ func Build(s *State, now time.Time, cfg Config) View {
 			}
 			b.Runs = append(b.Runs, runRow(slug, run, e, now))
 		}
-		// The name is the wire key decoded: the authenticated identity. The
-		// job-written repo field is free text and never names a block.
-		b.Name = clean(unkey(slug))
+		// The readable name: the project's own repo list, else the trusted
+		// config/caps/repos/<slug>.repo (an admin can set one over IAM), else
+		// the wire key decoded. The job-written registry repo field is free
+		// text and never names a block (Slug carries the wire key, for paths
+		// and identity, and is kept alongside for --json and --once text).
+		b.Name = cfg.Names[slug]
+		if rc.Repo != nil && rc.Repo.Repo != "" {
+			b.Name = rc.Repo.Repo
+		}
+		if b.Name == "" {
+			b.Name = clean(unkey(slug))
+		}
+		b.Name = clean(b.Name)
 		if b.Name == "" {
 			b.Name = "-"
 		}
@@ -292,7 +307,32 @@ func Build(s *State, now time.Time, cfg Config) View {
 				v.Project.RunHours += r.Age.Hours()
 			}
 		}
+		// A rolling window still shows what was spent in the last few
+		// minutes after every run of the repository stops (a kill, or all
+		// runs finishing): a trailing rate decaying toward zero, not a
+		// burn. With nothing live, there is no rate to show.
+		if len(b.Runs) == 0 {
+			b.Burn = Burn{}
+		}
 		v.Repos = append(v.Repos, b)
+	}
+	if v.Project.Runs == 0 {
+		v.Project.Burn = Burn{}
+	}
+
+	// The project's counters are a single aggregate node; each repository's
+	// is a separate one (design §6.2). They are written together, but a
+	// repository this build never saw contribute to one (for example, one
+	// whose own counter node was pruned or never arrived, while the run it
+	// came from still counted at the project level) would otherwise make the
+	// visible rows add up to less than the total with no visible reason. An
+	// "other" row keeps the sum honest; Slug is "" (it can't be killed).
+	var sc, ss, sn budget.Micros
+	for _, r := range v.Repos {
+		sc, ss, sn = sc+r.Counted, ss+r.Spent, sn+r.Notional
+	}
+	if oc, os, on := nonneg(v.Project.Counted-sc), nonneg(v.Project.Spent-ss), nonneg(v.Project.Notional-sn); oc > 0 || os > 0 || on > 0 {
+		v.Repos = append(v.Repos, RepoBlock{Name: "other (not shown individually)", Counted: oc, Spent: os, Notional: on})
 	}
 
 	sort.SliceStable(v.Repos, func(i, j int) bool {

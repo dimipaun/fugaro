@@ -159,7 +159,7 @@ func TestOAuthNotionalAgainstTheRules(t *testing.T) {
 	if err := s.Start(ctx, budget.AgentEntry{Repo: "acme/app", Auth: "oauth"}); err != nil {
 		t.Fatal(err)
 	}
-	err := s.AddNotional(ctx, 1_250_000, map[string]budget.ModelUse{"claude-sonnet-5-5": {Micros: 1_000_000, In: 1000, Out: 500, CR: 20, CW: 10}})
+	err := s.AddNotional(ctx, 1_250_000, map[string]budget.ModelUse{"claude-sonnet-5-5": {NotionalMicros: 1_000_000, In: 1000, Out: 500, CR: 20, CW: 10}})
 	if err != nil {
 		t.Fatalf("the rules refused notional spend: %v", err)
 	}
@@ -173,6 +173,14 @@ func TestOAuthNotionalAgainstTheRules(t *testing.T) {
 	}
 	if got := r.num(t, fmt.Sprintf("spend/%d/global/notional", d)); got != 1_500_000 {
 		t.Errorf("global notional = %d", got)
+	}
+	// A model's notional dollars land on their own leaf, never mixed into
+	// the gateway's billed "micros" (bug: the two used to share a path).
+	if got := r.num(t, fmt.Sprintf("spend/%d/repos/aurora-app/byModel/claude-sonnet-5-5/notionalMicros", d)); got != 1_000_000 {
+		t.Errorf("byModel notionalMicros = %d", got)
+	}
+	if got := r.num(t, fmt.Sprintf("spend/%d/repos/aurora-app/byModel/claude-sonnet-5-5/micros", d)); got != 0 {
+		t.Errorf("byModel micros must stay 0 for an oauth run: %d", got)
 	}
 }
 

@@ -308,7 +308,7 @@ func (r *run) reportNotional(ctx context.Context, res agent.Result) {
 	for model, u := range res.ModelUsage {
 		use := budget.ModelUse{In: u.Input, Out: u.Output, CR: u.CacheRead, CW: u.CacheCreation}
 		if m, ok := r.spend.Prices.Lookup(model); ok {
-			use.Micros = m.Rates.Cost(pricing.Usage{Input: u.Input, CacheWrite5m: u.CacheCreation, CacheRead: u.CacheRead, Output: u.Output})
+			use.NotionalMicros = m.Rates.Cost(pricing.Usage{Input: u.Input, CacheWrite5m: u.CacheCreation, CacheRead: u.CacheRead, Output: u.Output})
 		}
 		by[model] = use
 	}

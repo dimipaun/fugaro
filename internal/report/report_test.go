@@ -15,7 +15,7 @@ func rec(date, slug string, spent, notional, compute int64) Rec {
 		Repo: "acme/" + slug, Slug: slug, Date: date, Version: 1,
 		SpentMicros: budget.Micros(spent), NotionalMicros: budget.Micros(notional), ComputeMicros: budget.Micros(compute),
 		Runs: 1, Calls: 2, RunHours: 0.5,
-		ByModel:  map[string]budget.ModelTotals{"claude-x": {Micros: budget.Micros(spent), In: 10, Out: 5}},
+		ByModel:  map[string]budget.ModelTotals{"claude-x": {Micros: budget.Micros(spent), NotionalMicros: budget.Micros(notional), In: 10, Out: 5}},
 		ByPerson: map[string]budget.PersonTotals{"a@x.io": {Micros: budget.Micros(spent), NotionalMicros: budget.Micros(notional), Runs: 1}},
 	}
 	if compute > 0 {
@@ -105,7 +105,7 @@ func TestNotionalNeverInModelColumn(t *testing.T) {
 		if rep.Totals.Spent != 2_000_000 {
 			t.Errorf("%s: model total %d", d, rep.Totals.Spent)
 		}
-		if d != ByModel && rep.Totals.Notional != 8_500_000 {
+		if rep.Totals.Notional != 8_500_000 {
 			t.Errorf("%s: notional total %d", d, rep.Totals.Notional)
 		}
 	}
@@ -124,6 +124,47 @@ func TestNotionalNeverInModelColumn(t *testing.T) {
 				t.Fatalf("row %q", l)
 			}
 		}
+	}
+	// --by model: a model's notional goes under NOTIONAL~, never MODEL $
+	// (bug: a subscription's notional dollars used to land under MODEL $,
+	// with "-" under NOTIONAL~, in text, CSV and JSON).
+	var mb bytes.Buffer
+	modelRep := Build(recs, ByModel)
+	if err := Table(&mb, modelRep, Meta{Since: "a", Un: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range strings.Split(mb.String(), "\n") {
+		if strings.HasPrefix(l, "claude-x") {
+			f := strings.Fields(l)
+			if f[1] != "$2.00" || f[2] != "$8.50" {
+				t.Fatalf("by-model row %q, want model $2.00 next to notional $8.50", l)
+			}
+		}
+	}
+	var cb bytes.Buffer
+	if err := CSV(&cb, modelRep); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(cb.String(), "claude-x,no,2.000000,8.500000") {
+		t.Fatalf("by-model CSV must keep model and notional dollars in separate columns:\n%s", cb.String())
+	}
+	var jb bytes.Buffer
+	if err := JSON(&jb, modelRep, Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Rows []struct {
+			Key            string  `json:"key"`
+			ModelUSD       string  `json:"model_usd"`
+			NotionalUSD    *string `json:"notional_usd"`
+			NotionalMicros *int64  `json:"notional_micros"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(jb.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Rows) != 1 || doc.Rows[0].ModelUSD != "2.000000" || doc.Rows[0].NotionalUSD == nil || *doc.Rows[0].NotionalUSD != "8.500000" {
+		t.Fatalf("by-model JSON row = %+v", doc.Rows)
 	}
 }
 
@@ -314,7 +355,11 @@ func TestJSONShape(t *testing.T) {
 		}
 	}
 	row := m["rows"].([]any)[0].(map[string]any)
-	if row["model_usd"] != "1.500000" || row["model_micros"].(float64) != 1_500_000 || row["notional_usd"] != nil || row["tokens"] == nil {
+	// By model now tracks notional too (never added to model_usd/model_micros,
+	// the bug this guards against): present, zero, not null, since this
+	// model's own record carries none.
+	if row["model_usd"] != "1.500000" || row["model_micros"].(float64) != 1_500_000 ||
+		row["notional_usd"] != "0.000000" || row["notional_micros"].(float64) != 0 || row["tokens"] == nil {
 		t.Fatalf("%v", row)
 	}
 }

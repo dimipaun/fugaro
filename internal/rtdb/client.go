@@ -115,6 +115,8 @@ type Client struct {
 	backMax time.Duration
 	idle    time.Duration
 	clock   atomic.Pointer[serverClock]
+	// tokenInfoURL overrides defaultTokenInfoURL (CallerEmail; tests).
+	tokenInfoURL string
 }
 
 type serverClock struct{ server, local time.Time }
