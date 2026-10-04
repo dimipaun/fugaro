@@ -42,7 +42,13 @@ fugaro budget show
 
 It shows the mode (`observe` or `enforce`), the caps, today's counters (UTC), the headroom, the kill switches and the runs in flight, and needs the Viewer role on the project's Firebase project. Narrow it with `--repo <owner/name>`, widen it with `--all`, and use `--json` to parse it. If it refuses, report that the user lacks the role or the project has no budget backend, and carry on without it.
 
-Mention a kill switch that is on, a cap close to its limit, or no headroom. Changing any of it belongs to the user (a budget admin): `fugaro budget set`, `fugaro budget kill` and `fugaro budget resume` are theirs, and you only name them.
+Mention a kill switch that is on, a cap close to its limit, or no headroom. Changing any of it belongs to the user (a budget admin). You never run those commands; if the user asks how, show them this and let them run it:
+
+```bash user-runs
+fugaro budget set --repo <owner/name> --daily <usd>
+fugaro budget kill
+fugaro budget resume
+```
 
 ## 3. The live screen
 

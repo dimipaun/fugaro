@@ -63,11 +63,17 @@ A halted run is not a failure. The CLI exits 0, the runner gave the agent a shor
 | `token_cap` | The run's token cap was passed (`agent.max_run_tokens`), counted at stage boundaries, for any auth. | The user, in the project's config or in `fugaro.yaml` on the default branch. |
 | `no_cap` | Budget enforcement is on, but no per-run cap exists. A budget with no number is closed. Halted at the start, no pull request. | The user sets a cap in the project's config. |
 | `kill_switch` | Someone stopped the project or the repository on purpose. | Don't follow up. `fugaro budget show` shows who and why; clearing it is `fugaro budget resume`, the user's command. |
-| `repo_daily_cap`, `global_daily_cap` | A shared daily cap in the budget database is used up. | A budget admin: `fugaro budget set`. |
+| `repo_daily_cap`, `global_daily_cap` | A shared daily cap in the budget database is used up. | A budget admin raises it with `budget set` (the command is in the block below, for the user). |
 | `budget_unavailable` | The budget backend was unreachable for three minutes. | Wait until it is back, then follow up. |
 | `budget_token_expired` | The run waited over an hour before it started. Halted at the start, no pull request. | Launch the run again. |
 
-For these: raising a cap, clearing a kill switch and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. Don't edit the project's config or `fugaro.yaml` to get around a halt.
+For these: raising a cap, clearing a kill switch and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. The owner's commands are theirs to run:
+
+```bash user-runs
+fugaro budget set --repo <owner/name> --daily <usd>
+fugaro budget resume
+```
+ Don't edit the project's config or `fugaro.yaml` to get around a halt.
 
 ## 5. Recommend
 

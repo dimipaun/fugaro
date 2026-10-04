@@ -1,6 +1,6 @@
 ---
 name: routing
-description: Decide whether a piece of work belongs in a Fugaro cloud run or on the developer's own machine. Use when an agent is about to decide where to run a task, before launching with the working skill.
+description: "Decide whether a piece of work belongs in a Fugaro cloud run or on the developer's own machine. Use when an agent is about to decide where to run a task, or when a request mixes work that needs the cloud worker and work that needs the local machine."
 ---
 
 <!-- fugaro-skill name=routing fugaro-version=0.1.0 -->
@@ -8,4 +8,39 @@ description: Decide whether a piece of work belongs in a Fugaro cloud run or on 
 
 # Cloud versus local
 
-This skill carries the judgment for deciding whether a task should go to `fugaro run` in the cloud or stay on the developer's machine. The full judgment and worked examples land in a later task; for now, the short version: a self-contained task with clear acceptance criteria that builds and tests inside the repository's image belongs in the cloud, and anything needing local-only credentials, state or interaction stays local.
+A Fugaro run is a fleeting worker with the repository's own image and secrets, and no access to the developer's machine. That is the whole judgment: what the image can do alone goes to the cloud, and what needs the person's machine stays on it.
+
+## To the cloud (`fugaro run`)
+
+A self-contained coding task with clear acceptance criteria that builds and tests inside the repository's image:
+- a bug with a failing test or an error text to start from
+- a feature or refactor with named files and checkable behaviour
+- tests, docs, migrations of code, dependency bumps the CI covers
+- work for several independent runs at once (see the `parallelism` skill)
+
+## Local
+
+- anything that needs credentials or state that exist only on this machine: a local database with data in it, a VPN-only service, a private path, the user's logged-in tools
+- investigating live cloud resources (GCP, AWS and the like). The cloud job's keys deliberately do not grant that access, so a task that needs them is the wrong task for the cloud
+- interactive or exploratory work ("look at this and tell me")
+- anything that touches money or security (budget, policy, secrets, IAM, the CI workflows): do it with the user watching
+- anything the image cannot run: Docker-in-Docker, Testcontainers, Android builds
+- anything that needs unpushed work: a run starts from the base branch on the remote
+- changes to `.github/workflows/*` on GitHub: Fugaro cannot push them
+
+## When unsure
+
+Split it. Send the self-contained part to the cloud and keep the rest. If the split is not clean, keep it local.
+
+## Examples
+
+| Request | Where | Why |
+|---|---|---|
+| "Fix the flaky retry test in `queue_test.go`, here is the failure" | cloud | bounded, checkable, in the repo |
+| "Why is our staging database slow?" | local | needs live resources and credentials the job lacks |
+| "Add pagination to the list endpoint and its tests" | cloud | self-contained, the image can build and test it |
+| "Update the release workflow" | local | a GitHub App cannot push `.github/workflows/*` |
+| "Migrate the service, then check it against prod" | split | the code change to the cloud, the prod check local |
+| "Try this idea and tell me what you think" | local | exploratory; no acceptance criteria yet |
+
+Having decided on the cloud, launch with the `working` skill, and only task text the user has approved.
