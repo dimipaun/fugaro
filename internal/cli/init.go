@@ -775,11 +775,20 @@ func (r *initRun) confirm(what, undone string) error {
 	}
 	if !ok {
 		if r.o.nonInteractive || !stdinIsTerminal(r.cmd.InOrStdin()) {
-			return userErr("%s, or pass --yes once you have read what it does; %s", initflow.NeedsTerminal("the typed confirmation of this step"), undone)
+			return userErr("%s%s; %s", initflow.NeedsTerminal("the typed confirmation of this step"), r.yesRoute(), undone)
 		}
 		return userErr("not confirmed (the project's name was not typed); %s", undone)
 	}
 	return nil
+}
+
+// yesRoute is what follows "needs a real terminal" when a step cannot be
+// confirmed: --yes, except under --plan-only, which never takes it.
+func (r *initRun) yesRoute() string {
+	if r.o.planOnly {
+		return " (--plan-only never takes --yes: it creates nothing)"
+	}
+	return ", or pass --yes once you have read what it does"
 }
 
 // ask shows the banner and reports whether the step is confirmed; without
@@ -851,7 +860,7 @@ func (r *initRun) resourceManager(ctx context.Context, c *infra.Clients) error {
 		return err
 	}
 	if !ok {
-		why := initflow.NeedsTerminal("the typed confirmation of this step") + ", or pass --yes once you have read what it does, or"
+		why := initflow.NeedsTerminal("the typed confirmation of this step") + r.yesRoute() + ", or"
 		if !r.o.nonInteractive && stdinIsTerminal(r.cmd.InOrStdin()) {
 			why = "not confirmed (the project's name was not typed):"
 		}

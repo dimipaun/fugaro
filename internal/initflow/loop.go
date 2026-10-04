@@ -278,8 +278,11 @@ func (l *loop) preview(ctx context.Context, stages []Stage) error {
 	return nil
 }
 
+// env is what a stage is told. A plan-only run never has --yes: it creates
+// nothing, so a stage's plan that needs a prerequisite made (the state bucket,
+// an API) takes the typed confirmation or stops needs-you.
 func (l *loop) env(stage string) Env {
-	return Env{Yes: l.o.Yes && YesCovers(stage), Interactive: l.interactive}
+	return Env{Yes: l.o.Yes && !l.o.PlanOnly && YesCovers(stage), Interactive: l.interactive}
 }
 
 // fail records a failed stage and blocks what follows it.
