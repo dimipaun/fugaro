@@ -24,8 +24,10 @@ const (
 	rb          = "dev@example.invalid"
 )
 
-// noon is the database's clock in most tests.
-var noon = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+// noon is the database's clock in most tests: noon UTC of the day the tests
+// run. The run's token is minted by the wall clock and the rules compare it
+// with the database's, so a fixed date fails once the real one moves on.
+var noon = time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
 
 func today() int64 { return budget.Day(noon) }
 
