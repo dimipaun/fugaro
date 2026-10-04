@@ -194,9 +194,9 @@ func TestLedgerNeverExceedsGrantedWithLease(t *testing.T) {
 			rng := rand.New(rand.NewPCG(uint64(g), 11))
 			for range perWorker {
 				body := msg(sonnet, int64(1+rng.IntN(8000)), `"stream":true`)
-				resp, _ := h.post(body)
+				resp, rb := h.post(body)
 				if resp.StatusCode != 200 && resp.StatusCode != http.StatusTooManyRequests {
-					t.Errorf("status %d", resp.StatusCode)
+					t.Errorf("status %d: %s", resp.StatusCode, rb)
 				}
 			}
 		}()
@@ -215,6 +215,35 @@ func TestLedgerNeverExceedsGrantedWithLease(t *testing.T) {
 	if l.maxIn > 1 {
 		t.Errorf("%d grants ran at once", l.maxIn)
 	}
+}
+
+// A grant that covers a call's shortfall but is spent by the calls ahead
+// of it in the queue is the lease working, not the lease "granting less
+// than a call needs": the call must keep waiting its turn, not 503 after
+// five rounds. (This was the CI flake in TestLedgerNeverExceedsGrantedWithLease.)
+func TestTopUpContentionIsNotStarvation(t *testing.T) {
+	const calls = 3 * maxTopUps
+	w := worst(t, sonnet, leaseBody, 1000, "")
+	// Each grant is exactly one call's worth, and the calls hold it while
+	// they stream, so call k is served by the k-th grant.
+	l := &fakeLease{}
+	slow := anthropicfake.StreamOK(sonnet, pricing.Usage{Input: 10, Output: 10})
+	slow.EventDelay = 20 * time.Millisecond
+	script := make([]anthropicfake.Reply, calls)
+	for i := range script {
+		script[i] = slow
+	}
+	h := newHarnessWith(t, withLease(l, Enforce), script...)
+	codes := make(chan int, calls)
+	for range calls {
+		go func() { resp, _ := h.post(leaseBody); codes <- resp.StatusCode }()
+	}
+	for range calls {
+		if c := <-codes; c != 200 {
+			t.Errorf("status %d, want 200 (each call's turn comes; grants are %d)", c, w)
+		}
+	}
+	noHalt(t, h)
 }
 
 func TestTopUpSingleFlight(t *testing.T) {

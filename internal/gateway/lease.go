@@ -59,8 +59,8 @@ func capReason(reason string) bool {
 }
 
 const (
-	// maxTopUps bounds the grants one call waits through (each grant may
-	// be shared with others and be smaller than this call needs).
+	// maxTopUps bounds the grants one call waits through that come back
+	// smaller than its own shortfall (a grant is shared with other calls).
 	maxTopUps     = 5
 	reportTimeout = 30 * time.Second
 	// releaseTimeout bounds the release at Close even when Close's own
@@ -76,7 +76,8 @@ const (
 // it instead of asking for its own.
 type topUp struct {
 	done chan struct{}
-	err  error // set before done closes
+	err  error          // set before done closes
+	got  pricing.Micros // what the grant added, set before done closes
 }
 
 // freeLocked is what the lease still holds unspent and unreserved.
@@ -92,7 +93,11 @@ func (s *Server) freeLocked() pricing.Micros {
 // fit. No lock is held across Grant; Granted rises only by grants, so
 // used + reserved <= granted holds (but for an overrun, as in M9a).
 func (s *Server) reserveLease(ctx context.Context, st *stageState, w pricing.Micros) (string, int) {
-	for attempt := 0; ; attempt++ {
+	// strikes counts the grants that came back smaller than this call's own
+	// shortfall. A grant that covered it but was spent by the calls ahead
+	// of it is not a strike: the lease is working, the call waits its turn.
+	strikes := 0
+	for {
 		s.mu.Lock()
 		if s.halt != nil {
 			msg := s.haltMsg
@@ -110,17 +115,18 @@ func (s *Server) reserveLease(ctx context.Context, st *stageState, w pricing.Mic
 			s.mu.Unlock()
 			return "", 0
 		}
-		if attempt >= maxTopUps {
+		if strikes >= maxTopUps {
 			s.log.Warn("budget: the lease keeps granting less than a call needs", "stage", st.st.Name, "needed_micros", int64(w))
 			s.mu.Unlock()
 			return unavailableMsg, http.StatusServiceUnavailable
 		}
+		shortfall := w - free
 		f := s.flight
 		if f == nil {
 			f = &topUp{done: make(chan struct{})}
 			s.flight = f
 			s.grants.Add(1)
-			go s.runTopUp(f, w-free)
+			go s.runTopUp(f, shortfall)
 		}
 		s.mu.Unlock()
 		select {
@@ -132,6 +138,9 @@ func (s *Server) reserveLease(ctx context.Context, st *stageState, w pricing.Mic
 		}
 		if f.err != nil {
 			return s.leaseFailure(st, w, f.err)
+		}
+		if f.got < shortfall {
+			strikes++
 		}
 	}
 }
@@ -149,6 +158,7 @@ func (s *Server) runTopUp(f *topUp, need pricing.Micros) {
 		f.err = errors.New("the lease granted nothing")
 	default:
 		s.granted = satAdd(s.granted, g)
+		f.got = g
 		s.checkLocked()
 	}
 	s.flight = nil
