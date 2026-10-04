@@ -712,3 +712,54 @@ func TestAgentEnvHasNoProviderKey(t *testing.T) {
 		t.Errorf("declaring a provider key: err = %v", err)
 	}
 }
+
+// TestClaudeArgsNeverSideloadPlugins pins the launch contract of design
+// section 9 and plan V3: the headless run never loads, installs or trusts
+// anything the repository's settings name (the Fugaro plugin is for people's
+// interactive sessions). No plugin, marketplace, trust or settings-source
+// flag is ever passed, whatever the request. If the real container proves
+// that a project settings file does load the plugin, the runner adds a
+// disable and this test changes with it (plan V3 fallback).
+func TestClaudeArgsNeverSideloadPlugins(t *testing.T) {
+	for name, req := range map[string]Request{
+		"minimal": {SessionID: "s1"},
+		"full":    {SessionID: "s1", AppendSystemPrompt: "rules", Model: "m", MaxBudgetUSD: 5, JSONSchema: `{}`},
+		"resume":  {SessionID: "s1", Resume: true, Model: "m"},
+	} {
+		for _, a := range Args(req) {
+			l := strings.ToLower(a)
+			for _, bad := range []string{"plugin", "marketplace", "trust", "setting", "fugaro@fugaro", "extraknownmarketplaces"} {
+				// The prompt-like values (system prompt, schema) are ours and
+				// carry none of these words in the cases above.
+				if strings.Contains(l, bad) {
+					t.Errorf("%s: argument %q mentions %q", name, a, bad)
+				}
+			}
+		}
+	}
+}
+
+// TestClaudeEnvHasNoPluginOrTrustVariables: the scrubbed environment never
+// carries a plugin or trust variable from the runner's environment, on any
+// auth, and no variable that points Claude Code's config or plugin cache
+// elsewhere than the run's own home.
+func TestClaudeEnvHasNoPluginOrTrustVariables(t *testing.T) {
+	parent := []string{
+		"PATH=/bin", "HOME=/home/agent", "ANTHROPIC_API_KEY=key-123", "CLOUD_ML_REGION=us-east5", "ANTHROPIC_VERTEX_PROJECT_ID=p",
+		"CLAUDE_CODE_OAUTH_TOKEN=oauth-tok-1",
+		"CLAUDE_CODE_PLUGIN_SEED_DIR=/elsewhere", "CLAUDE_CODE_PLUGIN_CACHE_DIR=/elsewhere", "CLAUDE_CODE_PLUGIN_URL=https://evil.invalid",
+		"CLAUDE_CONFIG_DIR=/elsewhere", "CLAUDE_PLUGIN_ROOT=/elsewhere", "CLAUDE_CODE_TRUST_ALL=1",
+	}
+	for _, auth := range []string{"api-key", "vertex", "oauth"} {
+		env, _, err := BuildEnv(parent, EnvSpec{Auth: auth})
+		if err != nil {
+			t.Fatalf("%s: %v", auth, err)
+		}
+		for _, kv := range env {
+			k := strings.SplitN(kv, "=", 2)[0]
+			if strings.Contains(k, "PLUGIN") || strings.Contains(k, "TRUST") || k == "CLAUDE_CONFIG_DIR" {
+				t.Errorf("%s: the agent's env has %s", auth, kv)
+			}
+		}
+	}
+}

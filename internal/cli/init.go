@@ -28,16 +28,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/policy"
+	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
-
-// projectEnvVars name a project to the Google tools. One naming another
-// project than the installation's is refused: Terraform's provider or a
-// gcloud call could otherwise act on it.
-var projectEnvVars = []string{"GOOGLE_PROJECT", "GOOGLE_CLOUD_PROJECT", "CLOUDSDK_CORE_PROJECT"}
-
-const impersonateEnv = "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"
 
 // stdinIsTerminal reports whether in is a terminal, where a confirmation
 // can be typed. Tests replace it.
@@ -314,16 +308,14 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 }
 
 // checkEnv refuses an environment that would point Terraform or the
-// Google tools elsewhere, and finds terraform. It prints the local
-// config's warnings once it passes.
+// Google tools elsewhere (preflight.Environment, shared with fugaro
+// doctor), and finds terraform. It prints the local config's warnings once
+// it passes.
 func (r *initRun) checkEnv(lc *localcfg.Config) (string, error) {
-	for _, k := range projectEnvVars {
-		if v := os.Getenv(k); v != "" && v != lc.GCPProject {
-			return "", userErr("%s is set to %s, not the installation's project %s; unset it (or set it to %s) and rerun", k, v, lc.GCPProject, lc.GCPProject)
+	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
+		if !c.OK {
+			return "", userErr("%s; %s", c.Problem, c.Fix)
 		}
-	}
-	if _, set := os.LookupEnv(impersonateEnv); set {
-		return "", userErr("%s is set; fugaro init runs Terraform as your own credentials only, so unset it and rerun", impersonateEnv)
 	}
 	bin, err := exec.LookPath("terraform")
 	if err != nil {

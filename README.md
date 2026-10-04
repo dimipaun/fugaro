@@ -202,7 +202,7 @@ For the GCP backend, the only one today:
 
 Only GCP is implemented. We want to run Fugaro on **AWS** (for example ECS/Fargate tasks, S3, Secrets Manager, CloudWatch) and **Azure** (for example Container Apps jobs, Blob Storage, Key Vault, Azure Monitor), and we would love help: design feedback, a backend, test accounts, or just telling us what your setup looks like.
 
-A new cloud is a backend behind the interface in `internal/backend` plus its provisioning (today a Terraform module set driven by `fugaro init`), and the base images already run anywhere a container runs. The GCP backend is the reference. If you want to take a cloud on, please open an issue first so we can agree the shape together, and say so in the issue even if you can only review or test.
+A new cloud is a backend behind the interface in `internal/backend` plus its provisioning (today a Terraform module set driven by `fugaro init`), and the base images already run anywhere a container runs. The GCP backend is the reference, and [docs/backends.md](docs/backends.md) describes the seam, the conformance suite, and what is and isn't behind it yet. If you want to take a cloud on, please open an issue first so we can agree the shape together, and say so in the issue even if you can only review or test.
 
 ## Roadmap
 

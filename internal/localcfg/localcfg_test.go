@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -381,6 +382,23 @@ func TestRegistryHostValidation(t *testing.T) {
 		if _, err := Parse([]byte(sample + "registry_host: " + host + "\n")); err == nil || !strings.Contains(err.Error(), "registry_host") {
 			t.Errorf("%s (%s): err = %v", name, host, err)
 		}
+	}
+}
+
+// A config that sets no backend defaults to Cloud Run (design
+// m11-setup-and-skills.md §7: no second backend yet, so only that name
+// validates).
+func TestBackendDefaultsToCloudRun(t *testing.T) {
+	c, err := Parse([]byte(sample))
+	if err != nil || c.Backend() != backend.CloudRun {
+		t.Fatalf("Backend() = %q, %v, want %q", c.Backend(), err, backend.CloudRun)
+	}
+	c, err = Parse([]byte(sample + "backend: cloud-run\n"))
+	if err != nil || c.Backend() != backend.CloudRun {
+		t.Fatalf("explicit cloud-run: %q, %v", c.Backend(), err)
+	}
+	if _, err := Parse([]byte(sample + "backend: ecs-fargate\n")); err == nil || !strings.Contains(err.Error(), "backend") {
+		t.Fatalf("err = %v, want it to name backend", err)
 	}
 }
 

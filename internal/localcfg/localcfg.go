@@ -53,8 +53,12 @@ type Config struct {
 	// base registry. A workflow builds from the image of its base kind, so
 	// a project needs an entry for each kind its repositories use.
 	BaseImages map[string]string `yaml:"base_images,omitempty"`
-	Build      Build             `yaml:"build"`
-	Terraform  Terraform         `yaml:"terraform,omitempty"`
+	// BackendName is the compute backend by name (backend.Open's registry
+	// key); empty means backend.CloudRun, the only one implemented
+	// (design m11-setup-and-skills.md §7). Read it through Backend.
+	BackendName string    `yaml:"backend,omitempty"`
+	Build       Build     `yaml:"build"`
+	Terraform   Terraform `yaml:"terraform,omitempty"`
 	// ComputePrices override the compute list prices of a region, for
 	// cost estimates (design §10.1).
 	ComputePrices map[string]Price `yaml:"compute_prices,omitempty"`
@@ -625,6 +629,9 @@ func (c *Config) validate() error {
 	if c.SchedulerRegion != "" && !regionRE.MatchString(c.SchedulerRegion) {
 		bad("scheduler_region %q is not a region such as us-east4", c.SchedulerRegion)
 	}
+	if c.BackendName != "" && c.BackendName != backend.CloudRun {
+		bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
+	}
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
 		bad("terraform.state_bucket %q is not a bucket name", t.StateBucket)
 	}
@@ -813,6 +820,15 @@ func (c *Config) BuildRegion() string {
 		return c.Build.Region
 	}
 	return c.Region
+}
+
+// Backend is the compute backend this config selects: backend.CloudRun
+// when BackendName is unset.
+func (c *Config) Backend() string {
+	if c.BackendName == "" {
+		return backend.CloudRun
+	}
+	return c.BackendName
 }
 
 // Me is who runs are requested by: user, else git config user.email.
