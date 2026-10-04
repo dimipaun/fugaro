@@ -1258,8 +1258,8 @@ func TestInitRepoNeedsFugaroYAML(t *testing.T) {
 	r := sandboxRig(t)
 	testutil.Git(t, r.checkout, "rm", "-q", "fugaro.yaml")
 	res := r.fugaroInit(t, "--repo", r.checkout, "--yes")
-	if res.code != 1 || !strings.Contains(res.stderr, "/fugaro:onboard") || !strings.Contains(res.stderr, "fugaro config example") {
-		t.Fatalf("want exit 1 pointing at /fugaro:onboard:\n%s", res)
+	if res.code != 1 || !strings.Contains(res.stderr, "/fugaro:setup") || !strings.Contains(res.stderr, "fugaro config example") {
+		t.Fatalf("want exit 1 pointing at /fugaro:setup:\n%s", res)
 	}
 }
 
