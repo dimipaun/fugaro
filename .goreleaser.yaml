@@ -17,7 +17,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/dimipaun/fugaro/internal/cli.Version={{ .Version }}
+      - -s -w -X github.com/dimipaun/fugaro/internal/cli.Version={{ .Version }} -X github.com/dimipaun/fugaro/internal/cli.Commit={{ .FullCommit }}
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:

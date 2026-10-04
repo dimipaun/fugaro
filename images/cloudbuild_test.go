@@ -647,6 +647,82 @@ func versionStep(t *testing.T) string {
 	return ""
 }
 
+// TestCIWorkflowSkipsImagesTheTagTreeDoesNotHold: the nightly and manual runs
+// build the latest release tag's tree, and an old tag (v0.1.0) holds no
+// images/go or images/java-services: those legs must be skipped, not fail,
+// and every step of a leg (build, publish, verify) is gated on the list.
+func TestCIWorkflowSkipsImagesTheTagTreeDoesNotHold(t *testing.T) {
+	testutil.IsolateGit(t)
+	data, err := os.ReadFile("../.github/workflows/images.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Name string `yaml:"name"`
+				ID   string `yaml:"id"`
+				If   string `yaml:"if"`
+				Run  string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &wf); err != nil {
+		t.Fatal(err)
+	}
+	var script string
+	for _, s := range wf.Jobs["version"].Steps {
+		if s.ID == "kinds" {
+			script = s.Run
+		}
+	}
+	if script == "" {
+		t.Fatal("the version job has no kinds step")
+	}
+	repo := t.TempDir()
+	testutil.Git(t, repo, "init", "--quiet", "-b", "main", repo)
+	put := func(kind string) {
+		dir := filepath.Join(repo, "images", kind)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("web-node")
+	put("history")
+	testutil.Git(t, repo, "add", ".")
+	testutil.Git(t, repo, "commit", "--quiet", "-m", "v0.1.0 tree")
+	testutil.Git(t, repo, "tag", "v0.1.0")
+	put("go")
+	put("java-services")
+	testutil.Git(t, repo, "add", ".")
+	testutil.Git(t, repo, "commit", "--quiet", "-m", "later")
+	for tag, want := range map[string]string{"v0.1.0": ",web-node,history,", "": ",web-node,go,java-services,history,"} {
+		out := filepath.Join(t.TempDir(), "output")
+		cmd := exec.Command("sh", "-c", script)
+		cmd.Dir = repo
+		cmd.Env = append(os.Environ(), "TAG="+tag, "GITHUB_OUTPUT="+out)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("kinds (tag %q): %v\n%s", tag, err, b)
+		}
+		got, _ := os.ReadFile(out)
+		if string(got) != "kinds="+want+"\n" {
+			t.Errorf("tag %q: output %q, want kinds=%s", tag, got, want)
+		}
+	}
+	// Every step of the legs that build, publish or verify one image is
+	// gated on the list, so a missing image fails nothing.
+	for _, job := range []string{"base", "history", "publish"} {
+		for _, s := range wf.Jobs[job].Steps {
+			if !strings.Contains(s.If, "needs.version.outputs.kinds") {
+				t.Errorf("job %s step %q is not gated on the images the tree builds (if: %q)", job, s.Name, s.If)
+			}
+		}
+	}
+}
+
 // TestCIWorkflowMovesMajorOnlyForTheNewestRelease: a backport tag publishes
 // :X.Y.Z but must not move :X backwards past a newer release in the same
 // major.
