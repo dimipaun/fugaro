@@ -1,0 +1,390 @@
+package cli
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+
+	"github.com/spf13/cobra"
+	billing "google.golang.org/api/cloudbilling/v1"
+	crm "google.golang.org/api/cloudresourcemanager/v1"
+	"google.golang.org/api/option"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/preflight"
+)
+
+// doctorCheck is one read-only check's result, in the shape `doctor --json`
+// prints: preflight.Check's fields, plus Severity for a plugin pin or
+// install state ("warning" or "info"; "" is an ordinary check, which always
+// fails doctor when it isn't ok). An informational state never fails
+// doctor; a warning one fails it only with --strict (design m11-setup-and-skills.md §4.5).
+type doctorCheck struct {
+	ID       string `json:"id"`
+	OK       bool   `json:"ok"`
+	Problem  string `json:"problem,omitempty"`
+	Fix      string `json:"fix,omitempty"`
+	Severity string `json:"severity,omitempty"`
+}
+
+func fromPreflight(c preflight.Check) doctorCheck {
+	return doctorCheck{ID: c.ID, OK: c.OK, Problem: c.Problem, Fix: c.Fix}
+}
+
+// doctorProject is the installation doctor names, read from the local
+// config only (never a cloud call by itself). BaseImages are what the local
+// config records (fugaro init --base-image, or a future mirror stage): doctor
+// reports what is recorded, not whether the registry still carries it.
+type doctorProject struct {
+	Name         string            `json:"name"`
+	GCPProject   string            `json:"gcp_project"`
+	Region       string            `json:"region"`
+	RegistryHost string            `json:"registry_host,omitempty"`
+	BaseImages   map[string]string `json:"base_images,omitempty"`
+}
+
+// doctorFugaroYAML is the validity of a checkout's fugaro.yaml.
+type doctorFugaroYAML struct {
+	Path     string           `json:"path"`
+	Valid    bool             `json:"valid"`
+	Problems []config.Problem `json:"problems,omitempty"`
+}
+
+// doctorOutput is `fugaro doctor --json`.
+type doctorOutput struct {
+	OK         bool              `json:"ok"`
+	Checks     []doctorCheck     `json:"checks"`
+	Project    *doctorProject    `json:"project,omitempty"`
+	FugaroYAML *doctorFugaroYAML `json:"fugaro_yaml,omitempty"`
+	// Secrets are names and metadata only, never a value (gcp.Secrets.List
+	// never reads one back): best-effort, present only inside a checkout
+	// whose repository and Secret Manager are both reachable.
+	Secrets []secretEntry     `json:"secrets,omitempty"`
+	Plugin  pluginwire.Report `json:"plugin"`
+}
+
+// doctorLookPath finds executables for doctor's checks; a package variable so
+// tests never depend on what the machine running them has installed.
+var doctorLookPath = exec.LookPath
+
+func newDoctorCmd() *cobra.Command {
+	var (
+		cloud  cloudOptions
+		dir    string
+		plugin bool
+		strict bool
+		asJSON bool
+	)
+	cmd := &cobra.Command{
+		Use:   "doctor [--json] [--plugin] [--strict]",
+		Short: "Check that Fugaro is set up and ready, without changing anything",
+		Long: `doctor only ever reads: the environment, Terraform, the local project config
+and its installation's billing and IAM policy, the Fugaro plugin's wiring in
+.claude/settings.json, a checkout's fugaro.yaml and its stored secrets by
+name. It never prints a secret's value and never creates, enables or
+changes anything.
+
+--plugin checks only the plugin's wiring: offline, no credentials, safe for
+CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
+command; the informational states ("not installed", "cannot compare") never
+do, with or without --strict. A repository's CI runs
+fugaro doctor --plugin --strict.
+
+With no local Fugaro installation configured, doctor says so and names
+fugaro init as the fix, rather than guessing at a project.
+
+Exit 1 when a check fails, with the one-line fix to run.`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON)
+		},
+	}
+	addCloudFlags(cmd, &cloud)
+	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
+	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
+	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
+	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	return cmd
+}
+
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON bool) error {
+	ctx := cmd.Context()
+
+	var pluginReport pluginwire.Report
+	var pluginChecks []doctorCheck
+	if loc, ok := pluginwire.Locate(dir); ok {
+		pluginReport = pluginwire.Status(loc.Settings, Version, installedPlugins())
+		if pluginOnly && strict {
+			// CI mode: a runner has no Claude Code install, so "installed
+			// differs", "not installed" are not evaluated (design §4.5).
+			pluginReport.Install, pluginReport.Version = "", ""
+		}
+		pluginChecks = pluginDoctorChecks(pluginReport)
+	} else {
+		// Not inside a checkout there is no wiring to find: a warning (so
+		// --strict fails, as update-skills --check does), never silence.
+		pluginChecks = []doctorCheck{{ID: "plugin-pin", Severity: "warning",
+			Problem: pluginwire.Printable(dir) + " is not in a checkout (no .git above it), so the Fugaro plugin wiring cannot be checked",
+			Fix:     "run doctor inside the repository, or pass --dir"}}
+	}
+	o := doctorOutput{Plugin: pluginReport, Checks: pluginChecks}
+
+	if pluginOnly {
+		o.OK = !checksFail(o.Checks, strict)
+		return emitDoctor(cmd, o, asJSON)
+	}
+
+	// Distinguishing "no installation at all" from every other selection
+	// refusal (ambiguous projects, a wrong --project) needs the raw list,
+	// not localcfg.Select's wrapped error (design: "no installation means
+	// run fugaro init first").
+	if names, err := localcfg.Projects(os.Getenv); err == nil && len(names) == 0 {
+		o.Checks = append(o.Checks, doctorCheck{ID: "installation", OK: false,
+			Problem: "no Fugaro installation is configured",
+			Fix:     "run fugaro init"})
+		o.OK = !checksFail(o.Checks, strict)
+		return emitDoctor(cmd, o, asJSON)
+	}
+	_, lc, err := selectProject(ctx, cloudOpts)
+	if err != nil {
+		return err
+	}
+
+	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
+		o.Checks = append(o.Checks, fromPreflight(c))
+	}
+	_, tf := preflight.Terraform(doctorLookPath)
+	o.Checks = append(o.Checks, fromPreflight(tf))
+	// preflight.Docker is deliberately not run here: it is only meaningful
+	// with needed=true (a local base-image build is actually pending), and
+	// nothing yet computes that (it depends on the image mirror stage, M11
+	// T2, which hasn't landed). Calling it with needed=false would always
+	// report ok, which is not a check at all; wire it in once that state
+	// exists.
+
+	crmSvc, err := crm.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.ResourceManager)...)
+	if err != nil {
+		return remote(err)
+	}
+	billingSvc, err := billing.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudBilling)...)
+	if err != nil {
+		return remote(err)
+	}
+	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
+	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
+		o.Checks = append(o.Checks, fromPreflight(c))
+	}
+	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
+		o.Checks = append(o.Checks, fromPreflight(c))
+	}
+
+	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
+
+	if co, _ := checkoutProject(ctx, ""); co != nil {
+		if c, fy := fugaroYAMLCheck(co.Root); c != nil {
+			o.Checks = append(o.Checks, *c)
+			o.FugaroYAML = fy
+		}
+		o.Secrets = doctorSecrets(cmd, lc)
+	}
+
+	o.OK = !checksFail(o.Checks, strict)
+	return emitDoctor(cmd, o, asJSON)
+}
+
+// doctorAPIOpts are the client options for a Google API doctor reads from,
+// pointed at endpoint (lc's fake, in a test) or Google's own ("") and
+// authenticated as the caller (ADC, or none under lc's no_auth).
+func doctorAPIOpts(lc *localcfg.Config, endpoint string) []option.ClientOption {
+	opts := []option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}
+	if endpoint != "" {
+		opts = append(opts, option.WithEndpoint(endpoint))
+	}
+	if lc.Endpoints.NoAuth {
+		opts = append(opts, option.WithoutAuthentication())
+	} else if lc.GCPProject != "" {
+		opts = append(opts, option.WithQuotaProject(lc.GCPProject))
+	}
+	return opts
+}
+
+// fugaroYAMLCheck reads root/fugaro.yaml and checks it (config.Parse and
+// config.Check, as fugaro validate does), nil when there is no such file.
+func fugaroYAMLCheck(root string) (*doctorCheck, *doctorFugaroYAML) {
+	path := filepath.Join(root, "fugaro.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil
+	}
+	cfg, problems := config.Parse(data)
+	if cfg != nil {
+		problems = append(problems, config.Check(cfg, root)...)
+	}
+	fy := &doctorFugaroYAML{Path: path, Valid: len(problems) == 0, Problems: problems}
+	if len(problems) == 0 {
+		return &doctorCheck{ID: "fugaro-yaml", OK: true}, fy
+	}
+	return &doctorCheck{ID: "fugaro-yaml", OK: false,
+		Problem: fmt.Sprintf("%s has %d problem(s)", path, len(problems)),
+		Fix:     "run fugaro validate to see them"}, fy
+}
+
+// doctorSecrets lists the checkout's repository's stored secrets by name,
+// best-effort: nil when the repository or Secret Manager isn't reachable
+// (there is no fugaro.yaml declaring secrets yet, no origin, or no
+// credentials), never a hard failure, and never a value (gcp.Secrets.List
+// never reads one back).
+func doctorSecrets(cmd *cobra.Command, lc *localcfg.Config) []secretEntry {
+	ctx := cmd.Context()
+	env := &cloudEnv{lc: lc, gcp: gcp.Options{GCPProject: lc.GCPProject, Region: lc.Region,
+		Endpoints: gcp.Endpoints{SecretManager: lc.Endpoints.SecretManager, NoAuth: lc.Endpoints.NoAuth}}}
+	r, err := resolveSecretRepo(cmd, env, "")
+	if err != nil {
+		return nil
+	}
+	sm, err := gcp.NewSecrets(ctx, env.gcp)
+	if err != nil {
+		return nil
+	}
+	list, err := sm.List(ctx, map[string]string{gcp.LabelRepo: r.label})
+	if err != nil {
+		return nil
+	}
+	entries := make([]secretEntry, 0, len(list))
+	for _, s := range list {
+		entries = append(entries, secretEntry{Name: s.Labels[gcp.LabelSecret], SecretInfo: s})
+	}
+	slices.SortFunc(entries, func(a, b secretEntry) int {
+		return strings.Compare(a.Name+"\x00"+a.ID, b.Name+"\x00"+b.ID)
+	})
+	return entries
+}
+
+// pluginDoctorChecks turns a plugin report's states into doctor checks.
+func pluginDoctorChecks(r pluginwire.Report) []doctorCheck {
+	var out []doctorCheck
+	add := func(id string, s pluginwire.State) {
+		if s == "" {
+			return
+		}
+		c := doctorCheck{ID: id, OK: s == pluginwire.OK, Fix: s.Fix()}
+		switch s.Severity() {
+		case pluginwire.SeverityInfo:
+			c.Severity = "info"
+		case pluginwire.SeverityWarning:
+			c.Severity = "warning"
+		}
+		if s != pluginwire.OK {
+			c.Problem = pluginStateProblem(id, s, r)
+		}
+		out = append(out, c)
+	}
+	add("plugin-pin", r.Pin)
+	add("plugin-install", r.Install)
+	return out
+}
+
+// pluginStateProblem is the one-line problem text for a plugin state, the
+// same wording update-skills --check and the staleness warning use.
+func pluginStateProblem(id string, s pluginwire.State, r pluginwire.Report) string {
+	switch {
+	case id == "plugin-pin" && r.Detail != "":
+		return r.Detail
+	case id == "plugin-install" && s == pluginwire.InstalledDiffers:
+		return fmt.Sprintf("the installed plugin is %s, the pin is %s", r.Version, r.Ref)
+	}
+	return string(s)
+}
+
+// checksFail reports whether checks should fail doctor's exit code: any
+// ordinary check (Severity "") that isn't ok fails it; a "warning" one only
+// with strict; an "info" one never does.
+func checksFail(checks []doctorCheck, strict bool) bool {
+	for _, c := range checks {
+		if c.OK {
+			continue
+		}
+		switch c.Severity {
+		case "info":
+		case "warning":
+			if strict {
+				return true
+			}
+		default:
+			return true
+		}
+	}
+	return false
+}
+
+// printDoctorChecks prints one line per failing check (its problem and fix),
+// or a single "ok" line when none failed.
+func printDoctorChecks(w io.Writer, checks []doctorCheck) {
+	failed := false
+	for _, c := range checks {
+		if c.OK {
+			continue
+		}
+		failed = true
+		line := c.ID + ": "
+		if c.Severity != "" {
+			line = c.Severity + " " + line
+		}
+		line += c.Problem
+		if c.Fix != "" {
+			line += " (" + c.Fix + ")"
+		}
+		fmt.Fprintln(w, line)
+	}
+	if !failed {
+		fmt.Fprintln(w, "fugaro doctor: everything checked is ok")
+	}
+}
+
+// printDoctorSecrets prints the repository's secrets by name, never a
+// value: nothing when doctor never attempted to list them (secrets is nil),
+// "none stored" for an empty but reachable list.
+func printDoctorSecrets(w io.Writer, secrets []secretEntry) {
+	if secrets == nil {
+		return
+	}
+	if len(secrets) == 0 {
+		fmt.Fprintln(w, "secrets: none stored")
+		return
+	}
+	names := make([]string, len(secrets))
+	for i, s := range secrets {
+		names[i] = s.Name
+	}
+	fmt.Fprintln(w, "secrets: "+strings.Join(names, ", "))
+}
+
+func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(o); err != nil {
+			return err
+		}
+	} else {
+		out := cmd.OutOrStdout()
+		printDoctorChecks(out, o.Checks)
+		if p := o.Project; p != nil {
+			fmt.Fprintf(out, "project: %s (GCP %s, %s)\n", p.Name, p.GCPProject, p.Region)
+		}
+		printDoctorSecrets(out, o.Secrets)
+	}
+	if !o.OK {
+		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro doctor found a problem; see above")}
+	}
+	return nil
+}
