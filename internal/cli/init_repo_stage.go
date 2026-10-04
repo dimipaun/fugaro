@@ -61,7 +61,7 @@ func (s *repositoryStage) Missing() []string {
 	if s.tg == nil || !s.tg.needsAppID(s.e.lc, s.e.r.o) {
 		return nil
 	}
-	if st, err := s.e.authState(s.tg.repo); err != nil || st != authOK {
+	if st, err := s.e.authState(s.tg.origin); err != nil || st != authOK {
 		return nil
 	}
 	return []string{appIDFlag}
@@ -73,14 +73,14 @@ func (s *repositoryStage) Check(ctx context.Context) (initflow.Status, error) {
 		return s.st, nil
 	}
 	repo := pluginwire.Printable(s.tg.repo)
-	switch a, err := s.e.authState(s.tg.repo); {
+	switch a, err := s.e.authState(s.tg.origin); {
 	case err != nil:
 		return initflow.Status{}, err
 	case a == authAsk:
 		return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + ", which is not the project's yet: asks you to type its name first"}, nil
 	case a == authNeeded:
-		lf := onboardLeft(s.tg.repo)
-		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.repo), Left: &lf}, nil
+		lf := onboardLeft(s.tg.origin)
+		return initflow.Status{State: initflow.NeedsYou, Detail: unknownDetail(s.e.lc.Name, s.tg.origin), Left: &lf}, nil
 	}
 	return initflow.Status{State: initflow.Todo, Detail: "onboards " + repo + "; plans when applied"}, nil
 }
@@ -96,18 +96,18 @@ func (s *repositoryStage) authorize(ctx context.Context, env initflow.Env) error
 	if s.tg == nil {
 		return nil
 	}
-	switch a, err := e.authState(s.tg.repo); {
+	switch a, err := e.authState(s.tg.origin); {
 	case err != nil:
 		return err
 	case a == authNeeded || (a == authAsk && !env.Interactive):
-		return &initflow.NeedsYouError{Left: onboardLeft(s.tg.repo)}
+		return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin)}
 	case a == authAsk:
-		ok, err := e.confirmRepo(s.tg.root, s.tg.repo)
+		ok, err := e.confirmRepo(s.tg.root, s.tg.origin)
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return &initflow.NeedsYouError{Left: onboardLeft(s.tg.repo)}
+			return &initflow.NeedsYouError{Left: onboardLeft(s.tg.origin)}
 		}
 	}
 	if !s.tg.needsAppID(e.lc, e.r.o) {

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -28,9 +30,11 @@ var appIDRE = regexp.MustCompile(`^[0-9]{1,20}$`)
 
 // repoTarget is the checkout the repository stage onboards.
 type repoTarget struct {
-	root, repo string
-	branch     string // the default branch's name, as the ref resolved (origin/main: main)
-	cfg        *config.Config
+	root   string
+	origin originInfo
+	repo   string
+	branch string // the default branch's name, as the ref resolved (origin/main: main)
+	cfg    *config.Config
 }
 
 // needsAppID reports whether the engine will need the GitHub App's ID and
@@ -91,25 +95,95 @@ func gitRead(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
+var safeWordRE = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,][A-Za-z0-9_./:@%+=,-]*$`)
+
 // quoteWord is s as one shell word: unchanged when it is made of safe
-// characters, else in single quotes (a branch name may hold ; $ ( | & and
-// more, and the text is printed to be copied into a shell).
+// characters and cannot be read as an option (no leading '-'), else in single
+// quotes. A branch or repository name may hold ; $ ( | & ' and more, and the
+// text is printed to be copied into a shell.
 func quoteWord(s string) string {
-	if regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,-]+$`).MatchString(s) {
+	if safeWordRE.MatchString(s) {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// repoKnown reports whether the local config already lists repo.
-func repoKnown(lc *localcfg.Config, repo string) bool {
-	want, err := task.CanonicalRepo(repo)
+// originInfo is what the checkout says its origin is.
+type originInfo struct {
+	Repo, Host     string // owner/name and lower-case host, from what git resolves
+	Effective, Raw string // git remote get-url origin, and the raw remote.origin.url of the checkout's own config
+	Rewritten      bool   // the two differ in host or repository: url.<base>.insteadOf in the checkout's config
+}
+
+// providerHosts is the host each provider's repositories live on. GitHub
+// Enterprise and self-hosted Bitbucket are out of scope: their hosts are
+// "unusual" and always take the typed confirmation.
+var providerHosts = map[string]string{"github": "github.com", "bitbucket": "bitbucket.org"}
+
+func (o originInfo) standardHost() bool {
+	for _, h := range providerHosts {
+		if o.Host == h {
+			return true
+		}
+	}
+	return false
+}
+
+// typed is the text the user types to opt a repository in: owner/name, and
+// with the host in front when it is not a provider's own host.
+func (o originInfo) typed() string {
+	if o.standardHost() && !o.Rewritten {
+		return o.Repo
+	}
+	return o.Host + "/" + o.Repo
+}
+
+// originParts is the host and owner/name an origin URL names.
+func originParts(origin string) (host, repo string, ok bool) {
+	u, err := url.Parse(image.HTTPSOrigin(origin))
+	if err != nil || u.Scheme != "https" || u.Host == "" {
+		return "", "", false
+	}
+	repo, ok = repoFromOrigin(origin)
+	return strings.ToLower(u.Hostname()), repo, ok
+}
+
+// readOrigin derives the checkout's repository from both what git resolves
+// (git remote get-url origin: url.<base>.insteadOf applies) and the checkout's
+// own raw remote.origin.url. A checkout can ship its own .git/config, so the
+// two must name the same host and repository, else the origin is rewritten
+// and is not trusted by name.
+func readOrigin(ctx context.Context, root string) (originInfo, bool) {
+	eff, err := gitRead(ctx, root, "remote", "get-url", "origin")
+	host, repo, ok := originParts(eff)
+	if err != nil || !ok {
+		return originInfo{}, false
+	}
+	o := originInfo{Repo: repo, Host: host, Effective: eff}
+	raw, rerr := gitRead(ctx, root, "config", "--local", "--get", "remote.origin.url")
+	o.Raw = raw
+	rhost, rrepo, rok := originParts(raw)
+	if rerr != nil || !rok || rhost != host || !sameRepo(rrepo, repo) {
+		o.Rewritten = true
+	}
+	return o, true
+}
+
+// repoKnown reports whether the local config already lists the repository
+// this origin names, on the host of the provider recorded for it. A repository
+// of another host with a known owner/name, or an origin git config rewrites,
+// is not known.
+func repoKnown(lc *localcfg.Config, o originInfo) bool {
+	if o.Rewritten {
+		return false
+	}
+	want, err := task.CanonicalRepo(o.Repo)
 	if err != nil {
 		return false
 	}
-	for name := range lc.Repos {
+	for name, r := range lc.Repos {
 		if c, err := task.CanonicalRepo(name); err == nil && c == want {
-			return true
+			return providerHosts[r.Provider] == o.Host && o.Host != ""
 		}
 	}
 	return false
@@ -153,9 +227,9 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	if err != nil {
 		return skip("not in a checkout: run fugaro init in a checkout of the repository to onboard it")
 	}
-	origin, err := gitRead(ctx, root, "remote", "get-url", "origin")
-	repo, ok := repoFromOrigin(origin)
-	if err != nil || !ok {
+	oi, ok := readOrigin(ctx, root)
+	repo := oi.Repo
+	if !ok {
 		return skip("this checkout has no origin repository to onboard")
 	}
 	ref := defaultBranchRef(ctx, root)
@@ -164,8 +238,10 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	branch := strings.TrimPrefix(ref, "origin/")
 	shown := pluginwire.Printable(branch)
-	out, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml").Output()
-	data := out
+	var gerr bytes.Buffer
+	cat := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml")
+	cat.Stderr = &gerr
+	data, err := cat.Output()
 	if err != nil {
 		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
 	}
@@ -187,7 +263,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch " + quoteWord(branch)}
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
 	}
-	return &repoTarget{root: root, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
+	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
 }
 
 func normalEOL(b []byte) []byte { return bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n")) }

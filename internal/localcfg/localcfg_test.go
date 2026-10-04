@@ -797,3 +797,19 @@ func TestBaseImageNameKind(t *testing.T) {
 		}
 	}
 }
+
+// A config with the project-creation endpoint and adopt mode's installation
+// switches loads, and one of an older init (neither) still does.
+func TestConfigWithEndpointAndAdoptKeysLoads(t *testing.T) {
+	base := "version: 1\nname: belong\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\n"
+	lc, err := Parse([]byte(base + "endpoints: { firebase_management: http://127.0.0.1:1/ }\nterraform: { registry_cleanup: on, no_log_isolation: true, budget_backend: true }\n"))
+	if err != nil || lc.Endpoints.FirebaseManagement == "" || lc.Terraform.RegistryCleanup != "on" || !lc.Terraform.NoLogIsolation || !lc.Terraform.BudgetBackend {
+		t.Fatalf("%+v, %v", lc, err)
+	}
+	if _, err := Parse([]byte(base)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Parse([]byte(base + "terraform: { registry_cleanup: sometimes }\n")); err == nil {
+		t.Error("a bad cleanup mode was accepted")
+	}
+}

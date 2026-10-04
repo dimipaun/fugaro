@@ -251,7 +251,7 @@ cloned third-party repository cannot onboard itself.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
-	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository: the one non-interactive opt-in to wire and onboard a repository the project does not list yet (--yes never covers it; it must equal the origin exactly)")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
@@ -1747,8 +1747,7 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 
 // checkoutRepo returns the checkout's owner/name, from its origin.
 func checkoutRepo(ctx context.Context, root string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
-	cmd.WaitDelay = 5 * time.Second
+	cmd := gitCmd(ctx, root, "remote", "get-url", "origin")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1765,9 +1764,7 @@ func checkoutRepo(ctx context.Context, root string) (string, error) {
 // checkoutURL is the checkout's origin as an https URL without
 // credentials, which the builds and the daily check clone.
 func checkoutURL(ctx context.Context, root string) (string, error) {
-	c := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
-	c.WaitDelay = 5 * time.Second
-	out, err := c.Output()
+	out, err := gitCmd(ctx, root, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", userErr("no origin remote in the checkout %s", root)
 	}

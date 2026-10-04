@@ -33,8 +33,9 @@ type pluginStage struct {
 	printed bool // the outside-a-checkout snippet, said once
 	// ask: the checkout's repository is not the project's yet and has to be
 	// typed in before anything is written (set by plan); repo and root name it.
-	ask        bool
-	repo, root string
+	ask    bool
+	origin originInfo
+	root   string
 }
 
 func newPluginStage(e *initEngine) *pluginStage { return &pluginStage{e: e} }
@@ -73,9 +74,8 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	}
 	// Only the checkout the project's own repository stage would target.
 	e := s.e
-	origin, oerr := gitRead(ctx, loc.Root, "remote", "get-url", "origin")
-	repo, ok := repoFromOrigin(origin)
-	if oerr != nil || !ok {
+	repo, ok := readOrigin(ctx, loc.Root)
+	if !ok {
 		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to wire", nil)
 	}
 	if data, rerr := os.ReadFile(filepath.Join(loc.Root, "fugaro.yaml")); rerr == nil {
@@ -90,7 +90,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 		lf := onboardLeft(repo)
 		return status(initflow.NeedsYou, unknownDetail(e.lc.Name, repo), &lf)
 	case a == authAsk:
-		s.repo, s.root, s.ask = repo, loc.Root, true
+		s.origin, s.root, s.ask = repo, loc.Root, true
 	}
 	ch, err := pluginwire.Plan(loc.Settings, Version, s.e.r.o.allowFork)
 	var fe *pluginwire.ForeignError
@@ -158,14 +158,14 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 	r := s.e.r
 	if s.ask { // not the project's repository yet: its own typed confirmation, which --yes never gives
 		if !env.Interactive {
-			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.repo)}
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
 		}
-		ok, err := s.e.confirmRepo(s.root, s.repo)
+		ok, err := s.e.confirmRepo(s.root, s.origin)
 		if err != nil {
 			return initflow.Outcome{}, err
 		}
 		if !ok {
-			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.repo)}
+			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
 		}
 	}
 	fmt.Fprintf(r.w, "%s\n%s", ch.Path, ch.Diff())

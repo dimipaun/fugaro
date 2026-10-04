@@ -8,11 +8,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -81,9 +79,7 @@ func dirName(ctx context.Context) string {
 	if err != nil {
 		return ""
 	}
-	c := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	c.WaitDelay = 5 * time.Second
-	if out, err := c.Output(); err == nil {
+	if out, err := gitCmd(ctx, ".", "rev-parse", "--show-toplevel").Output(); err == nil {
 		dir = strings.TrimSpace(string(out))
 	}
 	return sanitiseName(filepath.Base(dir))

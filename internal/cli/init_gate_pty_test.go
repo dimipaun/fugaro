@@ -4,6 +4,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -88,5 +89,35 @@ func TestPtyPluginConfirmAndTypedRepo(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(settings); !strings.Contains(string(data), `"fugaro@fugaro": true`) {
 		t.Errorf("not wired:\n%s", data)
+	}
+}
+
+// The repository stage's own typed confirmation at a real terminal, then the
+// engine runs once.
+func TestPtyRepositoryTypedConfirmation(t *testing.T) {
+	dir := repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", ""))
+	t.Chdir(dir)
+	e, out, typeAt := ttyEngine(t, &initOptions{githubAppID: "12345"})
+	unknownRepo(e)
+	runs := 0
+	rs := newRepositoryStage(e)
+	rs.engineStage.run = func(context.Context) error { runs++; return nil }
+	type result struct {
+		res *initflow.Result
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
+		done <- result{res, err}
+	}()
+	typeAt("Type acme/app to onboard it", 1, "acme/app\n")
+	select {
+	case r := <-done:
+		if r.err != nil || runs != 1 || stateOf(r.res, "repository") != initflow.Done || !strings.Contains(out.String(), dir) {
+			t.Fatalf("%v runs %d %+v\n%s", r.err, runs, r.res.Stages, out.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the loop did not return")
 	}
 }

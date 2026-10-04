@@ -33,15 +33,19 @@ const (
 	authNeeded                 // not yet, and this run cannot ask
 )
 
-// authState says where repo stands. A --onboard-repo that is not this
-// checkout's repository is refused whatever else is true.
-func (e *initEngine) authState(repo string) (repoAuth, error) {
-	o := e.r.o
-	if o.onboardRepo != "" && !sameRepo(o.onboardRepo, repo) {
-		return authNeeded, userErr("--onboard-repo %s is not this checkout's repository (its origin is %s)", pluginwire.Printable(o.onboardRepo), pluginwire.Printable(repo))
+// authState says where the origin's repository stands. A --onboard-repo that
+// is not this checkout's repository is refused whatever else is true. The
+// flag names owner/name only, so it opts in only a repository on a provider's
+// own host with an origin git config does not rewrite; any other origin takes
+// the typed confirmation, which shows the host.
+func (e *initEngine) authState(o originInfo) (repoAuth, error) {
+	opts := e.r.o
+	if opts.onboardRepo != "" && !sameRepo(opts.onboardRepo, o.Repo) {
+		return authNeeded, userErr("--onboard-repo %s does not name this checkout's origin repository (%s)", pluginwire.Printable(opts.onboardRepo), pluginwire.Printable(o.Repo))
 	}
+	flagOK := opts.onboardRepo != "" && o.standardHost() && !o.Rewritten
 	switch {
-	case repoKnown(e.lc, repo), o.onboardRepo != "", e.authorized[strings.ToLower(repo)]:
+	case repoKnown(e.lc, o), flagOK, e.authorized[strings.ToLower(o.typed())]:
 		return authOK, nil
 	case e.canConfirmRepo():
 		return authAsk, nil
@@ -56,31 +60,45 @@ func (e *initEngine) canConfirmRepo() bool {
 	return e.r.canAsk() && !agentEnv(os.Getenv)
 }
 
-// onboardLeft is the one line that opts a repository in.
-func onboardLeft(repo string) initflow.Left {
-	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " init --onboard-repo " + quoteWord(repo)}
+// onboardLeft is what the user does to opt a repository in: the one-line
+// flag for an ordinary origin, else a note to use a clean clone.
+func onboardLeft(o originInfo) initflow.Left {
+	if o.standardHost() && !o.Rewritten {
+		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " init --onboard-repo " + quoteWord(o.Repo)}
+	}
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "run fugaro init in your own terminal and type " + pluginwire.Printable(o.typed()) + " at the prompt, or in a fresh clone of the real remote"}
 }
 
 // unknownDetail says why the stage waits for the user.
-func unknownDetail(project, repo string) string {
-	return "the repository " + pluginwire.Printable(repo) + " is not one of project " + pluginwire.Printable(project) + "'s yet; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes); the repository stage was not reached"
+func unknownDetail(project string, o originInfo) string {
+	d := "the repository " + pluginwire.Printable(o.typed()) + " is not one of project " + pluginwire.Printable(project) + "'s yet"
+	switch {
+	case o.Rewritten:
+		d = "the origin URL is rewritten by git config in this checkout (it says " + pluginwire.Printable(o.Raw) + ", git resolves it to " + pluginwire.Printable(o.Effective) + "), so " + d
+	case !o.standardHost():
+		d += " (host " + pluginwire.Printable(o.Host) + " is not a provider's own)"
+	}
+	return d + "; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes); the repository stage was not reached"
 }
 
-// confirmRepo asks, in the terminal, for the repository's owner/name typed:
-// the one answer that opts it in. Anything else leaves it out.
-func (e *initEngine) confirmRepo(root, repo string) (bool, error) {
+// confirmRepo asks, in the terminal, for the repository typed: the one
+// answer that opts it in. Anything else leaves it out.
+func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 	r := e.r
 	fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): this checkout's repository is not one of the project's yet.\n", pluginwire.Printable(r.projectName), pluginwire.Printable(r.gcpProject))
-	fmt.Fprintf(r.w, "  repository: %s (the origin)\n  checkout:   %q\n", pluginwire.Printable(repo), root)
+	fmt.Fprintf(r.w, "  repository: %s on host %s (the origin)\n  checkout:   %q\n", pluginwire.Printable(o.Repo), pluginwire.Printable(o.Host), root)
+	if o.Rewritten {
+		fmt.Fprintf(r.w, "  the origin URL is rewritten by git config: the checkout says %s, git resolves it to %s. A checkout can ship its own .git/config: prefer a fresh clone of the real remote.\n", pluginwire.Printable(o.Raw), pluginwire.Printable(o.Effective))
+	}
 	fmt.Fprintln(r.w, "  Wiring and onboarding it writes to the checkout and creates cloud resources in this project, and the repository's fugaro.yaml can start a Cloud Build. Do it only for a repository you trust and mean to onboard.")
-	fmt.Fprintf(r.w, "Type %s to onboard it: ", pluginwire.Printable(repo))
+	fmt.Fprintf(r.w, "Type %s to onboard it: ", pluginwire.Printable(o.typed()))
 	line, _ := r.in.ReadString('\n') // an ended input is a no
-	if strings.TrimSpace(line) != repo {
+	if strings.TrimSpace(line) != o.typed() {
 		return false, nil
 	}
 	if e.authorized == nil {
 		e.authorized = map[string]bool{}
 	}
-	e.authorized[strings.ToLower(repo)] = true
+	e.authorized[strings.ToLower(o.typed())] = true
 	return true, nil
 }
