@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -36,6 +37,8 @@ type initEngine struct {
 	c     *infra.Clients
 	t     *tf.TF
 	wd    *infra.Workdir
+
+	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
 
 // environment runs the environment check once (it prints the local
@@ -76,19 +79,23 @@ func (e *initEngine) setup(ctx context.Context) error {
 	return nil
 }
 
-// secretsHeld lists values the process holds that must never reach an
-// output (the secrets stage will return the ones it prompted for); none
-// yet. Tests replace it.
+// secretsHeld lists values the process holds from the start that must never
+// reach an output; none. The values the secrets stage prompts for are held
+// later, in the slots options adds to the list (see initEngine.hold). Tests
+// replace it.
 var secretsHeld = func() []string { return nil }
 
 // options is the loop's configuration from the flags.
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
+	base := secretsHeld()
+	e.redact = append(slices.Clone(base), make([]string, maxHeldSecrets)...)
+	e.held = e.redact[len(base):]
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), Out: r.w,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
-		Redact: secretsHeld(),
+		Redact: e.redact,
 	}
 }
 
@@ -96,6 +103,7 @@ func (e *initEngine) options() initflow.Options {
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e)}
+	stages = append(stages, newSecretsStage(e))
 	res, err := initflow.Run(ctx, stages, e.options())
 	return e.outcome(res, err)
 }
