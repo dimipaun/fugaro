@@ -35,8 +35,15 @@ func TestUpdateSkillsShowsWhatElseTheSettingsFileCarries(t *testing.T) {
 		}
 	}
 	js, _, _ := executeStdin(t, "", "update-skills", "--check", "--json")
-	if !strings.Contains(js, `"notices"`) {
-		t.Errorf("--json has no notices:\n%s", js)
+	if !strings.Contains(js, `"notices"`) || !strings.Contains(js, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("--json has no notices or no caveat:\n%s", js)
+	}
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("the diff screen has no caveat:\n%s", out)
+	}
+	// --check says it too, and a file with no notices is no exception.
+	if txt, _, _ := executeStdin(t, "", "update-skills", "--check"); !strings.Contains(txt, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("--check has no caveat:\n%s", txt)
 	}
 }
 
@@ -49,11 +56,25 @@ func TestDoctorStrictDoesNotFailOnSettingsNotices(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--strict failed on notices: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "the file defines hooks") {
-		t.Errorf("doctor does not show them:\n%s", out)
+	if !strings.Contains(out, "the file defines hooks") || !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("doctor does not show them, or the caveat:\n%s", out)
 	}
 	js, _, err := executeStdin(t, "", "doctor", "--plugin", "--strict", "--json")
 	if err != nil || !strings.Contains(js, `"plugin-settings-1"`) || !strings.Contains(js, `"severity": "info"`) {
 		t.Errorf("%v\n%s", err, js)
+	}
+}
+
+// A clean file is no assurance either: the caveat is there with no notices.
+func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
+	releaseBuild(t, "0.2.0")
+	wiringCheckout(t, `{"model":"opus"}`)
+	out, _, _ := executeStdin(t, "", "doctor", "--plugin")
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("doctor:\n%s", out)
+	}
+	out, _, _ = executeStdin(t, "", "update-skills", "--check")
+	if !strings.Contains(out, "this list is not exhaustive: read the file yourself") {
+		t.Errorf("update-skills --check:\n%s", out)
 	}
 }

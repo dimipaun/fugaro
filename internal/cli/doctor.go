@@ -143,6 +143,8 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			pluginChecks = append(pluginChecks, doctorCheck{ID: fmt.Sprintf("plugin-settings-%d", i+1), Severity: "info", Problem: n,
 				Fix: "review " + pluginwire.Printable(loc.Settings) + " (git blame it): wiring the plugin blesses the whole file"})
 		}
+		pluginChecks = append(pluginChecks, doctorCheck{ID: "plugin-settings-caveat", Severity: "info", Problem: pluginwire.NoticesCaveat,
+			Fix: "read " + pluginwire.Printable(loc.Settings) + " and the files beside it (.claude/skills, .claude/commands, .mcp.json) yourself"})
 	} else {
 		// Not inside a checkout there is no wiring to find: a warning (so
 		// --strict fails, as update-skills --check does), never silence.

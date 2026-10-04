@@ -28,9 +28,11 @@ type updateSkillsOutput struct {
 	Error    string `json:"error,omitempty"`
 	// Notices are what else the settings file says (hooks, permissions, other
 	// plugins...), shown before the file is blessed.
-	Notices []string           `json:"notices,omitempty"`
-	Release *releaseInfo       `json:"release,omitempty"` // the binary's tag and commit, and how to verify the tag
-	Report  *pluginwire.Report `json:"report,omitempty"`
+	Notices []string `json:"notices,omitempty"`
+	// NoticesNote says the notices are not exhaustive; set whenever they are shown.
+	NoticesNote string             `json:"notices_note,omitempty"`
+	Release     *releaseInfo       `json:"release,omitempty"` // the binary's tag and commit, and how to verify the tag
+	Report      *pluginwire.Report `json:"report,omitempty"`
 }
 
 func newUpdateSkillsCmd() *cobra.Command {
@@ -128,6 +130,8 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 		for _, n := range o.Notices {
 			say("heads-up: %s\n", n)
 		}
+		say("heads-up: %s\n", pluginwire.NoticesCaveat)
+		o.NoticesNote = pluginwire.NoticesCaveat
 		if r.Pin == pluginwire.Foreign {
 			o.Foreign = r.Repo
 			warnFork(r.Repo)
@@ -178,7 +182,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 		say("%s\n", describeReport(loc.Settings, r))
 	}
 	say("%s", pluginFirstRun)
-	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Notices: ch.Notices, Report: &r})
+	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Notices: ch.Notices, NoticesNote: pluginwire.NoticesCaveat, Report: &r})
 }
 
 func joinStates(ss []pluginwire.State) string {

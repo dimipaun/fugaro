@@ -25,8 +25,22 @@ func Notices(settings string, data []byte) []string {
 			out = append(out, settingsNotices(top)...)
 		}
 	}
-	return append(out, shadowNotices(filepath.Dir(settings))...)
+	out = append(out, shadowNotices(filepath.Dir(settings))...)
+	return append(out, mcpNotices(filepath.Dir(filepath.Dir(settings)))...)
 }
+
+// mcpNotices notes a repository-level .mcp.json: MCP servers it declares are
+// commands or services an agent calls, and its content is not read here.
+func mcpNotices(root string) []string {
+	if fi, err := os.Lstat(filepath.Join(root, ".mcp.json")); err == nil && !fi.IsDir() {
+		return []string{"the repository has a .mcp.json, which declares MCP servers (commands or services Claude Code can run or call): read it before trusting them"}
+	}
+	return nil
+}
+
+// NoticesCaveat goes with the notices wherever they are shown: the list is
+// what Fugaro knows to look for, so a short one (or none) is no assurance.
+const NoticesCaveat = "this list is not exhaustive: read the file yourself"
 
 func settingsNotices(top object) []string {
 	var out []string
@@ -50,9 +64,31 @@ func settingsNotices(top object) []string {
 			}
 			out = append(out, msg)
 		}
+		if raw, ok := perms.get("defaultMode"); ok && strings.TrimSpace(string(raw)) == `"bypassPermissions"` {
+			out = append(out, "permissions.defaultMode is bypassPermissions: tools run without asking")
+		}
 	}
 	if raw, ok := top.get("apiKeyHelper"); ok && nonEmpty(raw) {
 		out = append(out, "apiKeyHelper is set: a command that supplies the API key")
+	}
+	for _, k := range []struct{ key, msg string }{
+		{"statusLine", "statusLine is set: a command that runs while Claude Code is open"},
+		{"enabledMcpjsonServers", "enabledMcpjsonServers pre-approves MCP servers the repository declares"},
+		{"awsAuthRefresh", "awsAuthRefresh is set: a command that runs to refresh AWS credentials"},
+		{"awsCredentialExport", "awsCredentialExport is set: a command that supplies AWS credentials"},
+		{"otelHeadersHelper", "otelHeadersHelper is set: a command that supplies telemetry headers"},
+	} {
+		if raw, ok := top.get(k.key); ok && nonEmpty(raw) {
+			out = append(out, k.msg)
+		}
+	}
+	if sb, _, err := objectAt(top, "sandbox"); err == nil {
+		if raw, ok := sb.get("excludedCommands"); ok && nonEmpty(raw) {
+			out = append(out, "sandbox.excludedCommands names commands that run outside the sandbox")
+		}
+		if raw, ok := sb.get("allowUnsandboxedCommands"); ok && strings.TrimSpace(string(raw)) == "true" {
+			out = append(out, "sandbox.allowUnsandboxedCommands is true: a command may be run outside the sandbox")
+		}
 	}
 	if raw, ok := top.get("enableAllProjectMcpServers"); ok && strings.TrimSpace(string(raw)) == "true" {
 		out = append(out, "enableAllProjectMcpServers is true: every MCP server the repository declares is trusted without asking")
@@ -125,11 +161,13 @@ func NoticesFor(path string) []string {
 }
 
 // NoticeText is the change's notices for the diff screen, one "heads-up" line
-// each ("" when there are none).
+// each, then the caveat that the list is not exhaustive (always: a clean
+// screen must not read as assurance).
 func (c *Change) NoticeText() string {
 	var b strings.Builder
 	for _, n := range c.Notices {
 		b.WriteString("heads-up: " + n + "\n")
 	}
+	b.WriteString("heads-up: " + NoticesCaveat + "\n")
 	return b.String()
 }
