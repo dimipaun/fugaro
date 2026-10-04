@@ -155,6 +155,9 @@ func runImageBuild(cmd *cobra.Command, o imageBuildOptions) error {
 // fugaro.yaml and origin are read here.
 func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	ctx := cmd.Context()
+	if err := refuseHTTP2Debug(os.Getenv); err != nil {
+		return err
+	}
 	// A Cloud Build is billable: the project's name typed at a real
 	// terminal, never --json, a pipe or a coding agent's session. A run that
 	// can't take it is refused first, before the local config, the bucket or
