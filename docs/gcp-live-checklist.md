@@ -691,7 +691,9 @@ The Firebase project may be the installation's own GCP project (design `m9-budge
 3. Does `google_firebase_project` adopt a project that already runs Cloud Run and Artifact Registry? Record the plan and the apply.
 4. **The security claim, as a job account.** Impersonate (or `gcloud auth print-access-token --impersonate-service-account=<a job account>`) and call the RTDB REST with that token (`<rtdb_url>/.json?access_token=...`), Firestore `documents` and Identity Toolkit `accounts:lookup`: each must answer 401 or 403. Do the same as the build account and the scheduler account. `gcloud projects get-iam-policy <p>`: no job, build or scheduler account appears with a Firebase, datastore or primitive role.
 5. `fugaro budget show`, a run in observe mode, `fugaro watch --once`, and a second `init --firebase` (no changes: "No changes" for both roots).
-6. `terraform destroy` is not part of this check; nothing disables an API on destroy (`disable_on_destroy = false`).
+6. **The Cloud Build pivot.** From an image build step (a scratch repository's Dockerfile), run `gcloud builds submit` (or the Cloud Build API) without `serviceAccount` and, in that build, fetch the metadata token and call `<rtdb_url>/.json?access_token=...`, Firestore and Identity Toolkit. Record the answer, and `gcloud projects get-iam-policy <p>` for the default Compute (`<number>-compute@developer`), Cloud Build (`<number>@cloudbuild`) and App Engine accounts: with `roles/editor` the call succeeds (that is the risk; strip the role and repeat, it must be refused). Confirm `init --firebase` printed the warning for it.
+7. **Token forgery by another account.** Sign a JWT as a service account of the project that is not the signer (`signJwt` with `uid`, the run claims and audience `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`) and call `signInWithCustomToken` with the web API key: expect refusal or, if it is accepted, record it (Firebase accepts any account of the project).
+8. `terraform destroy` is not part of this check; nothing disables an API on destroy (`disable_on_destroy = false`).
 
 ## Not covered by these tests (manual)
 
