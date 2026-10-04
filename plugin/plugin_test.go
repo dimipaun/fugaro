@@ -146,12 +146,14 @@ func TestSkillSetIsFour(t *testing.T) {
 // §4.4): a machine-readable tag naming the owning skill and its version.
 var headerRE = regexp.MustCompile(`<!-- fugaro-skill name=(\S+) fugaro-version=(\S+) -->`)
 
-// skillFiles returns every markdown file under skills/, SKILL.md and its
+// skillFiles returns every markdown file under root, SKILL.md and its
 // reference files alike: both carry the header (design §4.4, §4.6 test 1).
-func skillFiles(t *testing.T) []string {
+// It walks every directory depth, so a skill's own SKILL.md and its
+// reference/*.md files are both found.
+func skillFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var files []string
-	err := filepath.WalkDir("skills", func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -169,7 +171,7 @@ func skillFiles(t *testing.T) []string {
 // TestEveryFileHasHeaderAndVersion: every skill file, including reference
 // files, names its owning skill and carries a version (design §4.4).
 func TestEveryFileHasHeaderAndVersion(t *testing.T) {
-	for _, f := range skillFiles(t) {
+	for _, f := range skillFiles(t, "skills") {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -209,7 +211,7 @@ func TestHeaderVersionEqualsPluginVersion(t *testing.T) {
 	if err := json.Unmarshal(data, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	for _, f := range skillFiles(t) {
+	for _, f := range skillFiles(t, "skills") {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
@@ -265,11 +267,7 @@ func TestBumpScriptRewritesHeaders(t *testing.T) {
 	if !strings.Contains(string(pluginJSON), `"version": "9.9.9"`) {
 		t.Errorf("plugin.json not bumped:\n%s", pluginJSON)
 	}
-	files, err := filepath.Glob(filepath.Join(root, "plugin", "skills", "*", "*.md"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no skill files: %v", err)
-	}
-	for _, f := range files {
+	for _, f := range skillFiles(t, filepath.Join(root, "plugin", "skills")) {
 		data, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)
