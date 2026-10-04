@@ -31,7 +31,7 @@ func checkout(t *testing.T, files map[string]string) string {
 }
 
 // buildImage runs `fugaro image build --local --json` in dir, the way the
-// onboard skill does. It removes the image when the test ends, and fails the
+// setup skill does. It removes the image when the test ends, and fails the
 // test unless the build and its smoke test pass.
 func buildImage(t *testing.T, dir, base, tag string, env ...string) image.LocalResult {
 	t.Helper()
