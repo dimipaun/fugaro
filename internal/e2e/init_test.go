@@ -1383,7 +1383,14 @@ func TestInitRepoEnablesResourceManager(t *testing.T) {
 		t.Fatalf("enables %q, terraform calls %q", r.su.Enables(), r.calls(t))
 	}
 
+	// --plan-only never takes --yes: nothing is enabled on its word.
 	res = r.fugaroInit(t, "--repo", r.checkout, "--plan-only", "--yes")
+	if res.code != 1 || len(r.su.Enables()) != 0 || len(r.calls(t)) != 0 {
+		t.Fatalf("--plan-only --yes: exit %d, enables %q, terraform calls %q\n%s", res.code, r.su.Enables(), r.calls(t), res)
+	}
+
+	// The project's name typed at a terminal confirms it.
+	res = r.fugaroInitTyped(t, initRepoProjectName+"\n", "--repo", r.checkout, "--plan-only")
 	if res.code != 0 {
 		t.Fatal(res)
 	}
