@@ -419,7 +419,11 @@ func TestStaleRetriesThenGrace(t *testing.T) {
 
 func TestLeaseAcrossMidnight(t *testing.T) {
 	f := newFixture(t)
-	late := time.Date(2026, 10, 2, 23, 59, 58, 0, time.UTC)
+	// Far enough from midnight that a runner stalled for seconds (the session
+	// adds real elapsed time to the frozen database clock) cannot move the
+	// first lease into the next day; the second lease is past midnight by a
+	// margin as wide.
+	late := time.Date(2026, 10, 2, 23, 50, 0, 0, time.UTC)
 	f.db.SetClock(func() time.Time { return late })
 	s := f.started(budget.AgentEntry{})
 	ctx := context.Background()
@@ -432,7 +436,7 @@ func TestLeaseAcrossMidnight(t *testing.T) {
 	}
 	// Midnight passes. A lease taken now belongs to the new day; the old one
 	// stays where it was granted.
-	f.db.SetClock(func() time.Time { return late.Add(5 * time.Second) })
+	f.db.SetClock(func() time.Time { return late.Add(20 * time.Minute) })
 	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil { // refreshes the clock from the response
 		t.Fatal(err)
 	}
@@ -465,7 +469,11 @@ func TestLeaseAcrossMidnight(t *testing.T) {
 // to the newest lease and only the rest to yesterday's.
 func TestReleaseTakesTodaysLeaseFirst(t *testing.T) {
 	f := newFixture(t)
-	late := time.Date(2026, 10, 2, 23, 59, 58, 0, time.UTC)
+	// Far enough from midnight that a runner stalled for seconds (the session
+	// adds real elapsed time to the frozen database clock) cannot move the
+	// first lease into the next day; the second lease is past midnight by a
+	// margin as wide.
+	late := time.Date(2026, 10, 2, 23, 50, 0, 0, time.UTC)
 	f.db.SetClock(func() time.Time { return late })
 	s := f.started(budget.AgentEntry{})
 	ctx := context.Background()
@@ -473,7 +481,7 @@ func TestReleaseTakesTodaysLeaseFirst(t *testing.T) {
 	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
 		t.Fatal(err)
 	}
-	f.db.SetClock(func() time.Time { return late.Add(5 * time.Second) })
+	f.db.SetClock(func() time.Time { return late.Add(20 * time.Minute) })
 	if _, err := s.Lease().Grant(ctx, 1_000_000); err != nil {
 		t.Fatal(err)
 	}
