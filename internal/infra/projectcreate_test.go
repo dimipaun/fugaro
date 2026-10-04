@@ -80,7 +80,7 @@ func TestCreateSequence(t *testing.T) {
 	if err != nil || !info.Exists || info.State != "ACTIVE" || !info.Firebase || !info.BillingKnown || info.BillingEnabled {
 		t.Fatalf("info %+v, err %v", info, err)
 	}
-	if err := LinkBilling(ctx, f.pc, "fugaro-new-1", "0123AB-4567CD-89EF01"); err != nil {
+	if err := LinkBilling(ctx, f.pc, "fugaro-new-1", "0123AB-4567CD-89EF01", false); err != nil {
 		t.Fatal(err)
 	}
 	if err := VerifyBilling(ctx, f.pc, "fugaro-new-1"); err != nil {
@@ -113,7 +113,7 @@ func TestCreateRefusesBadInputBeforeAnyCall(t *testing.T) {
 			t.Errorf("%+v was accepted", s)
 		}
 	}
-	if err := LinkBilling(ctx, f.pc, "fugaro-new-3", "nope"); err == nil {
+	if err := LinkBilling(ctx, f.pc, "fugaro-new-3", "nope", true); err == nil {
 		t.Error("a malformed account was accepted")
 	}
 	if n := len(f.crm.Requests()) + len(f.bill.Requests()); n != 0 {
@@ -208,10 +208,10 @@ func TestLinkBillingRefusals(t *testing.T) {
 	f.bill.AddAccount("0123AB-4567CD-89EF01", false)
 	f.bill.AddAccount("AAAAAA-BBBBBB-CCCCCC", true)
 	ctx := context.Background()
-	if err := LinkBilling(ctx, f.pc, "fugaro-bill-1", "0123AB-4567CD-89EF01"); err == nil || !strings.Contains(err.Error(), "closed") {
+	if err := LinkBilling(ctx, f.pc, "fugaro-bill-1", "0123AB-4567CD-89EF01", false); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Errorf("a closed account: %v", err)
 	}
-	if err := LinkBilling(ctx, f.pc, "fugaro-bill-1", "DDDDDD-EEEEEE-FFFFFF"); err == nil || !strings.Contains(err.Error(), "billing.resourceAssociations.create") {
+	if err := LinkBilling(ctx, f.pc, "fugaro-bill-1", "DDDDDD-EEEEEE-FFFFFF", false); err == nil || !strings.Contains(err.Error(), "billing.resourceAssociations.create") {
 		t.Errorf("an account the caller may not use: %v", err)
 	}
 	if n := len(f.bill.Links()); n != 0 {
@@ -227,5 +227,28 @@ func TestUserProjectDeniedIsNotMissing(t *testing.T) {
 	var pe *ProjectError
 	if !errors.As(err, &pe) || pe.Kind != ProjectDenied || !strings.Contains(pe.Fix, "set-quota-project") || !strings.Contains(pe.Error(), "USER_PROJECT_DENIED") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// With expectNoLink the write is refused, and not even sent, when the
+// project is linked or its billing cannot be read right before it.
+func TestLinkBillingGuard(t *testing.T) {
+	f := newProjectFakes(t)
+	f.crm.AddProject("fugaro-g-1", 1)
+	f.bill.SetBilling("fugaro-g-1", true)
+	f.crm.AddProject("fugaro-g-2", 2)
+	f.bill.SetSuspended("fugaro-g-2", "AAAAAA-BBBBBB-CCCCCC")
+	f.crm.AddProject("fugaro-g-3", 3)
+	f.bill.HideBilling("fugaro-g-3")
+	ctx := context.Background()
+	for _, id := range []string{"fugaro-g-1", "fugaro-g-2", "fugaro-g-3"} {
+		err := LinkBilling(ctx, f.pc, id, "0123AB-4567CD-89EF01", true)
+		var pe *ProjectError
+		if !errors.As(err, &pe) || pe.Kind != ProjectLinkGuard {
+			t.Errorf("%s: err = %v", id, err)
+		}
+	}
+	if n := f.bill.Attempts(); n != 0 {
+		t.Errorf("%d write(s) attempted", n)
 	}
 }

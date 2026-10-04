@@ -315,7 +315,7 @@ func adcInfo() (kind, quota string) {
 			path = filepath.Join(dir, "application_default_credentials.json")
 		}
 	}
-	b, err := os.ReadFile(path)
+	b, err := readBounded(path)
 	if err != nil {
 		return "", ""
 	}
@@ -327,6 +327,24 @@ func adcInfo() (kind, quota string) {
 		return "", ""
 	}
 	return f.Type, f.Quota
+}
+
+// readBounded reads a regular file of at most 1 MiB: a FIFO or a device
+// named by the environment is never opened for reading, so it cannot block.
+func readBounded(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, errors.New("not a regular file")
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, 1<<20))
 }
 
 // credentialNote says whose credentials make the calls, and which project
@@ -438,7 +456,12 @@ func (s *projectStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 		if !ok {
 			return initflow.Outcome{}, s.declined("the billing account's ID")
 		}
-		if err := infra.LinkBilling(ctx, s.pc, s.id, acct); err != nil {
+		if err := infra.LinkBilling(ctx, s.pc, s.id, acct, !created); err != nil {
+			var pe *infra.ProjectError
+			if errors.As(err, &pe) && pe.Kind == infra.ProjectLinkGuard {
+				fmt.Fprintln(r.w, pe.Error())
+				return initflow.Outcome{}, &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Project, Kind: initflow.LeftCommand, Text: s.guided()}}
+			}
 			return initflow.Outcome{}, s.fail(err)
 		}
 		if err := infra.VerifyBilling(ctx, s.pc, s.id); err != nil {

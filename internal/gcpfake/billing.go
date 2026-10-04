@@ -89,6 +89,19 @@ func (f *Billing) FailLinks(code int, status, msg string) {
 	}
 }
 
+// Attempts counts the writes (PUTs) received, accepted or refused: a test
+// that says "nothing was written" asserts this is zero, so it fails when a
+// write is attempted even though the fake refuses it.
+func (f *Billing) Attempts() int {
+	n := 0
+	for _, r := range f.Requests() {
+		if r.Method != http.MethodGet {
+			n++
+		}
+	}
+	return n
+}
+
 // Links are the updateBillingInfo calls accepted so far.
 func (f *Billing) Links() []Link {
 	f.mu.Lock()
@@ -133,8 +146,10 @@ func (f *Billing) link(w http.ResponseWriter, project string, body []byte) {
 		return
 	}
 	if f.account[project] != "" || f.enabled[project] {
-		// Replacing a link needs more than creating one; the fake grants
-		// the caller only the latter, so an existing link is never replaced.
+		// The fake refuses a replacement with 403. It does not model the real
+		// API's documented replace behaviour (updateBillingInfo on a linked
+		// project replaces the link for a caller allowed to), so it proves
+		// only that init does not try, which is what Attempts asserts.
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller may not replace the project's existing billing link")
 		return
 	}

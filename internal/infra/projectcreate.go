@@ -162,11 +162,12 @@ func ValidateBillingAccount(a string) error {
 type ProjectErrorKind string
 
 const (
-	ProjectTaken   ProjectErrorKind = "taken"        // the ID is held by a project the caller cannot read
-	ProjectDeleted ProjectErrorKind = "deleted"      // the project is DELETE_REQUESTED
-	ProjectAPIOff  ProjectErrorKind = "api-disabled" // an API is off on the credentials' quota project
-	ProjectDenied  ProjectErrorKind = "denied"       // a permission or an organization policy refused
-	ProjectOther   ProjectErrorKind = "other"
+	ProjectTaken     ProjectErrorKind = "taken"        // the ID is held by a project the caller cannot read
+	ProjectDeleted   ProjectErrorKind = "deleted"      // the project is DELETE_REQUESTED
+	ProjectAPIOff    ProjectErrorKind = "api-disabled" // an API is off on the credentials' quota project
+	ProjectDenied    ProjectErrorKind = "denied"       // a permission or an organization policy refused
+	ProjectLinkGuard ProjectErrorKind = "link-guard"   // billing is, or may now be, linked: nothing was written
+	ProjectOther     ProjectErrorKind = "other"
 )
 
 // ProjectError is a failed project call: the service's own text, verbatim,
@@ -384,7 +385,7 @@ func CreateProject(ctx context.Context, pc *ProjectClients, s CreateSpec) error 
 	if errors.As(err, &ge) && ge.Code == http.StatusConflict {
 		return &ProjectError{Kind: ProjectTaken, Err: fmt.Errorf("creating project %s: %w", s.ID, err),
 			Hint: "the ID is held by another project (possibly one in someone else's account, one deleted in the last 30 days, or one you created a moment ago that cannot be read yet), and project IDs are global and never reused",
-			Fix:  "if an earlier run of yours created " + s.ID + " a moment ago (it said \"created but cannot be read yet\" or timed out), wait a few minutes and rerun with the same ID; only if not, choose another --gcp-project, such as " + SuggestProjectID(s.ID)}
+			Fix:  "if an earlier run of yours created " + s.ID + " a moment ago (it said \"created but cannot be read yet\" or timed out), this is the resume: wait a few minutes and rerun with the same ID; only if not, choose another --gcp-project, such as " + SuggestProjectID(s.ID)}
 	}
 	if err != nil {
 		return orgPolicyHint(classify(err, "creating project "+s.ID))
@@ -488,9 +489,23 @@ func VerifyFirebase(ctx context.Context, pc *ProjectClients, id string) error {
 // LinkBilling links the billing account to the project: the one call that
 // can commit the user's money. It never relinks: a project that already has
 // billing is the caller's to have refused before this.
-func LinkBilling(ctx context.Context, pc *ProjectClients, id, account string) error {
+//
+// expectNoLink is the guard for a project this run did not create: the
+// billing is read again right before the write, and the write is refused
+// (ProjectLinkGuard, nothing sent) if an account is now linked or the read
+// fails. The invariant "never replace a link" lives with the only write.
+func LinkBilling(ctx context.Context, pc *ProjectClients, id, account string, expectNoLink bool) error {
 	if err := ValidateBillingAccount(account); err != nil {
 		return err
+	}
+	if expectNoLink {
+		bi, err := pc.Billing.Projects.GetBillingInfo("projects/" + id).Context(ctx).Do()
+		switch {
+		case err != nil:
+			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: its billing cannot be read right before the link: %w", id, err)}
+		case bi.BillingEnabled || bi.BillingAccountName != "":
+			return &ProjectError{Kind: ProjectLinkGuard, Err: fmt.Errorf("not linking billing to project %s: it is now linked to a billing account, and init never replaces a link", id)}
+		}
 	}
 	_, err := pc.Billing.Projects.UpdateBillingInfo("projects/"+id, &billing.ProjectBillingInfo{BillingAccountName: "billingAccounts/" + account}).Context(ctx).Do()
 	if err != nil {

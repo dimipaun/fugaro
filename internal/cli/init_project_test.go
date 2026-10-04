@@ -510,6 +510,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 	r.bill.HideBilling(newProj)
 	out, _, err := r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "unreadable billing")
+	if n := r.bill.Attempts(); n != 0 {
+		t.Errorf("unreadable billing: %d write(s) attempted", n)
+	}
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "cannot be read") || !strings.Contains(out, "gcloud billing projects link") {
 		t.Errorf("exit %d\n%s", ExitCode(err), out)
 	}
@@ -519,6 +522,9 @@ func TestRelinkNeverHappens(t *testing.T) {
 	r.bill.SetSuspended(newProj, "AAAAAA-BBBBBB-CCCCCC")
 	out, _, err = r.run(t, true, billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
 	r.nothingDone(t, "a suspended link")
+	if n := r.bill.Attempts(); n != 0 {
+		t.Errorf("a suspended link: %d write(s) attempted", n)
+	}
 	if ExitCode(err) != ExitUserError || !strings.Contains(out, "never replaces an existing link") {
 		t.Errorf("exit %d\n%s", ExitCode(err), out)
 	}
@@ -657,5 +663,53 @@ func TestStageIDIsTheFlagAlone(t *testing.T) {
 	}
 	if s.id != newProj {
 		t.Errorf("id %q", s.id)
+	}
+}
+
+// A project this run created is still linked when its billing cannot be
+// read right after creation: the write is attempted (here refused by the
+// fake's 403, which is the error shown).
+func TestCreatedHereUnreadableBillingStillAttempted(t *testing.T) {
+	r := newProjectRig(t)
+	r.bill.HideBilling(newProj)
+	_, _, err := r.run(t, true, newProj+"\n"+billingAcc+"\n", "--create-project", "--link-billing", billingAcc)
+	if err == nil || r.bill.Attempts() != 1 {
+		t.Errorf("err %v, attempts %d: the link should be attempted once", err, r.bill.Attempts())
+	}
+}
+
+// onRead runs fn the first time the reader is read: the moment the person
+// is at the prompt.
+type onRead struct {
+	r  *strings.Reader
+	fn func()
+}
+
+func (o *onRead) Read(p []byte) (int, error) {
+	if o.fn != nil {
+		o.fn()
+		o.fn = nil
+	}
+	return o.r.Read(p)
+}
+
+// Billing becomes linked between the decision and the write (while the
+// confirmation is typed): the write is not sent.
+func TestBillingLinkedWhileConfirmingIsNotReplaced(t *testing.T) {
+	r := newProjectRig(t)
+	r.existing(false)
+	fakeTerminal(t)
+	cmd := NewRootCmd()
+	var out, errOut strings.Builder
+	cmd.SetIn(&onRead{r: strings.NewReader(billingAcc + "\n"), fn: func() { r.bill.SetBilling(newProj, true) }})
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs([]string{"init", "--gcp-project", newProj, "--create-project", "--link-billing", billingAcc})
+	err := cmd.Execute()
+	if n := r.bill.Attempts(); n != 0 {
+		t.Errorf("%d write(s) attempted\n%s", n, out.String())
+	}
+	if ExitCode(err) != ExitUserError || !strings.Contains(out.String(), "never replaces a link") {
+		t.Errorf("exit %d (%v)\n%s", ExitCode(err), err, out.String())
 	}
 }
