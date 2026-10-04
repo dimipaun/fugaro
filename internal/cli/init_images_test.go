@@ -13,6 +13,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"golang.org/x/oauth2"
@@ -306,7 +307,7 @@ func TestImagesStageNeedsItsOwnConfirmation(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, err := executeStdin(t, "", "init", "--base", "go")
-	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a confirmation") {
+	if err == nil || ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	if !strings.Contains(out, "adds sha256:") || r.dst.puts != 0 {
@@ -404,7 +405,7 @@ func TestReplaceImageStillAsks(t *testing.T) {
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other
 	out, _, err := executeStdin(t, "", "init", "--base", "go", "--replace-image")
-	if err == nil || !strings.Contains(err.Error(), "needs a confirmation") || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
+	if err == nil || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
 		t.Fatalf("err %v, %d writes\n%s", err, r.dst.puts, out)
 	}
 	if !strings.Contains(out, "REPLACES "+other) {

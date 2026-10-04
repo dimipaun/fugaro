@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/shellword"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -95,17 +96,25 @@ func gitRead(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-var safeWordRE = regexp.MustCompile(`^[A-Za-z0-9_./:@%+=,][A-Za-z0-9_./:@%+=,-]*$`)
+// quoteWord is s as one shell word (the helper every printed command uses):
+// a leading-dash value is quoted, and printed after "--" where the command
+// takes options.
+func quoteWord(s string) string { return shellword.Quote(s) }
 
-// quoteWord is s as one shell word: unchanged when it is made of safe
-// characters and cannot be read as an option (no leading '-'), else in single
-// quotes. A branch or repository name may hold ; $ ( | & ' and more, and the
-// text is printed to be copied into a shell.
-func quoteWord(s string) string {
-	if safeWordRE.MatchString(s) {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+// switchLeft is the one line that puts the checkout on the default branch:
+// the branch after "--", so a name that begins with a dash is not an option.
+func switchLeft(branch string) initflow.Left {
+	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch -- " + quoteWord(branch)}
+}
+
+// promptLeft is a Left for a step typed at the user's own terminal: what is
+// typed there is the prose, the one-line command that starts it is the only
+// thing to paste. args are the command's words after the binary, already
+// quoted.
+func promptLeft(stage, typed string, args ...string) initflow.Left {
+	return initflow.Left{Stage: stage, Kind: initflow.LeftPrompt,
+		Text:     "in your own terminal window, not through a coding agent or a pipe, " + typed + " after running",
+		Commands: []string{selfCommand() + " " + strings.Join(args, " ")}}
 }
 
 // originInfo is what the checkout says its origin is.
@@ -251,7 +260,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 		if len(problems) > 0 {
 			why = problems[0].String()
 		}
-		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "fugaro validate"}
+		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " validate"}
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "fugaro.yaml on the default branch (" + shown + ") is not valid: " + pluginwire.Printable(oneLineCLI(why)), Left: &lf}
 	}
 	if project != "" && cfg.Project != project {
@@ -260,7 +269,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	// The engine reads the working tree: it must be the default branch's
 	// file (line endings aside).
 	if wt, err := os.ReadFile(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(data)) {
-		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: "git switch " + quoteWord(branch)}
+		lf := switchLeft(branch)
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
 	}
 	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}

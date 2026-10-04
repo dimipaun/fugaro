@@ -58,6 +58,8 @@ import (
 	firebase "google.golang.org/api/firebase/v1beta1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
+
+	"github.com/dimipaun/fugaro/internal/shellword"
 )
 
 // ProjectClients are the clients of the project stage: Resource Manager v3,
@@ -305,10 +307,10 @@ func classify(err error, what string) error {
 		}
 		quota := strings.TrimPrefix(consumer, "projects/")
 		hint := "the " + svc + " API is disabled on the quota project of your credentials"
-		fix := "enable it on the quota project of your credentials (gcloud auth application-default set-quota-project <a project of yours>, then gcloud services enable " + svc + " --project <that project>)"
+		fix := "gcloud services enable " + shellword.Quote(svc) + " --project <the quota project of your credentials>"
 		if quota != "" {
 			hint = "the " + svc + " API is disabled on " + quota + ", the quota project of your credentials"
-			fix = "gcloud services enable " + svc + " --project " + quota
+			fix = "gcloud services enable " + shellword.Quote(svc) + " --project " + shellword.Quote(quota)
 		}
 		return &ProjectError{Kind: ProjectAPIOff, Err: wrapped, Hint: hint, Fix: fix}
 	}

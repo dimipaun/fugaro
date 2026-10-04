@@ -81,7 +81,7 @@ func (s *imagesStage) Name() string                 { return initflow.Images }
 func (s *imagesStage) SelfConfirming()              {}
 func (s *imagesStage) Verify(context.Context) error { return nil }
 func (s *imagesStage) Left() initflow.Left {
-	return initflow.Left{Stage: initflow.Images, Kind: initflow.LeftPrompt, Text: "run fugaro init in your own terminal and type the project's name to copy the images"}
+	return promptLeft(initflow.Images, "type the project's name to copy the images", "init")
 }
 
 // releaseVersion is the CLI's published version, "" for a development build.

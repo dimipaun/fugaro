@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/firestore"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
@@ -425,7 +426,7 @@ func (r *initRun) confirmLocation() error {
 		return nil
 	}
 	if r.o.nonInteractive {
-		return userErr("the Firestore database's location, %s, is permanent and needs its own confirmation: run fugaro init --firebase at a terminal and type it, or pass --yes once you have read this; the Firestore database was not created (nothing was written)", infra.FirestoreLocation)
+		return userErr("the Firestore database's location, %s, is permanent and needs its own confirmation: %s, or pass --yes once you have read this; the Firestore database was not created (nothing was written)", infra.FirestoreLocation, initflow.NeedsTerminal("typing it"))
 	}
 	fmt.Fprintf(r.w, "Type %s to create it there: ", infra.FirestoreLocation)
 	line, err := r.in.ReadString('\n')

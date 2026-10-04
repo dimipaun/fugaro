@@ -92,7 +92,7 @@ func roleNotes(outs infra.InstallationOutputs) []string {
 	cmd := func(flag, you string, have []string) string {
 		parts := []string{selfCommand(), "init"}
 		for _, m := range have {
-			parts = append(parts, flag, m)
+			parts = append(parts, flag, quoteWord(m))
 		}
 		return strings.Join(append(parts, flag, you), " ")
 	}

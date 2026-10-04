@@ -37,7 +37,7 @@ func newRepositoryStage(e *initEngine) *repositoryStage {
 			}
 			return e.r.repoEngine(ctx, ".", e.bin, true)
 		},
-		left: initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftPrompt, Text: "run fugaro init in your own terminal, in the checkout, and type the project's name at each apply"},
+		left: promptLeft(initflow.Repository, "in the checkout, type the project's name at each apply", "init"),
 	}
 	return s
 }
