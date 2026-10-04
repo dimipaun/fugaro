@@ -291,6 +291,10 @@ func TestInitFirebaseSameProject(t *testing.T) {
 	if got := strs(v["skip_apis"]); !slices.Equal(got, infra.SharedAPIs) {
 		t.Errorf("skip_apis = %v, want %v", got, infra.SharedAPIs)
 	}
+	if !strings.Contains(out, "warning: the Firebase project is the installation's own project") || !strings.Contains(out, "123456789012-compute@developer.gserviceaccount.com (roles/editor)") ||
+		!strings.Contains(out, "iam.automaticIamGrantsForDefaultServiceAccounts") {
+		t.Errorf("no warning about the default Compute account's roles/editor in\n%s", out)
+	}
 	lc := r.localConfig(t)
 	if lc.Budget == nil || lc.Budget.FirebaseProject != initProject || lc.GCPProject != initProject || lc.Budget.RTDBURL != r.db.URL {
 		t.Errorf("budget config = %+v (gcp_project %s)", lc.Budget, lc.GCPProject)
@@ -323,8 +327,12 @@ func TestInitFirebaseTwoProjectsNoSkipAPIs(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
 	fakeTerminal(t)
-	if out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "init", "--firebase", fpID, "--budget-mode", "observe"); err != nil {
+	out, _, err := executeStdin(t, names(3)+"us-east5\n"+names(1), "init", "--firebase", fpID, "--budget-mode", "observe")
+	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	if strings.Contains(out, "installation's own project") {
+		t.Errorf("a two-project layout warned about default accounts:\n%s", out)
 	}
 	if _, ok := r.fbVars(t)["skip_apis"]; ok {
 		t.Errorf("a two-project layout wrote skip_apis: %v", r.fbVars(t))

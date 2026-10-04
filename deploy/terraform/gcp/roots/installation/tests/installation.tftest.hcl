@@ -1245,3 +1245,110 @@ run "TestHistoryEnvHasBucket" {
     error_message = "the history account reads the runs bucket (objectViewer), that bucket only"
   }
 }
+
+# The same-project layout puts these accounts in the project that also holds
+# the budget backend, so the resolved project-level grants and custom roles of
+# the installation module are pinned exactly: people get only the launcher and
+# build-submitter custom roles, the one service account with a project role is
+# the history account (its narrow Cloud Run role), and the scheduler account
+# has none. (Mock providers expose a child module's resources only when the
+# module itself is the run's target, hence a module-level run here; the repo
+# module's and the workflow module's equivalents are in repo.tftest.hcl, and
+# the text scan in deploy/terraform_test.go covers every IAM resource.)
+run "same_project_resolved_iam" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  override_resource {
+    target          = google_service_account.history[0]
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-history@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-history@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_service_account.scheduler
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+
+  override_resource {
+    target          = google_project_iam_custom_role.launcher
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroLauncher"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.job_runner
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroJobRunner"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.build_submitter
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroBuildSubmitter"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.tag_mover
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroTagMover"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.history[0]
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroHistory"
+    }
+  }
+
+  variables {
+    enable_budget = true
+    history = {
+      account_id       = "fugaro-history"
+      job              = "fugarohist"
+      image            = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/history:latest"
+      scheduler_job    = "fugaro-history-sweep"
+      scheduler_region = "us-east1"
+    }
+  }
+
+  assert {
+    condition = (alltrue([for m in google_project_iam_member.launcher : m.role == google_project_iam_custom_role.launcher.name && !startswith(m.member, "serviceAccount:")]) &&
+    alltrue([for m in google_project_iam_member.operator_build_submitter : m.role == google_project_iam_custom_role.build_submitter.name && !startswith(m.member, "serviceAccount:")]))
+    error_message = "the installation grants people only fugaroLauncher and fugaroBuildSubmitter on the project"
+  }
+  assert {
+    condition = (google_project_iam_member.history_launcher[0].role == google_project_iam_custom_role.history[0].name &&
+    google_project_iam_member.history_launcher[0].member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com")
+    error_message = "the history account's one project role in the installation is its narrow Cloud Run role"
+  }
+  assert {
+    condition = google_project_iam_custom_role.history[0].permissions == toset([
+      "run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get",
+    ])
+    error_message = "fugaroHistory holds exactly the Cloud Run read permissions"
+  }
+  assert {
+    condition = alltrue(flatten([
+      [for r in [google_project_iam_custom_role.launcher, google_project_iam_custom_role.job_runner, google_project_iam_custom_role.build_submitter, google_project_iam_custom_role.tag_mover, google_project_iam_custom_role.history[0]] :
+      [for p in r.permissions : !can(regex("^(firebase|datastore|identitytoolkit|iam\\.|resourcemanager|serviceusage|apikeys)", p))]],
+    ]))
+    error_message = "no installation custom role holds a permission on the budget backend, identities or IAM"
+  }
+}

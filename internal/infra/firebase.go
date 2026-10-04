@@ -283,16 +283,42 @@ func AdminsFromPolicy(p *crm.Policy) (admins, skipped []string) {
 	return admins, slices.Compact(skipped)
 }
 
+var defaultAccountRE = regexp.MustCompile(`^serviceAccount:([0-9]+-compute@developer|[0-9]+@cloudbuild|[a-z][a-z0-9-]+@appspot)\.gserviceaccount\.com$`)
+
+// DefaultAccountRisks lists the project's default Compute Engine, Cloud
+// Build and App Engine service accounts that hold a primitive role
+// (roles/editor or roles/owner). In a project that also holds the budget
+// backend, anything that runs as such an account (a build submitted without
+// a serviceAccount, a job or function deployed without one) reaches the
+// database, Firestore and Identity Toolkit through it. It reports, never
+// refuses: the policy is the person's.
+func DefaultAccountRisks(p *crm.Policy) []string {
+	var out []string
+	for _, b := range p.Bindings {
+		if b.Role != "roles/editor" && b.Role != "roles/owner" {
+			continue
+		}
+		for _, m := range b.Members {
+			if defaultAccountRE.MatchString(m) {
+				out = append(out, fmt.Sprintf("%s (%s)", strings.TrimPrefix(m, "serviceAccount:"), b.Role))
+			}
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
 // ProjectAdmins reads the GCP project's IAM policy and returns its budget
-// admins (AdminsFromPolicy).
-func ProjectAdmins(ctx context.Context, c *Clients, gcpProject string) (admins, skipped []string, err error) {
+// admins (AdminsFromPolicy) and its default service accounts that hold a
+// primitive role (DefaultAccountRisks).
+func ProjectAdmins(ctx context.Context, c *Clients, gcpProject string) (admins, skipped, risks []string, err error) {
 	req := &crm.GetIamPolicyRequest{Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3}}
 	p, err := c.CRM.Projects.GetIamPolicy(gcpProject, req).Context(ctx).Do()
 	if err != nil {
-		return nil, nil, fmt.Errorf("reading the IAM policy of project %s (its owners and editors become budget admins): %w", gcpProject, err)
+		return nil, nil, nil, fmt.Errorf("reading the IAM policy of project %s (its owners and editors become budget admins): %w", gcpProject, err)
 	}
 	admins, skipped = AdminsFromPolicy(p)
-	return admins, skipped, nil
+	return admins, skipped, DefaultAccountRisks(p), nil
 }
 
 // CheckFirebaseProject refuses a Firebase project that doesn't exist (or

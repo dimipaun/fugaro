@@ -130,6 +130,23 @@ func TestAdminsFromPolicy(t *testing.T) {
 	}
 }
 
+func TestDefaultAccountRisks(t *testing.T) {
+	p := &crm.Policy{Bindings: []*crm.Binding{
+		{Role: "roles/editor", Members: []string{"serviceAccount:123-compute@developer.gserviceaccount.com", "serviceAccount:123@cloudbuild.gserviceaccount.com",
+			"serviceAccount:proj-1234@appspot.gserviceaccount.com", "serviceAccount:123@cloudservices.gserviceaccount.com", "serviceAccount:ci@proj-1234.iam.gserviceaccount.com", "user:a@example.com"}},
+		{Role: "roles/owner", Members: []string{"serviceAccount:123-compute@developer.gserviceaccount.com"}},
+		{Role: "roles/cloudbuild.builds.builder", Members: []string{"serviceAccount:456@cloudbuild.gserviceaccount.com"}},
+	}}
+	want := []string{"123-compute@developer.gserviceaccount.com (roles/editor)", "123-compute@developer.gserviceaccount.com (roles/owner)",
+		"123@cloudbuild.gserviceaccount.com (roles/editor)", "proj-1234@appspot.gserviceaccount.com (roles/editor)"}
+	if got := DefaultAccountRisks(p); !slices.Equal(got, want) {
+		t.Errorf("risks = %v, want %v", got, want)
+	}
+	if got := DefaultAccountRisks(&crm.Policy{}); len(got) != 0 {
+		t.Errorf("an empty policy: %v", got)
+	}
+}
+
 func TestCheckFirebaseMembers(t *testing.T) {
 	for member, ok := range map[string]bool{
 		"user:a@example.com":  true,

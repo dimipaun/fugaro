@@ -83,12 +83,13 @@ func TestNoSecretVersionsInTerraform(t *testing.T) {
 }
 
 // Shared things are only ever granted on additively, never with a resource
-// that owns the whole policy or binding.
+// that owns the whole policy or binding, whatever the resource type
+// (project, folder, organization, service account, bucket, registry, job...).
 func TestNoAuthoritativeIAM(t *testing.T) {
 	walk(t, func(path string, b []byte) {
-		for _, bad := range []string{`_iam_binding"`, `_iam_policy"`, "google_project_iam_audit_config"} {
-			if strings.Contains(string(b), bad) {
-				t.Errorf("%s mentions %s", path, bad)
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if authoritativeIAMRE.MatchString(blk.typ) {
+				t.Errorf("%s: %s is authoritative IAM (binding, policy or audit config)", path, blk.name)
 			}
 		}
 	})
@@ -298,6 +299,7 @@ func walk(t *testing.T, fn func(path string, b []byte)) {
 }
 
 type block struct {
+	typ  string
 	name string // type.name
 	body string // the text between the block's braces, comments removed
 }
@@ -320,7 +322,7 @@ func resourceBlocks(t *testing.T, path string, src []byte, typ string) []block {
 		if end < 0 {
 			t.Fatalf("%s: unbalanced braces in %s.%s", path, typ, code[m[4]:m[5]])
 		}
-		out = append(out, block{name: typ + "." + code[m[4]:m[5]], body: code[open+1 : end]})
+		out = append(out, block{typ: typ, name: typ + "." + code[m[4]:m[5]], body: code[open+1 : end]})
 	}
 	return out
 }
@@ -681,15 +683,41 @@ func TestRolloverJobPausedAndIgnored(t *testing.T) {
 
 // The same-project layout (design D3, revised 2026-10-04): the installation
 // and the Firebase budget backend can live in one GCP project, so the budget
-// backend's separation from the jobs rests entirely on the IAM in this tree.
-// The tests below pin that boundary as text, because a plan assertion sees
-// only the inputs it is given and could never notice a new grant written by
-// reference.
+// backend's separation from the jobs rests on the IAM in this tree (and on
+// what people grant by hand, which no test here can see). The tests below pin
+// what THIS repository's Terraform grants, as text, because a plan assertion
+// sees only the inputs it is given and could never notice a new grant written
+// by reference. They are deliberately strict: every IAM resource of every
+// type must use a role and a member expression from an explicit allowlist, so
+// a grant routed through a local, a variable or format() fails here and has to
+// be reviewed and added knowingly.
 
 var (
 	quotedRoleRE = regexp.MustCompile(`"(roles/[A-Za-z0-9_.]+)"`)
 	roleRefRE    = regexp.MustCompile(`var\.installation\.role_ids\.[a-z_]+|google_project_iam_custom_role\.[a-z_]+(?:\[0\])?\.name`)
 	jobAccountRE = regexp.MustCompile(`google_service_account\.(job|build|scheduler)\b`)
+
+	// Every IAM resource type: google_<scope>_iam_member|binding|policy|audit_config.
+	anyIAMRE           = regexp.MustCompile(`^google_[a-z0-9_]+_iam_(member|binding|policy|audit_config)$`)
+	authoritativeIAMRE = regexp.MustCompile(`^google_[a-z0-9_]+_iam_(binding|policy|audit_config)$`)
+	attrRE             = func(name string) *regexp.Regexp {
+		return regexp.MustCompile(`(?m)^\s*` + name + `\s*=\s*(.+?)\s*$`)
+	}
+
+	// The role expressions an IAM member may use. A literal "roles/..." is
+	// checked against backendRoleRE; each.value (and each.value.role) takes
+	// its roles from literals and references elsewhere in the file, which are
+	// scanned the same way.
+	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
+	// The member expressions an IAM member may use.
+	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
+
+	// Roles that reach the budget backend (RTDB, Firestore, Identity
+	// Platform, API keys, the token signer, IAM or project policy), or that
+	// would let an account grant itself such a role, or run code as a
+	// default account that holds one (Cloud Build, Cloud Run admin,
+	// Functions). Only the Firebase module may grant the first group.
+	backendRoleRE = regexp.MustCompile(`^roles/(firebase[A-Za-z.]*|datastore\.[A-Za-z]+|identitytoolkit\.[A-Za-z]+|serviceusage\.[A-Za-z]+|apikeys\.[A-Za-z]+|owner|editor|viewer|resourcemanager\.[A-Za-z]+|iam\.(admin|roleAdmin|securityAdmin|securityReviewer|serviceAccount[A-Za-z]*|workloadIdentity[A-Za-z]*|organizationRoleAdmin|denyAdmin)|run\.(admin|developer)|cloudfunctions\.[A-Za-z]+|aiplatform\.admin|cloudbuild\.[A-Za-z.]+|appengine\.[A-Za-z]+|compute\.[A-Za-z]*[aA]dmin|logging\.admin|secretmanager\.admin)$`)
 )
 
 // projectRoles are the roles (literal or by reference) a block grants.
@@ -701,11 +729,84 @@ func projectRoles(body string) []string {
 	return append(out, roleRefRE.FindAllString(body, -1)...)
 }
 
+// TestIAMResourcesUseKnownExpressions fails on any IAM resource (any type, in
+// any root or module) whose role or member is an expression nobody has
+// reviewed: a local, a variable, format(), a conditional. The allowlist is
+// the set this tree uses today. A literal role must also not be a backend
+// role outside the Firebase module, nor a primitive role anywhere.
+func TestIAMResourcesUseKnownExpressions(t *testing.T) {
+	n := 0
+	walk(t, func(path string, b []byte) {
+		if !strings.HasSuffix(path, ".tf") {
+			return
+		}
+		inFirebase := strings.HasPrefix(path, "gcp/modules/firebase/")
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !anyIAMRE.MatchString(blk.typ) {
+				continue
+			}
+			n++
+			role, member := firstAttr(blk.body, "role"), firstAttr(blk.body, "member")
+			switch {
+			case role == "":
+				t.Errorf("%s: %s has no role attribute the scan can read", path, blk.name)
+			case strings.HasPrefix(role, `"`):
+				m := quotedRoleRE.FindStringSubmatch(role)
+				if m == nil || `"`+m[1]+`"` != role {
+					t.Errorf("%s: %s: role %s is not a plain literal \"roles/...\" (no interpolation, format() or concatenation)", path, blk.name, role)
+				}
+			case !allowedRoleExprs.MatchString(role):
+				t.Errorf("%s: %s: role expression %s is not on the allowlist (route it through a reviewed reference)", path, blk.name, role)
+			}
+			if member == "" || !allowedMemberExprs.MatchString(member) {
+				t.Errorf("%s: %s: member expression %q is not on the allowlist", path, blk.name, member)
+			}
+			for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
+				checkLiteralRole(t, path, blk.name, r[1], blk.typ, inFirebase)
+			}
+		}
+		// A role may arrive through each.value from a local: every literal role
+		// in the file is held to the same rule.
+		for _, r := range quotedRoleRE.FindAllStringSubmatch(stripComments(string(b)), -1) {
+			checkLiteralRole(t, path, "(file)", r[1], "", inFirebase)
+		}
+	})
+	if n < 30 {
+		t.Errorf("found only %d IAM resources: the scan is not seeing the tree", n)
+	}
+}
+
+func checkLiteralRole(t *testing.T, path, where, role, typ string, inFirebase bool) {
+	t.Helper()
+	if role == "roles/owner" || role == "roles/editor" || role == "roles/viewer" {
+		t.Errorf("%s: %s grants or names the primitive role %s", path, where, role)
+		return
+	}
+	if !backendRoleRE.MatchString(role) || inFirebase {
+		return
+	}
+	// serviceAccountUser (actAs, for the operators who deploy a job or a
+	// build) on a service account is the one allowed shape.
+	if role == "roles/iam.serviceAccountUser" && (typ == "google_service_account_iam_member" || typ == "") {
+		return
+	}
+	t.Errorf("%s: %s names %s, a role that reaches the budget backend or IAM, outside the Firebase module", path, where, role)
+}
+
+func firstAttr(body, name string) string {
+	m := attrRE(name).FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // REGRESSION (same-project layout): the project-level roles any job, build or
-// scheduler account holds are exactly these, in every module. None gives
-// access to the RTDB, Firestore, Identity Platform or the token signer, and no
-// primitive role is among them. A new project-level grant to one of these
-// accounts must be added here knowingly.
+// scheduler account holds are exactly these, in every module and IAM resource
+// type. None gives access to the RTDB, Firestore, Identity Platform or the
+// token signer, and no primitive role is among them. A new project-level
+// grant to one of these accounts must be added here knowingly. (Members are
+// held to the allowlist above, so a grant cannot hide behind a local.)
 func TestJobAccountsProjectRolesAreExactly(t *testing.T) {
 	want := []string{
 		"roles/aiplatform.user",                     // a Vertex workflow's job account
@@ -714,8 +815,8 @@ func TestJobAccountsProjectRolesAreExactly(t *testing.T) {
 	}
 	got := map[string]bool{}
 	walk(t, func(path string, b []byte) {
-		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
-			if !jobAccountRE.MatchString(blk.body) {
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if !anyIAMRE.MatchString(blk.typ) || !strings.HasPrefix(blk.typ, "google_project_") || !jobAccountRE.MatchString(blk.body) {
 				continue
 			}
 			for _, r := range projectRoles(blk.body) {
@@ -733,56 +834,40 @@ func TestJobAccountsProjectRolesAreExactly(t *testing.T) {
 	}
 }
 
-// No role that reaches the budget backend is granted anywhere but in the
-// Firebase module, and no primitive role is granted at all: in one project a
-// project-level grant elsewhere would reach the database too.
-func TestBudgetBackendRolesOnlyInFirebaseModule(t *testing.T) {
-	backend := regexp.MustCompile(`^roles/(firebase[a-z]*|datastore|identitytoolkit|serviceusage|iam\.serviceAccount[A-Za-z]*|iam\.workloadIdentityUser|owner|editor|viewer|iam\.securityAdmin|resourcemanager\.[A-Za-z]+|apikeys\.[A-Za-z]+)\b`)
-	for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member"} {
-		walk(t, func(path string, b []byte) {
-			for _, blk := range resourceBlocks(t, path, b, typ) {
-				for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
-					role := r[1]
-					if role == "roles/owner" || role == "roles/editor" || role == "roles/viewer" {
-						t.Errorf("%s: %s grants the primitive role %s", path, blk.name, role)
-					}
-					// serviceAccountUser on a job or build account (actAs, for
-					// the operators who deploy it) is the one allowed shape.
-					if backend.MatchString(role) && !strings.HasPrefix(path, "gcp/modules/firebase/") &&
-						!(role == "roles/iam.serviceAccountUser" && typ == "google_service_account_iam_member") {
-						t.Errorf("%s: %s grants %s outside the Firebase module", path, blk.name, role)
-					}
-				}
-			}
-		})
-	}
-}
-
 // Only the token minter role carries signJwt, and it is never granted on the
-// project: only on the signer account. No other custom role touches the
-// Firebase, Firestore or Identity Platform permissions, or IAM credentials.
+// project: only on the signer account. Every custom role's permission list
+// must be a plain literal list (a variable, local or concat could carry
+// anything), and none but the minter may hold a permission on the budget
+// backend, identities, IAM or the project policy.
 func TestCustomRolesNeverReachTheBackend(t *testing.T) {
-	banned := regexp.MustCompile(`"(firebase[a-z]*\.|datastore\.|identitytoolkit\.|iam\.serviceAccounts\.|iam\.roles\.|resourcemanager\.projects\.(set|get)IamPolicy|serviceusage\.apiKeys\.)`)
+	banned := regexp.MustCompile(`^(firebase[a-z]*\.|datastore\.|identitytoolkit\.|iam\.|resourcemanager\.|serviceusage\.|apikeys\.|cloudbuild\.builds\.(update|approve)|cloudfunctions\.|run\.(services|jobs)\.(create|update|setIamPolicy)|run\.[a-z]+\.setIamPolicy|compute\.|appengine\.)`)
+	listRE := regexp.MustCompile(`(?s)permissions\s*=\s*\[([^\]]*)\]`)
+	permRE := regexp.MustCompile(`^\s*(?:"[a-z0-9]+(?:\.[A-Za-z0-9]+)+"\s*,?\s*)*$`)
 	n := 0
 	walk(t, func(path string, b []byte) {
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
 			n++
-			isMinter := blk.name == "google_project_iam_custom_role.token_minter"
-			if isMinter {
-				if !strings.HasPrefix(path, "gcp/modules/firebase/") || !regexp.MustCompile(`permissions\s*=\s*\["iam\.serviceAccounts\.signJwt"\]`).MatchString(blk.body) {
+			m := listRE.FindStringSubmatch(blk.body)
+			if m == nil || !permRE.MatchString(strings.ReplaceAll(m[1], "\n", " ")) {
+				// Comments are stripped; what is left must be quoted strings only.
+				t.Errorf("%s: %s: permissions is not a literal list of quoted permissions (a variable, local or concat is refused)", path, blk.name)
+				continue
+			}
+			if blk.name == "google_project_iam_custom_role.token_minter" {
+				if !strings.HasPrefix(path, "gcp/modules/firebase/") || strings.TrimSpace(strings.Trim(strings.TrimSpace(m[1]), ",")) != `"iam.serviceAccounts.signJwt"` {
 					t.Errorf("%s: %s is not the signJwt-only role in the Firebase module", path, blk.name)
 				}
 				continue
 			}
-			if banned.MatchString(blk.body) {
-				t.Errorf("%s: %s holds a permission on the budget backend, identities or IAM", path, blk.name)
+			for _, p := range quotedPerm.FindAllStringSubmatch(m[1], -1) {
+				if banned.MatchString(p[1]) {
+					t.Errorf("%s: %s holds %s, a permission on the budget backend, identities, IAM or code execution", path, blk.name, p[1])
+				}
 			}
 		}
-		for _, typ := range []string{"google_project_iam_member", "google_project_iam_binding"} {
-			for _, blk := range resourceBlocks(t, path, b, typ) {
-				if strings.Contains(blk.body, "token_minter") {
-					t.Errorf("%s: %s grants the token minter role on the project", path, blk.name)
-				}
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if strings.HasPrefix(blk.typ, "google_project_iam_") && strings.Contains(blk.body, "token_minter") {
+				t.Errorf("%s: %s grants the token minter role on the project", path, blk.name)
 			}
 		}
 	})
@@ -790,6 +875,8 @@ func TestCustomRolesNeverReachTheBackend(t *testing.T) {
 		t.Errorf("found %d custom roles, want at least 6", n)
 	}
 }
+
+var quotedPerm = regexp.MustCompile(`"([^"]+)"`)
 
 // The signer's own IAM is the launchers' and operators' minter grant on the
 // signer account, and nothing else: no role on the project names it, and no
@@ -830,7 +917,12 @@ func TestHistoryAccountBackendRolesAreExactly(t *testing.T) {
 		}
 		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
 			if strings.Contains(blk.body, "var.history_account") {
-				got = append(got, quotedRoleRE.FindAllStringSubmatch(blk.body, -1)[0][1])
+				ms := quotedRoleRE.FindAllStringSubmatch(blk.body, -1)
+				if len(ms) != 1 {
+					t.Errorf("%s: %s grants the history account %d literal roles, want exactly 1", path, blk.name, len(ms))
+					continue
+				}
+				got = append(got, ms[0][1])
 			}
 		}
 	})
@@ -859,4 +951,21 @@ func TestFirebaseModuleSkipsSharedAPIs(t *testing.T) {
 			t.Errorf("%s declares no skip_apis: %v", p, err)
 		}
 	}
+}
+
+// allResourceBlocks returns every resource block in src, of any type.
+func allResourceBlocks(t *testing.T, path string, src []byte) []block {
+	t.Helper()
+	code := stripComments(string(src))
+	var out []block
+	for _, m := range resourceHeader.FindAllStringSubmatchIndex(code, -1) {
+		open := m[1] - 1
+		end := matchBrace(code, open)
+		typ := code[m[2]:m[3]]
+		if end < 0 {
+			t.Fatalf("%s: unbalanced braces in %s.%s", path, typ, code[m[4]:m[5]])
+		}
+		out = append(out, block{typ: typ, name: typ + "." + code[m[4]:m[5]], body: code[open+1 : end]})
+	}
+	return out
 }
