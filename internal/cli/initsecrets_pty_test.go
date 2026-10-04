@@ -7,6 +7,9 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -77,14 +80,9 @@ func queued(t *testing.T, f *ttyFixture) int {
 }
 
 // pastes: the answers of a Bitbucket checkout's whole prompt sequence.
-func (r *secretsRig) bitbucketSession(t *testing.T, f *ttyFixture, choice string) {
+func (r *secretsRig) bitbucketSession(t *testing.T, f *ttyFixture, claude string) {
 	r.answer(t, f, "bitbucket-token (input hidden)", 1, "bb-secret-value-EXAMPLE\n")
-	r.answer(t, f, "Type 1 or 2", 1, choice)
-	name := "claude-oauth-token"
-	if strings.TrimSpace(choice) == "2" {
-		name = "anthropic-api-key"
-	}
-	r.answer(t, f, name+" (input hidden)", 1, tokenValue+"\n")
+	r.answer(t, f, claude+" (input hidden)", 1, tokenValue+"\n")
 }
 
 // The prompts are hidden, validate, store through the engine, and nothing
@@ -93,7 +91,7 @@ func TestSecretPromptHidden(t *testing.T) {
 	f := newTTY(t)
 	r := newSecretsRig(t, bitbucketOrigin, f.tty)
 	done := r.start(context.Background())
-	r.bitbucketSession(t, f, "\n")
+	r.bitbucketSession(t, f, "claude-oauth-token")
 	lr := waitLoop(t, done)
 	if lr.err != nil || lr.res.Failed != nil || stateOf(lr.res, "secrets") != initflow.Changed {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
@@ -123,12 +121,14 @@ func TestSecretPromptHidden(t *testing.T) {
 	}
 }
 
-// The other Claude credential, chosen at its own hidden prompt.
-func TestSecretPromptChoosesAPIKey(t *testing.T) {
+// The Claude credential asked for is the one agent.auth names, with no
+// choice offered: api-key asks for the API key and never for the OAuth token.
+func TestSecretPromptFollowsAgentAuth(t *testing.T) {
 	f := newTTY(t)
 	r := newSecretsRig(t, bitbucketOrigin, f.tty)
+	r.writeConfig(t, checkoutYAML("bitbucket", "api-key", "aurora", ""))
 	done := r.start(context.Background())
-	r.bitbucketSession(t, f, "2\n")
+	r.bitbucketSession(t, f, "anthropic-api-key")
 	lr := waitLoop(t, done)
 	if lr.err != nil || lr.res.Failed != nil {
 		t.Fatalf("%v, %+v", lr.err, lr.res)
@@ -136,21 +136,9 @@ func TestSecretPromptChoosesAPIKey(t *testing.T) {
 	if r.store.latest(bitbucketSlug, "anthropic-api-key") != tokenValue || r.store.latest(bitbucketSlug, "claude-oauth-token") != "" {
 		t.Errorf("stored the wrong Claude credential")
 	}
-}
-
-// A choice that is not 1 or 2 fails without quoting what was typed (a
-// token pasted at the wrong prompt).
-func TestSecretPromptBadChoiceDoesNotQuote(t *testing.T) {
-	f := newTTY(t)
-	r := newSecretsRig(t, bitbucketOrigin, f.tty)
-	r.store.seed(bitbucketSlug, "bitbucket-token", "stored-already-0001")
-	done := r.start(context.Background())
-	r.answer(t, f, "Type 1 or 2", 1, tokenValue+"\n")
-	lr := waitLoop(t, done)
-	if lr.res.Failed == nil || strings.Contains(lr.res.Failed.Error+lr.res.Cause.Error(), "EXAMPLE") || r.store.setCalls() != 0 {
-		t.Fatalf("%+v", lr.res)
+	if strings.Contains(r.errOut.String(), "Type 1 or 2") {
+		t.Error("a choice was offered")
 	}
-	noLeak(t, tokenValue, resultJSON(t, lr.res), r.out.String(), r.errOut.String())
 }
 
 // A multi-line PEM is pasted once, hidden, and stored whole with its line
@@ -162,8 +150,7 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			r := newSecretsRig(t, githubOrigin, f.tty)
 			done := r.start(context.Background())
 			r.answer(t, f, "github-app-key (input hidden)", 1, strings.ReplaceAll(pemValue, "\n", nl))
-			r.answer(t, f, "Type 1 or 2", 1, "2\n")
-			r.answer(t, f, "anthropic-api-key (input hidden)", 1, tokenValue+"\n")
+			r.answer(t, f, "claude-oauth-token (input hidden)", 1, tokenValue+"\n")
 			lr := waitLoop(t, done)
 			if lr.err != nil || lr.res.Failed != nil {
 				t.Fatalf("%v, %+v", lr.err, lr.res)
@@ -255,7 +242,7 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 		f := newTTY(t)
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
 		r.store.seed(bitbucketSlug, "bitbucket-token", "stored-bb-token-0001")
-		r.store.seed(bitbucketSlug, "anthropic-api-key", "stored-api-key-0001") // either Claude credential does
+		r.store.seed(bitbucketSlug, "claude-oauth-token", "stored-oauth-0001")
 		_, _ = f.master.WriteString("typed-ahead-EXAMPLE\n")
 		time.Sleep(100 * time.Millisecond)
 		before := queued(t, f)
@@ -275,7 +262,6 @@ func TestExistingSecretNotOverwritten(t *testing.T) {
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
 		r.store.seed(bitbucketSlug, "bitbucket-token", "stored-bb-token-0001")
 		done := r.start(context.Background())
-		r.answer(t, f, "Type 1 or 2", 1, "\n")
 		r.answer(t, f, "claude-oauth-token (input hidden)", 1, tokenValue+"\n")
 		lr := waitLoop(t, done)
 		if lr.err != nil || lr.res.Failed != nil || r.store.setCalls() != 1 || strings.Contains(r.errOut.String(), "bitbucket-token") {
@@ -340,7 +326,7 @@ func TestSecretsStageAgainstSecretManagerFake(t *testing.T) {
 	const val = "bb-secret-value-EXAMPLE"
 	session := func(t *testing.T, sm *gcpfake.Secrets, f *ttyFixture) loopResult {
 		r := newSecretsRig(t, bitbucketOrigin, f.tty)
-		r.e.lc = &localcfg.Config{GCPProject: "proj-1234", Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
+		r.e.lc = &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", Endpoints: localcfg.Endpoints{SecretManager: sm.URL + "/", NoAuth: true}}
 		r.stage = newSecretsStage(r.e) // the real client, not the memStore
 		sm.Seed(gcp.SecretID(bitbucketSlug, "claude-oauth-token"), map[string]string{
 			gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: mustLabel(t, bitbucketSlug), gcp.LabelSecret: "claude-oauth-token"}, []byte(tokenValue))
@@ -410,6 +396,14 @@ func TestSecretNeverInOutputOrJSON(t *testing.T) {
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git")
+	if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte(checkoutYAML("bitbucket", "oauth", "aurora", "")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range agentMarkers {
+		t.Setenv(k, "")
+	}
+	writerIsTerminal = func(io.Writer) bool { return true }
+	t.Cleanup(func() { writerIsTerminal = realWriterIsTerminal })
 	t.Chdir(dir)
 
 	f := newTTY(t)
@@ -429,7 +423,6 @@ func TestSecretNeverInOutputOrJSON(t *testing.T) {
 	}
 	_, _ = f.master.WriteString("aurora\n") // the engine's own typed confirmation (the config rewrite)
 	rig.answer(t, f, "bitbucket-token (input hidden)", 1, val+"\n")
-	rig.answer(t, f, "Type 1 or 2", 1, "\n")
 	rig.answer(t, f, "claude-oauth-token (input hidden)", 1, tokenValue+"\n")
 	var err error
 	select {

@@ -8,20 +8,20 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
+	"maps"
 	"os"
-	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"golang.org/x/term"
+	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/image"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -34,6 +34,18 @@ import (
 //     fugaro secrets set commands, which keep their own pipe and file forms.
 //   - --yes and --non-interactive never reach it: with either, it prompts
 //     for nothing and reads nothing.
+//   - nothing is prompted when a coding agent's environment is present
+//     (agentMarkers), or when stdin, stdout or stderr is not a terminal (a
+//     redirected stderr would send the prompt to a file and make the user
+//     type blind). This is a mitigation, not a barrier: an agent that already
+//     holds a secret's bytes, or drives a pty, can get around any gate here.
+//     The real controls are that the skills never touch a value (their
+//     forbidden-instruction lint) and that the user types it.
+//   - the secrets asked for are the ones the repository's jobs mount
+//     (infra.SecretMounts, the function that mounts them), read from the
+//     checkout's fugaro.yaml: the git credential, the Claude credential the
+//     agent.auth names (none for vertex), the allowed providers' keys and the
+//     workflows' own.
 //   - a secret that already has a version is skipped, and is never read,
 //     overwritten or rotated here (that is fugaro secrets set).
 //   - a value lives in memory only from the prompt to the store call, is
@@ -47,8 +59,9 @@ import (
 // the first image build finds its secrets stored.
 
 // maxHeldSecrets is the redaction slots the engine keeps for values a stage
-// is holding (the secrets stage holds one at a time).
-const maxHeldSecrets = 4
+// is holding (the secrets stage holds one at a time: the value and each line of a
+// multi-line one).
+const maxHeldSecrets = 128
 
 // secretStore is what the stage needs of Secret Manager: metadata and
 // storing a value; it has no read of a value.
@@ -70,15 +83,48 @@ var selfCommand = func() string {
 	return "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 }
 
-// hold registers value with the loop's redaction until release.
+// hold registers value with the loop's redaction until release: the whole
+// value and each of its lines (a PEM's body lines are as secret as the whole).
 func (e *initEngine) hold(value []byte) (release func()) {
-	for i := range e.held {
-		if e.held[i] == "" {
-			e.held[i] = string(value)
-			return func() { e.held[i] = "" }
+	vals := []string{string(value)}
+	if bytes.Contains(value, []byte("\n")) {
+		for _, l := range bytes.Split(value, []byte("\n")) {
+			if len(l) >= minSecretBytes {
+				vals = append(vals, string(l))
+			}
 		}
 	}
-	return func() {}
+	var taken []int
+	for _, v := range vals {
+		for i := range e.held {
+			if e.held[i] == "" {
+				e.held[i] = v
+				taken = append(taken, i)
+				break
+			}
+		}
+	}
+	return func() {
+		for _, i := range taken {
+			e.held[i] = ""
+		}
+	}
+}
+
+// agentMarkers are the environment variables a coding agent's session sets.
+// With any of them present the stage never prompts: the person typing must be
+// at their own terminal, not behind an agent.
+var agentMarkers = []string{"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "CLAUDE_CODE_REMOTE", "CURSOR_AGENT", "AI_AGENT"}
+
+// agentEnv reports whether getenv shows a coding agent's session.
+func agentEnv(getenv func(string) string) bool {
+	return slices.ContainsFunc(agentMarkers, func(k string) bool { return getenv(k) != "" })
+}
+
+// writerIsTerminal reports whether w is a terminal. Tests replace it.
+var writerIsTerminal = func(w io.Writer) bool {
+	f, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(f.Fd()))
 }
 
 // secretsStage is stage 7.
@@ -92,7 +138,7 @@ type secretsStage struct {
 	tg      *secretTarget
 	skip    string
 	checked bool
-	missing []secretNeed
+	missing []string // names with no stored value
 	stored  []string // names stored in this run, for Verify
 }
 
@@ -112,59 +158,66 @@ func newSecretsStage(e *initEngine) *secretsStage {
 // secretTarget is the repository whose secrets the stage takes.
 type secretTarget struct {
 	repo, slug, label, provider string
-}
-
-// secretNeed is one thing still missing: a named secret, or the choice of
-// Claude credential when neither exists.
-type secretNeed struct {
-	name   string // "" for the Claude credential
-	claude bool
-}
-
-func (n secretNeed) names() []string {
-	if n.claude {
-		return []string{"claude-oauth-token", "anthropic-api-key"}
-	}
-	return []string{n.name}
+	wanted                      []string // every secret its jobs mount, in order
+	noConfig                    bool     // no fugaro.yaml here: only the git credential is known
 }
 
 func (s *secretsStage) Name() string { return initflow.Secrets }
 
-// canPrompt is whether this run may show a hidden prompt: a terminal, and
-// neither --non-interactive nor --yes (which never supplies a secret, and
-// is the flag of an unattended run).
+// canPrompt is whether this run may show a hidden prompt: stdin, stdout and
+// stderr are terminals, no coding agent's environment is present, and
+// neither --non-interactive nor --yes (which never supplies a secret, and is
+// the flag of an unattended run) is set.
 func (s *secretsStage) canPrompt() bool {
-	o := s.e.r.o
-	return !o.nonInteractive && !o.yes && stdinIsTerminal(s.e.r.cmd.InOrStdin())
+	o, cmd := s.e.r.o, s.e.r.cmd
+	return !o.nonInteractive && !o.yes && !agentEnv(os.Getenv) &&
+		stdinIsTerminal(cmd.InOrStdin()) && writerIsTerminal(cmd.ErrOrStderr()) && writerIsTerminal(cmd.OutOrStdout())
 }
 
-// resolve finds the repository and its provider: the local config's entry,
-// else the checkout's fugaro.yaml, else the origin's host (github.com or
-// bitbucket.org). skip says why the stage does not apply.
+// resolve finds the repository the stage works on and what its jobs mount.
+// It applies only to a checkout of a repository of this project, found as
+// fugaro secrets set finds one: the provider comes from the local config's
+// entry and the checkout's fugaro.yaml (never from the origin's host) and
+// must agree between them; a fugaro.yaml naming another project, or a
+// checkout the project does not know, is skipped, so a container is never
+// created for an unrelated checkout. skip says why.
 func (s *secretsStage) resolve(ctx context.Context) {
 	if s.tg != nil || s.skip != "" {
 		return
 	}
+	lc := s.e.lc
 	repo, err := originRepo(ctx)
 	if err != nil {
 		s.skip = "not in a checkout of a repository: run fugaro init there to take its secrets"
 		return
 	}
-	provider := ""
+	var local localcfg.Repo
+	known := false
 	if want, err := task.CanonicalRepo(repo); err == nil {
-		for name, r := range s.e.lc.Repos {
+		for name, r := range lc.Repos {
 			if c, err := task.CanonicalRepo(name); err == nil && c == want {
-				provider = r.Provider
+				local, known = r, true
 			}
 		}
 	}
-	if provider == "" {
-		if cfg := checkoutConfig(ctx, repo); cfg != nil {
+	cfg := checkoutConfig(ctx, repo)
+	if cfg != nil && cfg.Project != lc.Name {
+		s.skip = "this checkout's fugaro.yaml names another project (or none): its secrets are not taken here"
+		return
+	}
+	if !known && cfg == nil {
+		s.skip = "this checkout is not a repository of this project yet: onboard it first"
+		return
+	}
+	provider := local.Provider
+	if cfg != nil {
+		switch {
+		case provider != "" && cfg.Git.Provider != "" && provider != cfg.Git.Provider:
+			s.skip = "the local config and this checkout's fugaro.yaml disagree on the git provider; make them agree"
+			return
+		case provider == "":
 			provider = cfg.Git.Provider
 		}
-	}
-	if provider == "" {
-		provider = originProvider(ctx)
 	}
 	if provider != "github" && provider != "bitbucket" {
 		s.skip = "this checkout's git provider is not github or bitbucket"
@@ -180,73 +233,55 @@ func (s *secretsStage) resolve(ctx context.Context) {
 		s.skip = "this checkout's repository has no usable name"
 		return
 	}
-	s.tg = &secretTarget{repo: repo, slug: slug, label: label, provider: provider}
+	tg := &secretTarget{repo: repo, slug: slug, label: label, provider: provider}
+	gitSecret := "github-app-key"
+	if provider == "bitbucket" {
+		gitSecret = "bitbucket-token"
+	}
+	tg.wanted = []string{gitSecret}
+	if cfg == nil {
+		tg.noConfig = true
+	} else {
+		for _, name := range slices.Sorted(maps.Keys(cfg.Workflows)) {
+			mounts, err := infra.SecretMounts(gitSecret, cfg, name, cfg.Workflows[name], lc, repo)
+			if err != nil {
+				s.skip = "fugaro.yaml's secrets cannot be worked out: " + oneLine(err.Error())
+				return
+			}
+			for _, m := range mounts {
+				if !slices.Contains(tg.wanted, m.Logical) {
+					tg.wanted = append(tg.wanted, m.Logical)
+				}
+			}
+		}
+	}
+	s.tg = tg
 }
 
-// originProvider is the provider the origin's host names, or "".
-func originProvider(ctx context.Context) string {
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	u, err := url.Parse(image.HTTPSOrigin(strings.TrimSpace(string(out))))
-	if err != nil {
-		return ""
-	}
-	switch strings.ToLower(u.Hostname()) {
-	case "github.com":
-		return "github"
-	case "bitbucket.org":
-		return "bitbucket"
-	}
-	return ""
-}
-
-func (t *secretTarget) providerSecret() string {
-	if t.provider == "bitbucket" {
-		return "bitbucket-token"
-	}
-	return "github-app-key"
-}
-
-// find lists the repository's secrets (metadata only) and returns what is
-// still missing.
-func (s *secretsStage) find(ctx context.Context, st secretStore) ([]secretNeed, error) {
+// find lists the repository's secrets (metadata only) and returns what its
+// jobs mount that has no value yet.
+func (s *secretsStage) find(ctx context.Context, st secretStore) ([]string, error) {
 	list, err := st.List(ctx, map[string]string{gcp.LabelRepo: s.tg.label})
 	if err != nil {
 		return nil, err
 	}
-	has := func(name string) bool {
+	var out []string
+	for _, name := range s.tg.wanted {
 		id := gcp.SecretID(s.tg.slug, name)
-		return slices.ContainsFunc(list, func(i gcp.SecretInfo) bool { return i.ID == id && i.Latest != "" })
-	}
-	var out []secretNeed
-	if p := s.tg.providerSecret(); !has(p) {
-		out = append(out, secretNeed{name: p})
-	}
-	if !has("claude-oauth-token") && !has("anthropic-api-key") {
-		out = append(out, secretNeed{claude: true})
+		if !slices.ContainsFunc(list, func(i gcp.SecretInfo) bool { return i.ID == id && i.Latest != "" }) {
+			out = append(out, name)
+		}
 	}
 	return out, nil
 }
 
-func describeNeeds(needs []secretNeed) string {
-	var parts []string
-	for _, n := range needs {
-		if n.claude {
-			parts = append(parts, "claude-oauth-token (or anthropic-api-key)")
-		} else {
-			parts = append(parts, n.name)
-		}
-	}
-	return "no value stored for " + strings.Join(parts, ", ")
+func describeNeeds(names []string) string {
+	return "no value stored for " + strings.Join(names, ", ")
 }
 
 // Check lists which secrets have no version, by Secret Manager metadata. A
 // listing that fails (before the installation exists, for one) is not an
-// error here: Apply lists again and fails for real.
+// error here: Apply lists again and says what it needs.
 func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 	s.resolve(ctx)
 	if s.skip != "" {
@@ -261,11 +296,18 @@ func (s *secretsStage) Check(ctx context.Context) (initflow.Status, error) {
 		return initflow.Status{State: initflow.Todo, Detail: "which secrets are stored is read when it runs"}, nil
 	}
 	s.checked = true
-	if len(s.missing) == 0 {
-		return initflow.Status{State: initflow.Done, Detail: "the provider and Claude credentials are stored"}, nil
+	note := ""
+	if s.tg.noConfig {
+		note = " (no fugaro.yaml in this checkout, so the Claude credential is not assumed)"
 	}
-	detail := describeNeeds(s.missing)
+	if len(s.missing) == 0 {
+		return initflow.Status{State: initflow.Done, Detail: "the secrets the jobs mount are stored" + note}, nil
+	}
+	detail := describeNeeds(s.missing) + note
 	if !s.canPrompt() {
+		if agentEnv(os.Getenv) {
+			detail += "; a coding agent's session is present: run the commands in your own terminal, not through a coding agent"
+		}
 		lf := s.Left()
 		return initflow.Status{State: initflow.NeedsYou, Detail: detail, Left: &lf}, nil
 	}
@@ -285,26 +327,30 @@ func (s *secretsStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan,
 // joined on one line. None holds a value: the value is typed at the hidden
 // prompt, or the PEM is redirected from a file the user names.
 func (s *secretsStage) Left() initflow.Left {
-	needs := s.missing
-	if !s.checked && s.tg != nil {
-		needs = []secretNeed{{name: s.tg.providerSecret()}, {claude: true}}
-	}
 	if s.tg == nil {
 		return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: "run fugaro init in a checkout of the repository, in your own terminal"}
 	}
+	needs := s.missing
+	if !s.checked {
+		needs = s.tg.wanted
+	}
 	var cmds []string
-	for _, n := range needs {
-		set := selfCommand() + " secrets set "
-		switch {
-		case n.claude:
-			cmds = append(cmds, "claude setup-token; "+set+"claude-oauth-token --repo "+s.tg.repo)
-		case n.name == multilineSecret:
-			cmds = append(cmds, set+n.name+" --repo "+s.tg.repo+" < PATH-TO-THE-KEY-FILE")
+	for _, name := range needs {
+		set := selfCommand() + " secrets set " + name + " --repo " + s.tg.repo
+		switch name {
+		case "claude-oauth-token":
+			cmds = append(cmds, "claude setup-token; "+set)
+		case multilineSecret:
+			cmds = append(cmds, set+" < PATH-TO-THE-KEY-FILE")
 		default:
-			cmds = append(cmds, set+n.name+" --repo "+s.tg.repo)
+			cmds = append(cmds, set)
 		}
 	}
-	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: strings.Join(cmds, "; ")}
+	text := strings.Join(cmds, "; ")
+	if agentEnv(os.Getenv) {
+		text = "run this in your own terminal, not through a coding agent: " + text
+	}
+	return initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftCommand, Text: text}
 }
 
 // terminal is stdin as a real terminal file, else nil. The stage reads
@@ -316,6 +362,28 @@ func (s *secretsStage) terminal() *os.File {
 	return nil
 }
 
+// smProblem turns a refusal by Secret Manager (permission denied, the API
+// not enabled) into what the user does about it: not a failure of the run,
+// and never carrying the server's text (it could echo a payload).
+func (s *secretsStage) smProblem(err error) *initflow.NeedsYouError {
+	var ae *googleapi.Error
+	if !errors.As(err, &ae) || ae.Code != 403 {
+		return nil
+	}
+	text := "Secret Manager refused: you need roles/secretmanager.viewer and roles/secretmanager.secretVersionAdder on the project's secrets (ask the project owner), then rerun fugaro init"
+	if m := strings.ToLower(ae.Message); strings.Contains(m, "has not been used") || strings.Contains(m, "is disabled") || strings.Contains(m, "service_disabled") {
+		text = "the Secret Manager API (secretmanager.googleapis.com) is not enabled on the project: enable it (the owner's fugaro init does), then rerun fugaro init"
+	}
+	return &initflow.NeedsYouError{Left: initflow.Left{Stage: initflow.Secrets, Kind: initflow.LeftConsole, Text: text}}
+}
+
+func (s *secretsStage) apiErr(err error) error {
+	if ny := s.smProblem(err); ny != nil {
+		return ny
+	}
+	return remote(err)
+}
+
 func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
 	s.resolve(ctx)
 	f := s.terminal()
@@ -324,24 +392,18 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 	}
 	st, err := s.open(ctx)
 	if err != nil {
-		return initflow.Outcome{}, err
+		return initflow.Outcome{}, s.apiErr(err)
 	}
 	needs, err := s.find(ctx, st)
 	if err != nil {
-		return initflow.Outcome{}, remote(err)
+		return initflow.Outcome{}, s.apiErr(err)
 	}
 	s.missing, s.checked = needs, true
 	if len(needs) == 0 {
 		return initflow.Outcome{Detail: "No changes"}, nil
 	}
 	w := s.out()
-	for _, n := range needs {
-		name := n.name
-		if n.claude {
-			if name, err = s.chooseClaude(ctx, f, w); err != nil {
-				return initflow.Outcome{}, err
-			}
-		}
+	for _, name := range needs {
 		if err := s.take(ctx, st, f, w, name); err != nil {
 			return initflow.Outcome{}, err
 		}
@@ -350,31 +412,17 @@ func (s *secretsStage) Apply(ctx context.Context, env initflow.Env) (initflow.Ou
 	return initflow.Outcome{Changed: true, Detail: "stored " + strings.Join(s.stored, ", ")}, nil
 }
 
-// chooseClaude asks which Claude credential, at a hidden prompt too (a
-// value pasted by mistake must not echo), default the OAuth token.
-func (s *secretsStage) chooseClaude(ctx context.Context, f *os.File, w io.Writer) (string, error) {
-	fmt.Fprintln(w, "Claude credential: 1 = claude-oauth-token (default; run claude setup-token in your own terminal first), 2 = anthropic-api-key")
-	b, err := readHiddenLine(ctx, f, w, "Type 1 or 2, then press Enter (empty is 1): ")
-	if err != nil {
-		return "", err
-	}
-	defer clear(b)
-	switch string(b) {
-	case "", "1":
-		return "claude-oauth-token", nil
-	case "2":
-		return "anthropic-api-key", nil
-	}
-	return "", userErr("not a choice: type 1 or 2")
-}
-
 // take prompts for one secret, validates it and stores it. The value is
-// held only inside this call.
+// held only inside this call, with core dumps off while it is.
 func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w io.Writer, name string) error {
+	defer noCoreDumps()()
 	var (
 		value []byte
 		err   error
 	)
+	if name == "claude-oauth-token" {
+		fmt.Fprintln(w, "claude-oauth-token: run claude setup-token in your own terminal first, then paste the token it prints")
+	}
 	if name == multilineSecret {
 		value, err = readHiddenPEM(ctx, f, w, name)
 	} else {
@@ -392,6 +440,9 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 	id := gcp.SecretID(s.tg.slug, name)
 	labels := map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: s.tg.label, gcp.LabelSecret: name}
 	if _, err := st.Set(ctx, id, value, labels); err != nil {
+		if ny := s.smProblem(err); ny != nil {
+			return ny
+		}
 		// A server may echo what it received, raw, base64 or JSON-escaped.
 		esc, _ := json.Marshal(string(value))
 		msg := agent.Redact(err.Error(), []string{string(value), base64.StdEncoding.EncodeToString(value), strings.Trim(string(esc), `"`)})
@@ -412,11 +463,11 @@ func (s *secretsStage) Verify(ctx context.Context) error {
 	}
 	st, err := s.open(ctx)
 	if err != nil {
-		return err
+		return s.apiErr(err)
 	}
 	needs, err := s.find(ctx, st)
 	if err != nil {
-		return remote(err)
+		return s.apiErr(err)
 	}
 	if len(needs) > 0 {
 		return remote(errors.New("stored " + strings.Join(s.stored, ", ") + ", but " + describeNeeds(needs)))
@@ -425,22 +476,24 @@ func (s *secretsStage) Verify(ctx context.Context) error {
 }
 
 // readHiddenPEM reads a multi-line value (a PEM) pasted at the terminal
-// without echo: the terminal goes raw once for the whole paste, because a
-// line-by-line read would turn echo back on between lines and show what has
-// already arrived. It ends at the "-----END" line. Ctrl-C cancels (with
-// nothing stored) and Ctrl-D ends the input early; both restore the
-// terminal. The result has "\n" line ends and one trailing newline, and is
-// validated like any value; the paste's first line must be a -----BEGIN
-// line. Errors never quote the value. As readHidden, a cancelled read
-// leaves its goroutine blocked, for a process that exits soon after.
+// without echo: the terminal goes raw once for the whole paste, before the
+// prompt is shown (a line-by-line read would turn echo back on between lines
+// and show what has already arrived). It ends at the "-----END" line once
+// Enter is pressed. Ctrl-C cancels (with nothing stored) and Ctrl-D ends the
+// input early; both restore the terminal, as does a panic. Escape sequences
+// (arrow keys, the bracketed-paste markers a terminal may wrap a paste in)
+// are dropped. The result has "\n" line ends and one trailing newline, and
+// is validated like any value; the paste's first line must be a -----BEGIN
+// line. Errors never quote the value. As readHidden, a cancelled read leaves
+// its goroutine blocked, for a process that exits soon after.
 func readHiddenPEM(ctx context.Context, f *os.File, prompt io.Writer, name string) ([]byte, error) {
 	fd := int(f.Fd())
-	fmt.Fprintf(prompt, "Paste the private key for %s (input hidden), from its -----BEGIN line to its -----END line: ", name)
 	state, err := term.MakeRaw(fd)
 	if err != nil {
-		fmt.Fprintln(prompt)
 		return nil, userErr("reading the terminal's state: %v", err)
 	}
+	defer func() { _ = term.Restore(fd, state) }()
+	fmt.Fprintf(prompt, "Paste the private key for %s (input hidden), from its -----BEGIN line to its -----END line, then press Enter: ", name)
 	type result struct {
 		b   []byte
 		err error
@@ -455,10 +508,32 @@ func readHiddenPEM(ctx context.Context, f *os.File, prompt io.Writer, name strin
 			clear(buf)
 			done <- result{nil, err}
 		}
+		defer func() {
+			if r := recover(); r != nil {
+				_ = term.Restore(fd, state)
+				fail(userErr("reading the value from the terminal failed"))
+			}
+		}()
+		esc := 0 // 1 after ESC, 2 inside a CSI sequence
 		for {
 			n, rerr := f.Read(buf)
 			for _, c := range buf[:n] {
 				switch {
+				case esc == 1:
+					if c == '[' {
+						esc = 2
+					} else {
+						esc = 0
+					}
+					continue
+				case esc == 2:
+					if c >= 0x40 && c <= 0x7e { // the sequence's final byte
+						esc = 0
+					}
+					continue
+				case c == 0x1b:
+					esc = 1
+					continue
 				case c == 3:
 					fail(errCancelled)
 					return

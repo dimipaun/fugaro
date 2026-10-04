@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -122,6 +123,23 @@ type secretsRig struct {
 	store  *memStore
 	out    *syncBuf // the loop's account (stdout)
 	errOut *syncBuf // prompts and warnings (stderr)
+	dir    string   // the checkout
+}
+
+var realWriterIsTerminal = writerIsTerminal
+
+// checkoutYAML is a fugaro.yaml of project aurora for provider, with agent.auth auth
+// (and extra lines of the workflow, such as secrets).
+func checkoutYAML(provider, auth, project string, workflowExtra string) string {
+	return "version: 1\nproject: " + project + "\ngit: { provider: " + provider + " }\nagent: { auth: " + auth + " }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }" + workflowExtra + " }\n"
+}
+
+// writeConfig (re)writes the checkout's fugaro.yaml.
+func (r *secretsRig) writeConfig(t *testing.T, yaml string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(r.dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // newSecretsRig makes a checkout whose origin is origin, runs from it, and
@@ -134,7 +152,7 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 	testutil.Git(t, dir, "init", "-q")
 	testutil.Git(t, dir, "remote", "add", "origin", origin)
 	t.Chdir(dir)
-	r := &secretsRig{store: newMemStore(), out: &syncBuf{}, errOut: &syncBuf{}}
+	r := &secretsRig{store: newMemStore(), out: &syncBuf{}, errOut: &syncBuf{}, dir: dir}
 	cmd := NewRootCmd()
 	cmd.SetIn(in)
 	cmd.SetErr(r.errOut)
@@ -142,7 +160,17 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 	for _, f := range opts {
 		f(o)
 	}
-	r.e = &initEngine{r: &initRun{o: o, w: r.out, cmd: cmd}, lc: &localcfg.Config{}}
+	r.e = &initEngine{r: &initRun{o: o, w: r.out, cmd: cmd}, lc: &localcfg.Config{Name: "aurora"}}
+	provider := "github"
+	if strings.Contains(origin, "bitbucket") {
+		provider = "bitbucket"
+	}
+	r.writeConfig(t, checkoutYAML(provider, "oauth", "aurora", ""))
+	for _, k := range agentMarkers {
+		t.Setenv(k, "") // this session may be a coding agent's
+	}
+	writerIsTerminal = func(io.Writer) bool { return true } // the tests' buffers stand for the terminal
+	t.Cleanup(func() { writerIsTerminal = realWriterIsTerminal })
 	r.stage = newSecretsStage(r.e)
 	r.stage.open = func(context.Context) (secretStore, error) { return r.store, nil }
 	old := selfCommand
@@ -355,30 +383,76 @@ func TestSecretsCheckToleratesAnUnreadableStore(t *testing.T) {
 	}
 }
 
-// Outside a checkout (or on another host) the stage has nothing to take.
+// Outside a checkout, or in one of another host's, the stage has nothing to take.
 func TestSecretsSkippedOutsideAGithubOrBitbucketCheckout(t *testing.T) {
 	r := newSecretsRig(t, "https://gitlab.example/acme/app.git", strings.NewReader(""))
+	_ = os.Remove(filepath.Join(r.dir, "fugaro.yaml"))
+	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "gitlab"}}
 	res, err := r.run(t)
 	if err != nil || stateOf(res, "secrets") != initflow.Skipped {
 		t.Fatalf("%v, %+v", err, res.Stages)
 	}
+	r = newSecretsRig(t, githubOrigin, strings.NewReader(""))
 	t.Chdir(t.TempDir())
-	r2 := newSecretsRig(t, githubOrigin, strings.NewReader(""))
-	t.Chdir(t.TempDir())
-	res, err = r2.run(t)
+	res, err = r.run(t)
 	if err != nil || stateOf(res, "secrets") != initflow.Skipped {
 		t.Fatalf("%v, %+v", err, res.Stages)
 	}
 }
 
-// The provider comes from the local config when it has the repository,
-// whatever the host says.
-func TestSecretsProviderFromLocalConfig(t *testing.T) {
+// A checkout that is not this project's is skipped, and nothing is created
+// for it: a fugaro.yaml of another project, a provider the local config and
+// the file disagree on, a repository the project does not know.
+func TestSecretsSkippedForAnUnrelatedCheckout(t *testing.T) {
+	for name, tc := range map[string]struct {
+		yaml  string // "" removes the file
+		local string // the local config's provider for acme/app
+	}{
+		"another project":       {yaml: checkoutYAML("github", "oauth", "other", "")},
+		"no project":            {yaml: checkoutYAML("github", "oauth", "", "")},
+		"provider disagreement": {yaml: checkoutYAML("github", "oauth", "aurora", ""), local: "bitbucket"},
+		"unknown repository":    {yaml: ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spy := &readerSpy{Reader: strings.NewReader("")}
+			r := newSecretsRig(t, githubOrigin, spy)
+			if tc.yaml == "" {
+				if err := os.Remove(filepath.Join(r.dir, "fugaro.yaml")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				r.writeConfig(t, tc.yaml)
+			}
+			if tc.local != "" {
+				r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: tc.local}}
+			}
+			res, err := r.run(t)
+			if err != nil || stateOf(res, "secrets") != initflow.Skipped || r.store.setCalls() != 0 || len(r.store.secrets) != 0 || len(res.Left) != 0 {
+				t.Fatalf("%v, %+v", err, res.Stages)
+			}
+		})
+	}
+}
+
+// The local config's entry alone onboards a checkout without a fugaro.yaml:
+// the git credential is asked for, the Claude credential is not assumed, and
+// the stage says so.
+func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
 	r := newSecretsRig(t, "https://git.example.com/acme/app.git", strings.NewReader(""))
+	if err := os.Remove(filepath.Join(r.dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
 	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}
 	res, err := r.run(t)
-	if err != nil || !strings.Contains(res.Left[0].Text, "bitbucket-token") {
+	if err != nil || len(res.Left) != 1 || strings.Contains(res.Left[0].Text, "claude") || !strings.Contains(res.Left[0].Text, "bitbucket-token") {
 		t.Fatalf("%v, %+v", err, res)
+	}
+	var detail string
+	for _, st := range res.Stages {
+		detail = st.Detail
+	}
+	if !strings.Contains(detail, "no fugaro.yaml") {
+		t.Errorf("the assumption is not said: %q", detail)
 	}
 }
 
@@ -438,7 +512,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 	dir := t.TempDir()
 	testutil.IsolateGit(t)
 	testutil.Git(t, dir, "init", "-q")
-	testutil.Git(t, dir, "remote", "add", "origin", githubOrigin)
+	testutil.Git(t, dir, "remote", "add", "origin", "https://bitbucket.org/acme/sandbox.git") // the rig's local config knows it
 	t.Chdir(dir)
 	for _, flags := range [][]string{{"--yes"}, {"--non-interactive", "--yes"}, {"--non-interactive"}} {
 		spy := &readerSpy{Reader: strings.NewReader(tokenValue + "\n")}
@@ -464,7 +538,7 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 		}
 		if len(res.Left) > 0 {
 			last := res.Left[len(res.Left)-1]
-			if last["stage"] == "secrets" && !strings.Contains(last["text"], "secrets set github-app-key --repo acme/app") {
+			if last["stage"] == "secrets" && !strings.Contains(last["text"], "secrets set bitbucket-token --repo acme/sandbox") {
 				t.Fatalf("%v: left %v", flags, res.Left)
 			}
 		}
@@ -475,13 +549,13 @@ func TestInitSecretsStageThroughTheCommand(t *testing.T) {
 			}
 		}
 	}
-	// Both stored: the stage is done and init finishes.
-	label, _ := gcp.RepoLabel(appSlug)
+	// Stored: the stage is done and init finishes.
+	sandbox := mustSlug("bitbucket", "acme/sandbox")
+	label, _ := gcp.RepoLabel(sandbox)
 	labels := func(name string) map[string]string {
 		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
 	}
-	r.sm.Seed(gcp.SecretID(appSlug, "github-app-key"), labels("github-app-key"), []byte(pemValue))
-	r.sm.Seed(gcp.SecretID(appSlug, "claude-oauth-token"), labels("claude-oauth-token"), []byte(tokenValue))
+	r.sm.Seed(gcp.SecretID(sandbox, "bitbucket-token"), labels("bitbucket-token"), []byte(tokenValue))
 	out, _, err := executeStdin(t, "", "init", "--yes", "--json")
 	if err != nil {
 		t.Fatal(err)

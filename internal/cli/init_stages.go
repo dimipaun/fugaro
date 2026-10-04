@@ -88,9 +88,11 @@ var secretsHeld = func() []string { return nil }
 // options is the loop's configuration from the flags.
 func (e *initEngine) options() initflow.Options {
 	r, o := e.r, e.r.o
-	base := secretsHeld()
-	e.redact = append(slices.Clone(base), make([]string, maxHeldSecrets)...)
-	e.held = e.redact[len(base):]
+	if e.redact == nil { // built once: the loop and the stage share the slots
+		base := secretsHeld()
+		e.redact = append(slices.Clone(base), make([]string, maxHeldSecrets)...)
+		e.held = e.redact[len(base):]
+	}
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
 		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), Out: r.w,
