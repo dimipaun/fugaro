@@ -7,9 +7,19 @@ One SemVer tag `vX.Y.Z` releases everything (design section 12): the binary, the
 A push of a strict `vX.Y.Z` tag triggers two independent workflows:
 
 - `release.yml` (this document): checks the tag, then runs GoReleaser, which builds `fugaro` for darwin and linux on amd64 and arm64, writes `checksums.txt`, an SBOM per archive (syft), a keyless cosign signature of `checksums.txt`, and the GitHub Release with a grouped changelog; it also pushes the Homebrew cask. A `v0.x.y` release is then marked as a pre-release (GoReleaser's `prerelease: auto` only recognises `-rc1`-style suffixes, which the strict tag rule never produces).
-- `images.yml`: builds, smoke tests, scans and publishes `ghcr.io/dimipaun/fugaro-web-node:X.Y.Z` and `:X`, and the same two tags of `ghcr.io/dimipaun/fugaro-go` and `ghcr.io/dimipaun/fugaro-java-services` (`:X` moves only to the highest release of that major). Pull requests build, smoke test and publish nothing; the nightly run scans.
+- `images.yml`: builds, smoke tests, scans and publishes `ghcr.io/dimipaun/fugaro-web-node:X.Y.Z` and `:X`, and the same two tags of `ghcr.io/dimipaun/fugaro-go`, `ghcr.io/dimipaun/fugaro-java-services` and `ghcr.io/dimipaun/fugaro-history` (`:X` moves only to the highest release of that major). After publishing, the `verify-public` job pulls every reference with no login (`images/verify-public.sh`) and fails the release when one cannot be read or has no `linux/amd64` build; it lists each image's digest in the run summary. Pull requests build, smoke test and publish nothing; the nightly run scans.
 
 Neither workflow runs the test suite; CI already did on main. Both workflows run `scripts/release-gate.sh` first, so a tag on an off-main or red commit publishes nothing (no binaries, no images). It refuses unless the tagged commit is reachable from `origin/main` and the GitHub Actions checks `test`, `terraform` and `rules` all succeeded on it (a check of that name from another app does not count); if CI is still running, re-run the failed job once it is green. `release.yml` also requires the plugin version to equal the tag.
+
+## Making the image packages public (one time per package)
+
+A package that a workflow creates on ghcr.io is private. `fugaro init` mirrors the images with the user's own credentials and a plain `docker pull` has none, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
+
+1. Open `https://github.com/users/dimipaun/packages/container/fugaro-<name>/settings` for `web-node`, `go`, `java-services` and `history`.
+2. Under "Danger Zone", "Change package visibility", choose Public and confirm.
+3. Re-run the `verify-public` job of that release's `images` run (or `images/verify-public.sh ghcr.io/dimipaun/fugaro-<name>:X.Y.Z` on any machine, which uses no login).
+
+Until it is done, the first release's `verify-public` job fails by design with "cannot be read without a login (is the package public?)": the images are published and the failure only says the step above is outstanding. Later releases of a public package stay public.
 
 ## Secrets
 

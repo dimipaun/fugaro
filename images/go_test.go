@@ -141,14 +141,17 @@ func TestGoBasePinsMatchTheRepository(t *testing.T) {
 	}
 }
 
-// Every base the images workflow builds is also published, and the two
-// matrices agree.
+// Every base the images workflow builds is also published (the publish matrix
+// is the base matrix plus the history image).
 func TestImagesWorkflowBuildsAndPublishesEveryBase(t *testing.T) {
 	data, err := os.ReadFile("../.github/workflows/images.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(string(data), "base: [web-node, go, java-services]"); n != 2 {
-		t.Errorf("images.yml lists the bases in %d matrices, want 2 (build and publish)", n)
+	if n := strings.Count(string(data), "base: [web-node, go, java-services]"); n != 1 {
+		t.Errorf("images.yml lists the bases in %d build matrices, want 1", n)
+	}
+	if n := strings.Count(string(data), "base: [web-node, go, java-services, history]"); n != 1 {
+		t.Errorf("images.yml lists the published images in %d publish matrices, want 1", n)
 	}
 }
