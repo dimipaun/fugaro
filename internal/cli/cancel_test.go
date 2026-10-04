@@ -98,7 +98,8 @@ func TestCancelNeverHardCancelsDuringFinalize(t *testing.T) {
 // cancel must follow the record.
 func TestDoubleLaunchViewsFollowTheRecord(t *testing.T) {
 	f := newCloudFixture(t)
-	const id = "20260927-100000-abcd"
+	// `ls` hides runs older than its window, so the ID's date must follow the clock.
+	id := time.Now().UTC().Format("20060102-150405") + "-abcd"
 	dup := seedRun(t, f, id, "", "", true) // launch.json names this one
 	owner := f.run.Start(gcp.JobName(appSlug, "web"))
 	f.run.SetState(dup, backend.StateFailed)
