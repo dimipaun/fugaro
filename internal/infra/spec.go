@@ -311,11 +311,12 @@ func resolve(in Inputs) (*repoCtx, error) {
 	if c.repoURL, err = repoURL(c.provider, in.Repo, in.RepoURL); err != nil {
 		return nil, err
 	}
+	c.gitSecret, _ = GitSecret(c.provider)
 	switch c.provider {
 	case gitprov.KindBitbucket:
-		c.gitSecret, c.gitUser = "bitbucket-token", bitbucket.GitUsername
+		c.gitUser = bitbucket.GitUsername
 	case gitprov.KindGitHub:
-		c.gitSecret, c.gitUser = "github-app-key", githubGitUser
+		c.gitUser = githubGitUser
 		c.appID = in.GitHubAppID
 		if c.appID == "" && hasLocal {
 			c.appID = local.GitHubAppID
@@ -478,6 +479,19 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 		return WorkflowSpec{}, err
 	}
 	return c.workflow(name)
+}
+
+// GitSecret is the logical name of the git credential of provider (the
+// secret every job mounts), and false for a provider that is neither
+// Bitbucket nor GitHub. The one place that names them.
+func GitSecret(provider string) (string, bool) {
+	switch provider {
+	case gitprov.KindBitbucket:
+		return "bitbucket-token", true
+	case gitprov.KindGitHub:
+		return "github-app-key", true
+	}
+	return "", false
 }
 
 // SecretMount is one secret a workflow's job mounts: the logical name (what
