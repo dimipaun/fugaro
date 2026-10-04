@@ -44,10 +44,11 @@ In the repository's checkout, either use the plugin's `fugaro:onboard` skill fro
 
 ```sh
 fugaro init --repo                    # its secrets, registry, job and daily image check
-fugaro secrets set anthropic-api-key  # value from stdin or a hidden prompt; also github-app-key, bitbucket-token, claude-oauth-token and the secrets your workflows declare
+fugaro init                           # in your own terminal: asks, hidden, for the secrets the repository's jobs mount
+fugaro secrets set anthropic-api-key  # or by hand: value from stdin or a hidden prompt; also github-app-key, bitbucket-token, claude-oauth-token and the secrets your workflows declare
 ```
 
-`init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
+`fugaro init` takes those secrets at hidden prompts only in your own terminal (never with `--yes`, never through a coding agent); otherwise it prints the one-line `fugaro secrets set` commands to run. `init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
 
 ### 5. Run, watch, diagnose
 

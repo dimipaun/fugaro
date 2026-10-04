@@ -480,6 +480,51 @@ func Workflow(in Inputs, name string) (WorkflowSpec, error) {
 	return c.workflow(name)
 }
 
+// SecretMount is one secret a workflow's job mounts: the logical name (what
+// fugaro secrets set takes) and the variable it becomes.
+type SecretMount struct{ Logical, Env string }
+
+// SecretMounts is what the job of workflow name (w) mounts, in order: the
+// git provider's credential (gitSecret), the one Claude credential agent.auth
+// names (none for vertex), the keys of the model providers the owner's local
+// config allows repo to send code to (only with api-key: a run does not mix
+// credentials), and the workflow's own secrets. It is the one place that
+// decides it, for the job's spec and for the secrets init asks for.
+//
+// A provider's key is the runner's, for its gateway, and only a repository
+// the owner allowed to send code there gets it, as a variable the agent's
+// environment never carries.
+//
+// Limitation: every workflow of an allowed repository gets the key, whether
+// or not its pins name that provider's models. The spec sees only the
+// checked-in agent block (shared by all workflows), but the models a run
+// uses come from the branch's fugaro.yaml and a task's --model override,
+// neither known when the job is deployed; gating on the visible pins would
+// make a run that pins a provider model later fail for a missing key. The
+// key reaches only the runner, never the agent, and the repository is
+// already one the owner allowed to send code to the provider.
+func SecretMounts(gitSecret string, cfg *config.Config, name string, w config.Workflow, lc *localcfg.Config, repo string) ([]SecretMount, error) {
+	out := []SecretMount{{gitSecret, config.ReservedSecrets[gitSecret]}}
+	switch cfg.Agent.Auth {
+	case "oauth":
+		out = append(out, SecretMount{"claude-oauth-token", config.ReservedSecrets["claude-oauth-token"]})
+	case "api-key":
+		out = append(out, SecretMount{"anthropic-api-key", config.ReservedSecrets["anthropic-api-key"]})
+		for _, pn := range slices.Sorted(maps.Keys(lc.Providers)) {
+			if p := lc.Providers[pn]; p.AllowsData(repo) {
+				out = append(out, SecretMount{p.Secret, p.SecretEnv()})
+			}
+		}
+	}
+	for _, s := range w.Secrets {
+		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
+			return nil, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
+		}
+		out = append(out, SecretMount{s.Name, s.Env})
+	}
+	return out, nil
+}
+
 func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	w, ok := c.in.Cfg.Workflows[name]
 	if !ok {
@@ -540,47 +585,19 @@ func (c *repoCtx) workflow(name string) (WorkflowSpec, error) {
 	}
 
 	var collisions []string
-	mount := func(logical, env string) {
-		if _, dup := ws.SecretEnv[env]; dup {
-			collisions = append(collisions, env)
-		}
-		ws.SecretEnv[env] = logical
-		ws.SecretIDs[logical] = gcp.SecretID(slug, logical)
+	mounts, err := SecretMounts(c.gitSecret, c.in.Cfg, name, w, lc, c.in.Repo)
+	if err != nil {
+		return WorkflowSpec{}, err
 	}
-	mount(c.gitSecret, config.ReservedSecrets[c.gitSecret])
-	switch c.in.Cfg.Agent.Auth {
-	case "oauth":
-		mount("claude-oauth-token", config.ReservedSecrets["claude-oauth-token"])
-	case "api-key":
-		mount("anthropic-api-key", config.ReservedSecrets["anthropic-api-key"])
-	}
-	// A provider's key is the runner's, for its gateway, and only a
-	// repository the owner allowed to send code there gets it. It is mounted
-	// only with api-key (a run does not mix credentials) and as a variable
-	// the agent's environment never carries.
-	//
-	// Limitation: every workflow of an allowed repository gets the key,
-	// whether or not its pins name that provider's models. The spec sees
-	// only the checked-in agent block (c.in.Cfg.Agent, shared by all
-	// workflows), but the models a run uses come from the branch's
-	// fugaro.yaml and a task's --model override, neither known when the job
-	// is deployed; gating on the visible pins would make a run that pins a
-	// provider model later fail for a missing key. The key reaches only the
-	// runner, never the agent, and the repository is already one the owner
-	// allowed to send code to the provider.
-	if c.in.Cfg.Agent.Auth == "api-key" {
-		for _, name := range slices.Sorted(maps.Keys(lc.Providers)) {
-			if p := lc.Providers[name]; p.AllowsData(c.in.Repo) {
-				mount(p.Secret, p.SecretEnv())
-			}
+	for _, m := range mounts {
+		if _, dup := ws.SecretEnv[m.Env]; dup {
+			collisions = append(collisions, m.Env)
 		}
+		ws.SecretEnv[m.Env] = m.Logical
+		ws.SecretIDs[m.Logical] = gcp.SecretID(slug, m.Logical)
 	}
 	ws.BuildSecrets = []string{c.gitSecret}
 	for _, s := range w.Secrets {
-		if p, ok := config.ProviderBySecret(lc.Providers, s.Name); ok {
-			return WorkflowSpec{}, userErr("workflow %s: secret %s is the key of model provider %s, which only the owner's local config may use", name, s.Name, p)
-		}
-		mount(s.Name, s.Env)
 		ws.BuildSecrets = append(ws.BuildSecrets, s.Name)
 	}
 	slices.Sort(ws.BuildSecrets)
