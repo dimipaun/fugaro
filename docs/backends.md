@@ -19,3 +19,7 @@ A project config's `backend:` key names the backend (`cloud-run` is the default 
 `internal/backend/backendtest.Run(t, factory)` exercises the five lifecycle methods and the two timeout methods against any `Backend`. `factory` builds a fresh backend per subtest, already able to launch a job under `backendtest.Slug` / `backendtest.Workflow` (as `fugaro init` would have created it). A contributor's pull request for a new backend is "passes `backendtest.Run`"; `internal/backend/gcp/conformance_test.go` runs it against the GCP backend on the existing Cloud Run and Logging fakes (`internal/gcpfake`).
 
 No live service is touched: CI never runs against a real cloud.
+
+## Live checks
+
+The offline suites above prove a backend's logic, not the real service. The GCP backend's provisioning stages (project creation, the image mirror, the secrets and plugin-wiring stages, `doctor`) are exercised against real Google, ghcr.io and Artifact Registry by [Check 27](gcp-live-checklist.md) of the live checklist: user-run on a throwaway project, with exact steps, expected results and what to paste back. **It has not been run**; until it is, those stages' claims about Google and registry behaviour are from documentation, as the M11 design's §14 says. A second backend brings its own checklist entry for the stages it adds.

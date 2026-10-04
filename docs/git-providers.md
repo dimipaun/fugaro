@@ -26,7 +26,7 @@ Create a **repository access token** under *Repository settings → Security →
 
 Git uses it with the username `x-token-auth`. The token is scoped to its repository by design, which makes it the per-repo credential that design §6.1 asks for.
 
-**Name the token when you create it.** Pick a name you want people to see, for example `Fugaro`. Bitbucket shows the token's name as the author of every pull request and comment Fugaro creates, and a token can't be renamed or edited after creation (it can be rotated or revoked, which keeps the name). To change the name, create a new token, store it as a new version of the repository's `bitbucket-token` secret (`fugaro secrets set bitbucket-token --repo <owner/name> < <token file>`), and then revoke the old one. Use the same name for every repository, so pull requests look the same everywhere. Commits are authored as `Fugaro` whatever the token is called.
+**Name the token when you create it.** Pick a name you want people to see, such as `Fugaro <org>` (whether Bitbucket requires token names to be unique is unchecked; a bare `Fugaro` says nothing about whose it is). Bitbucket shows the token's name as the author of every pull request and comment Fugaro creates, and a token can't be renamed or edited after creation (it can be rotated or revoked, which keeps the name). To change the name, create a new token, store it as a new version of the repository's `bitbucket-token` secret (`fugaro secrets set bitbucket-token --repo <owner/name> < <token file>`), and then revoke the old one. Use the same name for every repository, so pull requests look the same everywhere. Commits are authored as `Fugaro` whatever the token is called.
 
 - **Reviewers** (`git.pr.reviewers`) are requested only when the PR becomes ready (see "Early draft PRs" below). They are account UUIDs (`{…}`) or account IDs, not usernames. If Bitbucket rejects one, the PR stays ready without reviewers and the run's report says so. Bitbucket answers an unknown but well-formed UUID with HTTP 400 `reviewers: Malformed reviewers list`, so the message does not distinguish an unknown reviewer from a malformed one.
 - **Labels** (`git.pr.labels`) are ignored. Bitbucket Cloud pull requests have no labels. The run logs a warning about this once, to its stderr log.
@@ -37,9 +37,7 @@ Git uses it with the username `x-token-auth`. The token is scoped to its reposit
 `git.pr.reviewers` needs account UUIDs. The repository access token can read the participants of the repository's recent pull requests, with each one's UUID and display name, so this finds anyone who took part in one of the last 30 merged pull requests. This keeps the token out of argv: `curl --config` reads the header from a process substitution, and `printf` is a shell builtin, so the token never reaches a process's command line.
 
 ```bash
-curl -sS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/fugaro-<repo>-token)") \
-  'https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests?state=MERGED&pagelen=30&fields=values.participants.user.uuid,values.participants.user.display_name' \
-  | python3 -m json.tool
+curl -sS --config <(printf 'header = "Authorization: Bearer %s"\n' "$(cat ~/.config/fugaro-<repo>-token)") 'https://api.bitbucket.org/2.0/repositories/<workspace>/<repo>/pullrequests?state=MERGED&pagelen=30&fields=values.participants.user.uuid,values.participants.user.display_name' | python3 -m json.tool
 ```
 
 Pick the reviewer's `{…}` UUID by display name, and put it in the repository's own `git.pr.reviewers`. Never put it in Fugaro, its tests or its fixtures.
@@ -52,7 +50,7 @@ Create a **GitHub App** and install it on the repositories Fugaro serves (design
 - **Issues: Read**
 - **Metadata: Read**
 
-Name the App when you create it, for example `Fugaro`: GitHub shows pull requests and comments it makes as authored by `<name>[bot]`.
+**Name the App when you create it, and expect the obvious name to be taken.** A GitHub App's name is unique across all of GitHub, and its URL handle (`github.com/apps/<slug>`) is derived from it: the bare name `Fugaro` is already taken (the first dogfooding install found out the hard way), so use `<yourname>-fugaro`, for example `acme-fugaro`. GitHub shows pull requests and comments the App makes as authored by `<slug>[bot]` (the name the App ends up with, so read the handle GitHub gives you), which is what your reviewers see on every PR. Treat the name as permanent: choose it before the first run, and use one App for all of a team's repositories so the pull requests look the same. The App's ID (a number on its settings page) is not a secret; `fugaro init` asks for it once in a terminal (or take `--github-app-id`) and keeps it in the local config. Generating a client secret is not needed (Fugaro uses the private key only); delete one if you made it.
 
 Store its App ID and private key as the variables above. At bootstrap, the runner mints an **installation token for this repository only**, restricted to the permissions above. It lasts about an hour. Before each stage, the runner replaces it with a fresh one if it would expire within that stage's timeout plus 5 minutes, but it never asks for more than 50 minutes, which is all GitHub can give. So with `timeouts.stage` above about 45 minutes, a stage can outlive its token: the agent's `git` and `gh` calls late in that stage fail, and only the refresh before the next stage (or before finalize's push) restores working credentials.
 
