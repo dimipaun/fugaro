@@ -13,7 +13,7 @@ if [ "${1:-}" = "--check" ]; then
 fi
 v=${1:-}
 v=${v#v}
-if ! printf '%s\n' "$v" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+if ! [[ $v =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "usage: $0 [--check] X.Y.Z" >&2
   exit 2
 fi
