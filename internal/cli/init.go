@@ -181,7 +181,9 @@ CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) init
 applies nothing, --yes included, and says to run it in your own terminal
 window; --plan-only and the read-only checks still work. That is a mitigation,
 not a barrier: an agent can unset its own environment. A run that adopted an
-existing installation applies nothing more in the same run.
+existing installation changes nothing in the cloud in the same run (the local
+config and, in a checkout, the plugin wiring in .claude/settings.json are the
+only files it writes).
 
 In a checkout of a repository of this project, the converge's secrets stage
 asks, at hidden prompts, for the secrets its jobs mount (the git credential,

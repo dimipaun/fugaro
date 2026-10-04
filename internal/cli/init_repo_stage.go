@@ -138,6 +138,10 @@ func (s *repositoryStage) Plan(ctx context.Context, env initflow.Env) (initflow.
 }
 
 func (s *repositoryStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	// An adopting run is told before it is asked to type anything.
+	if err := s.e.adoptGuard(s.name); err != nil {
+		return initflow.Outcome{}, err
+	}
 	if err := s.authorize(ctx, env); err != nil {
 		return initflow.Outcome{}, err
 	}
