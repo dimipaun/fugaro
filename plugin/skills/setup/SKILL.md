@@ -76,9 +76,11 @@ Ask the user, with your evidence and a recommended answer for each, **one topic 
 Before the first local build, and again before any rebuild after a change, show the user in the conversation every line that will run, with why it is there:
 - every `image.setup` step and `image.apt` package, and the build and test commands
 - a new Dockerfile: the whole file or the diff against the rendered one; a **fix of an existing** `.fugaro/*.Dockerfile` or `fugaro.yaml`: all of its executed lines, not only the ones you changed, since an existing line is repository data too
+- the content of any repository script those lines call (`make` targets, `scripts/*`, a `postinstall`), or an explicit statement that you did not read it, and the repository's `.npmrc` and `.yarnrc.yml` (`yarnPath` and plugins run code at install)
+- the names of the declared `secrets` variables, and whether each is already set in your own environment (test for presence only, never print a value): the local build passes any declared secret that is set to the build
 - any file you add that a command runs, such as the `agent.instructions` file (a text file appended to the agent's prompt; it must exist in the repository)
 
-Pin downloads by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's install, setup and build commands in Docker on the user's machine, with network access, and that secrets the user has exported for the build are passed to it. Wait for an explicit yes. If the user declines or has no Docker, skip the local build and say what is unverified (the smoke checks); the first cloud build is then the test.
+Pin every download by version and checksum. Don't pipe a download into a shell, use an unpinned `latest` or run a remote script. Say plainly that the build runs the repository's install, setup and build commands in Docker on the user's machine, with network access, and that secrets the user has exported for the build are passed to it. Wait for an explicit yes. If the user declines or has no Docker, skip the local build and say what is unverified (the smoke checks); the first cloud build is then the test.
 
 ## 7. Build the image locally, and loop
 
