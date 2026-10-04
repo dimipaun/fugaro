@@ -1357,6 +1357,26 @@ func TestInitRefusesUnreadableOutputs(t *testing.T) {
 	}
 }
 
+// A brand-new installation's state is empty: `terraform output -json`
+// succeeds with {}, which means "no prior installation", not unreadable
+// outputs. init goes on to the plan.
+func TestInitPlanOnlyOnEmptyState(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	r.script["output"] = map[string]any{"stdout": "{}"}
+	r.save(t)
+	out, _, err := executeStdin(t, "", "init", "--plan-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.ran(t, "plan")) != 1 || len(r.ran(t, "apply")) != 0 {
+		t.Fatalf("calls = %q", r.calls(t))
+	}
+	if !strings.Contains(out, "create module.installation.google_storage_bucket.runs") {
+		t.Errorf("no plan summary:\n%s", out)
+	}
+}
+
 // A refused rename changes no IAM: the runs bucket's viewers are only
 // touched once the name is known to be the installation's.
 func TestInitNameCheckBeforeViewersRemoval(t *testing.T) {

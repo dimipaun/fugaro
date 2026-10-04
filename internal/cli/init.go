@@ -783,10 +783,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 		// Outputs that exist but can't be read must not pass for "no
 		// installation": the name check below would be skipped.
 		o, err := infra.DecodeOutputs(raw)
-		if err != nil {
+		switch {
+		case errors.Is(err, infra.ErrNoOutputs):
+			// A fresh state: no prior installation yet.
+		case err != nil:
 			return outs, false, remote(fmt.Errorf("reading the installation's outputs: %w", err))
+		default:
+			prior, havePrior = o, true
 		}
-		prior, havePrior = o, true
 	}
 	if err := checkInstallationName(r.o.name, lc.Name, prior, havePrior); err != nil {
 		return outs, false, err
