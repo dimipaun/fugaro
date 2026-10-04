@@ -150,6 +150,37 @@ func TestTagMoverRoleIsTagsDeleteOnly(t *testing.T) {
 	}
 }
 
+// The base images are copied into fugaro-base by init, as the person running
+// it (design m11 §3.3): a build account must never be able to write that
+// registry, since the image every repository's credential step runs comes
+// from it. So the only grant on the base registry that is not a reader's is
+// the operators' writer role, and no grant of any kind to a service account
+// writes it.
+func TestMirrorRunsAsUserNotBuildAccount(t *testing.T) {
+	writers := 0
+	walk(t, func(path string, b []byte) {
+		for _, typ := range []string{"google_artifact_registry_repository_iam_member", "google_artifact_registry_repository_iam_binding", "google_artifact_registry_repository_iam_policy"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				onBase := strings.Contains(blk.body, "repository.base.") || strings.Contains(blk.body, "base_registry") || strings.Contains(blk.body, `"fugaro-base"`)
+				if !onBase {
+					continue
+				}
+				switch {
+				case hasAttr(blk.body, "role", `"roles/artifactregistry.reader"`):
+				case blk.name == typ+".base_writer" && path == "gcp/modules/installation/iam.tf" && typ == "google_artifact_registry_repository_iam_member" &&
+					strings.Contains(blk.body, "toset(var.operators)") && hasAttr(blk.body, "member", "each.value"):
+					writers++
+				default:
+					t.Errorf("%s: %s grants something other than reader on the base registry to something other than the operators", path, blk.name)
+				}
+			}
+		}
+	})
+	if writers != 1 {
+		t.Errorf("found %d operator writer grants on the base registry, want exactly 1", writers)
+	}
+}
+
 // Destroying the Terraform config must never turn off an API the project
 // (or someone else in it) still uses.
 func TestProjectServicesKeepOnDestroy(t *testing.T) {

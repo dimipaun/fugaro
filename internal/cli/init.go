@@ -28,6 +28,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/preflight"
 	"github.com/dimipaun/fugaro/internal/runner"
@@ -46,6 +47,8 @@ type initOptions struct {
 	schedulerRegion                     string
 	runsBucket, stateBucket             string
 	baseImages                          []string
+	baseKinds                           []string // --base: base kinds to mirror now
+	imageSource                         string   // --image-source: a fork's own release registry/owner
 	launchers, operators                []string
 	budget                              int64
 	budgetCurrency, billingAccount      string
@@ -175,6 +178,8 @@ Terraform's state, destroying nothing.`,
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
 	f.StringArrayVar(&o.baseImages, "base-image", nil, "a base image the image checks run and builds start from, recorded in the local config under its base kind (repeatable; KIND=IMAGE, or just IMAGE when its repository is named fugaro-<kind>; the kinds you don't name keep theirs)")
+	f.StringSliceVar(&o.baseKinds, "base", nil, "base kinds (go, java-services, web-node) whose release image init copies into the project's registry now, besides the ones the checkout's fugaro.yaml names (comma-separated or repeated)")
+	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release images are copied from (default ghcr.io/dimipaun; a fork names its own, such as ghcr.io/acme)")
 	f.StringArrayVar(&o.launchers, "launcher", nil, "an IAM member who launches and watches runs (repeatable; default: the local config's)")
 	f.StringArrayVar(&o.operators, "operator", nil, "an IAM member who onboards repositories (repeatable; default: the local config's)")
 	f.Int64Var(&o.budget, "budget", 0, "a monthly budget on the project, in whole units of --budget-currency")
@@ -409,6 +414,16 @@ func (o *initOptions) check() error {
 	for _, v := range o.baseImages {
 		if _, _, err := localcfg.ParseBaseImageFlag(v); err != nil {
 			return userErr("%v", err)
+		}
+	}
+	for _, k := range o.baseKinds {
+		if !slices.Contains(config.Bases, k) {
+			return userErr("--base %q is not a base kind (%s)", k, strings.Join(config.Bases, ", "))
+		}
+	}
+	if o.imageSource != "" {
+		if err := mirror.ValidSourcePrefix(o.imageSource); err != nil {
+			return userErr("--image-source: %v", err)
 		}
 	}
 	if o.firebase == "" && (o.budgetMode != "" || o.budgetAdminsChanged) {
@@ -1338,7 +1353,7 @@ func (o *initOptions) checkRepo() error {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
-		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--no-log-isolation": o.noLogIsolation,
+		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
 		"--firebase": o.firebase != "", "--budget-mode": o.budgetMode != "", "--budget-admin": o.budgetAdminsChanged,
 	}
