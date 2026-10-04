@@ -1,0 +1,13 @@
+version: 1
+project: acme
+git: { provider: bitbucket, base_branch: main }
+workflows:
+  server:
+    base: java-services
+    image:
+      setup: ["./gradlew --no-daemon testClasses"]
+    commands:
+      build: ./gradlew --no-daemon testClasses
+      test: fugaro-services start && ./gradlew --no-daemon integrationTest
+      reports: ["**/build/test-results/**/*.xml"]
+    resources: { cpu: 4, memory: 16Gi }

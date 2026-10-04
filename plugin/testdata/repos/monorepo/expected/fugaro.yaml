@@ -1,0 +1,15 @@
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  api:
+    base: go
+    dockerfile: .fugaro/api.Dockerfile
+    commands:
+      build: cd services/api && go build ./...
+      test: cd services/api && go test ./...
+  web:
+    base: web-node
+    commands:
+      build: cd web && pnpm build
+      test: cd web && pnpm test

@@ -6,13 +6,9 @@
 
 > **Status: pre-1.0. Expect breaking changes.** The first release is v0.1.0. It covers the runner, the git providers (GitHub and Bitbucket Cloud), the `web-node` base and derived images, the Cloud Run backend with its CLI, follow-up runs, the shared budget and the plugin skills. The design is [docs/design/v1.md](docs/design/v1.md).
 
-## Quickstart
+## Getting started
 
-Install, stand up an installation in your own Google Cloud project, onboard a repository, run a task. Each step links to the deep doc.
-
-### 1. Install
-
-v0.1.0 is the first release; these channels are live from that tag.
+Fugaro needs a Google Cloud project with billing (see [Requirements](#requirements)), `gcloud` signed in with Application Default Credentials, Terraform 1.7 or newer, Docker if you build images locally, and a GitHub or Bitbucket repository. Install the CLI (v0.1.0 is the first release; these channels are live from that tag):
 
 ```sh
 brew install dimipaun/tap/fugaro
@@ -20,17 +16,22 @@ brew install dimipaun/tap/fugaro
 go install github.com/dimipaun/fugaro/cmd/fugaro@latest
 ```
 
-Or download an archive from [GitHub Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64). Each release has a `checksums.txt` signed with cosign; [docs/release.md](docs/release.md#verifying-a-release) shows how to verify it.
+Or download an archive from [GitHub Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64); each release has a `checksums.txt` signed with cosign ([how to verify](docs/release.md#verifying-a-release)). Then, in the repository's checkout:
 
-### 2. Prerequisites
+1. Run `fugaro init`.
+2. Open your coding agent and run `/fugaro:setup`.
 
-- A Google Cloud project with billing enabled (see [Requirements](#requirements))
-- `gcloud` authenticated, with Application Default Credentials (`gcloud auth application-default login`)
-- Terraform 1.7 or newer on `PATH`
-- Docker, only if you build images locally
-- A GitHub or Bitbucket repository to run tasks against
+This two-step flow is on `main` and ships with the release after v0.1.0: v0.1.0 does not include the converging `fugaro init` or `/fugaro:setup`, so with v0.1.0 follow [Manual setup](#manual-setup). Parts of the new flow (project creation, image mirroring, the plugin install prompt) are not yet verified against real cloud services.
 
-### 3. Stand up the installation (once per project)
+`fugaro init` converges the installation (a first run names it: `--name`, `--gcp-project`, `--region`; `--create-project` and `--link-billing` create the project and link billing, each behind a confirmation you type), copies the release's base images into your registry, asks for secrets at hidden prompts in your own terminal, and wires the Fugaro plugin into the repository's `.claude/settings.json`, pinned to the release. `/fugaro:setup` reads the repository, writes `fugaro.yaml` (and a Dockerfile only when `image:` can't express the build) with you, and opens a pull request; merge it, then run `fugaro init` again to add the repository's job, first image build and schedule. Details and rollback: [docs/gcp-setup.md](docs/gcp-setup.md).
+
+The plugin gives your agent four skills: `setup`, `working` (run, watch, diagnose, follow up), `routing` (cloud or local) and `parallelism`. Commit the `.claude/settings.json` change; teammates should be offered the plugin when they open the folder in Claude Code and trust it (not yet verified: if you are not offered it, restart Claude Code in the folder or use the commands below). To install it yourself, run `/plugin marketplace add dimipaun/fugaro`, then `/plugin install fugaro@fugaro`. `fugaro doctor` checks the pin and the rest of the setup, and `fugaro update-skills` moves the pin to your binary's release.
+
+## Manual setup
+
+The steps `fugaro init` and `/fugaro:setup` do for you, one by one, and what comes after.
+
+### Stand up the installation (once per project)
 
 ```sh
 fugaro init --name <project> --gcp-project <gcp-project-id> --region <region>
@@ -38,9 +39,9 @@ fugaro init --name <project> --gcp-project <gcp-project-id> --region <region>
 
 `init` shows its Terraform plan and applies it after you confirm by typing the project's name. `init` is a rerunnable converge: it stops at the first stage that fails or needs you, a rerun resumes, and one with nothing to do says `No changes`. Its `images` stage copies the release's base images (`--base go,web-node`, plus the kinds your `fugaro.yaml` names) and, with `--firebase`, the history image from ghcr.io into your own registry, verified by digest and with no Docker (`--image-source` for a fork, `--expect-digest KIND=sha256:<hex>` to pin a digest, `--replace-image` to replace a tag that names another image; the trust anchor without a pin is the release tag in ghcr.io, see [docs/gcp-setup.md](docs/gcp-setup.md)). `--non-interactive` never prompts (applying then needs `--yes`, which never covers a secret, project creation or billing), `--json` prints each stage and what is left for you, and never prompts (the secrets stage is then left to you, as `fugaro secrets set` commands); exit 0 done, 1 refused or left for you, 2 a cloud failure. Details, what it creates and how to roll back: [docs/gcp-setup.md](docs/gcp-setup.md).
 
-### 4. Onboard a repository
+### Set up a repository by hand
 
-In the repository's checkout, either use the plugin's `fugaro:onboard` skill from Claude Code (below) or write `fugaro.yaml` yourself, starting from `fugaro config example`, and check it with `fugaro validate`. Then, from the checkout:
+In the repository's checkout, write `fugaro.yaml` yourself instead of with `/fugaro:setup`, starting from `fugaro config example`, and check it with `fugaro validate` (and `fugaro image build --local` when you have Docker). Merge it, then, from the checkout:
 
 ```sh
 fugaro init --repo                    # its secrets, registry, job and daily image check
@@ -50,7 +51,7 @@ fugaro secrets set anthropic-api-key  # or by hand: value from stdin or a hidden
 
 `fugaro init` takes those secrets at hidden prompts only in your own terminal (never with `--yes`, never through a coding agent); otherwise it prints the one-line `fugaro secrets set` commands to run. `init --repo` offers the first image build (billable, confirmed separately). For a GitHub repository, pass `--github-app-id`. See [docs/gcp-setup.md](docs/gcp-setup.md) and [docs/git-providers.md](docs/git-providers.md).
 
-### 5. Run, watch, diagnose
+### Run, watch, diagnose
 
 ```sh
 fugaro run "add a --verbose flag to the export command"
@@ -62,7 +63,7 @@ fugaro cancel <run>            # the runner finalizes first; the draft PR stays
 
 Every run that pushed ends in a pull request, a draft one if it failed. The draft appears at the first verified push and shows the run's progress, and the configured reviewers are requested only when it becomes ready (`git.pr.early_draft`, [docs/git-providers.md](docs/git-providers.md)); unlike earlier versions, a failed, halted or cancelled run no longer notifies reviewers at all, so watch `fugaro ls` for those. To act on review comments, continue it with `fugaro run --pr N` (optionally with extra instructions as TEXT); it reads the comments of the accounts `fugaro.yaml`'s `followup.trusted` lists.
 
-### 6. Optional: the shared budget
+### Optional: the shared budget
 
 With a Firebase project linked to billing, runs share project-wide caps and kill switches ([docs/gcp-setup.md](docs/gcp-setup.md#turning-the-shared-budget-on-m9b)):
 
@@ -75,10 +76,6 @@ fugaro report --by week        # spend history: by day, week, month, year, repo,
 ```
 
 `fugaro report` reads the spend history that a daily job copies into Firestore (created by `init --firebase`; its `us-east5` location is permanent), with the last days computed live and marked `(partial)`. Model dollars, notional (subscription list-price) and compute are always separate columns. It needs the Firebase project's `roles/datastore.viewer` and `roles/serviceusage.serviceUsageConsumer`; see [docs/gcp-setup.md](docs/gcp-setup.md#spend-history-and-reports-m9d).
-
-### The Claude Code plugin
-
-`plugin/` holds six skills for your local coding agent: `fugaro:onboard` (set a repository up), `fugaro:launch` (start a run), `fugaro:status`, `fugaro:logs`, `fugaro:diagnose` and `fugaro:followup` (continue a Fugaro PR). Add the marketplace in Claude Code with `/plugin marketplace add dimipaun/fugaro`, then `/plugin install fugaro@fugaro`.
 
 ---
 
@@ -181,7 +178,7 @@ With a provider coder, `first_line_review` makes the cheap model review (and fix
 
 A task is a small hand-off spec: what to do, which repo, which branch, and which workflow. It can be launched directly or by your local coding agent, which builds the spec and starts the job through the `fugaro` CLI. Many tasks can run at once, independently.
 
-Local-agent skills (`plugin/`): `fugaro:onboard` sets a repository up, `fugaro:launch` starts a run, `fugaro:status` lists running and recent runs, `fugaro:logs` fetches a run's logs, `fugaro:diagnose` explains a failure (the draft PR and its logs), and `fugaro:followup` continues a Fugaro PR with a follow-up run.
+Local-agent skills (`plugin/`): `/fugaro:setup` sets a repository up; `working` starts a run, lists running and recent runs, fetches logs, explains a failure and continues a Fugaro PR with a follow-up run; `routing` decides what belongs in the cloud; `parallelism` says how wide to fan out.
 
 ## Observability and guardrails
 

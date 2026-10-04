@@ -1,0 +1,11 @@
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  web:
+    base: web-node
+    image:
+      node: "22"
+    commands:
+      build: npm run build
+      test: npm test

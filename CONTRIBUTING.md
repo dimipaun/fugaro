@@ -32,6 +32,10 @@ Terraform changes: `terraform fmt -check -recursive deploy/terraform`, and `terr
 - `terraform`: fmt, validate and `terraform test` of the three roots, tflint, a Trivy scan, and the `terraform`-tagged tests
 - `rules`: the database rules against the emulator, which fails (not skips) if the emulator is missing
 
+## Skills
+
+The plugin's skills are in `plugin/skills` (`setup`, `working`, `routing`, `parallelism`). Try a change with `claude --plugin-dir plugin`. A CLI change that touches a documented command changes the skill that names it in the same PR: the tests in `plugin/` check every command and flag a skill gives against the CLI.
+
 ## Conventions
 
 - **Strict decoding.** Config and wire formats are decoded strictly (unknown fields are errors), so a typo fails loudly. Keep it that way for new formats and update the JSON Schemas in `schemas/`.

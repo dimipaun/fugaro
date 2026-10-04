@@ -113,7 +113,7 @@ fugaro init --base-image "$tag"
 
 ### 4. A repository
 
-1. **Write and commit its `fugaro.yaml`,** whose first lines are `version: 1` and `project: <project>`. Use the `fugaro:onboard` skill, or `fugaro config example > fugaro.yaml` and edit it, then `fugaro validate` and `fugaro image build --local`. Merge it. For a sandbox that should never rebuild by itself, set `rebuild: { check: off }` on its workflows before its first `init --repo`: it then gets no check job and no schedule. Turning the checks off later deletes a protected job: see "Turning checks off, or removing a workflow".
+1. **Write and commit its `fugaro.yaml`,** whose first lines are `version: 1` and `project: <project>`. Use the `/fugaro:setup` skill, or `fugaro config example > fugaro.yaml` and edit it, then `fugaro validate` and `fugaro image build --local`. Merge it. For a sandbox that should never rebuild by itself, set `rebuild: { check: off }` on its workflows before its first `init --repo`: it then gets no check job and no schedule. Turning the checks off later deletes a protected job: see "Turning checks off, or removing a workflow".
 2. **Plan it, from the repository's checkout:**
 
    ```bash
