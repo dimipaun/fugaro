@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -487,6 +488,18 @@ func fakeTerminal(t *testing.T) {
 	old := stdinIsTerminal
 	stdinIsTerminal = func(io.Reader) bool { return true }
 	t.Cleanup(func() { stdinIsTerminal = old })
+}
+
+// typedThroughYes lets a test that is about something else answer a typed-only
+// confirmation (the Firestore location, a billable build, replacing a tag) from
+// its stdin while it passes --yes, which the real rule never allows (its own
+// tests, TestTypedOnly..., use the real one). A coding agent's environment
+// still confirms nothing.
+func typedThroughYes(t *testing.T) {
+	t.Helper()
+	old := canConfirmTyped
+	canConfirmTyped = func(_ initflow.ConfirmClass, c initflow.Conditions) bool { return c.Agent == "" }
+	t.Cleanup(func() { canConfirmTyped = old })
 }
 
 // At a terminal, anything but the project name declines.
@@ -1335,7 +1348,7 @@ func TestInitRepoRefusesVertexEnforce(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nagent: { auth: vertex }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	_, _, err = execute(t, "init", "--repo", "--project", "aurora", root)
+	_, _, err = execute(t, "init", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "Vertex budgets are not supported yet") {
 		t.Fatalf("init --repo: exit %d, err %v", ExitCode(err), err)
 	}
@@ -1438,7 +1451,7 @@ func TestInitRepoRefusesAnInstallationOfAnotherProject(t *testing.T) {
 	root := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.Git(t, root, "remote", "add", "origin", "https://github.com/acme/webapp.git")
 	t.Chdir(t.TempDir())
-	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--project", "aurora", "--github-app-id", "12345", root)
+	_, _, err = executeStdin(t, "", "init", "--repo", "--yes", "--onboard-repo", "acme/webapp", "--project", "aurora", "--github-app-id", "12345", root)
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "fugaro.yaml names project aurora, but this installation is project borealis") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
@@ -1571,3 +1584,5 @@ func TestInitBaseImagePerKind(t *testing.T) {
 		t.Fatalf("exit %d, %v", ExitCode(err), err)
 	}
 }
+
+func writeFileForTest(path, data string) error { return os.WriteFile(path, []byte(data), 0o644) }

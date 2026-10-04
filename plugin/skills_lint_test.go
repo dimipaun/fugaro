@@ -510,7 +510,8 @@ func negatedBefore(prefix string) bool {
 var (
 	// forbiddenFlags the agent never passes: they confirm for the user, skip a
 	// check, or widen trust.
-	forbiddenFlags  = []string{"--yes", "-y", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork"}
+	forbiddenFlags = []string{"--yes", "-y", "--allow-delete", "--forget", "--allow-job-delete", "--no-budget-check", "--allow-fork",
+		"--onboard-repo", "--replace-image", "--create-project", "--link-billing"}
 	safetyFlags     = regexp.MustCompile(`(^|\s)(--no-verify|--no-gpg-sign|--no-smoke|--dangerously-skip-permissions|--force)(\s|=|$)`)
 	tokenCommands   = regexp.MustCompile(`print-access-token|print-identity-token|GOOGLE_IMPERSONATE_SERVICE_ACCOUNT|\bprintenv\b|\becho\s+"?\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD)|(^|[\s;|&])env\s*[|>]|\bBearer\s+\$|/proc/[^\s]*environ|\bdeclare\s+-x\b`)
 	credentialPaths = regexp.MustCompile(`~/\.config/gcloud|~/\.config/fugaro/(credentials|tokens?|secrets?)\S*|application_default_credentials|(^|[\s/"'])\.env($|[\s"'])|\.git-credentials|\.netrc`)
@@ -607,7 +608,7 @@ func lintForbidden(f *skillFile, ci *commandIndex) []string {
 		}
 		negated := !u.inBlock && negatedBefore(u.ctx[:u.col])
 		for _, c := range ci.commands(u.text) {
-			if slices.ContainsFunc(c.args, func(x string) bool { return slices.Contains(forbiddenFlags, x) }) && !negated {
+			if hasForbiddenFlag(c.args) && !negated {
 				add(u.line, "a flag the agent must never pass", u.text)
 			}
 			if inlineSecretValue(c) {
@@ -678,13 +679,22 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 		if !slices.Contains(userRunsAllowed, c.path) {
 			add("a user-runs block may not run " + c.path)
 		}
-		if slices.ContainsFunc(c.args, func(x string) bool { return slices.Contains(forbiddenFlags, x) }) {
+		if hasForbiddenFlag(c.args) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
 			add("fugaro secrets set with a value")
 		}
 	}
+}
+
+// hasForbiddenFlag reports whether args holds a forbidden flag, as
+// "--flag" or "--flag=value".
+func hasForbiddenFlag(args []string) bool {
+	return slices.ContainsFunc(args, func(x string) bool {
+		name, _, _ := strings.Cut(x, "=")
+		return slices.Contains(forbiddenFlags, name)
+	})
 }
 
 // inlineSecretValue reports whether a secrets set carries more than the
@@ -1147,6 +1157,76 @@ func TestLintRejectsInvalidYAMLExample(t *testing.T) {
 	expectClean(t, demoTree(t, "```yaml fugaro.yaml\n"+strings.ReplaceAll(string(good), "system prompt", "prompt")+"```\n"))
 }
 
+// TestSkillCommandsAreOneLine: a command a skill shows to run is one complete
+// line: no trailing backslash continuation and no second command chained on
+// with && or ; (a run's task text follows its one line as a heredoc body).
+// A person pastes one line at a time, and a chained or continued line can hide
+// what runs second.
+func TestSkillCommandsAreOneLine(t *testing.T) {
+	files, err := loadSkillFiles(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		for _, v := range multiLineCommands(f) {
+			t.Error(v)
+		}
+	}
+	// The same check catches a bad skill.
+	bad := func(body string) int {
+		fs, err := loadSkillFiles(demoTree(t, body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := 0
+		for _, f := range fs {
+			n += len(multiLineCommands(f))
+		}
+		return n
+	}
+	if bad("```bash\nfugaro validate \\\n  --json\n```\n") == 0 || bad("```bash\nfugaro validate && fugaro doctor\n```\n") == 0 {
+		t.Error("the one-line check misses a continued or a chained command")
+	}
+	if bad("```bash\nfugaro validate --json\n```\n") != 0 || bad("```bash\nfugaro run --task-file - <<'TASK'\nbody; with && things\nTASK\n```\n") != 0 {
+		t.Error("a plain command, or a heredoc's body, is flagged")
+	}
+}
+
+var chainedFugaro = regexp.MustCompile(`^fugaro\s[^|<]*?(&&|;)\s*\S`)
+
+// multiLineCommands are the fenced fugaro commands of f that continue on the
+// next line or chain another command on.
+func multiLineCommands(f *skillFile) []string {
+	var out []string
+	fence := ""
+	for i, line := range f.lines {
+		trimmed := strings.TrimSpace(line)
+		if marker, _ := fenceOf(trimmed); marker != "" {
+			switch {
+			case fence == "":
+				fence = marker
+			case marker == fence:
+				fence = ""
+			}
+			continue
+		}
+		if fence == "" {
+			continue
+		}
+		cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "$ "))
+		if !strings.HasPrefix(cmd, "fugaro ") {
+			continue
+		}
+		if strings.HasSuffix(cmd, "\\") {
+			out = append(out, fmt.Sprintf("%s:%d: a fugaro command continues on the next line: %q", f.path, i+1, cmd))
+		}
+		if chainedFugaro.MatchString(cmd) {
+			out = append(out, fmt.Sprintf("%s:%d: a fugaro command is chained with another: %q", f.path, i+1, cmd))
+		}
+	}
+	return out
+}
+
 func TestLintRejectsYesNearInit(t *testing.T) {
 	expectViolation(t, demoTree(t, "```bash\nfugaro init --yes\n```\n"), "a flag the agent must never pass")
 	expectViolation(t, demoTree(t, "Run `fugaro init --repo --yes`.\n"), "a flag the agent must never pass")
@@ -1425,6 +1505,26 @@ func TestLintForbidsBypassFlags(t *testing.T) {
 	expectViolation(t, demoTree(t, "```bash\nfugaro update-skills --allow-fork\n```\n"), "a flag the agent must never pass")
 	expectClean(t, demoTree(t, "The user may choose to skip the pre-check (`--no-budget-check`).\n"))
 	expectClean(t, demoTree(t, "Never run `fugaro run --no-budget-check`.\n"))
+}
+
+// TestLintForbidsOnboardingAndMoneyFlags: opting a repository in, replacing a
+// registry image, creating a project and linking billing are the user's, typed
+// at their own terminal: a skill never has the agent pass these flags, in any
+// spelling.
+func TestLintForbidsOnboardingAndMoneyFlags(t *testing.T) {
+	for _, body := range []string{
+		"```bash\nfugaro init --onboard-repo acme/app\n```\n",
+		"Run `fugaro init --onboard-repo=acme/app`.\n",
+		"Run `fugaro init --repo --onboard-repo acme/app`.\n",
+		"```bash\nfugaro init --base go --replace-image go\n```\n",
+		"Run `fugaro init --replace-image=history`.\n",
+		"```bash\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
+		"Run `fugaro init --link-billing 0123AB-4567CD-89EF01`.\n",
+		"The user runs this:\n\n```bash user-runs\nfugaro init --create-project --gcp-project my-proj-123\n```\n",
+	} {
+		expectViolation(t, demoTree(t, body), "a flag")
+	}
+	expectClean(t, demoTree(t, "Never pass `--onboard-repo` or `--replace-image`: onboarding a repository is the user's, typed in their own terminal.\n"))
 }
 
 // TestLintDangerousCommandsVariants: the shapes that slipped past the first

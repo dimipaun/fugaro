@@ -142,8 +142,9 @@ func TestNonInteractiveNeverReadsFirestoreLocation(t *testing.T) {
 	rd := &readSpy{Reader: strings.NewReader("us-east5\n")}
 	r := &initRun{o: &initOptions{nonInteractive: true}, w: &strings.Builder{}, in: bufio.NewReader(rd)}
 	err := r.confirmLocation()
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	var ny *initflow.NeedsYouError
+	if !errors.As(err, &ny) || strings.Contains(err.Error(), "--yes") {
+		t.Fatalf("err %v: the location is the user's, and --yes does not give it", err)
 	}
 	if rd.read {
 		t.Error("stdin was read")
@@ -326,7 +327,7 @@ func TestSecretsHeldReachTheLoopsRedaction(t *testing.T) {
 func TestFirebaseRunsThroughTheLoop(t *testing.T) {
 	r := newFBRig(t)
 	r.historyImage()
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--budget-mode", "observe", "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--budget-mode", "observe", "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}

@@ -41,12 +41,22 @@ func (e *ForkError) Error() string {
 	return fmt.Sprintf("the %q marketplace in %s names the repository %s, not %s; it is left as it is (pass --allow-fork to move its ref to this release's tag)", Marketplace, e.Path, Printable(e.Repo), Repo)
 }
 
+// MaxPrintable is the most Printable keeps of a string, in runes.
+const MaxPrintable = 200
+
 // Printable makes a string from a repository's files safe to print to a
 // terminal: control characters (escape sequences) and invisible or
-// direction-changing format characters (bidi overrides) become \uXXXX.
+// direction-changing format characters (bidi overrides) become \uXXXX, and
+// what is longer than MaxPrintable runes is cut, so a hostile file cannot
+// fill a screen or the --json result.
 func Printable(s string) string {
 	var b strings.Builder
+	n := 0
 	for _, r := range s {
+		if n++; n > MaxPrintable {
+			b.WriteString("... (truncated)")
+			break
+		}
 		if (unicode.IsControl(r) && r != '\t') || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError {
 			fmt.Fprintf(&b, "\\u%04x", r)
 			continue
@@ -68,8 +78,11 @@ type Change struct {
 	// Disabled: the repository sets enabledPlugins["fugaro@fugaro"] to false,
 	// which is kept.
 	Disabled bool
-	existed  bool
-	perm     fs.FileMode
+	// Notices are the file's other contents the user should see before
+	// blessing it (see Notices): one line each, whether or not it changes.
+	Notices []string
+	existed bool
+	perm    fs.FileMode
 }
 
 // Plan computes the merge of the plugin's two entries into the settings file
@@ -101,7 +114,7 @@ func Plan(path, version string, allowFork bool) (*Change, error) {
 			return nil, &InvalidError{path, err}
 		}
 	}
-	ch := &Change{Path: path, Tag: tag, Before: before, existed: existed, perm: perm}
+	ch := &Change{Path: path, Tag: tag, Before: before, existed: existed, perm: perm, Notices: Notices(path, before)}
 	dirty, foreign, disabled, err := merge(&top, path, tag)
 	if err != nil {
 		return nil, err

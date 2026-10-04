@@ -177,7 +177,7 @@ func TestDevBuildHasNoSilentFallback(t *testing.T) {
 		t.Fatal("a development build tried to copy an image")
 		return nil, nil
 	}
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -196,7 +196,7 @@ func TestDevBuildHasNoSilentFallback(t *testing.T) {
 
 func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 	r := newImagesRig(t, "1.2.3")
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--json")
+	out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes", "--json")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -228,7 +228,7 @@ func TestHistoryJobAppliedAfterMirror(t *testing.T) {
 	}
 	// A rerun copies nothing.
 	puts := r.dst.puts
-	if out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes"); err != nil || r.dst.puts != puts {
+	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil || r.dst.puts != puts {
 		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out)
 	}
 }
@@ -364,8 +364,9 @@ func TestReleaseTagIsNotMovedWithoutReplaceImage(t *testing.T) {
 	if r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
 		t.Fatal("the release tag moved")
 	}
-	if _, _, err := executeStdin(t, "", "init", "--yes", "--base", "go", "--replace-image"); err != nil || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] == other {
-		t.Fatalf("with --replace-image: %v", err)
+	// The flag names the kind; the project's name is typed to confirm it.
+	if _, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--base", "go", "--replace-image", "go"); err != nil || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] == other {
+		t.Fatalf("with --replace-image go: %v", err)
 	}
 }
 
@@ -376,14 +377,15 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	other := cdg([]byte("hand pushed history"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[initProject+"/fugaro-base/history:latest"] = other
-	_, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes")
+	_, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes")
 	if err == nil || !strings.Contains(err.Error(), other) || !strings.Contains(err.Error(), "--replace-image") {
 		t.Fatalf("err = %v", err)
 	}
 	if r.dst.tags[initProject+"/fugaro-base/history:latest"] != other || r.dst.puts != 0 {
 		t.Fatal("history:latest was replaced")
 	}
-	out, _, err := executeStdin(t, "", "init", "--firebase", fpID, "--yes", "--replace-image")
+	// The database exists by now (the run above made it): only the replacement is typed.
+	out, _, err := executeStdin(t, initProjectName+"\n", "init", "--firebase", fpID, "--yes", "--replace-image", "history")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -392,8 +394,51 @@ func TestHistoryLatestNeedsReplaceImage(t *testing.T) {
 	}
 }
 
-// --replace-image is not a confirmation: without --yes the stage still asks.
-func TestReplaceImageStillAsks(t *testing.T) {
+// --replace-image names the intent only: a run that cannot take a typed
+// confirmation (--yes, --non-interactive, --json, a pipe, a coding agent)
+// leaves the replacement to the user with the one-line typed route, and moves
+// nothing. The real rule is in force here.
+func TestReplaceImageIsNeverConfirmedByYes(t *testing.T) {
+	for name, tc := range map[string]struct {
+		args  []string
+		env   string
+		stdin string
+	}{
+		"--yes":                    {[]string{"--yes"}, "", initProjectName + "\n"},
+		"--yes --non-interactive":  {[]string{"--yes", "--non-interactive"}, "", ""},
+		"--yes --json":             {[]string{"--yes", "--json"}, "", initProjectName + "\n"},
+		"a pipe, no flags":         {nil, "", initProjectName + "\n"},
+		"a coding agent, with yes": {[]string{"--yes"}, "CLAUDECODE", initProjectName + "\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newImagesRig(t, "1.2.3")
+			r.stateBucket()
+			r.script["plan"] = map[string]any{"exit": 0}
+			r.save(t)
+			if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil { // the installation is converged
+				t.Fatal(err)
+			}
+			canConfirmTyped = initflow.CanConfirm // the real rule
+			other := cdg([]byte("hand pushed"))
+			r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
+			r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other
+			if tc.env != "" {
+				t.Setenv(tc.env, "1")
+			}
+			out, errOut, err := executeStdin(t, tc.stdin, append([]string{"init", "--base", "go", "--replace-image", "go"}, tc.args...)...)
+			out += errOut // --json sends the account to stderr
+			if r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
+				t.Fatalf("the tag moved: %v\n%s", err, out)
+			}
+			if err == nil && !strings.Contains(out, "needs-you") && !strings.Contains(out, "needs you") {
+				t.Errorf("exit 0 without replacing, and not left for the user:\n%s", out)
+			}
+			if !strings.Contains(out, "REPLACES "+other) && tc.env == "" {
+				t.Errorf("the plan does not say what is replaced:\n%s", out)
+			}
+		})
+	}
+	// At a terminal, with the name typed, it is replaced.
 	r := newImagesRig(t, "1.2.3")
 	r.stateBucket()
 	r.script["plan"] = map[string]any{"exit": 0}
@@ -401,15 +446,14 @@ func TestReplaceImageStillAsks(t *testing.T) {
 	if _, _, err := executeStdin(t, "", "init", "--yes"); err != nil {
 		t.Fatal(err)
 	}
+	canConfirmTyped = initflow.CanConfirm
+	fakeTerminal(t)
 	other := cdg([]byte("hand pushed"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other
-	out, _, err := executeStdin(t, "", "init", "--base", "go", "--replace-image")
-	if err == nil || !strings.Contains(err.Error(), "needs a real terminal: "+initflow.NoTerminalAdvice) || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] != other || r.dst.puts != 0 {
-		t.Fatalf("err %v, %d writes\n%s", err, r.dst.puts, out)
-	}
-	if !strings.Contains(out, "REPLACES "+other) {
-		t.Errorf("the plan does not say what is replaced:\n%s", out)
+	// the replacement's confirmation and the copy's
+	if out, _, err := executeStdin(t, names(2), "init", "--base", "go", "--replace-image", "go"); err != nil || r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] == other {
+		t.Fatalf("typed at a terminal: %v\n%s", err, out)
 	}
 }
 
@@ -457,7 +501,7 @@ func TestDestinationMovedAtStageLevel(t *testing.T) {
 	other := cdg([]byte("someone else"))
 	r.dst.mans[other], r.dst.types[other] = []byte("x"), "application/vnd.oci.image.manifest.v1+json"
 	r.dst.onBlob = func() { r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] = other }
-	_, _, err := executeStdin(t, "", "init", "--yes", "--base", "go", "--replace-image")
+	_, _, err := executeStdin(t, initProjectName+"\n", "init", "--yes", "--base", "go", "--replace-image", "go")
 	if err == nil || !strings.Contains(err.Error(), "changed while") {
 		t.Fatalf("err = %v", err)
 	}

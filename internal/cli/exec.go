@@ -381,7 +381,7 @@ func execPrices(getenv func(string) string, warn func(string)) *backend.Prices {
 // read counts as enforce: the runner will fail it, and the hook is refused
 // the same way a malformed budget is.
 func localFileMode(workDir string) string {
-	data, err := os.ReadFile(filepath.Join(workDir, "fugaro.yaml"))
+	data, err := readFugaroYAML(filepath.Join(workDir, "fugaro.yaml"))
 	if err != nil {
 		return ""
 	}

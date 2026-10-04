@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/dimipaun/fugaro/internal/config"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -83,7 +82,7 @@ func (s *pluginStage) plan1(ctx context.Context) (*pluginwire.Change, *initflow.
 	if !ok {
 		return status(initflow.Skipped, "this checkout has no origin repository, so it is not one to wire", nil)
 	}
-	if data, rerr := os.ReadFile(filepath.Join(loc.Root, "fugaro.yaml")); rerr == nil {
+	if data, rerr := readFugaroYAML(filepath.Join(loc.Root, "fugaro.yaml")); rerr == nil {
 		if p, perr := config.ProjectOf(data); perr != nil || p != e.lc.Name {
 			return status(initflow.Skipped, "this checkout's fugaro.yaml names another project (or none), not "+pluginwire.Printable(e.lc.Name)+": the plugin is not wired here", nil)
 		}
@@ -144,7 +143,7 @@ func (s *pluginStage) Plan(ctx context.Context, _ initflow.Env) (initflow.Plan, 
 	case !ch.Changed:
 		return initflow.Plan{NothingToDo: true, Detail: "No changes"}, nil
 	}
-	fmt.Fprintf(s.e.r.w, "%s\n%s", ch.Path, ch.Diff())
+	fmt.Fprintf(s.e.r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
 	return initflow.Plan{Detail: "adds the Fugaro plugin to " + ch.Path + ", pinned to " + ch.Tag}, nil
 }
 
@@ -173,7 +172,7 @@ func (s *pluginStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 			return initflow.Outcome{}, &initflow.NeedsYouError{Left: onboardLeft(s.origin)}
 		}
 	}
-	fmt.Fprintf(r.w, "%s\n%s", ch.Path, ch.Diff())
+	fmt.Fprintf(r.w, "%s\n%s%s", ch.Path, ch.Diff(), ch.NoticeText())
 	if ch.Note != "" {
 		fmt.Fprintf(r.w, "note: %s\n", ch.Note)
 	}

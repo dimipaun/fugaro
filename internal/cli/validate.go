@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -258,7 +257,7 @@ func newValidateCmd() *cobra.Command {
 			if len(args) == 1 {
 				path = args[0]
 			}
-			data, err := os.ReadFile(path)
+			data, err := readFugaroYAML(path)
 			if err != nil {
 				return err
 			}

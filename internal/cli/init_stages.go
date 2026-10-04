@@ -98,7 +98,7 @@ func (e *initEngine) options() initflow.Options {
 	}
 	return initflow.Options{
 		Yes: o.yes, NonInteractive: o.nonInteractive, PlanOnly: o.planOnly,
-		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), Out: r.w,
+		Terminal: stdinIsTerminal(r.cmd.InOrStdin()), JSON: o.asJSON, Agent: agentMarker(os.Getenv), Out: r.w,
 		Project: r.projectName, GCPProject: r.gcpProject, Region: e.lc.Region,
 		Redact: e.redact,
 	}
@@ -260,6 +260,9 @@ func (s *engineStage) Plan(ctx context.Context, env initflow.Env) (initflow.Plan
 }
 
 func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
+	if err := s.e.adoptGuard(s.name); err != nil {
+		return initflow.Outcome{}, err
+	}
 	if err := s.with(ctx, env, false); err != nil {
 		return initflow.Outcome{}, err
 	}

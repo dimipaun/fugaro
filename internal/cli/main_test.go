@@ -22,6 +22,12 @@ func TestMain(m *testing.M) {
 	os.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	os.Setenv("https_proxy", "http://127.0.0.1:1")
 	os.Unsetenv("STORAGE_EMULATOR_HOST")
+	// init refuses to apply anything in a coding agent's session, and the
+	// tests are often run from one: a test that means to be in one sets a
+	// marker itself.
+	for _, k := range agentMarkers {
+		os.Unsetenv(k)
+	}
 	// Commands read the project from the fugaro.yaml of the checkout they run
 	// in, found through git from the working directory. The tests run inside
 	// this repository, whose own fugaro.yaml names the project fugaro, so git

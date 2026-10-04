@@ -135,11 +135,24 @@ func checkoutYAML(provider, auth, project string, workflowExtra string) string {
 }
 
 // writeConfig (re)writes the checkout's fugaro.yaml.
+// The stage reads the default branch's file (a checkout's working tree is not
+// to be trusted), so it is committed and fetched as origin/main.
 func (r *secretsRig) writeConfig(t *testing.T, yaml string) {
 	t.Helper()
 	if err := os.WriteFile(filepath.Join(r.dir, "fugaro.yaml"), []byte(yaml), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	testutil.Git(t, r.dir, "add", "fugaro.yaml")
+	testutil.Git(t, r.dir, "commit", "-q", "--allow-empty", "-m", "fugaro.yaml")
+	fetched(t, r.dir)
+}
+
+// removeConfig is a default branch with no fugaro.yaml.
+func (r *secretsRig) removeConfig(t *testing.T) {
+	t.Helper()
+	testutil.Git(t, r.dir, "rm", "-q", "-f", "fugaro.yaml")
+	testutil.Git(t, r.dir, "commit", "-q", "-m", "no fugaro.yaml")
+	fetched(t, r.dir)
 }
 
 // newSecretsRig makes a checkout whose origin is origin, runs from it, and
@@ -149,7 +162,7 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 	t.Helper()
 	testutil.IsolateGit(t)
 	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "init", "-q", "-b", "main")
 	testutil.Git(t, dir, "remote", "add", "origin", origin)
 	t.Chdir(dir)
 	r := &secretsRig{store: newMemStore(), out: &syncBuf{}, errOut: &syncBuf{}, dir: dir}
@@ -165,6 +178,9 @@ func newSecretsRig(t *testing.T, origin string, in io.Reader, opts ...func(*init
 	if strings.Contains(origin, "bitbucket") {
 		provider = "bitbucket"
 	}
+	// The repository is the project's own (the local config lists it): the
+	// hostile-checkout gate has its own tests.
+	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: provider}}
 	r.writeConfig(t, checkoutYAML(provider, "oauth", "aurora", ""))
 	for _, k := range agentMarkers {
 		t.Setenv(k, "") // this session may be a coding agent's
@@ -389,7 +405,7 @@ func TestSecretsCheckToleratesAnUnreadableStore(t *testing.T) {
 // Outside a checkout, or in one of another host's, the stage has nothing to take.
 func TestSecretsSkippedOutsideAGithubOrBitbucketCheckout(t *testing.T) {
 	r := newSecretsRig(t, "https://gitlab.example/acme/app.git", strings.NewReader(""))
-	_ = os.Remove(filepath.Join(r.dir, "fugaro.yaml"))
+	r.removeConfig(t)
 	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "gitlab"}}
 	res, err := r.run(t)
 	if err != nil || stateOf(res, "secrets") != initflow.Skipped {
@@ -420,12 +436,11 @@ func TestSecretsSkippedForAnUnrelatedCheckout(t *testing.T) {
 			spy := &readerSpy{Reader: strings.NewReader("")}
 			r := newSecretsRig(t, githubOrigin, spy)
 			if tc.yaml == "" {
-				if err := os.Remove(filepath.Join(r.dir, "fugaro.yaml")); err != nil {
-					t.Fatal(err)
-				}
+				r.removeConfig(t)
 			} else {
 				r.writeConfig(t, tc.yaml)
 			}
+			r.e.lc.Repos = nil // the project does not list it, unless the case says it does
 			if tc.local != "" {
 				r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: tc.local}}
 			}
@@ -441,10 +456,8 @@ func TestSecretsSkippedForAnUnrelatedCheckout(t *testing.T) {
 // the git credential is asked for, the Claude credential is not assumed, and
 // the stage says so.
 func TestSecretsWithoutFugaroYAMLTakesOnlyTheGitCredential(t *testing.T) {
-	r := newSecretsRig(t, "https://git.example.com/acme/app.git", strings.NewReader(""))
-	if err := os.Remove(filepath.Join(r.dir, "fugaro.yaml")); err != nil {
-		t.Fatal(err)
-	}
+	r := newSecretsRig(t, bitbucketOrigin, strings.NewReader(""))
+	r.removeConfig(t)
 	r.e.lc.Repos = map[string]localcfg.Repo{"acme/app": {Provider: "bitbucket"}}
 	res, err := r.run(t)
 	if err != nil || len(res.Left) != 1 || strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "claude") || !strings.Contains(strings.Join(res.Left[0].Commands, "\n"), "bitbucket-token") {

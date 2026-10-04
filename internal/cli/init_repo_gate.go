@@ -1,11 +1,13 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -43,7 +45,8 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	if opts.onboardRepo != "" && !sameRepo(opts.onboardRepo, o.Repo) {
 		return authNeeded, userErr("--onboard-repo %s does not name this checkout's origin repository (%s)", pluginwire.Printable(opts.onboardRepo), pluginwire.Printable(o.Repo))
 	}
-	flagOK := opts.onboardRepo != "" && o.standardHost() && !o.Rewritten
+	// A coding agent never opts a repository in, by the flag either.
+	flagOK := opts.onboardRepo != "" && o.standardHost() && !o.Rewritten && !agentEnv(os.Getenv)
 	switch {
 	case repoKnown(e.lc, o), flagOK, e.authorized[strings.ToLower(o.typed())]:
 		return authOK, nil
@@ -61,9 +64,11 @@ func (e *initEngine) canConfirmRepo() bool {
 }
 
 // onboardLeft is what the user does to opt a repository in: the one-line
-// flag for an ordinary origin, else a note to use a clean clone.
+// flag for an ordinary origin, else a note to use a clean clone. For a coding
+// agent's session it is never the flag, which would be a line for the agent to
+// paste: only the typed route, in the user's own terminal.
 func onboardLeft(o originInfo) initflow.Left {
-	if o.standardHost() && !o.Rewritten {
+	if o.standardHost() && !o.Rewritten && !agentEnv(os.Getenv) {
 		return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " init --onboard-repo " + quoteWord(o.Repo)}
 	}
 	return initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "in your own terminal window, or in a fresh clone of the real remote, type " + pluginwire.Printable(o.typed()) + " at the prompt of", Commands: []string{selfCommand() + " init"}}
@@ -101,4 +106,36 @@ func (e *initEngine) confirmRepo(root string, o originInfo) (bool, error) {
 	}
 	e.authorized[strings.ToLower(o.typed())] = true
 	return true, nil
+}
+
+// gateRepo is the same gate for init --repo run on its own, before its first
+// cloud call: a repository the local config does not list is onboarded only
+// after its owner/name is typed at the user's own terminal, or by
+// --onboard-repo (never from a coding agent's session). A known repository
+// goes on as it always did. The converge's repository stage has done this
+// itself, and --plan-only and --forget change no repository, so they skip it.
+func (r *initRun) gateRepo(ctx context.Context, root string, lc *localcfg.Config) error {
+	oi, ok := readOrigin(ctx, root)
+	if !ok {
+		return userErr("this checkout has no origin repository to onboard")
+	}
+	e := &initEngine{r: r, lc: lc}
+	switch a, err := e.authState(oi); {
+	case err != nil:
+		return err
+	case a == authOK:
+		return nil
+	case a == authAsk:
+		if ok, err := e.confirmRepo(root, oi); err != nil {
+			return err
+		} else if ok {
+			return nil
+		}
+		return userErr("not confirmed (%s was not typed); nothing was changed", pluginwire.Printable(oi.typed()))
+	}
+	how := "in your own terminal window, not through a coding agent or a pipe, run " + selfCommand() + " init --repo and type " + pluginwire.Printable(oi.typed()) + " at the prompt"
+	if lf := onboardLeft(oi); lf.Kind == initflow.LeftCommand {
+		how = "pass --onboard-repo " + quoteWord(oi.Repo) + ", or " + how
+	}
+	return userErr("%s; onboarding it creates cloud resources, so it needs your own opt-in (not covered by --yes): %s", unknownDetail(lc.Name, oi), how)
 }

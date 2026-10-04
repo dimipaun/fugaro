@@ -163,3 +163,49 @@ func TestAdoptOlderInstallationReportsNoChanges(t *testing.T) {
 		t.Errorf("stages %+v", res.Stages)
 	}
 }
+
+// An installation adopted in this run is not applied to from the same run:
+// the person is probably a teammate without the owner's roles, and a plan from
+// their empty defaults would try to undo the installation. Every stage that
+// would change the cloud after the adoption is the user's, --yes or not.
+func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
+	r := newInitRig(t)
+	r.installationState(t)
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)}
+	r.save(t)
+	e := adoptEngine(t, r, &initOptions{yes: true})
+	ran := false
+	// An engine stage that would apply (the Firebase root, say).
+	later := &engineStage{e: e, name: initflow.Firebase, skip: func() string { return "" },
+		run: func(context.Context) error { ran = true; return nil }, left: promptLeft(initflow.Firebase, "type the name", "init")}
+	res, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e), later}, e.options())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]initflow.State{}
+	for _, s := range res.Stages {
+		got[s.Name] = s.State
+	}
+	if got[initflow.Installation] != initflow.Changed || got[initflow.Firebase] != initflow.NeedsYou || ran {
+		t.Fatalf("stages %+v, ran %v", res.Stages, ran)
+	}
+	if n := len(r.ran(t, "apply")); n != 0 {
+		t.Errorf("applied after an adopt: %q", r.calls(t))
+	}
+	if len(res.Left) != 1 || !strings.Contains(res.Left[0].Text, "adopted") || res.ExitCode() != 1 {
+		t.Errorf("left %+v", res.Left)
+	}
+	// Each guarded stage refuses on its own, too.
+	for _, name := range []string{initflow.Installation2, initflow.Images, initflow.Secrets, initflow.Repository} {
+		if err := e.adoptGuard(name); err == nil {
+			t.Errorf("%s: not refused after an adopt", name)
+		}
+	}
+	if err := e.adoptGuard(initflow.Plugin); err != nil {
+		t.Errorf("the plugin wiring changes no cloud resource: %v", err)
+	}
+	e.adopted = ""
+	if err := e.adoptGuard(initflow.Installation2); err != nil {
+		t.Errorf("a rerun is the ordinary converge: %v", err)
+	}
+}

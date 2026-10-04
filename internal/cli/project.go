@@ -35,7 +35,7 @@ func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error
 		return nil, nil
 	}
 	root := strings.TrimSpace(string(out))
-	data, err := os.ReadFile(filepath.Join(root, "fugaro.yaml"))
+	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil, nil

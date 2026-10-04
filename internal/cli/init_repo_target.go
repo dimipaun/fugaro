@@ -268,7 +268,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	// The engine reads the working tree: it must be the default branch's
 	// file (line endings aside).
-	if wt, err := os.ReadFile(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(data)) {
+	if wt, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(data)) {
 		lf := switchLeft(branch)
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
 	}

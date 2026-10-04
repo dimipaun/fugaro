@@ -418,7 +418,13 @@ func yamlProblems(err error) []Problem {
 	return []Problem{problemFromYAML(err.Error())}
 }
 
+// yamlValueRE is the quoted value yaml.v3 puts in a type error ("cannot
+// unmarshal !!str `abc...` into config.Agent"). A fugaro.yaml may be somebody
+// else's, so an error names the key and the type wanted, never what was there.
+var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal !!\\w+) `.*?` into ")
+
 func problemFromYAML(msg string) Problem {
+	msg = yamlValueRE.ReplaceAllString(msg, "$1 into ")
 	if m := yamlLineRE.FindStringSubmatch(msg); m != nil {
 		line, _ := strconv.Atoi(m[1])
 		return Problem{Line: line, Message: m[2]}
