@@ -66,6 +66,7 @@ Through the **subagent review loop in a local session**, with your eyes on it: a
 - **Output.** Go emits no JUnit reports, so verify says "0 tests: no JUnit reports"; it reports pass or fail from the exit status only. `gotestsum` would add per-test results and `rerun_failed`; it is a follow-up.
 - **Login expiry.** `gcloud` and `gsutil` logins expire (reauth) while you are away; the `fugaro` CLI uses its own credentials and keeps working.
 - **The frictions that became M11** (design `m11-setup-and-skills.md` §6): the first-install `init --plan-only` failure, same-project refusal, the taken App name, the Cloud Billing API on the quota project, the default Compute account's `roles/editor`, the unpublished base and history images, wrapped multi-line commands, typed confirmations needing a real terminal, and the many manual rounds.
+- **Resize redraw.** Resizing the terminal window during `fugaro watch` can leave a stale duplicate footer line on screen (known cosmetic redraw bug).
 
 ## Left out of the `go` image, on purpose
 
