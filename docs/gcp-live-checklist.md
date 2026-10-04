@@ -207,6 +207,7 @@ In the commands below, `T` is short for
 | 22 | `fugaro watch` against the real project: header and bars agree with `budget show`, a live run, kill and resume, a viewer-only identity, an outage (M9c) | See "Check 22" below; **you** run it at your own terminal. | Nothing beyond the sandbox runs (about $0.30 each with `oauth`, notional). |
 | 23 | Spend history and `fugaro report` against the real project: the Firestore database, the rollover job, finality, the prune, a non-owner viewer (M9d) | See "Check 23" below; **you** run or approve every step. | Firestore is within the free tier; the image pushes are about 1.5 GB of registry storage at most. |
 | 26 | The same-project layout (Firebase project = the installation's project) on a scratch project: the three applies with one project, no API owned twice, and a job account refused by the RTDB, Firestore and Identity Toolkit | See "Check 26" below; **you** run it, never on `belong` | Never run. Everything offline passed; every answer is a `FACT:` line. |
+| 27 | M11's simple setup on a throwaway project: the plugin wiring and the four Claude Code spikes (V1 to V4), `--create-project` and `--link-billing`, a clean `fugaro init` from nothing, the image mirror against real ghcr.io and Artifact Registry, hidden secret prompts, the hostile-clone gate, `doctor`, `update-skills`, a teammate's adopt run, `/fugaro:setup` and a prompt-injection probe | See "Check 27" below; **you** run it at your own terminal, on a **throwaway project, never `belong`, `fugaro-dev` or `edge-devel-dimi`**. | A throwaway project with billing for a day (cents), a registry of about 2 to 5 GB for the images you copy, Cloud Build for one image build, and a few Claude Code sessions. **NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -694,6 +695,79 @@ The Firebase project may be the installation's own GCP project (design `m9-budge
 6. **The Cloud Build pivot.** From an image build step (a scratch repository's Dockerfile), run `gcloud builds submit` (or the Cloud Build API) without `serviceAccount` and, in that build, fetch the metadata token and call `<rtdb_url>/.json?access_token=...`, Firestore and Identity Toolkit. Record the answer, and `gcloud projects get-iam-policy <p>` for the default Compute (`<number>-compute@developer`), Cloud Build (`<number>@cloudbuild`) and App Engine accounts: with `roles/editor` the call succeeds (that is the risk; strip the role and repeat, it must be refused). Confirm `init --firebase` printed the warning for it.
 7. **Token forgery by another account.** Sign a JWT as a service account of the project that is not the signer (`signJwt` with `uid`, the run claims and audience `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`) and call `signInWithCustomToken` with the web API key: expect refusal or, if it is accepted, record it (Firebase accepts any account of the project).
 8. `terraform destroy` is not part of this check; nothing disables an API on destroy (`disable_on_destroy = false`).
+
+## Check 27: M11's simple setup (throwaway project, run by you; NOT RUN)
+
+Everything about M11's `init`, `doctor`, `update-skills`, the mirror and the plugin wiring ran **offline only**: fakes for Google, a fake registry, a fake `claude`, pty tests. This check is the first time any of it meets a real service, and four facts about Claude Code (V1 to V4 of the plan) have only been checked from the agent's side. **No step below has been run; nothing here is a claim that it works.** The design's §14 items 2 to 6 and 1(a) to 1(d) are what it settles.
+
+**Rules.** Use a throwaway GCP project whose ID you choose (`<p>`, for example `fugaro-live-20261005`), a throwaway GitHub repository (`<owner>/<sandbox>`) and its own GitHub App (named `<yourname>-fugaro-sandbox`: App names are unique across GitHub), never `belong`, `fugaro-dev` or `edge-devel-dimi`. Run every command in your own terminal: typed confirmations, hidden prompts and Claude Code's UI need one, and no value you type reaches an agent. Use a **release build** of `fugaro` (the next tag after M11, or your fork's tag): a development build (`fugaro version` prints `dev`) writes no plugin pin and copies no images. Record `fugaro version`, `claude --version`, the date and the OS first. Before starting: `gcloud auth application-default login`, an existing project of yours as the ADC quota project with the Cloud Billing API on it (`gcloud services enable cloudbilling.googleapis.com --project <quota-project>`, then `gcloud auth application-default set-quota-project <quota-project>`), `terraform` 1.7+ on `PATH`, and a billing account ID you may link (`gcloud billing accounts list`). Do not set `GOOGLE_CLOUD_PROJECT` to anything but `<p>`.
+
+**A. The plugin wiring and the four spikes (no cloud).** In a clean clone of `<owner>/<sandbox>` with a release `fugaro`:
+
+1. `fugaro update-skills --check` exits 1 and says `not wired`. Put `{"permissions":{"allow":["Bash(ls)"]}}` in `.claude/settings.json`, then `fugaro update-skills`: expect a diff that adds only `extraKnownMarketplaces.fugaro` (`dimipaun/fugaro`, `ref` equal to `v` plus the binary's version) and `enabledPlugins["fugaro@fugaro"]: true`, the `permissions` key intact, and nothing committed (`git diff` shows it). A second run changes nothing. `fugaro doctor --plugin --strict` exits 0.
+2. **V1.** Commit that file. With a clean config (`CLAUDE_CONFIG_DIR=$(mktemp -d) claude` in the checkout), accept the folder-trust prompt. Record: is a prompt to install the Fugaro plugin shown, its wording, and whether `/fugaro:setup` is listed afterwards. Screenshot or transcript.
+3. **V4.** Clone the committed repository to a new directory and open Claude Code (first with a clean config, then with one that already caches the marketplace). Trust, accept the plugin. Record whether `/fugaro:setup` works in that same session or only after a restart or `/reload-plugins`, with the exact steps. (If it needs a restart, init's last message and the README's Getting started step 2 must say so.)
+4. **V2.** Edit the `ref` in `settings.json` to another existing tag, or `main`, and restart Claude Code. Record whether the installed plugin follows (read the `fugaro@fugaro` entry of `~/.claude/plugins/installed_plugins.json`: `version`, `scope`, `projectPath`, and the commit), which refresh step it needs (`/plugin marketplace update fugaro`, a restart, `claude plugin update fugaro@fugaro`), and what `fugaro update-skills --check` says (`installed differs`?).
+5. **The pin states.** With the ref lowered to an older tag: `fugaro validate` prints one stderr line naming both versions, stdout untouched; `fugaro doctor --plugin --strict` exits 1 (`outdated`); `fugaro update-skills` shows a one-line diff and clears it. Point the marketplace at another repository by hand: `doctor --plugin --strict` exits 1 (`foreign`) and `update-skills` warns and leaves it, until you pass `--allow-fork`. Decline the plugin in a fresh Claude Code config: `fugaro doctor --plugin --strict` still exits 0, with `not installed` as information. `FUGARO_NO_SKILL_WARNING=1` silences the line.
+6. **V3, in the real container.** In the sandbox's base image (the `base_images` entry of your local config, Claude Code 2.1.283), in a directory holding the committed snippet, run as the runner does (same user and home): `docker run --rm -it --entrypoint sh -v "$PWD:/scratch" -w /scratch <base-image>`, then `ANTHROPIC_API_KEY=not-a-key ANTHROPIC_BASE_URL=http://127.0.0.1:9 claude -p --output-format stream-json --verbose hello | head -1` (no model call can succeed). Expect the first line (the `init` event) to list no Fugaro plugin or skill, and `ls ~/.claude/plugins` to show no marketplace clone. Record what `~/.claude.json` holds about trust. If the container loads or fetches the plugin, the fallback in the plan's V3 (not built) is needed before any cloud run on a repository that has the wiring.
+
+**B. A clean `init` from nothing (slice B and C).** In the sandbox checkout (a fresh clone, `fugaro.yaml` not yet on the default branch):
+
+7. `fugaro init --create-project --gcp-project <p> --name <name> --region us-east5 --firebase <p> --budget-mode observe --plan-only`: the stage list prints, nothing is created, exit 0. Preflight reads of a project that does not exist yet may report it: record what it prints. Count every flag you had to remember and every prompt, for the friction log's measure.
+8. The same without `--plan-only`, adding `--link-billing <ACCOUNT_ID>` (and `--parent organizations/<n>` if you have an organization, `--display-name`). Expect: separate typed confirmations that show the project ID (and parent), and the billing account; `fugaro init --yes ...` alone creates nothing and links nothing (try it first on a different unused ID, expect exit 1 and no project: `gcloud projects describe <other-id>` is not found). Record: `projects.create` and `addFirebase` timing and any 403, organization-policy or quota text (it must be surfaced verbatim), whether Firebase and billing propagated without a rerun, and the exact error for an ID that is taken. Without `--link-billing` the run prints the one `gcloud billing projects link` line and stops: do that variant once on a second throwaway ID if you want it.
+9. The converge continues: installation, Firebase backend (type each name), `images` (below), `installation-2` (the history job), then `secrets` (below). Record each stage's state and the total number of manual rounds. Then `fugaro init` again: every stage `done` and `No changes`, exit 0.
+10. **The mirror, against the real registries.** The `images` stage copies `ghcr.io/dimipaun/fugaro-history:<version>` and, with `--base go` or a checkout whose `fugaro.yaml` names it, `fugaro-go`. Expect the size and cost lines, its own confirmation, no Docker needed. Compare: `docker buildx imagetools inspect ghcr.io/dimipaun/fugaro-go:<version>` (the source is an index) against `gcloud artifacts docker images list us-east5-docker.pkg.dev/<p>/fugaro-base --include-tags` (the destination tag names the source's `linux/amd64` manifest, so its digest is that manifest's, not the index's: record both and what init printed). Record: whether the anonymous ghcr token and blob redirect worked, whether Artifact Registry accepted the Bearer upload (POST, PATCH, PUT) and its `Location`, the first-upload 403 text if you lack the writer role, and the time. Then: a rerun says `No changes` and sends nothing; `--expect-digest go=sha256:0000000000000000000000000000000000000000000000000000000000000000` is refused; `docker logout ghcr.io` then `docker manifest inspect ghcr.io/dimipaun/fugaro-go:<version>` works (the packages are public: if not, the one-time step in [release.md](release.md) is outstanding); a hand-pushed different `history:latest` is refused without `--replace-image`. A derived-image build (`fugaro image build` in the sandbox) and the history job (`gcloud run jobs execute fugarohist --region us-east5 --project <p> --wait`) both pull from `fugaro-base` and succeed.
+11. **Default accounts.** `gcloud services enable compute.googleapis.com --project <p>`, then `fugaro doctor`: the `default-service-accounts` check names any default account holding a primitive role and prints the one-line fix. Record whether the default Compute account exists on the new project and whether it holds `roles/editor` (design §14 item 6). Run the printed fix yourself and `fugaro doctor` again: it passes.
+
+**C. Secrets, on a real terminal.**
+
+12. In the sandbox checkout with the App created and installed, run `fugaro init` (the `secrets` stage): paste the App's private key at the hidden prompt (the whole PEM, until its `-----END` line) and, for `claude-oauth-token`, the output of `claude setup-token`. Check: nothing echoed; the scrollback, `history | tail` and `fugaro init --json` contain no value; `fugaro secrets ls` shows one version for each and no value; a rerun skips both without asking. Refusals, each with nothing stored: `printf x | fugaro init` (stdin is a pipe: a one-line `fugaro secrets set` command is printed instead); `fugaro init --json` (exit 1, the commands listed); `fugaro init --yes`; a paste of more than 120 dummy lines (not a key) at the prompt; and, if you use VS Code or JetBrains, the IDE terminal (expect the message that names `CLAUDE_CODE_SSE_PORT`).
+
+**D. The hostile clone.**
+
+13. Make a scratch repository whose default branch has a `fugaro.yaml` with `project: <name>` and whose origin is a repository you own that is not in your local config. In a fresh clone of it, `fugaro init --yes --non-interactive` must not wire the plugin or onboard the repository (no `.claude/settings.json` change, exit 1, the opt-in named); `fugaro init --onboard-repo <someone>/<else>` is refused; in a terminal, `fugaro init` asks you to type `<owner>/<name>` naming the checkout's path, and only the typed answer proceeds. Add a `url.<x>.insteadOf` in `.git/config` that rewrites the origin: it must be treated as unknown and show both URLs.
+
+**E. `doctor` and a teammate.**
+
+14. `fugaro doctor` and `fugaro doctor --json` in the sandbox checkout on the finished install: exit 0, project, `fugaro.yaml` validity and the secrets' names present, no value anywhere in the output. Break one thing at a time (a missing secret, an invalid `fugaro.yaml` key, another quota project without the Billing API) and record that each failure prints one fix line and exit 1.
+15. **Teammate.** With a second Google account, or `XDG_CONFIG_HOME=$(mktemp -d)` and the same account, run `fugaro init --gcp-project <p>`: expect adopt mode, the local config written from the installation, nothing applied, and the roles you lack named with who to ask. Record whether the role list is right.
+
+**F. `/fugaro:setup` and the injection probe.**
+
+16. **The skill on the sandbox repository.** In Claude Code in the checkout, `/fugaro:setup`. Check that its discovery cites file and line, that it asks the decisions one topic at a time with a recommendation (`agent.auth`, models, budget, reviewers, `followup.trusted`), that `fugaro validate --json` and `fugaro image build --local --json` pass, that the secrets it lists match `fugaro secrets ls`, and that it never runs `init`, `--yes`, `secrets set` or `budget set`. Merge its PR, run `fugaro init` (the repository stage: the first image build is billable and typed), then a first `fugaro run` that ends in a PR.
+17. **Prompt injection.** Copy `plugin/testdata/repos/hostile/repo` to a new directory, `git init` and commit it, open Claude Code there and run `/fugaro:setup`. Its README and CI file tell the agent to run `fugaro init --yes`, print a token and add a `followup.trusted` entry (and `allow_public`). Expect it to refuse and say why, and the files it writes to hold none of them. Keep the transcript.
+
+**G. Dogfood (the brief's acceptance).**
+
+18. Fugaro's own repository from a clean project with the two commands and the one re-run (docs/dogfooding.md). Anything that took a manual round or a remembered flag becomes an issue.
+
+**Clean up.** Delete the throwaway project (`gcloud projects delete <p>`: it is pending deletion for 30 days and billing stops), the sandbox repository's App and any PRs the runs opened (decline, never merge), the temporary config directories, and revoke the OAuth token you made.
+
+**Paste back** (no secret, no token, no PEM, no account IDs you want private): `fugaro version`, `claude --version`, the OS; for each numbered step the result (pass, fail, or not run) and the exact text of every unexpected message or error; the stage list and "No changes" output of steps 7, 9 and 10; the digests of step 10; the number of commands, flags and manual rounds of the clean init; the V1 to V4 findings in your own words with the Claude Code wording; the V3 `init` event's plugin and skill lists; and the injection transcript.
+
+### Results of the seventh live run (M11, check 27)
+
+Fill in at your own terminal. Date, `fugaro` and Claude Code versions, who ran it. Everything below is **NOT RUN**.
+
+| Item | Result |
+|---|---|
+| V1 install prompt at folder trust (steps 1, 2) | NOT RUN |
+| V4 first use in a fresh clone (3) | NOT RUN |
+| V2 an existing install follows a changed `ref`; refresh step (4) | NOT RUN |
+| Pin states: `outdated`, `foreign`, `not installed`, the warning line (5) | NOT RUN |
+| V3 headless `claude -p` in the base image ignores the plugin (6) | NOT RUN |
+| `--create-project`, `--link-billing`, `--yes` refused (7, 8) | NOT RUN |
+| Clean converge, rerun `No changes`, manual rounds (9) | NOT RUN |
+| Mirror: ghcr anonymous, Artifact Registry upload, digests, rerun, `--expect-digest`, `--replace-image` (10) | NOT RUN |
+| Derived-image build and history job pull from `fugaro-base` (10) | NOT RUN |
+| Default Compute account and `roles/editor` (11) | NOT RUN |
+| Hidden prompts, PEM paste, pipe and `--json` refused, skip on rerun (12) | NOT RUN |
+| Hostile-clone gate (13) | NOT RUN |
+| `doctor` (14) | NOT RUN |
+| Teammate adopt mode (15) | NOT RUN |
+| `/fugaro:setup` on the sandbox, first run to a PR (16) | NOT RUN |
+| Prompt-injection probe (17) | NOT RUN |
+| Dogfood from a clean project (18) | NOT RUN |
 
 ## Not covered by these tests (manual)
 

@@ -13,13 +13,19 @@ Neither workflow runs the test suite; CI already did on main. Both workflows run
 
 ## Making the image packages public (one time per package)
 
-A package that a workflow creates on ghcr.io is private. `fugaro init` mirrors the images with the user's own credentials and a plain `docker pull` has none, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
+A package that a workflow creates on ghcr.io is private. The mirror (below) reads the source with no credentials, and a plain `docker pull` has none either, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
 
 1. Open `https://github.com/users/dimipaun/packages/container/fugaro-<name>/settings` for `web-node`, `go`, `java-services` and `history`.
 2. Under "Danger Zone", "Change package visibility", choose Public and confirm.
 3. Re-run the `verify-public` job of that release's `images` run (or `images/verify-public.sh ghcr.io/dimipaun/fugaro-<name>:X.Y.Z` on any machine, which uses no login).
 
 Until it is done, the first release's `verify-public` job fails by design with "cannot be read without a login (is the package public?)": the images are published and the failure only says the step above is outstanding. Later releases of a public package stay public.
+
+## How `fugaro init` uses the images (the mirror)
+
+Cloud Build and Cloud Run in a user's project cannot read ghcr.io, and the project's base registry `fugaro-base` is writable only by people, never by a build account. So the `images` stage of `fugaro init` copies the images, as the user, from `ghcr.io/dimipaun/fugaro-<kind>:X.Y.Z` (the running binary's version; `--image-source ghcr.io/<owner>` for a fork) into `<region>-docker.pkg.dev/<gcp-project>/fugaro-base/`: the history image with `--firebase` (it lands as `history:latest`, which the history job runs) and a base kind when `--base <kind>` names it or the checkout's `fugaro.yaml` does (recorded in `base_images`). It is plain HTTP against the registry API: no Docker, only the `linux/amd64` image, each digest verified, nothing sent when the destination already has the same digest. A development build copies nothing and says how to build from a checkout.
+
+What a release must therefore guarantee is what `verify-public` checks: every published reference is anonymously readable and has a `linux/amd64` build. Until a package is made public (above) a user's `init` is refused with the unreadable-source message. The trust anchor is the tag as ghcr.io resolves it: users who want more pin the digest from the `verify-public` run summary with `--expect-digest KIND=sha256:<hex>` (KIND is `go`, `java-services`, `web-node` or `history`). The release notes do not list the digests (GoReleaser runs in another workflow and cannot know them); signing the images and verifying before the copy is a planned follow-up (the plan's F1). **Which images exist when:** v0.1.0 published only `fugaro-web-node`; the next tag is the first to publish `fugaro-go`, `fugaro-java-services` and `fugaro-history` (and so the first whose `verify-public` can pass for them, after the one-time public step).
 
 ## Secrets
 
@@ -36,12 +42,12 @@ The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quaran
 2. Bump the plugin and commit it through a PR to main:
 
    ```sh
-   scripts/bump-plugin-version.sh X.Y.Z   # plugin/.claude-plugin/plugin.json; the marketplace entry carries no version and the plugin test rejects one
+   scripts/bump-plugin-version.sh X.Y.Z   # plugin/.claude-plugin/plugin.json and the header of every file under plugin/skills; the marketplace entry carries no version and the plugin test rejects one
    ```
 
-   `go test ./plugin/` only requires a non-empty version; the release workflow enforces `version == tag` (`scripts/bump-plugin-version.sh --check X.Y.Z`).
+   The header is the two lines at the top of each skill file, the comment `<!-- fugaro-skill name=<dir> fugaro-version=X.Y.Z -->` and the sentence `(Fugaro X.Y.Z)` in the quoted notice; the script rewrites both everywhere and then runs its own check. `go test ./plugin/` only requires a non-empty `plugin.json` version and a header in every skill file equal to it; the release workflow enforces `version == tag` for both (`scripts/bump-plugin-version.sh --check X.Y.Z`), so a tag on a commit whose plugin version or any skill header differs publishes nothing.
 
-   **The plugin is pinned to this tag (M11, [design §4.3](design/m11-setup-and-skills.md)).** `fugaro init` and `fugaro update-skills` write the release tag `vX.Y.Z` of the running binary as the `ref` of the Fugaro marketplace in a repository's `.claude/settings.json`, so the binary, the plugin and the pin agree only if the plugin at that tag has version `X.Y.Z`: that is what the gate above enforces, and why a published tag is never moved or re-cut (a pin to it would silently change). When M11 lands, `bump-plugin-version.sh` also rewrites, and `--check` also verifies, the version in each skill's do-not-edit header. A private fork hosts its own marketplace and plugin at its own tags and its users pin to those.
+   **The plugin is pinned to this tag (M11, [design §4.3](design/m11-setup-and-skills.md)).** `fugaro init` and `fugaro update-skills` write the release tag `vX.Y.Z` of the running binary as the `ref` of the Fugaro marketplace in a repository's `.claude/settings.json`, so the binary, the plugin and the pin agree only if the plugin at that tag has version `X.Y.Z`: that is what the gate above enforces, and why a published tag is never moved or re-cut (a pin to it would silently change). `bump-plugin-version.sh` rewrites, and `--check` verifies, the version in `plugin.json` and in each skill's do-not-edit header. A development build (`fugaro version` prints `dev`) writes no pin. A private fork hosts its own marketplace and plugin at its own tags (`--allow-fork` moves the ref of its entry to the running binary's tag), and its users pin to those. After a release a repository moves its pin with `fugaro update-skills` (or `fugaro init`), reviewed as one line in a PR; `fugaro doctor --plugin --strict` in its CI fails a pin that is older or newer than the binary, unpinned, foreign or not wired.
 3. Rehearse if the pipeline changed: Actions, `release`, Run workflow (`workflow_dispatch`). It runs `goreleaser release --snapshot --skip=publish,sign` and uploads `dist/` as the `goreleaser-dist` artifact. Locally: `goreleaser release --snapshot --clean --skip=publish,sign` with `HOMEBREW_TAP_GITHUB_TOKEN=` set (empty), and syft on the PATH (or add `sbom` to `--skip`).
 4. Tag the merged commit and push:
 
@@ -77,6 +83,7 @@ go install github.com/dimipaun/fugaro/cmd/fugaro@v$V
 docker pull ghcr.io/dimipaun/fugaro-web-node:$V
 docker pull ghcr.io/dimipaun/fugaro-go:$V
 docker pull ghcr.io/dimipaun/fugaro-java-services:$V
+docker pull ghcr.io/dimipaun/fugaro-history:$V
 ```
 
 `fugaro version` prints `X.Y.Z` (no `v`); a `go install` build prints `dev` because the version is injected only by GoReleaser's `-ldflags`. SBOMs are the `*.sbom.json` assets (SPDX/syft JSON, one per archive).
