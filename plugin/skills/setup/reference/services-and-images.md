@@ -20,9 +20,10 @@ An image is a Fugaro **base kind** plus the repository's checkout at `base_branc
 | Postgres, Redis, Firebase emulators | the `java-services` base: `fugaro-services start` as the first step of `commands.test` |
 | Postgres or Redis on another base | `image.apt` plus a start line in `commands.test`, or a Dockerfile for a vendor package |
 | Other servers (MySQL, Mongo, Kafka, Elasticsearch, a browser) | `image.apt` or `image.setup`; a Dockerfile when a vendor installer is needed; started in the test command; counted against the job's memory (Cloud Run's `/tmp` is memory) |
-| A Docker daemon, docker-compose, Testcontainers | **not available in a Cloud Run job.** Say so to the user and offer: the repository's local-services mode (the way a `java-services` repository uses `TEST_SERVICES=local` so its tests start Postgres and Redis directly), a test command that covers only the suites that don't need Docker (CI stays the gate for the rest), or the user running those tests elsewhere. Never work around it |
+| A Docker daemon, docker-compose, Testcontainers | **not available in a Cloud Run job.** Say so to the user and offer: the repository's own local-services mode (a switch that makes its tests start Postgres and Redis directly instead of through Docker; each repository names it differently), a test command that covers only the suites that don't need Docker (CI stays the gate for the rest), or the user running those tests elsewhere. Never work around it |
 
-How to find the need: `docker-compose*.yml`, `compose.yaml`, Testcontainers dependencies, `services:` in a CI file, `firebase.json`, `DATABASE_URL`-style test variables, `.env.test` files (read for names only), emulator configs. On `java-services`, if the tests use those services, `commands.test` starts them first: `fugaro-services start && TEST_SERVICES=local ./gradlew.sh integrationTest ...`; the repository must have a mode that uses local services instead of Docker. Warm the Gradle caches with `image.setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"]`.
+How to find the need: `docker-compose*.yml`, `compose.yaml`, Testcontainers dependencies, `services:` in a CI file, `firebase.json`, `DATABASE_URL`-style test variables, `.env.test` files (read for names only), emulator configs.
+On `java-services`, if the tests use those services, `commands.test` starts them first, then runs the repository's own task with its local-services switch. The repository must have such a mode; the example below is illustrative (`TEST_SERVICES=local` and the task names are one repository's convention, not Fugaro's). Warming the Gradle caches with a task that resolves test dependencies, in `image.setup`, is usual.
 
 ## The `image:` block (the default)
 
@@ -82,7 +83,7 @@ workflows:
     resources: { cpu: 4, memory: 8Gi }
 ```
 
-A `java-services` workflow whose tests use the local services:
+An illustrative `java-services` workflow whose tests use the local services (the task names and the `TEST_SERVICES=local` switch are placeholders for the repository's own):
 
 ```yaml fugaro.yaml
 version: 1
@@ -92,10 +93,10 @@ workflows:
   server:
     base: java-services
     image:
-      setup: ["./gradlew.sh --no-daemon testClasses resolveTestDependencies"]
+      setup: ["./gradlew --no-daemon testClasses"]
     commands:
-      build: ./gradlew.sh --no-daemon testClasses
-      test: fugaro-services start && TEST_SERVICES=local ./gradlew.sh --no-daemon integrationTest
+      build: ./gradlew --no-daemon testClasses
+      test: fugaro-services start && TEST_SERVICES=local ./gradlew --no-daemon integrationTest
       reports: ["**/build/test-results/**/*.xml"]
     resources: { cpu: 4, memory: 16Gi }
 ```
@@ -116,6 +117,8 @@ workflows:
 ## The Dockerfile rule
 
 Use `image:` unless the evidence needs something it can't express: a toolchain that isn't a Node version or an apt package, a vendor installer, a multi-stage tool build, or build arguments the template doesn't have. The template carries what is security-critical and easy to get wrong (the git credential as a build secret no layer keeps, workflow secrets as mounts, the sudo rule and setuid bits removed, `finalize-checkout`). So:
+
+`fugaro validate` checks that a `dockerfile:` path is relative, inside the repository and exists, and lints the contract; it does **not** enforce the `.fugaro/<workflow>.Dockerfile` location (a root `Dockerfile` passes). That location is Fugaro's rule, which you keep.
 
 1. Run `fugaro image render --workflow <name>` and save the output as `.fugaro/<workflow>.Dockerfile`. Never start from a blank Dockerfile. Never write one at the repository root: that is the application's.
 2. In `fugaro.yaml`, remove the workflow's `image:` block and set `dockerfile: .fugaro/<workflow>.Dockerfile`. They can't both be set.

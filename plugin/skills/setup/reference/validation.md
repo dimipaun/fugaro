@@ -10,6 +10,7 @@
 ## Build the image
 
 `fugaro image build --local --json`, with `--workflow <name>` when there are several workflows. Docker's build log goes to stderr. The JSON on stdout has `image`, `dockerfile`, `commit`, `origin` and `error`, plus `smoke.checks[]`, each with a `name`, `ok` and `detail`. Before reading failures:
+- **This build runs the repository's code** (install scripts, `image.setup`, the build command) on the user's Docker, with network access, which is why the lines are shown and approved first (step 6 of the skill). Declared secrets are read from the environment of the process that runs the build and passed to the build container.
 - A development build of `fugaro` has no published base image, and says so. Run it again with `--base <image>` and an image the user built (`images/build-base.sh web-node` in the Fugaro repository).
 - The image bakes the committed `HEAD`. Your uncommitted `fugaro.yaml` is read from the working tree, but uncommitted changes to `package.json` or lockfiles are not in the image.
 - The first build on Apple Silicon runs under emulation, because Cloud Run is `linux/amd64`, and can take a long time. Tell the user rather than giving up.
@@ -20,7 +21,7 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 | Failure | Likely fix |
 |---|---|
 | apt: "Unable to locate package" | Fix the name in `image.apt`. The base is Ubuntu 24.04. |
-| The dependency install fails with 401 or 403 | A registry token is missing. Declare it in `secrets` and ask the user to export the variable before rerunning; `fugaro` passes declared secrets to the build without storing them. |
+| The dependency install fails with 401 or 403 | A registry token is missing. Declare it in `secrets`. Don't have the token put into your own environment: the build would read it from yours. Either the user runs the build themselves in their own terminal, with the variable exported there (`fugaro image build --local --json --workflow <name>`), and tells you only whether it passed and the failing check names (the JSON has no secret values); or the user decides, knowing that, to export it for your session; or skip the local build for this workflow and let the first cloud build test it. |
 | The install hangs, runs out of memory or ends in an internal error while many packages build at once | Set `image.skip_build_scripts: true` and have `commands.build` build the packages. |
 | `--immutable` or `--frozen-lockfile` refuses a lockfile change | The lockfile is out of date in the repository. Tell the user. |
 | A `setup` step fails | Fix the step. To debug, run it by hand in the image: `docker run --rm -it <image> bash`. |
@@ -31,5 +32,7 @@ When it fails, read the `error` and the end of the build log, then fix `fugaro.y
 | Smoke `user`, `init` or `no-sudo` fails | The Dockerfile changed `USER`, `ENTRYPOINT` or the sudo rules. Restore the contract. |
 | Smoke `checkout` fails | `/work/repo` is not at the built commit. Remove the setup step or Dockerfile line that checks out, resets or pulls. |
 | Smoke `claude`, `no-setuid`, `no-setgid`, `no-file-caps` or `sudoers` fails | The Dockerfile or a setup step removed Claude Code, added setuid or setgid binaries or file capabilities, or left sudo rules. Restore the contract. |
+| Smoke `root-scan` fails | The filesystem scans must run as root (uid 0). Something changed the image's user or the scan's access. Restore the contract. |
+| Smoke `managed-settings-dir` fails | Something baked files into the directory the runner writes Claude Code's managed settings to at run time. Remove that step. |
 
 If the same failure survives three different fixes, stop and ask the user. Then the loop is over only when both checks pass for every workflow.
