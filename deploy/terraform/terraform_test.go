@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -675,5 +676,187 @@ func TestRolloverJobPausedAndIgnored(t *testing.T) {
 	})
 	if !found {
 		t.Fatal("no rollover scheduler job found")
+	}
+}
+
+// The same-project layout (design D3, revised 2026-10-04): the installation
+// and the Firebase budget backend can live in one GCP project, so the budget
+// backend's separation from the jobs rests entirely on the IAM in this tree.
+// The tests below pin that boundary as text, because a plan assertion sees
+// only the inputs it is given and could never notice a new grant written by
+// reference.
+
+var (
+	quotedRoleRE = regexp.MustCompile(`"(roles/[A-Za-z0-9_.]+)"`)
+	roleRefRE    = regexp.MustCompile(`var\.installation\.role_ids\.[a-z_]+|google_project_iam_custom_role\.[a-z_]+(?:\[0\])?\.name`)
+	jobAccountRE = regexp.MustCompile(`google_service_account\.(job|build|scheduler)\b`)
+)
+
+// projectRoles are the roles (literal or by reference) a block grants.
+func projectRoles(body string) []string {
+	var out []string
+	for _, m := range quotedRoleRE.FindAllStringSubmatch(body, -1) {
+		out = append(out, m[1])
+	}
+	return append(out, roleRefRE.FindAllString(body, -1)...)
+}
+
+// REGRESSION (same-project layout): the project-level roles any job, build or
+// scheduler account holds are exactly these, in every module. None gives
+// access to the RTDB, Firestore, Identity Platform or the token signer, and no
+// primitive role is among them. A new project-level grant to one of these
+// accounts must be added here knowingly.
+func TestJobAccountsProjectRolesAreExactly(t *testing.T) {
+	want := []string{
+		"roles/aiplatform.user",                     // a Vertex workflow's job account
+		"roles/logging.logWriter",                   // a repository's build account
+		"var.installation.role_ids.build_submitter", // fugaroBuildSubmitter: cloudbuild.builds.create/get
+	}
+	got := map[string]bool{}
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if !jobAccountRE.MatchString(blk.body) {
+				continue
+			}
+			for _, r := range projectRoles(blk.body) {
+				got[r] = true
+			}
+		}
+	})
+	var have []string
+	for r := range got {
+		have = append(have, r)
+	}
+	slices.Sort(have)
+	if !slices.Equal(have, want) {
+		t.Errorf("job, build and scheduler accounts hold project roles %v, want exactly %v", have, want)
+	}
+}
+
+// No role that reaches the budget backend is granted anywhere but in the
+// Firebase module, and no primitive role is granted at all: in one project a
+// project-level grant elsewhere would reach the database too.
+func TestBudgetBackendRolesOnlyInFirebaseModule(t *testing.T) {
+	backend := regexp.MustCompile(`^roles/(firebase[a-z]*|datastore|identitytoolkit|serviceusage|iam\.serviceAccount[A-Za-z]*|iam\.workloadIdentityUser|owner|editor|viewer|iam\.securityAdmin|resourcemanager\.[A-Za-z]+|apikeys\.[A-Za-z]+)\b`)
+	for _, typ := range []string{"google_project_iam_member", "google_service_account_iam_member"} {
+		walk(t, func(path string, b []byte) {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				for _, r := range quotedRoleRE.FindAllStringSubmatch(blk.body, -1) {
+					role := r[1]
+					if role == "roles/owner" || role == "roles/editor" || role == "roles/viewer" {
+						t.Errorf("%s: %s grants the primitive role %s", path, blk.name, role)
+					}
+					// serviceAccountUser on a job or build account (actAs, for
+					// the operators who deploy it) is the one allowed shape.
+					if backend.MatchString(role) && !strings.HasPrefix(path, "gcp/modules/firebase/") &&
+						!(role == "roles/iam.serviceAccountUser" && typ == "google_service_account_iam_member") {
+						t.Errorf("%s: %s grants %s outside the Firebase module", path, blk.name, role)
+					}
+				}
+			}
+		})
+	}
+}
+
+// Only the token minter role carries signJwt, and it is never granted on the
+// project: only on the signer account. No other custom role touches the
+// Firebase, Firestore or Identity Platform permissions, or IAM credentials.
+func TestCustomRolesNeverReachTheBackend(t *testing.T) {
+	banned := regexp.MustCompile(`"(firebase[a-z]*\.|datastore\.|identitytoolkit\.|iam\.serviceAccounts\.|iam\.roles\.|resourcemanager\.projects\.(set|get)IamPolicy|serviceusage\.apiKeys\.)`)
+	n := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_custom_role") {
+			n++
+			isMinter := blk.name == "google_project_iam_custom_role.token_minter"
+			if isMinter {
+				if !strings.HasPrefix(path, "gcp/modules/firebase/") || !regexp.MustCompile(`permissions\s*=\s*\["iam\.serviceAccounts\.signJwt"\]`).MatchString(blk.body) {
+					t.Errorf("%s: %s is not the signJwt-only role in the Firebase module", path, blk.name)
+				}
+				continue
+			}
+			if banned.MatchString(blk.body) {
+				t.Errorf("%s: %s holds a permission on the budget backend, identities or IAM", path, blk.name)
+			}
+		}
+		for _, typ := range []string{"google_project_iam_member", "google_project_iam_binding"} {
+			for _, blk := range resourceBlocks(t, path, b, typ) {
+				if strings.Contains(blk.body, "token_minter") {
+					t.Errorf("%s: %s grants the token minter role on the project", path, blk.name)
+				}
+			}
+		}
+	})
+	if n < 6 {
+		t.Errorf("found %d custom roles, want at least 6", n)
+	}
+}
+
+// The signer's own IAM is the launchers' and operators' minter grant on the
+// signer account, and nothing else: no role on the project names it, and no
+// other service account IAM resource grants on it.
+func TestSignerIAMIsMinterOnly(t *testing.T) {
+	grants := 0
+	walk(t, func(path string, b []byte) {
+		for _, blk := range resourceBlocks(t, path, b, "google_service_account_iam_member") {
+			if !strings.Contains(blk.body, "google_service_account.signer") {
+				continue
+			}
+			grants++
+			if blk.name != "google_service_account_iam_member.minter" || !strings.Contains(blk.body, "google_project_iam_custom_role.token_minter.name") {
+				t.Errorf("%s: %s grants on the signer something other than the minter role", path, blk.name)
+			}
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if strings.Contains(blk.body, "google_service_account.signer") {
+				t.Errorf("%s: %s grants a project role to the signer", path, blk.name)
+			}
+		}
+	})
+	if grants != 1 {
+		t.Errorf("want one grant on the signer (minter), got %d", grants)
+	}
+}
+
+// The history account's project roles are the installation's narrow Cloud Run
+// role plus, on the Firebase project, exactly the four the sweep and the
+// rollover need. In one project these are the only grants a Fugaro service
+// account holds on the backend.
+func TestHistoryAccountBackendRolesAreExactly(t *testing.T) {
+	want := []string{"roles/datastore.user", "roles/firebaseauth.admin", "roles/firebasedatabase.admin", "roles/serviceusage.serviceUsageConsumer"}
+	var got []string
+	walk(t, func(path string, b []byte) {
+		if !strings.HasPrefix(path, "gcp/modules/firebase/") {
+			return
+		}
+		for _, blk := range resourceBlocks(t, path, b, "google_project_iam_member") {
+			if strings.Contains(blk.body, "var.history_account") {
+				got = append(got, quotedRoleRE.FindAllStringSubmatch(blk.body, -1)[0][1])
+			}
+		}
+	})
+	slices.Sort(got)
+	if !slices.Equal(got, want) {
+		t.Errorf("the history account holds %v on the Firebase project, want %v", got, want)
+	}
+}
+
+// Two roots apply to one project in the same-project layout, and they must
+// never own one address twice: the only resource types both could create are
+// project services, and the Firebase module takes the shared ones out through
+// skip_apis. Every other project-scoped singleton has a name of its own in
+// each root (the Go side pins the names).
+func TestFirebaseModuleSkipsSharedAPIs(t *testing.T) {
+	b, err := fs.ReadFile(FS, "gcp/modules/firebase/apis.tf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "setsubtract(local.apis, var.skip_apis)") {
+		t.Error("the Firebase module does not subtract skip_apis from the APIs it enables")
+	}
+	for _, p := range []string{"gcp/modules/firebase/variables.tf", "gcp/roots/firebase/variables.tf"} {
+		v, err := fs.ReadFile(FS, p)
+		if err != nil || !strings.Contains(string(v), `variable "skip_apis"`) {
+			t.Errorf("%s declares no skip_apis: %v", p, err)
+		}
 	}
 }
