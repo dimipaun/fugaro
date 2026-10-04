@@ -183,7 +183,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.w, m.h = msg.Width, msg.Height
 		m.rebuild()
-		return m, nil
+		// A terminal reflows the old frame on a resize and the renderer's
+		// line count no longer matches it: clear, then redraw the whole frame.
+		return m, tea.ClearScreen
 	case actionDoneMsg:
 		m.flow.Done()
 		m.notice = msg.out.Notice
