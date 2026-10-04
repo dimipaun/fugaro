@@ -38,6 +38,8 @@ type initEngine struct {
 	t     *tf.TF
 	wd    *infra.Workdir
 
+	adopted string // set when the installation stage adopted an existing installation instead of applying
+
 	redact, held []string // the loop's redaction list, and the slots at its end a stage fills with a value it holds
 }
 
@@ -105,7 +107,7 @@ func (e *initEngine) options() initflow.Options {
 // loop and maps its result to what init returns.
 func (e *initEngine) converge(ctx context.Context) error {
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), newImagesStage(e), newInstallation2Stage(e)}
-	stages = append(stages, newSecretsStage(e))
+	stages = append(stages, newSecretsStage(e), newPluginStage(e), newRepositoryStage(e))
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}
@@ -204,6 +206,10 @@ type engineStage struct {
 	// result (the second installation apply, after the Firebase root's).
 	// The run's result still accumulates both.
 	isolate bool
+	// did, when set, is what the engine did besides applying Terraform (the
+	// installation stage's adoption writes the local config and applies
+	// nothing): a non-empty line makes the stage "changed".
+	did     func() string
 	applied bool
 	changes *infra.PlanCounts
 }
@@ -257,6 +263,8 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		return initflow.Outcome{}, err
 	}
 	switch {
+	case !s.applied && s.did != nil && s.did() != "":
+		return initflow.Outcome{Changed: true, Detail: s.did()}, nil
 	case !s.applied:
 		return initflow.Outcome{Detail: "No changes"}, nil
 	case s.changes != nil:
@@ -269,7 +277,7 @@ func (s *engineStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 // --firebase the installation is the Firebase engine's first apply, so the
 // stage is skipped.
 func newInstallationStage(e *initEngine) *engineStage {
-	return &engineStage{e: e, name: initflow.Installation,
+	return &engineStage{e: e, name: initflow.Installation, did: func() string { return e.adopted },
 		skip: func() string {
 			if e.r.o.firebase != "" {
 				return "applied as the first step of the firebase backend"
@@ -279,6 +287,14 @@ func newInstallationStage(e *initEngine) *engineStage {
 		run: func(ctx context.Context) error {
 			if err := e.setup(ctx); err != nil {
 				return err
+			}
+			if e.old == nil { // no local config yet: is this an installation someone else made?
+				switch ok, err := e.r.installationExists(ctx, e.c, e.spec); {
+				case err != nil:
+					return err
+				case ok:
+					return e.r.adopt(ctx, e)
+				}
 			}
 			return e.r.install(ctx, e.c, e.t, e.wd, e.lc, e.spec, e.path, e.old)
 		},

@@ -60,6 +60,7 @@ type initOptions struct {
 	planOnly, printVars, configOnly     bool
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
+	allowFork                           bool // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
@@ -113,10 +114,14 @@ project's ID and the region, each with a suggestion (the name from the
 repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
 project, never gcloud's default project; us-east5) and writes the local config,
 so later runs ask nothing; without a terminal, or with --non-interactive,
---yes or --json, it names every missing flag in one error.
+--yes or --json, it names every missing flag in one error. Where the
+installation already exists and this machine has no local config for it,
+init adopts it: it writes the config from the installation and applies
+nothing, and says which roles to ask an owner for.
 
-init runs as a converge of stages (preflight, installation, and with
---firebase the Firebase backend), each with its own confirmation, in order,
+init runs as a converge of stages (preflight, installation, with --firebase
+the Firebase backend and the images, the secrets, the plugin wiring and the
+repository), each with its own confirmation, in order,
 and stops at the first that fails or needs you; a rerun resumes, and one
 with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
 only planned), 1 a refusal, or a step left for you (see left_for_you in
@@ -182,7 +187,16 @@ account's ID. Each is its own typed confirmation, never given by --yes,
 Without --link-billing, init prints the one gcloud command that links billing
 and stops. An existing project you can read is adopted; one that is held by
 someone else, or pending deletion, is refused; its existing billing link is
-never changed.`,
+never changed.
+
+The plugin-wiring stage merges the Fugaro marketplace and plugin into the
+checkout's .claude/settings.json, pinned to this release's tag, after showing
+the diff and asking (--yes confirms it); see update-skills. The repository
+stage runs init --repo for the checkout, after the secrets, when its default
+branch has a fugaro.yaml naming this project (else it is skipped and says
+why); it asks once for the GitHub App's ID of a GitHub repository (or take
+--github-app-id) and keeps its own confirmations, the first image build's
+included.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
@@ -230,6 +244,7 @@ never changed.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
+	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
@@ -1426,13 +1441,26 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 			return err
 		}
 	}
-	ctx := cmd.Context()
-
-	// 1. The checkout, its fugaro.yaml, and the local config.
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
 	}
+	return r.repoEngine(cmd.Context(), dir, "", false)
+}
+
+// repoEngine is init --repo's engine for the checkout at dir. The converge's
+// repository stage runs it too (embedded): then the result is the converge's
+// to print, and bin is the terraform its environment check already found.
+func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool) error {
+	o, cmd := r.o, r.cmd
+	finish := func() error {
+		if embedded {
+			return nil
+		}
+		return r.printResult()
+	}
+
+	// 1. The checkout, its fugaro.yaml, and the local config.
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
@@ -1488,9 +1516,10 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		return err
 	}
 
-	bin, err := r.checkEnv(lc)
-	if err != nil {
-		return err
+	if bin == "" {
+		if bin, err = r.checkEnv(lc); err != nil {
+			return err
+		}
 	}
 	inst, err := installOptions(o, lc)
 	if err != nil {
@@ -1530,7 +1559,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		if err := r.forgetRepo(ctx, c, t, backend, repo, inst.StateBucket, slug); err != nil {
 			return err
 		}
-		return r.printResult()
+		return finish()
 	}
 
 	// 2. The installation, and its outputs.
@@ -1598,14 +1627,14 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	// 7. What is still missing.
 	r.printMissing(spec, versions, missing)
 	if o.planOnly {
-		return r.printResult()
+		return finish()
 	}
 
 	// 8. The local config.
 	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
 		return err
 	}
-	return r.printResult()
+	return finish()
 }
 
 // requireCheckoutProject refuses, before any cloud call, a checkout whose
