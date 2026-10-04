@@ -53,7 +53,7 @@ var lockfiles = []struct{ pm, file string }{
 // package.json or no lockfile, and an error when packageManager names an
 // unsupported tool or one whose lockfile is missing.
 func DetectNodePM(root string) (*NodePM, error) {
-	data, err := os.ReadFile(filepath.Join(root, "package.json"))
+	data, err := ReadRegular(filepath.Join(root, "package.json"), MaxCheckoutFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -119,7 +119,7 @@ func yarnGlobalCache(root string, major int) bool {
 	var rc struct {
 		EnableGlobalCache *bool `yaml:"enableGlobalCache"`
 	}
-	if data, err := os.ReadFile(filepath.Join(root, ".yarnrc.yml")); err == nil {
+	if data, err := ReadRegular(filepath.Join(root, ".yarnrc.yml"), MaxCheckoutFile); err == nil {
 		_ = yaml.Unmarshal(data, &rc) // an unreadable .yarnrc.yml falls back to the default
 	}
 	if rc.EnableGlobalCache != nil {
