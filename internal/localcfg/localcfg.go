@@ -286,6 +286,13 @@ type Terraform struct {
 	// members (user:, group: or serviceAccount:); the GCP project's owners
 	// and editors are admins too, read when fugaro init --firebase runs.
 	BudgetAdmins []string `yaml:"budget_admins,omitempty"`
+	// RegistryCleanup (dry-run, on or off), NoLogIsolation and BudgetBackend
+	// are the installation's switches that exist as flags: adopt mode copies
+	// them from the installation's outputs, so a plan from a machine that did
+	// not apply it starts from what the installation is. Flags override them.
+	RegistryCleanup string `yaml:"registry_cleanup,omitempty"`
+	NoLogIsolation  bool   `yaml:"no_log_isolation,omitempty"`
+	BudgetBackend   bool   `yaml:"budget_backend,omitempty"`
 }
 
 // Price is a region's compute price per second, in US dollars.
@@ -637,6 +644,11 @@ func (c *Config) validate() error {
 	}
 	if t := c.Terraform; t.StateBucket != "" && !bucketRE.MatchString(t.StateBucket) {
 		bad("terraform.state_bucket %q is not a bucket name", t.StateBucket)
+	}
+	switch c.Terraform.RegistryCleanup {
+	case "", "dry-run", "on", "off":
+	default:
+		bad("terraform.registry_cleanup %q must be dry-run, on or off", c.Terraform.RegistryCleanup)
 	}
 	if e := c.Terraform.AlertEmail; e != "" && !emailRE.MatchString(e) {
 		bad("terraform.alert_email %q is not an email address", e)

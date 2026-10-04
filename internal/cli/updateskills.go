@@ -166,7 +166,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 	if r.Pin == pluginwire.Foreign || ch.Disabled {
 		say("%s\n", describeReport(loc.Settings, r))
 	}
-	say("Teammates are offered the plugin when they open this folder in Claude Code and trust it. To install it now,\nrun `claude plugin install fugaro@fugaro --scope project` (or /plugin install fugaro@fugaro in Claude Code);\nif its skills are not listed, restart Claude Code in this folder.\n")
+	say("%s", pluginFirstRun)
 	return emit(updateSkillsOutput{Checkout: true, Settings: loc.Settings, Changed: ch.Changed, Ref: ch.Tag, Note: ch.Note, Foreign: ch.Foreign, Disabled: ch.Disabled, Report: &r})
 }
 

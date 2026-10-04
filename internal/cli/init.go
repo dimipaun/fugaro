@@ -60,6 +60,8 @@ type initOptions struct {
 	planOnly, printVars, configOnly     bool
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
+	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
+	allowFork                           bool   // --allow-fork: the plugin-wiring stage may move a fork's marketplace ref
 	allowDelete                         []string
 	launchersChanged, operatorsChanged  bool
 	alertEmailChanged, baseImageChanged bool
@@ -108,8 +110,19 @@ project Viewers' read access to the runs bucket, each after its own
 confirmation. A plan that would delete or replace anything is
 refused unless --allow-delete names the address.
 
-init runs as a converge of stages (preflight, installation, and with
---firebase the Firebase backend), each with its own confirmation, in order,
+On a first run in a terminal it asks, once, for the project's name, the GCP
+project's ID and the region, each with a suggestion (the name from the
+repository's owner; the ID from GOOGLE_CLOUD_PROJECT or the credentials' quota
+project, never gcloud's default project; us-east5) and writes the local config,
+so later runs ask nothing; without a terminal, or with --non-interactive,
+--yes or --json, it names every missing flag in one error. Where the
+installation already exists and this machine has no local config for it,
+init adopts it: it writes the config from the installation and applies
+nothing, and says which roles to ask an owner for.
+
+init runs as a converge of stages (preflight, installation, with --firebase
+the Firebase backend and the images, the secrets, the plugin wiring and the
+repository), each with its own confirmation, in order,
 and stops at the first that fails or needs you; a rerun resumes, and one
 with nothing to do says "No changes" and exits 0. Exit codes: 0 done (or
 only planned), 1 a refusal, or a step left for you (see left_for_you in
@@ -175,7 +188,22 @@ account's ID. Each is its own typed confirmation, never given by --yes,
 Without --link-billing, init prints the one gcloud command that links billing
 and stops. An existing project you can read is adopted; one that is held by
 someone else, or pending deletion, is refused; its existing billing link is
-never changed.`,
+never changed.
+
+The plugin-wiring stage merges the Fugaro marketplace and plugin into the
+checkout's .claude/settings.json, pinned to this release's tag, after showing
+the diff and asking (--yes confirms it); see update-skills. The repository
+stage runs init --repo for the checkout, after the secrets, when its
+origin's default branch (origin/HEAD, main or master, as last fetched) has a
+fugaro.yaml naming this project (else it is skipped and says why); it asks
+once for the GitHub App's ID of a GitHub repository (or take --github-app-id)
+and keeps its own confirmations, the first image build's included.
+
+Both stages act only on a repository the project's local config already lists,
+or one you opt in: a repository not listed yet needs its owner/name typed at
+your own terminal (naming the checkout's path), or --onboard-repo owner/name,
+which must equal the origin; --yes and --non-interactive never cover it, so a
+cloned third-party repository cannot onboard itself.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			f := cmd.Flags()
@@ -223,10 +251,12 @@ never changed.`,
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (only after reading what it will do)")
+	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it; any other origin takes the typed confirmation)")
+	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its confirmation even then, so that plan exits 1); --yes never covers creating a project, linking billing or a secret. With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
-	f.StringVar(&o.githubAppID, "github-app-id", "", "with --repo: the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config)")
+	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
 	return cmd
@@ -303,6 +333,9 @@ func runInit(cmd *cobra.Command, o *initOptions) error {
 		if err := refuseHTTP2Debug(os.Getenv); err != nil {
 			return err
 		}
+	}
+	if err := r.gatherInputs(cmd.Context()); err != nil {
+		return err
 	}
 	lc, path, old, err := loadInitConfig(cmd.Context(), o)
 	if err != nil {
@@ -421,10 +454,35 @@ func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, e
 	return c, nil
 }
 
+func (o *initOptions) registryCleanupSet() bool { return o.registryCleanup != "" }
+
+// checkAppID validates --github-app-id where it is given, not only where it
+// is used.
+func (o *initOptions) checkAppID() error {
+	if o.githubAppID != "" && !appIDRE.MatchString(o.githubAppID) {
+		return userErr("--github-app-id %q is not a GitHub App ID (1 to 20 digits)", o.githubAppID)
+	}
+	return nil
+}
+
 // check refuses flag combinations that mean nothing.
 func (o *initOptions) check() error {
-	if o.githubAppID != "" || o.noBuild || o.allowJobDelete {
-		return userErr("--github-app-id, --no-build and --allow-job-delete are for fugaro init --repo")
+	if o.noBuild || o.allowJobDelete {
+		return userErr("--no-build and --allow-job-delete are for fugaro init --repo")
+	}
+	if err := o.checkAppID(); err != nil {
+		return err
+	}
+	if o.onboardRepo != "" {
+		if _, err := task.CanonicalRepo(o.onboardRepo); err != nil {
+			return userErr("--onboard-repo %q is not owner/name", o.onboardRepo)
+		}
+		if o.forget || o.configOnly || o.printVars {
+			return userErr("--onboard-repo opts the checkout's repository in to the converge; it excludes --forget, --config-only and --print-vars")
+		}
+	}
+	if o.githubAppID != "" && (o.forget || o.configOnly || o.printVars) {
+		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget} {
@@ -589,8 +647,8 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	opts := infra.InstallOptions{
 		StateBucket:     o.stateBucket,
 		AlertEmail:      o.alertEmail,
-		RegistryCleanup: o.registryCleanup,
-		NoLogIsolation:  o.noLogIsolation,
+		RegistryCleanup: cmp.Or(o.registryCleanup, lc.Terraform.RegistryCleanup),
+		NoLogIsolation:  o.noLogIsolation || lc.Terraform.NoLogIsolation,
 	}
 	if o.launchersChanged {
 		opts.Launchers = append([]string{}, o.launchers...)
@@ -601,7 +659,7 @@ func installOptions(o *initOptions, lc *localcfg.Config) (infra.InstallationSpec
 	// The installation carries the history account (and, once it can, the
 	// sweeper's job) from the first --firebase on, and a plain fugaro init
 	// keeps them while the config records the Firebase project.
-	opts.BudgetBackend = o.firebase != "" || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
+	opts.BudgetBackend = o.firebase != "" || lc.Terraform.BudgetBackend || (lc.Budget != nil && lc.Budget.FirebaseProject != "")
 	if o.budget > 0 {
 		opts.Budget = &infra.Budget{BillingAccount: o.billingAccount, Amount: o.budget, CurrencyCode: o.budgetCurrency}
 	}
@@ -1371,6 +1429,12 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if err := o.checkAppID(); err != nil {
+		return err
+	}
+	if o.onboardRepo != "" {
+		return userErr("--onboard-repo is for fugaro init without --repo (init --repo is the explicit onboarding already)")
+	}
 	n := 0
 	for _, b := range []bool{o.planOnly, o.printVars, o.forget} {
 		if b {
@@ -1416,13 +1480,26 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 			return err
 		}
 	}
-	ctx := cmd.Context()
-
-	// 1. The checkout, its fugaro.yaml, and the local config.
 	dir := "."
 	if len(args) > 0 {
 		dir = args[0]
 	}
+	return r.repoEngine(cmd.Context(), dir, "", false)
+}
+
+// repoEngine is init --repo's engine for the checkout at dir. The converge's
+// repository stage runs it too (embedded): then the result is the converge's
+// to print, and bin is the terraform its environment check already found.
+func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool) error {
+	o, cmd := r.o, r.cmd
+	finish := func() error {
+		if embedded {
+			return nil
+		}
+		return r.printResult()
+	}
+
+	// 1. The checkout, its fugaro.yaml, and the local config.
 	if err := o.requireCheckoutProject(ctx, dir); err != nil {
 		return err
 	}
@@ -1478,9 +1555,10 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		return err
 	}
 
-	bin, err := r.checkEnv(lc)
-	if err != nil {
-		return err
+	if bin == "" {
+		if bin, err = r.checkEnv(lc); err != nil {
+			return err
+		}
 	}
 	inst, err := installOptions(o, lc)
 	if err != nil {
@@ -1520,7 +1598,7 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 		if err := r.forgetRepo(ctx, c, t, backend, repo, inst.StateBucket, slug); err != nil {
 			return err
 		}
-		return r.printResult()
+		return finish()
 	}
 
 	// 2. The installation, and its outputs.
@@ -1588,14 +1666,14 @@ func runInitRepo(cmd *cobra.Command, o *initOptions, args []string) error {
 	// 7. What is still missing.
 	r.printMissing(spec, versions, missing)
 	if o.planOnly {
-		return r.printResult()
+		return finish()
 	}
 
 	// 8. The local config.
 	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
 		return err
 	}
-	return r.printResult()
+	return finish()
 }
 
 // requireCheckoutProject refuses, before any cloud call, a checkout whose
@@ -1669,8 +1747,7 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 
 // checkoutRepo returns the checkout's owner/name, from its origin.
 func checkoutRepo(ctx context.Context, root string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
-	cmd.WaitDelay = 5 * time.Second
+	cmd := gitCmd(ctx, root, "remote", "get-url", "origin")
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1687,9 +1764,7 @@ func checkoutRepo(ctx context.Context, root string) (string, error) {
 // checkoutURL is the checkout's origin as an https URL without
 // credentials, which the builds and the daily check clone.
 func checkoutURL(ctx context.Context, root string) (string, error) {
-	c := exec.CommandContext(ctx, "git", "-C", root, "remote", "get-url", "origin")
-	c.WaitDelay = 5 * time.Second
-	out, err := c.Output()
+	out, err := gitCmd(ctx, root, "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", userErr("no origin remote in the checkout %s", root)
 	}

@@ -221,7 +221,7 @@ func TestInitWithoutNameRefused(t *testing.T) {
 	// GCP project and region to find it (and with them it goes on to the
 	// cloud, which a test can't let it do: see TestInitConfigOnlyTakesNameFromOutputs).
 	_, _, err := execute(t, "init", "--config-only")
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project and --region") {
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--gcp-project <id>") || !strings.Contains(err.Error(), "--region <region>") {
 		t.Errorf("--config-only with nothing: exit %d, err %v", ExitCode(err), err)
 	}
 	_, _, err = execute(t, "init", "--name", "aurora", "--region", "us-east5")

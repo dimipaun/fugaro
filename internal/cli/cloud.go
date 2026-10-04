@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -330,9 +329,7 @@ func (e *cloudEnv) repoSlug(repo string, checkout func() *config.Config) (string
 
 // originRepo is owner/name of the checkout's origin remote.
 func originRepo(ctx context.Context) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "remote", "get-url", "origin")
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
+	out, err := gitCmd(ctx, ".", "remote", "get-url", "origin").Output()
 	if err != nil {
 		return "", userErr("no --repo, and no origin remote here to take it from")
 	}
@@ -381,9 +378,7 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if err1 != nil || err2 != nil || a != b {
 		return nil, nil
 	}
-	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--show-toplevel")
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
+	out, err := gitCmd(ctx, ".", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return nil, nil
 	}

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -28,13 +27,10 @@ import (
 // says which project it belongs to; YAML that doesn't decode, or a
 // project: that isn't one string, is an error.
 func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error) {
-	args := []string{"rev-parse", "--show-toplevel"}
-	if dir != "" {
-		args = append([]string{"-C", dir}, args...)
+	if dir == "" {
+		dir = "."
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.WaitDelay = 5 * time.Second
-	out, err := cmd.Output()
+	out, err := gitCmd(ctx, dir, "rev-parse", "--show-toplevel").Output()
 	if err != nil {
 		return nil, nil
 	}
