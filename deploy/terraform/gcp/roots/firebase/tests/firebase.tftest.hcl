@@ -687,3 +687,129 @@ run "bad_api_key_name" {
 
   expect_failures = [var.names]
 }
+
+# The same-project layout (design D3, revised 2026-10-04): the Firebase
+# project is the installation's own GCP project, so the history account, the
+# signer and the grants all live in one project with the job, build and
+# scheduler accounts. The Firebase root leaves the APIs the installation root
+# enables to it (skip_apis), and everything else is as with two projects.
+run "same_project_apis" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  override_resource {
+    target          = google_service_account.signer
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.token_minter
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroTokenMinter"
+    }
+  }
+
+  variables {
+    project   = "proj-1234"
+    skip_apis = ["cloudresourcemanager.googleapis.com", "iam.googleapis.com"]
+  }
+
+  assert {
+    condition = keys(google_project_service.this) == [
+      "apikeys.googleapis.com", "firebase.googleapis.com",
+      "firebasedatabase.googleapis.com", "firebaserules.googleapis.com", "firestore.googleapis.com", "iamcredentials.googleapis.com",
+      "identitytoolkit.googleapis.com", "securetoken.googleapis.com",
+    ]
+    error_message = "with skip_apis the Firebase root enables everything but iam and cloudresourcemanager, which the installation root owns"
+  }
+  assert {
+    condition     = alltrue([for s in google_project_service.this : s.project == "proj-1234" && !s.disable_on_destroy])
+    error_message = "the APIs are in the one project and are never disabled on destroy"
+  }
+}
+
+# The roles on the project are the Firebase module's, and the only service
+# account that receives any is the history account (its sweep and rollover);
+# the signer holds none, and its one IAM grant is the minter role, on itself.
+run "same_project_grants" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  override_resource {
+    target          = google_service_account.signer
+    override_during = plan
+    values = {
+      name   = "projects/proj-1234/serviceAccounts/fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+      email  = "fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+      member = "serviceAccount:fugaro-token-signer@proj-1234.iam.gserviceaccount.com"
+    }
+  }
+  override_resource {
+    target          = google_project_iam_custom_role.token_minter
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroTokenMinter"
+    }
+  }
+
+  variables {
+    project   = "proj-1234"
+    skip_apis = ["cloudresourcemanager.googleapis.com", "iam.googleapis.com"]
+  }
+
+  assert {
+    condition = alltrue(flatten([
+      [for m in google_project_iam_member.viewer : m.member != google_service_account.signer.member && m.project == "proj-1234"],
+      [for m in google_project_iam_member.admin : m.member != google_service_account.signer.member && m.project == "proj-1234"],
+      [for m in google_project_iam_member.datastore_viewer : m.member != google_service_account.signer.member],
+      [for m in google_project_iam_member.usage_consumer : m.member != google_service_account.signer.member],
+      [for m in [google_project_iam_member.history_database, google_project_iam_member.history_auth, google_project_iam_member.history_firestore, google_project_iam_member.history_usage] :
+      m.member == "serviceAccount:fugaro-history@proj-1234.iam.gserviceaccount.com" && m.project == "proj-1234"],
+    ]))
+    error_message = "in one project the signer holds no role and only the history account holds service-account roles"
+  }
+  assert {
+    condition = alltrue(concat(
+      [for m in google_project_iam_member.viewer : !startswith(m.member, "serviceAccount:")],
+      [for m in google_project_iam_member.admin : !startswith(m.member, "serviceAccount:")],
+      [for m in google_project_iam_member.datastore_viewer : !startswith(m.member, "serviceAccount:")],
+      [for m in google_project_iam_member.usage_consumer : !startswith(m.member, "serviceAccount:")],
+    ))
+    error_message = "no service account is among the people's grants, so no job, build or scheduler account gets a role on the backend"
+  }
+  assert {
+    condition = (keys(google_project_iam_member.admin) == ["group:editors@example.com", "user:extra@example.com", "user:owner@example.com"] &&
+    alltrue([for m in google_project_iam_member.admin : m.role == "roles/firebasedatabase.admin"]))
+    error_message = "the budget admins are the owners, editors and budget_admins, with roles/firebasedatabase.admin, exactly as with two projects"
+  }
+  assert {
+    condition = (google_project_iam_custom_role.token_minter.permissions == toset(["iam.serviceAccounts.signJwt"]) &&
+    alltrue([for m in google_service_account_iam_member.minter : m.service_account_id == google_service_account.signer.name && m.role == "projects/proj-1234/roles/fugaroTokenMinter"]))
+    error_message = "the signer's IAM is unchanged: signJwt for the launchers and operators, on the signer account only"
+  }
+}
+
+run "bad_skip_apis" {
+  command = plan
+
+  module {
+    source = "../../modules/firebase"
+  }
+
+  variables {
+    skip_apis = ["not an api"]
+  }
+
+  expect_failures = [var.skip_apis]
+}

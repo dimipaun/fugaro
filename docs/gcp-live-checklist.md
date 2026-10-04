@@ -206,6 +206,7 @@ In the commands below, `T` is short for
 | 21 | The shared budget against the real Firebase project: tokens, rules, leases and releases, a repository daily cap, a kill, token expiry, the grace (design §5, §6.4) | See "Check 21" below; **you** run it at your own terminal with your own API key: `FUGARO_LIVE_BASE_IMAGE=<tag> FUGARO_LIVE_RTDB_URL=<url> FUGARO_LIVE_FIREBASE_API_KEY=<key> FUGARO_LIVE_TOKEN_SIGNER=<account> FUGARO_LIVE_ANTHROPIC_API_KEY=<key> FUGARO_LIVE_SPEND_OK=1 go test -tags 'live docker' -timeout 90m -run TestLiveBudget -v ./internal/e2e/` | About $0.50. Every answer is a `FACT:` line; the run, cap and kill halts are the assertions. |
 | 22 | `fugaro watch` against the real project: header and bars agree with `budget show`, a live run, kill and resume, a viewer-only identity, an outage (M9c) | See "Check 22" below; **you** run it at your own terminal. | Nothing beyond the sandbox runs (about $0.30 each with `oauth`, notional). |
 | 23 | Spend history and `fugaro report` against the real project: the Firestore database, the rollover job, finality, the prune, a non-owner viewer (M9d) | See "Check 23" below; **you** run or approve every step. | Firestore is within the free tier; the image pushes are about 1.5 GB of registry storage at most. |
+| 26 | The same-project layout (Firebase project = the installation's project) on a scratch project: the three applies with one project, no API owned twice, and a job account refused by the RTDB, Firestore and Identity Toolkit | See "Check 26" below; **you** run it, never on `belong` | Never run. Everything offline passed; every answer is a `FACT:` line. |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -680,6 +681,19 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 | Run cap halt before the next call | |
 | Key revoked, file deleted, sandbox PRs declined | |
 | Unverified (not tested): DeepSeek's own Anthropic endpoint, other models (Qwen, Kimi), header-based provider preferences | still unverified |
+
+## Check 26: the same-project layout (never run)
+
+The Firebase project may be the installation's own GCP project (design `m9-budget-and-dashboard.md` §6.0, D3 revised 2026-10-04). Everything about it ran **offline only** (fake terraform, mock-provider plans, text checks on the IAM): no real apply has used one project for both roots. Run it on a **scratch project with billing, never `belong`**, as you, one ⚠ CONFIRM per step.
+
+1. `fugaro init --name scratch --gcp-project <p> ...` then `fugaro init --firebase <p> --budget-mode observe --plan-only`: the Firebase plan must not list `google_project_service` for `iam` or `cloudresourcemanager` (the installation root owns them), and must name `project = <p>`.
+2. The three applies, and the database step. Record any 409 or "already exists" (the signer, `fugaroTokenMinter`, the API key and the RTDB instance are new in a project that never had Firebase; Identity Platform and the database mark are the REST steps).
+3. Does `google_firebase_project` adopt a project that already runs Cloud Run and Artifact Registry? Record the plan and the apply.
+4. **The security claim, as a job account.** Impersonate (or `gcloud auth print-access-token --impersonate-service-account=<a job account>`) and call the RTDB REST with that token (`<rtdb_url>/.json?access_token=...`), Firestore `documents` and Identity Toolkit `accounts:lookup`: each must answer 401 or 403. Do the same as the build account and the scheduler account. `gcloud projects get-iam-policy <p>`: no job, build or scheduler account appears with a Firebase, datastore or primitive role.
+5. `fugaro budget show`, a run in observe mode, `fugaro watch --once`, and a second `init --firebase` (no changes: "No changes" for both roots).
+6. **The Cloud Build pivot.** From an image build step (a scratch repository's Dockerfile), run `gcloud builds submit` (or the Cloud Build API) without `serviceAccount` and, in that build, fetch the metadata token and call `<rtdb_url>/.json?access_token=...`, Firestore and Identity Toolkit. Record the answer, and `gcloud projects get-iam-policy <p>` for the default Compute (`<number>-compute@developer`), Cloud Build (`<number>@cloudbuild`) and App Engine accounts: with `roles/editor` the call succeeds (that is the risk; strip the role and repeat, it must be refused). Confirm `init --firebase` printed the warning for it.
+7. **Token forgery by another account.** Sign a JWT as a service account of the project that is not the signer (`signJwt` with `uid`, the run claims and audience `https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit`) and call `signInWithCustomToken` with the web API key: expect refusal or, if it is accepted, record it (Firebase accepts any account of the project).
+8. `terraform destroy` is not part of this check; nothing disables an API on destroy (`disable_on_destroy = false`).
 
 ## Not covered by these tests (manual)
 

@@ -24,6 +24,12 @@ variable "manage_apis" {
   nullable = false
 }
 
+variable "skip_apis" {
+  type     = list(string)
+  default  = []
+  nullable = false
+}
+
 variable "launchers" {
   type     = list(string)
   default  = []

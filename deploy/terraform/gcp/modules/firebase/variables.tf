@@ -3,7 +3,7 @@
 # The validation blocks check shapes only; nothing here derives a name.
 
 variable "project" {
-  description = "The Firebase project's ID (the FP, a GCP project of its own, which the user created and linked to billing). Everything here lives in it."
+  description = "The Firebase project's ID (the FP, which the user created and linked to billing). It is either a GCP project of its own or the installation's own project; everything here lives in it."
   type        = string
 
   validation {
@@ -51,6 +51,18 @@ variable "manage_apis" {
   type        = bool
   default     = true
   nullable    = false
+}
+
+variable "skip_apis" {
+  description = "APIs this root does not enable because the installation root, in the same GCP project, does (set by fugaro init when the FP is the installation's own project; empty with two projects)."
+  type        = list(string)
+  default     = []
+  nullable    = false
+
+  validation {
+    condition     = alltrue([for a in var.skip_apis : can(regex("^[a-z0-9]+\\.googleapis\\.com$", a))])
+    error_message = "skip_apis must be service names such as iam.googleapis.com."
+  }
 }
 
 variable "launchers" {

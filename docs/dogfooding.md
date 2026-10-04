@@ -10,7 +10,7 @@ The merge gate stays GitHub CI: `go test -race ./...`, the docker-tests job, the
 
 ## Setup
 
-1. **Projects.** Create the GCP project `fugaro-dev` with billing, and the Firebase project for the budget backend. `init --firebase` adopts a Firebase project that exists and is billed; it never creates one. Whether it is `fugaro-dev` itself or a separate project is your decision.
+1. **Projects.** Create the GCP project `fugaro-dev` with billing, and the Firebase project for the budget backend. `init --firebase` adopts a Firebase project that exists and is billed; it never creates one. It can be `fugaro-dev` itself (one project for everything: `fugaro init --firebase fugaro-dev`) or a separate project; both layouts are supported (design `m9-budget-and-dashboard.md` §6.0).
 2. **Preconditions** in [gcp-setup.md](gcp-setup.md) "Preconditions" (ADC with a quota project, Terraform 1.7+, an Owner role). For the Firebase step, log in with the extra scopes in "Turning the shared budget on".
 3. **The installation:**
 
