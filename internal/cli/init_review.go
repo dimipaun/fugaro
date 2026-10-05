@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -51,10 +52,12 @@ const (
 type runReview struct {
 	// cover says which plans the run's one confirmation may cover (the
 	// allowlist of tf.Cover, with the members the review screen lists).
-	cover  func() tf.Cover
-	owner  func(ctx context.Context) (why string, owned bool)
-	screen func(ctx context.Context, why string)
-	state  reviewState
+	cover func() tf.Cover
+	// firebase says whether the Firebase project is verified as Fugaro's.
+	firebase func(context.Context) (bool, string)
+	owner    func(ctx context.Context) (why string, owned bool)
+	screen   func(ctx context.Context, why string)
+	state    reviewState
 }
 
 // ctx is the command's context, or a background one in a test with none.
@@ -262,9 +265,17 @@ func (e *initEngine) projectAdmins(ctx context.Context) []string {
 // members and to Fugaro's own service accounts of the installation's project
 // and the Firebase project.
 func (e *initEngine) cover() tf.Cover {
-	c := tf.Cover{Projects: []string{e.r.gcpProject}}
-	if fp := e.r.o.firebase; fp != "" {
-		c.Projects = append(c.Projects, fp)
+	c := tf.Cover{Projects: []string{e.r.gcpProject}, Region: e.lc.Region, Buckets: []string{e.spec.RunsBucket}}
+	if host, err := infra.RegistryHost(e.lc); err == nil {
+		c.Registry, _, _ = strings.Cut(host, "/")
+	}
+	if b := e.r.o.billingAccount; b != "" {
+		c.Billing = []string{b}
+	}
+	if fp := e.r.o.firebase; fp != "" && fp != e.r.gcpProject {
+		if ok, _ := e.firebaseVerified(e.r.ctx()); ok {
+			c.Projects = append(c.Projects, fp)
+		}
 	}
 	for _, a := range e.accessLists(e.r.ctx()) {
 		c.Listed = append(c.Listed, a.members...)
@@ -307,10 +318,25 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		fmt.Fprintln(w, "  installation:   Terraform apply of the installation root (planned when applied)")
 	}
 	if todo[initflow.Firebase] {
-		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(o.firebase))
+		_, fpWhy := e.firebaseVerified(ctx)
+		fmt.Fprintf(w, "  firebase:       Terraform applies of the installation root (GCP project %s) and of the Firebase root in %s, then the budget database's marks and rules and Identity Platform (planned when applied)\n", pluginwire.Printable(r.gcpProject), pluginwire.Printable(o.firebase))
+		fmt.Fprintf(w, "                  the Firebase project %s: %s\n", pluginwire.Printable(o.firebase), fpWhy)
 	}
 	if todo[initflow.Images] {
 		fmt.Fprintln(w, "  "+e.images.reviewLine(ctx))
+		fmt.Fprintln(w, "                  "+e.images.sourceLine(ctx))
+	}
+	if len(e.lc.BaseImages) > 0 {
+		kinds := slices.Sorted(maps.Keys(e.lc.BaseImages))
+		prefix := e.cover().Registry + "/" + r.gcpProject + "/"
+		for _, k := range kinds {
+			ref := e.lc.BaseImages[k]
+			note := ""
+			if !strings.HasPrefix(ref, prefix) {
+				note = " (OUTSIDE this project's registry " + pluginwire.Printable(prefix) + ": a job built on it is not covered)"
+			}
+			fmt.Fprintf(w, "  base image %s: %s%s\n", pluginwire.Printable(k), pluginwire.Printable(ref), note)
+		}
 	}
 	if todo[initflow.Installation2] {
 		fmt.Fprintln(w, "  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)")
@@ -326,9 +352,13 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
 	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else stops and asks its own typed confirmation):")
 	for _, a := range e.accessLists(ctx) {
-		list := strings.Join(a.members, ", ")
-		if list == "" {
-			list = "nobody"
+		list := "nobody"
+		if len(a.members) > 0 {
+			ps := make([]string, len(a.members))
+			for i, m := range a.members {
+				ps[i] = pluginwire.Printable(m)
+			}
+			list = strings.Join(ps, ", ")
 		}
 		line := fmt.Sprintf("  %-15s %s (%s)", a.what+":", list, a.source)
 		if a.note != "" {
@@ -336,9 +366,19 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		}
 		fmt.Fprintln(w, line)
 	}
+	for _, a := range e.accessLists(ctx) {
+		for _, m := range a.members {
+			if strings.HasPrefix(m, "domain:") || m == "allUsers" || m == "allAuthenticatedUsers" {
+				fmt.Fprintf(w, "WARNING: %s lists %s, which is everyone in a domain or on the internet: a plan granting it is NOT covered and asks its own typed confirmation.\n", a.what, pluginwire.Printable(m))
+			}
+		}
+	}
 	alert, asrc := e.alertEmail()
-	fmt.Fprintf(w, "  %-15s %s (%s)\n", "alert email:", alert, asrc)
-	fmt.Fprintln(w, "Every Terraform plan is shown as it runs and is covered only if it adds nothing outside the listed members, the installation's own roles and resource kinds, and removes or replaces nothing; any other plan stops and asks its own typed confirmation.")
+	fmt.Fprintf(w, "  %-15s %s (%s)\n", "alert email:", pluginwire.Printable(alert), asrc)
+	if o.billingAccount != "" {
+		fmt.Fprintf(w, "  %-15s %s (from --billing-account; the only account a budget may name)\n", "billing account:", pluginwire.Printable(o.billingAccount))
+	}
+	fmt.Fprintln(w, "Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) stops that step, which asks its own typed confirmation.")
 	fmt.Fprintln(w, "Still asks separately, never covered by this confirmation:")
 	var sep []string
 	if o.firebase != "" {
@@ -394,4 +434,60 @@ func (e *initEngine) alertEmail() (string, string) {
 		return e.lc.Terraform.AlertEmail, "from the local config"
 	}
 	return "none", "not set"
+}
+
+// firebaseVerified says whether the Firebase project is Fugaro's, and how
+// that was found: the installation's own project, or another one whose own
+// runs bucket carries this project's mark (the same check as the installation
+// project's). A Firebase project that is neither is covered by nothing: its
+// root and its database writes take their own typed names.
+func (e *initEngine) firebaseVerified(ctx context.Context) (bool, string) {
+	r := e.r
+	fp := r.o.firebase
+	switch {
+	case fp == "":
+		return false, ""
+	case fp == r.gcpProject:
+		return true, "the installation's own project, verified as above"
+	}
+	if e.fpChecked == "" {
+		e.fpChecked = "no"
+		if c := e.c; c != nil || e.lc != nil {
+			if c == nil {
+				c, _ = newInitClients(ctx, e.lc)
+			}
+			if c != nil {
+				if num, err := infra.ProjectNumber(ctx, c, fp); err == nil {
+					if m, err := infra.ReadProjectMarker(ctx, c, "fugaro-runs-"+fp, num); err == nil && m != nil && m.Name == r.projectName && m.GCPProject == fp {
+						e.fpChecked = "yes"
+					}
+				}
+			}
+		}
+	}
+	if e.fpChecked == "yes" {
+		return true, "verified as Fugaro's (its own runs bucket carries this project's mark)"
+	}
+	return false, "NOT verified as Fugaro's (another project than " + pluginwire.Printable(r.gcpProject) + ", with no Fugaro mark): its Terraform apply and database writes each ask their own typed name"
+}
+
+// firebaseReason is why a step on the Firebase project is not covered, "" when
+// it is (or there is no review).
+func (r *initRun) firebaseReason() string {
+	if r.review == nil || r.review.firebase == nil {
+		return ""
+	}
+	if ok, why := r.review.firebase(r.ctx()); !ok {
+		return "the Firebase project is " + why
+	}
+	return ""
+}
+
+// notCoveredFirebase is notCovered for a plan of the Firebase root, which is
+// also not covered when the Firebase project is not verified as Fugaro's.
+func (r *initRun) notCoveredFirebase(p *tf.Plan) string {
+	if why := r.firebaseReason(); why != "" {
+		return why
+	}
+	return r.notCovered(p)
 }

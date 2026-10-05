@@ -194,8 +194,11 @@ Terraform plan is shown as it runs and is covered only if it is creates and
 in-place updates of the installation's own resource kinds, granting only the
 modules' roles to the listed launchers, operators and budget admins (the review
 prints them, with where each came from) or to Fugaro's own service accounts:
-any other plan (a destroy or replace, an IAM binding or policy, an unlisted
-member, a widened role) stops that step, which asks its own typed name. A wrong name applies nothing.
+its attributes are the modules' (images in this project's registry, jobs of
+this project, logs to this project, private buckets), and a Firebase project
+other than the installation's is covered only if verified as Fugaro's; any other
+plan (a destroy or replace, an IAM binding or policy, an unlisted member, a
+widened role) stops that step, which asks its own typed name. A wrong name applies nothing.
 The confirmation is per run and never stored. Any other project (adopted,
 unmarked, or a mark that fails to read) keeps a typed name at each step;
 --yes covers the ordinary steps as ever and takes no review; --non-interactive,

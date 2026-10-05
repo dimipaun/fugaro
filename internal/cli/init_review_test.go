@@ -216,7 +216,7 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 	mk := func(typ string, after map[string]any, acts ...string) *tf.Plan {
 		return &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "module.x." + typ + ".z", Type: typ, Change: tf.Change{Actions: acts, After: after, AfterUnknown: map[string]any{}}}}}
 	}
-	additive := mk("google_storage_bucket", nil, "create")
+	additive := mk("google_storage_bucket", map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, "create")
 	for name, bad := range map[string]*tf.Plan{
 		"replace":       mk("google_storage_bucket", nil, "delete", "create"),
 		"iam binding":   mk("google_project_iam_binding", nil, "create"),
@@ -490,19 +490,20 @@ func TestReviewScreenGolden(t *testing.T) {
 // permanent location is typed on its own. The same run in an unmarked project
 // asks for the name at each of those steps.
 func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
-	run := func(t *testing.T, marked bool, stdin string) (string, error, *imagesRig) {
+	run := func(t *testing.T, fp string, marked bool, stdin string) (string, error, *imagesRig) {
 		t.Helper()
-		r := newImagesRig(t, "1.2.3")
+		r := newImagesRigFor(t, "1.2.3", fp)
 		if marked {
 			r.markedRuns(t, initProjectName, initProject)
 		} else {
 			r.markedRuns(t, "", "")
 		}
 		fakeTerminal(t)
-		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fpID, "--base", "go")
+		out, errOut, err := executeStdin(t, stdin, "init", "--firebase", fp, "--base", "go")
 		return out + errOut, err, r
 	}
-	out, err, r := run(t, true, initProjectName+"\n"+infra.FirestoreLocation+"\n")
+	// One project for everything (the Firebase project is the installation's).
+	out, err, r := run(t, initProject, true, initProjectName+"\n"+infra.FirestoreLocation+"\n")
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -517,20 +518,37 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 		t.Fatalf("%d run prompt(s), %d per-step, location prompts %d\n%s", runP, stepP, strings.Count(out, "Type "+infra.FirestoreLocation), out)
 	}
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
-		t.Errorf("%d covered steps (want at least the viewers, three applies, the Firestore writes, the images and the config):\n%s", n, out)
+		t.Errorf("%d covered steps:\n%s", n, out)
+	}
+	if !strings.Contains(out, "images:         copy history latest, go 1.2.3") || !strings.Contains(out, "NOT pinned with --expect-digest: history, go") {
+		t.Errorf("the review does not name the images and their pinning before the typed name:\n%s", out)
+	}
+	if i, j := strings.Index(out, "NOT pinned"), strings.Index(out, "Type aurora to apply all of the above"); i < 0 || j < i {
+		t.Errorf("the pinning is not shown before the typed name:\n%s", out)
+	}
+	if !strings.Contains(out, "the installation's own project") {
+		t.Errorf("the screen does not say which project the Firebase root applies to:\n%s", out)
 	}
 	if i, j := strings.Index(out, "this does NOT create the Firestore database"), strings.Index(out, "Type "+infra.FirestoreLocation+" to create it there"); i < 0 || j < i {
 		t.Errorf("the covered write does not say the database creation is asked next:\n%s", out)
 	}
-	if !strings.Contains(out, "images:         copy history latest, go 1.2.3") {
-		t.Errorf("the review does not name the images:\n%s", out)
-	}
 	// The name does not give the location.
-	if _, err, r2 := run(t, true, initProjectName+"\n"+initProjectName+"\n"); err == nil || len(r2.dst.tags) != 0 {
+	if _, err, r2 := run(t, initProject, true, initProjectName+"\n"+initProjectName+"\n"); err == nil || len(r2.dst.tags) != 0 {
 		t.Errorf("the project's name confirmed the Firestore location (err %v, copied %v)", err, r2.dst.tags)
 	}
+	// Another project for Firebase, not verified as Fugaro's: its root and its
+	// database writes each take their own typed name; the installation's steps
+	// stay under the one confirmation.
+	out, err, r = run(t, fpID, true, initProjectName+"\n"+names(1)+names(1)+infra.FirestoreLocation+"\n")
+	if err != nil {
+		t.Fatalf("separate Firebase project: %v\n%s", err, out)
+	}
+	runP, stepP = prompts(out)
+	if runP != 1 || stepP != 2 || !strings.Contains(out, "NOT verified as Fugaro's") || !strings.Contains(out, "the Firebase project is NOT verified") {
+		t.Fatalf("%d run prompt(s), %d per-step\n%s", runP, stepP, out)
+	}
 	// Unmarked: a name per step, and the count is what it was.
-	out, err, _ = run(t, false, names(4)+infra.FirestoreLocation+"\n"+names(8))
+	out, err, _ = run(t, initProject, false, names(4)+infra.FirestoreLocation+"\n"+names(8))
 	if err != nil {
 		t.Fatalf("unmarked: %v\n%s", err, out)
 	}
@@ -688,5 +706,66 @@ func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
 	out, _, err := executeStdin(t, names(1), "init")
 	if err == nil || len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "not covered by the run confirmation") {
 		t.Fatalf("err %v, calls %q\n%s", err, r.calls(t), out)
+	}
+}
+
+// Everything the screen prints from flags or the config is printable text: an
+// escape sequence from a hostile config reaches no terminal. A domain member
+// is warned about, base images are listed and flagged when outside the
+// project's registry, and the billing account is named.
+func TestReviewScreenPrintsOnlySafeText(t *testing.T) {
+	var b strings.Builder
+	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{launchersChanged: true, alertEmail: "a\x1b[2Jb@example.com", billingAccount: "AAAA\x1b[31m-BBBB", imageSource: "ghcr.io/ev\x1bil"},
+		w: &b, projectName: initProjectName, gcpProject: initProject}
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RegistryHost: "us-east5-docker.pkg.dev/" + initProject,
+		BaseImages: map[string]string{"go": "evil.example/\x1b[1mx:1", "web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+	e := &initEngine{r: r, lc: lc, adminsRead: true, images: &imagesStage{}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket,
+		Launchers: []string{"user:a\x1b[31m@example.com", "domain:example.com"}}}
+	e.images.e = e
+	e.previewed = []initflow.StageResult{{Name: initflow.Images, State: initflow.Todo}}
+	e.reviewScreen(t.Context(), "test")
+	out := b.String()
+	if strings.Contains(out, "\x1b") {
+		t.Fatalf("an escape sequence reached the screen:\n%q", out)
+	}
+	for _, want := range []string{"WARNING: launchers lists domain:example.com", "base image go: ", "OUTSIDE this project's registry", "billing account:", "image source: ghcr.io/ev"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "base image web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3 (OUTSIDE") {
+		t.Errorf("the project's own base image is flagged:\n%s", out)
+	}
+}
+
+// The first Cloud Build's confirmation is never on the covered path: the
+// function that offers it uses askTyped and never the run confirmation.
+func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
+	b, err := os.ReadFile("init.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "func (r *initRun) buildImages(")
+	if i < 0 {
+		t.Fatal("buildImages not found")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+	if !strings.Contains(body, "r.askTyped(") {
+		t.Error("buildImages no longer asks the typed confirmation")
+	}
+	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
+		if strings.Contains(body, bad) {
+			t.Errorf("buildImages uses %s", bad)
+		}
+	}
+	img, _ := os.ReadFile("image.go")
+	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers"} {
+		if strings.Contains(string(img), bad) {
+			t.Errorf("image.go uses %s", bad)
+		}
 	}
 }

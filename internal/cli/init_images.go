@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
@@ -540,4 +541,23 @@ func (s *imagesStage) reviewLine(ctx context.Context) string {
 		}
 	}
 	return fmt.Sprintf("images:         copy %s (%.1f MB, about $%.2f/month)", strings.Join(names, ", "), float64(bytes)/1e6, float64(bytes)/1e9*storagePerGBMonth)
+}
+
+// sourceLine is where the images come from and whether their digests are
+// pinned, for the review screen (before the typed name): the release tag in
+// the source registry is the trust anchor unless --expect-digest pins it.
+func (s *imagesStage) sourceLine(ctx context.Context) string {
+	items, _, err := s.items(ctx)
+	expect, _ := parseExpectDigests(s.e.r.o.expectDigests)
+	var unpinned []string
+	for _, it := range items {
+		if expect[it.key()] == "" {
+			unpinned = append(unpinned, it.key())
+		}
+	}
+	src := pluginwire.Printable(s.allow()[0])
+	if err != nil || len(unpinned) > 0 {
+		return fmt.Sprintf("image source: %s, the release tag as it resolves now; NOT pinned with --expect-digest: %s", src, pluginwire.Printable(unpinnedText(unpinned)))
+	}
+	return "image source: " + src + "; every image is pinned with --expect-digest"
 }

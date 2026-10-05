@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // Both names are in every job's environment, and the GCP ID is never
@@ -215,5 +216,35 @@ func TestReadProjectMarker(t *testing.T) {
 	}
 	if m, err := ReadProjectMarker(ctx, newCloud(t).c, "", testProjectNumber); m != nil || err != nil {
 		t.Fatalf("no bucket name: %v, %v", m, err)
+	}
+}
+
+// The names the one-confirmation allowlist trusts are the ones the code
+// produces.
+func TestCoverNamesAreTheCodes(t *testing.T) {
+	has := func(l []string, v string) bool {
+		for _, x := range l {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range []string{RoleLauncher, RoleJobRunner, RoleBuildSubmitter, RoleTagMover, MinterRoleID, "fugaroHistory"} {
+		if !has(tf.FugaroRoles, r) {
+			t.Errorf("role %s is not in tf.FugaroRoles", r)
+		}
+	}
+	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID} {
+		if !has(tf.FugaroAccounts, a) {
+			t.Errorf("account %s is not in tf.FugaroAccounts", a)
+		}
+	}
+	c := tf.Cover{Projects: []string{"proj-1"}}
+	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
+		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
+			Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + id + "@proj-1.iam.gserviceaccount.com", "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}); len(c.NotCovered(p)) != 0 {
+			t.Errorf("%s: %v", id, c.NotCovered(p))
+		}
 	}
 }

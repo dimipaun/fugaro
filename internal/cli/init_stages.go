@@ -41,6 +41,7 @@ type initEngine struct {
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
 	admins     []string        // the GCP project's owners and editors, read once for the review (init_review.go)
 	adminsRead bool
+	fpChecked  string // "", "yes" or "no": the Firebase project's verification, once
 	defaulted  string // the member a new config's launchers and operators defaulted to (init_members.go)
 	adopted    string // set when the installation stage adopted an existing installation instead of applying
 
@@ -119,7 +120,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
-	e.r.review = &runReview{cover: e.cover, owner: e.owner, screen: e.reviewScreen}
+	e.r.review = &runReview{cover: e.cover, firebase: e.firebaseVerified, owner: e.owner, screen: e.reviewScreen}
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}
