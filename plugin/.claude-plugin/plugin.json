@@ -1,6 +1,6 @@
 {
   "name": "fugaro",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Skills for Fugaro: set a repository up (fugaro.yaml and its image), decide cloud versus local, work with runs (launch, status, logs, diagnose, follow up a pull request), and plan work in parallel.",
   "author": { "name": "Dimi Paun" },
   "repository": "https://github.com/dimipaun/fugaro",
