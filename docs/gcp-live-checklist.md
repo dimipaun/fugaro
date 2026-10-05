@@ -518,6 +518,8 @@ M9d merged with **no live apply**. Everything below is the live bring-up of the 
 | A19 | A rerun changes nothing (no `updateTime` movement), and a final document is not rewritten without `--force` | Step 5; after D+2, run `--day D` again: "final, kept" | A moving `updateTime` means the equality check misses a field: harmless churn, fix `Roller` |
 | A20 | The job's rollover reads RTDB with the history account (`firebasedatabase.admin`) and a day it prunes was read back equal | Step 7's before/after snapshots | Any difference in a protected node: pause the Scheduler job and report it as a bug (the pruned day's data is in Firestore; caps and kill switches can be set again with `fugaro budget set`/`kill`) |
 
+**Run of 2026-10-05 on `fugaro-dev` (steps 1b, 4 and 5; the rest is open).** The database, deny-all rules, mark and root collection (`meta`) were read back earlier the same day (steps 2 and 3 passed on the dogfood installation). Day 2026-10-04 (the only day in the budget database) was rolled over by hand with `gcloud run jobs execute fugarohist ... --args=budget,history,--rollover,--day,2026-10-04 --wait` after a read-only snapshot: first run 14 s, `1 written, 0 unchanged, provisional, 0 days pruned, 0 failed`, one `spendDaily` document; second run `0 written, 1 unchanged` with an identical `updateTime`; the RTDB config, kill, caps, spend day and agents nodes were byte-identical before and after. Confirms A2, A16, A18 (duration) and A19. Still open: the final day and the prune (step 7), the Scheduler job's 00:30 execution args (A4, step 8) and resuming the job (step 9); the job stays PAUSED.
+
 **Results template**
 
 | Item | Result |
