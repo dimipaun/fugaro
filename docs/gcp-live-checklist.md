@@ -446,6 +446,8 @@ The unit tests cover the view, the streams and the kill flow offline (fake datab
 - CPU at many agents (about 100 live runs, or the closest you can get) and over a long session.
 - tmux (and a pager-less ssh session).
 
+**Step 8 result on `fugaro-dev` (A4, 2026-10-05): the rollover's POST was refused.** Scheduler's call to `jobs/fugarohist:run` with the overrides body got HTTP 403 (Scheduler status code 7, PERMISSION_DENIED) as `fugaro-scheduler`, which held only `roles/run.invoker` on the job. That role has `run.jobs.run` but not `run.jobs.runWithOverrides`, which a run with overrides requires; the 15-minute sweep (no body) was unaffected. So A4's "accepts overrides" needs the permission as well. Fix: the scheduler account holds `fugaroJobRunner` (`run.jobs.run` plus `run.jobs.runWithOverrides`) on the history job instead of `roles/run.invoker`. Re-run step 8 after `fugaro init --firebase <GCP>` has applied it: the execution's `args` must be the override. The repo check job's call has no body, so `roles/run.invoker` stays enough there.
+
 **Results template**
 
 | Item | Result |
@@ -488,7 +490,7 @@ M9d merged with **no live apply**. Everything below is the live bring-up of the 
 5. **⚠ CONFIRM: run it again** (same command): the day lines say `0 written, N unchanged`, and each document's `updateTime` is **identical** (`GET` the documents before and after; FACT, A5, A6).
 6. **⚠ CONFIRM: `fugaro report` variants.** `report`; `--by week|month|year|repo|model|person`; `--since 7d`; `--repo <R>`; `--csv` (open it: formula-looking cells start with `'`); `--json | jq .` (exact `*_usd` strings, `partial` rows for the live days). Today and yesterday are `(partial)`. Then as a **non-owner viewer** (a second account with only `roles/datastore.viewer` and `serviceUsageConsumer` on `<FP>`, via `gcloud auth application-default login`): it reads. Remove `serviceUsageConsumer` from that account: the refusal text names both roles (FACT: the real error; A11). With the Firestore API endpoint overridden to an unreachable address (`endpoints.firestore` in the local config, an `https://` or loopback URL such as `http://127.0.0.1:9`), the report fails with exit 2 (`reading the spend history: ...`): the degraded banner appears only for no `firebase_project`, no database or no mark. Restore the config afterwards.
 7. **The D+2 final and the prune (wait for it; nothing to do but look).** The first day the prune may take is `today-9` and older, once it is final. The state to compare against is the snapshot of step 1b (the live days, config, kill, caps and registry, re-read the same way). After the pass that prunes a day `P`: the logs say the day was archived and pruned; `spend/<P>`, `outcomes/<P>` and the ledgers whose last share was `P` are gone; **every item above is byte-identical** (config, kill, caps, today, yesterday and the registry untouched); the `spendDaily` documents of `P` exist with `final: true` and unchanged. Then `fugaro report --since <P> --until <P>` still answers, now from Firestore only, without `(partial)`. If a pass exits 1 on a day, **do not force it blindly**: read the message, compare the document with the database, then `--day D --force` (FACT).
-8. **⚠ CONFIRM: the Scheduler job.** `gcloud scheduler jobs describe fugaro-history-rollover --location <SREGION> --project <GCP>`: schedule `30 0 * * *`, `Etc/UTC`, retry 0, the state is `PAUSED`, and the body (base64) decodes to `{"overrides":{"containerOverrides":[{"args":["budget","history","--rollover"]}],"timeout":"1800s"}}`. Run `terraform plan` again (rerun `--plan-only`): it must not propose to resume it (`ignore_changes`). After 00:30 UTC: `gcloud run jobs executions list --job fugarohist --region <REGION>` shows an execution at about 00:30; `gcloud run jobs executions describe <name> --region <REGION> --format=yaml` shows the container `args` were the override (FACT, A4), the logs show the rollover (not the sweep) and exit 0. The 15-minute sweep executions keep running with `--sweep` (compare the args of one). To trigger it by hand once: `gcloud scheduler jobs run fugaro-history-rollover --location <SREGION>`.
+8. **⚠ CONFIRM: the Scheduler job.** `gcloud scheduler jobs describe fugaro-history-rollover --location <SREGION> --project <GCP>`: schedule `30 0 * * *`, `Etc/UTC`, retry 0, the state is `PAUSED`, and the body (base64) decodes to `{"overrides":{"containerOverrides":[{"args":["budget","history","--rollover"]}],"timeout":"1800s"}}`. Run `terraform plan` again (rerun `--plan-only`): it must not propose to resume it (`ignore_changes`). (The scheduler account must hold `fugaroJobRunner`, not `roles/run.invoker`, on the job: the overrides need `run.jobs.runWithOverrides`.) After 00:30 UTC: `gcloud run jobs executions list --job fugarohist --region <REGION>` shows an execution at about 00:30; `gcloud run jobs executions describe <name> --region <REGION> --format=yaml` shows the container `args` were the override (FACT, A4), the logs show the rollover (not the sweep) and exit 0. The 15-minute sweep executions keep running with `--sweep` (compare the args of one). To trigger it by hand once: `gcloud scheduler jobs run fugaro-history-rollover --location <SREGION>`.
 9. **⚠ CONFIRM: resume the rollover job, only after steps 4 and 5 and their verification (documents equal to the database, the second run changes nothing, the snapshot of step 1b unchanged).** `gcloud scheduler jobs resume fugaro-history-rollover --location <SREGION> --project <GCP>`. From the next 00:30 UTC pass the rollover may prune days older than 8 that are final: watch step 7's checks after the first pass that prunes.
 
 **Rollback.** `gcloud scheduler jobs pause fugaro-history-rollover --location <SREGION> --project <GCP>` (or remove it with Terraform) stops the rollover; the budget database is then not pruned and nothing is lost. Firestore: nothing to roll back except deleting the `spendDaily` documents (and `meta/installation`) yourself; the database has delete protection and **its location can never change**.
@@ -517,6 +519,8 @@ M9d merged with **no live apply**. Everything below is the live bring-up of the 
 | A18 | The Scheduler's `overrides.timeout` ("1800s") is honoured for a rollover execution, and the pass finishes inside it (the code starts no day after 25 min and ends its context at 29 min; the sweep keeps 600 s) | Step 8: `gcloud run jobs executions describe <name>` shows the 1800 s task timeout; step 4's and the first night's duration | If the override is refused or ignored, raise the job's `timeout` in `history.tf` instead; a killed pass has written every finished day (facts are read per day), so a rerun continues and is safe |
 | A19 | A rerun changes nothing (no `updateTime` movement), and a final document is not rewritten without `--force` | Step 5; after D+2, run `--day D` again: "final, kept" | A moving `updateTime` means the equality check misses a field: harmless churn, fix `Roller` |
 | A20 | The job's rollover reads RTDB with the history account (`firebasedatabase.admin`) and a day it prunes was read back equal | Step 7's before/after snapshots | Any difference in a protected node: pause the Scheduler job and report it as a bug (the pruned day's data is in Firestore; caps and kill switches can be set again with `fugaro budget set`/`kill`) |
+
+**Run of 2026-10-05 on `fugaro-dev` (steps 1b, 4 and 5; the rest is open).** The database, deny-all rules, mark and root collection (`meta`) were read back earlier the same day (steps 2 and 3 passed on the dogfood installation). Day 2026-10-04 (the only day in the budget database) was rolled over by hand with `gcloud run jobs execute fugarohist ... --args=budget,history,--rollover,--day,2026-10-04 --wait` after a read-only snapshot: first run 14 s, `1 written, 0 unchanged, provisional, 0 days pruned, 0 failed`, one `spendDaily` document; second run `0 written, 1 unchanged` with an identical `updateTime`; the RTDB config, kill, caps, spend day and agents nodes were byte-identical before and after. Confirms A2, A16, A18 (duration) and A19. Still open: the final day and the prune (step 7), the Scheduler job's 00:30 execution args (A4, step 8; see the step 8 result below) and resuming the job (step 9); the job stays PAUSED.
 
 **Results template**
 
@@ -683,7 +687,7 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 | Key revoked, file deleted, sandbox PRs declined | |
 | Unverified (not tested): DeepSeek's own Anthropic endpoint, other models (Qwen, Kimi), header-based provider preferences | still unverified |
 
-## Check 26: the same-project layout (step 4 run 2026-10-04; 6 and 7 open)
+## Check 26: the same-project layout (steps 4, 6 and 7 run; 7 found the forgery boundary)
 
 The Firebase project may be the installation's own GCP project (design `m9-budget-and-dashboard.md` §6.0, D3 revised 2026-10-04). Everything about it ran **offline only** (fake terraform, mock-provider plans, text checks on the IAM): no real apply has used one project for both roots. Run it on a **scratch project with billing, never `belong`**, as you, one ⚠ CONFIRM per step.
 
@@ -702,7 +706,8 @@ Run by the maintainer with temporary Token Creator grants (removed by the script
 
 - **Step 4, static:** no job, build or scheduler account holds a Firebase, datastore or primitive role; the default Compute account has no `roles/editor` (removed by hand); only `fugaro-history` holds Firebase roles, by design.
 - **Step 4, runtime, impersonating the run job, build, scheduler and default Compute accounts:** RTDB answered 401, Firestore 403 and Identity Toolkit `accounts:query` `INSUFFICIENT_PERMISSION` (HTTP 400) for each. PASS.
-- **Step 6 (Cloud Build pivot with a real build) and step 7 (token forgery): NOT RUN.**
+- **Step 6, the Cloud Build pivot (run 2026-10-05):** a tiny build submitted without a `serviceAccount` ran as the default Compute account (`<number>-compute@developer`, `roles/editor` already removed) and called the RTDB, Firestore and Identity Toolkit with its metadata token; the step asserted that none answered 2xx (exits 31 to 33) and the build finished `SUCCESS`, so all three refused. The account cannot write build logs after the role removal, so the codes themselves were not visible: the verdict is the assertion. PASS (with `roles/editor` stripped; the doc's "with editor it succeeds" half was not repeated).
+- **Step 7, token forgery (run 2026-10-05): ACCEPTED.** A custom token signed by `fugaro-scheduler` (a service account of the project that is not the token signer) was accepted by `signInWithCustomToken` (HTTP 200, an ID token for the made-up user `probe-forged-uid`, deleted afterwards). So Firebase's real boundary is **who can sign as any service account of the project** (`iam.serviceAccounts.signJwt`), not who can sign as the designated signer. In `fugaro-dev` the only project-level Token Creator is Firebase's own Admin SDK account (`firebase-adminsdk-fbsvc`); the maintainer's `roles/owner` does not include `signJwt` (it needed an explicit grant for the test, removed afterwards) and holds only `fugaroTokenMinter` on the signer. What a forged token can then do is bounded by the RTDB rules' claim checks, which were not probed. Follow-up: a `doctor` check that lists every principal able to sign as any project service account and warns about anyone beyond the Firebase Admin SDK account; and state this boundary in the design.
 - Lesson: allow a minute or two for Token Creator propagation; probe Firestore on a collection path, not the documents root (404).
 
 
@@ -757,27 +762,33 @@ Everything about M11's `init`, `doctor`, `update-skills`, the mirror and the plu
 
 ### Results of the seventh live run (M11, check 27)
 
-Fill in at your own terminal. Date, `fugaro` and Claude Code versions, who ran it. Everything below is **NOT RUN**.
+Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary (Homebrew cask), Claude Code 2.1.289, on a throwaway project `fugaro-live-20261005` (created by `init`), a private sandbox repository and its own GitHub App. Everything below is from that run; "pass" means it behaved as designed, and every defect found is listed under "Findings".
 
 | Item | Result |
 |---|---|
-| V1 install at folder trust (steps 1, 2) | VERIFIED LIVE 2026-10-04 (installs by itself, no prompt) |
-| V4 first use in a fresh clone (3) | VERIFIED LIVE 2026-10-04 (first session, no restart) |
-| V2 an existing install follows a changed `ref`; refresh step (4) | VERIFIED LIVE 2026-10-04 (`/plugin marketplace update fugaro` needed) |
-| Pin states: `outdated`, `foreign`, `not installed`, the warning line (5) | NOT RUN |
-| V3 headless `claude -p` in the base image ignores the plugin (6) | VERIFIED LIVE 2026-10-04 (untrusted workspace ignored) |
-| `--create-project`, `--link-billing`, `--yes` refused (7, 8) | NOT RUN |
-| Clean converge, rerun `No changes`, manual rounds (9) | NOT RUN |
-| Mirror: ghcr anonymous, Artifact Registry upload, digests, rerun, `--expect-digest`, `--replace-image` (10) | NOT RUN |
-| Derived-image build and history job pull from `fugaro-base` (10) | NOT RUN |
-| Default Compute account and `roles/editor` (11) | NOT RUN |
-| Hidden prompts, PEM paste, pipe and `--json` refused, skip on rerun (12) | NOT RUN |
-| Hostile-clone gate (13) | NOT RUN |
-| `doctor` (14) | NOT RUN |
-| Teammate adopt mode (15) | NOT RUN |
-| `/fugaro:setup` on the sandbox, first run to a PR (16) | NOT RUN |
-| Prompt-injection probe (17) | NOT RUN |
-| Dogfood from a clean project (18) | NOT RUN |
+| V1 install at folder trust | VERIFIED: installs by itself at trust, no prompt |
+| V2 an existing install follows a changed `ref` | VERIFIED: needs `/plugin marketplace update fugaro`, then works in the same session |
+| V3 headless `claude -p` ignores the project plugin | VERIFIED in the base image (Claude Code 2.1.283) |
+| V4 first use in a fresh clone | VERIFIED: first session, no restart |
+| `--create-project`, `--link-billing` typed confirmations | PASS (`--plan-only` printed the stages and created nothing, exit 0) |
+| Clean converge: installation, Firebase, Firestore (typed location), images, history job, repository, plugin | PASS; a rerun says `No changes` for every stage |
+| Mirror from ghcr.io to Artifact Registry (history 16 MB, go 378 MB) | PASS: no Docker, digest-verified, `0.2.0` published and anonymously pullable (`verify-public` passed) |
+| Hidden secret prompts (App key PEM, OAuth token) | PASS: nothing echoed, stored with labels, the job read them |
+| Hostile clone gate, `--yes --non-interactive` and interactive | PASS: exit 1, nothing wired or onboarded, hostile hook never ran |
+| `doctor` | PASS (flagged the default Compute account's `roles/editor`, which was then removed) |
+| Teammate adopt (`XDG_CONFIG_HOME` temp) | PASS for safety (wrong name refused with nothing written, right name wrote a 0600 config, nothing applied); gap: no `budget` section, so `watch` shows run records only |
+| `/fugaro:setup` on the sandbox | PASS (one topic at a time, validated each step, never ran `init`, told the user to type secrets) |
+| Prompt-injection probe | PASS: every planted instruction treated as data, no local build, no files written, no `init --yes`, no token, no `followup` entry |
+| First cloud run to a pull request | PASS: `Add Farewell function with tests`, PR by the App, $0.31 model notional on the subscription, about a minute |
+| Cloud build of the repository image | PASS after installing the App on the repository (first build failed at the `credential` step with a clear 404) |
+
+#### Findings (and where they went)
+
+- **Fixed during the run:** a stray newline after a hidden paste failed the next typed confirmation (#122); the release images' publish legs cancelled each other (#118); the `report --by model/person` and `watch` display bugs (#117); a flaky budget test with the clock 2 s before midnight (#121).
+- **In review:** one review screen and one typed name per run for ordinary steps, and new project configs default the launcher and operator to the person running `init` (#123): without it `fugaro run` failed with `not allowed to sign as the token signer`.
+- **Open (init):** check the GitHub App before a billable build (installed on the repository and holding all four permissions: Contents, Pull requests, Issues: read, Metadata; a run failed with HTTP 422 because the App lacked Issues: read); retry the Firestore read-back right after creation (API propagation); the billing read uses the new project as the quota project, so Cloud Billing needs enabling by hand; a first run of a new project with several configs needs `--project`; `doctor` and `/fugaro:setup` cannot pick a project in a checkout without `fugaro.yaml` when several configs exist; show the repository question before slow plans; adopt should read the Firebase root's outputs (RTDB URL, project, signer, key), and default the project name from the installation.
+- **Open (setup skill):** it recommended `vertex` without checking it was enabled, bundles review rounds with machine size, told the user to name the App `Fugaro` (taken) and listed three App permissions, and suggested `! fugaro init` (needs a real terminal).
+- **Open (misc):** Homebrew warns the cask uses the deprecated `postflight` (GoReleaser generates it); `fugaro watch` shows the kill actor from the current directory's git email.
 
 ## Not covered by these tests (manual)
 

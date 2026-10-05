@@ -141,15 +141,17 @@ resource "google_cloud_run_v2_job" "history" {
   depends_on = [google_project_iam_member.history_launcher]
 }
 
-# roles/run.invoker holds run.jobs.run, which Scheduler's call needs, on
-# this job only.
-resource "google_cloud_run_v2_job_iam_member" "history_invoker" {
+# fugaroJobRunner (run.jobs.run and run.jobs.runWithOverrides) on this job
+# only. The sweep needs run.jobs.run; the rollover's body carries overrides,
+# which also need run.jobs.runWithOverrides, and roles/run.invoker lacks it
+# (live: Cloud Run answered 403 to the rollover, Check 23 step 8).
+resource "google_cloud_run_v2_job_iam_member" "history_runner" {
   count = local.deploy_history ? 1 : 0
 
   project  = var.project
   location = google_cloud_run_v2_job.history[0].location
   name     = google_cloud_run_v2_job.history[0].name
-  role     = "roles/run.invoker"
+  role     = google_project_iam_custom_role.job_runner.name
   member   = google_service_account.scheduler.member
 }
 
@@ -193,13 +195,14 @@ resource "google_cloud_scheduler_job" "history_sweep" {
     }
   }
 
-  depends_on = [google_cloud_run_v2_job_iam_member.history_invoker]
+  depends_on = [google_cloud_run_v2_job_iam_member.history_runner]
 }
 
 # The rollover, once a day at 00:30 UTC (M9d H7): the same Cloud Run job, run
 # with its args replaced by --rollover through the run API's overrides. The
 # sweep stays liveness only. Unverified assumption A4: that jobs.run accepts
-# overrides.containerOverrides[].args; the test asserts exactly this body, and
+# overrides.containerOverrides[].args (confirmed once the scheduler held
+# runWithOverrides; with run.invoker alone it is a 403); the test asserts exactly this body, and
 # the live runbook proves it. Overrides replace the container's args whole,
 # so they repeat "budget history". overrides.timeout gives this execution
 # 1800s (the first pass reads a whole window of run records); the sweep keeps
@@ -246,5 +249,5 @@ resource "google_cloud_scheduler_job" "history_rollover" {
     }
   }
 
-  depends_on = [google_cloud_run_v2_job_iam_member.history_invoker]
+  depends_on = [google_cloud_run_v2_job_iam_member.history_runner]
 }

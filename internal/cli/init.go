@@ -868,11 +868,20 @@ func (r *initRun) ask(what string) (bool, error) {
 // the project's name.
 func (r *initRun) typed(prompt string) (bool, error) {
 	fmt.Fprint(r.w, prompt)
-	line, err := r.in.ReadString('\n')
-	if err != nil && !errors.Is(err, io.EOF) {
-		return false, userErr("reading the confirmation: %v", err)
+	// A blank line is never an answer, but a stray newline is common right
+	// after a hidden paste (a pasted secret plus Enter leaves one in the
+	// terminal's input): skip up to three of them instead of failing a
+	// confirmation the person is typing correctly. Only the exact project
+	// name confirms.
+	for blanks := 0; ; blanks++ {
+		line, err := r.in.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return false, userErr("reading the confirmation: %v", err)
+		}
+		if answer := strings.TrimSpace(line); answer != "" || err != nil || blanks >= 3 {
+			return answer == r.projectName, nil
+		}
 	}
-	return strings.TrimSpace(line) == r.projectName, nil
 }
 
 // askTyped is the confirmation of a step that is money or permanent
