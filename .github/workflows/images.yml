@@ -188,11 +188,14 @@ jobs:
   publish:
     needs: [version, base, history]
     if: needs.version.outputs.publish == 'true'
-    # Publishes queue rather than race: move_major is decided from the tags
-    # present when the version job ran, so two close tag pushes in one major
-    # must push in order or :<major> could end on the older one.
+    # Publishes of one image queue rather than race: move_major is decided
+    # from the tags present when the version job ran, so two close tag pushes
+    # in one major must push in order or :<major> could end on the older one.
+    # The group is per image: GitHub keeps one PENDING job per group and
+    # cancels the others, so a single shared group cancelled two of the four
+    # matrix legs of the v0.2.0 release.
     concurrency:
-      group: images-publish
+      group: images-publish-${{ matrix.base }}
       cancel-in-progress: false
     permissions:
       contents: read
