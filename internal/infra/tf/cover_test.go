@@ -87,7 +87,7 @@ func TestCoverNotCovered(t *testing.T) {
 	}{
 		"additive known plan": {[]ResourceChange{sa, role, bucket(nil), job("us-east5-docker.pkg.dev/proj-1/fugaro-base/history:latest", []any{"/usr/local/bin/fugaro"}, []any{"budget", "history", "--sweep"}), sched(okURI, "fugaro-scheduler@proj-1.iam.gserviceaccount.com"),
 			rc("google_logging_project_sink", map[string]any{"destination": "logging.googleapis.com/projects/proj-1/locations/global/buckets/fugaro"}, map[string]any{}, "create"),
-			grant("google_project_iam_member", "user:me@example.com", "roles/storage.objectUser"),
+			grant("google_project_iam_member", "user:me@example.com", "roles/datastore.viewer"),
 			grant("google_project_iam_member", "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com", "roles/datastore.user"),
 			grant("google_project_iam_member", "serviceAccount:fugaro-b-acme-0123abcd@proj-1.iam.gserviceaccount.com", "roles/logging.logWriter"),
 			grant("google_project_iam_member", "group:ops@example.com", "projects/proj-1/roles/fugaroLauncher"),
@@ -117,8 +117,8 @@ func TestCoverNotCovered(t *testing.T) {
 		"bucket without uniform access":   {[]ResourceChange{bucket(map[string]any{"uniform_bucket_level_access": false})}, false},
 		"bucket attributes missing":       {[]ResourceChange{rc("google_storage_bucket", nil, nil, "create")}, false},
 		"resource in another project":     {[]ResourceChange{rc("google_secret_manager_secret", map[string]any{"project": "other"}, map[string]any{}, "create")}, false},
-		"grant on another bucket":         {[]ResourceChange{rc("google_storage_bucket_iam_member", map[string]any{"bucket": "evil-bucket", "member": "user:me@example.com", "role": "roles/storage.objectUser"}, map[string]any{}, "create")}, false},
-		"grant on the runs bucket":        {[]ResourceChange{rc("google_storage_bucket_iam_member", map[string]any{"bucket": "fugaro-runs-proj-1", "member": "user:me@example.com", "role": "roles/storage.objectUser"}, map[string]any{}, "create")}, true},
+		"grant on another bucket":         {[]ResourceChange{rc("google_storage_bucket_iam_member", map[string]any{"bucket": "evil-bucket", "member": "user:me@example.com", "role": "roles/storage.objectAdmin"}, map[string]any{}, "create")}, false},
+		"grant on the runs bucket":        {[]ResourceChange{rc("google_storage_bucket_iam_member", map[string]any{"bucket": "fugaro-runs-proj-1", "member": "user:me@example.com", "role": "roles/storage.objectAdmin"}, map[string]any{}, "create")}, true},
 		"grant on a foreign registry":     {[]ResourceChange{rc("google_artifact_registry_repository_iam_member", map[string]any{"repository": "prod-images", "member": "user:me@example.com", "role": "roles/artifactregistry.reader"}, map[string]any{}, "create")}, false},
 		"billing budget not shown":        {[]ResourceChange{rc("google_billing_budget", map[string]any{"billing_account": "billingAccounts/ZZZZ-ZZZZ"}, map[string]any{}, "create")}, false},
 		"billing budget shown":            {[]ResourceChange{rc("google_billing_budget", map[string]any{"billing_account": "billingAccounts/AAAA-BBBB"}, map[string]any{}, "create")}, true},
@@ -127,11 +127,11 @@ func TestCoverNotCovered(t *testing.T) {
 		"import of another project":       {[]ResourceChange{{Address: "a.google_storage_bucket.x", Type: "google_storage_bucket", Change: Change{Actions: []string{"no-op"}, Importing: &Importing{ID: "other/fugaro-runs"}, After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}}}}, false},
 		"import of this project": {[]ResourceChange{{Address: "a.google_storage_bucket.x", Type: "google_storage_bucket", Change: Change{Actions: []string{"update"}, Importing: &Importing{ID: "proj-1/fugaro-runs-proj-1"},
 			After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}}}}, true},
-		"domain member, even listed":            {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/storage.objectUser")}, false},
-		"allUsers, even listed":                 {[]ResourceChange{grant("google_project_iam_member", "allUsers", "roles/storage.objectUser")}, false},
-		"a custom role of the firebase project": {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "projects/fp-2/roles/fugaroTokenMinter")}, true},
+		"domain member, even listed":            {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/datastore.viewer")}, false},
+		"allUsers, even listed":                 {[]ResourceChange{grant("google_project_iam_member", "allUsers", "roles/datastore.viewer")}, false},
+		"a custom role of the firebase project": {[]ResourceChange{grant("google_service_account_iam_member", "user:me@example.com", "projects/fp-2/roles/fugaroTokenMinter")}, true},
 		"a custom role by a made-up name":       {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "projects/proj-1/roles/fugaroEverything")}, false},
-		"a made-up fugaro account":              {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:fugaro-evil@proj-1.iam.gserviceaccount.com", "roles/storage.objectUser")}, false},
+		"a made-up fugaro account":              {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:fugaro-evil@proj-1.iam.gserviceaccount.com", "roles/logging.logWriter")}, false},
 		"computed member from another module's account": {[]ResourceChange{
 			{Address: "module.a.google_service_account.s", Type: "google_service_account", Change: Change{Actions: []string{"create"}, After: map[string]any{}, AfterUnknown: map[string]any{}}},
 			{Address: "module.b.google_project_iam_member.m", Type: "google_project_iam_member", Change: Change{Actions: []string{"create"}, After: map[string]any{"role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{"member": true}}}}, false},
@@ -152,10 +152,10 @@ func TestCoverNotCovered(t *testing.T) {
 		"unknown resource type":            {[]ResourceChange{rc("google_compute_instance", nil, nil, "create")}, false},
 		"allUsers":                         {[]ResourceChange{grant("google_storage_bucket_iam_member", "allUsers", "roles/storage.objectViewer")}, false},
 		"allAuthenticatedUsers":            {[]ResourceChange{grant("google_storage_bucket_iam_member", "allAuthenticatedUsers", "roles/storage.objectViewer")}, false},
-		"domain member":                    {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/storage.objectViewer")}, false},
-		"member not on the screen":         {[]ResourceChange{grant("google_project_iam_member", "user:eve@example.com", "roles/storage.objectUser")}, false},
-		"another project's account":        {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:fugaro-x@other.iam.gserviceaccount.com", "roles/storage.objectUser")}, false},
-		"a non-fugaro account":             {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:evil@proj-1.iam.gserviceaccount.com", "roles/storage.objectUser")}, false},
+		"domain member":                    {[]ResourceChange{grant("google_project_iam_member", "domain:example.com", "roles/datastore.viewer")}, false},
+		"member not on the screen":         {[]ResourceChange{grant("google_project_iam_member", "user:eve@example.com", "roles/datastore.viewer")}, false},
+		"another project's account":        {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:fugaro-x@other.iam.gserviceaccount.com", "roles/logging.logWriter")}, false},
+		"a non-fugaro account":             {[]ResourceChange{grant("google_project_iam_member", "serviceAccount:evil@proj-1.iam.gserviceaccount.com", "roles/logging.logWriter")}, false},
 		"owner to a listed member":         {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/owner")}, false},
 		"editor":                           {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/editor")}, false},
 		"securityAdmin":                    {[]ResourceChange{grant("google_project_iam_member", "user:me@example.com", "roles/iam.securityAdmin")}, false},
@@ -298,6 +298,8 @@ func jobWithSpec(spec string, unknownValue bool) ResourceChange {
 		map[string]any{"template": []any{map[string]any{"template": []any{map[string]any{"containers": []any{unk}}}}}}, "create")
 }
 
+const okBuild = "fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com"
+
 func TestCoverCheckSpec(t *testing.T) {
 	const reg = "us-east5-docker.pkg.dev/proj-1/"
 	spec := func(registry string, bases ...string) string {
@@ -305,7 +307,7 @@ func TestCoverCheckSpec(t *testing.T) {
 		for i, r := range bases {
 			b[string(rune('a'+i))] = r
 		}
-		m := map[string]any{"repo": "acme/webapp", "registry": registry, "base_images": b}
+		m := map[string]any{"repo": "acme/webapp", "registry": registry, "build_service_account": okBuild, "base_images": b}
 		out, _ := json.Marshal(m)
 		return string(out)
 	}
@@ -336,12 +338,12 @@ func TestCoverCheckSpec(t *testing.T) {
 		"base image with dot-dot":                         {jobWithSpec(spec(reg+"r", reg+"../other/web:1"), false), false},
 		"not json":                                        {jobWithSpec("registry="+reg, false), false},
 		"json that is not an object":                      {jobWithSpec(`["`+reg+`"]`, false), false},
-		"registry not a string":                           {jobWithSpec(`{"registry":7}`, false), false},
-		"base_images not an object":                       {jobWithSpec(`{"registry":"`+reg+`r","base_images":["x"]}`, false), false},
-		"base image not a string":                         {jobWithSpec(`{"registry":"`+reg+`r","base_images":{"a":5}}`, false), false},
-		"case-folded duplicate key, as the job parses it": {jobWithSpec(`{"registry":"`+reg+`r","Registry":"evil.example/x"}`, false), false},
-		"duplicate key, last wins":                        {jobWithSpec(`{"registry":"evil.example/x","registry":"`+reg+`r"}`, false), true},
-		"null base images":                                {jobWithSpec(`{"registry":"`+reg+`r","base_images":null}`, false), true},
+		"registry not a string":                           {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":7}`, false), false},
+		"base_images not an object":                       {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"`+reg+`r","base_images":["x"]}`, false), false},
+		"base image not a string":                         {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"`+reg+`r","base_images":{"a":5}}`, false), false},
+		"case-folded duplicate key, as the job parses it": {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"`+reg+`r","Registry":"evil.example/x"}`, false), false},
+		"duplicate key, last wins":                        {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x","registry":"`+reg+`r"}`, false), true},
+		"null base images":                                {jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"`+reg+`r","base_images":null}`, false), true},
 		"spec unknown":                                    {jobWithSpec("", true), false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -354,9 +356,9 @@ func TestCoverCheckSpec(t *testing.T) {
 
 // Two FUGARO_CHECK_SPEC entries are both read, and a spec on any job counts.
 func TestCoverCheckSpecEveryEntry(t *testing.T) {
-	j := jobWithSpec(`{"registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
+	j := jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
 	cs := j.Change.After["template"].([]any)[0].(map[string]any)["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
-	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"registry":"evil.example/x"}`})
+	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x"}`})
 	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}); len(got) == 0 {
 		t.Fatal("a second, foreign FUGARO_CHECK_SPEC is covered")
 	}
@@ -469,7 +471,7 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 		j.Change.AfterUnknown = set(j.Change.AfterUnknown, path)
 		return j
 	}
-	ok := jobWithSpec(`{"registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
+	ok := jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
 	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ok}}); len(got) != 0 {
 		t.Fatalf("baseline not covered: %q", got)
 	}
@@ -487,7 +489,7 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 		"container args":       {"template", 0, "template", 0, "containers", 0, "args"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			j := flag(jobWithSpec(`{"registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false), path...)
+			j := flag(jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false), path...)
 			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}); len(got) == 0 {
 				t.Fatal("covered")
 			}

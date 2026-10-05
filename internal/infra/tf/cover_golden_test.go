@@ -155,3 +155,48 @@ func TestShapeDriftFailsClosed(t *testing.T) {
 		})
 	}
 }
+
+// The Firebase root of a same-project layout (the Firebase project is the
+// installation's own: fugaro-dev style), planned for real: one project, no
+// second one in Cover.Projects, and none of the APIs the installation root
+// enables (skip_apis).
+func TestGoldenSameProjectFirebasePlan(t *testing.T) {
+	p := goldenPlan(t, "firebase-same-project")
+	cover := Cover{Projects: []string{"proj-1234"}, Registry: "us-east5-docker.pkg.dev", Region: "us-east5", Listed: []string{"user:owner@example.com"}}
+	if got := cover.NotCovered(p); len(got) != 0 {
+		t.Fatalf("a real same-project firebase plan is not covered: %q", got)
+	}
+	var members, services int
+	for _, rc := range p.ResourceChanges {
+		if !slices.Equal(rc.Change.Actions, []string{"create"}) {
+			t.Errorf("%s: actions %v, want a fresh create plan", rc.Address, rc.Change.Actions)
+		}
+		if proj := str(rc.Change.After["project"]); proj != "proj-1234" {
+			t.Errorf("%s: project = %q, want the installation's own proj-1234", rc.Address, proj)
+		}
+		switch rc.Type {
+		case "google_project_service":
+			services++
+			if s := str(rc.Change.After["service"]); s == "cloudresourcemanager.googleapis.com" || s == "iam.googleapis.com" {
+				t.Errorf("%s: the Firebase root enables %s, which the installation root owns", rc.Address, s)
+			}
+		case "google_project_iam_member":
+			members++
+			if str(rc.Change.After["member"]) == "" || str(rc.Change.After["role"]) == "" {
+				t.Errorf("%s: member or role is not a plain value", rc.Address)
+			}
+		}
+	}
+	if members < 5 || services < 5 {
+		t.Errorf("only %d iam members and %d services in the plan", members, services)
+	}
+	// The plan is covered only for the run it was made for.
+	for name, c := range map[string]Cover{
+		"the owner not on the review screen": {Projects: cover.Projects, Registry: cover.Registry, Region: cover.Region},
+		"another project":                    {Projects: []string{"other"}, Registry: cover.Registry, Region: cover.Region, Listed: cover.Listed},
+	} {
+		if got := c.NotCovered(p); len(got) == 0 {
+			t.Errorf("covered for %s", name)
+		}
+	}
+}

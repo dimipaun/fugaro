@@ -386,3 +386,39 @@ func TestDoctorTokenSignersProjectNumberUnreadable(t *testing.T) {
 		t.Errorf("summary %q does not say the number was unreadable", c.Problem)
 	}
 }
+
+// A conditional binding that is classed information names its condition, so a
+// temporary grant is not read as a standing one: a conditional owner, a
+// conditional service agent, and a conditional Admin SDK binding.
+func TestDoctorTokenSignersInfoLinesNameTheCondition(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withClassRoles()
+	cond := &gcpfake.IAMCondition{Title: "temp", Expression: "request.time < timestamp('2030-01-01T00:00:00Z')"}
+	agent := "serviceAccount:service-" + dsNum + "@gcp-sa-cloudbuild.iam.gserviceaccount.com"
+	r.iam.AddServiceAccount("proj-1234", "firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com", "adminsdk")
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com"}},
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:temp-owner@example.com"}, Condition: cond},
+		gcpfake.Binding{Role: "roles/cloudbuild.serviceAgent", Members: []string{agent}},
+		gcpfake.Binding{Role: "roles/cloudscheduler.serviceAgent", Members: []string{agent}, Condition: cond},
+		gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"serviceAccount:firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com"}, Condition: &gcpfake.IAMCondition{Title: "", Expression: "resource.name != 'x'"}})
+	o, err := r.doctor(t, "--strict")
+	if err != nil || len(signerChecks(o)) != 0 {
+		t.Fatalf("--strict must stay green: err %v, checks %+v", err, o.Checks)
+	}
+	w, ok := checkByID(o, "token-signers-owners")
+	if !ok || !strings.Contains(w.Problem, "user:temp-owner@example.com (only while temp)") || !strings.Contains(w.Problem, "2 owner(s)") {
+		t.Errorf("owners line %q does not name the owner's condition", w.Problem)
+	}
+	if strings.Contains(w.Problem, "user:owner@example.com (only") {
+		t.Errorf("the unconditional owner is shown as conditional: %q", w.Problem)
+	}
+	g, ok := checkByID(o, "token-signers-google-agents")
+	if !ok || !strings.Contains(g.Problem, "roles/cloudscheduler.serviceAgent (only while temp)") || strings.Contains(g.Problem, "roles/cloudbuild.serviceAgent (only") {
+		t.Errorf("agents line %q does not name the agent's condition", g.Problem)
+	}
+	s, _ := checkByID(o, "token-signers")
+	if !strings.Contains(s.Problem, "firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com (only while resource.name != 'x')") {
+		t.Errorf("summary %q does not name the Admin SDK binding's condition (the expression stands in for an empty title)", s.Problem)
+	}
+}

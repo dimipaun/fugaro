@@ -63,19 +63,22 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	for _, f := range fs {
 		switch {
 		case f.Expected:
-			expected = append(expected, pluginwire.Printable(f.Member))
+			expected = append(expected, pluginwire.Printable(f.Member)+condSuffix(f.Condition))
 		case f.Class == infra.SignerGoogleAgent:
 			m := pluginwire.Printable(strings.TrimPrefix(f.Member, "serviceAccount:"))
 			if _, ok := agents[m]; !ok {
 				agentOrder = append(agentOrder, m)
 			}
-			if r := pluginwire.Printable(f.Role); !slices.Contains(agents[m], r) {
+			if r := pluginwire.Printable(f.Role) + condSuffix(f.Condition); !slices.Contains(agents[m], r) {
 				agents[m] = append(agents[m], r)
 			}
 		case f.Class == infra.SignerOwner:
-			if m := pluginwire.Printable(f.Member); !owners[m] {
-				owners[m] = true
-				ownerOrder = append(ownerOrder, m)
+			m := pluginwire.Printable(f.Member)
+			owners[m] = true
+			// A conditional binding is named with its condition, so an owner
+			// who holds the role only for a while is not shown as a plain one.
+			if e := m + condSuffix(f.Condition); !slices.Contains(ownerOrder, e) {
+				ownerOrder = append(ownerOrder, e)
 			}
 		default:
 			n++
@@ -95,7 +98,7 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if len(ownerOrder) > 0 {
 		info = append(info, doctorCheck{ID: "token-signers-owners", Severity: "info",
 			Problem: fmt.Sprintf("project owners can create service-account keys and therefore sign tokens: the trust root; %d owner(s): %s; keep this list short",
-				len(ownerOrder), strings.Join(ownerOrder, ", "))})
+				len(owners), strings.Join(ownerOrder, ", "))})
 	}
 	// Always said, and always partial: nothing found is not "safe".
 	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/gcp-setup.md#token-signers)"
@@ -111,6 +114,21 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	summary := doctorCheck{ID: "token-signers", Severity: "info", Problem: msg,
 		Fix: "to review the signer's policy: gcloud iam service-accounts get-iam-policy " + shellword.Quote(psigner) + " --project " + shellword.Quote(pfp)}
 	return append(append([]doctorCheck{summary}, info...), out...)
+}
+
+// condSuffix names a conditional binding's condition (its title, or the
+// expression when it has none) after the member or role it limits; "" for an
+// unconditional one. Info lines list bindings that are not removed, so the
+// condition is the only thing that tells a temporary grant from a standing one.
+func condSuffix(c *infra.SignerCondition) string {
+	if c == nil {
+		return ""
+	}
+	what := c.Title
+	if what == "" {
+		what = c.Expression
+	}
+	return " (only while " + pluginwire.Printable(what) + ")"
 }
 
 func dedupe(s []string) []string {
