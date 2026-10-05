@@ -80,6 +80,13 @@ type SignerFinding struct {
 // of the legacy ones that carry the bare number (<number>@<domain>). The
 // default compute account (<number>-compute@developer.gserviceaccount.com)
 // is deliberately absent: it is a plain account that people grant roles to.
+//
+// The gcp-sa-<product> domain is a wildcard: Google's agents live under many
+// gcp-sa-* domains and there is no fixed published set, so any gcp-sa-* label
+// is accepted. That prefix is not verified as reserved to Google; the email
+// must still carry THIS project's number exactly (service-<number>@), which
+// another party cannot hold without owning a service agent of this project,
+// so the impact of a look-alike is low.
 var (
 	agentDomainRE   = regexp.MustCompile(`^(?:gcp-sa-[a-z0-9-]+|serverless-robot-prod|containerregistry|compute-system|container-engine-robot|gcf-admin-robot|firebase-rules|dataflow-service-producer-prod|cloud-ml\.google\.com|gae-api-prod\.google\.com)\.iam\.gserviceaccount\.com$`)
 	legacyAgentDoms = []string{"cloudservices.gserviceaccount.com", "cloudbuild.gserviceaccount.com"}

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Regenerates internal/infra/tf/testdata/golden/*.plan.json: real
-# `terraform show -json` plans of the three roots (fresh creates), cut down to
+# `terraform show -json` plans of the three roots (and of the Firebase root in
+# the same-project layout) (fresh creates), cut down to
 # their resource_changes. Needs terraform, jq and the google provider already
 # in a plugin cache directory (the one fugaro keeps: ~/.cache/fugaro/terraform-plugins).
 # It plans with a fake access token and an unreachable HTTPS proxy, so no
@@ -29,9 +30,16 @@ tfenv=(env -i "PATH=$PATH" "HOME=$tmp/home" "TF_CLI_CONFIG_FILE=$tmp/rc" TF_IN_A
   HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9
   ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy=)
 mkdir -p "$tmp/home"
-for r in installation repo firebase; do
+# name:root pairs. firebase-same-project is the Firebase root with the
+# installation's own project as the Firebase project (skip_apis set).
+for pair in installation:installation repo:repo firebase:firebase firebase-same-project:firebase; do
+  r=${pair%%:*}
+  root=${pair##*:}
   (
-    cd "$tmp/gcp/roots/$r"
+    cd "$tmp/gcp/roots/$root"
+    if [ "$r" = firebase-same-project ]; then
+      cp "$repo/internal/infra/testdata/firebase-same-project.tfvars.json" terraform.tfvars.json
+    fi
     sed -i.bak '/backend "gcs" {}/d' main.tf
     "${tfenv[@]}" terraform init -backend=false >/dev/null
     "${tfenv[@]}" terraform plan -out=plan.bin >/dev/null

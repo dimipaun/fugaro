@@ -44,31 +44,83 @@ var allowedTypes = map[string]bool{
 	"google_storage_bucket_object":                   true,
 }
 
-// allowedRoles are the predefined roles the modules grant. A custom role of
-// this installation (projects/<p>/roles/fugaro...) is allowed besides them.
-// roles/iam.serviceAccountUser is only ever granted to a principal the check
-// already accepts (a Fugaro service account or a listed member).
-var allowedRoles = map[string]bool{
-	"roles/aiplatform.user":                   true,
-	"roles/artifactregistry.reader":           true,
-	"roles/artifactregistry.writer":           true,
-	"roles/datastore.user":                    true,
-	"roles/datastore.viewer":                  true,
-	"roles/firebaseauth.admin":                true,
-	"roles/firebasedatabase.admin":            true,
-	"roles/firebasedatabase.viewer":           true,
-	"roles/iam.serviceAccountUser":            true,
-	"roles/logging.logWriter":                 true,
-	"roles/logging.viewAccessor":              true,
-	"roles/run.invoker":                       true,
-	"roles/secretmanager.secretAccessor":      true,
-	"roles/secretmanager.secretVersionAdder":  true,
-	"roles/secretmanager.viewer":              true,
-	"roles/serviceusage.serviceUsageConsumer": true,
-	"roles/storage.objectAdmin":               true,
-	"roles/storage.objectUser":                true,
-	"roles/storage.objectViewer":              true,
+// who says what kind of principal a module grants a role to: People are the
+// members the review screen lists (launchers, operators, admins), Accounts the
+// Fugaro service accounts of this run.
+type who uint8
+
+const (
+	toPeople who = 1 << iota
+	toAccounts
+)
+
+// customKey is how grantRules names a custom role of the installation (by its
+// role ID, whichever of this run's projects it lives in).
+const customKey = "custom:"
+
+// grantRules says, per *_iam_member resource type, which roles the modules
+// grant through it and to which kind of principal: the predefined roles by
+// name, the installation's custom roles as "custom:<role ID>". A grant outside
+// its type's row is not covered even when the role is granted elsewhere (a
+// role that is harmless on a bucket may not be on the project), and a role
+// meant for the job accounts is not covered for a person. A role the table
+// does not name for the type is refused: the table is an allowlist.
+// TestGrantRulesAreTheModules fails when a module's grants and this table
+// differ.
+var grantRules = map[string]map[string]who{
+	"google_project_iam_member": {
+		customKey + "fugaroLauncher":              toPeople,
+		customKey + "fugaroBuildSubmitter":        toPeople | toAccounts,
+		customKey + "fugaroHistory":               toAccounts,
+		"roles/aiplatform.user":                   toAccounts,
+		"roles/datastore.user":                    toAccounts,
+		"roles/datastore.viewer":                  toPeople,
+		"roles/firebaseauth.admin":                toAccounts,
+		"roles/firebasedatabase.admin":            toPeople | toAccounts,
+		"roles/firebasedatabase.viewer":           toPeople,
+		"roles/logging.logWriter":                 toAccounts,
+		"roles/serviceusage.serviceUsageConsumer": toPeople | toAccounts,
+	},
+	"google_service_account_iam_member": {
+		customKey + "fugaroTokenMinter": toPeople,
+		"roles/iam.serviceAccountUser":  toPeople | toAccounts,
+	},
+	"google_storage_bucket_iam_member": {
+		"roles/storage.objectAdmin":  toPeople,
+		"roles/storage.objectUser":   toAccounts,
+		"roles/storage.objectViewer": toAccounts,
+	},
+	"google_artifact_registry_repository_iam_member": {
+		customKey + "fugaroTagMover":    toAccounts,
+		"roles/artifactregistry.reader": toPeople | toAccounts,
+		"roles/artifactregistry.writer": toPeople | toAccounts,
+	},
+	"google_secret_manager_secret_iam_member": {
+		"roles/secretmanager.secretAccessor":     toAccounts,
+		"roles/secretmanager.secretVersionAdder": toPeople,
+		"roles/secretmanager.viewer":             toPeople,
+	},
+	"google_cloud_run_v2_job_iam_member": {
+		customKey + "fugaroJobRunner": toPeople | toAccounts,
+		"roles/run.invoker":           toAccounts,
+	},
+	"google_logging_log_view_iam_member": {
+		"roles/logging.viewAccessor": toPeople,
+	},
 }
+
+// allowedRoles are the predefined roles any row of grantRules names.
+var allowedRoles = func() map[string]bool {
+	m := map[string]bool{}
+	for _, row := range grantRules {
+		for r := range row {
+			if !strings.HasPrefix(r, customKey) {
+				m[r] = true
+			}
+		}
+	}
+	return m
+}()
 
 // Cover says which plans init's one confirmation may cover.
 type Cover struct {
@@ -176,7 +228,7 @@ func (c Cover) NotCovered(p *Plan) []string {
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.checkGrant(rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"]); why != "" {
+			if why := c.checkGrant(rc.Type, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"]); why != "" {
 				add(rc, why)
 			}
 		}
@@ -289,8 +341,14 @@ func unknownAt(v any, path ...any) bool {
 	return v == true
 }
 
-func (c Cover) checkGrant(ch Change, createsSA, createsRole bool) string {
-	// The principal.
+func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) string {
+	rules := grantRules[typ]
+	if rules == nil {
+		return "a grant of a type the modules do not use"
+	}
+	// The principal. A member computed from a service account this module
+	// creates is an account.
+	kind := toAccounts
 	switch {
 	case unknown(ch, "member"):
 		if !createsSA { // a member computed from a service account this module creates
@@ -307,6 +365,7 @@ func (c Cover) checkGrant(ch Change, createsSA, createsRole bool) string {
 			if !strings.HasPrefix(m, "user:") && !strings.HasPrefix(m, "group:") && !strings.HasPrefix(m, "serviceAccount:") {
 				return fmt.Sprintf("grants to %s, which is not a user, group or service account", m)
 			}
+			kind = toPeople
 		case c.fugaroAccount(m):
 		default:
 			return fmt.Sprintf("grants to %s, who is not on the review screen", m)
@@ -320,10 +379,18 @@ func (c Cover) checkGrant(ch Change, createsSA, createsRole bool) string {
 		return ""
 	}
 	role, _ := ch.After["role"].(string)
-	if allowedRoles[role] || c.fugaroRole(role) {
-		return ""
+	key, ok := c.roleKey(role)
+	if !ok {
+		return fmt.Sprintf("grants the role %q, which the installation's modules do not use", role)
 	}
-	return fmt.Sprintf("grants the role %q, which the installation's modules do not use", role)
+	w, ok := rules[key]
+	if !ok {
+		return fmt.Sprintf("grants the role %q on a %s, which the installation's modules do not do", role, typ)
+	}
+	if w&kind == 0 {
+		return fmt.Sprintf("grants the role %q to a kind of principal the installation's modules do not grant it to", role)
+	}
+	return ""
 }
 
 func (c Cover) fugaroAccount(m string) bool {
@@ -334,13 +401,19 @@ func (c Cover) fugaroAccount(m string) bool {
 	return slices.Contains(FugaroAccounts, sm[1]) || jobAccount.MatchString(sm[1])
 }
 
-func (c Cover) fugaroRole(r string) bool {
+// roleKey is the grantRules key of a role: a predefined role by name, a
+// custom role of this run's projects as customKey+ID. ok is false for any
+// other role, including a custom role the modules do not create.
+func (c Cover) roleKey(r string) (string, bool) {
+	if strings.HasPrefix(r, "roles/") {
+		return r, allowedRoles[r]
+	}
 	for _, p := range c.Projects {
 		if id, ok := strings.CutPrefix(r, "projects/"+p+"/roles/"); ok && slices.Contains(FugaroRoles, id) {
-			return true
+			return customKey + id, true
 		}
 	}
-	return false
+	return "", false
 }
 
 // modulePrefix is the module path of a resource's address.
@@ -538,13 +611,22 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 // with the same tags: encoding/json's case-insensitive keys and last
 // duplicate), so the two cannot read different values out of one string.
 type checkSpec struct {
-	Registry   string            `json:"registry"`
-	BaseImages map[string]string `json:"base_images"`
+	Registry            string            `json:"registry"`
+	BuildServiceAccount string            `json:"build_service_account"`
+	BaseImages          map[string]string `json:"base_images"`
 }
 
 // refChars are the characters an image reference may hold here: the spec's
 // refs reach a Dockerfile FROM line and a build's arguments.
 var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
+
+// buildAccount: the spec's build_service_account is the email of a Fugaro job
+// account (fugaro-<readable>-<8 hex>) in one of this run's projects. The fixed
+// accounts (scheduler, history, token signer) are not build accounts.
+func (c Cover) buildAccount(email string) bool {
+	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
+	return sm != nil && slices.Contains(c.Projects, sm[2]) && jobAccount.MatchString(sm[1])
+}
 
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
 // environment (envPath is the env list's path in after_unknown): the spec's
@@ -579,6 +661,11 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 		}
 		if !inRegistry(s.Registry) {
 			return fmt.Sprintf("a check spec whose registry %q is outside this run's %s", s.Registry, prefix)
+		}
+		// The account the check's builds run as: one of this run's Fugaro job
+		// accounts (the repository's build account), never an arbitrary one.
+		if !c.buildAccount(s.BuildServiceAccount) {
+			return fmt.Sprintf("a check spec whose build service account is %q, not a Fugaro service account of this run", s.BuildServiceAccount)
 		}
 		for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
 			if ref := s.BaseImages[k]; !inRegistry(ref) {
