@@ -1280,3 +1280,20 @@ func TestCheckUsesTheBaseOfEachCheckedKind(t *testing.T) {
 		t.Errorf("job spec workflows = %v", spec.Workflows)
 	}
 }
+
+// tf.Cover reads the registry and base images out of FUGARO_CHECK_SPEC with
+// its own struct (the tf package cannot import this one): these are the two
+// JSON keys it decodes, so renaming either here fails until Cover follows.
+func TestCheckJobSpecKeysCoverReads(t *testing.T) {
+	b, err := json.Marshal(CheckJobSpec{Registry: "h/p/r", BaseImages: map[string]string{"k": "h/p/b:1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if string(m["registry"]) != `"h/p/r"` || string(m["base_images"]) != `{"k":"h/p/b:1"}` {
+		t.Fatalf("CheckJobSpec encodes as %s, tf/cover.go reads registry and base_images", b)
+	}
+}

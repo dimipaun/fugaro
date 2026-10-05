@@ -1,7 +1,9 @@
 package tf
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -98,6 +100,21 @@ var (
 	repoID     = regexp.MustCompile(`^fugaro(-[a-z0-9-]+)?$`)
 )
 
+// RolePermissions pins the permissions of every custom role the modules
+// create, by role ID: a plan creates or updates such a role only with exactly
+// these. A role that gained a permission could otherwise make every grant of it
+// (which the review screen shows as a plain "launcher") reach further.
+// TestRolePinsAreTheModules fails when a module's list and this one differ.
+var RolePermissions = map[string][]string{
+	"fugaroLauncher": {"run.jobs.get", "run.jobs.list", "run.executions.get", "run.executions.list", "run.executions.cancel", "run.operations.get",
+		"secretmanager.secrets.list", "secretmanager.versions.list"},
+	"fugaroJobRunner":      {"run.jobs.run", "run.jobs.runWithOverrides"},
+	"fugaroBuildSubmitter": {"cloudbuild.builds.create", "cloudbuild.builds.get"},
+	"fugaroTagMover":       {"artifactregistry.tags.delete"},
+	"fugaroTokenMinter":    {"iam.serviceAccounts.signJwt"},
+	"fugaroHistory":        {"run.executions.list", "run.executions.get", "run.jobs.get", "run.jobs.list", "run.operations.get"},
+}
+
 // knownCommands are the container command and args the modules set: none for
 // a workflow's job, the history sweep and the image check.
 var knownCommands = [][2][]string{
@@ -152,8 +169,8 @@ func (c Cover) NotCovered(p *Plan) []string {
 			add(rc, "a service account key")
 		case !allowedTypes[t]:
 			add(rc, "a resource type outside the installation's modules")
-		case t == "google_project_iam_custom_role" && slices.Contains(acts, "update") && !samePermissions(rc.Change):
-			add(rc, "changes a custom role's permissions")
+		case t == "google_project_iam_custom_role" && c.customRole(rc) != "":
+			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in this run's projects")
 		case c.attributes(rc, creates) != "":
@@ -182,7 +199,7 @@ func samePermissions(c Change) bool {
 	if !ok1 || !ok2 {
 		return false
 	}
-	if m, ok := c.AfterUnknown.(map[string]any); ok && m["permissions"] == true {
+	if unknown(c, "permissions") {
 		return false
 	}
 	if len(a) != len(b) {
@@ -196,10 +213,80 @@ func samePermissions(c Change) bool {
 	return true
 }
 
+// customRole says why a custom role's create or update is not the modules':
+// its ID is not one of theirs, it is not in one of this run's projects, its
+// permissions are not exactly the pinned ones (known only after apply counts
+// as not), or an update changes them. "" when it is.
+func (c Cover) customRole(rc ResourceChange) string {
+	ch := rc.Change
+	if unknown(ch, "role_id") || unknown(ch, "project") || unknown(ch, "permissions") {
+		return "a custom role whose ID, project or permissions are not known"
+	}
+	id, _ := ch.After["role_id"].(string)
+	pinned, ok := RolePermissions[id]
+	if !ok {
+		return fmt.Sprintf("a custom role %q, which the installation's modules do not create", id)
+	}
+	if p := str(ch.After["project"]); !slices.Contains(c.Projects, p) {
+		return fmt.Sprintf("a custom role in project %q, which is not this run's", p)
+	}
+	got, isList := ch.After["permissions"].([]any)
+	if !isList {
+		return "a custom role with no known permissions"
+	}
+	have := map[string]bool{}
+	for _, g := range got {
+		s, isStr := g.(string)
+		if !isStr {
+			return "a custom role with a permission that is not a string"
+		}
+		have[s] = true
+	}
+	if len(have) != len(pinned) || len(got) != len(pinned) {
+		return "changes a custom role's permissions from the modules' (" + id + ")"
+	}
+	for _, p := range pinned {
+		if !have[p] {
+			return "changes a custom role's permissions from the modules' (" + id + ")"
+		}
+	}
+	if slices.Contains(ch.Actions, "update") && !samePermissions(ch) {
+		return "changes a custom role's permissions"
+	}
+	return ""
+}
+
 // unknown reports whether the plan knows the attribute only after apply.
 func unknown(c Change, attr string) bool {
 	m, ok := c.AfterUnknown.(map[string]any)
 	return ok && m[attr] == true
+}
+
+// unknownAt reports whether the plan knows the value at path (map keys and
+// list indexes, in the shape of after_unknown) only after apply: true if the
+// value or any block above it is unknown. A path the plan does not mention is
+// known.
+func unknownAt(v any, path ...any) bool {
+	for _, k := range path {
+		if v == true {
+			return true
+		}
+		switch k := k.(type) {
+		case string:
+			m, ok := v.(map[string]any)
+			if !ok {
+				return false
+			}
+			v = m[k]
+		case int:
+			l, ok := v.([]any)
+			if !ok || k >= len(l) {
+				return false
+			}
+			v = l[k]
+		}
+	}
+	return v == true
 }
 
 func (c Cover) checkGrant(ch Change, createsSA, createsRole bool) string {
@@ -341,6 +428,9 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 		proj = c.Projects[0]
 	}
 	pre := modulePrefix(rc)
+	if unknown(rc.Change, "project") {
+		return "in a project that is not known"
+	}
 	if p := str(a["project"]); p != "" && !slices.Contains(c.Projects, p) {
 		return "in project " + p + ", which is not this run's"
 	}
@@ -362,10 +452,20 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 	switch rc.Type {
 	case "google_cloud_run_v2_job":
 		cs := objects(at(a["template"], "template", "containers"))
+		unk := rc.Change.AfterUnknown
+		if unknownAt(unk, "template", 0, "template", 0, "containers") {
+			return "containers that are not known"
+		}
 		if len(cs) == 0 {
 			return "no container"
 		}
-		for _, m := range cs {
+		for i, m := range cs {
+			cp := []any{"template", 0, "template", 0, "containers", i}
+			for _, attr := range []string{"image", "command", "args"} {
+				if unknownAt(unk, append(slices.Clone(cp), attr)...) {
+					return "a container " + attr + " that is not known"
+				}
+			}
 			if img := str(m["image"]); c.Registry == "" || !strings.HasPrefix(img, c.Registry+"/"+proj+"/") {
 				return fmt.Sprintf("runs the image %q, outside this run's registry %s/%s/", img, c.Registry, proj)
 			}
@@ -376,6 +476,9 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 			}
 			if !known {
 				return "runs a command the modules do not set"
+			}
+			if why := c.checkSpecs(m, unk, append(slices.Clone(cp), "env"), proj); why != "" {
+				return why
 			}
 		}
 	case "google_cloud_scheduler_job":
@@ -425,6 +528,58 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 		slices.Sort(got)
 		if !slices.Equal(got, apiTargets) {
 			return "a key whose API targets are not the web key's two"
+		}
+	}
+	return ""
+}
+
+// checkSpec is the part of the check job's FUGARO_CHECK_SPEC that points at
+// registries; it decodes as fugaro image check --job does (infra.CheckJobSpec
+// with the same tags: encoding/json's case-insensitive keys and last
+// duplicate), so the two cannot read different values out of one string.
+type checkSpec struct {
+	Registry   string            `json:"registry"`
+	BaseImages map[string]string `json:"base_images"`
+}
+
+// checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
+// environment (envPath is the env list's path in after_unknown): the spec's
+// registry and each base image it builds FROM must be in this run's registry,
+// so a job that the covered plan creates can never build from or push to
+// anything else. An environment that is not fully known is not covered.
+func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string) string {
+	if unknownAt(unk, envPath...) {
+		return "an environment that is not known"
+	}
+	prefix := c.Registry + "/" + proj + "/"
+	inRegistry := func(ref string) bool {
+		if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) {
+			return false
+		}
+		return !slices.Contains(strings.Split(ref, "/"), "..")
+	}
+	for j, e := range objects(m["env"]) {
+		ep := append(slices.Clone(envPath), j)
+		if unknownAt(unk, append(slices.Clone(ep), "name")...) {
+			return "an environment variable whose name is not known"
+		}
+		if e["name"] != "FUGARO_CHECK_SPEC" {
+			continue
+		}
+		if unknownAt(unk, append(slices.Clone(ep), "value")...) {
+			return "a check spec that is not known"
+		}
+		var s checkSpec
+		if err := json.Unmarshal([]byte(str(e["value"])), &s); err != nil {
+			return "a check spec that is not the JSON the check job reads"
+		}
+		if !inRegistry(s.Registry) {
+			return fmt.Sprintf("a check spec whose registry %q is outside this run's %s", s.Registry, prefix)
+		}
+		for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
+			if ref := s.BaseImages[k]; !inRegistry(ref) {
+				return fmt.Sprintf("a check spec whose base image %s is %q, outside this run's %s", k, ref, prefix)
+			}
 		}
 	}
 	return ""

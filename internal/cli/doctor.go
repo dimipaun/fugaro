@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	billing "google.golang.org/api/cloudbilling/v1"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
+	iam "google.golang.org/api/iam/v1"
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
@@ -95,7 +96,8 @@ func newDoctorCmd() *cobra.Command {
 		Use:   "doctor [--json] [--plugin] [--strict]",
 		Short: "Check that Fugaro is set up and ready, without changing anything",
 		Long: `doctor only ever reads: the environment, Terraform, the local project config
-and its installation's billing and IAM policy, the Fugaro plugin's wiring in
+and its installation's billing and IAM policy (with a budget backend, who can
+sign sign-in tokens for it: warnings, never changes), the Fugaro plugin's wiring in
 .claude/settings.json, a checkout's fugaro.yaml and its stored secrets by
 name. It never prints a secret's value and never creates, enables or
 changes anything.
@@ -215,6 +217,14 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
 		o.Checks = append(o.Checks, fromPreflight(c))
+	}
+
+	if lc.Budget != nil && lc.Budget.FirebaseProject != "" {
+		iamSvc, err := iam.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.IAM)...)
+		if err != nil {
+			return failed(remote(err))
+		}
+		o.Checks = append(o.Checks, doctorTokenSigners(ctx, lc, crmSvc, iamSvc)...)
 	}
 
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}

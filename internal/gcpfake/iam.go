@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -61,25 +63,33 @@ func cloneBindings(bs []Binding) []Binding {
 	return out
 }
 
-// IAM is a fake of the IAM v1 calls Fugaro makes: serviceAccounts get
-// and a project custom role's get.
+// IAM is a fake of the IAM v1 calls Fugaro makes: serviceAccounts get,
+// list and getIamPolicy, and a custom role's get (a project's or an
+// organization's).
 type IAM struct {
 	*Server
 
 	mu       sync.Mutex
 	accounts map[string]map[string]string // projects/<p>/serviceAccounts/<email> → fields
 	roles    map[string]map[string]any    // projects/<p>/roles/<id> → fields
+	policies map[string][]Binding         // projects/<p>/serviceAccounts/<email> → its IAM policy
+	hidden   map[string]bool              // accounts whose policy answers PERMISSION_DENIED
+	// PageSize, when set, is the most accounts one list page holds, whatever
+	// the request asks for, so a caller's paging is exercised.
+	PageSize int
 }
 
 var (
-	serviceAccountRE = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
-	customRoleRE     = regexp.MustCompile(`^/v1/(projects/[^/]+/roles/[^/:]+)$`)
+	serviceAccountRE  = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
+	serviceAccountsRE = regexp.MustCompile(`^/v1/(projects/[^/]+)/serviceAccounts$`)
+	saPolicyRE        = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+):getIamPolicy$`)
+	customRoleRE      = regexp.MustCompile(`^/v1/((?:projects|organizations)/[^/]+/roles/[^/:]+)$`)
 )
 
 // NewIAM starts an IAM fake that lives until the test ends.
 func NewIAM(t *testing.T) *IAM {
 	t.Helper()
-	f := &IAM{accounts: map[string]map[string]string{}, roles: map[string]map[string]any{}}
+	f := &IAM{accounts: map[string]map[string]string{}, roles: map[string]map[string]any{}, policies: map[string][]Binding{}, hidden: map[string]bool{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -91,6 +101,34 @@ func (f *IAM) AddRole(project, id, title string, deleted bool) {
 	defer f.mu.Unlock()
 	name := "projects/" + project + "/roles/" + id
 	f.roles[name] = map[string]any{"name": name, "title": title, "deleted": deleted, "stage": "GA", "etag": "BwX0"}
+}
+
+// SetRolePermissions sets the permissions the custom role name
+// (projects/<p>/roles/<id> or organizations/<n>/roles/<id>) includes, as its
+// get reports them; AddRole makes the role exist first.
+func (f *IAM) SetRolePermissions(name string, perms ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.roles[name] == nil {
+		f.roles[name] = map[string]any{"name": name, "title": name, "stage": "GA", "etag": "BwX0"}
+	}
+	f.roles[name]["includedPermissions"] = perms
+}
+
+// SetServiceAccountPolicy sets the IAM policy of the account email of
+// project, as its getIamPolicy serves it.
+func (f *IAM) SetServiceAccountPolicy(project, email string, bindings ...Binding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.policies["projects/"+project+"/serviceAccounts/"+email] = cloneBindings(bindings)
+}
+
+// HidePolicy makes the getIamPolicy of the account projects/<p>/serviceAccounts/<email>
+// answer PERMISSION_DENIED.
+func (f *IAM) HidePolicy(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.hidden[name] = true
 }
 
 // AddServiceAccount makes the account email exist in project with
@@ -119,6 +157,22 @@ func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		writeJSON(w, http.StatusOK, maps.Clone(role))
 		return
 	}
+	if m := saPolicyRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodPost && m != nil {
+		if f.accounts[m[1]] == nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Unknown service account")
+			return
+		}
+		if f.hidden[m[1]] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "Permission 'iam.serviceAccounts.getIamPolicy' denied")
+			return
+		}
+		servePolicy(w, r.URL.Query(), f.policies[m[1]])
+		return
+	}
+	if m := serviceAccountsRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		f.listAccounts(w, r, m[1])
+		return
+	}
 	m := serviceAccountRE.FindStringSubmatch(r.URL.Path)
 	if r.Method != http.MethodGet || m == nil {
 		f.unhandled(w, r)
@@ -130,4 +184,35 @@ func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		return
 	}
 	writeJSON(w, http.StatusOK, maps.Clone(a))
+}
+
+// listAccounts serves one page of project's accounts, in name order. The
+// page token is the index of the next account.
+func (f *IAM) listAccounts(w http.ResponseWriter, r *http.Request, project string) {
+	var names []string
+	for name := range f.accounts {
+		if strings.HasPrefix(name, project+"/serviceAccounts/") {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	start, _ := strconv.Atoi(r.URL.Query().Get("pageToken"))
+	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	if f.PageSize > 0 && (size <= 0 || size > f.PageSize) {
+		size = f.PageSize
+	}
+	if size <= 0 {
+		size = len(names)
+	}
+	start = min(start, len(names))
+	end := min(start+size, len(names))
+	page := []map[string]string{}
+	for _, n := range names[start:end] {
+		page = append(page, maps.Clone(f.accounts[n]))
+	}
+	out := map[string]any{"accounts": page}
+	if end < len(names) {
+		out["nextPageToken"] = strconv.Itoa(end)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
