@@ -447,15 +447,15 @@ func lintUserRunsLeadIn(f *skillFile) []string {
 	for _, b := range f.userRunsBlocks {
 		if !userLeadRE.MatchString(b.text) {
 			out = append(out, fmt.Sprintf("%s:%d: a user-runs block must follow a sentence saying the user runs it", f.path, b.line))
-		} else if !strings.Contains(strings.ToLower(b.text), "terminal") {
-			out = append(out, fmt.Sprintf("%s:%d: a user-runs block must follow a sentence saying the user runs it in their own terminal", f.path, b.line))
+		} else if lt := strings.ToLower(b.text); !strings.Contains(lt, "own terminal") || !strings.Contains(lt, "not through the agent") {
+			out = append(out, fmt.Sprintf("%s:%d: a user-runs block must follow a sentence saying the user runs it in their own terminal, not through the agent", f.path, b.line))
 		}
 	}
 	return out
 }
 
 // bangShellRE is a command given with Claude Code's `!` shell prefix.
-var bangShellRE = regexp.MustCompile(`(^|[\s` + "`" + `"'(])!\s*(fugaro|claude)\b`)
+var bangShellRE = regexp.MustCompile(`(^|[\s` + "`" + `"'(])!\s*(?:[A-Z_][A-Z0-9_]*=\S*\s+)*(?:\./|\.\./|/\S*/)?(fugaro|claude|gcloud|docker|terraform|git|gh)\b`)
 
 // lintBangShell: a `!` shell inside Claude Code is not a terminal, and init,
 // secrets set and a cloud image build refuse to work through the agent, so no
@@ -463,7 +463,7 @@ var bangShellRE = regexp.MustCompile(`(^|[\s` + "`" + `"'(])!\s*(fugaro|claude)\
 func lintBangShell(f *skillFile) []string {
 	var out []string
 	for i, l := range f.lines {
-		if bangShellRE.MatchString(l) || strings.HasPrefix(strings.TrimSpace(l), "!fugaro") {
+		if bangShellRE.MatchString(l) {
 			out = append(out, fmt.Sprintf("%s:%d: a command with a ! prefix: a ! shell is not a terminal, tell the user to use their own terminal window", f.path, i+1))
 		}
 	}
@@ -1260,7 +1260,7 @@ func TestLintInitAppliesOnlyInUserRuns(t *testing.T) {
 	expectViolation(t, demoTree(t, "Then run `fugaro init`.\n"), "applying fugaro init")
 	expectViolation(t, demoTree(t, "Never run `fugaro init`.\n"), "applying fugaro init")
 	expectClean(t, demoTree(t, "Run `fugaro init --repo --plan-only` and `fugaro init --print-vars`.\n"))
-	expectClean(t, demoTree(t, "The user runs this once in their own terminal:\n\n```bash user-runs\nfugaro init\n```\n"))
+	expectClean(t, demoTree(t, "The user runs this once in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro init\n```\n"))
 }
 
 func TestLintRejectsSecretShaped(t *testing.T) {
@@ -1283,7 +1283,7 @@ func TestLintRejectsSecretHandling(t *testing.T) {
 	expectViolation(t, demoTree(t, "Open `~/.config/gcloud/application_default_credentials.json`.\n"), "credential file")
 	expectViolation(t, demoTree(t, "Open `~/.config/fugaro/credentials.json`.\n"), "credential file")
 	expectClean(t, demoTree(t, "The config is `~/.config/fugaro/projects/x.yaml`. Never paste a secret value in the conversation.\n"))
-	expectClean(t, demoTree(t, "The user runs this in their own terminal:\n\n```bash user-runs\nfugaro secrets set github-token --repo o/r\n```\n"))
+	expectClean(t, demoTree(t, "The user runs this in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro secrets set github-token --repo o/r\n```\n"))
 }
 
 func TestLintRejectsCurlPipeShell(t *testing.T) {
@@ -1306,7 +1306,7 @@ func TestLintRejectsDangerousCommands(t *testing.T) {
 	}
 	expectClean(t, demoTree(t, "Never run `gh pr merge`.\n"))
 	expectClean(t, demoTree(t, "```bash\ngit push origin fugaro/run-1\n```\n"))
-	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nterraform apply\n```\n"), "the user must do")
+	expectViolation(t, demoTree(t, "The user runs this in their own terminal, not through the agent:\n\n```bash user-runs\nterraform apply\n```\n"), "the user must do")
 }
 
 func TestLintRejectsEditingOwnedSkills(t *testing.T) {
@@ -1324,8 +1324,8 @@ func TestLintRejectsBudgetOutsideUserRuns(t *testing.T) {
 }
 
 func TestLintAllowsUserRunsBlock(t *testing.T) {
-	expectClean(t, demoTree(t, "The owner runs this in their terminal:\n\n```bash user-runs\nfugaro budget set --global --daily 50\nfugaro budget kill\nfugaro budget resume\n```\n"))
-	expectClean(t, demoTree(t, "The owner runs it in their terminal:\n\n~~~bash user-runs\nfugaro budget kill\n~~~\n"))
+	expectClean(t, demoTree(t, "The owner runs this in their own terminal, not through the agent:\n\n```bash user-runs\nfugaro budget set --global --daily 50\nfugaro budget kill\nfugaro budget resume\n```\n"))
+	expectClean(t, demoTree(t, "The owner runs it in their own terminal, not through the agent:\n\n~~~bash user-runs\nfugaro budget kill\n~~~\n"))
 }
 
 // TestLintNegationIsScoped: a negation covers a command only in its own
@@ -1421,7 +1421,7 @@ func TestPluginHasSkillsOnly(t *testing.T) {
 
 // userRuns wraps lines in a user-runs block with its lead-in sentence.
 func userRuns(lines string) string {
-	return "The user runs this in their own terminal:\n\n```bash user-runs\n" + lines + "\n```\n"
+	return "The user runs this in their own terminal, not through the agent:\n\n```bash user-runs\n" + lines + "\n```\n"
 }
 
 // TestLintOwnerCommandsHoweverTheyAreWritten: the resolved command path, not
@@ -1494,6 +1494,9 @@ func TestLintBangShell(t *testing.T) {
 		"```bash\n! fugaro secrets set x --repo o/r\n```\n",
 		"Then ! fugaro image build --workflow web.\n",
 		"Use `!fugaro init`.\n",
+		"Type `! ./fugaro init`.\n",
+		"Type `!FUGARO_PROJECT=p fugaro init`.\n",
+		"Type `! gcloud auth login` or `! docker build .`.\n",
 	} {
 		expectViolation(t, demoTree(t, body), "a ! prefix")
 	}
@@ -1501,7 +1504,8 @@ func TestLintBangShell(t *testing.T) {
 	expectClean(t, demoTree(t, "Done! fugaro is ready.\n"))
 	expectClean(t, demoTree(t, userRuns("fugaro init")))
 	// A user-runs block says the terminal.
-	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro init\n```\n"), "in their own terminal")
+	expectViolation(t, demoTree(t, "The user runs this in their terminal:\n\n```bash user-runs\nfugaro init\n```\n"), "not through the agent")
+	expectViolation(t, demoTree(t, "The user runs this:\n\n```bash user-runs\nfugaro init\n```\n"), "own terminal")
 }
 
 // TestLintHiddenInstructions: nothing that renders as nothing, loads from

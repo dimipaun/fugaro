@@ -118,7 +118,7 @@ Some follow-ups are refused inside the cloud, after launch, and change nothing o
 | `branch ... no longer exists on origin` | The PR's branch was deleted. Offer a new run. |
 | `updated PR #N after this follow-up was launched` | Another follow-up got there first. Check the PR, then launch a new follow-up if something is still open. |
 | `PR #N's head moved during bootstrap` | Someone pushed while the run started. Launch again. |
-| `follow-up runs are not supported by this version of fugaro` | The repository's image is older than the CLI. The user rebuilds it with `fugaro image build`. |
+| `follow-up runs are not supported by this version of fugaro` | The repository's image is older than the CLI. The user rebuilds it with `fugaro image build`, in their own terminal window, not through the agent. |
 | `fugaro.yaml on <ref> names base …` | The base branch's `fugaro.yaml` names another base branch. Tell the user; it needs fixing on the base branch. |
 | `source branch is …`, or `comes from repository …` | The PR isn't on the branch, or in the repository, its runs used. Tell the user; offer a new run. |
 | `previous run X has no readable record` | The run it continues can't be read. Show `fugaro diagnose X` and stop. |

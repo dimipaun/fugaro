@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/cli"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/image"
 )
@@ -62,7 +63,7 @@ func TestSetupSkillMentionsDoctorFirst(t *testing.T) {
 		t.Error("SKILL.md does not give `fugaro doctor --json`")
 	}
 	// Init is an owner command: named for the user in a user-runs block only.
-	if !regexp.MustCompile("(?s)no installation.{0,300}```bash user-runs\nfugaro init\n```").MatchString(text) {
+	if !regexp.MustCompile("(?s)no installation.{0,300}```bash user-runs\nfugaro init( --project <name>)?\n```").MatchString(text) {
 		t.Error("SKILL.md does not say that no installation means the user runs init first, in a user-runs block")
 	}
 }
@@ -499,10 +500,70 @@ func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
 			t.Errorf("SKILL.md does not recognise the error %q", phrase)
 		}
 	}
-	for _, want := range []string{"Ask the user which Fugaro project this repository belongs to", "pass `--project <name>` to every fugaro command you run", "same `--project <name>`", "don't open the config directory"} {
+	for _, want := range []string{"Ask the user which Fugaro project this repository belongs to", "don't open the config directory", "exactly as the user confirmed it", "refuse any that holds a space, a quote or a shell character", "`FUGARO_PROJECT=<name> fugaro validate --json`", "`FUGARO_PROJECT=<name> fugaro config example`"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md never says %q", want)
 		}
+	}
+	// The commands the skill says take --project do, and the ones it gives
+	// the environment form do not: derived from the cobra flags so it can't drift.
+	m := regexp.MustCompile("the commands that take `--project` \\(([^)]*)\\)[^;]*; the others \\(([^)]*)\\)").FindStringSubmatch(skill)
+	if m == nil {
+		t.Fatal("SKILL.md does not list the commands that take --project and the ones that do not")
+	}
+	root := cli.NewRootCmd()
+	listed := func(list string) (out []string) {
+		for _, c := range regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(list, -1) {
+			out = append(out, c[1])
+		}
+		return
+	}
+	hasFlag := func(name string) bool {
+		c, _, err := root.Find(strings.Fields(name))
+		if err != nil || c == root {
+			t.Fatalf("the skill names a command %q that does not exist", name)
+		}
+		return c.Flags().Lookup("project") != nil
+	}
+	for _, c := range listed(m[1]) {
+		if !hasFlag(c) {
+			t.Errorf("SKILL.md says %q takes --project, but it has no such flag", c)
+		}
+	}
+	for _, c := range listed(m[2]) {
+		if hasFlag(c) {
+			t.Errorf("SKILL.md says %q takes no --project, but it has the flag", c)
+		}
+	}
+	if strings.Contains(skill, "`--project <name>` to every fugaro command") {
+		t.Error("SKILL.md says every fugaro command takes --project")
+	}
+	if !strings.Contains(skill, "fugaro init --project <name>") {
+		t.Error("the init blocks do not show --project")
+	}
+}
+
+// TestSetupSkillRecommendationAnchors: wording mutants that would let a
+// recommendation through unchecked.
+func TestSetupSkillRecommendationAnchors(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	for _, want := range []string{
+		"checked with a read-only command you may run, or stated by the user",
+		"Recommend the credential the evidence supports; `vertex` only once the facts are verified",
+		"The App's four repository permissions are Contents Read & write",
+		"Pull requests Read & write, Issues Read and Metadata Read, and never Workflows",
+		"skipped, with a one-line confirmation",
+	} {
+		if !strings.Contains(skill, want) && !strings.Contains(dec, want) {
+			t.Errorf("the skill never says %q", want)
+		}
+	}
+	if strings.Contains(dec, "`vertex` | none (the job's own account) | the installation's cloud project has") {
+		t.Error("vertex is recommended by default")
+	}
+	if !regexp.MustCompile(`(?m)^1\. On a GitHub repository only, the GitHub App`).MatchString(skill) {
+		t.Error("the App-ID topic is not first in SKILL.md step 5")
 	}
 }
 

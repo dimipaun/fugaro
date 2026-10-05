@@ -7,7 +7,7 @@ Ask **one topic at a time**: say what the topic is, what you found, your recomme
 
 ## 1. The GitHub App (GitHub repositories only)
 
-Ask this first, because the final plan (`fugaro init --repo --plan-only --github-app-id <id>`) needs the App's ID and it must not surface only after everything else. Ask: "What is the GitHub App ID (a number on the App's settings page, not a secret)?" Take it from the user; don't look for it in files. If there is no App yet, tell the user how to create one and wait:
+Ask this first, because the final plan (`fugaro init --repo --plan-only --github-app-id <id>`) needs the App's ID and it must not surface only after everything else. Ask: "What is the GitHub App ID (a number on the App's settings page, not a secret)?" Take it from the user; don't look for it in files. If `fugaro doctor --json` or an earlier plan output already shows an App ID recorded for this installation, say so and ask only for a confirmation. If there is no App yet, tell the user how to create one and wait:
 - **Name:** `<yourname>-fugaro`, for example `acme-fugaro`. App names are unique across all of GitHub and the bare `Fugaro` is taken. The name is shown as the author of every pull request and can't be changed, so use one App for all of the team's repositories.
 - **Repository permissions, four:** Contents Read & write, Pull requests Read & write, Issues Read, Metadata Read. **Never Workflows**: a run able to edit `.github/workflows/*` could weaken the merge gates or reach the repository's secrets.
 - **Install it on this repository.** When the permissions of an installed App change, accept the change on the installation (GitHub requires it; until then the old permissions apply).
