@@ -657,6 +657,128 @@ func TestPostMergeCheckStillPendingTimesOut(t *testing.T) {
 	}
 }
 
+// identicalTreeEnv makes the target (merge commit) checks not ready yet, as
+// right after a squash merge, and lists the merged PR whose head carries the
+// same tree, so the gate may use the head's checks.
+func identicalTreeEnv(g *ghState, extra ...string) *ghState {
+	env := append([]string{
+		"FAKE_GH_POST_TEST=missing", "FAKE_GH_POST_TERRAFORM=pending", "FAKE_GH_POST_RULES=missing",
+		"FAKE_GH_IDENTICAL_PR=1", "RELEASE_SH_TIMEOUT_SECONDS=2",
+	}, extra...)
+	return g.with(env...)
+}
+
+// TestIdenticalTreeHeadChecksEndTheWait: the squash-merge commit has no
+// checks yet, but the merged PR's head has the same tree and all three
+// green; the gate passes at once and says whose checks it used.
+func TestIdenticalTreeHeadChecksEndTheWait(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := identicalTreeEnv(newGHState(t, r, greenChecks()))
+	start := time.Now()
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v1.0.0")
+	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
+		t.Errorf("expected the head's checks to be named:\n%s", res.out)
+	}
+	if strings.Contains(res.out, "still waiting") || time.Since(start) > 30*time.Second {
+		t.Errorf("an identical-tree green head must not wait:\n%s", res.out)
+	}
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+		t.Errorf("tag missing:\n%s", res.out)
+	}
+}
+
+// TestIdenticalTreeOwnChecksPreferred: when the target has complete green
+// checks of its own, nothing is looked up.
+func TestIdenticalTreeOwnChecksPreferred(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_IDENTICAL_PR=1")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	if strings.Contains(res.out, "identical tree") || countLog(t, g, "api repos/") == 0 {
+		t.Errorf("own green checks must be used without a lookup:\n%s", res.out)
+	}
+	if strings.Contains(g.log(t), "/pulls") || strings.Contains(g.log(t), "/git/commits/") {
+		t.Errorf("no tree or pulls lookup expected:\n%s", g.log(t))
+	}
+}
+
+// TestIdenticalTreeNotAccepted: every way a candidate can fail to vouch
+// leaves the wait (and the timeout failure) as before.
+func TestIdenticalTreeNotAccepted(t *testing.T) {
+	cases := []struct {
+		name  string
+		extra []string
+	}{
+		{"different tree", []string{"FAKE_GH_HEAD_TREE=0123456789abcdef0123456789abcdef01234567"}},
+		{"head check failed", []string{"FAKE_GH_HEAD_RULES=failed"}},
+		{"head check missing", []string{"FAKE_GH_HEAD_TERRAFORM=missing"}},
+		{"head check pending", []string{"FAKE_GH_HEAD_TEST=pending"}},
+		{"head check cancelled", []string{"FAKE_GH_HEAD_TEST=cancelled"}},
+		{"PR not merged", []string{"FAKE_GH_PULL_UNMERGED=1"}},
+		{"merge commit is another sha", []string{"FAKE_GH_PULL_MERGE_SHA=0123456789abcdef0123456789abcdef01234567"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.extra...)
+			res := runRelease(t, r, g, "", "1.0.0", "--yes")
+			res.requireFailureContaining(t, "required check 'test' is missing")
+			if strings.Contains(res.out, "identical tree") {
+				t.Errorf("the candidate must not be used:\n%s", res.out)
+			}
+			requireNoTag(t, r, res)
+		})
+	}
+}
+
+// TestIdenticalTreeLookupFailureNeverPasses: a failing pulls or git api call
+// is noted once on stderr and the gate behaves as without the shortcut.
+func TestIdenticalTreeLookupFailureNeverPasses(t *testing.T) {
+	for _, c := range []struct{ env, call string }{
+		{"FAKE_GH_PULLS_FAIL=1", "pulls of"},
+		{"FAKE_GH_GIT_FAIL=1", "git commit"},
+	} {
+		t.Run(c.env, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := identicalTreeEnv(newGHState(t, r, greenChecks()), c.env)
+			res := runRelease(t, r, g, "", "1.0.0", "--yes")
+			res.requireFailureContaining(t, "required check 'test' is missing")
+			if n := strings.Count(res.out, "identical-tree lookup unavailable ("+c.call); n != 1 {
+				t.Errorf("want the note exactly once, got %d:\n%s", n, res.out)
+			}
+			requireNoTag(t, r, res)
+		})
+	}
+}
+
+// TestIdenticalTreeSecondPRCanVouch: a first associated PR that does not
+// qualify does not stop a later one that does.
+func TestIdenticalTreeSecondPRCanVouch(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_BAD_PR_FIRST=1")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	head := testutil.Git(t, r.bare, "rev-parse", "refs/heads/release/v1.0.0")
+	if !strings.Contains(res.out, "using the checks of "+head+" (identical tree)") {
+		t.Errorf("expected the second PR's head to be used:\n%s", res.out)
+	}
+}
+
+// TestIdenticalTreeNeverOverridesTargetFailure: a conclusive failure on the
+// target fails the gate at once, even next to a green identical-tree head.
+func TestIdenticalTreeNeverOverridesTargetFailure(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := identicalTreeEnv(newGHState(t, r, greenChecks()), "FAKE_GH_POST_RULES=failed")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireFailureContaining(t, "required check 'rules' is failed")
+	if strings.Contains(res.out, "identical tree") {
+		t.Errorf("the head's checks must not override a failure:\n%s", res.out)
+	}
+	requireNoTag(t, r, res)
+}
+
 // TestHeadNotMergeCommit: something else landed on main after the release
 // merge; the script must refuse rather than tag a different commit.
 func TestHeadNotMergeCommit(t *testing.T) {

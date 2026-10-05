@@ -354,7 +354,9 @@ fi
 scripts/bump-plugin-version.sh --check "$version"
 # CI starts on the merge commit only now, so its checks are usually missing
 # or still running: the gate waits for them (up to --timeout-minutes), naming
-# what is pending, and fails at once on a conclusive failure.
+# what is pending, and fails at once on a conclusive failure. It does not wait
+# for CI on a squash-merge commit whose tree equals the green PR head's: it
+# uses the head's checks and says so.
 echo "waiting for test, terraform and rules to pass on $head_sha (up to ${timeout_minutes}m)..."
 GITHUB_SHA="$head_sha" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
@@ -365,7 +367,7 @@ cat <<EOF
 Release summary
   tag:     $tag
   commit:  $head_sha ($subject)
-  checks:  test, terraform and rules all succeeded on $head_sha (scripts/release-gate.sh, above)
+  checks:  test, terraform and rules all succeeded, on $head_sha or on the identical-tree head of the merged PR (scripts/release-gate.sh says which, above)
 
 A pushed tag is permanent: the Go module proxy and the public ghcr.io images
 cache vX.Y.Z forever, so it is never moved or re-cut (docs/release.md#rolling-back).
