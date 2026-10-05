@@ -32,16 +32,18 @@ import (
 type Firestore struct {
 	*Server
 
-	mu       sync.Mutex
-	db       *fsDatabase
-	docs     map[string]*fsDoc // "coll/id"
-	clock    func() time.Time
-	last     time.Time
-	denyNext int
-	auth     []string
-	quota    []string
-	ops      map[string]bool // operation name -> polled once already
-	raceLoc  string          // see RaceCreate
+	mu                  sync.Mutex
+	db                  *fsDatabase
+	docs                map[string]*fsDoc // "coll/id"
+	clock               func() time.Time
+	last                time.Time
+	denyNext            int
+	disabledReads       int // reads still to refuse (see DisabledReadsAfterCreate)
+	disabledAfterCreate int
+	auth                []string
+	quota               []string
+	ops                 map[string]bool // operation name -> polled once already
+	raceLoc             string          // see RaceCreate
 }
 
 type fsDatabase struct{ location, typ, protection string }
@@ -125,6 +127,17 @@ func (f *Firestore) DenyNext(n int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.denyNext = n
+}
+
+// DisabledReadsAfterCreate makes the first n reads of the database resource
+// itself (GET .../databases/(default)) after the next database create
+// answer 403 SERVICE_DISABLED, as the API does for a minute or two after its
+// enablement: "has not been used in project ... or it is disabled". Nothing
+// else is affected.
+func (f *Firestore) DisabledReadsAfterCreate(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disabledAfterCreate = n
 }
 
 // Credentials lists the Authorization header of each request in order.
@@ -229,6 +242,16 @@ func (f *Firestore) handle(w http.ResponseWriter, r *http.Request, body []byte) 
 	project, rest := m[1], m[3]
 	switch {
 	case rest == "" && r.Method == http.MethodGet:
+		f.mu.Lock()
+		off := f.disabledReads > 0
+		if off {
+			f.disabledReads--
+		}
+		f.mu.Unlock()
+		if off {
+			writeServiceDisabled(w, "firestore.googleapis.com", "projects/123456789")
+			return
+		}
 		f.getDatabase(w, project)
 	case strings.HasPrefix(rest, "/operations/") && r.Method == http.MethodGet:
 		f.getOperation(w, project, rest)
@@ -297,6 +320,7 @@ func (f *Firestore) createDatabase(w http.ResponseWriter, r *http.Request, proje
 		req.DeleteProtectionState = "DELETE_PROTECTION_DISABLED"
 	}
 	f.db = &fsDatabase{location: req.LocationID, typ: req.Type, protection: req.DeleteProtectionState}
+	f.disabledReads, f.disabledAfterCreate = f.disabledAfterCreate, 0
 	name := "projects/" + project + "/databases/(default)/operations/create1"
 	f.ops[name] = false
 	writeJSON(w, 200, map[string]any{"name": name, "done": false,

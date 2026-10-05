@@ -472,8 +472,29 @@ func (c *Client) CreateDatabase(ctx context.Context, location string, deleteProt
 	if op.Error != nil {
 		return nil, &Error{Op: "CREATE-DATABASE", Path: "database", Msg: clip(op.Error.Message)}
 	}
-	return c.GetDatabase(ctx)
+	// The read-back: a database that was just created can answer 403 "API
+	// has not been used ... or it is disabled" for a while (the Firestore
+	// API's enablement is still propagating), though the create succeeded.
+	// It is retried, a bounded number of times, before it is reported.
+	var db *Database
+	var err error
+	for i := 0; i < readBackTries; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("firestore: CREATE-DATABASE database: %w", ctx.Err())
+			case <-time.After(c.poll):
+			}
+		}
+		if db, err = c.GetDatabase(ctx); !errors.Is(err, ErrPermission) {
+			break
+		}
+	}
+	return db, err
 }
+
+// readBackTries bounds the reads of a database after its creation.
+const readBackTries = 10
 
 type rawDoc struct {
 	Name       string         `json:"name"`
