@@ -2,11 +2,13 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -270,5 +272,82 @@ func TestCheckoutProjectNeverNamesANewInstallation(t *testing.T) {
 	r = &initRun{o: &initOptions{name: "evil-project", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
 	if err := r.gatherInputs(t.Context()); err != nil {
 		t.Errorf("--name: %v", err)
+	}
+}
+
+// Adopt mode (a new machine, an existing installation): the name is asked
+// after the GCP project and region, and its suggestion is the installation's
+// own name, not the directory's.
+func TestFirstRunSuggestsTheInstallationsName(t *testing.T) {
+	firstRunEnv(t)
+	root := filepath.Join(t.TempDir(), "My App")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	testutil.IsolateGit(t)
+	testutil.Git(t, root, "init", "-q")
+	t.Chdir(root)
+	fakeTerminal(t)
+	var asked []string
+	old := installationName
+	installationName = func(_ context.Context, gcpProject, region, runsBucket string) string {
+		asked = append(asked, gcpProject+" "+region)
+		return "team-x"
+	}
+	t.Cleanup(func() { installationName = old })
+	var out strings.Builder
+	r := &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if r.o.name != "team-x" || !strings.Contains(out.String(), "[team-x]") || strings.Contains(out.String(), "my-app") {
+		t.Errorf("name %q:\n%s", r.o.name, out.String())
+	}
+	if len(asked) != 1 || asked[0] != "proj-1234 us-east5" {
+		t.Errorf("the installation was looked up with %q, want once with the GCP project and region already known", asked)
+	}
+	// Typing another name is still the user's word (the run then refuses it
+	// against the installation as before); --name is never replaced.
+	asked = nil
+	r = &initRun{o: &initOptions{name: "mine", cloud: cloudOptions{gcpProject: "proj-1234", region: "us-east5"}}, w: &out, in: bufio.NewReader(strings.NewReader("")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil || r.o.name != "mine" || len(asked) != 0 {
+		t.Errorf("--name: %v %q %v", err, r.o.name, asked)
+	}
+	// Nothing found: the ordinary suggestion.
+	installationName = func(context.Context, string, string, string) string { return "" }
+	out.Reset()
+	r = &initRun{o: &initOptions{}, w: &out, in: bufio.NewReader(strings.NewReader("proj-1234\n\n\n")), cmd: NewRootCmd()}
+	if err := r.gatherInputs(t.Context()); err != nil || r.o.name != "my-app" {
+		t.Errorf("no installation: %v %q\n%s", err, r.o.name, out.String())
+	}
+}
+
+// The installation's name comes from its runs bucket's marker, accepted only
+// from a bucket of the GCP project that is Fugaro's.
+func TestReadInstallationName(t *testing.T) {
+	r := newInitRig(t)
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := readInstallationName(t.Context(), lc); got != "" {
+		t.Errorf("no bucket: %q", got)
+	}
+	r.markedRuns(t, "team-x", initProject)
+	if got := readInstallationName(t.Context(), lc); got != "team-x" {
+		t.Errorf("marked: %q, want team-x", got)
+	}
+	// A marker naming another GCP project, or an invalid name, is not used.
+	r2 := newInitRig(t)
+	lc2, _ := localcfg.Load(r2.cfg)
+	r2.markedRuns(t, "team-x", "other-proj-1")
+	if got := readInstallationName(t.Context(), lc2); got != "" {
+		t.Errorf("a marker for another GCP project: %q", got)
+	}
+	r3 := newInitRig(t)
+	lc3, _ := localcfg.Load(r3.cfg)
+	r3.markedRuns(t, "Not A Name", initProject)
+	if got := readInstallationName(t.Context(), lc3); got != "" {
+		t.Errorf("an invalid name: %q", got)
 	}
 }

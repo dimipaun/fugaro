@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -209,29 +210,6 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 	}
 	fmt.Fprintln(r.w, "fugaro init: this is the first run here; each answer has a suggestion, press Enter to accept it.")
 	o := r.o
-	if name == "" && !o.configOnly {
-		def, label := suggestName(ctx), "Fugaro project name (permanent"
-		switch _, _, ok := originOwner(ctx); {
-		case fromCheckout != "":
-			// No default: the file may be a clone's, so the name is typed.
-			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
-		case ok:
-			label += "; suggested from the origin's owner"
-		case def != "":
-			label += "; suggested from this directory's name"
-		}
-		label += ")"
-		v, err := r.prompt(label, def, func(s string) error {
-			if !config.ProjectNameRE.MatchString(s) {
-				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		o.name = v
-	}
 	if o.cloud.gcpProject == "" {
 		v, err := r.prompt("GCP project ID", suggestGCPProject(), func(s string) error {
 			if !infra.ValidProjectID(s) {
@@ -256,7 +234,72 @@ func (r *initRun) gatherInputs(ctx context.Context) error {
 		}
 		o.cloud.region = v
 	}
+	if name == "" && !o.configOnly {
+		def, label := suggestName(ctx), "Fugaro project name (permanent"
+		installed := installationName(ctx, o.cloud.gcpProject, o.cloud.region, o.runsBucket)
+		switch _, _, ok := originOwner(ctx); {
+		case installed != "":
+			// An installation already exists here (a teammate's, adopted on
+			// this machine): its own name, not a guess from a directory.
+			def, label = installed, label+"; the existing installation in this GCP project is named "+pluginwire.Printable(installed)
+		case fromCheckout != "":
+			// No default: the file may be a clone's, so the name is typed.
+			def, label = "", label+"; this checkout's fugaro.yaml says "+pluginwire.Printable(fromCheckout)+", but a cloned repository's file can say anything: type the name you want"
+		case ok:
+			label += "; suggested from the origin's owner"
+		case def != "":
+			label += "; suggested from this directory's name"
+		}
+		label += ")"
+		v, err := r.prompt(label, def, func(s string) error {
+			if !config.ProjectNameRE.MatchString(s) {
+				return errors.New("a project name is 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		o.name = v
+	}
 	return nil
+}
+
+// installationName is the name of the installation that already exists in the
+// GCP project, read from its runs bucket's marker; "" when there is none or it
+// cannot be read (no credentials, no access, not Fugaro's): the name is then
+// asked with the ordinary suggestion. Read-only. Tests replace it.
+var installationName = func(ctx context.Context, gcpProject, region, runsBucket string) string {
+	if gcpProject == "" || region == "" {
+		return ""
+	}
+	lc, err := newProjectConfig("pending", gcpProject, region)
+	if err != nil {
+		return ""
+	}
+	if runsBucket != "" {
+		lc.RunsBucket = runsBucket
+	}
+	return readInstallationName(ctx, lc)
+}
+
+// readInstallationName reads the marker of lc's runs bucket, accepted only
+// from a bucket of lc's GCP project that carries Fugaro's label and names that
+// project (infra.ReadProjectMarker), and returns the name it holds.
+func readInstallationName(ctx context.Context, lc *localcfg.Config) string {
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		return ""
+	}
+	num, err := infra.ProjectNumber(ctx, c, lc.GCPProject)
+	if err != nil {
+		return ""
+	}
+	m, err := infra.ReadProjectMarker(ctx, c, lc.RunsBucketName(), num)
+	if err != nil || m == nil || m.GCPProject != lc.GCPProject || !config.ProjectNameRE.MatchString(m.Name) {
+		return ""
+	}
+	return m.Name
 }
 
 // prompt asks label with def as the suggestion and returns the validated
