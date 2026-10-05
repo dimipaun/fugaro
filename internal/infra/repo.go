@@ -65,8 +65,15 @@ func RepoRootVars(spec RepoSpec, o RepoRootOptions) ([]byte, error) {
 // InstallationStateExists reports whether the state bucket holds the
 // installation's state: fugaro init has applied it there.
 func InstallationStateExists(ctx context.Context, c *Clients, stateBucket string) (bool, error) {
+	return StateExists(ctx, c, stateBucket, StatePrefixInstallation)
+}
+
+// StateExists reports whether the state bucket holds any object under the
+// root's state prefix (StatePrefixInstallation, StatePrefixFirebase).
+// Read-only.
+func StateExists(ctx context.Context, c *Clients, stateBucket, statePrefix string) (bool, error) {
 	found := false
-	prefix := StatePrefixInstallation + "/"
+	prefix := statePrefix + "/"
 	err := c.Storage.Objects.List(stateBucket).Prefix(prefix).Pages(ctx, func(o *storage.Objects) error {
 		if len(o.Items) > 0 {
 			found = true

@@ -209,3 +209,88 @@ func TestNothingIsAppliedAfterAnAdoptInTheSameRun(t *testing.T) {
 		t.Errorf("a rerun is the ordinary converge: %v", err)
 	}
 }
+
+// firebaseState puts the Firebase root's state object in the rig's state
+// bucket: someone's init --firebase has applied it.
+func (r *initRig) firebaseState(t *testing.T) {
+	t.Helper()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixFirebase+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// adoptRun adopts the rig's installation (which has the budget backend's
+// history account) and returns the config it wrote and the run's output.
+func adoptRun(t *testing.T, r *initRig, firebaseOutput string) (cfg, out string) {
+	t.Helper()
+	r.script["output"] = map[string]any{"stdout": outputsJSONWith(t, map[string]any{"history_service_account": historyAccount, "history_job": nil})}
+	if firebaseOutput != "" {
+		r.script["output@firebase"] = map[string]any{"stdout": firebaseOutput}
+	}
+	r.save(t)
+	e := adoptEngine(t, r, &initOptions{yes: true})
+	var buf strings.Builder
+	e.r.w = &buf
+	if _, err := initflow.Run(t.Context(), []initflow.Stage{&preflightStage{e}, newInstallationStage(e)}, e.options()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(e.path)
+	if err != nil {
+		t.Fatalf("the local config was not written: %v\n%s", err, buf.String())
+	}
+	return string(data), buf.String()
+}
+
+// Adopt mode fills the budget section from the Firebase root's outputs, read
+// only, so a teammate can use watch and runs without being an owner. None of
+// it is a secret, and nothing that is not in the outputs is written.
+func TestAdoptFillsTheBudgetSectionFromTheFirebaseOutputs(t *testing.T) {
+	r := newFBRig(t)
+	r.installationState(t)
+	r.firebaseState(t)
+	cfg, out := adoptRun(t, r.initRig, "")
+	for _, want := range []string{"rtdb_url: " + r.db.URL, "firebase_project: " + fpID, "firebase_api_key: " + fpAPIKey, "token_signer: fugaro-token-signer@" + fpID + ".iam.gserviceaccount.com"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("the local config lacks %q:\n%s", want, cfg)
+		}
+	}
+	// Not the mode, the cap or anything else: the outputs do not say them.
+	for _, not := range []string{"mode:", "per_run_usd: 1", "allowed_models", "max_run_tokens"} {
+		if strings.Contains(cfg, not) {
+			t.Errorf("the local config holds %q, which no output says:\n%s", not, cfg)
+		}
+	}
+	if !strings.Contains(out, "budget") {
+		t.Errorf("the run does not say it filled the budget section:\n%s", out)
+	}
+	// Read only: terraform ran output (and init) in the Firebase root, never apply or plan.
+	for _, c := range append(r.ran(t, "apply"), r.ran(t, "plan")...) {
+		t.Errorf("adopt ran %v", c)
+	}
+}
+
+// With no Firebase state (no budget backend yet), or one that cannot be read,
+// the section stays empty and the adopt still succeeds, saying why.
+func TestAdoptWithoutFirebaseOutputs(t *testing.T) {
+	r := newFBRig(t)
+	r.installationState(t)
+	cfg, _ := adoptRun(t, r.initRig, "")
+	if strings.Contains(cfg, "rtdb_url") || strings.Contains(cfg, "firebase_api_key") {
+		t.Errorf("a budget section without a Firebase state:\n%s", cfg)
+	}
+	// State there, outputs unusable: a warning, nothing written.
+	r2 := newFBRig(t)
+	r2.installationState(t)
+	r2.firebaseState(t)
+	cfg, out := adoptRun(t, r2.initRig, `{"rtdb_url":{"value":"not a url","type":"string"}}`)
+	if strings.Contains(cfg, "rtdb_url") || !strings.Contains(out, "budget") {
+		t.Errorf("unusable outputs:\n%s\n%s", cfg, out)
+	}
+}
