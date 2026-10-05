@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Cuts a release: bumps the plugin through a PR, waits for it to merge, then
 # tags the merged commit. See docs/release.md ("Cutting a release" section)
-# for the full picture; this script automates every step of it but the tag
-# push's confirmation.
+# for the full picture; this script automates every step of it, the tag
+# push included: the release gate is the safeguard, there is no prompt.
 #
 #   scripts/release.sh X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
 #
-# --yes skips only the final "create and push the tag?" prompt; every
+# --yes is accepted and does nothing (there is no tag prompt any more); every
 # precondition below still runs. --dry-run stops after printing the plan for
 # step 2 (branch/PR), creating nothing. --timeout-minutes (default 45, a
 # whole number >= 1) bounds each of the two waits: step 3 (the release PR
@@ -102,6 +102,11 @@ latest_released_version() {
   git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' | grep -vxF "$tag" | sed 's/^v//' | awk -F. '{printf "%020d%020d%020d %s\n", $1, $2, $3, $0}' | sort | tail -1 | awk '{print $2}'
 }
 
+poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
+# RELEASE_SH_TIMEOUT_SECONDS exists for the tests only (--timeout-minutes has
+# a one-minute floor).
+timeout_seconds=${RELEASE_SH_TIMEOUT_SECONDS:-$((timeout_minutes * 60))}
+
 # 1. Preconditions, checked in order; the first failure stops the script.
 if ! [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "version '$version' is not strict SemVer X.Y.Z (no leading v, no pre-release suffix, no leading zeros in a component)" >&2
@@ -162,7 +167,7 @@ if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
 fi
 # A tag that exists only locally (an earlier run created it and its push
 # failed) is allowed: if the release PR is merged and the tag sits on the
-# merge commit, step 6 offers to push it. Anything else is refused there.
+# merge commit, step 6 pushes it. Anything else is refused there.
 local_tag=0
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   local_tag=1
@@ -174,8 +179,10 @@ if [ -n "$latest" ] && ! version_gt "$version" "$latest"; then
   exit 1
 fi
 
-echo "checking that main's checks are green at $local_main..."
-GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" scripts/release-gate.sh "$tag"
+# Checks still running on main (a just-merged PR) are waited for, up to
+# --timeout-minutes; a failed check fails at once.
+echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
+GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
 # 2. Branch, bump, PR (skipped by --dry-run; resumed from an existing PR).
 if [ "$dry_run" = 1 ]; then
@@ -273,10 +280,6 @@ else
 fi
 
 # 3. Wait for the merge.
-poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
-# RELEASE_SH_TIMEOUT_SECONDS exists for the tests only (--timeout-minutes has
-# a one-minute floor).
-timeout_seconds=${RELEASE_SH_TIMEOUT_SECONDS:-$((timeout_minutes * 60))}
 
 poll_pr() {
   n=$1
@@ -379,20 +382,7 @@ if [ "$local_tag" = 1 ]; then
     echo "tag $tag already exists locally at $existing, not the verified merge commit $head_sha; delete it (git tag -d $tag) and re-run" >&2
     exit 1
   fi
-  question="Tag $tag already exists locally at this commit but is not on origin. Push it?"
-else
-  question="Create and push tag $tag?"
-fi
-if [ "$yes" != 1 ]; then
-  printf '%s [y/N] ' "$question"
-  read -r answer || answer=""
-  case "$answer" in
-    y | Y | yes | YES) ;;
-    *)
-      echo "aborted: tag not created or pushed" >&2
-      exit 1
-      ;;
-  esac
+  echo "Tag $tag already exists locally at this commit but is not on origin; pushing it."
 fi
 
 # 6. Tag and push.
@@ -407,7 +397,7 @@ if ! git push origin "refs/tags/$tag"; then
   fi
   echo "pushing tag $tag failed. It exists locally at $head_sha; once the cause is fixed, push it with:
   git push origin refs/tags/$tag
-or re-run scripts/release.sh $version, which offers to push it." >&2
+or re-run scripts/release.sh $version, which pushes it." >&2
   exit 1
 fi
 

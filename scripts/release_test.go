@@ -315,7 +315,7 @@ func TestDryRunCreatesNothing(t *testing.T) {
 }
 
 // TestHappyPathAnsweringYes drives release.sh through a real bump, PR,
-// squash merge and, after answering "y", the tag — checking that exactly
+// squash merge and the tag (no prompt) — checking that exactly
 // one branch, one commit and one PR were created, and the tag matches the
 // merge commit.
 func TestHappyPathAnsweringYes(t *testing.T) {
@@ -323,7 +323,7 @@ func TestHappyPathAnsweringYes(t *testing.T) {
 	g := newGHState(t, r, greenChecks())
 	initialMain := testutil.Git(t, r.bare, "rev-parse", "main")
 
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "", "1.0.0")
 	res.requireSuccess(t)
 
 	if n := countLog(t, g, "pr create"); n != 1 {
@@ -352,52 +352,20 @@ func TestHappyPathAnsweringYes(t *testing.T) {
 	}
 }
 
-// TestAnsweringNoLeavesNoTag checks the merge still happens (the PR is real
-// and auto-merge already landed it) but declining the final prompt leaves
-// no tag, since the default answer is no.
-func TestAnsweringNoLeavesNoTag(t *testing.T) {
-	r := newReleaseRepo(t)
-	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g, "n\n", "1.0.0")
-	if res.err == nil {
-		t.Fatalf("expected a non-zero exit when declining the tag prompt:\n%s", res.out)
-	}
-	if !strings.Contains(res.out, "aborted") {
-		t.Errorf("expected an 'aborted' message, got:\n%s", res.out)
-	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
-		t.Errorf("declining the prompt must not create a tag: %s", out)
-	}
-	// The merge itself did happen (auto-merge doesn't wait for a human).
-	mainSHA := testutil.Git(t, r.bare, "rev-parse", "main")
-	subject := testutil.Git(t, r.bare, "log", "-1", "--format=%s", mainSHA)
-	if subject != "release: v1.0.0" {
-		t.Errorf("expected the release PR to have merged before the prompt, got HEAD subject %q", subject)
-	}
-}
-
-// TestEmptyAnswerDefaultsToNo checks the bare prompt default (no input) is
-// "no", per docs/release.md's [y/N].
-func TestEmptyAnswerDefaultsToNo(t *testing.T) {
-	r := newReleaseRepo(t)
-	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g, "\n", "1.0.0")
-	if res.err == nil {
-		t.Fatalf("expected a non-zero exit on an empty answer:\n%s", res.out)
-	}
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out != "" {
-		t.Errorf("an empty answer must not create a tag: %s", out)
-	}
-}
-
-// TestYesFlagSkipsPrompt checks --yes tags without reading stdin at all.
-func TestYesFlagSkipsPrompt(t *testing.T) {
-	r := newReleaseRepo(t)
-	g := newGHState(t, r, greenChecks())
-	res := runRelease(t, r, g, "", "1.0.0", "--yes")
-	res.requireSuccess(t)
-	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
-		t.Errorf("--yes should have created the tag; output:\n%s", res.out)
+// TestTagsWithoutPromptOrStdin checks the tag is created with no prompt and
+// no stdin at all, and that --yes is still accepted as a no-op.
+func TestTagsWithoutPromptOrStdin(t *testing.T) {
+	for _, extra := range [][]string{nil, {"--yes"}} {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+		res := runRelease(t, r, g, "", append([]string{"1.0.0"}, extra...)...)
+		res.requireSuccess(t)
+		if strings.Contains(res.out, "[y/N]") {
+			t.Errorf("no prompt expected:\n%s", res.out)
+		}
+		if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+			t.Errorf("tag missing (args %v); output:\n%s", extra, res.out)
+		}
 	}
 }
 
@@ -520,7 +488,7 @@ func TestPRFailedCheckStopsWaiting(t *testing.T) {
 	}
 }
 
-// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT) is handled
+// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT to the process group) is handled
 // with a message telling the caller how to continue, rather than leaving
 // the terminal on a bare stack trace.
 func TestInterruptPrintsResumeInstructions(t *testing.T) {
@@ -536,14 +504,39 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Env = append(cmd.Env, g.env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 5 * time.Second
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	// Signal only once the script has issued its merge call, i.e. it is past
+	// the preconditions with its traps installed and heading into the poll
+	// loop. A fixed sleep raced a slow runner: the signal could land before
+	// the trap existed, or while the script was elsewhere, and the run hung.
+	deadline := time.Now().Add(60 * time.Second)
+	for countLog(t, g, "pr merge") == 0 {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			t.Fatalf("release.sh never reached the merge step; output:\n%s", out.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Like a terminal's Ctrl-C, signal the whole process group: the poll
+	// loop runs in a subshell, which a signal sent to the parent alone would
+	// never reach (bash defers its trap until that child exits).
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
-	_ = cmd.Wait()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		t.Fatalf("release.sh did not exit within 30s of SIGINT; output:\n%s", out.String())
+	}
 	if !strings.Contains(out.String(), "resume") {
 		t.Fatalf("expected resume instructions after SIGINT, got:\n%s", out.String())
 	}
@@ -630,6 +623,34 @@ func TestWaitsForPostMergeChecks(t *testing.T) {
 	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
 		t.Errorf("tag missing after the checks went green:\n%s", res.out)
 	}
+}
+
+// TestPreconditionWaitsForPendingChecksOnMain: checks still running on main
+// when the script starts are waited for (not failed), with a message.
+func TestPreconditionWaitsForPendingChecksOnMain(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_PRE_PENDING_CALLS=2")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "still waiting: check 'test' is pending") {
+		t.Errorf("expected the pending check to be named:\n%s", res.out)
+	}
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+		t.Errorf("tag missing after the checks went green:\n%s", res.out)
+	}
+}
+
+// TestPreconditionPendingChecksOnMainTimeOut: never-finishing checks on main
+// end the wait at the timeout with a clear error, before anything is created.
+func TestPreconditionPendingChecksOnMainTimeOut(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending", "RELEASE_SH_TIMEOUT_SECONDS=2")
+	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res.requireFailureContaining(t, "required check 'rules' is pending")
+	if n := countLog(t, g, "pr create"); n != 0 {
+		t.Errorf("a pull request was created despite pending checks on main")
+	}
+	requireNoTag(t, r, res)
 }
 
 func TestPostMergeCheckFailsFast(t *testing.T) {
@@ -1018,10 +1039,10 @@ func failedTagPush(t *testing.T) (*releaseRepo, *ghState) {
 
 func TestFailedTagPushThenRerunPushesLocalTag(t *testing.T) {
 	r, g := failedTagPush(t)
-	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "", "1.0.0")
 	res.requireSuccess(t)
 	if !strings.Contains(res.out, "exists locally at this commit but is not on origin") {
-		t.Errorf("expected the local-tag prompt:\n%s", res.out)
+		t.Errorf("expected the local-tag notice:\n%s", res.out)
 	}
 	merge := testutil.Git(t, r.bare, "rev-parse", "main")
 	if tag := testutil.Git(t, r.bare, "rev-parse", "v1.0.0^{commit}"); tag != merge {
@@ -1032,16 +1053,13 @@ func TestFailedTagPushThenRerunPushesLocalTag(t *testing.T) {
 	}
 }
 
-func TestLocalTagDeclinedAndWrongCommit(t *testing.T) {
+func TestLocalTagWrongCommit(t *testing.T) {
 	r, g := failedTagPush(t)
-	res := runRelease(t, r, g, "n\n", "1.0.0")
-	res.requireFailureContaining(t, "aborted")
-	requireNoTag(t, r, res)
 
 	// A local tag on some other commit is refused, never pushed.
 	testutil.Git(t, r.local, "tag", "-d", "v1.0.0")
 	testutil.Git(t, r.local, "tag", "-a", "v1.0.0", "-m", "x", "HEAD~1")
-	res = runRelease(t, r, g, "y\n", "1.0.0")
+	res := runRelease(t, r, g, "", "1.0.0")
 	res.requireFailureContaining(t, "not the verified merge commit")
 	requireNoTag(t, r, res)
 }
