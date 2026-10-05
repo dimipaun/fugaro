@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Cuts a release: bumps the plugin through a PR, waits for it to merge, then
 # tags the merged commit. See docs/release.md ("Cutting a release" section)
-# for the full picture; this script automates every step of it but the tag
-# push's confirmation.
+# for the full picture; this script automates every step of it, the tag
+# push included: the release gate is the safeguard, there is no prompt.
 #
 #   scripts/release.sh X.Y.Z [--yes] [--dry-run] [--timeout-minutes N]
 #
-# --yes skips only the final "create and push the tag?" prompt; every
+# --yes is accepted and does nothing (there is no tag prompt any more); every
 # precondition below still runs. --dry-run stops after printing the plan for
 # step 2 (branch/PR), creating nothing. --timeout-minutes (default 45, a
 # whole number >= 1) bounds each of the two waits: step 3 (the release PR
@@ -167,7 +167,7 @@ if [ -n "$(git ls-remote --tags origin "refs/tags/$tag")" ]; then
 fi
 # A tag that exists only locally (an earlier run created it and its push
 # failed) is allowed: if the release PR is merged and the tag sits on the
-# merge commit, step 6 offers to push it. Anything else is refused there.
+# merge commit, step 6 pushes it. Anything else is refused there.
 local_tag=0
 if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
   local_tag=1
@@ -382,20 +382,7 @@ if [ "$local_tag" = 1 ]; then
     echo "tag $tag already exists locally at $existing, not the verified merge commit $head_sha; delete it (git tag -d $tag) and re-run" >&2
     exit 1
   fi
-  question="Tag $tag already exists locally at this commit but is not on origin. Push it?"
-else
-  question="Create and push tag $tag?"
-fi
-if [ "$yes" != 1 ]; then
-  printf '%s [y/N] ' "$question"
-  read -r answer || answer=""
-  case "$answer" in
-    y | Y | yes | YES) ;;
-    *)
-      echo "aborted: tag not created or pushed" >&2
-      exit 1
-      ;;
-  esac
+  echo "Tag $tag already exists locally at this commit but is not on origin; pushing it."
 fi
 
 # 6. Tag and push.
@@ -410,7 +397,7 @@ if ! git push origin "refs/tags/$tag"; then
   fi
   echo "pushing tag $tag failed. It exists locally at $head_sha; once the cause is fixed, push it with:
   git push origin refs/tags/$tag
-or re-run scripts/release.sh $version, which offers to push it." >&2
+or re-run scripts/release.sh $version, which pushes it." >&2
   exit 1
 fi
 
