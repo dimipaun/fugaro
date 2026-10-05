@@ -483,7 +483,7 @@ func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *
 func TestDoctorGitHubApp(t *testing.T) {
 	doctorChecks := func(t *testing.T) (out string, checks []doctorCheck) {
 		t.Helper()
-		out, errOut, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+		out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
 		var o doctorOutput
 		if err := json.Unmarshal([]byte(out), &o); err != nil {
 			t.Fatalf("%v\n%s\n%s", err, out, errOut)
@@ -530,4 +530,26 @@ func TestDoctorGitHubApp(t *testing.T) {
 			t.Fatalf("%+v", c)
 		}
 	})
+}
+
+// doctor without --check-github-app (what the setup skill runs, in an agent's
+// session) never reads the App's key and never asks GitHub: the fake refuses
+// any access call.
+func TestDoctorWithoutFlagNeverReadsTheKey(t *testing.T) {
+	r, auth := doctorApp(t, 200, fullPerms)
+	// doctorApp allows access for the flagged tests; here the fake must see none.
+	t.Setenv("CLAUDECODE", "1")
+	out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range o.Checks {
+		if strings.HasPrefix(c.ID, "github-app") {
+			t.Errorf("a GitHub App check without the flag: %+v", c)
+		}
+	}
+	if a := r.sm.Accessed(); len(a) != 0 || len(*auth) != 0 {
+		t.Errorf("accessed %v, GitHub asked %d times", a, len(*auth))
+	}
 }

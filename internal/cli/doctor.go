@@ -89,11 +89,12 @@ var doctorLookPath = exec.LookPath
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		cloud  cloudOptions
-		dir    string
-		plugin bool
-		strict bool
-		asJSON bool
+		cloud    cloudOptions
+		dir      string
+		plugin   bool
+		checkApp bool
+		strict   bool
+		asJSON   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor [--json] [--plugin] [--strict]",
@@ -102,7 +103,12 @@ func newDoctorCmd() *cobra.Command {
 and its installation's billing and IAM policy (with a budget backend, who can
 sign sign-in tokens for it: warnings, never changes), the Fugaro plugin's wiring in
 .claude/settings.json, a checkout's fugaro.yaml and its stored secrets by
-name. It never prints a secret's value and never creates, enables or
+name. With --check-github-app, in your own terminal, it also asks GitHub whether
+each GitHub App the config records is installed on its repository with the
+permissions Fugaro's runs ask for: that is the one thing that reads a secret's
+value (the App's private key, with your own credentials, held in memory only to
+sign, never printed), and it is refused in a coding agent's session. Otherwise
+it never prints a secret's value and never creates, enables or
 changes anything.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
@@ -117,19 +123,26 @@ fugaro init as the fix, rather than guessing at a project.
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
 		},
 	}
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
+	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only (refused in a coding agent's session)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
 	ctx := cmd.Context()
+	// Before anything is read: the key is never read in a coding agent's session.
+	if checkApp {
+		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
 
 	var pluginReport pluginwire.Report
 	var pluginChecks []doctorCheck
@@ -232,7 +245,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, doctorTokenSigners(ctx, lc, crmSvc, iamSvc)...)
 	}
 
-	o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc)...)
+	if checkApp {
+		o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc, cmd.ErrOrStderr())...)
+	}
 
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
@@ -248,11 +263,12 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	return emitDoctor(cmd, o, asJSON)
 }
 
-// doctorGitHubApps is the GitHub App pre-check (githubapp.go) for the GitHub
+// doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind
+// --check-github-app, for the GitHub
 // repositories the local config records with an App: the checkout's own when
 // doctor runs in one, else each of them. A check that could not be made is a
 // warning that does not claim the App is fine.
-func doctorGitHubApps(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer) []doctorCheck {
 	var repos []string
 	for name, r := range lc.Repos {
 		if r.Provider == gitprov.KindGitHub && r.GitHubAppID != "" {
@@ -271,7 +287,7 @@ func doctorGitHubApps(ctx context.Context, lc *localcfg.Config) []doctorCheck {
 		if err != nil {
 			continue
 		}
-		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, gcp.SecretID(slug, "github-app-key"))
+		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: gcp.SecretID(slug, "github-app-key"), Notice: notice})
 		id := "github-app:" + repo
 		switch c.Verdict {
 		case appFine:

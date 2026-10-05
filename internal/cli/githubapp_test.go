@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,7 +76,12 @@ func newGitHubRig(t *testing.T) *githubRig {
 
 func (g *githubRig) check(t *testing.T) appCheck {
 	t.Helper()
-	return checkGitHubApp(t.Context(), &localcfg.Config{Name: "aurora", GCPProject: initProject}, "acme/app", "12345", "app-key-secret")
+	return g.checkWith(t, appKeySource{Read: true, SecretID: "app-key-secret", Notice: io.Discard})
+}
+
+func (g *githubRig) checkWith(t *testing.T, src appKeySource) appCheck {
+	t.Helper()
+	return checkGitHubApp(t.Context(), &localcfg.Config{Name: "aurora", GCPProject: initProject}, "acme/app", "12345", src)
 }
 
 // leaks is whether any of text holds the key, a JWT, or what GitHub was sent.
@@ -217,6 +223,7 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 		t.Helper()
 		fb := gcpfake.NewBuild(t)
 		r, _, out := conditions()[6].run(t, "") // no terminal: an offered build is left, never typed
+		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
 			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
@@ -276,6 +283,7 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 		spec.Provider = "bitbucket"
 		fb := gcpfake.NewBuild(t)
 		r, _, _ := conditions()[6].run(t, "")
+		r.o.checkApp = true
 		lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
 			BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
 			Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
@@ -283,4 +291,75 @@ func TestFirstBuildWaitsForTheGitHubApp(t *testing.T) {
 			t.Errorf("err %v, GitHub asked %d times, hold %q", err, len(g.auth), r.buildHold)
 		}
 	})
+}
+
+// The key is never read from Secret Manager without --check-github-app: the
+// check is then "not made" and says how to make it, and nothing is read or
+// sent. The key typed in this run is used from memory, with no read either.
+func TestGitHubAppKeyIsReadOnlyBehindTheFlag(t *testing.T) {
+	g := newGitHubRig(t)
+	c := g.checkWith(t, appKeySource{SecretID: "app-key-secret"})
+	if c.Verdict != appUnknown || g.reads != 0 || len(g.auth) != 0 ||
+		!strings.Contains(c.Problem, "rerun with --check-github-app (reads the key with your own credentials) or run") || !strings.Contains(c.Problem, "doctor --check-github-app in your own terminal") {
+		t.Fatalf("%+v reads %d GitHub asked %d", c, g.reads, len(g.auth))
+	}
+	// From this run's memory: checked, nothing read, the caller's copy kept.
+	mem := append([]byte(nil), appKey(t)...)
+	c = g.checkWith(t, appKeySource{Mem: mem, SecretID: "app-key-secret"})
+	if c.Verdict != appFine || g.reads != 0 || len(g.auth) != 1 || string(mem) != string(appKey(t)) {
+		t.Fatalf("%+v reads %d asked %d", c, g.reads, len(g.auth))
+	}
+	// The notice comes before the read, and only with the flag.
+	var notice strings.Builder
+	g.checkWith(t, appKeySource{Read: true, SecretID: "app-key-secret", Notice: &notice})
+	if !strings.Contains(notice.String(), "reads the App's private key with your own credentials, holds it in memory only") || g.reads != 1 {
+		t.Fatalf("notice %q reads %d", notice.String(), g.reads)
+	}
+}
+
+// Through init: without the flag, a key stored in an earlier run is not read
+// (the build is offered as before, with the warning); the key typed in this
+// run is used.
+func TestInitPreCheckWithoutFlagReadsNothing(t *testing.T) {
+	g := newGitHubRig(t)
+	spec := infra.RepoSpec{Name: "acme/app", Provider: "github", GitHubAppID: "12345", Secrets: map[string]string{"github-app-key": "app-key-secret"},
+		BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r"}
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+	fb := gcpfake.NewBuild(t)
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"},
+		Endpoints:  localcfg.Endpoints{CloudBuild: fb.URL + "/", NoAuth: true}}
+	r, _, out := conditions()[6].run(t, "")
+	if _, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"}); err != nil {
+		t.Fatal(err)
+	}
+	if g.reads != 0 || len(g.auth) != 0 || r.buildHold != "" || !strings.Contains(out.String()+strings.Join(r.res.Warnings, "\n"), "rerun with --check-github-app") {
+		t.Fatalf("reads %d asked %d hold %q\n%s %v", g.reads, len(g.auth), r.buildHold, out.String(), r.res.Warnings)
+	}
+	r, _, _ = conditions()[6].run(t, "")
+	r.appKeyMem = append([]byte(nil), appKey(t)...)
+	g.status = 404
+	if _, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"}); err != nil || g.reads != 0 || len(g.auth) != 1 || !strings.Contains(r.buildHold, "not installed") {
+		t.Fatalf("typed key: %v reads %d asked %d hold %q", err, g.reads, len(g.auth), r.buildHold)
+	}
+}
+
+// --check-github-app is refused under a coding agent's marker, by init and by
+// doctor, before anything is read or sent.
+func TestCheckGitHubAppRefusedInAgentSession(t *testing.T) {
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			g := newGitHubRig(t)
+			t.Setenv(marker, "1")
+			for _, args := range [][]string{{"init", "--check-github-app", "--plan-only"}, {"init", "--repo", "--check-github-app", "--plan-only"}, {"doctor", "--check-github-app", "--json"}} {
+				_, _, err := execute(t, args...)
+				if err == nil || !strings.Contains(err.Error(), "refused in a coding agent's session") || ExitCode(err) != ExitUserError {
+					t.Errorf("%v: %v", args, err)
+				}
+			}
+			if g.reads != 0 || len(g.auth) != 0 {
+				t.Errorf("the key was read (%d) or GitHub asked (%d)", g.reads, len(g.auth))
+			}
+		})
+	}
 }

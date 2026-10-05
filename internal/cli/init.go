@@ -89,6 +89,7 @@ type initOptions struct {
 	// --repo: onboard the repository of a checkout.
 	repo, noBuild, allowJobDelete bool
 	githubAppID                   string
+	checkApp                      bool // --check-github-app
 }
 
 func newInitCmd() *cobra.Command {
@@ -342,6 +343,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
+	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only; refused in a coding agent's session); without it init checks only with the key you typed in this run")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
@@ -377,6 +379,9 @@ type initRun struct {
 	// pre-check failed (its problem and fix, one line); "" when they were
 	// offered and not typed.
 	buildHold string
+	// appKeyMem is the GitHub App's key the user typed at this run's secrets
+	// stage, held in memory for the pre-check and cleared when the run ends.
+	appKeyMem []byte
 
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
@@ -428,6 +433,12 @@ func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
 
 func runInit(r *initRun) error {
 	cmd, o := r.cmd, r.o
+	defer func() { clear(r.appKeyMem) }()
+	if o.checkApp {
+		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
 	// --plan-only creates and changes nothing: --yes confirms nothing under
 	// it, in any path (the converge, --firebase, --repo, the embedded repo
 	// engine). What a plan needs made first takes the typed confirmation.
@@ -1665,6 +1676,12 @@ func (o *initOptions) checkRepo() error {
 // step confirmed; then the local config records it.
 func runInitRepo(r *initRun, args []string) error {
 	cmd, o := r.cmd, r.o
+	defer func() { clear(r.appKeyMem) }()
+	if o.checkApp {
+		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
 	if err := o.checkRepo(); err != nil {
 		return err
 	}
@@ -1921,7 +1938,7 @@ func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec inf
 	if spec.Provider != gitprov.KindGitHub || spec.GitHubAppID == "" {
 		return ""
 	}
-	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, spec.Secrets["github-app-key"])
+	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, appKeySource{Mem: r.appKeyMem, Read: r.o.checkApp, SecretID: spec.Secrets["github-app-key"], Notice: r.w})
 	for _, w := range c.Warnings {
 		r.warn(w)
 	}

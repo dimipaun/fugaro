@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -21,11 +22,16 @@ import (
 // what the installation grants (github.CheckInstallation) and compares it
 // with what the tokens request, derived from the code that requests them.
 //
-// The App's private key is read from Secret Manager with the person's own
-// credentials (gcp.Secrets.Access: owners can; launchers and operators hold
-// no value read, which makes the check "not made", never "fine"), held in
-// memory only to sign the JWT, and never printed, logged, put in an argument
-// or an error.
+// The CLI holds no provider credential (docs/git-providers.md), so the check
+// needs the App's private key only in two ways, both in memory, both used only
+// to sign the JWT, never printed, logged, put in an argument or an error:
+//   - in init, the key the user typed at THIS run's secrets stage (appKeyMem),
+//     with no Secret Manager read;
+//   - behind the explicit flag --check-github-app (init and doctor), which
+//     reads it from Secret Manager with the person's own credentials
+//     (gcp.Secrets.Access) after a one-line notice, and is refused under a
+//     coding agent's marker, so the value never reaches an agent's process.
+// Without either, the check is "not made", never "fine".
 
 // githubAPIURL is the GitHub REST root the pre-check asks; tests replace it.
 var githubAPIURL = github.DefaultBaseURL
@@ -35,13 +41,37 @@ var githubAPIURL = github.DefaultBaseURL
 var githubAPIClient *http.Client
 
 // readAppKey reads the PEM of the GitHub App's private key from the secret.
-// Tests replace it.
+// Only behind --check-github-app. Tests replace it.
 var readAppKey = func(ctx context.Context, lc *localcfg.Config, secretID string) ([]byte, error) {
 	sm, err := gcp.NewSecrets(ctx, gcpOptions(lc))
 	if err != nil {
 		return nil, err
 	}
 	return sm.Access(ctx, secretID)
+}
+
+// checkGitHubAppFlag is the flag that allows the key's Secret Manager read.
+const checkGitHubAppFlag = "--check-github-app"
+
+// refuseAppKeyReadInAgent is the refusal of the flag under a coding agent's
+// environment, before anything is read.
+func refuseAppKeyReadInAgent(getenv func(string) string) error {
+	if agentEnv(getenv) {
+		return userErr("%s reads the GitHub App's private key with your own credentials, so it is refused in a coding agent's session (the value must never reach an agent's process): run it in your own terminal window", checkGitHubAppFlag)
+	}
+	return nil
+}
+
+// appKeySource says where the check may get the App's key.
+type appKeySource struct {
+	// Mem is the key the user typed in this run, if still held; the check
+	// copies it and does not clear it (its holder does).
+	Mem []byte
+	// Read allows reading it from Secret Manager (--check-github-app);
+	// SecretID names the secret; Notice receives the one-line notice first.
+	Read     bool
+	SecretID string
+	Notice   io.Writer
 }
 
 // appVerdict is how the check ended.
@@ -65,21 +95,33 @@ type appCheck struct {
 }
 
 // checkGitHubApp asks GitHub whether the App appID is installed on repo
-// (owner/name) with the permissions Fugaro's tokens ask for. secretID is the
-// secret holding the App's private key.
-func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID, secretID string) appCheck {
+// (owner/name) with the permissions Fugaro's tokens ask for, with the key from
+// src.
+func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string, src appKeySource) appCheck {
 	owner, name, ok := gitprov.SplitRepo(repo)
 	if !ok || appID == "" {
 		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation was not checked: no App ID or repository to check it for"}
 	}
-	pem, err := readAppKey(ctx, lc, secretID)
+	var pem []byte
 	switch {
-	case errors.Is(err, gcp.ErrNoVersion):
-		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: its private key is not stored yet (the github-app-key secret has no version)"}
-	case errors.Is(err, gcp.ErrNoAccess):
-		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: you may not read secret values (a project owner can), and the check signs with the App's key"}
-	case err != nil:
-		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: the App's key could not be read: " + oneLineCLI(err.Error())}
+	case len(src.Mem) > 0:
+		pem = append([]byte(nil), src.Mem...)
+	case src.Read:
+		if src.Notice != nil {
+			fmt.Fprintln(src.Notice, "reads the App's private key with your own credentials, holds it in memory only")
+		}
+		var err error
+		pem, err = readAppKey(ctx, lc, src.SecretID)
+		switch {
+		case errors.Is(err, gcp.ErrNoVersion):
+			return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: its private key is not stored yet (the github-app-key secret has no version)"}
+		case errors.Is(err, gcp.ErrNoAccess):
+			return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: you may not read secret values (a project owner can), and the check signs with the App's key"}
+		case err != nil:
+			return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: the App's key could not be read: " + oneLineCLI(err.Error())}
+		}
+	default:
+		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation on " + repo + " was not checked: rerun with " + checkGitHubAppFlag + " (reads the key with your own credentials) or run " + selfCommand() + " doctor " + checkGitHubAppFlag + " in your own terminal"}
 	}
 	key, err := github.ParsePrivateKey(pem)
 	clear(pem)
