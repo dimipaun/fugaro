@@ -67,7 +67,7 @@ A halted run is not a failure. The CLI exits 0, the runner gave the agent a shor
 | `budget_unavailable` | The budget backend was unreachable for three minutes. | Wait until it is back, then follow up. |
 | `budget_token_expired` | The run waited over an hour before it started. Halted at the start, no pull request. | Launch the run again. |
 
-For these: raising a cap, clearing a kill switch and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. The owner's commands are theirs to run:
+For these: raising a cap, clearing a kill switch and the budget commands belong to the user. Show the exact command, for example `fugaro budget show`, and say which cap applies. The owner's commands are theirs to run, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro budget set --repo <owner/name> --daily <usd>

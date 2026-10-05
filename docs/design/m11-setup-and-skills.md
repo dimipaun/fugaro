@@ -125,7 +125,7 @@ Phase 1 cannot store every secret: today's containers are per repository, create
 - **Detect and skip:** `secrets ls` shows what exists for the repository; a present secret is `done` and is never overwritten by init (rotating is `secrets set`).
 - **Hidden prompts only.** The value is read with `golang.org/x/term` from a terminal. If stdin is not a terminal, init does not read secret values from it (a pipe could be an agent holding a value it should not have); it prints the one-line `fugaro secrets set <name> --repo <slug>` command to run in a terminal. The existing `secrets set` keeps its pipe and file forms for the user's own scripts. No value is ever echoed, logged, written to `result` JSON, put in an error, or kept in the local config. (The existing minimum-length and size rules apply.)
 - **`/fugaro:setup` closes the loop:** once it knows `agent.auth` and the workflows' own `secrets:`, it compares them with `fugaro secrets ls --json` and tells the user which one-liners to run. It never handles a value (§9).
-- **Not a Fugaro job:** creating the GitHub App or a Bitbucket repository access token happens in a browser. Init prints the steps and the facts that bit the dogfooding run: **GitHub App names are globally unique** (the example name `Fugaro` is taken: the docs example must say so and suggest `Fugaro <org>`), the name is shown as the author of every PR, and it cannot be changed later. (Docs fix in T20; the same for Bitbucket token names.)
+- **Not a Fugaro job:** creating the GitHub App or a Bitbucket repository access token happens in a browser. Init prints the steps and the facts that bit the dogfooding run: **GitHub App names are globally unique** (the example name `Fugaro` is taken: the docs example must say so and suggest `<yourname>-fugaro`), the name is shown as the author of every PR, and it cannot be changed later. (Docs fix in T20; the same for Bitbucket token names.)
 
 ### 3.6 How a repository gets onboarded
 
@@ -278,7 +278,7 @@ The brief wants the agent to author "Dockerfile and `fugaro.yaml` together". Rec
 |---|---|---|---|
 | 1 | First-install `init --plan-only` failed on empty Terraform state | Fixed in #77. Keep a regression test that drives the converge from nothing (no state, no config, no registry) with fakes | T8 |
 | 2 | `init --firebase` refused the installation's own project | Fixed in #79. Same-project is the default; no second ID is asked for | T8 |
-| 3 | GitHub App name `Fugaro` taken | Docs and init text: names are globally unique, suggest `Fugaro <org>`, shown as PR author, not renameable. Fix `git-providers.md` (the "for example `Fugaro`" lines) and gcp-setup precondition 10 | T20 |
+| 3 | GitHub App name `Fugaro` taken | Docs and init text: names are globally unique, suggest `<yourname>-fugaro`, shown as PR author, not renameable. Fix `git-providers.md` (the "for example `Fugaro`" lines) and gcp-setup precondition 10 | T20 |
 | 4 | Cloud Billing API must be on the credentials' quota project | Preflight check (shared with `doctor`): detect, enable behind a confirmation or print the one-line command | T5 |
 | 5 | Default Compute SA held `roles/editor` | Existing same-project warning kept in preflight; fix printed as one line; never applied to a project init did not create | T5, T16 |
 | 6 | ghcr base unreadable by Cloud Build and Run; `fugaro-go` not published; built and pushed by hand | The mirror stage (§3.3); release publishes `fugaro-go`, and ghcr packages are public and checked anonymously in CI | T11, T2 |

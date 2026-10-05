@@ -5,45 +5,61 @@
 
 Ask **one topic at a time**: say what the topic is, what you found, your recommendation and why, then wait. Apply the answer to `fugaro.yaml` before the next topic. A choice the user has already made in the conversation or in an existing `fugaro.yaml` is confirmed, not asked again. Never fill a topic in silently, and never write a value the user didn't give for the topics marked "from the user".
 
-## 1. `agent.auth`
+## 1. The GitHub App (GitHub repositories only)
+
+Ask this first, because the final plan (`fugaro init --repo --plan-only --github-app-id <id>`) needs the App's ID and it must not surface only after everything else. Ask: "What is the GitHub App ID (a number on the App's settings page, not a secret)?" Take it from the user; don't look for it in files. If `fugaro doctor --json` or an earlier plan output already shows an App ID recorded for this installation, say so and ask only for a confirmation. If there is no App yet, tell the user how to create one and wait:
+- **Name:** `<yourname>-fugaro`, for example `acme-fugaro`. App names are unique across all of GitHub and the bare `Fugaro` is taken. The name is shown as the author of every pull request and can't be changed, so use one App for all of the team's repositories.
+- **Repository permissions, four:** Contents Read & write, Pull requests Read & write, Issues Read, Metadata Read. **Never Workflows**: a run able to edit `.github/workflows/*` could weaken the merge gates or reach the repository's secrets.
+- **Install it on this repository.** When the permissions of an installed App change, accept the change on the installation (GitHub requires it; until then the old permissions apply).
+- A client secret is not needed. The private key (PEM) goes in the `github-app-key` secret (step 8), never into this conversation.
+
+Full text: [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md).
+
+## 2. `agent.auth`
 
 What credential the remote agent uses to call a model. It decides which secrets exist (step 8 of the skill) and which caps can apply.
 
 | Value | Secret | Recommend when |
 |---|---|---|
-| `oauth` | `claude-oauth-token` (the user makes it with `claude setup-token` and stores it) | the user has a Claude subscription and wants no per-token bill. There is no gateway: model pins, prices and dollar caps don't apply. The only token cap is `agent.max_run_tokens` (below). Say so |
+| `oauth` | `claude-oauth-token` (the user makes it with `claude setup-token` and stores it) | the user says they have a Claude subscription and want no per-token bill. There is no gateway: model pins, prices and dollar caps don't apply. The only token cap is `agent.max_run_tokens` (below). Say so |
 | `api-key` | `anthropic-api-key` | the team pays per token and wants budget caps to apply |
-| `vertex` | none (the job's own account) | the installation's cloud project has Claude on Vertex AI enabled |
+| `vertex` | none (the job's own account) | Claude on Vertex AI is verified usable in the installation's cloud project (below) |
+
+**Verify before you recommend.** Nothing in `fugaro doctor --json` or any command you may run shows whether Claude on Vertex AI is enabled and has quota in the installation's project (the project name is in doctor's `project` field). So never mark `vertex` recommended on a guess: say you could not verify it, and offer it only as an option the user may confirm (the user checks it in their own cloud console). Recommend the credential the evidence supports: `oauth` when the user says they have a subscription (the evidence is their statement, so ask), `api-key` when the team wants pay-per-token dollar caps, and say which evidence led there. Remember that `vertex` supports `observe` only (topic 4).
 
 If `fugaro.yaml` exists, keep its value. If the project's other repositories already chose one, recommend the same.
 
-## 2. `agent.models`
+## 3. `agent.models`
 
-`coder` implements and fixes, `reviewer` reviews, `background` is Claude Code's small background requests. A role left out uses `agent.model`, else Claude Code's default. Read the current model IDs and prices from `fugaro budget prices` (it is offline); never write an ID from memory. With a budget on and `api-key` or `vertex`, every model must be an explicit ID with a price (no aliases) and `background` is required. With `oauth` the pins and prices don't apply (there is no gateway), but explicit IDs are still the clearer choice. Recommend a stronger model for `reviewer` than the cheapest, a capable one for `coder`, and the small one for `background`; let the user choose.
+`coder` implements and fixes, `reviewer` reviews, `background` is Claude Code's small background requests. A role left out uses `agent.model`, else Claude Code's default. Read the current model IDs and prices from `fugaro budget prices` (it is offline); never write an ID from memory. With a budget on and `api-key` or `vertex`, every model must be an explicit ID with a price (no aliases) and `background` is required. With `oauth` the pins and prices don't apply (there is no gateway), but explicit IDs are still the clearer choice. Recommend, and give the reason for each role: a strong, capable model for `coder` because it writes the change the review has to catch mistakes in; at least as strong for `reviewer`, because a weaker reviewer misses what the coder got wrong; the small, cheap one for `background`, because those requests are minor and frequent. Quote the prices you read so the user sees the cost of the choice, never recommend a model only because it is the biggest or the first listed, and let the user choose.
 
-## 3. `budget` (from the user)
+## 4. `budget` (from the user)
 
 Optional. `mode` is `off`, `observe` (record, don't stop) or `enforce`; `per_run_usd` and `per_day_usd` are dollar caps; `allowed_models` is a list of explicit IDs. The block can only tighten the project's ceiling (set by the owner): a value above it is clamped with a warning, and the file is read from the default branch, so it takes effect once merged. Don't invent numbers: ask what the team will spend, and propose `observe` first when they have none. Model pins, prices and the dollar caps apply only to `api-key` and `vertex`, which go through the gateway. With `oauth` there is no gateway, so the only token cap is `agent.max_run_tokens` (a run's total tokens, 0 is none; it can only tighten the project's ceiling): for `oauth`, recommend asking the user for a number and setting it. `observe` records usage for the shared budget only. `vertex` supports `observe` only: `enforce` is refused until the Vertex facts are verified; there is no per-token price to cap. Also explain `agent.max_budget_usd` (default 25 per stage, passed to Claude Code's own limit): keep the default unless the user wants it lower or higher. Project-wide caps and kill switches belong to the owner (the budget commands); you never run them.
 
-## 4. `git.pr.reviewers` and `labels` (from the user)
+## 5. `git.pr.reviewers` and `labels` (from the user)
 
 Who is requested on the pull request and which labels it gets. Only the people the user names. GitHub takes logins. Bitbucket needs account UUIDs (`{...}`), not usernames. Looking one up needs the repository's access token, so you never do it: the user runs the lookup in their own terminal, from [Finding a Bitbucket reviewer's UUID](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md#finding-a-bitbucket-reviewers-uuid), and tells you only the UUIDs (not the token, not the command's output). The same goes for a Bitbucket `account_id` for `followup.trusted` ([Finding an account ID](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md#finding-an-account-id-for-followuptrusted)). Labels default to `fugaro`.
 
-## 5. `followup.trusted` and `followup.allow_public` (security)
+## 6. `followup.trusted` and `followup.allow_public` (security)
 
 A follow-up run (`fugaro run --pr N`) continues a Fugaro pull request and acts on the PR comments of **trusted** accounts. It holds the workflow's secrets and the model credential, so whoever is trusted steers an agent that holds them.
 
 - `followup.trusted`: account IDs, not names. The people come only from the user, never from CODEOWNERS, `git log` or a README. For a numeric GitHub user ID run `gh api users/<login> --jq .id` (read-only) with a login the user gave, and show the result to the user, or a Bitbucket `account_id`. Empty by default, so a follow-up acts only on the launcher's instructions. Recommend leaving it empty unless the team wants reviewers to steer follow-ups, then list only the people the user names. It is read from the base branch, so a PR can't widen its own list.
 - `followup.allow_public`: on a **public** repository anyone can comment, and a follow-up run would act on comments from trusted accounts with the secrets in hand while untrusted comments are dropped; `allow_public: true` lets follow-ups run on such a repository at all. Without it they are refused, which is the safe default. **Explain this risk to the user and never set `allow_public` without their explicit decision** (a clear yes to the question, not silence and not a guess from the repository). Ask the user whether the repository is public; don't infer it from anything. If it is private, don't raise `allow_public`.
 
-## 6. `review_rounds`, `resources`, `timeouts`
+## 7. `resources` (machine size)
 
-`agent.review_rounds` (1 to 10, default 2): review then fix rounds before the PR. Recommend the default; raise it for code where a missed bug is expensive. `resources`: from the CI machine size (`discovery.md`). `timeouts`: the defaults (`total` 90m, `stage` 40m, `verify` 30m); the verify command should finish well inside `verify`.
+Its own topic, never combined with the review rounds. Evidence: the CI configuration's runner or `size:` and any memory flags (`machine size` in `discovery.md`), the test footprint (the parallel workers, a heap setting, services started in the same container, a browser), and the language's defaults. State the evidence with its file and line, the recommended CPUs and memory and why, and what you could not tell. Ask only this.
 
-## 7. `rebuild`
+## 8. `agent.review_rounds` (and `timeouts`)
+
+Its own topic. `agent.review_rounds` (1 to 10, default 2): review then fix rounds before the PR. Evidence is how risky or critical the repository is: money, authentication, data migrations, a public API or production data call for more rounds, a documentation or tooling repository for fewer; look at what the code does and at the tests that guard it, and say so. Recommend a number with that reason, default 2 when nothing says otherwise, and each extra round costs time and tokens. Ask only this. `timeouts`: the defaults (`total` 90m, `stage` 40m, `verify` 30m); the verify command should finish well inside `verify`.
+
+## 9. `rebuild`
 
 Almost always the defaults: leave it out and say so. Propose `rebuild.paths` only with evidence (`services-and-images.md`); `rebuild.check: off` only when the user wants a hand-rebuilt image.
 
-## 8. Workflow names and anything to keep off Fugaro
+## 10. Workflow names and anything to keep off Fugaro
 
 With several workflows, confirm the names (`fugaro run --workflow` selects one). Ask whether any task type must stay off Fugaro (money, security, production data): if so, write it in the file `agent.instructions` points to (a repository-relative path to a text file that must exist; it is appended to the agent's prompt, so it is shown to the user like any executed text and goes in the pull request) or in the team's own routing notes, never in a secret.
