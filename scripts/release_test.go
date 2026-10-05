@@ -632,6 +632,34 @@ func TestWaitsForPostMergeChecks(t *testing.T) {
 	}
 }
 
+// TestPreconditionWaitsForPendingChecksOnMain: checks still running on main
+// when the script starts are waited for (not failed), with a message.
+func TestPreconditionWaitsForPendingChecksOnMain(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_PRE_PENDING_CALLS=2")
+	res := runRelease(t, r, g, "", "1.0.0", "--yes")
+	res.requireSuccess(t)
+	if !strings.Contains(res.out, "still waiting: check 'test' is pending") {
+		t.Errorf("expected the pending check to be named:\n%s", res.out)
+	}
+	if out := testutil.Git(t, r.bare, "tag", "--list", "v1.0.0"); out == "" {
+		t.Errorf("tag missing after the checks went green:\n%s", res.out)
+	}
+}
+
+// TestPreconditionPendingChecksOnMainTimeOut: never-finishing checks on main
+// end the wait at the timeout with a clear error, before anything is created.
+func TestPreconditionPendingChecksOnMainTimeOut(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks()).with("FAKE_GH_CHECK_RULES=pending", "RELEASE_SH_TIMEOUT_SECONDS=2")
+	res := runRelease(t, r, g, "y\n", "1.0.0")
+	res.requireFailureContaining(t, "required check 'rules' is pending")
+	if n := countLog(t, g, "pr create"); n != 0 {
+		t.Errorf("a pull request was created despite pending checks on main")
+	}
+	requireNoTag(t, r, res)
+}
+
 func TestPostMergeCheckFailsFast(t *testing.T) {
 	r := newReleaseRepo(t)
 	// A long timeout: a conclusive failure must not be waited out.

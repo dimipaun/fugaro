@@ -13,6 +13,9 @@
 #                    reports for that name
 #   FAKE_GH_POST_TEST / _TERRAFORM / _RULES    same, but only once a PR has
 #                    merged (overrides the above from then on)
+#   FAKE_GH_PRE_PENDING_CALLS  before the merge, the api reports "pending"
+#                    for the first N calls per check name (CI still running
+#                    on main), then the configured FAKE_GH_CHECK_* value
 #   FAKE_GH_MISSING_CALLS  after the merge, the api reports "missing" for
 #                    the first N calls per check name (CI not started yet)
 #   FAKE_GH_ADVANCE_AFTER_MERGE  non-empty: another commit lands on main
@@ -65,6 +68,12 @@ check_conclusion() {
     fi
     printf '%s' "$post"
   else
+    n=$(($(cat "$dir/pre_calls_$1" 2>/dev/null || echo 0) + 1))
+    echo "$n" >"$dir/pre_calls_$1"
+    if [ "$n" -le "${FAKE_GH_PRE_PENDING_CALLS:-0}" ]; then
+      printf 'pending'
+      return
+    fi
     printf '%s' "$pre"
   fi
 }

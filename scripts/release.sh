@@ -102,6 +102,11 @@ latest_released_version() {
   git tag -l 'v*' | grep -E '^v(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*)){2}$' | grep -vxF "$tag" | sed 's/^v//' | awk -F. '{printf "%020d%020d%020d %s\n", $1, $2, $3, $0}' | sort | tail -1 | awk '{print $2}'
 }
 
+poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
+# RELEASE_SH_TIMEOUT_SECONDS exists for the tests only (--timeout-minutes has
+# a one-minute floor).
+timeout_seconds=${RELEASE_SH_TIMEOUT_SECONDS:-$((timeout_minutes * 60))}
+
 # 1. Preconditions, checked in order; the first failure stops the script.
 if ! [[ $version =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
   echo "version '$version' is not strict SemVer X.Y.Z (no leading v, no pre-release suffix, no leading zeros in a component)" >&2
@@ -174,8 +179,10 @@ if [ -n "$latest" ] && ! version_gt "$version" "$latest"; then
   exit 1
 fi
 
-echo "checking that main's checks are green at $local_main..."
-GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" scripts/release-gate.sh "$tag"
+# Checks still running on main (a just-merged PR) are waited for, up to
+# --timeout-minutes; a failed check fails at once.
+echo "checking that main's checks are green at $local_main (waiting up to ${timeout_minutes}m for any still running)..."
+GITHUB_SHA="$local_main" GITHUB_REPOSITORY="$repo" GATE_WAIT_SECONDS="$timeout_seconds" GATE_POLL_SECONDS="$poll_seconds" scripts/release-gate.sh "$tag"
 
 # 2. Branch, bump, PR (skipped by --dry-run; resumed from an existing PR).
 if [ "$dry_run" = 1 ]; then
@@ -273,10 +280,6 @@ else
 fi
 
 # 3. Wait for the merge.
-poll_seconds=${RELEASE_SH_POLL_SECONDS:-30}
-# RELEASE_SH_TIMEOUT_SECONDS exists for the tests only (--timeout-minutes has
-# a one-minute floor).
-timeout_seconds=${RELEASE_SH_TIMEOUT_SECONDS:-$((timeout_minutes * 60))}
 
 poll_pr() {
   n=$1
