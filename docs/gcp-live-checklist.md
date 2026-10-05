@@ -685,7 +685,7 @@ M10 sends a run's coder to a non-Anthropic model (design `docs/design/m10-multi-
 | Key revoked, file deleted, sandbox PRs declined | |
 | Unverified (not tested): DeepSeek's own Anthropic endpoint, other models (Qwen, Kimi), header-based provider preferences | still unverified |
 
-## Check 26: the same-project layout (step 4 run 2026-10-04; 6 and 7 open)
+## Check 26: the same-project layout (steps 4, 6 and 7 run; 7 found the forgery boundary)
 
 The Firebase project may be the installation's own GCP project (design `m9-budget-and-dashboard.md` §6.0, D3 revised 2026-10-04). Everything about it ran **offline only** (fake terraform, mock-provider plans, text checks on the IAM): no real apply has used one project for both roots. Run it on a **scratch project with billing, never `belong`**, as you, one ⚠ CONFIRM per step.
 
@@ -704,7 +704,8 @@ Run by the maintainer with temporary Token Creator grants (removed by the script
 
 - **Step 4, static:** no job, build or scheduler account holds a Firebase, datastore or primitive role; the default Compute account has no `roles/editor` (removed by hand); only `fugaro-history` holds Firebase roles, by design.
 - **Step 4, runtime, impersonating the run job, build, scheduler and default Compute accounts:** RTDB answered 401, Firestore 403 and Identity Toolkit `accounts:query` `INSUFFICIENT_PERMISSION` (HTTP 400) for each. PASS.
-- **Step 6 (Cloud Build pivot with a real build) and step 7 (token forgery): NOT RUN.**
+- **Step 6, the Cloud Build pivot (run 2026-10-05):** a tiny build submitted without a `serviceAccount` ran as the default Compute account (`<number>-compute@developer`, `roles/editor` already removed) and called the RTDB, Firestore and Identity Toolkit with its metadata token; the step asserted that none answered 2xx (exits 31 to 33) and the build finished `SUCCESS`, so all three refused. The account cannot write build logs after the role removal, so the codes themselves were not visible: the verdict is the assertion. PASS (with `roles/editor` stripped; the doc's "with editor it succeeds" half was not repeated).
+- **Step 7, token forgery (run 2026-10-05): ACCEPTED.** A custom token signed by `fugaro-scheduler` (a service account of the project that is not the token signer) was accepted by `signInWithCustomToken` (HTTP 200, an ID token for the made-up user `probe-forged-uid`, deleted afterwards). So Firebase's real boundary is **who can sign as any service account of the project** (`iam.serviceAccounts.signJwt`), not who can sign as the designated signer. In `fugaro-dev` the only project-level Token Creator is Firebase's own Admin SDK account (`firebase-adminsdk-fbsvc`); the maintainer's `roles/owner` does not include `signJwt` (it needed an explicit grant for the test, removed afterwards) and holds only `fugaroTokenMinter` on the signer. What a forged token can then do is bounded by the RTDB rules' claim checks, which were not probed. Follow-up: a `doctor` check that lists every principal able to sign as any project service account and warns about anyone beyond the Firebase Admin SDK account; and state this boundary in the design.
 - Lesson: allow a minute or two for Token Creator propagation; probe Firestore on a collection path, not the documents root (404).
 
 
