@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // Both names are in every job's environment, and the GCP ID is never
@@ -160,5 +162,89 @@ func TestM4GoldenEnvRenamed(t *testing.T) {
 	}
 	if !strings.Contains(string(readme), "the env names changed in M9a: FUGARO_PROJECT is the project name, the GCP ID is FUGARO_GCP_PROJECT") {
 		t.Error("testdata/README.md has no note about the renamed env names")
+	}
+}
+
+func TestReadProjectMarker(t *testing.T) {
+	ctx := context.Background()
+	write := func(f *cloud, bucket, body string) {
+		t.Helper()
+		if err := f.gcs.Bucket(t, bucket).Bucket.WriteAll(ctx, ProjectMarkerObject, []byte(body), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, tc := range map[string]struct {
+		seed func(f *cloud)
+		want *ProjectMarker
+	}{
+		"no bucket": {func(f *cloud) {}, nil},
+		"no object": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, managed) }, nil},
+		"marker": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, &ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"}},
+		"a perfect mark in another project's bucket": {func(f *cloud) {
+			f.gcs.AddBucket("runs", 999, managed)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"an unlabelled bucket with a mark": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"not json": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, managed); write(f, "runs", "nope") }, nil},
+		"wrong version": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
+			write(f, "runs", `{"version":2,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"no name": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
+			write(f, "runs", `{"version":1,"gcp_project":"proj-1234"}`)
+		}, nil},
+		"oversized": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234","x":"`+strings.Repeat("a", 5000)+`"}`)
+		}, nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloud(t)
+			tc.seed(f)
+			got, err := ReadProjectMarker(ctx, f.c, "runs", testProjectNumber)
+			if err != nil || !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got %+v, err %v; want %+v", got, err, tc.want)
+			}
+		})
+	}
+	if m, err := ReadProjectMarker(ctx, newCloud(t).c, "", testProjectNumber); m != nil || err != nil {
+		t.Fatalf("no bucket name: %v, %v", m, err)
+	}
+}
+
+// The names the one-confirmation allowlist trusts are the ones the code
+// produces.
+func TestCoverNamesAreTheCodes(t *testing.T) {
+	has := func(l []string, v string) bool {
+		for _, x := range l {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	for _, r := range []string{RoleLauncher, RoleJobRunner, RoleBuildSubmitter, RoleTagMover, MinterRoleID, "fugaroHistory"} {
+		if !has(tf.FugaroRoles, r) {
+			t.Errorf("role %s is not in tf.FugaroRoles", r)
+		}
+	}
+	for _, a := range []string{SchedulerServiceAccountID, HistoryAccountID, SignerAccountID} {
+		if !has(tf.FugaroAccounts, a) {
+			t.Errorf("account %s is not in tf.FugaroAccounts", a)
+		}
+	}
+	c := tf.Cover{Projects: []string{"proj-1"}}
+	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
+		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
+			Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + id + "@proj-1.iam.gserviceaccount.com", "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}); len(c.NotCovered(p)) != 0 {
+			t.Errorf("%s: %v", id, c.NotCovered(p))
+		}
 	}
 }

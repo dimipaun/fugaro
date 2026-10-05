@@ -1,0 +1,23 @@
+
+Review: project aurora (GCP proj-1234) is Fugaro's own (created by this run), so its ordinary steps share ONE confirmation.
+Will do, each step printing its own exact plan first:
+  firebase:       Terraform applies of the installation root (GCP project proj-1234) and of the Firebase root in aurora-fp, then the budget database's marks and rules and Identity Platform (planned when applied)
+                  the Firebase project aurora-fp: NOT verified as Fugaro's (another project than proj-1234, with no Fugaro mark): its Terraform apply and database writes each ask their own typed name
+  installation-2: Terraform apply of the installation root again, deploying the history job (planned when applied)
+  repository:     Terraform apply onboarding acme/web (planned when applied)
+Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).
+IAM changes announced: removes project Viewers' read access to the runs bucket gs://fugaro-runs-proj-1234 and the state bucket gs://fugaro-tfstate-proj-1234 when they have it.
+Who gets access (the effective lists; a plan that grants anyone else stops and asks its own typed confirmation):
+  launchers:      user:me@example.com (default: you); launch runs; also mint run tokens when --firebase's token signer is applied
+  operators:      group:ops@example.com (from the local config); onboard repositories and submit builds
+  budget admins:  user:ba@example.com, user:owner@example.com (from a flag); plus the GCP project's owners and editors who are users or groups, read now
+  budget viewers: user:me@example.com, group:ops@example.com (the launchers and operators)
+  alert email:    none (not set)
+Every Terraform plan is shown as it runs. It is covered only if it consists of creates and in-place updates of the installation's own resource kinds, its attributes are the modules' (images in this project's registry, jobs of this project called by Fugaro's accounts, logs to this project, private buckets, this project's names), and it grants only the modules' roles to the members above or to Fugaro's own service accounts. Anything else (a destroy or replace, a binding or policy, a key, another project, an unlisted member) stops that step, which asks its own typed confirmation.
+Still asks separately, never covered by this confirmation:
+  - the Firestore database's creation (its location is permanent)
+  - replacing a tag in your registry (--replace-image)
+  - each first Cloud Build of an image (billable)
+  - onboarding acme/web, which is not one of the project's yet (type owner/name)
+  - the secrets (hidden prompts)
+  - the plugin wiring (its own y/N)

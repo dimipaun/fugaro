@@ -158,8 +158,13 @@ func (r *initRig) save(t *testing.T) {
 type planChange = map[string]any
 
 func change(addr string, actions ...string) planChange {
-	return planChange{"address": addr, "type": strings.Split(strings.TrimPrefix(addr, "module.installation."), ".")[0],
-		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": map[string]any{}}}
+	typ := strings.Split(strings.TrimPrefix(addr, "module.installation."), ".")[0]
+	after := map[string]any{}
+	if typ == "google_storage_bucket" { // as the module writes it
+		after = map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}
+	}
+	return planChange{"address": addr, "type": typ,
+		"change": map[string]any{"actions": actions, "before": map[string]any{}, "after": after}}
 }
 
 // setPlan makes the fake's show -json report changes.

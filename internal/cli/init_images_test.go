@@ -139,9 +139,11 @@ type imagesRig struct {
 	built    int
 }
 
-func newImagesRig(t *testing.T, version string) *imagesRig {
+func newImagesRig(t *testing.T, version string) *imagesRig { return newImagesRigFor(t, version, fpID) }
+
+func newImagesRigFor(t *testing.T, version, fp string) *imagesRig {
 	t.Helper()
-	r := &imagesRig{fbRig: newFBRig(t), src: newImagesRegistry(t), dst: newImagesRegistry(t)}
+	r := &imagesRig{fbRig: newFBRigFor(t, fp), src: newImagesRegistry(t), dst: newImagesRegistry(t)}
 	t.Chdir(t.TempDir()) // outside any checkout: no fugaro.yaml names a base
 	for _, n := range []string{"fugaro-history", "fugaro-go", "fugaro-web-node"} {
 		r.src.publish("dimipaun/"+n, "1.2.3")
