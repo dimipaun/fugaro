@@ -506,3 +506,53 @@ func TestInitRepoWarnsWhenBaseLacksProject(t *testing.T) {
 		t.Fatalf("warning = %q", got)
 	}
 }
+
+// Live Check 27: with several project configs, a first run of a new project
+// named by --name was refused ("nothing selects one"); and a command run in a
+// checkout whose origin repository is listed by exactly one project selects
+// that project.
+func TestInitNameOfNewProjectAmongSeveral(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1111")
+	writeProject(t, "borealis", "proj-2222")
+	t.Chdir(t.TempDir()) // outside any checkout
+	o := &initOptions{name: "cyan", cloud: cloudOptions{gcpProject: "proj-3333", region: "us-east5", stderr: discard}}
+	lc, path, old, err := loadInitConfig(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := localcfg.ProjectPath(os.Getenv, "cyan")
+	if lc.Name != "cyan" || lc.GCPProject != "proj-3333" || path != want || old != nil {
+		t.Fatalf("config %+v at %s (old %q)", lc, path, old)
+	}
+	// Nothing names a project: the refusal says what to do.
+	o.name = ""
+	_, _, _, err = loadInitConfig(context.Background(), o)
+	if err == nil || !strings.Contains(err.Error(), "aurora, borealis") || !strings.Contains(err.Error(), "export FUGARO_PROJECT=<name>") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestOriginRepositorySelectsItsProject(t *testing.T) {
+	isolateProjects(t, t.TempDir())
+	writeProject(t, "aurora", "proj-1111")
+	path := writeProject(t, "borealis", "proj-2222")
+	data, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append(data, "repos:\n  acme/web:\n    provider: github\n    workflows: [fix]\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	testutil.IsolateGit(t)
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/web.git")
+	t.Chdir(dir)
+	sel, lc, err := selectFrom(cloudOptions{stderr: discard}, nil, false)
+	if err != nil || lc == nil || sel.Name != "borealis" || !strings.Contains(sel.From, "origin repository") {
+		t.Fatalf("selected %+v, %v", sel, err)
+	}
+	// An origin no project lists selects nothing.
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/other.git")
+	if _, _, err = selectFrom(cloudOptions{stderr: discard}, nil, false); err == nil || !strings.Contains(err.Error(), "several project configs") {
+		t.Fatalf("an unlisted origin: %v", err)
+	}
+}

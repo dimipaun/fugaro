@@ -665,7 +665,7 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	if err != nil {
 		return nil, "", nil, err
 	}
-	sel, lc, err := selectFrom(o.cloud, co, true)
+	sel, lc, err := selectNamed(o.cloud, co, true, o.name)
 	if err != nil {
 		return nil, "", nil, err
 	}

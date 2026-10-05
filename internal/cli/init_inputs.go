@@ -147,7 +147,7 @@ func (r *initRun) firstRunMissing(ctx context.Context) (name, fromCheckout strin
 	if err != nil {
 		return "", "", nil, false // loadInitConfig reports it
 	}
-	sel, lc, err := selectFrom(o.cloud, co, true)
+	sel, lc, err := selectNamed(o.cloud, co, true, o.name)
 	if err != nil || lc != nil {
 		return "", "", nil, false
 	}

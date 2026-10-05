@@ -238,3 +238,72 @@ func TestSelectExplicitFile(t *testing.T) {
 		t.Fatalf("--config: %+v, %+v, %v", sel, cfg, err)
 	}
 }
+
+// Live Check 27: several project configs, a first run for a new project name
+// said "nothing selects one" although --name named it; and where no checkout
+// fugaro.yaml and no flag selects, the refusal now says how to fix it, and
+// the checkout's origin repository selects the one project that lists it.
+func TestSelectNameAndOrigin(t *testing.T) {
+	xdg := t.TempDir()
+	getenv := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": xdg}[k] }
+	write := func(name, gcp, repos string) {
+		writeFile(t, filepath.Join(xdg, "fugaro", "projects", name+".yaml"), projectYAML(name, gcp)+repos)
+	}
+	write("aurora", "aurora-gcp-1", "repos:\n  acme/web:\n    provider: github\n    workflows: [fix]\n")
+	write("borealis", "proj-1234", "repos:\n  acme/api:\n    provider: github\n    workflows: [fix]\n  other/shared:\n    provider: github\n    workflows: [fix]\n")
+	origin := func(r string) func() string { return func() string { return r } }
+
+	// --name of a new project names it, for a first run.
+	sel, cfg, err := Select(SelectInput{Name: "cyan", Creating: true, Getenv: getenv})
+	if err != nil || cfg != nil || sel.Name != "cyan" || sel.From != "--name" {
+		t.Fatalf("--name cyan: %+v, %+v, %v", sel, cfg, err)
+	}
+	// --name of an existing one selects its config.
+	if sel, cfg, err = Select(SelectInput{Name: "aurora", Creating: true, Getenv: getenv}); err != nil || cfg == nil || sel.Name != "aurora" {
+		t.Fatalf("--name aurora: %+v, %v", sel, err)
+	}
+	// Anything that selects ranks above --name.
+	if sel, _, err = Select(SelectInput{Name: "cyan", Project: "borealis", Creating: true, Getenv: getenv}); err != nil || sel.Name != "borealis" {
+		t.Fatalf("--project over --name: %+v, %v", sel, err)
+	}
+	// Not a first run (a command that does not create): --name is not a selector.
+	if _, _, err = Select(SelectInput{Name: "cyan", Getenv: getenv}); err == nil {
+		t.Fatal("--name selected a project for a command that does not create one")
+	}
+	// The origin repository selects the one project that lists it.
+	sel, cfg, err = Select(SelectInput{Origin: origin("Acme/API"), Getenv: getenv})
+	if err != nil || cfg == nil || sel.Name != "borealis" || sel.From != "the checkout's origin repository acme/api" {
+		t.Fatalf("origin: %+v, %v", sel, err)
+	}
+	// A repository no project lists leaves the choice to the user, and the
+	// refusal lists the configs and the fix in one line.
+	_, _, err = Select(SelectInput{Origin: origin("acme/unknown"), Getenv: getenv})
+	var se *SelectError
+	if !errors.As(err, &se) {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{"several project configs (aurora, borealis)", "export FUGARO_PROJECT=<name>", "--project <name>"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %q, want it to say %q", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Errorf("the refusal is not one line: %q", err)
+	}
+	// Two projects listing it: not guessed.
+	write("cyan", "cyan-gcp-1", "repos:\n  acme/web:\n    provider: github\n    workflows: [fix]\n")
+	if _, _, err = Select(SelectInput{Origin: origin("acme/web"), Getenv: getenv}); err == nil || !strings.Contains(err.Error(), "aurora, cyan") {
+		t.Fatalf("a repository two projects list: %v", err)
+	}
+	// An explicit selector beats the origin.
+	if sel, _, err = Select(SelectInput{Origin: origin("acme/api"), Project: "aurora", Getenv: getenv}); err != nil || sel.Name != "aurora" {
+		t.Fatalf("--project over the origin: %+v, %v", sel, err)
+	}
+	// One config only: the origin is not consulted.
+	one := t.TempDir()
+	getenv1 := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": one}[k] }
+	writeFile(t, filepath.Join(one, "fugaro", "projects", "aurora.yaml"), projectYAML("aurora", "aurora-gcp-1"))
+	if sel, _, err = Select(SelectInput{Origin: origin("acme/api"), Getenv: getenv1}); err != nil || sel.From != "only project config" {
+		t.Fatalf("one config: %+v, %v", sel, err)
+	}
+}

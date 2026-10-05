@@ -69,8 +69,15 @@ func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *lo
 // fugaro init, which may select a project config it has yet to write
 // (nil).
 func selectFrom(o cloudOptions, co *localcfg.Checkout, creating bool) (localcfg.Selection, *localcfg.Config, error) {
+	return selectNamed(o, co, creating, "")
+}
+
+// selectNamed is selectFrom with fugaro init's --name: where nothing else
+// selects one of several project configs, it names the project (a first run
+// of that name too).
+func selectNamed(o cloudOptions, co *localcfg.Checkout, creating bool, name string) (localcfg.Selection, *localcfg.Config, error) {
 	sel, lc, err := localcfg.Select(localcfg.SelectInput{
-		Config: o.config, Project: o.project, Checkout: co,
+		Config: o.config, Project: o.project, Checkout: co, Name: name, Origin: checkoutOrigin,
 		EnvProject: os.Getenv("FUGARO_PROJECT"), EnvConfig: os.Getenv("FUGARO_CONFIG"),
 		Creating: creating, Getenv: os.Getenv,
 	})
@@ -229,4 +236,18 @@ func baseProjectWarning(ctx context.Context, root, base, project string) string 
 		return fmt.Sprintf("origin/%s's fugaro.yaml has no `project:`; runs will refuse until %s's fugaro.yaml says project: %s", base, base, project)
 	}
 	return fmt.Sprintf("origin/%s's fugaro.yaml names project %s; runs will refuse until %s's fugaro.yaml says project: %s", base, got, base, project)
+}
+
+// checkoutOrigin is the working directory's checkout's origin repository
+// (owner/name), "" with none or one git config rewrites (not trusted by name).
+func checkoutOrigin() string {
+	ctx := context.Background()
+	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+	if err != nil {
+		return ""
+	}
+	if oi, ok := readOrigin(ctx, root); ok && !oi.Rewritten {
+		return oi.Repo
+	}
+	return ""
 }
