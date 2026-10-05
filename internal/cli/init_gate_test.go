@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -456,5 +459,64 @@ func TestHostileCloneWithRealConfigNotOnboarded(t *testing.T) {
 	res, err := initflow.Run(t.Context(), []initflow.Stage{rs}, e.options())
 	if err != nil || stateOf(res, "repository") != initflow.NeedsYou {
 		t.Fatalf("%v %+v", err, res.Stages)
+	}
+}
+
+// firstReadSpy runs fn on the first read of the stream.
+type firstReadSpy struct {
+	io.Reader
+	once sync.Once
+	fn   func()
+}
+
+func (s *firstReadSpy) Read(p []byte) (int, error) {
+	s.once.Do(s.fn)
+	return s.Reader.Read(p)
+}
+
+// Live Check 27: the repository question came only after the slow Terraform
+// plans. It is asked first now, before any plan touches the cloud for the
+// checkout, and the answer is the same gate: typed, or the stages say what to
+// do and do not ask again.
+func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
+	for name, answer := range map[string]string{"typed": "acme/app\n", "not typed": "no\n"} {
+		t.Run(name, func(t *testing.T) {
+			releaseBuild(t, "0.2.0")
+			r := newInitRig(t)
+			r.stateBucket()
+			t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
+			fakeTerminal(t)
+			e := rigEngine(t, r, &initOptions{planOnly: true, githubAppID: "12345"})
+			before := -1
+			e.r.in = bufio.NewReader(&firstReadSpy{Reader: strings.NewReader(answer + answer + answer), fn: func() { before = len(r.calls(t)) }})
+			var out syncBuf
+			e.r.w = &out
+			_ = e.converge(t.Context())
+			if before != 0 {
+				t.Fatalf("the question was asked after %d terraform calls, want before the first", before)
+			}
+			if n := strings.Count(out.String(), "Type acme/app"); n != 1 {
+				t.Errorf("the question was asked %d times, want once:\n%s", n, out.String())
+			}
+			if len(r.calls(t)) == 0 {
+				t.Error("no stage planned after the question")
+			}
+			if name == "not typed" && !strings.Contains(out.String(), "--onboard-repo acme/app") {
+				t.Errorf("not typed, and the opt-in line is missing:\n%s", out.String())
+			}
+		})
+	}
+	// --yes never asks, early or late: nothing is typed for it.
+	r := newInitRig(t)
+	r.stateBucket()
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", initProjectName, "")))
+	fakeTerminal(t)
+	e := rigEngine(t, r, &initOptions{planOnly: true, yes: true, githubAppID: "12345"})
+	asked := false
+	e.r.in = bufio.NewReader(&firstReadSpy{Reader: strings.NewReader("acme/app\n"), fn: func() { asked = true }})
+	e.r.w = &syncBuf{}
+	_ = e.converge(t.Context())
+	if asked {
+		t.Error("--yes asked for the repository")
 	}
 }

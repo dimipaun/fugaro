@@ -39,6 +39,7 @@ type initEngine struct {
 	wd    *infra.Workdir
 
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
+	declined   map[string]bool // repositories the user was asked about and did not type
 	admins     []string        // the GCP project's owners and editors, read once for the review (init_review.go)
 	adminsRead bool
 	fpChecked  string // "", "yes" or "no": the Firebase project's verification, once
@@ -124,6 +125,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}
+	e.gateEarly(ctx)
 	res, err := initflow.Run(ctx, stages, e.options())
 	if err == nil && res != nil && e.r.o.planOnly && res.Failed == nil {
 		e.planOnlyReview(ctx, res.Stages)
