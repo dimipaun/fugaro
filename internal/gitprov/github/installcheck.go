@@ -115,8 +115,14 @@ type InstallationReport struct {
 // installation lookup answered 404).
 type NotInstalledError struct{ AppID, Repo string }
 
-func (e *NotInstalledError) Error() string {
-	return fmt.Sprintf("the GitHub App %s is not installed on %s: install it on this repository only (Settings, GitHub Apps, Install App)", e.AppID, e.Repo)
+func (e *NotInstalledError) Error() string { return e.Problem() + ": " + e.Fix() }
+
+// Problem is what is wrong, Fix the one-line remedy.
+func (e *NotInstalledError) Problem() string {
+	return fmt.Sprintf("the GitHub App %s is not installed on %s", e.AppID, e.Repo)
+}
+func (e *NotInstalledError) Fix() string {
+	return "install it on this repository only (Settings, GitHub Apps, Install App)"
 }
 
 // BadCredentialsError is GitHub refusing the App's own JWT: the private key

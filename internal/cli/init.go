@@ -23,6 +23,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
@@ -357,6 +358,10 @@ type initRun struct {
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
 	// or a coding agent): the run ends needs-you, with the typed route.
 	buildsLeft []string
+	// buildHold is why those builds were not offered at all: the GitHub App's
+	// pre-check failed (its problem and fix, one line); "" when they were
+	// offered and not typed.
+	buildHold string
 
 	// review is the run's one confirmation, set only by the converge
 	// (init_review.go).
@@ -1823,7 +1828,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err != nil {
 			return initErr(err)
 		}
-		built, err := r.buildImages(ctx, lc, cfg, spec, names)
+		built, err := r.offerBuilds(ctx, lc, cfg, spec, names)
 		if err != nil {
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
@@ -1854,8 +1859,17 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
 		left := promptLeft(initflow.Repository, "type the project's name at the first image build's prompt (it is billable)", "init", "--repo")
-		if embedded {
+		if r.buildHold != "" {
+			// Not offered: the GitHub App is not ready (appPreCheck), which no
+			// typing fixes.
+			left = initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftConsole, Text: "the first image build waits for the GitHub App: " + r.buildHold + "; then rerun", Commands: []string{selfCommand() + " init"}}
+			if !embedded {
+				left.Commands = []string{selfCommand() + " init --repo"}
+			}
+		} else if embedded {
 			left = promptLeft(initflow.Repository, "in the checkout, type the project's name at the first image build's prompt (it is billable)", "init")
+		}
+		if embedded {
 			return &initflow.NeedsYouError{Left: left}
 		}
 		if err := finish(); err != nil {
@@ -1864,6 +1878,46 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		return userErr("the first image build of %s is billable and needs the project's name typed at a real terminal: %s: %s", strings.Join(r.buildsLeft, ", "), left.Text, left.Commands[0])
 	}
 	return finish()
+}
+
+// offerBuilds is the first image builds: first the GitHub App pre-check, before
+// anything billable is offered (an App that is not installed on the
+// repository, or lacks a permission a run asks for, would only fail the build
+// or the first run, after the charge: the builds are then left, with the
+// reason, for the user), then each build's typed confirmation (buildImages).
+func (r *initRun) offerBuilds(ctx context.Context, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, names []string) (int, error) {
+	if len(names) > 0 {
+		if hold := r.appPreCheck(ctx, lc, spec); hold != "" {
+			r.buildsLeft, r.buildHold = append(r.buildsLeft, names...), hold
+			return 0, nil
+		}
+	}
+	return r.buildImages(ctx, lc, cfg, spec, names)
+}
+
+// appPreCheck runs the GitHub App pre-check (githubapp.go) for a GitHub
+// repository whose first image build is about to be offered. It returns why
+// the build must wait ("" to go on): the App is not installed on the
+// repository, or the installation lacks a permission Fugaro's tokens ask for,
+// each named with its fix. A check that could not be made (no key to read, no
+// access, GitHub unreachable) is a warning that does not claim the App is
+// fine, and the build is offered as before.
+func (r *initRun) appPreCheck(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec) string {
+	if spec.Provider != gitprov.KindGitHub || spec.GitHubAppID == "" {
+		return ""
+	}
+	c := checkGitHubApp(ctx, lc, spec.Name, spec.GitHubAppID, spec.Secrets["github-app-key"])
+	for _, w := range c.Warnings {
+		r.warn(w)
+	}
+	switch c.Verdict {
+	case appUnknown:
+		r.warn(c.Problem)
+	case appFailed:
+		fmt.Fprintf(r.w, "GitHub App check for %s failed: %s\n  fix: %s\n  The first image build is not offered until this is fixed (nothing was billed).\n", spec.Name, c.Problem, c.Fix)
+		return c.Problem + ": " + c.Fix
+	}
+	return ""
 }
 
 // requireCheckoutProject refuses, before any cloud call, a checkout whose

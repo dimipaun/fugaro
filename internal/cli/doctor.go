@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,9 +21,11 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // doctorCheck is one read-only check's result, in the shape `doctor --json`
@@ -229,6 +232,8 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		o.Checks = append(o.Checks, doctorTokenSigners(ctx, lc, crmSvc, iamSvc)...)
 	}
 
+	o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc)...)
+
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
@@ -241,6 +246,48 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 
 	o.OK = !checksFail(o.Checks, strict)
 	return emitDoctor(cmd, o, asJSON)
+}
+
+// doctorGitHubApps is the GitHub App pre-check (githubapp.go) for the GitHub
+// repositories the local config records with an App: the checkout's own when
+// doctor runs in one, else each of them. A check that could not be made is a
+// warning that does not claim the App is fine.
+func doctorGitHubApps(ctx context.Context, lc *localcfg.Config) []doctorCheck {
+	var repos []string
+	for name, r := range lc.Repos {
+		if r.Provider == gitprov.KindGitHub && r.GitHubAppID != "" {
+			repos = append(repos, name)
+		}
+	}
+	slices.Sort(repos)
+	if root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel"); err == nil {
+		if oi, ok := readOrigin(ctx, root); ok {
+			repos = slices.DeleteFunc(repos, func(name string) bool { return !sameRepo(name, oi.Repo) })
+		}
+	}
+	var out []doctorCheck
+	for _, repo := range repos {
+		slug, err := task.Slug(gitprov.KindGitHub, repo)
+		if err != nil {
+			continue
+		}
+		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, gcp.SecretID(slug, "github-app-key"))
+		id := "github-app:" + repo
+		switch c.Verdict {
+		case appFine:
+			out = append(out, doctorCheck{ID: id, OK: true})
+		case appFailed:
+			out = append(out, doctorCheck{ID: id, OK: false, Problem: c.Problem, Fix: c.Fix})
+		default:
+			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: c.Problem,
+				Fix: "rerun doctor as a project owner with GitHub reachable, or look at the App's installation by hand (Settings, GitHub Apps, Configure)"})
+		}
+		for i, w := range c.Warnings {
+			out = append(out, doctorCheck{ID: fmt.Sprintf("github-app-permissions-%d:%s", i+1, repo), OK: false, Severity: "warning", Problem: w,
+				Fix: "remove what Fugaro does not need in the App's permissions (GitHub, Settings, Developer settings, GitHub Apps, the App, Permissions & events)"})
+		}
+	}
+	return out
 }
 
 // doctorAPIOpts are the client options for a Google API doctor reads from,

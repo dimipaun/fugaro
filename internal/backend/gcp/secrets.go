@@ -76,7 +76,11 @@ func (s *Secrets) Access(ctx context.Context, id string) ([]byte, error) {
 	if r.Payload == nil {
 		return nil, ErrNoVersion
 	}
-	return r.Payload.Data, nil
+	data, err := base64.StdEncoding.DecodeString(r.Payload.Data)
+	if err != nil {
+		return nil, fmt.Errorf("reading secret %s: the payload is not base64", id)
+	}
+	return data, nil
 }
 
 // Set stores value as a new version of secret id, creating the secret with
