@@ -18,6 +18,8 @@ import (
 // installation other than that config.
 type doctorRig struct {
 	dir     string
+	cfgPath string
+	cfg     string
 	crm     *gcpfake.CRM
 	billing *gcpfake.Billing
 	sm      *gcpfake.Secrets
@@ -45,6 +47,7 @@ func newDoctorRig(t *testing.T) *doctorRig {
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	r.cfgPath, r.cfg = path, cfg
 	return r
 }
 
