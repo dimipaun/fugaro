@@ -479,3 +479,54 @@ func TestDBPermissionIsExplained(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// Outputs read from a state bucket are checked as a set for the one Firebase
+// project: a foreign but well-formed triple (another database, another signer,
+// another project) is refused whole, field by field and together.
+func TestFirebaseOutputsMustBelongToOneProject(t *testing.T) {
+	good := FirebaseOutputs{RTDBURL: "https://aurora-fp-default-rtdb.firebaseio.com", FirebaseAPIKey: "AIzaSyA0123456789abcdefghijklmnopqrstu",
+		TokenSigner: "fugaro-token-signer@aurora-fp.iam.gserviceaccount.com", FirebaseProject: "aurora-fp"}
+	if err := CheckFirebaseOutputsFor(good, "", false); err != nil {
+		t.Fatalf("own project, derived: %v", err)
+	}
+	regional := good
+	regional.RTDBURL = "https://aurora-fp-default-rtdb.europe-west1.firebasedatabase.app"
+	if err := CheckFirebaseOutputsFor(regional, "aurora-fp", false); err != nil {
+		t.Fatalf("regional form: %v", err)
+	}
+	foreign := map[string]func(o *FirebaseOutputs){
+		"database": func(o *FirebaseOutputs) { o.RTDBURL = "https://attacker-db.firebaseio.com" },
+		"regional database of another project": func(o *FirebaseOutputs) {
+			o.RTDBURL = "https://other-fp-default-rtdb.europe-west1.firebasedatabase.app"
+		},
+		"database with a path": func(o *FirebaseOutputs) { o.RTDBURL = "https://aurora-fp-default-rtdb.firebaseio.com/x" },
+		"signer":               func(o *FirebaseOutputs) { o.TokenSigner = "attacker@other-fp.iam.gserviceaccount.com" },
+		"signer of our project, another account": func(o *FirebaseOutputs) {
+			o.TokenSigner = "evil@aurora-fp.iam.gserviceaccount.com"
+		},
+		"project": func(o *FirebaseOutputs) { o.FirebaseProject = "other-fp" },
+		"all three": func(o *FirebaseOutputs) {
+			o.RTDBURL, o.TokenSigner, o.FirebaseProject = "https://attacker-db.firebaseio.com", "attacker@other-fp.iam.gserviceaccount.com", "other-fp"
+		},
+	}
+	for name, mut := range foreign {
+		o := good
+		mut(&o)
+		// Passed --firebase aurora-fp: nothing else is accepted.
+		if err := CheckFirebaseOutputsFor(o, "aurora-fp", false); err == nil {
+			t.Errorf("%s accepted with --firebase aurora-fp", name)
+		}
+		// Derived from the state: the three still have to agree.
+		if name != "project" {
+			if err := CheckFirebaseOutputsFor(o, "", false); err == nil {
+				t.Errorf("%s accepted when derived", name)
+			}
+		}
+	}
+	// A fake's loopback database is allowed only where fakes are.
+	loop := good
+	loop.RTDBURL = "http://127.0.0.1:9000"
+	if CheckFirebaseOutputsFor(loop, "aurora-fp", false) == nil || CheckFirebaseOutputsFor(loop, "aurora-fp", true) != nil {
+		t.Error("loopback rule")
+	}
+}

@@ -22,6 +22,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
@@ -129,7 +130,7 @@ Exit 1 when a check fails, with the one-line fix to run.`,
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
-	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only (refused in a coding agent's session)")
+	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
@@ -231,7 +232,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
 	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
-		o.Checks = append(o.Checks, fromPreflight(c))
+		dc := fromPreflight(c)
+		if c.ID == "billing-api" && !lc.Endpoints.NoAuth && infra.CredentialsQuotaProject(ctx) == "" {
+			// Credentials with no quota project: say so, and never suggest the
+			// project being checked.
+			dc.Problem, dc.Fix = infra.NoQuotaProjectProblem(lc.GCPProject), "gcloud auth application-default set-quota-project <your-project>"
+		}
+		o.Checks = append(o.Checks, dc)
 	}
 	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
 		o.Checks = append(o.Checks, fromPreflight(c))

@@ -145,3 +145,20 @@ func TestCheckInstallationFailuresAndNoSecrets(t *testing.T) {
 		t.Fatal("an unreachable API was not an error")
 	}
 }
+
+// An owner or repository that is not a plain name never reaches a request path.
+func TestCheckInstallationRefusesOddNames(t *testing.T) {
+	srv, seen := installServer(t, 200, fullPermsForTest)
+	for _, c := range [][2]string{{"acme", ".."}, {"..", "app"}, {"a%2Fb", "x"}, {"acme", "app/../../x"}, {"acme", "a b"}} {
+		o := checkOpts(t, srv.URL)
+		o.Owner, o.Repo = c[0], c[1]
+		if _, err := CheckInstallation(context.Background(), o); err == nil {
+			t.Errorf("%v accepted", c)
+		}
+	}
+	if len(*seen) != 0 {
+		t.Errorf("requests were sent: %v", *seen)
+	}
+}
+
+var fullPermsForTest = map[string]string{"contents": "write", "pull_requests": "write", "issues": "read", "metadata": "read"}

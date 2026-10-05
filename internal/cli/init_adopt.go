@@ -181,6 +181,13 @@ func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.Ins
 		skip(oneLineCLI(err.Error()))
 		return
 	}
+	// The outputs are state anyone with the state bucket can write: they must
+	// all be one Firebase project's (the one passed with --firebase, else the
+	// one they name), or none is kept.
+	if err := infra.CheckFirebaseOutputsFor(fo, r.o.firebase, e.lc.Endpoints.NoAuth); err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
 	b := localcfg.Budget{}
 	if next.Budget != nil {
 		b = *next.Budget

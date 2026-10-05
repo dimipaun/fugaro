@@ -251,7 +251,7 @@ func TestSelectNameAndOrigin(t *testing.T) {
 	}
 	write("aurora", "aurora-gcp-1", "repos:\n  acme/web:\n    provider: github\n    workflows: [fix]\n")
 	write("borealis", "proj-1234", "repos:\n  acme/api:\n    provider: github\n    workflows: [fix]\n  other/shared:\n    provider: github\n    workflows: [fix]\n")
-	origin := func(r string) func() string { return func() string { return r } }
+	origin := func(r string) func() (string, string) { return func() (string, string) { return "github.com", r } }
 
 	// --name of a new project names it, for a first run.
 	sel, cfg, err := Select(SelectInput{Name: "cyan", Creating: true, Getenv: getenv})
@@ -298,6 +298,10 @@ func TestSelectNameAndOrigin(t *testing.T) {
 	// An explicit selector beats the origin.
 	if sel, _, err = Select(SelectInput{Origin: origin("acme/api"), Project: "aurora", Getenv: getenv}); err != nil || sel.Name != "aurora" {
 		t.Fatalf("--project over the origin: %+v, %v", sel, err)
+	}
+	// The same owner/name on another host is another repository.
+	if _, _, err = Select(SelectInput{Origin: func() (string, string) { return "gitlab.com", "acme/api" }, Getenv: getenv}); err == nil {
+		t.Fatal("a gitlab.com/acme/api origin selected the project that lists GitHub acme/api")
 	}
 	// One config only: the origin is not consulted.
 	one := t.TempDir()

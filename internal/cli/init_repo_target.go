@@ -127,7 +127,7 @@ type originInfo struct {
 // providerHosts is the host each provider's repositories live on. GitHub
 // Enterprise and self-hosted Bitbucket are out of scope: their hosts are
 // "unusual" and always take the typed confirmation.
-var providerHosts = map[string]string{"github": "github.com", "bitbucket": "bitbucket.org"}
+var providerHosts = localcfg.ProviderHosts
 
 func (o originInfo) standardHost() bool {
 	for _, h := range providerHosts {

@@ -6,10 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strings"
 
+	"golang.org/x/oauth2/google"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
 	firebasedatabase "google.golang.org/api/firebasedatabase/v1beta"
 	"google.golang.org/api/googleapi"
@@ -341,6 +344,9 @@ func CheckFirebaseProject(ctx context.Context, c *Clients, fp string) error {
 		return errors.New("no Cloud Billing client (endpoints.cloud_billing is not set)")
 	}
 	bi, err := c.Billing.Projects.GetBillingInfo("projects/" + fp).Context(ctx).Do()
+	if _, ok := disabledConsumer(err, "cloudbilling.googleapis.com"); ok && !c.NoAuth && CredentialsQuotaProject(ctx) == "" {
+		return userErr("%s", NoQuotaProjectProblem(fp))
+	}
 	if consumer, ok := disabledConsumer(err, "cloudbilling.googleapis.com"); ok {
 		quota := strings.TrimPrefix(consumer, "projects/")
 		return userErr("the Cloud Billing API (cloudbilling.googleapis.com) is disabled on %s, the quota project of your credentials, so project %s's billing can't be read. Enable it there and rerun: gcloud services enable cloudbilling.googleapis.com --project %s", quota, fp, quota)
@@ -433,4 +439,72 @@ func DecodeFirebaseOutputs(raw map[string]json.RawMessage) (FirebaseOutputs, err
 		*dst = v
 	}
 	return o, nil
+}
+
+// CheckFirebaseOutputsFor refuses outputs that do not all belong to one
+// Firebase project fp: the database must be exactly
+// https://<fp>-default-rtdb.firebaseio.com or
+// https://<fp>-default-rtdb.<region>.firebasedatabase.app, the signer exactly
+// fugaro-token-signer@<fp>.iam.gserviceaccount.com (the account the Firebase
+// module creates), and firebase_project fp itself. fp is the project the user
+// named (--firebase) or, when "", the one the outputs name, which then has to
+// be what the database and signer say too. They come from a state bucket, so
+// a foreign but well-formed triple must not be taken as ours. loopbackOK is
+// for the fakes' loopback database.
+func CheckFirebaseOutputsFor(o FirebaseOutputs, fp string, loopbackOK bool) error {
+	if fp == "" {
+		fp = o.FirebaseProject
+	}
+	if !ValidProjectID(fp) {
+		return fmt.Errorf("the Firebase project %q is not a project ID", fp)
+	}
+	if o.FirebaseProject != fp {
+		return fmt.Errorf("the Firebase root's firebase_project is %s, not %s", o.FirebaseProject, fp)
+	}
+	if want := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", SignerAccountID, fp); o.TokenSigner != want {
+		return fmt.Errorf("the Firebase root's token_signer is %s, not %s", o.TokenSigner, want)
+	}
+	u, err := url.Parse(o.RTDBURL)
+	if err != nil {
+		return fmt.Errorf("the Firebase root's rtdb_url is not a URL")
+	}
+	if loopbackOK && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1") {
+		return nil
+	}
+	legacy := fp + "-default-rtdb.firebaseio.com"
+	regional := regexp.MustCompile(`^` + regexp.QuoteMeta(fp) + `-default-rtdb\.[a-z0-9-]+\.firebasedatabase\.app$`)
+	if u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" ||
+		!(u.Host == legacy || regional.MatchString(u.Host)) {
+		return fmt.Errorf("the Firebase root's rtdb_url %s is not project %s's database (https://%s or https://%s-default-rtdb.<region>.firebasedatabase.app)", o.RTDBURL, fp, legacy, fp)
+	}
+	return nil
+}
+
+// CredentialsQuotaProject is the quota project the Application Default
+// Credentials name (GOOGLE_CLOUD_QUOTA_PROJECT, else the credentials file's
+// quota_project_id), "" when they name none. The billing reads are billed to
+// it and never to the project being set up.
+func CredentialsQuotaProject(ctx context.Context) string {
+	if v := os.Getenv("GOOGLE_CLOUD_QUOTA_PROJECT"); v != "" {
+		return v
+	}
+	creds, err := google.FindDefaultCredentials(ctx)
+	if err != nil || creds == nil {
+		return ""
+	}
+	var f struct {
+		Quota string `json:"quota_project_id"`
+	}
+	if json.Unmarshal(creds.JSON, &f) != nil {
+		return ""
+	}
+	return f.Quota
+}
+
+// NoQuotaProjectProblem is the error for a billing read refused because the
+// credentials name no quota project. Nothing falls back to the project being
+// set up (the Cloud Billing API cannot be enabled on a project that does not
+// exist yet).
+func NoQuotaProjectProblem(project string) string {
+	return "project " + project + "'s billing can't be read: your credentials name no quota project, and the Cloud Billing API is not usable without one. Set one of your own projects (one that has the Cloud Billing API enabled, and never the project being set up) with: gcloud auth application-default set-quota-project <your-project>"
 }

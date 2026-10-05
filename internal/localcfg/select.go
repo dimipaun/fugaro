@@ -27,10 +27,10 @@ type SelectInput struct {
 	// several project configs it is the project's name, which has a config or
 	// is to be created. Only with Creating.
 	Name string
-	// Origin, when set, gives the checkout's origin repository (owner/name):
+	// Origin, when set, gives the checkout's origin host and repository (owner/name):
 	// where nothing else selects one of several project configs, the one
 	// project that lists it is selected. Called only then.
-	Origin func() string
+	Origin func() (host, repo string)
 	// Creating is fugaro init, which writes the project config: a missing
 	// one is not refused (the selection then has no config), but the
 	// checkout's project still has to agree.
@@ -229,8 +229,8 @@ func (s *selector) run() (Selection, *Config, error) {
 		}
 		note := ""
 		if in.Origin != nil {
-			if repo := in.Origin(); repo != "" {
-				sel, c, listed := s.byOrigin(names, repo)
+			if host, repo := in.Origin(); repo != "" && host != "" {
+				sel, c, listed := s.byOrigin(names, host, repo)
 				if c != nil {
 					return sel, c, nil
 				}
@@ -299,10 +299,13 @@ func (s *selector) withNotes(sel Selection, c *Config) (Selection, *Config, erro
 	return sel, c, nil
 }
 
+// ProviderHosts is the host each provider's repositories live on.
+var ProviderHosts = map[string]string{"github": "github.com", "bitbucket": "bitbucket.org"}
+
 // byOrigin selects the project config that lists repo among its repos, when
 // exactly one does; otherwise it returns no config (nothing is guessed), and
 // listed names the projects that do list it.
-func (s *selector) byOrigin(names []string, repo string) (sel Selection, c *Config, listed []string) {
+func (s *selector) byOrigin(names []string, host, repo string) (sel Selection, c *Config, listed []string) {
 	var hitCfg *Config
 	var hitPath string
 	for _, n := range names {
@@ -310,7 +313,11 @@ func (s *selector) byOrigin(names []string, repo string) (sel Selection, c *Conf
 		if err != nil {
 			continue // an unreadable config is not a candidate; selecting it would fail on its own
 		}
-		for r := range pc.Repos {
+		for r, rc := range pc.Repos {
+			// The same repository name on another host is another repository.
+			if ProviderHosts[rc.Provider] != strings.ToLower(host) {
+				continue
+			}
 			if strings.EqualFold(strings.TrimSuffix(r, ".git"), strings.TrimSuffix(repo, ".git")) {
 				listed = append(listed, n)
 				hitCfg, hitPath = pc, path

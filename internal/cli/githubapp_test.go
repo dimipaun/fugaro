@@ -312,7 +312,12 @@ func TestGitHubAppKeyIsReadOnlyBehindTheFlag(t *testing.T) {
 	// The notice comes before the read, and only with the flag.
 	var notice strings.Builder
 	g.checkWith(t, appKeySource{Read: true, SecretID: "app-key-secret", Notice: &notice})
-	if !strings.Contains(notice.String(), "reads the App's private key with your own credentials, holds it in memory only") || g.reads != 1 {
+	for _, want := range []string{"reads the App's private key with your own credentials", "only the PEM byte copy is cleared", "garbage collection", "GODEBUG=http2debug"} {
+		if !strings.Contains(notice.String(), want) {
+			t.Errorf("the notice lacks %q: %s", want, notice.String())
+		}
+	}
+	if strings.Contains(notice.String(), "\n\n") || strings.Count(strings.TrimSpace(notice.String()), "\n") != 0 || g.reads != 1 {
 		t.Fatalf("notice %q reads %d", notice.String(), g.reads)
 	}
 }
@@ -338,7 +343,14 @@ func TestInitPreCheckWithoutFlagReadsNothing(t *testing.T) {
 	}
 	r, _, _ = conditions()[6].run(t, "")
 	r.appKeyMem = append([]byte(nil), appKey(t)...)
+	held := r.appKeyMem
 	g.status = 404
+	defer func() {
+		// The typed copy is cleared right after the check, not at the run's end.
+		if r.appKeyMem != nil || strings.Trim(string(held), "\x00") != "" {
+			t.Errorf("the typed key copy was not cleared after the pre-check")
+		}
+	}()
 	if _, err := r.offerBuilds(t.Context(), lc, cfg, spec, []string{"app"}); err != nil || g.reads != 0 || len(g.auth) != 1 || !strings.Contains(r.buildHold, "not installed") {
 		t.Fatalf("typed key: %v reads %d asked %d hold %q", err, g.reads, len(g.auth), r.buildHold)
 	}
@@ -361,5 +373,19 @@ func TestCheckGitHubAppRefusedInAgentSession(t *testing.T) {
 				t.Errorf("the key was read (%d) or GitHub asked (%d)", g.reads, len(g.auth))
 			}
 		})
+	}
+}
+
+// A repository name that is not owner/name never reaches the key or GitHub.
+func TestGitHubAppCheckRefusesOddRepoNames(t *testing.T) {
+	g := newGitHubRig(t)
+	for _, repo := range []string{"acme/..", "../app", "a%2Fb/x", "acme/app/x"} {
+		c := checkGitHubApp(t.Context(), &localcfg.Config{Name: "aurora", GCPProject: initProject}, repo, "12345", appKeySource{Read: true, SecretID: "app-key-secret"})
+		if c.Verdict != appUnknown {
+			t.Errorf("%s: %+v", repo, c)
+		}
+	}
+	if g.reads != 0 || len(g.auth) != 0 {
+		t.Errorf("reads %d, GitHub asked %d", g.reads, len(g.auth))
 	}
 }

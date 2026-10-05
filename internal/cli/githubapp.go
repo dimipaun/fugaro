@@ -12,6 +12,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/gitprov/github"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // The GitHub App pre-check (live Check 27): a run or an image build fails
@@ -24,7 +25,9 @@ import (
 //
 // The CLI holds no provider credential (docs/git-providers.md), so the check
 // needs the App's private key only in two ways, both in memory, both used only
-// to sign the JWT, never printed, logged, put in an argument or an error:
+// to sign the JWT (only the PEM byte copy is cleared afterwards: the encoded
+// payload and the parsed key live until garbage collection), never printed,
+// logged, put in an argument or an error:
 //   - in init, the key the user typed at THIS run's secrets stage (appKeyMem),
 //     with no Secret Manager read;
 //   - behind the explicit flag --check-github-app (init and doctor), which
@@ -99,7 +102,7 @@ type appCheck struct {
 // src.
 func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string, src appKeySource) appCheck {
 	owner, name, ok := gitprov.SplitRepo(repo)
-	if !ok || appID == "" {
+	if _, cerr := task.CanonicalRepo(repo); !ok || cerr != nil || appID == "" {
 		return appCheck{Verdict: appUnknown, Problem: "the GitHub App's installation was not checked: no App ID or repository to check it for"}
 	}
 	var pem []byte
@@ -108,7 +111,7 @@ func checkGitHubApp(ctx context.Context, lc *localcfg.Config, repo, appID string
 		pem = append([]byte(nil), src.Mem...)
 	case src.Read:
 		if src.Notice != nil {
-			fmt.Fprintln(src.Notice, "reads the App's private key with your own credentials, holds it in memory only")
+			fmt.Fprintln(src.Notice, "reads the App's private key with your own credentials and holds it in memory only to sign a 9-minute token; only the PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection); GODEBUG=http2debug in your own environment would print the token's Authorization header, so unset it first")
 		}
 		var err error
 		pem, err = readAppKey(ctx, lc, src.SecretID)

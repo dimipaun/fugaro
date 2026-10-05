@@ -57,7 +57,8 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 // Access reads the value of secret id's latest version, with the caller's own
 // credentials. It exists for one purpose: the GitHub App pre-check of init and
 // doctor signs a JWT with the App's key, in memory, to ask GitHub what the
-// installation grants. The caller holds the value in memory only and never
+// installation grants. The caller holds the value in memory only (clearing its byte copy; the
+// encoded payload lives until garbage collection) and never
 // prints, logs or passes it on; the errors returned never carry it. A person
 // without secretmanager.versions.access (the roles Fugaro grants launchers and
 // operators do not include it; project owners have it) gets ErrNoAccess.

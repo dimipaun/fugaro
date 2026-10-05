@@ -343,7 +343,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
 	f.BoolVar(&o.asJSON, "json", false, "print the result as JSON on stdout (progress goes to stderr)")
 	f.BoolVar(&o.repo, "repo", false, "onboard the repository of the checkout at PATH (default: the current directory) instead of the installation")
-	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only; refused in a coding agent's session); without it init checks only with the key you typed in this run")
+	f.BoolVar(&o.checkApp, "check-github-app", false, "let the GitHub App pre-check read the App's private key from Secret Manager with your own credentials (held in memory only, for one signed token; refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it); without it init checks only with the key you typed in this run")
 	f.StringVar(&o.githubAppID, "github-app-id", "", "the GitHub App's ID, for a GitHub repository (not a secret; recorded in the local config; init asks once at a terminal, and --non-interactive needs it)")
 	f.BoolVar(&o.noBuild, "no-build", false, "with --repo: don't offer the first image builds")
 	f.BoolVar(&o.allowJobDelete, "allow-job-delete", false, "with --repo: lower the jobs' deletion protection, for offboarding")
@@ -1919,7 +1919,12 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 // reason, for the user), then each build's typed confirmation (buildImages).
 func (r *initRun) offerBuilds(ctx context.Context, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, names []string) (int, error) {
 	if len(names) > 0 {
-		if hold := r.appPreCheck(ctx, lc, spec); hold != "" {
+		hold := r.appPreCheck(ctx, lc, spec)
+		// The typed key is not needed again: its byte copy is cleared now, not
+		// at the run's end.
+		clear(r.appKeyMem)
+		r.appKeyMem = nil
+		if hold != "" {
 			r.buildsLeft, r.buildHold = append(r.buildsLeft, names...), hold
 			return 0, nil
 		}

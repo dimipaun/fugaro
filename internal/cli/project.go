@@ -238,16 +238,16 @@ func baseProjectWarning(ctx context.Context, root, base, project string) string 
 	return fmt.Sprintf("origin/%s's fugaro.yaml names project %s; runs will refuse until %s's fugaro.yaml says project: %s", base, got, base, project)
 }
 
-// checkoutOrigin is the working directory's checkout's origin repository
+// checkoutOrigin is the working directory's checkout's origin host and repository
 // (owner/name), "" with none or one git config rewrites (not trusted by name).
-func checkoutOrigin() string {
+func checkoutOrigin() (host, repo string) {
 	ctx := context.Background()
 	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	if oi, ok := readOrigin(ctx, root); ok && !oi.Rewritten {
-		return oi.Repo
+		return oi.Host, oi.Repo
 	}
-	return ""
+	return "", ""
 }

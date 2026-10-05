@@ -11,9 +11,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 )
 
 // adcWithQuota points Application Default Credentials at a credential file
@@ -70,4 +72,35 @@ func mustPKCS8(t *testing.T, k *rsa.PrivateKey) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// Credentials that name no quota project: the billing read says so and names
+// what to do, and never falls back to the project being set up (no call names
+// it as the quota project).
+func TestBillingWithoutAQuotaProjectIsAClearError(t *testing.T) {
+	adcWithQuota(t, "") // a credential file with no quota_project_id
+	t.Setenv("GOOGLE_CLOUD_QUOTA_PROJECT", "")
+	var quotas []string
+	bill := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		quotas = append(quotas, r.Header.Get("X-Goog-User-Project"))
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":{"code":403,"status":"PERMISSION_DENIED","message":"Cloud Billing API has not been used in project 764086051850 before or it is disabled.","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"SERVICE_DISABLED","domain":"googleapis.com","metadata":{"service":"cloudbilling.googleapis.com","consumer":"projects/764086051850"}}]}}`))
+	}))
+	t.Cleanup(bill.Close)
+	crm := gcpfake.NewCRM(t)
+	crm.AddProject("new-proj", 123456789)
+	c, err := NewClients(context.Background(), gcp.Options{GCPProject: "new-proj", Region: "us-east5"}, Endpoints{Billing: bill.URL, ResourceManager: crm.URL + "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = CheckFirebaseProject(context.Background(), c, "new-proj")
+	if err == nil || !strings.Contains(err.Error(), "name no quota project") || !strings.Contains(err.Error(), "gcloud auth application-default set-quota-project") ||
+		strings.Contains(err.Error(), "services enable") {
+		t.Fatalf("err = %v", err)
+	}
+	for _, q := range quotas {
+		if q == "new-proj" {
+			t.Fatalf("the project being set up was named as the quota project: %v", quotas)
+		}
+	}
 }

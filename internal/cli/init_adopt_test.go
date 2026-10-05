@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -292,5 +293,38 @@ func TestAdoptWithoutFirebaseOutputs(t *testing.T) {
 	cfg, out := adoptRun(t, r2.initRig, `{"rtdb_url":{"value":"not a url","type":"string"}}`)
 	if strings.Contains(cfg, "rtdb_url") || !strings.Contains(out, "budget") {
 		t.Errorf("unusable outputs:\n%s\n%s", cfg, out)
+	}
+}
+
+// Outputs that are each well formed but not one project's are never written:
+// the budget section stays empty and the run says why.
+func TestAdoptRefusesForeignFirebaseOutputs(t *testing.T) {
+	out := func(rtdb, signer, fp string) string {
+		m := map[string]any{}
+		for k, v := range map[string]string{"rtdb_url": rtdb, "firebase_api_key": fpAPIKey, "token_signer": signer, "firebase_project": fp} {
+			m[k] = map[string]any{"value": v, "type": "string", "sensitive": false}
+		}
+		b, _ := json.Marshal(m)
+		return string(b)
+	}
+	for name, o := range map[string]string{
+		"database": out("https://attacker-db.firebaseio.com", "fugaro-token-signer@"+fpID+".iam.gserviceaccount.com", fpID),
+		"signer":   out("https://"+fpID+"-default-rtdb.firebaseio.com", "attacker@other-fp.iam.gserviceaccount.com", fpID),
+		"all":      out("https://attacker-db.firebaseio.com", "attacker@other-fp.iam.gserviceaccount.com", "other-fp"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFBRig(t)
+			r.installationState(t)
+			r.firebaseState(t)
+			cfg, out := adoptRun(t, r.initRig, o)
+			for _, no := range []string{"rtdb_url", "firebase_api_key", "token_signer", "attacker", "other-fp"} {
+				if strings.Contains(cfg, no) {
+					t.Errorf("the config holds %q:\n%s", no, cfg)
+				}
+			}
+			if !strings.Contains(out, "left empty") {
+				t.Errorf("no reason given:\n%s", out)
+			}
+		})
 	}
 }

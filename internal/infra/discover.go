@@ -56,6 +56,8 @@ type Clients struct {
 	// FirebaseDB lists the Firebase project's databases (init --firebase
 	// checks them before anything is granted on the project); nil like Billing.
 	FirebaseDB *firebasedatabase.Service
+	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
+	NoAuth bool
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -117,6 +119,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	// of init never name the project being set up as the one that pays.
 	billingOpts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, false) }
 	var c Clients
+	c.NoAuth = o.Endpoints.NoAuth
 	var err error
 	if c.IAM, err = iam.NewService(ctx, opts(e.IAM)...); err != nil {
 		return nil, fmt.Errorf("connecting to IAM: %w", err)

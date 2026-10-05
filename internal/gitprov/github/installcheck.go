@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/gitprov/httpjson"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // What the GitHub App must grant (design §6.1) is what Fugaro's tokens ask
@@ -141,6 +142,11 @@ func (e *BadCredentialsError) Error() string {
 func CheckInstallation(ctx context.Context, o Options) (InstallationReport, error) {
 	if o.Owner == "" || o.Repo == "" {
 		return InstallationReport{}, errors.New("github: owner and repository are required")
+	}
+	// Before any path is built: dot segments, encoded slashes and the like
+	// are refused, never escaped into another API path.
+	if _, err := task.CanonicalRepo(o.Owner + "/" + o.Repo); err != nil {
+		return InstallationReport{}, fmt.Errorf("github: %q is not an owner and a repository name", o.Owner+"/"+o.Repo)
 	}
 	if o.AppID == "" || o.PrivateKey == nil {
 		return InstallationReport{}, errors.New("github: an App ID and private key are required")
