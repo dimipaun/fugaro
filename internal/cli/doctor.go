@@ -207,7 +207,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if err != nil {
 		return failed(remote(err))
 	}
-	billingSvc, err := billing.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudBilling)...)
+	// Billing is read with the credentials' own quota project, not the
+	// installation's: the same rule as init's billing reads.
+	billingSvc, err := billing.NewService(ctx, doctorAPIOptsQuota(lc, lc.Endpoints.CloudBilling, false)...)
 	if err != nil {
 		return failed(remote(err))
 	}
@@ -245,13 +247,19 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 // pointed at endpoint (lc's fake, in a test) or Google's own ("") and
 // authenticated as the caller (ADC, or none under lc's no_auth).
 func doctorAPIOpts(lc *localcfg.Config, endpoint string) []option.ClientOption {
+	return doctorAPIOptsQuota(lc, endpoint, true)
+}
+
+// doctorAPIOptsQuota is doctorAPIOpts, naming the installation's GCP project
+// as the quota project only when withQuota.
+func doctorAPIOptsQuota(lc *localcfg.Config, endpoint string, withQuota bool) []option.ClientOption {
 	opts := []option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}
 	if endpoint != "" {
 		opts = append(opts, option.WithEndpoint(endpoint))
 	}
 	if lc.Endpoints.NoAuth {
 		opts = append(opts, option.WithoutAuthentication())
-	} else if lc.GCPProject != "" {
+	} else if withQuota && lc.GCPProject != "" {
 		opts = append(opts, option.WithQuotaProject(lc.GCPProject))
 	}
 	return opts
