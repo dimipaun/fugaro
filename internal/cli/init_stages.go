@@ -39,8 +39,10 @@ type initEngine struct {
 	wd    *infra.Workdir
 
 	authorized map[string]bool // repositories the user typed in this run (see init_repo_gate.go)
-	defaulted  string          // the member a new config's launchers and operators defaulted to (init_members.go)
-	adopted    string          // set when the installation stage adopted an existing installation instead of applying
+	admins     []string        // the GCP project's owners and editors, read once for the review (init_review.go)
+	adminsRead bool
+	defaulted  string // the member a new config's launchers and operators defaulted to (init_members.go)
+	adopted    string // set when the installation stage adopted an existing installation instead of applying
 
 	// The one confirmation's review screen is built from the preview's stages
 	// and the two stages it asks about (init_review.go).
@@ -117,7 +119,7 @@ func (e *initEngine) converge(ctx context.Context) error {
 	e.images, e.repo = newImagesStage(e), newRepositoryStage(e)
 	stages := []initflow.Stage{&preflightStage{e}, newInstallationStage(e), newFirebaseStage(e), e.images, newInstallation2Stage(e)}
 	stages = append(stages, newSecretsStage(e), newPluginStage(e), e.repo)
-	e.r.review = &runReview{owner: e.owner, screen: e.reviewScreen}
+	e.r.review = &runReview{cover: e.cover, owner: e.owner, screen: e.reviewScreen}
 	if e.r.o.createProject {
 		stages = append(stages, newProjectStage(e))
 	}

@@ -187,7 +187,7 @@ func TestReviewScreenNamesDefaultedMembers(t *testing.T) {
 	}
 	out.Reset()
 	e.reviewScreen(t.Context(), "test")
-	if !strings.Contains(out.String(), "launchers: user:me@example.com (you); operators: user:me@example.com (you); change with --launcher/--operator") {
+	if !strings.Contains(out.String(), "launchers:      user:me@example.com (default: you)") {
 		t.Errorf("\n%s", out.String())
 	}
 }

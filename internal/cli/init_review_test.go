@@ -32,6 +32,9 @@ func (c condition) reviewRun(t *testing.T, stdin string, owned bool) (r *initRun
 	r.review = &runReview{
 		owner:  func(context.Context) (string, bool) { *ownerCalls++; return "test", owned },
 		screen: func(context.Context, string) { *screens++; fmt.Fprintln(r.w, "REVIEW SCREEN") },
+		cover: func() tf.Cover {
+			return tf.Cover{Projects: []string{initProject}, Listed: []string{"user:me@example.com"}}
+		},
 	}
 	return
 }
@@ -204,33 +207,44 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 	})
 }
 
-// A plan that destroys, replaces or removes an IAM grant is not covered: the
-// step shows why and asks its own typed confirmation, even after the run
-// confirmation was taken; a plan that only adds is covered.
-func TestPlanBeyondAdditiveAsksItsOwn(t *testing.T) {
+// A plan outside the allowlist (a destroy, a replace, an IAM binding, a
+// grant to someone the review did not list) is not covered: the step shows why
+// and asks its own typed confirmation, even after the run confirmation was
+// taken; a known additive plan is covered.
+func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 	c := condition{"a terminal", initOptions{}, true, ""}
-	destroy := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_y.z", Type: "google_y", Change: tf.Change{Actions: []string{"delete", "create"}}}}}
-	additive := &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_y.z", Type: "google_y", Change: tf.Change{Actions: []string{"create"}}}}}
-	if planNotCovered(additive) != "" || planNotCovered(destroy) == "" {
-		t.Fatalf("planNotCovered: additive %q, destroy %q", planNotCovered(additive), planNotCovered(destroy))
+	mk := func(typ string, after map[string]any, acts ...string) *tf.Plan {
+		return &tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "module.x." + typ + ".z", Type: typ, Change: tf.Change{Actions: acts, After: after, AfterUnknown: map[string]any{}}}}}
 	}
-	for name, tc := range map[string]struct {
-		stdin string
-		err   bool
-	}{"its own answer": {initProjectName + "\n" + initProjectName + "\n", false}, "only the run's answer": {initProjectName + "\n", true}} {
-		t.Run(name, func(t *testing.T) {
-			r, _, out, _, _ := c.reviewRun(t, tc.stdin, true)
-			if err := r.confirmOrdinary("applies the additive plan", "x", planNotCovered(additive)); err != nil {
-				t.Fatal(err)
-			}
-			err := r.confirmOrdinary("applies the destroying plan", "nothing was applied", planNotCovered(destroy))
-			if (err != nil) != tc.err {
-				t.Fatalf("err %v\n%s", err, out)
-			}
-			if !strings.Contains(out.String(), "not covered by the run confirmation") || strings.Count(out.String(), "Type aurora to apply to GCP project") != 1 {
-				t.Errorf("\n%s", out)
-			}
-		})
+	additive := mk("google_storage_bucket", nil, "create")
+	for name, bad := range map[string]*tf.Plan{
+		"replace":       mk("google_storage_bucket", nil, "delete", "create"),
+		"iam binding":   mk("google_project_iam_binding", nil, "create"),
+		"unlisted user": mk("google_project_iam_member", map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "create"),
+		"owner":         mk("google_project_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/owner"}, "create"),
+		"nil":           nil,
+	} {
+		for sname, tc := range map[string]struct {
+			stdin string
+			err   bool
+		}{"its own answer": {initProjectName + "\n" + initProjectName + "\n", false}, "only the run's answer": {initProjectName + "\n", true}} {
+			t.Run(name+"/"+sname, func(t *testing.T) {
+				r, _, out, _, _ := c.reviewRun(t, tc.stdin, true)
+				if r.notCovered(additive) != "" || r.notCovered(bad) == "" {
+					t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive), r.notCovered(bad))
+				}
+				if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive)); err != nil {
+					t.Fatal(err)
+				}
+				err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad))
+				if (err != nil) != tc.err {
+					t.Fatalf("err %v\n%s", err, out)
+				}
+				if !strings.Contains(out.String(), "not covered by the run confirmation") || strings.Count(out.String(), "Type aurora to apply to GCP project") != 1 {
+					t.Errorf("\n%s", out)
+				}
+			})
+		}
 	}
 }
 
@@ -434,7 +448,12 @@ func TestMarkedProjectPlanOnlyShowsTheReview(t *testing.T) {
 func TestReviewScreenGolden(t *testing.T) {
 	var b strings.Builder
 	r := &initRun{cmd: &cobra.Command{}, o: &initOptions{firebase: "aurora-fp", replaceImages: []string{"history"}}, w: &b, projectName: initProjectName, gcpProject: initProject}
-	e := &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket}}
+	e := &initEngine{r: r, lc: &localcfg.Config{Name: initProjectName}, spec: infra.InstallationSpec{RunsBucket: initRunsBucket, StateBucket: initStateBucket,
+		Launchers: []string{"user:me@example.com"}, Operators: []string{"group:ops@example.com"}}, adminsRead: true, admins: []string{"user:owner@example.com"}}
+	r.o.budgetAdmins = []string{"user:ba@example.com"}
+	r.o.budgetAdminsChanged = true
+	r.o.launchersChanged = true
+	e.defaulted = "user:me@example.com"
 	e.previewed = []initflow.StageResult{
 		{Name: initflow.Preflight, State: initflow.Done},
 		{Name: initflow.Installation, State: initflow.Skipped},
@@ -500,6 +519,9 @@ func TestFirebaseRunTakesOnePromptPlusTheLocation(t *testing.T) {
 	if n := strings.Count(out, "covered by the run confirmation"); n < 5 {
 		t.Errorf("%d covered steps (want at least the viewers, three applies, the Firestore writes, the images and the config):\n%s", n, out)
 	}
+	if i, j := strings.Index(out, "this does NOT create the Firestore database"), strings.Index(out, "Type "+infra.FirestoreLocation+" to create it there"); i < 0 || j < i {
+		t.Errorf("the covered write does not say the database creation is asked next:\n%s", out)
+	}
 	if !strings.Contains(out, "images:         copy history latest, go 1.2.3") {
 		t.Errorf("the review does not name the images:\n%s", out)
 	}
@@ -545,9 +567,126 @@ func TestMarkedProjectReplacePlanAsksItsOwn(t *testing.T) {
 			if got := len(r.ran(t, "apply")); got != tc.apply {
 				t.Fatalf("%d applies, want %d (err %v)\n%s", got, tc.apply, err, out)
 			}
-			if run, _ := prompts(out); run != 1 || !strings.Contains(out, "not covered by the run confirmation: the plan destroys, replaces") {
+			if run, _ := prompts(out); run != 1 || !strings.Contains(out, "not covered by the run confirmation: the plan is outside what the review announced") {
 				t.Fatalf("\n%s", out)
 			}
 		})
+	}
+}
+
+// Only a bucket that is this project's, with the default name and the mark,
+// makes the project Fugaro's own.
+func TestOwnershipNeedsTheBucketToBelongToTheProject(t *testing.T) {
+	mark := fmt.Sprintf(`{"version":1,"name":%q,"gcp_project":%q}`, initProjectName, initProject)
+	write := func(t *testing.T, r *initRig, bucket string) {
+		t.Helper()
+		if err := r.gcs.Bucket(t, bucket).Bucket.WriteAll(context.Background(), infra.ProjectMarkerObject, []byte(mark), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	managedLabels := map[string]string{"fugaro": "managed"}
+	for name, tc := range map[string]struct {
+		seed  func(t *testing.T, r *initRig)
+		setup func(e *initEngine)
+		owned bool
+	}{
+		"the project's own marked bucket": {func(t *testing.T, r *initRig) {
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, managedLabels)
+			write(t, r, initRunsBucket)
+		}, nil, true},
+		"a perfect mark in another project's bucket": {func(t *testing.T, r *initRig) {
+			r.gcs.AddBucket(initRunsBucket, 999, managedLabels)
+			write(t, r, initRunsBucket)
+		}, nil, false},
+		"an unlabelled bucket with a perfect mark": {func(t *testing.T, r *initRig) {
+			r.gcs.AddBucket(initRunsBucket, initProjectNumber, nil)
+			write(t, r, initRunsBucket)
+		}, nil, false},
+		"a custom runs bucket, marked and the project's": {func(t *testing.T, r *initRig) {
+			r.gcs.AddBucket("my-own-runs", initProjectNumber, managedLabels)
+			write(t, r, "my-own-runs")
+		}, func(e *initEngine) { e.spec.RunsBucket = "my-own-runs" }, false},
+		"no bucket": {func(t *testing.T, r *initRig) {}, nil, false},
+		"the project's number cannot be read": {func(t *testing.T, r *initRig) {
+			r.gcs.AddBucket("fugaro-runs-nope", initProjectNumber, managedLabels)
+			write(t, r, "fugaro-runs-nope")
+		}, func(e *initEngine) { e.r.gcpProject = "nope"; e.spec.RunsBucket = "fugaro-runs-nope" }, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newInitRig(t)
+			tc.seed(t, r)
+			e := rigEngine(t, r, &initOptions{})
+			if tc.setup != nil {
+				tc.setup(e)
+			}
+			if why, ok := e.owner(t.Context()); ok != tc.owned {
+				t.Fatalf("owned %v (%q), want %v", ok, why, tc.owned)
+			}
+		})
+	}
+}
+
+// The review's typed name is the project's name exactly: another case, a
+// longer or a shorter name, or a name with something after it, is not it.
+func TestReviewNameMustBeExact(t *testing.T) {
+	for _, typed := range []string{"AURORA", "Aurora", "auroraa", "aurora2", "aur", "sandboxx", "aurora .", "x aurora", ""} {
+		t.Run(typed, func(t *testing.T) {
+			c := condition{"a terminal", initOptions{}, true, ""}
+			r, _, _, _, _ := c.reviewRun(t, typed+"\n", true)
+			var ny *initflow.NeedsYouError
+			if err := r.confirmOrdinary("applies A", "x", ""); !asNeedsYou(err, &ny) {
+				t.Fatalf("%q was accepted: %v", typed, err)
+			}
+		})
+	}
+}
+
+// The review lists who gets access, with where each list came from, before the
+// typed name: from flags, from the config, and the default.
+func TestReviewScreenListsEffectiveAccess(t *testing.T) {
+	screen := func(t *testing.T, o *initOptions, lc *localcfg.Config, spec infra.InstallationSpec, defaulted string) string {
+		var b strings.Builder
+		r := &initRun{cmd: &cobra.Command{}, o: o, w: &b, projectName: initProjectName, gcpProject: initProject}
+		spec.RunsBucket, spec.StateBucket = initRunsBucket, initStateBucket
+		e := &initEngine{r: r, lc: lc, spec: spec, defaulted: defaulted, adminsRead: true}
+		e.reviewScreen(t.Context(), "test")
+		return b.String()
+	}
+	out := screen(t, &initOptions{launchersChanged: true, operatorsChanged: true, alertEmail: "ops@example.com"}, &localcfg.Config{},
+		infra.InstallationSpec{Launchers: []string{"user:a@example.com"}, Operators: []string{"user:b@example.com"}}, "")
+	for _, want := range []string{"launchers:      user:a@example.com (from a flag)", "operators:      user:b@example.com (from a flag)", "alert email:    ops@example.com (from a flag)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("flags: lacks %q:\n%s", want, out)
+		}
+	}
+	cfg := &localcfg.Config{}
+	cfg.Terraform.AlertEmail = "cfg@example.com"
+	out = screen(t, &initOptions{}, cfg, infra.InstallationSpec{Launchers: []string{"group:eng@example.com"}}, "")
+	for _, want := range []string{"launchers:      group:eng@example.com (from the local config)", "operators:      nobody (from the local config)", "alert email:    cfg@example.com (from the local config)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("config: lacks %q:\n%s", want, out)
+		}
+	}
+	out = screen(t, &initOptions{launchersChanged: true, operatorsChanged: true}, &localcfg.Config{},
+		infra.InstallationSpec{Launchers: []string{"user:me@example.com"}, Operators: []string{"user:me@example.com"}}, "user:me@example.com")
+	if !strings.Contains(out, "launchers:      user:me@example.com (default: you)") || !strings.Contains(out, "alert email:    none (not set)") {
+		t.Errorf("default:\n%s", out)
+	}
+	if strings.Index(out, "launchers:") > strings.Index(out, "Every Terraform plan is shown as it runs") || !strings.Contains(out, "Fixed, announced and free") {
+		t.Errorf("order or wording:\n%s", out)
+	}
+}
+
+// Through the command: a plan that grants a role to someone the review did not
+// list stops that step, which asks its own typed name.
+func TestMarkedProjectUnlistedGrantAsksItsOwn(t *testing.T) {
+	r := newInitRig(t)
+	r.markedRuns(t, initProjectName, initProject)
+	r.setPlan(t, planChange{"address": "module.installation.google_project_iam_member.x", "type": "google_project_iam_member",
+		"change": map[string]any{"actions": []string{"create"}, "before": nil, "after": map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "after_unknown": map[string]any{}}})
+	fakeTerminal(t)
+	out, _, err := executeStdin(t, names(1), "init")
+	if err == nil || len(r.ran(t, "apply")) != 0 || !strings.Contains(out, "not covered by the run confirmation") {
+		t.Fatalf("err %v, calls %q\n%s", err, r.calls(t), out)
 	}
 }

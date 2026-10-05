@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -27,7 +28,7 @@ import (
 // replacing a registry tag, an unlisted repository (confirmRepo), secrets.
 // Those never call anything here: TestRunConfirmationCallSites lists the only
 // files that may. And a step whose plan destroys, replaces or removes an IAM
-// grant (tf.Beyond) is not covered either: it asks its own typed confirmation.
+// grant is not covered either (tf.Cover): it asks its own typed confirmation.
 //
 // Fugaro-owned means: the project was created by this run (init
 // --create-project), or the runs bucket's fugaro/project.json names this
@@ -48,6 +49,9 @@ const (
 // (initEngine.converge); every other mode of init leaves initRun.review nil,
 // and so asks per step.
 type runReview struct {
+	// cover says which plans the run's one confirmation may cover (the
+	// allowlist of tf.Cover, with the members the review screen lists).
+	cover  func() tf.Cover
 	owner  func(ctx context.Context) (why string, owned bool)
 	screen func(ctx context.Context, why string)
 	state  reviewState
@@ -110,14 +114,21 @@ func (r *initRun) declinedRun() error {
 	return &initflow.NeedsYouError{Left: promptLeft(initflow.Installation, "type the project's name at the review to apply all of its steps", args...)}
 }
 
-// planNotCovered is why a plan is not covered by the run's one confirmation,
-// "" when it is.
-func planNotCovered(p *tf.Plan) string {
-	b := tf.Beyond(p)
+// notCovered is why a plan is not covered by the run's one confirmation, ""
+// when it is: only a plan that is entirely creates and in-place updates of the
+// installation's own resource types, granting only the roles the modules use
+// to people the review listed or to Fugaro's own service accounts, is covered
+// (tf.Cover). Anything else, a plan that could not be read included, asks its
+// own typed confirmation.
+func (r *initRun) notCovered(p *tf.Plan) string {
+	if r.review == nil || r.review.cover == nil {
+		return ""
+	}
+	b := r.review.cover().NotCovered(p)
 	if len(b) == 0 {
 		return ""
 	}
-	return "the plan destroys, replaces or removes IAM access (" + strings.Join(b, "; ") + ")"
+	return "the plan is outside what the review announced (" + strings.Join(b, "; ") + ")"
 }
 
 // askOrdinary is ask for an ordinary step: covered by the run's one
@@ -157,11 +168,16 @@ func (r *initRun) confirmOrdinary(what, undone, notCovered string) error {
 }
 
 // owner says why the project is Fugaro's own, or not: created by this run, or
-// carrying its mark (read-only; any failure to read is "not owned").
+// its runs bucket (which must have the default name, so a custom or squatted
+// bucket never counts) belongs to this project (its own project number) and
+// carries the mark naming this project. Read-only; any failure is "not owned".
 func (e *initEngine) owner(ctx context.Context) (string, bool) {
 	r := e.r
 	if r.res.Created != "" && r.res.Created == r.gcpProject {
 		return "created by this run", true
+	}
+	if e.spec.RunsBucket != "fugaro-runs-"+r.gcpProject {
+		return "", false
 	}
 	c := e.c
 	if c == nil {
@@ -170,11 +186,90 @@ func (e *initEngine) owner(ctx context.Context) (string, bool) {
 			return "", false
 		}
 	}
-	m, err := infra.ReadProjectMarker(ctx, c, e.spec.RunsBucket)
+	num, err := infra.ProjectNumber(ctx, c, r.gcpProject)
+	if err != nil {
+		return "", false
+	}
+	m, err := infra.ReadProjectMarker(ctx, c, e.spec.RunsBucket, num)
 	if err != nil || m == nil || m.Name != r.projectName || m.GCPProject != r.gcpProject {
 		return "", false
 	}
-	return "its runs bucket carries Fugaro's mark for project " + pluginwire.Printable(m.Name), true
+	return "its runs bucket, which is this project's, carries Fugaro's mark for project " + pluginwire.Printable(m.Name), true
+}
+
+// access is one list of IAM members the review prints, and where it came from.
+type access struct {
+	what    string
+	members []string
+	source  string
+	note    string
+}
+
+// accessLists are the effective launchers, operators, budget admins and
+// viewers, and the alert email, each with its source (a flag, the local
+// config, or the default for a new config). The launchers can mint run tokens
+// and launch runs, and the operators onboard repositories: they are the only
+// people the run's one confirmation lets a plan grant roles to.
+func (e *initEngine) accessLists(ctx context.Context) []access {
+	o := e.r.o
+	src := func(changed bool) string {
+		switch {
+		case changed && e.defaulted != "":
+			return "default: you"
+		case changed:
+			return "from a flag"
+		}
+		return "from the local config"
+	}
+	out := []access{
+		{what: "launchers", members: e.spec.Launchers, source: src(o.launchersChanged), note: "launch runs; also mint run tokens when --firebase's token signer is applied"},
+		{what: "operators", members: e.spec.Operators, source: src(o.operatorsChanged), note: "onboard repositories and submit builds"},
+	}
+	if o.firebase != "" || e.lc.Terraform.BudgetBackend {
+		bs := "from the local config"
+		if o.budgetAdminsChanged {
+			bs = "from a flag"
+		}
+		out = append(out, access{what: "budget admins", members: e.r.budgetAdmins(e.lc), source: bs, note: "plus the GCP project's owners and editors who are users or groups, read now"})
+		for _, a := range e.projectAdmins(ctx) {
+			out[len(out)-1].members = append(out[len(out)-1].members, a)
+		}
+		out = append(out, access{what: "budget viewers", members: slices.Concat(e.spec.Launchers, e.spec.Operators), source: "the launchers and operators"})
+	}
+	return out
+}
+
+// projectAdmins are the GCP project's owners and editors who are users or
+// groups, which the Firebase root makes budget admins; read once, read-only,
+// and empty when it cannot be read (then a plan granting them is not covered).
+func (e *initEngine) projectAdmins(ctx context.Context) []string {
+	if e.adminsRead || (e.r.o.firebase == "" && !e.lc.Terraform.BudgetBackend) {
+		return e.admins
+	}
+	e.adminsRead = true
+	c := e.c
+	if c == nil {
+		var err error
+		if c, err = newInitClients(ctx, e.lc); err != nil {
+			return nil
+		}
+	}
+	e.admins, _, _, _ = infra.ProjectAdmins(ctx, c, e.r.gcpProject)
+	return e.admins
+}
+
+// cover is what the run's one confirmation may cover: grants to the listed
+// members and to Fugaro's own service accounts of the installation's project
+// and the Firebase project.
+func (e *initEngine) cover() tf.Cover {
+	c := tf.Cover{Projects: []string{e.r.gcpProject}}
+	if fp := e.r.o.firebase; fp != "" {
+		c.Projects = append(c.Projects, fp)
+	}
+	for _, a := range e.accessLists(e.r.ctx()) {
+		c.Listed = append(c.Listed, a.members...)
+	}
+	return c
 }
 
 // todo is the preview's stages the run's one confirmation covers that have
@@ -227,12 +322,23 @@ func (e *initEngine) reviewScreen(ctx context.Context, why string) {
 		}
 		fmt.Fprintf(w, "  repository:     Terraform apply onboarding %s (planned when applied)\n", repo)
 	}
-	if e.defaulted != "" {
-		fmt.Fprintf(w, "  launchers: %s (you); operators: %s (you); change with --launcher/--operator\n", e.defaulted, e.defaulted)
+	fmt.Fprintln(w, "Fixed, announced and free, so they need no plan: the Terraform state bucket (cents a month) and the Cloud Resource Manager API when missing, the local config (its diff is shown first).")
+	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it.\n", e.spec.RunsBucket, e.spec.StateBucket)
+	fmt.Fprintln(w, "Who gets access (the effective lists; a plan that grants anyone else stops and asks its own typed confirmation):")
+	for _, a := range e.accessLists(ctx) {
+		list := strings.Join(a.members, ", ")
+		if list == "" {
+			list = "nobody"
+		}
+		line := fmt.Sprintf("  %-15s %s (%s)", a.what+":", list, a.source)
+		if a.note != "" {
+			line += "; " + a.note
+		}
+		fmt.Fprintln(w, line)
 	}
-	fmt.Fprintln(w, "  also, where missing or changed: the Terraform state bucket (cents a month), the Cloud Resource Manager API, the local config (its diff is shown first)")
-	fmt.Fprintf(w, "IAM changes announced: removes project Viewers' read access to the runs bucket gs://%s and the state bucket gs://%s when they have it; each Terraform plan lists the service accounts and roles it adds.\n", e.spec.RunsBucket, e.spec.StateBucket)
-	fmt.Fprintln(w, "A plan that destroys or replaces anything, or removes any other IAM grant, is not covered: that step stops and asks for its own typed confirmation.")
+	alert, asrc := e.alertEmail()
+	fmt.Fprintf(w, "  %-15s %s (%s)\n", "alert email:", alert, asrc)
+	fmt.Fprintln(w, "Every Terraform plan is shown as it runs and is covered only if it adds nothing outside the listed members, the installation's own roles and resource kinds, and removes or replaces nothing; any other plan stops and asks its own typed confirmation.")
 	fmt.Fprintln(w, "Still asks separately, never covered by this confirmation:")
 	var sep []string
 	if o.firebase != "" {
@@ -277,4 +383,15 @@ func (e *initEngine) planOnlyReview(ctx context.Context, stages []initflow.Stage
 	}
 	e.reviewScreen(ctx, why)
 	fmt.Fprintf(e.r.w, "A run without --plan-only asks once at a terminal: Type %s to apply all of the above. --plan-only never takes --yes or it.\n", e.r.projectName)
+}
+
+// alertEmail is the alert email in effect and where it comes from.
+func (e *initEngine) alertEmail() (string, string) {
+	switch o := e.r.o; {
+	case o.alertEmail != "":
+		return o.alertEmail, "from a flag"
+	case e.lc.Terraform.AlertEmail != "":
+		return e.lc.Terraform.AlertEmail, "from the local config"
+	}
+	return "none", "not set"
 }

@@ -136,39 +136,3 @@ func hasAction(p *Plan, action string) bool {
 	}
 	return false
 }
-
-func TestBeyond(t *testing.T) {
-	rc := func(addr, typ string, before, after map[string]any, unknown any, acts ...string) ResourceChange {
-		return ResourceChange{Address: addr, Type: typ, Change: Change{Actions: acts, Before: before, After: after, AfterUnknown: unknown}}
-	}
-	mem := func(role string, ms ...any) map[string]any { return map[string]any{"role": role, "members": ms} }
-	for name, tc := range map[string]struct {
-		changes []ResourceChange
-		want    int
-	}{
-		"additive":               {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil, "create"), rc("a.c", "google_y", nil, nil, nil, "update"), rc("a.d", "google_z", nil, nil, nil, "read", "no-op"), rc("a.e", "google_z", nil, nil, nil, "forget")}, 0},
-		"delete":                 {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil, "delete")}, 1},
-		"replace":                {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil, "delete", "create")}, 1},
-		"replace, create first":  {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil, "create", "delete")}, 1},
-		"no actions":             {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil)}, 1},
-		"unknown action":         {[]ResourceChange{rc("a.b", "google_x", nil, nil, nil, "frobnicate")}, 1},
-		"iam member gone":        {[]ResourceChange{rc("a.b", "google_project_iam_member", nil, nil, nil, "delete")}, 1},
-		"binding gains":          {[]ResourceChange{rc("a.b", "google_project_iam_binding", mem("r", "u:a"), mem("r", "u:a", "u:b"), map[string]any{}, "update")}, 0},
-		"binding loses":          {[]ResourceChange{rc("a.b", "google_project_iam_binding", mem("r", "u:a", "u:b"), mem("r", "u:a"), map[string]any{}, "update")}, 1},
-		"binding role changes":   {[]ResourceChange{rc("a.b", "google_project_iam_binding", mem("r", "u:a"), mem("s", "u:a"), map[string]any{}, "update")}, 1},
-		"binding unknown":        {[]ResourceChange{rc("a.b", "google_project_iam_binding", mem("r", "u:a"), mem("r"), map[string]any{"members": true}, "update")}, 1},
-		"binding not comparable": {[]ResourceChange{rc("a.b", "google_project_iam_binding", nil, nil, nil, "update")}, 1},
-		"policy rewritten":       {[]ResourceChange{rc("a.b", "google_project_iam_policy", nil, nil, nil, "update")}, 1},
-		"policy created":         {[]ResourceChange{rc("a.b", "google_project_iam_policy", nil, nil, nil, "create")}, 0},
-		"audit config":           {[]ResourceChange{rc("a.b", "google_project_iam_audit_config", nil, nil, nil, "update")}, 1},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := Beyond(&Plan{ResourceChanges: tc.changes}); len(got) != tc.want {
-				t.Fatalf("Beyond = %q, want %d", got, tc.want)
-			}
-		})
-	}
-	if len(Beyond(nil)) != 1 {
-		t.Error("a missing plan is covered")
-	}
-}

@@ -178,8 +178,9 @@ your own terminal, or --onboard-repo.
 
 One confirmation per run, in a project Fugaro owns. A project is Fugaro's own
 when this run created it (--create-project) or its runs bucket carries Fugaro's
-mark (fugaro/project.json naming this project and this GCP project; read-only
-check). There, at a terminal, the ordinary steps (the Terraform applies of the
+mark (fugaro/project.json naming this project and this GCP project, in a bucket
+named fugaro-runs-<gcp project> that belongs to that project; read-only check:
+a custom runs bucket never qualifies). There, at a terminal, the ordinary steps (the Terraform applies of the
 installation, the Firebase root, the history job and the repository, the state
 bucket, the Cloud Resource Manager API, the Viewer-read removal, image copies
 that only add tags, the Firestore marks and rules, the local config) share one
@@ -188,9 +189,13 @@ something to change (so a rerun with nothing to do asks nothing). Each step
 still prints its own exact plan. It never covers creating a project, linking
 billing, the Firestore database's permanent location, a Cloud Build, replacing
 a registry tag (--replace-image), an unlisted repository or a secret: each
-keeps its own typed confirmation. A plan that destroys or replaces anything,
-or removes an IAM grant other than the announced Viewer-read removal, is not
-covered: that step asks for its own typed name. A wrong name applies nothing.
+keeps its own typed confirmation. The state bucket and the API enable are fixed, announced, free steps; every
+Terraform plan is shown as it runs and is covered only if it is creates and
+in-place updates of the installation's own resource kinds, granting only the
+modules' roles to the listed launchers, operators and budget admins (the review
+prints them, with where each came from) or to Fugaro's own service accounts:
+any other plan (a destroy or replace, an IAM binding or policy, an unlisted
+member, a widened role) stops that step, which asks its own typed name. A wrong name applies nothing.
 The confirmation is per run and never stored. Any other project (adopted,
 unmarked, or a mark that fails to read) keeps a typed name at each step;
 --yes covers the ordinary steps as ever and takes no review; --non-interactive,
@@ -1098,7 +1103,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, true, nil
 		}
 		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", planNotCovered(plan)); err != nil {
+		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan)); err != nil {
 			return outs, false, err
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -2058,7 +2063,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !first {
 		what += ", deploying the images just built"
 	}
-	if err := r.confirmOrdinary(what, "nothing was applied", planNotCovered(plan)); err != nil {
+	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan)); err != nil {
 		return nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {

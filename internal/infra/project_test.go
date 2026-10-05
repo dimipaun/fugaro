@@ -177,35 +177,43 @@ func TestReadProjectMarker(t *testing.T) {
 		want *ProjectMarker
 	}{
 		"no bucket": {func(f *cloud) {}, nil},
-		"no object": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, nil) }, nil},
+		"no object": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, managed) }, nil},
 		"marker": {func(f *cloud) {
-			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
 			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
 		}, &ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"}},
-		"not json": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, nil); write(f, "runs", "nope") }, nil},
-		"wrong version": {func(f *cloud) {
+		"a perfect mark in another project's bucket": {func(f *cloud) {
+			f.gcs.AddBucket("runs", 999, managed)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"an unlabelled bucket with a mark": {func(f *cloud) {
 			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234"}`)
+		}, nil},
+		"not json": {func(f *cloud) { f.gcs.AddBucket("runs", testProjectNumber, managed); write(f, "runs", "nope") }, nil},
+		"wrong version": {func(f *cloud) {
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
 			write(f, "runs", `{"version":2,"name":"aurora","gcp_project":"proj-1234"}`)
 		}, nil},
 		"no name": {func(f *cloud) {
-			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
 			write(f, "runs", `{"version":1,"gcp_project":"proj-1234"}`)
 		}, nil},
 		"oversized": {func(f *cloud) {
-			f.gcs.AddBucket("runs", testProjectNumber, nil)
+			f.gcs.AddBucket("runs", testProjectNumber, managed)
 			write(f, "runs", `{"version":1,"name":"aurora","gcp_project":"proj-1234","x":"`+strings.Repeat("a", 5000)+`"}`)
 		}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newCloud(t)
 			tc.seed(f)
-			got, err := ReadProjectMarker(ctx, f.c, "runs")
+			got, err := ReadProjectMarker(ctx, f.c, "runs", testProjectNumber)
 			if err != nil || !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("got %+v, err %v; want %+v", got, err, tc.want)
 			}
 		})
 	}
-	if m, err := ReadProjectMarker(ctx, newCloud(t).c, ""); m != nil || err != nil {
+	if m, err := ReadProjectMarker(ctx, newCloud(t).c, "", testProjectNumber); m != nil || err != nil {
 		t.Fatalf("no bucket name: %v, %v", m, err)
 	}
 }

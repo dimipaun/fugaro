@@ -9,6 +9,8 @@ import (
 	"net/http"
 
 	"google.golang.org/api/googleapi"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // ProjectMarkerObject is the object in the runs bucket that names the
@@ -30,13 +32,28 @@ type ProjectMarker struct {
 // anyone holding objectAdmin on the bucket could replace it.
 const markerMaxBytes = 4 << 10
 
-// ReadProjectMarker reads the runs bucket's fugaro/project.json, read-only.
+// ReadProjectMarker reads the runs bucket's fugaro/project.json, read-only,
+// but only from a bucket that belongs to the project: the bucket's own project
+// number must be projectNumber and it must carry Fugaro's managed label. A
+// bucket name is global, so a mark proves nothing by itself: anyone can make a
+// bucket with a perfect marker in a project of their own.
 // It returns nil, nil for no marker (no bucket, no object, no access, or an
 // object that is not a version 1 marker): "not marked" is an answer. Any other
 // failure is an error; whoever asks (init's one confirmation) treats both as
 // "not Fugaro's", failing closed.
-func ReadProjectMarker(ctx context.Context, c *Clients, bucket string) (*ProjectMarker, error) {
-	if bucket == "" || c == nil || c.Storage == nil {
+func ReadProjectMarker(ctx context.Context, c *Clients, bucket string, projectNumber uint64) (*ProjectMarker, error) {
+	if bucket == "" || projectNumber == 0 || c == nil || c.Storage == nil {
+		return nil, nil
+	}
+	b, err := c.Storage.Buckets.Get(bucket).Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		if errors.As(err, &ge) && (ge.Code == http.StatusNotFound || ge.Code == http.StatusForbidden) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading bucket gs://%s: %w", bucket, err)
+	}
+	if b.ProjectNumber != projectNumber || b.Labels[gcp.LabelManaged] != gcp.ManagedValue {
 		return nil, nil
 	}
 	resp, err := c.Storage.Objects.Get(bucket, ProjectMarkerObject).Context(ctx).Download()
