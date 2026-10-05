@@ -166,6 +166,7 @@ func TestBurnWindow(t *testing.T) {
 func TestBurnFast(t *testing.T) {
 	s := newState(t)
 	put(t, s, SrcConfig, "/", `{"caps":{"global":{"dailyMicros":80000000}}}`, t0) // $10/h default alert
+	put(t, s, SrcAgents, "/", `{"lib":{"x":`+agent("lib", "t", "")+`}}`, t0)      // a live run: burn is shown
 	spend(t, s, t0, 0)
 	spend(t, s, t0.Add(2*time.Minute), 4_000_000) // $2/min = $120/h
 	v := Build(s, t0.Add(2*time.Minute), Config{})
@@ -178,6 +179,7 @@ func TestBurnFast(t *testing.T) {
 	}
 	// No cap, no alert: never fast.
 	s2 := newState(t)
+	put(t, s2, SrcAgents, "/", `{"lib":{"x":`+agent("lib", "t", "")+`}}`, t0)
 	spend(t, s2, t0, 0)
 	spend(t, s2, t0.Add(2*time.Minute), 4_000_000)
 	if Build(s2, t0.Add(2*time.Minute), Config{}).Project.Burn.Fast {
@@ -469,5 +471,57 @@ func TestPollingKeepsBurnWindows(t *testing.T) {
 	}
 	if _, ok := s.Burn("", t0.Add(60*time.Second)); !ok {
 		t.Fatal("burn unknown under polling")
+	}
+}
+
+// With no run live the trailing window still holds the spend of runs that
+// just ended (or were killed): that is not a rate, so no burn is shown.
+func TestNoBurnWhenNoRunIsLive(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"lib":{"x":`+agent("lib", "t", "")+`}}`, t0)
+	put(t, s, SrcRepos, "/", `{"lib":{"spent":0}}`, t0)
+	spend(t, s, t0, 0)
+	spend(t, s, t0.Add(2*time.Minute), 4_000_000)
+	now := t0.Add(2 * time.Minute)
+	if v := Build(s, now, Config{}); !v.Project.Burn.Known {
+		t.Fatalf("a live run shows burn: %+v", v.Project.Burn)
+	}
+	put(t, s, SrcAgents, "/", `null`, now) // the run was killed
+	v := Build(s, now, Config{})
+	if v.Project.Burn.Known || v.Project.Burn.PerMin != 0 || v.Project.Burn.Fast {
+		t.Fatalf("project burn with no run: %+v", v.Project.Burn)
+	}
+	for _, r := range v.Repos {
+		if r.Burn.Known || r.Burn.PerMin != 0 {
+			t.Fatalf("repo burn with no run: %+v", r)
+		}
+	}
+}
+
+// A repository's name is the readable one the local config gives for its
+// slug, else the decoded wire key; the slug stays its own field.
+func TestRepoNameFromConfig(t *testing.T) {
+	s := newState(t)
+	put(t, s, SrcAgents, "/", `{"dimipaun-fugaro-a6023ed4":{"r1":`+agent("x/y", "t", "")+`},"other":{"r2":`+agent("o", "t", "")+`}}`, t0)
+	v := Build(s, t0, Config{RepoNames: map[string]string{"dimipaun-fugaro-a6023ed4": "dimipaun/fugaro"}})
+	got := map[string]string{}
+	for _, b := range v.Repos {
+		got[b.Slug] = b.Name
+	}
+	if got["dimipaun-fugaro-a6023ed4"] != "dimipaun/fugaro" || got["other"] != "other" {
+		t.Fatalf("%v", got)
+	}
+	d := BuildJSON("p", v)
+	for _, r := range d.Repos {
+		if r.Slug == "dimipaun-fugaro-a6023ed4" && r.Repo != "dimipaun/fugaro" {
+			t.Fatalf("%+v", r)
+		}
+	}
+	// A hostile configured name is sanitised.
+	v = Build(s, t0, Config{RepoNames: map[string]string{"other": "a\x1b[2Jb"}})
+	for _, b := range v.Repos {
+		if strings.ContainsRune(b.Name, 0x1b) {
+			t.Fatalf("%q", b.Name)
+		}
 	}
 }

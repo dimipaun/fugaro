@@ -14,13 +14,18 @@
 //     rows are computed here from the per-day documents.
 //   - Compute is "n/a" when no run of the row had its compute estimated, never
 //     0; "-" (null in JSON) means the figure is not recorded for that
-//     breakdown (compute per model or per person, notional per model).
+//     breakdown (compute per model or per person).
+//   - The runner records one dollar figure per model, billed or notional. By
+//     model, a day with no billed spend counts it all as notional, a day with
+//     no notional as billed, and a mixed day splits it in the day's
+//     billed:notional proportion.
 //   - Every string that came from the database goes through safetext.Strip,
 //     in every output.
 package report
 
 import (
 	"fmt"
+	"math/bits"
 	"sort"
 	"strings"
 	"time"
@@ -88,8 +93,11 @@ type Report struct {
 	By Dim
 	// NoHours: run-hours are not known (run-record totals): n/a, never 0.
 	NoHours bool
-	Rows    []Row
-	Totals  Row
+	// MixedModelDays: a by-model day had both billed and notional spend, so
+	// its models' dollars were split in that day's proportion.
+	MixedModelDays bool
+	Rows           []Row
+	Totals         Row
 }
 
 // Text is database-derived text made safe: stripped of terminal controls.
@@ -161,6 +169,7 @@ func Build(recs []Rec, d Dim) Report {
 		return a
 	}
 	tot := &acc{}
+	mixed := false
 	for _, r := range recs {
 		switch {
 		case d.IsPeriod() || d == ByRepo:
@@ -185,7 +194,13 @@ func Build(recs []Rec, d Dim) Report {
 			for k, m := range r.ByModel {
 				a := get(k, "")
 				a.row.Key = Text(unkey(k))
-				a.row.Spent = satAdd(a.row.Spent, m.Micros)
+				billed, notional := splitModel(r.DayRecord, m.Micros)
+				if r.SpentMicros > 0 && r.NotionalMicros > 0 {
+					mixed = true
+				}
+				a.row.Spent = satAdd(a.row.Spent, billed)
+				a.row.Notional = satAdd(a.row.Notional, notional)
+				a.row.NotionalTracked = true
 				a.row.In, a.row.Out = satN(a.row.In, m.In), satN(a.row.Out, m.Out)
 				a.row.CR, a.row.CW = satN(a.row.CR, m.CR), satN(a.row.CW, m.CW)
 				a.row.TokensTracked = true
@@ -193,7 +208,9 @@ func Build(recs []Rec, d Dim) Report {
 				markDay(a, r)
 			}
 		case d == ByPerson:
+			var attributed int64
 			for k, p := range r.ByPerson {
+				attributed = satN(attributed, p.Runs)
 				a := get(k, "")
 				a.row.Key = Text(unkey(k))
 				a.row.Spent = satAdd(a.row.Spent, p.Micros)
@@ -203,9 +220,19 @@ func Build(recs []Rec, d Dim) Report {
 				a.row.ComputeState = ComputeNotTracked
 				markDay(a, r)
 			}
+			// Runs with no per-person figure (no requester recorded) are
+			// still runs: count them under unknown.
+			if r.Runs > attributed {
+				a := get(budget.UnknownPerson, "")
+				a.row.Key = budget.UnknownPerson
+				a.row.NotionalTracked = true
+				a.row.ComputeState = ComputeNotTracked
+				a.row.Runs = satN(a.row.Runs, r.Runs-attributed)
+				markDay(a, r)
+			}
 		}
 	}
-	rep := Report{By: d}
+	rep := Report{By: d, MixedModelDays: mixed}
 	for _, k := range order {
 		a := groups[k]
 		finish(a)
@@ -224,7 +251,7 @@ func Build(recs []Rec, d Dim) Report {
 		})
 	}
 	// Totals: the sum of the rows, by the same rules.
-	tot.row = Row{Key: "TOTAL", NotionalTracked: d != ByModel, TokensTracked: d == ByModel}
+	tot.row = Row{Key: "TOTAL", NotionalTracked: true, TokensTracked: d == ByModel}
 	tot.row.ComputeState = ComputeNotEstimated
 	if d == ByModel || d == ByPerson {
 		tot.row.ComputeState = ComputeNotTracked
@@ -251,6 +278,28 @@ func Build(recs []Rec, d Dim) Report {
 	}
 	rep.Totals = tot.row
 	return rep
+}
+
+// splitModel splits one model's recorded dollars of a day into billed and
+// notional: all notional on a day with no billed spend, all billed on a day
+// with no notional, otherwise in the day's billed:notional proportion.
+func splitModel(r budget.DayRecord, m budget.Micros) (billed, notional budget.Micros) {
+	switch {
+	case m <= 0:
+		return 0, 0
+	case r.NotionalMicros <= 0:
+		return m, 0
+	case r.SpentMicros <= 0:
+		return 0, m
+	}
+	hi, lo := bits.Mul64(uint64(m), uint64(r.NotionalMicros))
+	den := uint64(satAdd(r.SpentMicros, r.NotionalMicros))
+	if hi >= den { // cannot happen while NotionalMicros <= den; stay safe
+		return 0, m
+	}
+	q, _ := bits.Div64(hi, lo, den)
+	notional = budget.Micros(q)
+	return m - notional, notional
 }
 
 func markDay(a *acc, r Rec) {

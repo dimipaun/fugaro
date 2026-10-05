@@ -13,19 +13,21 @@ Neither workflow runs the test suite; CI already did on main. Both workflows run
 
 ## Making the image packages public (one time per package)
 
-A package that a workflow creates on ghcr.io is private. The mirror (below) reads the source with no credentials, and a plain `docker pull` has none either, so each of the four packages must be public. GitHub has no API call for this with the workflow's token; do it once by hand per package, after the first publish of that image:
+The mirror (below) reads the source with no credentials, and a plain `docker pull` has none either, so each of the four packages must be public. **In practice a package a workflow publishes from this public repository is public from the start** (it inherits the repository's visibility): the v0.2.0 release published `fugaro-go`, `fugaro-java-services` and `fugaro-history` for the first time, `verify-public` passed with no manual step, and all four manifests answered 200 anonymously. So after a release that publishes a new package, only check that it is public: the `verify-public` job passing is that check.
 
-1. Open `https://github.com/users/dimipaun/packages/container/fugaro-<name>/settings` for `web-node`, `go`, `java-services` and `history`.
+If a package ever turns out private (`verify-public` fails with "cannot be read without a login (is the package public?)"): GitHub has no API call for this with the workflow's token, so do it by hand:
+
+1. Open `https://github.com/users/dimipaun/packages/container/fugaro-<name>/settings`.
 2. Under "Danger Zone", "Change package visibility", choose Public and confirm.
 3. Re-run the `verify-public` job of that release's `images` run (or `images/verify-public.sh ghcr.io/dimipaun/fugaro-<name>:X.Y.Z` on any machine, which uses no login).
 
-Until it is done, the first release's `verify-public` job fails by design with "cannot be read without a login (is the package public?)": the images are published and the failure only says the step above is outstanding. Later releases of a public package stay public.
+Later releases of a public package stay public.
 
 ## How `fugaro init` uses the images (the mirror)
 
 Cloud Build and Cloud Run in a user's project cannot read ghcr.io, and the project's base registry `fugaro-base` is writable only by people, never by a build account. So the `images` stage of `fugaro init` copies the images, as the user, from `ghcr.io/dimipaun/fugaro-<kind>:X.Y.Z` (the running binary's version; `--image-source ghcr.io/<owner>` for a fork) into `<region>-docker.pkg.dev/<gcp-project>/fugaro-base/`: the history image with `--firebase` (it lands as `history:latest`, which the history job runs) and a base kind when `--base <kind>` names it or the checkout's `fugaro.yaml` does (recorded in `base_images`). It is plain HTTP against the registry API: no Docker, only the `linux/amd64` image, each digest verified, nothing sent when the destination already has the same digest. A development build copies nothing and says how to build from a checkout.
 
-What a release must therefore guarantee is what `verify-public` checks: every published reference is anonymously readable and has a `linux/amd64` build. Until a package is made public (above) a user's `init` is refused with the unreadable-source message. The trust anchor is the tag as ghcr.io resolves it: users who want more pin the digest from the `verify-public` run summary with `--expect-digest KIND=sha256:<hex>` (KIND is `go`, `java-services`, `web-node` or `history`). The release notes do not list the digests (GoReleaser runs in another workflow and cannot know them); signing the images and verifying before the copy is a planned follow-up (the plan's F1). **Which images exist when:** v0.1.0 published only `fugaro-web-node`; the next tag is the first to publish `fugaro-go`, `fugaro-java-services` and `fugaro-history` (and so the first whose `verify-public` can pass for them, after the one-time public step).
+What a release must therefore guarantee is what `verify-public` checks: every published reference is anonymously readable and has a `linux/amd64` build. Until a package is made public (above) a user's `init` is refused with the unreadable-source message. The trust anchor is the tag as ghcr.io resolves it: users who want more pin the digest from the `verify-public` run summary with `--expect-digest KIND=sha256:<hex>` (KIND is `go`, `java-services`, `web-node` or `history`). The release notes do not list the digests (GoReleaser runs in another workflow and cannot know them); signing the images and verifying before the copy is a planned follow-up (the plan's F1). **Which images exist when:** v0.1.0 published only `fugaro-web-node`; the next tag is the first to publish `fugaro-go`, `fugaro-java-services` and `fugaro-history` (v0.2.0, whose `verify-public` passed).
 
 ## Secrets
 
@@ -41,7 +43,7 @@ The Homebrew cask runs a post-install step on macOS: `xattr -dr com.apple.quaran
 **Before you tag (the checklist; each item has been missed or is easy to miss):**
 
 - **Run `scripts/bump-plugin-version.sh X.Y.Z` and commit it** (through a PR to main). The release gate refuses a tag whose plugin version or any skill header differs from it, and a repository pinned to the tag would otherwise load a plugin that disagrees with the binary.
-- **Make each new ghcr.io package public, once** (see "Making the image packages public"): the first release that publishes `fugaro-go`, `fugaro-java-services` and `fugaro-history` leaves them private, and `verify-public` fails until you do.
+- **Check that each new ghcr.io package is public** (see "Making the image packages public"): a package published from this public repository inherits its visibility (it did for v0.2.0), so this is only a check; `verify-public` passing is the proof.
 - **Turn on tag protection and immutable releases (the repository owner's setting; Fugaro does not change repository settings).** A git tag is mutable, and the plugin pin and the image tags are anchored to it, so: add a GitHub ruleset that restricts updates and deletions of `v*` tags (Settings, Rules, Rulesets, target tags `v*`, restrict updates and deletions), and enable immutable releases. Without them, anyone who can push tags can move `vX.Y.Z` after users pin to it.
 - **Refresh `internal/pricing`'s `checkedAt` date** after checking the vendor's price page (`fugaro budget prices` warns that the table is older than 90 days: the table was last checked 2026-09-30, so it warns from 2026-12-29).
 - The binary prints the commit it was built from (`fugaro doctor --plugin`, `fugaro update-skills`) with the one line that checks the tag: `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print that commit: on the `^{}` line for an annotated tag, on the only line for a lightweight tag (the `^{}` pattern alone prints nothing for one, which is why both are given). Run it once after tagging.

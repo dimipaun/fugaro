@@ -382,6 +382,20 @@ func TestWindowResizeAndTooNarrow(t *testing.T) {
 	}
 }
 
+// A resize clears the screen before the redraw: a terminal that reflowed the
+// old frame would otherwise leave a stale copy of its last lines behind.
+func TestWindowResizeClearsScreen(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	_, cmd := x.m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if cmd == nil {
+		t.Fatal("a resize must clear the screen")
+	}
+	if got, want := cmd(), tea.ClearScreen(); got != want {
+		t.Fatalf("resize command returned %#v, want a clear-screen", got)
+	}
+}
+
 func TestRepoNarrowing(t *testing.T) {
 	x := newTM(t)
 	x.m.o.RepoKey, x.m.o.Repo = "acme%2Flib", "acme/lib"

@@ -15,7 +15,7 @@ func rec(date, slug string, spent, notional, compute int64) Rec {
 		Repo: "acme/" + slug, Slug: slug, Date: date, Version: 1,
 		SpentMicros: budget.Micros(spent), NotionalMicros: budget.Micros(notional), ComputeMicros: budget.Micros(compute),
 		Runs: 1, Calls: 2, RunHours: 0.5,
-		ByModel:  map[string]budget.ModelTotals{"claude-x": {Micros: budget.Micros(spent), In: 10, Out: 5}},
+		ByModel:  map[string]budget.ModelTotals{"claude-x": {Micros: budget.Micros(spent + notional), In: 10, Out: 5}},
 		ByPerson: map[string]budget.PersonTotals{"a@x.io": {Micros: budget.Micros(spent), NotionalMicros: budget.Micros(notional), Runs: 1}},
 	}
 	if compute > 0 {
@@ -314,7 +314,108 @@ func TestJSONShape(t *testing.T) {
 		}
 	}
 	row := m["rows"].([]any)[0].(map[string]any)
-	if row["model_usd"] != "1.500000" || row["model_micros"].(float64) != 1_500_000 || row["notional_usd"] != nil || row["tokens"] == nil {
+	if row["model_usd"] != "1.500000" || row["model_micros"].(float64) != 1_500_000 || row["notional_usd"] != "0.000000" || row["tokens"] == nil {
 		t.Fatalf("%v", row)
+	}
+}
+
+// subRec is a subscription day: nothing billed, the whole model figure is
+// the run's notional (the runner records it under byModel too).
+func subRec(date string, model, notional int64) Rec {
+	r := budget.DayRecord{
+		Repo: "acme/app", Slug: "app", Date: date, Version: 1, NotionalMicros: budget.Micros(notional), Runs: 2,
+		ByModel: map[string]budget.ModelTotals{"claude-sonnet-5": {Micros: budget.Micros(model), In: 7}},
+	}
+	return Rec{DayRecord: r}
+}
+
+// TestByModelSplitsBilledFromNotional: a subscription's model figure is
+// notional, shown under NOTIONAL~ and never under MODEL $, as in the other
+// views.
+func TestByModelSplitsBilledFromNotional(t *testing.T) {
+	rep := Build([]Rec{subRec("2026-10-01", 90_132_148, 95_545_282)}, ByModel)
+	row := rep.Rows[0]
+	if row.Spent != 0 || !row.NotionalTracked || row.Notional != 90_132_148 || rep.Totals.Spent != 0 || rep.Totals.Notional != 90_132_148 {
+		t.Fatalf("row %+v totals %+v", row, rep.Totals)
+	}
+	var b bytes.Buffer
+	if err := Table(&b, rep, Meta{Since: "a", Un: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.HasPrefix(l, "claude-sonnet-5") {
+			if f := strings.Fields(l); f[1] != "$0.00" || f[2] != "$90.132148" {
+				t.Fatalf("row %q", l)
+			}
+		}
+	}
+	if !strings.Contains(b.String(), "priced from its tokens") {
+		t.Fatalf("no footer explaining the notional difference:\n%s", b.String())
+	}
+	var c bytes.Buffer
+	if err := CSV(&c, rep); err != nil || !strings.Contains(c.String(), "claude-sonnet-5,no,0.000000,90.132148,7,") {
+		t.Fatalf("csv %v\n%s", err, c.String())
+	}
+	var j bytes.Buffer
+	if err := JSON(&j, rep, Meta{}); err != nil {
+		t.Fatal(err)
+	}
+	var doc JSONDoc
+	if err := json.Unmarshal(j.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Rows[0].ModelMicros != 0 || doc.Rows[0].NotionalMicros == nil || *doc.Rows[0].NotionalMicros != 90_132_148 {
+		t.Fatalf("json %+v", doc.Rows[0])
+	}
+}
+
+// TestByModelMixedDayIsProportional: a day with billed and notional spend
+// splits each model's figure in the day's billed:notional proportion, and
+// the split always adds back to the model figure.
+func TestByModelMixedDayIsProportional(t *testing.T) {
+	r := rec("2026-10-01", "app", 3_000_000, 1_000_000, 0)
+	r.ByModel = map[string]budget.ModelTotals{"m": {Micros: 4_000_001}}
+	rep := Build([]Rec{r}, ByModel)
+	row := rep.Rows[0]
+	if row.Spent+row.Notional != 4_000_001 || row.Notional < 1_000_000 || row.Notional > 1_000_001 {
+		t.Fatalf("%+v", row)
+	}
+	var b bytes.Buffer
+	_ = Table(&b, rep, Meta{Since: "a", Un: "b"})
+	if !strings.Contains(b.String(), "proportion") {
+		t.Fatalf("no footer on the mixed split:\n%s", b.String())
+	}
+}
+
+// TestByPersonCountsRunsWithoutShares: runs that have no per-person figure
+// (no requester recorded) are counted under unknown, not dropped.
+func TestByPersonCountsRunsWithoutShares(t *testing.T) {
+	r := subRec("2026-10-01", 0, 5_000_000)
+	r.Runs = 12
+	r.ByPerson = map[string]budget.PersonTotals{"unknown": {NotionalMicros: 5_000_000}}
+	rep := Build([]Rec{r}, ByPerson)
+	if len(rep.Rows) != 1 || rep.Rows[0].Key != "unknown" || rep.Rows[0].Runs != 12 || rep.Totals.Runs != 12 {
+		t.Fatalf("%+v", rep.Rows)
+	}
+	var b bytes.Buffer
+	_ = Table(&b, rep, Meta{Since: "a", Un: "b"})
+	if !strings.Contains(b.String(), "no requester") {
+		t.Fatalf("no footer:\n%s", b.String())
+	}
+	// Partly attributed: the rest of the runs go to unknown.
+	r = rec("2026-10-01", "app", 3_000_000, 0, 0)
+	r.Runs = 3 // a@x.io has 1
+	rep = Build([]Rec{r}, ByPerson)
+	got := map[string]int64{}
+	for _, w := range rep.Rows {
+		got[w.Key] = w.Runs
+	}
+	if got["a@x.io"] != 1 || got["unknown"] != 2 {
+		t.Fatalf("%v", got)
+	}
+	// No per-person data at all: still one unknown row with the runs.
+	r.ByPerson = nil
+	if rep = Build([]Rec{r}, ByPerson); len(rep.Rows) != 1 || rep.Rows[0].Runs != 3 {
+		t.Fatalf("%+v", rep.Rows)
 	}
 }
