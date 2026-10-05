@@ -790,7 +790,7 @@ run "history_account_first" {
     error_message = "the history account has its own narrow role: it lists executions and cannot cancel them"
   }
   assert {
-    condition     = length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0 && length(google_cloud_run_v2_job_iam_member.history_invoker) == 0
+    condition     = length(google_cloud_run_v2_job.history) == 0 && length(google_cloud_scheduler_job.history_sweep) == 0 && length(google_cloud_run_v2_job_iam_member.history_runner) == 0
     error_message = "the first apply deploys only the account: the job and its Scheduler job wait for deploy_job"
   }
 }
@@ -871,6 +871,13 @@ run "TestSweepSchedulerJob" {
     }
   }
   override_resource {
+    target          = google_project_iam_custom_role.job_runner
+    override_during = plan
+    values = {
+      name = "projects/proj-1234/roles/fugaroJobRunner"
+    }
+  }
+  override_resource {
     target          = google_service_account.scheduler
     override_during = plan
     values = {
@@ -915,8 +922,12 @@ run "TestSweepSchedulerJob" {
     error_message = "the sweep runs as fugaro-scheduler"
   }
   assert {
-    condition     = google_cloud_run_v2_job_iam_member.history_invoker[0].role == "roles/run.invoker" && google_cloud_run_v2_job_iam_member.history_invoker[0].member == "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com" && google_cloud_run_v2_job_iam_member.history_invoker[0].name == "fugarohist"
-    error_message = "fugaro-scheduler holds run.invoker on the history job only"
+    condition     = google_cloud_run_v2_job_iam_member.history_runner[0].role == "projects/proj-1234/roles/fugaroJobRunner" && google_cloud_run_v2_job_iam_member.history_runner[0].role != "roles/run.invoker" && google_cloud_run_v2_job_iam_member.history_runner[0].member == "serviceAccount:fugaro-scheduler@proj-1234.iam.gserviceaccount.com" && google_cloud_run_v2_job_iam_member.history_runner[0].name == "fugarohist"
+    error_message = "fugaro-scheduler holds fugaroJobRunner (run and runWithOverrides) on the history job only: the rollover's overrides need runWithOverrides, which roles/run.invoker lacks (live HTTP 403, check 23 step 8)"
+  }
+  assert {
+    condition     = contains(google_project_iam_custom_role.job_runner.permissions, "run.jobs.run") && contains(google_project_iam_custom_role.job_runner.permissions, "run.jobs.runWithOverrides")
+    error_message = "the role the scheduler holds on the history job must carry run.jobs.run (the sweep) and run.jobs.runWithOverrides (the rollover)"
   }
 }
 
@@ -1191,7 +1202,7 @@ run "TestRolloverSchedulerJob" {
   }
   assert {
     condition     = one(one(google_cloud_scheduler_job.history_rollover[0].http_target).oauth_token).service_account_email == "fugaro-scheduler@proj-1234.iam.gserviceaccount.com"
-    error_message = "the rollover runs as fugaro-scheduler, which holds run.invoker on the history job only"
+    error_message = "the rollover runs as fugaro-scheduler, which holds fugaroJobRunner on the history job only"
   }
   assert {
     condition     = one(one(one(google_cloud_run_v2_job.history[0].template).template).containers).args == tolist(["budget", "history", "--sweep"])

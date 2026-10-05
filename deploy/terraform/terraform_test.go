@@ -721,6 +721,35 @@ func TestRolloverJobPausedAndIgnored(t *testing.T) {
 	}
 }
 
+// REGRESSION (live, Check 23 step 8, 2026-10-05): a Scheduler call that carries
+// overrides in its body needs run.jobs.runWithOverrides, which roles/run.invoker
+// lacks (Cloud Run answered 403). The rollover job's body does carry overrides,
+// so the scheduler account holds fugaroJobRunner on the history job, never
+// roles/run.invoker. The binding stays job-scoped (a job IAM member).
+func TestHistorySchedulerHoldsJobRunnerOnTheJob(t *testing.T) {
+	found := false
+	walk(t, func(path string, b []byte) {
+		for _, blk := range allResourceBlocks(t, path, b) {
+			if blk.typ != "google_cloud_run_v2_job_iam_member" || !strings.HasPrefix(blk.name, "google_cloud_run_v2_job_iam_member.history_") {
+				continue
+			}
+			found = true
+			if r := firstAttr(blk.body, "role"); r != "google_project_iam_custom_role.job_runner.name" {
+				t.Errorf("%s: %s role is %s, want the job_runner custom role", path, blk.name, r)
+			}
+			if m := firstAttr(blk.body, "member"); m != "google_service_account.scheduler.member" {
+				t.Errorf("%s: %s member is %s, want the scheduler account", path, blk.name, m)
+			}
+			if strings.Contains(blk.body, "run.invoker") {
+				t.Errorf("%s: %s grants run.invoker, which cannot start a run with overrides", path, blk.name)
+			}
+		}
+	})
+	if !found {
+		t.Fatal("no history job IAM member found")
+	}
+}
+
 // The same-project layout (design D3, revised 2026-10-04): the installation
 // and the Firebase budget backend can live in one GCP project, so the budget
 // backend's separation from the jobs rests on the IAM in this tree (and on
@@ -748,7 +777,7 @@ var (
 	// checked against backendRoleRE; each.value (and each.value.role) takes
 	// its roles from literals and references elsewhere in the file, which are
 	// scanned the same way.
-	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
+	allowedRoleExprs = regexp.MustCompile(`^(each\.value(\.role)?|var\.job_runner_role|var\.installation\.role_ids\.(tag_mover|build_submitter)|google_project_iam_custom_role\.(launcher|build_submitter|token_minter|job_runner)\.name|google_project_iam_custom_role\.history\[0\]\.name)$`)
 	// The member expressions an IAM member may use.
 	allowedMemberExprs = regexp.MustCompile(`^(each\.(value|key)(\.member)?|google_service_account\.(job|build|scheduler)\.member|google_service_account\.history\[0\]\.member|"serviceAccount:\$\{var\.(history_account|installation\.scheduler_service_account)\}")$`)
 
