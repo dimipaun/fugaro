@@ -31,6 +31,14 @@ func newSignerDoctorRig(t *testing.T) *signerRig {
 	r.iam.AddServiceAccount("proj-1234", dsSched, "scheduler")
 	r.iam.AddRole("proj-1234", "fugaroTokenMinter", "Fugaro token minter", false)
 	r.iam.SetRolePermissions(dsMinter, "iam.serviceAccounts.signJwt")
+	for role, perms := range map[string][]string{
+		"roles/iam.serviceAccountTokenCreator": {"iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken"},
+		"roles/iam.serviceAccountAdmin":        {"iam.serviceAccounts.setIamPolicy"},
+		"roles/owner":                          {"resourcemanager.projects.get"},
+		"roles/firebase.sdkAdminServiceAgent":  {"firebase.projects.get"},
+	} {
+		r.iam.SetRolePermissions(role, perms...)
+	}
 	r.withBudget(t, "proj-1234", dsSigner)
 	return r
 }
@@ -57,10 +65,14 @@ func (r *signerRig) doctor(t *testing.T, args ...string) (doctorOutput, error) {
 	return o, err
 }
 
+// summary is the always-present partial-coverage line; signerChecks are the
+// per-finding warnings.
+func summary(o doctorOutput) (doctorCheck, bool) { return doctorCheckByID(o.Checks, "token-signers") }
+
 func signerChecks(o doctorOutput) []doctorCheck {
 	var out []doctorCheck
 	for _, c := range o.Checks {
-		if strings.HasPrefix(c.ID, "token-signers") {
+		if strings.HasPrefix(c.ID, "token-signers-") {
 			out = append(out, c)
 		}
 	}
@@ -74,17 +86,23 @@ func (r *signerRig) project(bs ...gcpfake.Binding) {
 func TestDoctorTokenSignersNotCheckedWithoutABudgetBackend(t *testing.T) {
 	r := newDoctorRig(t)
 	o, _ := (&signerRig{doctorRig: r}).doctor(t)
-	if cs := signerChecks(o); len(cs) != 0 {
-		t.Fatalf("checks %+v", cs)
+	if _, ok := summary(o); ok || len(signerChecks(o)) != 0 {
+		t.Fatalf("checks %+v", o.Checks)
 	}
 }
 
-func TestDoctorTokenSignersNone(t *testing.T) {
+// Nothing found is still said to be partial: information, never "ok".
+func TestDoctorTokenSignersNoneIsStillPartial(t *testing.T) {
 	r := newSignerDoctorRig(t)
 	o, err := r.doctor(t, "--strict")
-	cs := signerChecks(o)
-	if err != nil || len(cs) != 1 || !cs[0].OK || cs[0].ID != "token-signers" {
-		t.Fatalf("err %v, checks %+v", err, cs)
+	c, ok := summary(o)
+	if err != nil || !ok || c.OK || c.Severity != "info" || len(signerChecks(o)) != 0 {
+		t.Fatalf("err %v, checks %+v", err, o.Checks)
+	}
+	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents", "docs/gcp-setup.md#token-signers"} {
+		if !strings.Contains(c.Problem, want) {
+			t.Errorf("summary %q lacks %q", c.Problem, want)
+		}
 	}
 }
 
@@ -96,12 +114,11 @@ func TestDoctorTokenSignersOnlyExpectedIsInfo(t *testing.T) {
 	r.iam.AddServiceAccount("proj-1234", "firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com", "adminsdk")
 	r.project(gcpfake.Binding{Role: "roles/iam.serviceAccountTokenCreator", Members: []string{"serviceAccount:firebase-adminsdk-fbsvc@proj-1234.iam.gserviceaccount.com"}})
 	o, err := r.doctor(t, "--strict")
-	cs := signerChecks(o)
-	if err != nil || len(cs) != 1 {
-		t.Fatalf("err %v, checks %+v", err, cs)
+	c, ok := summary(o)
+	if err != nil || !ok || len(signerChecks(o)) != 0 {
+		t.Fatalf("err %v, checks %+v", err, o.Checks)
 	}
-	c := cs[0]
-	if c.ID != "token-signers" || c.OK || c.Severity != "info" || c.Fix == "" ||
+	if c.OK || c.Severity != "info" || c.Fix == "" ||
 		!strings.Contains(c.Problem, "user:launcher@example.com") || !strings.Contains(c.Problem, "firebase-adminsdk-fbsvc@") {
 		t.Fatalf("check %+v", c)
 	}
@@ -121,6 +138,7 @@ func TestDoctorTokenSignersUnexpectedWarns(t *testing.T) {
 	}
 	c := cs[0]
 	for _, want := range []string{"user:eve@example.com", "roles/iam.serviceAccountTokenCreator", "project proj-1234",
+		"iam.serviceAccounts.getAccessToken", "resolves to include",
 		"can sign sign-in tokens with any claims, i.e. act as any run against the budget database"} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("problem %q lacks %q", c.Problem, want)
@@ -210,9 +228,12 @@ func TestDoctorTokenSignersFirebaseProjectUnreadable(t *testing.T) {
 	r := newSignerDoctorRig(t)
 	r.withBudget(t, "other-fp", "fugaro-token-signer@other-fp.iam.gserviceaccount.com")
 	o, err := r.doctor(t, "--strict")
-	cs := signerChecks(o)
-	if err != nil || len(cs) != 1 || cs[0].Severity != "info" || cs[0].OK || !strings.Contains(cs[0].Problem, "other-fp") || cs[0].Fix == "" {
-		t.Fatalf("err %v, checks %+v", err, cs)
+	c, ok := summary(o)
+	if err == nil || !ok || c.Severity != "warning" || c.OK || !strings.Contains(c.Problem, "other-fp") || c.Fix == "" {
+		t.Fatalf("--strict must fail when nothing could be read: err %v, check %+v", err, c)
+	}
+	if _, err := r.doctor(t); err != nil {
+		t.Fatalf("without --strict: %v", err)
 	}
 }
 

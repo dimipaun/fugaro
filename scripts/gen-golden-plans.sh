@@ -21,16 +21,21 @@ RC
 cp "$repo/internal/infra/testdata/installation-budget-job.tfvars.json" "$tmp/gcp/roots/installation/terraform.tfvars.json"
 cp "$repo/internal/infra/testdata/firebase.tfvars.json" "$tmp/gcp/roots/firebase/terraform.tfvars.json"
 cp "$repo/deploy/terraform/gcp/roots/repo/tests/testdata/github-vertex.tfvars.json" "$tmp/gcp/roots/repo/terraform.tfvars.json"
-export TF_CLI_CONFIG_FILE="$tmp/rc" TF_IN_AUTOMATION=1 TF_INPUT=0 CHECKPOINT_DISABLE=1
-export HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 NO_PROXY=
-export GOOGLE_OAUTH_ACCESS_TOKEN=fake
+# Terraform runs under env -i: nothing of the caller's environment (GOOGLE_*,
+# TF_VAR_*, TF_CLI_ARGS*, impersonation, credentials) reaches it. Only PATH, a
+# throwaway HOME, the TF_* it needs, a fake token and a dead proxy.
+tfenv=(env -i "PATH=$PATH" "HOME=$tmp/home" "TF_CLI_CONFIG_FILE=$tmp/rc" TF_IN_AUTOMATION=1 TF_INPUT=0 CHECKPOINT_DISABLE=1
+  GOOGLE_OAUTH_ACCESS_TOKEN=fake
+  HTTPS_PROXY=http://127.0.0.1:9 HTTP_PROXY=http://127.0.0.1:9 https_proxy=http://127.0.0.1:9 http_proxy=http://127.0.0.1:9
+  ALL_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 NO_PROXY= no_proxy=)
+mkdir -p "$tmp/home"
 for r in installation repo firebase; do
   (
     cd "$tmp/gcp/roots/$r"
     sed -i.bak '/backend "gcs" {}/d' main.tf
-    terraform init -backend=false >/dev/null
-    terraform plan -out=plan.bin >/dev/null
-    terraform show -json plan.bin | jq -c '{format_version,terraform_version,resource_changes}' > "$repo/internal/infra/tf/testdata/golden/$r.plan.json"
+    "${tfenv[@]}" terraform init -backend=false >/dev/null
+    "${tfenv[@]}" terraform plan -out=plan.bin >/dev/null
+    "${tfenv[@]}" terraform show -json plan.bin | jq -c '{format_version,terraform_version,resource_changes}' > "$repo/internal/infra/tf/testdata/golden/$r.plan.json"
   )
 done
 echo "wrote $repo/internal/infra/tf/testdata/golden/*.plan.json"

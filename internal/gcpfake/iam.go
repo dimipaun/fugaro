@@ -83,7 +83,7 @@ var (
 	serviceAccountRE  = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
 	serviceAccountsRE = regexp.MustCompile(`^/v1/(projects/[^/]+)/serviceAccounts$`)
 	saPolicyRE        = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+):getIamPolicy$`)
-	customRoleRE      = regexp.MustCompile(`^/v1/((?:projects|organizations)/[^/]+/roles/[^/:]+)$`)
+	customRoleRE      = regexp.MustCompile(`^/v1/((?:(?:projects|organizations)/[^/]+/)?roles/[^/:]+)$`)
 )
 
 // NewIAM starts an IAM fake that lives until the test ends.

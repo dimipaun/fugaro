@@ -325,6 +325,13 @@ func TestCoverCheckSpec(t *testing.T) {
 		"registry with dot-dot":                           {jobWithSpec(spec(reg+"../other/r"), false), false},
 		"one foreign base image":                          {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web:1", "evil.example/web:1"), false), false},
 		"base image of another project":                   {jobWithSpec(spec(reg+"r", "us-east5-docker.pkg.dev/other/fugaro-base/web:1"), false), false},
+		"base image with a space":                         {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web:1 --evil"), false), false},
+		"base image with a newline":                       {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web:1\nRUN x"), false), false},
+		"base image with a quote":                         {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web:1'"), false), false},
+		"base image with a dollar":                        {jobWithSpec(spec(reg+"r", reg+"fugaro-base/$X"), false), false},
+		"base image with a semicolon":                     {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web;x"), false), false},
+		"registry with a space":                           {jobWithSpec(spec(reg+"r x"), false), false},
+		"base image by digest":                            {jobWithSpec(spec(reg+"r", reg+"fugaro-base/web@sha256:0123abcd"), false), true},
 		"empty base image":                                {jobWithSpec(spec(reg+"r", ""), false), false},
 		"base image with dot-dot":                         {jobWithSpec(spec(reg+"r", reg+"../other/web:1"), false), false},
 		"not json":                                        {jobWithSpec("registry="+reg, false), false},
@@ -472,6 +479,12 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 		"env value":  {"template", 0, "template", 0, "containers", 0, "env", 1, "value"},
 		"env name":   {"template", 0, "template", 0, "containers", 0, "env", 1, "name"},
 		"command":    {"template", 0, "template", 0, "containers", 0, "command"},
+		// a whole ancestor block unknown hides everything under it
+		"template block":       {"template"},
+		"inner template block": {"template", 0, "template"},
+		"container element":    {"template", 0, "template", 0, "containers", 0},
+		"container image":      {"template", 0, "template", 0, "containers", 0, "image"},
+		"container args":       {"template", 0, "template", 0, "containers", 0, "args"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			j := flag(jobWithSpec(`{"registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false), path...)

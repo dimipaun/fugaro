@@ -542,6 +542,10 @@ type checkSpec struct {
 	BaseImages map[string]string `json:"base_images"`
 }
 
+// refChars are the characters an image reference may hold here: the spec's
+// refs reach a Dockerfile FROM line and a build's arguments.
+var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
+
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
 // environment (envPath is the env list's path in after_unknown): the spec's
 // registry and each base image it builds FROM must be in this run's registry,
@@ -553,7 +557,7 @@ func (c Cover) checkSpecs(m map[string]any, unk any, envPath []any, proj string)
 	}
 	prefix := c.Registry + "/" + proj + "/"
 	inRegistry := func(ref string) bool {
-		if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) {
+		if c.Registry == "" || !strings.HasPrefix(ref, prefix) || len(ref) == len(prefix) || !refChars.MatchString(ref) {
 			return false
 		}
 		return !slices.Contains(strings.Split(ref, "/"), "..")

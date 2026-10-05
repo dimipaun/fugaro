@@ -49,6 +49,9 @@ type SignerFinding struct {
 	// else is a risk to name.
 	Expected bool
 	Why      string
+	// Perms are the permissions of the role, as the IAM API resolves them,
+	// that make it sign or grant (empty for SignerUnread).
+	Perms []string
 	// Err is why a SignerUnread finding could not be read.
 	Err string
 }
@@ -57,22 +60,11 @@ type SignerFinding struct {
 // JWT signed by the account's key), and the one that can grant them.
 var (
 	signPermissions  = []string{"iam.serviceAccounts.signJwt", "iam.serviceAccounts.signBlob", "iam.serviceAccounts.getAccessToken", "iam.serviceAccounts.implicitDelegation", "iam.serviceAccountKeys.create"}
-	grantPermissions = []string{"iam.serviceAccounts.setIamPolicy"}
+	grantPermissions = []string{"iam.serviceAccounts.setIamPolicy", "resourcemanager.projects.setIamPolicy"}
 )
 
-// predefinedSigners are the predefined roles known to hold those permissions.
-// Other predefined roles (Google's service agents among them) are not looked
-// up, and the primitive roles are not counted: an owner can always edit the
-// policy and grant itself the right, which is the project's own IAM boundary,
-// not a signer to name one by one.
-var predefinedSigners = map[string]SignerKind{
-	"roles/iam.serviceAccountTokenCreator": SignerSigns,
-	"roles/iam.serviceAccountKeyAdmin":     SignerSigns,
-	"roles/iam.serviceAccountAdmin":        SignerGrants,
-}
-
 var adminSDKRE = func(fp string) *regexp.Regexp {
-	return regexp.MustCompile(`^serviceAccount:firebase-adminsdk-[a-z0-9-]+@` + regexp.QuoteMeta(fp) + `\.iam\.gserviceaccount\.com$`)
+	return regexp.MustCompile(`^serviceAccount:firebase-adminsdk-[a-z0-9]{4,6}@` + regexp.QuoteMeta(fp) + `\.iam\.gserviceaccount\.com$`)
 }
 
 type signerBinding struct {
@@ -148,9 +140,10 @@ func firstLineOf(s string) string {
 }
 
 type roleInfo struct {
-	kind  SignerKind // 0: neither signs nor grants
-	perms []string
-	err   error
+	kind    SignerKind // 0: neither signs nor grants
+	perms   []string
+	matched []string
+	err     error
 }
 
 type signerEval struct {
@@ -162,46 +155,54 @@ type signerEval struct {
 	roles    map[string]*roleInfo
 }
 
-// role is what a role can do: the known predefined ones by name, a custom
-// role (a project's or an organization's) by reading its permissions.
+// role is what a role can do, from its permissions as the IAM API resolves
+// them: every role is read, predefined and primitive ones included, so
+// nothing rests on a list of names. A role that cannot be read is an error.
 func (e *signerEval) role(name string) *roleInfo {
 	if r, ok := e.roles[name]; ok {
 		return r
 	}
 	r := &roleInfo{}
 	e.roles[name] = r
-	if k, ok := predefinedSigners[name]; ok {
-		r.kind = k
-		return r
-	}
-	var perms []string
+	var role *iam.Role
 	var err error
 	switch {
 	case strings.HasPrefix(name, "projects/") && strings.Contains(name, "/roles/"):
-		var role *iam.Role
-		if role, err = e.i.Projects.Roles.Get(name).Context(e.ctx).Do(); err == nil {
-			perms = role.IncludedPermissions
-		}
+		role, err = e.i.Projects.Roles.Get(name).Context(e.ctx).Do()
 	case strings.HasPrefix(name, "organizations/") && strings.Contains(name, "/roles/"):
-		var role *iam.Role
-		if role, err = e.i.Organizations.Roles.Get(name).Context(e.ctx).Do(); err == nil {
-			perms = role.IncludedPermissions
-		}
+		role, err = e.i.Organizations.Roles.Get(name).Context(e.ctx).Do()
+	case strings.HasPrefix(name, "roles/"):
+		role, err = e.i.Roles.Get(name).Context(e.ctx).Do()
 	default:
-		return r // primitive and other predefined roles
+		err = fmt.Errorf("%q is not a role name", name)
 	}
 	if err != nil {
 		r.err = err
 		return r
 	}
-	r.perms = perms
-	switch {
-	case slices.ContainsFunc(perms, func(p string) bool { return slices.Contains(signPermissions, p) }):
-		r.kind = SignerSigns
-	case slices.ContainsFunc(perms, func(p string) bool { return slices.Contains(grantPermissions, p) }):
-		r.kind = SignerGrants
+	r.perms = role.IncludedPermissions
+	for _, p := range r.perms {
+		if slices.Contains(signPermissions, p) {
+			r.kind = SignerSigns
+			r.matched = append(r.matched, p)
+		}
+	}
+	if r.kind == 0 {
+		for _, p := range r.perms {
+			if slices.Contains(grantPermissions, p) {
+				r.kind = SignerGrants
+				r.matched = append(r.matched, p)
+			}
+		}
 	}
 	return r
+}
+
+// minterMember: the designed path grants the minter role to people and
+// service accounts (and groups), never to allUsers, allAuthenticatedUsers or
+// a whole domain.
+func minterMember(m string) bool {
+	return strings.HasPrefix(m, "user:") || strings.HasPrefix(m, "serviceAccount:") || strings.HasPrefix(m, "group:")
 }
 
 // eval is the findings of one policy's bindings; account is "" for the
@@ -214,7 +215,7 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 			if strings.HasPrefix(m, "deleted:") {
 				continue // a principal that no longer exists
 			}
-			f := SignerFinding{Kind: r.kind, Member: m, Role: b.role, Account: account, Condition: b.cond}
+			f := SignerFinding{Kind: r.kind, Member: m, Role: b.role, Account: account, Condition: b.cond, Perms: r.matched}
 			switch {
 			case r.err != nil:
 				f.Kind, f.Err = SignerUnread, firstLineOf(r.err.Error())
@@ -222,9 +223,9 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 				continue
 			}
 			switch {
-			case f.Kind != SignerUnread && e.adminSDK.MatchString(m):
+			case f.Kind == SignerSigns && e.adminSDK.MatchString(m):
 				f.Expected, f.Why = true, "the Firebase Admin SDK account"
-			case f.Kind == SignerSigns && account != "" && strings.EqualFold(account, e.signer) &&
+			case f.Kind == SignerSigns && minterMember(m) && account != "" && strings.EqualFold(account, e.signer) &&
 				b.role == "projects/"+e.fp+"/roles/"+MinterRoleID && slices.Equal(r.perms, []string{"iam.serviceAccounts.signJwt"}):
 				f.Expected, f.Why = true, "the designed path: launchers and operators mint run tokens as the signer"
 			}

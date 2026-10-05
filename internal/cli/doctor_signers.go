@@ -35,11 +35,13 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	if signer == "" {
 		signer = infra.SignerAccountID + "@" + fp + ".iam.gserviceaccount.com"
 	}
+	pfp, psigner := pluginwire.Printable(fp), pluginwire.Printable(signer)
 	fs, err := infra.TokenSigners(ctx, c, i, fp, signer)
 	if err != nil {
-		return []doctorCheck{{ID: "token-signers", Severity: "info",
-			Problem: "cannot tell who can sign sign-in tokens for the budget database in project " + pluginwire.Printable(fp) + ": " + oneLineCLI(err.Error()),
-			Fix:     "ask an owner of " + pluginwire.Printable(fp) + " to grant you read access to its IAM (for example roles/iam.securityReviewer), or run doctor as one"}}
+		// A warning: with nothing read, --strict must not go green.
+		return []doctorCheck{{ID: "token-signers", Severity: "warning",
+			Problem: "cannot tell who can sign sign-in tokens for the budget database in project " + pfp + ": " + oneLineCLI(err.Error()),
+			Fix:     "ask an owner of " + pfp + " to grant you read access to its IAM (for example roles/iam.securityReviewer), or run doctor as one"}}
 	}
 	var out []doctorCheck
 	var expected []string
@@ -52,16 +54,15 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		n++
 		out = append(out, signerCheck(fmt.Sprintf("token-signers-%d", n), fp, f))
 	}
-	if n > 0 {
-		return out
+	// Always said, and always partial: nothing found is not "safe".
+	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies, Google service agents (docs/gcp-setup.md#token-signers)"
+	if len(expected) > 0 {
+		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account): %s",
+			len(expected), strings.Join(dedupe(expected), ", "))
 	}
-	if len(expected) == 0 {
-		return []doctorCheck{{ID: "token-signers", OK: true}}
-	}
-	return []doctorCheck{{ID: "token-signers", Severity: "info",
-		Problem: fmt.Sprintf("%d principal(s) can sign sign-in tokens for the budget database, all as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account): %s",
-			len(expected), strings.Join(dedupe(expected), ", ")),
-		Fix: "no action needed; to review: gcloud iam service-accounts get-iam-policy " + shellword.Quote(signer) + " --project " + shellword.Quote(fp)}}
+	summary := doctorCheck{ID: "token-signers", Severity: "info", Problem: msg,
+		Fix: "to review the signer's policy: gcloud iam service-accounts get-iam-policy " + shellword.Quote(psigner) + " --project " + shellword.Quote(pfp)}
+	return append([]doctorCheck{summary}, out...)
 }
 
 func dedupe(s []string) []string {
@@ -81,7 +82,8 @@ func dedupe(s []string) []string {
 // made printable, so a hostile name cannot dress the line up.
 func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 	member, role, account := pluginwire.Printable(f.Member), pluginwire.Printable(f.Role), pluginwire.Printable(f.Account)
-	where := "project " + pluginwire.Printable(fp)
+	pfp := pluginwire.Printable(fp)
+	where := "project " + pfp
 	if f.Account != "" {
 		where = "service account " + account
 	}
@@ -89,25 +91,26 @@ func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 	if f.Condition != nil {
 		cond = " (only while " + pluginwire.Printable(f.Condition.Title) + ")"
 	}
+	perms := pluginwire.Printable(strings.Join(f.Perms, ", "))
 	c := doctorCheck{ID: id, Severity: "warning"}
 	switch f.Kind {
 	case infra.SignerSigns:
-		c.Problem = fmt.Sprintf("%s holds %s on %s%s and %s", member, role, where, cond, signConsequence)
+		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and %s", member, role, where, cond, perms, signConsequence)
 	case infra.SignerGrants:
-		c.Problem = fmt.Sprintf("%s holds %s on %s%s and can grant itself the right to sign sign-in tokens with any claims, i.e. act as any run against the budget database", member, role, where, cond)
+		c.Problem = fmt.Sprintf("%s holds %s on %s%s (which the IAM API resolves to include %s) and can grant itself the right to sign sign-in tokens with any claims, i.e. act as any run against the budget database", member, role, where, cond, perms)
 	default:
 		if f.Member == "" {
 			c.Problem = fmt.Sprintf("cannot tell who holds the right to sign on %s: its IAM policy was not read (%s)", where, pluginwire.Printable(f.Err))
-			c.Fix = "ask an owner to grant you iam.serviceAccounts.getIamPolicy on " + account + ", or review it yourself: gcloud iam service-accounts get-iam-policy " + shellword.Quote(account) + " --project " + shellword.Quote(fp)
+			c.Fix = "ask an owner to grant you iam.serviceAccounts.getIamPolicy on " + account + ", or review it yourself: gcloud iam service-accounts get-iam-policy " + shellword.Quote(account) + " --project " + shellword.Quote(pfp)
 			return c
 		}
 		c.Problem = fmt.Sprintf("cannot tell what %s can do with %s on %s: the role was not read (%s); it may be able to sign sign-in tokens", member, role, where, pluginwire.Printable(f.Err))
-		c.Fix = "ask an owner to grant you iam.roles.get on the role, or read it yourself: gcloud iam roles describe " + shellword.Quote(f.Role)
+		c.Fix = "ask an owner to grant you iam.roles.get on the role, or read it yourself: gcloud iam roles describe " + shellword.Quote(role)
 		return c
 	}
-	cmd := "gcloud projects remove-iam-policy-binding " + shellword.Quote(fp)
+	cmd := "gcloud projects remove-iam-policy-binding " + shellword.Quote(pfp)
 	if f.Account != "" {
-		cmd = "gcloud iam service-accounts remove-iam-policy-binding " + shellword.Quote(account) + " --project " + shellword.Quote(fp)
+		cmd = "gcloud iam service-accounts remove-iam-policy-binding " + shellword.Quote(account) + " --project " + shellword.Quote(pfp)
 	}
 	// Printable forms: a member with a control character in it is shown
 	// escaped, never as bytes a terminal would act on.
