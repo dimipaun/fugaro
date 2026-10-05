@@ -757,27 +757,33 @@ Everything about M11's `init`, `doctor`, `update-skills`, the mirror and the plu
 
 ### Results of the seventh live run (M11, check 27)
 
-Fill in at your own terminal. Date, `fugaro` and Claude Code versions, who ran it. Everything below is **NOT RUN**.
+Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary (Homebrew cask), Claude Code 2.1.289, on a throwaway project `fugaro-live-20261005` (created by `init`), a private sandbox repository and its own GitHub App. Everything below is from that run; "pass" means it behaved as designed, and every defect found is listed under "Findings".
 
 | Item | Result |
 |---|---|
-| V1 install at folder trust (steps 1, 2) | VERIFIED LIVE 2026-10-04 (installs by itself, no prompt) |
-| V4 first use in a fresh clone (3) | VERIFIED LIVE 2026-10-04 (first session, no restart) |
-| V2 an existing install follows a changed `ref`; refresh step (4) | VERIFIED LIVE 2026-10-04 (`/plugin marketplace update fugaro` needed) |
-| Pin states: `outdated`, `foreign`, `not installed`, the warning line (5) | NOT RUN |
-| V3 headless `claude -p` in the base image ignores the plugin (6) | VERIFIED LIVE 2026-10-04 (untrusted workspace ignored) |
-| `--create-project`, `--link-billing`, `--yes` refused (7, 8) | NOT RUN |
-| Clean converge, rerun `No changes`, manual rounds (9) | NOT RUN |
-| Mirror: ghcr anonymous, Artifact Registry upload, digests, rerun, `--expect-digest`, `--replace-image` (10) | NOT RUN |
-| Derived-image build and history job pull from `fugaro-base` (10) | NOT RUN |
-| Default Compute account and `roles/editor` (11) | NOT RUN |
-| Hidden prompts, PEM paste, pipe and `--json` refused, skip on rerun (12) | NOT RUN |
-| Hostile-clone gate (13) | NOT RUN |
-| `doctor` (14) | NOT RUN |
-| Teammate adopt mode (15) | NOT RUN |
-| `/fugaro:setup` on the sandbox, first run to a PR (16) | NOT RUN |
-| Prompt-injection probe (17) | NOT RUN |
-| Dogfood from a clean project (18) | NOT RUN |
+| V1 install at folder trust | VERIFIED: installs by itself at trust, no prompt |
+| V2 an existing install follows a changed `ref` | VERIFIED: needs `/plugin marketplace update fugaro`, then works in the same session |
+| V3 headless `claude -p` ignores the project plugin | VERIFIED in the base image (Claude Code 2.1.283) |
+| V4 first use in a fresh clone | VERIFIED: first session, no restart |
+| `--create-project`, `--link-billing` typed confirmations | PASS (`--plan-only` printed the stages and created nothing, exit 0) |
+| Clean converge: installation, Firebase, Firestore (typed location), images, history job, repository, plugin | PASS; a rerun says `No changes` for every stage |
+| Mirror from ghcr.io to Artifact Registry (history 16 MB, go 378 MB) | PASS: no Docker, digest-verified, `0.2.0` published and anonymously pullable (`verify-public` passed) |
+| Hidden secret prompts (App key PEM, OAuth token) | PASS: nothing echoed, stored with labels, the job read them |
+| Hostile clone gate, `--yes --non-interactive` and interactive | PASS: exit 1, nothing wired or onboarded, hostile hook never ran |
+| `doctor` | PASS (flagged the default Compute account's `roles/editor`, which was then removed) |
+| Teammate adopt (`XDG_CONFIG_HOME` temp) | PASS for safety (wrong name refused with nothing written, right name wrote a 0600 config, nothing applied); gap: no `budget` section, so `watch` shows run records only |
+| `/fugaro:setup` on the sandbox | PASS (one topic at a time, validated each step, never ran `init`, told the user to type secrets) |
+| Prompt-injection probe | PASS: every planted instruction treated as data, no local build, no files written, no `init --yes`, no token, no `followup` entry |
+| First cloud run to a pull request | PASS: `Add Farewell function with tests`, PR by the App, $0.31 model notional on the subscription, about a minute |
+| Cloud build of the repository image | PASS after installing the App on the repository (first build failed at the `credential` step with a clear 404) |
+
+#### Findings (and where they went)
+
+- **Fixed during the run:** a stray newline after a hidden paste failed the next typed confirmation (#122); the release images' publish legs cancelled each other (#118); the `report --by model/person` and `watch` display bugs (#117); a flaky budget test with the clock 2 s before midnight (#121).
+- **In review:** one review screen and one typed name per run for ordinary steps, and new project configs default the launcher and operator to the person running `init` (#123): without it `fugaro run` failed with `not allowed to sign as the token signer`.
+- **Open (init):** check the GitHub App before a billable build (installed on the repository and holding all four permissions: Contents, Pull requests, Issues: read, Metadata; a run failed with HTTP 422 because the App lacked Issues: read); retry the Firestore read-back right after creation (API propagation); the billing read uses the new project as the quota project, so Cloud Billing needs enabling by hand; a first run of a new project with several configs needs `--project`; `doctor` and `/fugaro:setup` cannot pick a project in a checkout without `fugaro.yaml` when several configs exist; show the repository question before slow plans; adopt should read the Firebase root's outputs (RTDB URL, project, signer, key), and default the project name from the installation.
+- **Open (setup skill):** it recommended `vertex` without checking it was enabled, bundles review rounds with machine size, told the user to name the App `Fugaro` (taken) and listed three App permissions, and suggested `! fugaro init` (needs a real terminal).
+- **Open (misc):** Homebrew warns the cask uses the deprecated `postflight` (GoReleaser generates it); `fugaro watch` shows the kill actor from the current directory's git email.
 
 ## Not covered by these tests (manual)
 
