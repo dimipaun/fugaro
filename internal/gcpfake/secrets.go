@@ -17,8 +17,9 @@ import (
 // Secrets is a stateful fake of the Secret Manager v1 calls Fugaro makes:
 // secrets get, create, list (with a filter of labels.k=v terms joined by
 // " AND "), delete, getIamPolicy, addVersion and versions list. It has no
-// access call:
-// Fugaro never reads a value back, so a client that tries fails the test.
+// access call unless a test allows it (AllowAccess): Fugaro never reads a
+// value back, but for the GitHub App pre-check's one read of the App's key,
+// so any other client that tries fails the test.
 //
 // Known differences from real Secret Manager: the list filter supports only
 // the one shape Fugaro sends, and pages are never split.
@@ -33,8 +34,10 @@ type Secrets struct {
 	// appear between the client's get and its create.
 	OnCreate func(id string)
 
-	mu      sync.Mutex
-	secrets map[string]*fakeSecret // by ID
+	mu          sync.Mutex
+	secrets     map[string]*fakeSecret // by ID
+	allowAccess bool
+	accessed    []string // the secret IDs whose latest version was read
 }
 
 type fakeSecret struct {
@@ -49,6 +52,7 @@ var (
 	secretsPathRE  = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets$`)
 	addVersionRE   = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):addVersion$`)
 	versionsPathRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions$`)
+	accessRE       = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+)/versions/latest:access$`)
 	secretPolicyRE = regexp.MustCompile(`^/v1/projects/([^/]+)/secrets/([^/:]+):getIamPolicy$`)
 	labelTermRE    = regexp.MustCompile(`^labels\.([a-z0-9_-]+)=([a-z0-9_-]*)$`)
 )
@@ -71,6 +75,21 @@ func (f *Secrets) Latest(id string) []byte {
 		return nil
 	}
 	return append([]byte(nil), s.versions[len(s.versions)-1]...)
+}
+
+// AllowAccess lets the fake answer the access call (the latest version's
+// value); without it a client that reads a value fails the test.
+func (f *Secrets) AllowAccess() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.allowAccess = true
+}
+
+// Accessed lists the IDs of the secrets whose value was read, in order.
+func (f *Secrets) Accessed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.accessed...)
 }
 
 // Seed creates secret id with labels and one version holding value, as
@@ -104,6 +123,21 @@ func (f *Secrets) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	defer f.mu.Unlock()
 	p := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && accessRE.MatchString(p):
+		m := accessRE.FindStringSubmatch(p)
+		if !f.allowAccess {
+			f.t.Errorf("gcpfake: a client read the value of secret %s", m[2])
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "the fake allows no access")
+			return
+		}
+		s := f.secrets[m[2]]
+		if s == nil || len(s.versions) == 0 {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Secret ["+p+"] not found or has no versions.")
+			return
+		}
+		f.accessed = append(f.accessed, m[2])
+		writeJSON(w, http.StatusOK, map[string]any{"name": "projects/" + m[1] + "/secrets/" + m[2] + "/versions/" + strconv.Itoa(len(s.versions)),
+			"payload": map[string]any{"data": base64.StdEncoding.EncodeToString(s.versions[len(s.versions)-1])}})
 	case r.Method == http.MethodGet && secretPathRE.MatchString(p):
 		m := secretPathRE.FindStringSubmatch(p)
 		s := f.secrets[m[2]]

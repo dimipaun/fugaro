@@ -22,8 +22,15 @@ import (
 // overwrite it.
 var ErrForeignSecret = errors.New("secret exists but is not labelled as ours")
 
+// ErrNoVersion is Access on a secret that does not exist or has no version.
+var ErrNoVersion = errors.New("the secret does not exist or has no version")
+
+// ErrNoAccess is Access refused: the caller may not read secret values.
+var ErrNoAccess = errors.New("not allowed to read secret values")
+
 // Secrets manages a repository's secrets in Secret Manager. It never reads
-// a value back: Fugaro only writes secrets, and the platform mounts them.
+// a value back (Fugaro only writes secrets, and the platform mounts them),
+// but for Access, the GitHub App pre-check's one read.
 type Secrets struct {
 	svc     *secretmanager.Service
 	project string
@@ -45,6 +52,36 @@ func NewSecrets(ctx context.Context, o Options) (*Secrets, error) {
 		return nil, fmt.Errorf("connecting to Secret Manager: %w", err)
 	}
 	return &Secrets{svc: svc, project: o.GCPProject}, nil
+}
+
+// Access reads the value of secret id's latest version, with the caller's own
+// credentials. It exists for one purpose: the GitHub App pre-check of init and
+// doctor signs a JWT with the App's key, in memory, to ask GitHub what the
+// installation grants. The caller holds the value in memory only (clearing its byte copy; the
+// encoded payload lives until garbage collection) and never
+// prints, logs or passes it on; the errors returned never carry it. A person
+// without secretmanager.versions.access (the roles Fugaro grants launchers and
+// operators do not include it; project owners have it) gets ErrNoAccess.
+func (s *Secrets) Access(ctx context.Context, id string) ([]byte, error) {
+	r, err := s.svc.Projects.Secrets.Versions.Access(s.name(id) + "/versions/latest").Context(ctx).Do()
+	if err != nil {
+		var ge *googleapi.Error
+		switch {
+		case errors.As(err, &ge) && ge.Code == http.StatusNotFound:
+			return nil, ErrNoVersion
+		case errors.As(err, &ge) && ge.Code == http.StatusForbidden:
+			return nil, ErrNoAccess
+		}
+		return nil, fmt.Errorf("reading secret %s: %w", id, err)
+	}
+	if r.Payload == nil {
+		return nil, ErrNoVersion
+	}
+	data, err := base64.StdEncoding.DecodeString(r.Payload.Data)
+	if err != nil {
+		return nil, fmt.Errorf("reading secret %s: the payload is not base64", id)
+	}
+	return data, nil
 }
 
 // Set stores value as a new version of secret id, creating the secret with

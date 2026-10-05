@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -442,5 +445,111 @@ func TestDoctorIsDeterministic(t *testing.T) {
 	}
 	if len(o.Secrets) != 3 || o.Secrets[0].Name != "alpha" || o.Secrets[2].Name != "zeta" {
 		t.Fatalf("secrets not sorted by name: %+v", o.Secrets)
+	}
+}
+
+// doctorApp is a doctor rig whose config records the GitHub repository
+// acme/app with App 12345, its key stored in the fake Secret Manager, and a
+// GitHub that answers the installation lookup.
+func doctorApp(t *testing.T, status int, perms map[string]string) (*doctorRig, *[]string) {
+	t.Helper()
+	r := newDoctorRig(t)
+	r.sm.AllowAccess()
+	path, err := localcfg.ProjectPath(os.Getenv, "aurora")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if err := os.WriteFile(path, append(data, "repos:\n  acme/app: { provider: github, github_app_id: \"12345\", workflows: [app] }\n"...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	putSecret(t, r.sm, "proj-1234", mustSlug("github", "acme/app"), "github-app-key", []byte(appKeyPEM(t)))
+	var auth []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		auth = append(auth, req.Header.Get("Authorization"))
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": 9, "permissions": perms, "message": "Not Found"})
+	}))
+	t.Cleanup(srv.Close)
+	old := githubAPIURL
+	githubAPIURL = srv.URL
+	t.Cleanup(func() { githubAPIURL = old })
+	return r, &auth
+}
+
+// doctor says whether each recorded GitHub App is installed with what runs
+// ask for: failing with the fix, a warning for what it must not hold, and
+// never a secret in its output.
+func TestDoctorGitHubApp(t *testing.T) {
+	doctorChecks := func(t *testing.T) (out string, checks []doctorCheck) {
+		t.Helper()
+		out, errOut, _ := execute(t, "doctor", "--check-github-app", "--json", "--dir", t.TempDir())
+		var o doctorOutput
+		if err := json.Unmarshal([]byte(out), &o); err != nil {
+			t.Fatalf("%v\n%s\n%s", err, out, errOut)
+		}
+		return out + errOut, o.Checks
+	}
+	t.Run("fine", func(t *testing.T) {
+		_, auth := doctorApp(t, 200, fullPerms)
+		out, checks := doctorChecks(t)
+		if c, ok := doctorCheckByID(checks, "github-app:acme/app"); !ok || !c.OK || len(*auth) != 1 {
+			t.Fatalf("%+v %v asked %d\n%s", c, ok, len(*auth), out)
+		}
+	})
+	t.Run("not installed", func(t *testing.T) {
+		doctorApp(t, 404, nil)
+		_, checks := doctorChecks(t)
+		c, _ := doctorCheckByID(checks, "github-app:acme/app")
+		if c.OK || c.Severity != "" || !strings.Contains(c.Problem, "the GitHub App 12345 is not installed on acme/app") || !strings.Contains(c.Fix, "install it on this repository only") {
+			t.Fatalf("%+v", c)
+		}
+	})
+	t.Run("missing permission and workflows write", func(t *testing.T) {
+		doctorApp(t, 200, map[string]string{"contents": "write", "pull_requests": "write", "metadata": "read", "workflows": "write"})
+		out, checks := doctorChecks(t)
+		c, _ := doctorCheckByID(checks, "github-app:acme/app")
+		if c.OK || !strings.Contains(c.Problem, "Issues: Read") || !strings.Contains(c.Fix, "add Issues: Read, then accept the new permission on the installation") {
+			t.Fatalf("%+v", c)
+		}
+		w, ok := doctorCheckByID(checks, "github-app-permissions-1:acme/app")
+		if !ok || w.OK || w.Severity != "warning" || !strings.Contains(w.Problem, "Workflows: Write") {
+			t.Fatalf("%+v %v", w, ok)
+		}
+		if strings.Contains(out, "BEGIN RSA PRIVATE KEY") || strings.Contains(out, "eyJhbGciOi") {
+			t.Fatalf("doctor printed key material:\n%s", out)
+		}
+	})
+	t.Run("GitHub unreachable", func(t *testing.T) {
+		r, _ := doctorApp(t, 200, fullPerms)
+		githubAPIURL = "http://127.0.0.1:1"
+		_ = r
+		_, checks := doctorChecks(t)
+		c, _ := doctorCheckByID(checks, "github-app:acme/app")
+		if c.OK || c.Severity != "warning" || !strings.Contains(c.Problem, "does not say the App is fine") {
+			t.Fatalf("%+v", c)
+		}
+	})
+}
+
+// doctor without --check-github-app (what the setup skill runs, in an agent's
+// session) never reads the App's key and never asks GitHub: the fake refuses
+// any access call.
+func TestDoctorWithoutFlagNeverReadsTheKey(t *testing.T) {
+	r, auth := doctorApp(t, 200, fullPerms)
+	// doctorApp allows access for the flagged tests; here the fake must see none.
+	t.Setenv("CLAUDECODE", "1")
+	out, _, _ := execute(t, "doctor", "--json", "--dir", t.TempDir())
+	var o doctorOutput
+	if err := json.Unmarshal([]byte(out), &o); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range o.Checks {
+		if strings.HasPrefix(c.ID, "github-app") {
+			t.Errorf("a GitHub App check without the flag: %+v", c)
+		}
+	}
+	if a := r.sm.Accessed(); len(a) != 0 || len(*auth) != 0 {
+		t.Errorf("accessed %v, GitHub asked %d times", a, len(*auth))
 	}
 }

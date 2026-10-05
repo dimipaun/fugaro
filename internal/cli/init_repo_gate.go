@@ -50,10 +50,45 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	switch {
 	case repoKnown(e.lc, o), flagOK, e.authorized[strings.ToLower(o.typed())]:
 		return authOK, nil
+	case e.declined[strings.ToLower(o.typed())]:
+		// Asked once, at the start of the run, and not typed: the stages say
+		// what to do and are not asked again.
+		return authNeeded, nil
 	case e.canConfirmRepo():
 		return authAsk, nil
 	}
 	return authNeeded, nil
+}
+
+// gateEarly asks the unknown-repository question at the start of a converge,
+// before any stage plans: the installation's and Firebase's Terraform plans
+// take minutes, and the question used to come only after them (live Check
+// 27). The decision is the same one the stages make and is not weakened: the
+// same authState (known, --onboard-repo, or the typed owner/name in the
+// user's own terminal, never under --yes, --non-interactive, --json or an
+// agent), the same confirmation, before any plan for a checkout. It asks only
+// for the repository the repository stage would target (the checkout's
+// fugaro.yaml on its default branch names this project); every other case is
+// left to the stages, as before. A repository not typed is remembered, so the
+// stages report needs-you with the opt-in and do not ask again.
+func (e *initEngine) gateEarly(ctx context.Context) {
+	if e.repo == nil {
+		return
+	}
+	e.repo.resolve(ctx)
+	tg := e.repo.tg
+	if tg == nil {
+		return
+	}
+	if a, err := e.authState(tg.origin); err != nil || a != authAsk {
+		return
+	}
+	if ok, err := e.confirmRepo(tg.root, tg.origin); err == nil && !ok {
+		if e.declined == nil {
+			e.declined = map[string]bool{}
+		}
+		e.declined[strings.ToLower(tg.origin.typed())] = true
+	}
 }
 
 // canConfirmRepo: a typed confirmation needs the user's own terminal, as the

@@ -90,7 +90,7 @@ A run opens a **draft** pull request at its first verified push (a passing test 
 
 ## Follow-up runs (design §4.4)
 
-A follow-up (`fugaro run --pr N`) reads the repository, the pull request and its comments, and updates the pull request by number. **The permissions are unchanged:** everything below is covered by the scopes and permissions listed above, and the CLI still holds no provider credential (the runner makes every call).
+A follow-up (`fugaro run --pr N`) reads the repository, the pull request and its comments, and updates the pull request by number. **The permissions are unchanged:** everything below is covered by the scopes and permissions listed above, and the CLI still holds no provider credential (the runner makes every call). **The one exception:** `fugaro init` and `fugaro doctor` can check that the GitHub App is installed on the repository with the permissions runs ask for. They use the App's private key only from memory: the key you typed at this run's `secrets` stage, or, only behind the explicit `--check-github-app` flag, read from Secret Manager with your own credentials (owners only) after a one-line notice. The key signs one JWT; only its PEM byte copy is cleared afterwards (the encoded payload and the parsed key live until garbage collection), it is never printed or logged, and GODEBUG=http2debug in your own environment would print the JWT's Authorization header (it lives 9 minutes), so unset it. `--check-github-app` is refused in a coding agent's session, and `fugaro doctor` without it never reads the key (the setup skill runs `fugaro doctor --json`).
 
 | What | GitHub | Bitbucket Cloud |
 |---|---|---|

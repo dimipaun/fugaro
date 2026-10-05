@@ -45,9 +45,9 @@ func TestPtyFirstRunPrompts(t *testing.T) {
 	e, out, typeAt := ttyEngine(t, &initOptions{})
 	done := make(chan error, 1)
 	go func() { done <- e.r.gatherInputs(t.Context()) }()
-	typeAt("Fugaro project name", 1, "\n")
 	typeAt("GCP project ID", 1, "my-proj-42\n")
 	typeAt("Region", 1, "\n")
+	typeAt("Fugaro project name", 1, "\n") // last: its default can come from an installation in that project
 	select {
 	case err := <-done:
 		if err != nil {

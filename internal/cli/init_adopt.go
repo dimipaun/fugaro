@@ -9,6 +9,8 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // Adopt mode (design §3.1, "A new team member"): the installation exists
@@ -64,6 +66,7 @@ func (r *initRun) adopt(ctx context.Context, e *initEngine) error {
 	if !r.o.operatorsChanged && len(next.Terraform.Operators) == 0 {
 		next.Terraform.Operators = slices.Clone(outs.Operators)
 	}
+	r.adoptBudget(ctx, e, outs, &next)
 	if err := r.configOnly(ctx, e.c, e.t, e.wd, &next, e.spec, e.path, e.old); err != nil {
 		return err
 	}
@@ -122,4 +125,85 @@ func roleNotes(outs infra.InstallationOutputs) []string {
 		fmt.Sprintf("to launch and watch runs you need the launcher role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Launchers), cmd("--launcher", "user:<your-email>", outs.Launchers)),
 		fmt.Sprintf("to onboard repositories you need the operator role, held by: %s; if you are not listed, ask an owner to run: %s", list(outs.Operators), cmd("--operator", "user:<your-email>", outs.Operators)),
 	}
+}
+
+// adoptBudget fills next's budget section from the Firebase root's outputs
+// (the realtime database's URL, the Firebase project, its restricted web API
+// key and the token signer), so a teammate's watch and runs find the budget
+// backend without an owner's init --firebase. Read only: terraform init and
+// output in the Firebase root, which needs no variables and changes no state.
+// None of the four is a secret (the API key is restricted by design) and
+// nothing the outputs do not hold is written: not the mode, not the caps. An
+// installation with no budget backend, no Firebase state, or outputs that can't
+// be read or fail validation leaves the section as it is, saying why; the
+// adoption itself goes on.
+func (r *initRun) adoptBudget(ctx context.Context, e *initEngine, outs infra.InstallationOutputs, next *localcfg.Config) {
+	if outs.HistoryServiceAccount == "" {
+		return // no budget backend: nothing to find
+	}
+	skip := func(why string) {
+		fmt.Fprintf(r.w, "the budget section of the local config was left empty (%s); watch and the budget commands need it: an owner's fugaro init --firebase <project> fills it, or rerun this once the Firebase root's state can be read\n", why)
+	}
+	switch ok, err := infra.StateExists(ctx, e.c, e.spec.StateBucket, infra.StatePrefixFirebase); {
+	case err != nil:
+		skip("the Firebase root's state could not be listed: " + oneLineCLI(err.Error()))
+		return
+	case !ok:
+		skip("there is no Firebase root state in gs://" + e.spec.StateBucket + ", so the budget backend was not deployed with --firebase")
+		return
+	}
+	fdir, err := infra.FirebaseWorkdir(os.Getenv, e.lc.GCPProject)
+	if err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
+	fwd, ft, err := r.terraform(e.bin, fdir, "firebase")
+	if err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
+	backend, err := fwd.WriteBackend(e.spec.StateBucket, infra.StatePrefixFirebase)
+	if err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
+	if err := ft.Init(ctx, backend); err != nil {
+		skip("terraform init in the Firebase root failed: " + oneLineCLI(err.Error()))
+		return
+	}
+	raw, err := ft.Output(ctx)
+	if err != nil {
+		skip("the Firebase root's outputs could not be read: " + oneLineCLI(err.Error()))
+		return
+	}
+	fo, err := infra.DecodeFirebaseOutputs(raw)
+	if err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
+	// The outputs are state anyone with the state bucket can write: they must
+	// all be one Firebase project's (the one passed with --firebase, else the
+	// one they name), or none is kept.
+	if err := infra.CheckFirebaseOutputsFor(fo, r.o.firebase, e.lc.Endpoints.NoAuth); err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	}
+	b := localcfg.Budget{}
+	if next.Budget != nil {
+		b = *next.Budget
+	}
+	b.FirebaseProject, b.RTDBURL, b.FirebaseAPIKey, b.TokenSigner = fo.FirebaseProject, fo.RTDBURL, fo.FirebaseAPIKey, fo.TokenSigner
+	trial := *next
+	trial.Budget = &b
+	// The outputs come from state anyone with the state bucket can write: each
+	// goes through the config's own validation before it is kept.
+	if data, err := trial.Marshal(); err != nil {
+		skip(oneLineCLI(err.Error()))
+		return
+	} else if _, err := localcfg.Parse(data); err != nil {
+		skip("an output of the Firebase root is not valid: " + oneLineCLI(err.Error()))
+		return
+	}
+	next.Budget = &b
+	fmt.Fprintf(r.w, "the budget section of the local config was filled from the Firebase root's outputs (project %s, its realtime database, web API key and token signer; none is a secret): watch and runs can use the budget backend\n", pluginwire.Printable(fo.FirebaseProject))
 }

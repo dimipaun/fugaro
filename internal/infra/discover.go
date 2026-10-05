@@ -56,6 +56,8 @@ type Clients struct {
 	// FirebaseDB lists the Firebase project's databases (init --firebase
 	// checks them before anything is granted on the project); nil like Billing.
 	FirebaseDB *firebasedatabase.Service
+	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
+	NoAuth bool
 }
 
 // Endpoints override the roots of the APIs gcp.Endpoints has no field for,
@@ -91,14 +93,17 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 			}
 		}
 	}
-	opts := func(endpoint string) []option.ClientOption {
+	// withQuota: the target project is the quota project. Cloud Billing's is
+	// not (billingOpts): the target may be a project this very run creates,
+	// where the API cannot be enabled yet.
+	optsFor := func(endpoint string, withQuota bool) []option.ClientOption {
 		out := []option.ClientOption{option.WithLogger(discardLogger)}
 		if endpoint != "" {
 			out = append(out, option.WithEndpoint(endpoint))
 		}
 		if o.Endpoints.NoAuth {
 			out = append(out, option.WithoutAuthentication())
-		} else if o.GCPProject != "" {
+		} else if withQuota && o.GCPProject != "" {
 			// User ADC has no project of its own, and some APIs refuse it
 			// without a quota project.
 			out = append(out, option.WithQuotaProject(o.GCPProject))
@@ -108,7 +113,13 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 		}
 		return out
 	}
+	opts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, true) }
+	// The credentials' own quota project (gcloud auth application-default
+	// set-quota-project), as the project stage's clients: the billing reads
+	// of init never name the project being set up as the one that pays.
+	billingOpts := func(endpoint string) []option.ClientOption { return optsFor(endpoint, false) }
 	var c Clients
+	c.NoAuth = o.Endpoints.NoAuth
 	var err error
 	if c.IAM, err = iam.NewService(ctx, opts(e.IAM)...); err != nil {
 		return nil, fmt.Errorf("connecting to IAM: %w", err)
@@ -142,7 +153,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	}
 	// Only init --firebase calls it.
 	if !o.Endpoints.NoAuth || e.Billing != "" {
-		if c.Billing, err = billing.NewService(ctx, opts(e.Billing)...); err != nil {
+		if c.Billing, err = billing.NewService(ctx, billingOpts(e.Billing)...); err != nil {
 			return nil, fmt.Errorf("connecting to Cloud Billing: %w", err)
 		}
 	}

@@ -456,13 +456,15 @@ func (r *initRun) firestoreStep(ctx context.Context, lc *localcfg.Config, fp str
 		}
 		hc = oauth2.NewClient(ctx, ts)
 	}
-	fs, err := firestore.New(lc.Endpoints.Firestore, fp, ts, firestore.WithHTTPClient(hc))
-	if err != nil {
-		return nil, userErr("%v", err)
-	}
 	wait := time.Second
 	if lc.Endpoints.NoAuth {
 		wait = 10 * time.Millisecond
+	}
+	// The poll interval also paces the read-back after the database's
+	// creation, which retries while the API's enablement propagates.
+	fs, err := firestore.New(lc.Endpoints.Firestore, fp, ts, firestore.WithHTTPClient(hc), firestore.WithPollInterval(2*wait))
+	if err != nil {
+		return nil, userErr("%v", err)
 	}
 	return &infra.FirestoreStep{FS: fs, Rules: &infra.RulesClient{Endpoint: lc.Endpoints.FirebaseRules, Project: fp, HTTP: hc},
 		FP: fp, Project: lc.Name, GCPProject: lc.GCPProject, Version: Version, Wait: wait}, nil

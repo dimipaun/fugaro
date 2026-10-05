@@ -158,6 +158,10 @@ func TestMultilinePEMAccepted(t *testing.T) {
 			if got := r.store.latest(mustSlug("github", "acme/app"), "github-app-key"); got != pemValue {
 				t.Fatalf("stored %q", got)
 			}
+			// Typed in this run: the App pre-check may use it from memory.
+			if string(r.e.r.appKeyMem) != pemValue {
+				t.Fatalf("the typed key is not held in memory for the pre-check")
+			}
 			f.waitEcho(t, true)
 			time.Sleep(100 * time.Millisecond)
 			if d := f.displayed(); strings.Contains(d, "EXAMPLE") || strings.Contains(d, "MIIE") {

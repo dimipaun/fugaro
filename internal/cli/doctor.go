@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,9 +21,12 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/gitprov"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/preflight"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // doctorCheck is one read-only check's result, in the shape `doctor --json`
@@ -86,11 +90,12 @@ var doctorLookPath = exec.LookPath
 
 func newDoctorCmd() *cobra.Command {
 	var (
-		cloud  cloudOptions
-		dir    string
-		plugin bool
-		strict bool
-		asJSON bool
+		cloud    cloudOptions
+		dir      string
+		plugin   bool
+		checkApp bool
+		strict   bool
+		asJSON   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "doctor [--json] [--plugin] [--strict]",
@@ -99,7 +104,12 @@ func newDoctorCmd() *cobra.Command {
 and its installation's billing and IAM policy (with a budget backend, who can
 sign sign-in tokens for it: warnings, never changes), the Fugaro plugin's wiring in
 .claude/settings.json, a checkout's fugaro.yaml and its stored secrets by
-name. It never prints a secret's value and never creates, enables or
+name. With --check-github-app, in your own terminal, it also asks GitHub whether
+each GitHub App the config records is installed on its repository with the
+permissions Fugaro's runs ask for: that is the one thing that reads a secret's
+value (the App's private key, with your own credentials, held in memory only to
+sign, never printed), and it is refused in a coding agent's session. Otherwise
+it never prints a secret's value and never creates, enables or
 changes anything.
 
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
@@ -114,19 +124,26 @@ fugaro init as the fix, rather than guessing at a project.
 Exit 1 when a check fails, with the one-line fix to run.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON)
+			return runDoctor(cmd, cloud, dir, plugin, strict, asJSON, checkApp)
 		},
 	}
 	addCloudFlags(cmd, &cloud)
 	cmd.Flags().StringVar(&dir, "dir", ".", "a directory in the checkout, for the plugin wiring")
 	cmd.Flags().BoolVar(&plugin, "plugin", false, "check only the plugin's wiring (offline, no credentials)")
+	cmd.Flags().BoolVar(&checkApp, "check-github-app", false, "also check each recorded GitHub App is installed with the permissions runs ask for: reads the App's private key from Secret Manager with your own credentials, in memory only, for one signed token (refused in a coding agent's session; GODEBUG=http2debug would print the token, so unset it)")
 	cmd.Flags().BoolVar(&strict, "strict", false, "fail on a stale, unpinned, foreign or unwired plugin (CI mode)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
 	return cmd
 }
 
-func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON bool) error {
+func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnly, strict, asJSON, checkApp bool) error {
 	ctx := cmd.Context()
+	// Before anything is read: the key is never read in a coding agent's session.
+	if checkApp {
+		if err := refuseAppKeyReadInAgent(os.Getenv); err != nil {
+			return err
+		}
+	}
 
 	var pluginReport pluginwire.Report
 	var pluginChecks []doctorCheck
@@ -207,13 +224,21 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	if err != nil {
 		return failed(remote(err))
 	}
-	billingSvc, err := billing.NewService(ctx, doctorAPIOpts(lc, lc.Endpoints.CloudBilling)...)
+	// Billing is read with the credentials' own quota project, not the
+	// installation's: the same rule as init's billing reads.
+	billingSvc, err := billing.NewService(ctx, doctorAPIOptsQuota(lc, lc.Endpoints.CloudBilling, false)...)
 	if err != nil {
 		return failed(remote(err))
 	}
 	sameProjectFirebase := lc.Budget == nil || lc.Budget.FirebaseProject == "" || lc.Budget.FirebaseProject == lc.GCPProject
 	for _, c := range preflight.Billing(ctx, billingSvc, lc.GCPProject) {
-		o.Checks = append(o.Checks, fromPreflight(c))
+		dc := fromPreflight(c)
+		if c.ID == "billing-api" && !lc.Endpoints.NoAuth && infra.CredentialsQuotaProject(ctx) == "" {
+			// Credentials with no quota project: say so, and never suggest the
+			// project being checked.
+			dc.Problem, dc.Fix = infra.NoQuotaProjectProblem(lc.GCPProject), "gcloud auth application-default set-quota-project <your-project>"
+		}
+		o.Checks = append(o.Checks, dc)
 	}
 	for _, c := range preflight.IAMPolicy(ctx, crmSvc, lc.GCPProject, sameProjectFirebase) {
 		o.Checks = append(o.Checks, fromPreflight(c))
@@ -225,6 +250,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 			return failed(remote(err))
 		}
 		o.Checks = append(o.Checks, doctorTokenSigners(ctx, lc, crmSvc, iamSvc)...)
+	}
+
+	if checkApp {
+		o.Checks = append(o.Checks, doctorGitHubApps(ctx, lc, cmd.ErrOrStderr())...)
 	}
 
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
@@ -241,17 +270,66 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	return emitDoctor(cmd, o, asJSON)
 }
 
+// doctorGitHubApps is the GitHub App pre-check (githubapp.go), only behind
+// --check-github-app, for the GitHub
+// repositories the local config records with an App: the checkout's own when
+// doctor runs in one, else each of them. A check that could not be made is a
+// warning that does not claim the App is fine.
+func doctorGitHubApps(ctx context.Context, lc *localcfg.Config, notice io.Writer) []doctorCheck {
+	var repos []string
+	for name, r := range lc.Repos {
+		if r.Provider == gitprov.KindGitHub && r.GitHubAppID != "" {
+			repos = append(repos, name)
+		}
+	}
+	slices.Sort(repos)
+	if root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel"); err == nil {
+		if oi, ok := readOrigin(ctx, root); ok {
+			repos = slices.DeleteFunc(repos, func(name string) bool { return !sameRepo(name, oi.Repo) })
+		}
+	}
+	var out []doctorCheck
+	for _, repo := range repos {
+		slug, err := task.Slug(gitprov.KindGitHub, repo)
+		if err != nil {
+			continue
+		}
+		c := checkGitHubApp(ctx, lc, repo, lc.Repos[repo].GitHubAppID, appKeySource{Read: true, SecretID: gcp.SecretID(slug, "github-app-key"), Notice: notice})
+		id := "github-app:" + repo
+		switch c.Verdict {
+		case appFine:
+			out = append(out, doctorCheck{ID: id, OK: true})
+		case appFailed:
+			out = append(out, doctorCheck{ID: id, OK: false, Problem: c.Problem, Fix: c.Fix})
+		default:
+			out = append(out, doctorCheck{ID: id, OK: false, Severity: "warning", Problem: c.Problem,
+				Fix: "rerun doctor as a project owner with GitHub reachable, or look at the App's installation by hand (Settings, GitHub Apps, Configure)"})
+		}
+		for i, w := range c.Warnings {
+			out = append(out, doctorCheck{ID: fmt.Sprintf("github-app-permissions-%d:%s", i+1, repo), OK: false, Severity: "warning", Problem: w,
+				Fix: "remove what Fugaro does not need in the App's permissions (GitHub, Settings, Developer settings, GitHub Apps, the App, Permissions & events)"})
+		}
+	}
+	return out
+}
+
 // doctorAPIOpts are the client options for a Google API doctor reads from,
 // pointed at endpoint (lc's fake, in a test) or Google's own ("") and
 // authenticated as the caller (ADC, or none under lc's no_auth).
 func doctorAPIOpts(lc *localcfg.Config, endpoint string) []option.ClientOption {
+	return doctorAPIOptsQuota(lc, endpoint, true)
+}
+
+// doctorAPIOptsQuota is doctorAPIOpts, naming the installation's GCP project
+// as the quota project only when withQuota.
+func doctorAPIOptsQuota(lc *localcfg.Config, endpoint string, withQuota bool) []option.ClientOption {
 	opts := []option.ClientOption{option.WithLogger(slog.New(slog.DiscardHandler))}
 	if endpoint != "" {
 		opts = append(opts, option.WithEndpoint(endpoint))
 	}
 	if lc.Endpoints.NoAuth {
 		opts = append(opts, option.WithoutAuthentication())
-	} else if lc.GCPProject != "" {
+	} else if withQuota && lc.GCPProject != "" {
 		opts = append(opts, option.WithQuotaProject(lc.GCPProject))
 	}
 	return opts

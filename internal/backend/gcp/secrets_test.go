@@ -211,3 +211,29 @@ func TestClientsIgnoreSDKDebugLogging(t *testing.T) {
 		t.Fatalf("the SDK logged to stderr:\n%s", out)
 	}
 }
+
+// Access is the one value read (the GitHub App pre-check's), and says what
+// it could not do without echoing a value.
+func TestSecretsAccess(t *testing.T) {
+	ctx := context.Background()
+	s, sm := newTestSecrets(t)
+	sm.AllowAccess()
+	if _, err := s.Access(ctx, "missing-1"); !errors.Is(err, ErrNoVersion) {
+		t.Fatalf("absent secret: %v", err)
+	}
+	sm.Seed("empty-1", map[string]string{"fugaro": "managed"}, nil)
+	if _, err := s.Access(ctx, "empty-1"); !errors.Is(err, ErrNoVersion) {
+		t.Fatalf("no version: %v", err)
+	}
+	sm.Seed("has-1", map[string]string{"fugaro": "managed"}, []byte("old"))
+	if _, err := s.Set(ctx, "has-1", []byte("the-value"), map[string]string{"fugaro": "managed"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Access(ctx, "has-1")
+	if err != nil || string(got) != "the-value" {
+		t.Fatalf("Access = %q, %v", got, err)
+	}
+	if a := sm.Accessed(); len(a) != 1 || a[0] != "has-1" {
+		t.Errorf("accessed = %v", a)
+	}
+}

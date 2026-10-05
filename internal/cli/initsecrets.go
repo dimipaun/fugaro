@@ -548,6 +548,12 @@ func (s *secretsStage) take(ctx context.Context, st secretStore, f *os.File, w i
 		}
 		return remote(errors.New(msg))
 	}
+	if name == multilineSecret {
+		// Typed just now: the App pre-check may use it from memory, with no
+		// Secret Manager read (cleared when the run ends).
+		clear(s.e.r.appKeyMem)
+		s.e.r.appKeyMem = append([]byte(nil), value...)
+	}
 	fmt.Fprintf(w, "stored %s\n", name)
 	return nil
 }

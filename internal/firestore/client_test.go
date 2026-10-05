@@ -405,3 +405,23 @@ func TestNewValidation(t *testing.T) {
 		}
 	}
 }
+
+// The read-back right after a create can hit the API's enablement still
+// propagating (403 SERVICE_DISABLED): it is retried, not reported, and a
+// permanent refusal still is.
+func TestCreateDatabaseReadBackRetriesPropagation(t *testing.T) {
+	f := gcpfake.NewFirestore(t)
+	c := newClient(t, f, firestore.WithPollInterval(time.Millisecond))
+	ctx := context.Background()
+	f.RemoveDatabase()
+	f.DisabledReadsAfterCreate(3)
+	db, err := c.CreateDatabase(ctx, "us-east5", true)
+	if err != nil || db.LocationID != "us-east5" {
+		t.Fatalf("created = %+v, %v", db, err)
+	}
+	f.RemoveDatabase()
+	f.DisabledReadsAfterCreate(1000)
+	if _, err := c.CreateDatabase(ctx, "us-east5", true); !errors.Is(err, firestore.ErrPermission) {
+		t.Fatalf("a read-back that never works = %v", err)
+	}
+}

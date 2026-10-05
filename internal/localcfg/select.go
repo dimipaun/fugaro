@@ -23,6 +23,14 @@ type SelectInput struct {
 	Checkout   *Checkout // nil outside a checkout (no git toplevel, or no fugaro.yaml there)
 	EnvProject string    // $FUGARO_PROJECT
 	EnvConfig  string    // $FUGARO_CONFIG
+	// Name is fugaro init's --name: where nothing else selects one of
+	// several project configs it is the project's name, which has a config or
+	// is to be created. Only with Creating.
+	Name string
+	// Origin, when set, gives the checkout's origin host and repository (owner/name):
+	// where nothing else selects one of several project configs, the one
+	// project that lists it is selected. Called only then.
+	Origin func() (host, repo string)
 	// Creating is fugaro init, which writes the project config: a missing
 	// one is not refused (the selection then has no config), but the
 	// checkout's project still has to agree.
@@ -213,9 +221,27 @@ func (s *selector) run() (Selection, *Config, error) {
 		}
 		return Selection{}, nil, s.refuse("%s", msg)
 	default:
+		// --name (fugaro init) names the project, for a first run too. With
+		// one project config it never selects: that is the "renaming isn't
+		// supported" refusal.
+		if in.Creating && in.Name != "" {
+			return s.named(in.Name, "--name")
+		}
+		note := ""
+		if in.Origin != nil {
+			if host, repo := in.Origin(); repo != "" && host != "" {
+				sel, c, listed := s.byOrigin(names, host, repo)
+				if c != nil {
+					return sel, c, nil
+				}
+				if len(listed) > 1 {
+					note = fmt.Sprintf(" (the checkout's origin repository %s is listed by %s)", strings.ToLower(repo), strings.Join(listed, ", "))
+				}
+			}
+		}
 		return Selection{}, nil, &SelectError{Projects: names, Msg: fmt.Sprintf(
-			"several project configs (%s) and nothing selects one: pass --project <name>, set FUGARO_PROJECT, or run from a checkout whose fugaro.yaml names its project",
-			strings.Join(names, ", "))}
+			"several project configs (%s) and nothing selects one%s: run `export FUGARO_PROJECT=<name>` (or pass --project <name>), or run from a checkout whose fugaro.yaml names its project",
+			strings.Join(names, ", "), note)}
 	}
 }
 
@@ -271,4 +297,36 @@ func (s *selector) withNotes(sel Selection, c *Config) (Selection, *Config, erro
 		sel.Notes = append(sel.Notes, fmt.Sprintf("ignoring FUGARO_CONFIG (project %s): project %s's config is %s", ec.Name, sel.Name, sel.Path))
 	}
 	return sel, c, nil
+}
+
+// ProviderHosts is the host each provider's repositories live on.
+var ProviderHosts = map[string]string{"github": "github.com", "bitbucket": "bitbucket.org"}
+
+// byOrigin selects the project config that lists repo among its repos, when
+// exactly one does; otherwise it returns no config (nothing is guessed), and
+// listed names the projects that do list it.
+func (s *selector) byOrigin(names []string, host, repo string) (sel Selection, c *Config, listed []string) {
+	var hitCfg *Config
+	var hitPath string
+	for _, n := range names {
+		pc, path, err := LoadProject(s.in.Getenv, n)
+		if err != nil {
+			continue // an unreadable config is not a candidate; selecting it would fail on its own
+		}
+		for r, rc := range pc.Repos {
+			// The same repository name on another host is another repository.
+			if ProviderHosts[rc.Provider] != strings.ToLower(host) {
+				continue
+			}
+			if strings.EqualFold(strings.TrimSuffix(r, ".git"), strings.TrimSuffix(repo, ".git")) {
+				listed = append(listed, n)
+				hitCfg, hitPath = pc, path
+				break
+			}
+		}
+	}
+	if len(listed) != 1 {
+		return Selection{}, nil, listed
+	}
+	return Selection{Path: hitPath, Name: listed[0], From: "the checkout's origin repository " + strings.ToLower(repo)}, hitCfg, listed
 }

@@ -469,3 +469,21 @@ func TestMarkVersionNewerAccepted(t *testing.T) {
 		t.Fatalf("version 0 accepted: %v", err)
 	}
 }
+
+// Live Check 27: the read-back right after the database's creation answered
+// 403 "API has not been used ... disabled" once (the enablement was still
+// propagating) and failed the run. It is retried.
+func TestReadBackAfterCreateRetriesAPIPropagation(t *testing.T) {
+	r := newFBRig(t)
+	r.fs.RemoveDatabase()
+	r.fs.DisabledReadsAfterCreate(3)
+	if out, _, err := executeStdin(t, "us-east5\n", "init", "--firebase", fpID, "--yes"); err != nil {
+		t.Fatalf("a read-back that needed a retry failed the run: %v\n%s", err, out)
+	}
+	if n := r.dbCreates(); n != 1 {
+		t.Errorf("database creates = %d, want 1", n)
+	}
+	if _, ok := r.fs.Value("meta", "installation"); !ok {
+		t.Error("no mark")
+	}
+}
