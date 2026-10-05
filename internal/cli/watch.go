@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"io"
@@ -62,21 +63,45 @@ var watchStdoutTTY = isTTY
 // variable so tests can replace it.
 var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	// Who a kill is recorded as, asked before the screen takes the terminal.
-	// A failure must not block the screen: the identity then reads "unknown".
-	by, err := d.LC.Me(ctx)
-	if err != nil || by == "" {
-		by = "unknown"
-	}
+	// A failure must not block the screen: kill and resume then refuse.
+	by := watchActor(ctx, d.LC)
 	return watch.RunTUI(ctx, watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
 		RepoKey: d.RepoKey, Repo: d.Repo,
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
 		Exec: func(ctx context.Context, req watch.Request) watch.Outcome {
-			return watch.Execute(ctx, d.DB, req, by)
+			return watchExec(ctx, d.DB, req, by)
 		},
 		AltScreen: true,
 	})
+}
+
+// watchActor is who a kill or resume from the screen is recorded as: the
+// identity budget kill and run use (localcfg Me: the config's user, else git
+// config user.email), else the authenticated Google user. "" when neither is
+// known; the audit record never carries a placeholder.
+func watchActor(ctx context.Context, lc *localcfg.Config) string {
+	if me, err := lc.Me(ctx); err == nil && me != "" {
+		return me
+	}
+	if me, err := authenticatedUser(ctx, lc); err == nil && me != "" {
+		return me
+	}
+	return ""
+}
+
+// watchExec runs a confirmed request as by, refusing without writing when
+// nobody is identified.
+func watchExec(ctx context.Context, db interface {
+	budget.KillDB
+	Get(ctx context.Context, path string, out any) (bool, error)
+}, req watch.Request, by string) watch.Outcome {
+	if by == "" {
+		msg := "cannot tell who you are: set user in the local config or git config user.email; nothing was changed"
+		return watch.Outcome{Err: errors.New(msg), Notice: msg}
+	}
+	return watch.Execute(ctx, db, req, by)
 }
 
 type watchOptions struct {
