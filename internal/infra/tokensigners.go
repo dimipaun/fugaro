@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -33,6 +34,22 @@ const (
 	SignerUnread
 )
 
+// SignerClass says how to treat a finding that is not part of the design.
+type SignerClass int
+
+const (
+	// SignerRisk (the zero value): unexpected power, to review and remove.
+	SignerRisk SignerClass = iota
+	// SignerGoogleAgent: a Google-operated service agent of THIS project. It
+	// holds roles that can sign or change IAM because the service needs them;
+	// it cannot be removed without breaking the service, and trusting it is
+	// trusting Google.
+	SignerGoogleAgent
+	// SignerOwner: a project owner (roles/owner on the project), the trust
+	// root: owners can always create keys or grant themselves anything.
+	SignerOwner
+)
+
 // SignerCondition is a conditional binding's condition.
 type SignerCondition struct{ Title, Expression string }
 
@@ -49,11 +66,46 @@ type SignerFinding struct {
 	// else is a risk to name.
 	Expected bool
 	Why      string
+	// Class is SignerRisk for everything that is not Expected and not one of
+	// the two inherent cases (set only for findings that sign or grant).
+	Class SignerClass
 	// Perms are the permissions of the role, as the IAM API resolves them,
 	// that make it sign or grant (empty for SignerUnread).
 	Perms []string
 	// Err is why a SignerUnread finding could not be read.
 	Err string
+}
+
+// Domains of Google's service agents (service-<project number>@<domain>), and
+// of the legacy ones that carry the bare number (<number>@<domain>). The
+// default compute account (<number>-compute@developer.gserviceaccount.com)
+// is deliberately absent: it is a plain account that people grant roles to.
+var (
+	agentDomainRE   = regexp.MustCompile(`^(?:gcp-sa-[a-z0-9-]+|serverless-robot-prod|containerregistry|compute-system|container-engine-robot|gcf-admin-robot|firebase-rules|dataflow-service-producer-prod|cloud-ml\.google\.com|gae-api-prod\.google\.com)\.iam\.gserviceaccount\.com$`)
+	legacyAgentDoms = []string{"cloudservices.gserviceaccount.com", "cloudbuild.gserviceaccount.com"}
+)
+
+// googleServiceAgent reports whether member is a Google-operated service
+// agent of the project with the given number: a service account whose email
+// is exactly service-<number>@<pinned agent domain>, or <number>@<legacy
+// agent domain>. number 0 (unknown) qualifies nothing, and so does another
+// project's number, another domain, or another member type.
+func googleServiceAgent(member string, number uint64) bool {
+	if number == 0 {
+		return false
+	}
+	email, ok := strings.CutPrefix(strings.ToLower(member), "serviceaccount:")
+	if !ok {
+		return false
+	}
+	n := strconv.FormatUint(number, 10)
+	if d, ok := strings.CutPrefix(email, "service-"+n+"@"); ok {
+		return agentDomainRE.MatchString(d)
+	}
+	if d, ok := strings.CutPrefix(email, n+"@"); ok {
+		return slices.Contains(legacyAgentDoms, d)
+	}
+	return false
 }
 
 // Permissions that sign as an account directly (a Firebase custom token is a
@@ -76,10 +128,11 @@ type signerBinding struct {
 // TokenSigners reads the Firebase project fp's IAM policy and the policy of
 // each of its service accounts, and returns every principal that holds a
 // role that can sign as an account or grant itself that. signer is the token
-// signer account's email. A project policy or account list that cannot be
+// signer account's email. number is the project's number (0 when it could not
+// be read: no Google service agent is then recognised). A project policy or account list that cannot be
 // read is an error; a single account's policy or a single role that cannot be
 // read is a SignerUnread finding.
-func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signer string) ([]SignerFinding, error) {
+func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signer string, number uint64) ([]SignerFinding, error) {
 	pol, err := c.Projects.GetIamPolicy(fp, &crm.GetIamPolicyRequest{Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3}}).Context(ctx).Do()
 	if err != nil {
 		return nil, fmt.Errorf("reading the IAM policy of project %s: %w", fp, err)
@@ -96,7 +149,7 @@ func TokenSigners(ctx context.Context, c *crm.Service, i *iam.Service, fp, signe
 	}
 	slices.Sort(accounts)
 
-	e := &signerEval{ctx: ctx, i: i, fp: fp, signer: strings.ToLower(signer), adminSDK: adminSDKRE(fp), roles: map[string]*roleInfo{}}
+	e := &signerEval{ctx: ctx, i: i, fp: fp, signer: strings.ToLower(signer), number: number, adminSDK: adminSDKRE(fp), roles: map[string]*roleInfo{}}
 	var proj []signerBinding
 	for _, b := range pol.Bindings {
 		sb := signerBinding{role: b.Role, members: b.Members}
@@ -151,6 +204,7 @@ type signerEval struct {
 	i        *iam.Service
 	fp       string
 	signer   string
+	number   uint64
 	adminSDK *regexp.Regexp
 	roles    map[string]*roleInfo
 }
@@ -228,6 +282,16 @@ func (e *signerEval) eval(account string, bs []signerBinding) []SignerFinding {
 			case f.Kind == SignerSigns && minterMember(m) && account != "" && strings.EqualFold(account, e.signer) &&
 				b.role == "projects/"+e.fp+"/roles/"+MinterRoleID && slices.Equal(r.perms, []string{"iam.serviceAccounts.signJwt"}):
 				f.Expected, f.Why = true, "the designed path: launchers and operators mint run tokens as the signer"
+			}
+			if !f.Expected && account == "" && f.Kind != SignerUnread {
+				// Only project-level bindings: a binding on one account is
+				// someone's grant, whoever the member is.
+				switch {
+				case googleServiceAgent(m, e.number):
+					f.Class = SignerGoogleAgent
+				case b.role == "roles/owner" && (strings.HasPrefix(m, "user:") || strings.HasPrefix(m, "group:") || strings.HasPrefix(m, "serviceAccount:")):
+					f.Class = SignerOwner
+				}
 			}
 			out = append(out, f)
 		}
