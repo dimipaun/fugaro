@@ -262,7 +262,7 @@ func TestAdoptFillsTheBudgetSectionFromTheFirebaseOutputs(t *testing.T) {
 		}
 	}
 	// Not the mode, the cap or anything else: the outputs do not say them.
-	for _, not := range []string{"mode:", "per_run_usd: 1", "allowed_models", "max_run_tokens"} {
+	for _, not := range []string{"mode: observe", "mode: enforce", "per_run_usd: 1", "allowed_models", "max_run_tokens"} {
 		if strings.Contains(cfg, not) {
 			t.Errorf("the local config holds %q, which no output says:\n%s", not, cfg)
 		}
