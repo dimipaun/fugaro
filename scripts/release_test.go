@@ -488,7 +488,7 @@ func TestPRFailedCheckStopsWaiting(t *testing.T) {
 	}
 }
 
-// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT) is handled
+// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT to the process group) is handled
 // with a message telling the caller how to continue, rather than leaving
 // the terminal on a bare stack trace.
 func TestInterruptPrintsResumeInstructions(t *testing.T) {
@@ -504,14 +504,39 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Env = append(cmd.Env, g.env...)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.WaitDelay = 5 * time.Second
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(300 * time.Millisecond)
-	if err := cmd.Process.Signal(os.Interrupt); err != nil {
+	// Signal only once the script has issued its merge call, i.e. it is past
+	// the preconditions with its traps installed and heading into the poll
+	// loop. A fixed sleep raced a slow runner: the signal could land before
+	// the trap existed, or while the script was elsewhere, and the run hung.
+	deadline := time.Now().Add(60 * time.Second)
+	for countLog(t, g, "pr merge") == 0 {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			_ = cmd.Wait()
+			t.Fatalf("release.sh never reached the merge step; output:\n%s", out.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// Like a terminal's Ctrl-C, signal the whole process group: the poll
+	// loop runs in a subshell, which a signal sent to the parent alone would
+	// never reach (bash defers its trap until that child exits).
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
 		t.Fatal(err)
 	}
-	_ = cmd.Wait()
+	done := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		t.Fatalf("release.sh did not exit within 30s of SIGINT; output:\n%s", out.String())
+	}
 	if !strings.Contains(out.String(), "resume") {
 		t.Fatalf("expected resume instructions after SIGINT, got:\n%s", out.String())
 	}
