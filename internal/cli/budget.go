@@ -497,6 +497,23 @@ func runBudgetShow(cmd *cobra.Command, o *budgetShowOptions) error {
 		}
 	}
 
+	// The project figures are the sum of every repository's. Rows that are not
+	// all of them (no --all) sum to less; say by how much. Counters that
+	// disagree even over every repository are a real accounting mismatch.
+	var unlisted, every figures
+	for k, sp := range repoSpend {
+		every = figures{every.counted + sp.Counted, every.spent + sp.Spent, every.notional + sp.Notional}
+		if !keys[k] {
+			unlisted = figures{unlisted.counted + sp.Counted, unlisted.spent + sp.Spent, unlisted.notional + sp.Notional}
+		}
+	}
+	if unlisted != (figures{}) {
+		doc.Warnings = append(doc.Warnings, "repositories not listed above hold "+countersText(unlisted)+" of the project figures; --all lists them")
+	}
+	if diff := (figures{global.Counted - every.counted, global.Spent - every.spent, global.Notional - every.notional}); diff != (figures{}) {
+		doc.Warnings = append(doc.Warnings, "the project figures and the sum of its repositories' do not add up: the project counters are over by "+countersText(diff)+" (negative: under); the day's rollover keeps the raw nodes when they differ")
+	}
+
 	if o.json {
 		return writeJSON(cmd.OutOrStdout(), doc)
 	}
@@ -534,6 +551,17 @@ func usdText(v *float64) string {
 	}
 	m, _ := pricing.FromUSD(*v)
 	return money(m)
+}
+
+// figures are dollar counters, comparable (budget.Counters holds a map).
+type figures struct{ counted, spent, notional budget.Micros }
+
+func countersText(c figures) string {
+	f := func(m budget.Micros) string { return usdVal(m.USD()) }
+	if c.counted < 0 || c.spent < 0 || c.notional < 0 {
+		f = func(m budget.Micros) string { return fmt.Sprintf("%.6f", m.USD()) }
+	}
+	return "counted " + f(c.counted) + ", spent " + f(c.spent) + ", notional " + f(c.notional)
 }
 
 func usdVal(v float64) string {
