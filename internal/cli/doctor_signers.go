@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -22,9 +23,12 @@ const signConsequence = "can sign sign-in tokens with any claims, i.e. act as an
 // account of the Firebase project. Firebase accepts a custom sign-in token
 // signed by ANY service account of the project, so that, and not the signer
 // account's minter role, is the real boundary of the budget database's
-// identity. Only the principals the design expects (the Firebase Admin SDK
-// account, and the minter role on the signer account alone) are information;
-// every other one is a warning that fails doctor under --strict. Nothing is
+// identity. Three kinds of principal are information: the ones the design
+// expects (the Firebase Admin SDK account, the minter role on the signer
+// account alone), Google's own service agents of this project (matched by
+// exact email AND this project's number) and the project owners (the trust
+// root); none is ever given a remove command. Every other one is a warning
+// that fails doctor under --strict. Nothing is
 // checked without a budget backend. Read-only.
 func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service, i *iam.Service) []doctorCheck {
 	if lc.Budget == nil || lc.Budget.FirebaseProject == "" {
@@ -36,7 +40,13 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 		signer = infra.SignerAccountID + "@" + fp + ".iam.gserviceaccount.com"
 	}
 	pfp, psigner := pluginwire.Printable(fp), pluginwire.Printable(signer)
-	fs, err := infra.TokenSigners(ctx, c, i, fp, signer)
+	// The project's number tells Google's own service agents of this project
+	// from look-alikes; unread, none is recognised (they warn like any other).
+	number, nerr := infra.ProjectNumber(ctx, &infra.Clients{CRM: c}, fp)
+	if nerr != nil {
+		number = 0
+	}
+	fs, err := infra.TokenSigners(ctx, c, i, fp, signer, number)
 	if err != nil {
 		// A warning: with nothing read, --strict must not go green.
 		return []doctorCheck{{ID: "token-signers", Severity: "warning",
@@ -45,24 +55,62 @@ func doctorTokenSigners(ctx context.Context, lc *localcfg.Config, c *crm.Service
 	}
 	var out []doctorCheck
 	var expected []string
+	agents := map[string][]string{} // Google service agent -> its roles
+	var agentOrder []string
+	owners := map[string]bool{}
+	var ownerOrder []string
 	n := 0
 	for _, f := range fs {
-		if f.Expected {
+		switch {
+		case f.Expected:
 			expected = append(expected, pluginwire.Printable(f.Member))
-			continue
+		case f.Class == infra.SignerGoogleAgent:
+			m := pluginwire.Printable(strings.TrimPrefix(f.Member, "serviceAccount:"))
+			if _, ok := agents[m]; !ok {
+				agentOrder = append(agentOrder, m)
+			}
+			if r := pluginwire.Printable(f.Role); !slices.Contains(agents[m], r) {
+				agents[m] = append(agents[m], r)
+			}
+		case f.Class == infra.SignerOwner:
+			if m := pluginwire.Printable(f.Member); !owners[m] {
+				owners[m] = true
+				ownerOrder = append(ownerOrder, m)
+			}
+		default:
+			n++
+			out = append(out, signerCheck(fmt.Sprintf("token-signers-%d", n), fp, f))
 		}
-		n++
-		out = append(out, signerCheck(fmt.Sprintf("token-signers-%d", n), fp, f))
+	}
+	var info []doctorCheck
+	if len(agentOrder) > 0 {
+		var parts []string
+		for _, m := range agentOrder {
+			parts = append(parts, m+" ("+strings.Join(agents[m], ", ")+")")
+		}
+		info = append(info, doctorCheck{ID: "token-signers-google-agents", Severity: "info",
+			Problem: "Google-operated service agents of this project hold roles that can sign tokens or change IAM: " + strings.Join(parts, ", ") +
+				"; they are Google-operated, not removable without breaking the service; the trust is the same as trusting Google; no action"})
+	}
+	if len(ownerOrder) > 0 {
+		info = append(info, doctorCheck{ID: "token-signers-owners", Severity: "info",
+			Problem: fmt.Sprintf("project owners can create service-account keys and therefore sign tokens: the trust root; %d owner(s): %s; keep this list short",
+				len(ownerOrder), strings.Join(ownerOrder, ", "))})
 	}
 	// Always said, and always partial: nothing found is not "safe".
-	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies, Google service agents (docs/gcp-setup.md#token-signers)"
+	msg := "checked the project and service-account IAM policies of " + pfp + "; not read: folder- and organization-inherited bindings, deny policies (docs/gcp-setup.md#token-signers)"
+	if nerr == nil {
+		msg += "; Google service agents of this project are read and classified"
+	} else {
+		msg += "; the project number could not be read (" + oneLineCLI(nerr.Error()) + "), so no Google service agent is recognised and each is listed as a warning"
+	}
 	if len(expected) > 0 {
 		msg += fmt.Sprintf("; %d principal(s) can sign as designed (the Firebase Admin SDK account; launchers and operators through the minter role on the signer account): %s",
 			len(expected), strings.Join(dedupe(expected), ", "))
 	}
 	summary := doctorCheck{ID: "token-signers", Severity: "info", Problem: msg,
 		Fix: "to review the signer's policy: gcloud iam service-accounts get-iam-policy " + shellword.Quote(psigner) + " --project " + shellword.Quote(pfp)}
-	return append([]doctorCheck{summary}, out...)
+	return append(append([]doctorCheck{summary}, info...), out...)
 }
 
 func dedupe(s []string) []string {
@@ -118,6 +166,6 @@ func signerCheck(id, fp string, f infra.SignerFinding) doctorCheck {
 	if f.Condition != nil {
 		cmd += " --condition=" + shellword.Quote("expression="+pluginwire.Printable(f.Condition.Expression)+",title="+pluginwire.Printable(f.Condition.Title))
 	}
-	c.Fix = cmd
+	c.Fix = "review before running: " + cmd
 	return c
 }

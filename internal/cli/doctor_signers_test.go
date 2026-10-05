@@ -72,7 +72,7 @@ func summary(o doctorOutput) (doctorCheck, bool) { return doctorCheckByID(o.Chec
 func signerChecks(o doctorOutput) []doctorCheck {
 	var out []doctorCheck
 	for _, c := range o.Checks {
-		if strings.HasPrefix(c.ID, "token-signers-") {
+		if len(c.ID) > len("token-signers-") && strings.HasPrefix(c.ID, "token-signers-") && c.ID[len("token-signers-")] >= '0' && c.ID[len("token-signers-")] <= '9' {
 			out = append(out, c)
 		}
 	}
@@ -99,7 +99,7 @@ func TestDoctorTokenSignersNoneIsStillPartial(t *testing.T) {
 	if err != nil || !ok || c.OK || c.Severity != "info" || len(signerChecks(o)) != 0 {
 		t.Fatalf("err %v, checks %+v", err, o.Checks)
 	}
-	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents", "docs/gcp-setup.md#token-signers"} {
+	for _, want := range []string{"checked the project and service-account IAM policies of proj-1234", "not read:", "folder- and organization-inherited bindings", "deny policies", "Google service agents of this project are read and classified", "docs/gcp-setup.md#token-signers"} {
 		if !strings.Contains(c.Problem, want) {
 			t.Errorf("summary %q lacks %q", c.Problem, want)
 		}
@@ -147,7 +147,7 @@ func TestDoctorTokenSignersUnexpectedWarns(t *testing.T) {
 	if c.Severity != "warning" || c.OK || c.ID != "token-signers-1" {
 		t.Fatalf("check %+v", c)
 	}
-	if want := "gcloud projects remove-iam-policy-binding proj-1234 --member=user:eve@example.com --role=roles/iam.serviceAccountTokenCreator"; c.Fix != want {
+	if want := "review before running: gcloud projects remove-iam-policy-binding proj-1234 --member=user:eve@example.com --role=roles/iam.serviceAccountTokenCreator"; c.Fix != want {
 		t.Fatalf("fix %q, want %q", c.Fix, want)
 	}
 	if _, err := r.doctor(t, "--strict"); err == nil {
@@ -167,8 +167,8 @@ func TestDoctorTokenSignersServiceAccountLevelAndCustomRole(t *testing.T) {
 		fixes = append(fixes, c.Fix)
 	}
 	want := []string{
-		"gcloud projects remove-iam-policy-binding proj-1234 --member=user:eve@example.com --role=projects/proj-1234/roles/mySigner",
-		"gcloud iam service-accounts remove-iam-policy-binding " + dsSched + " --project proj-1234 --member=group:ops@example.com --role=roles/iam.serviceAccountTokenCreator",
+		"review before running: gcloud projects remove-iam-policy-binding proj-1234 --member=user:eve@example.com --role=projects/proj-1234/roles/mySigner",
+		"review before running: gcloud iam service-accounts remove-iam-policy-binding " + dsSched + " --project proj-1234 --member=group:ops@example.com --role=roles/iam.serviceAccountTokenCreator",
 	}
 	if len(fixes) != 2 || fixes[0] != want[0] || fixes[1] != want[1] {
 		t.Fatalf("fixes %q, want %q", fixes, want)
@@ -262,5 +262,127 @@ func TestDoctorTokenSignersReadOnly(t *testing.T) {
 		if req.Method != http.MethodGet && !(req.Method == http.MethodPost && strings.HasSuffix(req.Path, ":getIamPolicy")) {
 			t.Errorf("doctor made a non-read call: %s %s", req.Method, req.Path)
 		}
+	}
+}
+
+// withClassRoles makes the roles the live fugaro-dev run resolved readable,
+// with the permissions that matter.
+func (r *signerRig) withClassRoles() {
+	for role, perms := range map[string][]string{
+		"roles/owner":                           {"resourcemanager.projects.get", "iam.serviceAccountKeys.create", "resourcemanager.projects.setIamPolicy"},
+		"roles/editor":                          {"iam.serviceAccountKeys.create"},
+		"roles/cloudbuild.serviceAgent":         {"iam.serviceAccounts.getAccessToken", "iam.serviceAccounts.signBlob"},
+		"roles/cloudscheduler.serviceAgent":     {"iam.serviceAccounts.getAccessToken"},
+		"roles/firebase.managementServiceAgent": {"iam.serviceAccounts.setIamPolicy"},
+		"roles/run.serviceAgent":                {"iam.serviceAccounts.signBlob"},
+	} {
+		r.iam.SetRolePermissions(role, perms...)
+	}
+}
+
+func checkByID(o doctorOutput, id string) (doctorCheck, bool) { return doctorCheckByID(o.Checks, id) }
+
+const dsNum = "123456789012" // the doctor rig's project number
+
+// The live fugaro-dev result: Google's service agents of the project and the
+// owner are information (one line each, no remove command) and never fail
+// --strict; only the unexpected power is a warning.
+func TestDoctorTokenSignersClasses(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withClassRoles()
+	agents := []string{
+		"serviceAccount:service-" + dsNum + "@gcp-sa-cloudbuild.iam.gserviceaccount.com",
+		"serviceAccount:service-" + dsNum + "@gcp-sa-cloudscheduler.iam.gserviceaccount.com",
+		"serviceAccount:service-" + dsNum + "@gcp-sa-firebase.iam.gserviceaccount.com",
+		"serviceAccount:service-" + dsNum + "@serverless-robot-prod.iam.gserviceaccount.com",
+	}
+	roles := []string{"roles/cloudbuild.serviceAgent", "roles/cloudscheduler.serviceAgent", "roles/firebase.managementServiceAgent", "roles/run.serviceAgent"}
+	var bs []gcpfake.Binding
+	for i, a := range agents {
+		bs = append(bs, gcpfake.Binding{Role: roles[i], Members: []string{a}})
+	}
+	r.crm.SetPolicy("proj-1234", append(bs, gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com", "group:owners@example.com"}})...)
+	o, err := r.doctor(t, "--strict")
+	if err != nil || len(signerChecks(o)) != 0 {
+		t.Fatalf("--strict must stay green: err %v, checks %+v", err, o.Checks)
+	}
+	g, ok := checkByID(o, "token-signers-google-agents")
+	if !ok || g.OK || g.Severity != "info" || g.Fix != "" {
+		t.Fatalf("agents check %+v", g)
+	}
+	for i, a := range agents {
+		if !strings.Contains(g.Problem, strings.TrimPrefix(a, "serviceAccount:")) || !strings.Contains(g.Problem, roles[i]) {
+			t.Errorf("agents line %q lacks %s / %s", g.Problem, a, roles[i])
+		}
+	}
+	for _, want := range []string{"Google-operated service agents of this project hold roles that can sign tokens or change IAM", "Google-operated", "not removable without breaking the service", "the trust is the same as trusting Google", "no action"} {
+		if !strings.Contains(g.Problem, want) {
+			t.Errorf("agents line %q lacks %q", g.Problem, want)
+		}
+	}
+	w, ok := checkByID(o, "token-signers-owners")
+	if !ok || w.OK || w.Severity != "info" || w.Fix != "" {
+		t.Fatalf("owners check %+v", w)
+	}
+	for _, want := range []string{"project owners can create service-account keys and therefore sign tokens", "the trust root", "2 owner(s)", "user:owner@example.com", "group:owners@example.com", "keep this list short"} {
+		if !strings.Contains(w.Problem, want) {
+			t.Errorf("owners line %q lacks %q", w.Problem, want)
+		}
+	}
+	for _, c := range o.Checks {
+		if strings.Contains(c.Fix, "remove-iam-policy-binding") {
+			t.Errorf("a class A/B line carries a remove command: %+v", c)
+		}
+	}
+}
+
+// Look-alikes, editors and a non-user owner stay warnings with a remove command.
+func TestDoctorTokenSignersLookAlikesAndEditorsWarn(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withClassRoles()
+	r.crm.SetPolicy("proj-1234",
+		gcpfake.Binding{Role: "roles/cloudbuild.serviceAgent", Members: []string{
+			"serviceAccount:service-999@gcp-sa-cloudbuild.iam.gserviceaccount.com",
+			"serviceAccount:service-" + dsNum + "@gcp-sa-cloudbuild.evil.com",
+			"user:service-" + dsNum + "@gcp-sa-cloudbuild.iam.gserviceaccount.com",
+			"serviceAccount:service-" + dsNum + "@other-proj.iam.gserviceaccount.com"}},
+		gcpfake.Binding{Role: "roles/editor", Members: []string{"user:ed@example.com", "serviceAccount:" + dsNum + "-compute@developer.gserviceaccount.com"}},
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"allUsers"}})
+	o, err := r.doctor(t, "--strict")
+	cs := signerChecks(o)
+	if err == nil || len(cs) != 7 {
+		t.Fatalf("err %v, checks %+v", err, cs)
+	}
+	for _, c := range cs {
+		if c.Severity != "warning" || !strings.HasPrefix(c.Fix, "review before running: gcloud projects remove-iam-policy-binding proj-1234 --member=") {
+			t.Errorf("check %+v", c)
+		}
+	}
+	if _, ok := checkByID(o, "token-signers-google-agents"); ok {
+		t.Error("a look-alike produced an agents line")
+	}
+	if _, ok := checkByID(o, "token-signers-owners"); ok {
+		t.Error("allUsers produced an owners line")
+	}
+}
+
+// The project's number unreadable: no Google agent is recognised, so they
+// are warnings again (never silently trusted), and the summary says why.
+func TestDoctorTokenSignersProjectNumberUnreadable(t *testing.T) {
+	r := newSignerDoctorRig(t)
+	r.withClassRoles()
+	r.crm.SetPolicy("proj-1234", gcpfake.Binding{Role: "roles/cloudbuild.serviceAgent",
+		Members: []string{"serviceAccount:service-" + dsNum + "@gcp-sa-cloudbuild.iam.gserviceaccount.com"}})
+	r.crm.DenyGet("proj-1234")
+	o, _ := r.doctor(t)
+	cs := signerChecks(o)
+	if len(cs) != 1 || cs[0].Severity != "warning" {
+		t.Fatalf("checks %+v", o.Checks)
+	}
+	if _, ok := checkByID(o, "token-signers-google-agents"); ok {
+		t.Fatal("an agent was recognised without the project number")
+	}
+	if c, _ := summary(o); !strings.Contains(c.Problem, "project number") {
+		t.Errorf("summary %q does not say the number was unreadable", c.Problem)
 	}
 }

@@ -51,7 +51,11 @@ func SeedPredefinedRoles(f *gcpfake.IAM) {
 	f.SetRolePermissions("roles/iam.serviceAccountKeyAdmin", "iam.serviceAccountKeys.create", "iam.serviceAccountKeys.list")
 	f.SetRolePermissions("roles/iam.serviceAccountAdmin", "iam.serviceAccounts.setIamPolicy", "iam.serviceAccounts.get")
 	f.SetRolePermissions("roles/iam.securityAdmin", "resourcemanager.projects.setIamPolicy", "iam.serviceAccounts.setIamPolicy")
-	f.SetRolePermissions("roles/owner", "resourcemanager.projects.get", "iam.serviceAccounts.get")
+	f.SetRolePermissions("roles/owner", "resourcemanager.projects.get", "iam.serviceAccounts.get", "iam.serviceAccountKeys.create", "resourcemanager.projects.setIamPolicy")
+	f.SetRolePermissions("roles/cloudbuild.serviceAgent", "iam.serviceAccounts.getAccessToken", "iam.serviceAccounts.signBlob")
+	f.SetRolePermissions("roles/run.serviceAgent", "iam.serviceAccounts.getAccessToken")
+	f.SetRolePermissions("roles/cloudscheduler.serviceAgent", "iam.serviceAccounts.signBlob")
+	f.SetRolePermissions("roles/firebase.managementServiceAgent", "iam.serviceAccounts.setIamPolicy")
 	f.SetRolePermissions("roles/editor", "iam.serviceAccountKeys.create", "iam.serviceAccounts.get")
 	f.SetRolePermissions("roles/viewer", "resourcemanager.projects.get")
 	f.SetRolePermissions("roles/run.invoker", "run.jobs.run")
@@ -60,6 +64,12 @@ func SeedPredefinedRoles(f *gcpfake.IAM) {
 }
 
 func (r *signerRig) find(t *testing.T) ([]SignerFinding, error) {
+	t.Helper()
+	return r.findNumber(t, 111)
+}
+
+// findNumber is find with project number n (0: unknown).
+func (r *signerRig) findNumber(t *testing.T, n uint64) ([]SignerFinding, error) {
 	t.Helper()
 	ctx := context.Background()
 	opts := func(u string) []option.ClientOption {
@@ -73,13 +83,15 @@ func (r *signerRig) find(t *testing.T) ([]SignerFinding, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return TokenSigners(ctx, c, i, tsProject, tsSigner)
+	return TokenSigners(ctx, c, i, tsProject, tsSigner, n)
 }
 
+// unexpected is the findings that are a risk: neither designed nor one of
+// the two inherent classes.
 func unexpected(fs []SignerFinding) []SignerFinding {
 	var out []SignerFinding
 	for _, f := range fs {
-		if !f.Expected {
+		if !f.Expected && f.Class == SignerRisk {
 			out = append(out, f)
 		}
 	}
@@ -89,7 +101,8 @@ func unexpected(fs []SignerFinding) []SignerFinding {
 func TestTokenSignersNone(t *testing.T) {
 	r := newSignerRig(t)
 	fs, err := r.find(t)
-	if err != nil || len(fs) != 0 {
+	// The rig's owner resolves to key creation: a finding, of the owner class.
+	if err != nil || len(fs) != 1 || fs[0].Class != SignerOwner || fs[0].Expected {
 		t.Fatalf("findings %+v, err %v", fs, err)
 	}
 }
@@ -108,10 +121,13 @@ func TestTokenSignersExpected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(fs) != 4 || len(unexpected(fs)) != 0 {
+	if len(fs) != 5 || len(unexpected(fs)) != 0 {
 		t.Fatalf("findings %+v", fs)
 	}
 	for _, f := range fs {
+		if f.Class == SignerOwner {
+			continue
+		}
 		if f.Why == "" {
 			t.Errorf("expected finding without a reason: %+v", f)
 		}
@@ -328,7 +344,7 @@ func TestTokenSignersUnreadable(t *testing.T) {
 	ctx := context.Background()
 	c, _ := crm.NewService(ctx, option.WithEndpoint(r2.crm.URL+"/"), option.WithoutAuthentication())
 	i, _ := iam.NewService(ctx, option.WithEndpoint(r2.iam.URL+"/"), option.WithoutAuthentication())
-	if _, err := TokenSigners(ctx, c, i, "no-such-project", tsSigner); err == nil || !strings.Contains(err.Error(), "no-such-project") {
+	if _, err := TokenSigners(ctx, c, i, "no-such-project", tsSigner, 111); err == nil || !strings.Contains(err.Error(), "no-such-project") {
 		t.Fatalf("err = %v", err)
 	}
 	// A service account whose own policy cannot be read is named.
@@ -419,7 +435,7 @@ func TestTokenSignersSignerComparison(t *testing.T) {
 	c, _ := crm.NewService(ctx, opts(r.crm.URL+"/")...)
 	i, _ := iam.NewService(ctx, opts(r.iam.URL+"/")...)
 	for signer, want := range map[string]int{strings.ToUpper(tsSigner): 0, tsSched: 1, "x" + tsSigner: 1, tsSigner[:len(tsSigner)-1]: 1} {
-		fs, err := TokenSigners(ctx, c, i, tsProject, signer)
+		fs, err := TokenSigners(ctx, c, i, tsProject, signer, 111)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -461,5 +477,159 @@ func TestTokenSignersAdminSDKShape(t *testing.T) {
 	fs, _ := r.find(t)
 	if len(unexpected(fs)) != 1 {
 		t.Fatalf("%+v", fs)
+	}
+}
+
+func classOf(fs []SignerFinding, member string) (SignerClass, bool) {
+	for _, f := range fs {
+		if f.Member == member {
+			return f.Class, true
+		}
+	}
+	return 0, false
+}
+
+// The Google-operated service agents of THIS project are class A: the live
+// fugaro-dev ones, and the bare-number legacy ones. Only an exact
+// service-<this number>@<pinned domain> qualifies.
+func TestTokenSignersGoogleAgentsOfThisProject(t *testing.T) {
+	agents := map[string]string{
+		"serviceAccount:service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com":     "roles/cloudbuild.serviceAgent",
+		"serviceAccount:service-111@gcp-sa-cloudscheduler.iam.gserviceaccount.com": "roles/cloudscheduler.serviceAgent",
+		"serviceAccount:service-111@gcp-sa-firebase.iam.gserviceaccount.com":       "roles/firebase.managementServiceAgent",
+		"serviceAccount:service-111@serverless-robot-prod.iam.gserviceaccount.com": "roles/run.serviceAgent",
+		"serviceAccount:service-111@containerregistry.iam.gserviceaccount.com":     "roles/run.serviceAgent",
+		"serviceAccount:111@cloudservices.gserviceaccount.com":                     "roles/editor",
+		"serviceAccount:111@cloudbuild.gserviceaccount.com":                        "roles/cloudbuild.serviceAgent",
+	}
+	r := newSignerRig(t)
+	var bs []gcpfake.Binding
+	for m, role := range agents {
+		bs = append(bs, gcpfake.Binding{Role: role, Members: []string{m}})
+	}
+	r.crm.SetPolicy(tsProject, bs...)
+	fs, err := r.find(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != len(agents) {
+		t.Fatalf("findings %+v", fs)
+	}
+	for m := range agents {
+		if c, ok := classOf(fs, m); !ok || c != SignerGoogleAgent {
+			t.Errorf("%s: class %v (found %v), want a Google agent", m, c, ok)
+		}
+	}
+	// The project number unknown: nothing is class A.
+	fs, err = r.findNumber(t, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range fs {
+		if f.Class != SignerRisk {
+			t.Errorf("number unknown, yet %+v is classified", f)
+		}
+	}
+}
+
+// Look-alikes are never class A: another project's agent, a wrong domain, a
+// suffix or prefix trick, another member type, the default compute account,
+// an account of the project named like an agent, an agent on one account's
+// policy (someone granted it, it is not Google's own).
+func TestTokenSignersGoogleAgentLookAlikes(t *testing.T) {
+	const role = "roles/cloudbuild.serviceAgent"
+	members := []string{
+		"serviceAccount:service-222@gcp-sa-cloudbuild.iam.gserviceaccount.com",          // another project's agent
+		"serviceAccount:service-1111@gcp-sa-cloudbuild.iam.gserviceaccount.com",         // number prefix
+		"serviceAccount:service-111@gcp-sa-cloudbuild.evil.com",                         // wrong domain
+		"serviceAccount:service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com.evil.com", // suffix
+		"serviceAccount:service-111@evil.gcp-sa-cloudbuild.iam.gserviceaccount.com",     // subdomain
+		"serviceAccount:service-111@gcp-sa-.iam.gserviceaccount.com",                    // empty service
+		"serviceAccount:service-111@gcp-sa-a/b.iam.gserviceaccount.com",                 // odd service
+		"serviceAccount:x-service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com",        // prefix
+		"serviceAccount:service-111@fp-1.iam.gserviceaccount.com",                       // this project's account named like an agent
+		"serviceAccount:service-111@fp-2.iam.gserviceaccount.com",                       // another project's account named like one
+		"serviceAccount:111-compute@developer.gserviceaccount.com",                      // the default compute account
+		"serviceAccount:111@developer.gserviceaccount.com",
+		"user:service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com",  // a user
+		"group:service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com", // a group
+		"serviceAccount:111@cloudservices.gserviceaccount.com.evil.com",
+		"serviceAccount:2111@cloudbuild.gserviceaccount.com",
+	}
+	r := newSignerRig(t)
+	r.crm.SetPolicy(tsProject, gcpfake.Binding{Role: role, Members: members})
+	r.iam.SetServiceAccountPolicy(tsProject, tsSched, gcpfake.Binding{Role: role, Members: []string{"serviceAccount:service-111@gcp-sa-cloudbuild.iam.gserviceaccount.com"}})
+	fs, err := r.find(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fs) != len(members)+1 {
+		t.Fatalf("findings %+v", fs)
+	}
+	for _, f := range fs {
+		if f.Class != SignerRisk {
+			t.Errorf("%s on %q was classified %v", f.Member, f.Account, f.Class)
+		}
+	}
+}
+
+// Project owners are class B (the trust root); editors are not (the primitive
+// editor role resolves to key creation too: unexpected power); an owner
+// binding of anything but a user, group or service account, a role read
+// failure, or an owner role on a service account's policy, is a risk.
+func TestTokenSignersOwnersAndEditors(t *testing.T) {
+	r := newSignerRig(t)
+	r.crm.SetPolicy(tsProject,
+		gcpfake.Binding{Role: "roles/owner", Members: []string{"user:owner@example.com", "group:owners@example.com", "serviceAccount:ci@elsewhere.iam.gserviceaccount.com", "allUsers", "domain:example.com", "deleted:user:gone@example.com?uid=1"}},
+		gcpfake.Binding{Role: "roles/editor", Members: []string{"user:ed@example.com", "serviceAccount:111-compute@developer.gserviceaccount.com"}})
+	r.iam.SetServiceAccountPolicy(tsProject, tsSched, gcpfake.Binding{Role: "roles/owner", Members: []string{"user:acct@example.com"}})
+	fs, err := r.find(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]SignerClass{
+		"user:owner@example.com": SignerOwner, "group:owners@example.com": SignerOwner, "serviceAccount:ci@elsewhere.iam.gserviceaccount.com": SignerOwner,
+		"allUsers": SignerRisk, "domain:example.com": SignerRisk,
+		"user:ed@example.com": SignerRisk, "serviceAccount:111-compute@developer.gserviceaccount.com": SignerRisk,
+		"user:acct@example.com": SignerRisk,
+	}
+	if len(fs) != len(want) {
+		t.Fatalf("findings %+v", fs)
+	}
+	for _, f := range fs {
+		if f.Class != want[f.Member] {
+			t.Errorf("%s (%s): class %v, want %v", f.Member, f.Role, f.Class, want[f.Member])
+		}
+	}
+}
+
+// An owner role that cannot be read is unknown, never classified.
+func TestTokenSignersUnreadableOwnerIsNotClassified(t *testing.T) {
+	r := newSignerRig(t)
+	r.crm.SetPolicy(tsProject, gcpfake.Binding{Role: "projects/fp-1/roles/gone", Members: []string{"user:owner@example.com"}})
+	fs, err := r.find(t)
+	if err != nil || len(fs) != 1 || fs[0].Kind != SignerUnread || fs[0].Class != SignerRisk {
+		t.Fatalf("findings %+v, err %v", fs, err)
+	}
+}
+
+func TestGoogleServiceAgent(t *testing.T) {
+	for m, want := range map[string]bool{
+		"serviceAccount:service-7@gcp-sa-x-y1.iam.gserviceaccount.com":         true,
+		"serviceAccount:SERVICE-7@GCP-SA-CLOUDBUILD.iam.gserviceaccount.com":   true,
+		"serviceAccount:service-07@gcp-sa-cloudbuild.iam.gserviceaccount.com":  false,
+		"serviceAccount:service-7@gcp-sa-cloudbuild.iam.gserviceaccount.com\n": false,
+		"serviceAccount:service--7@gcp-sa-cloudbuild.iam.gserviceaccount.com":  false,
+		"serviceAccount:7@cloudservices.gserviceaccount.com":                   true,
+		"serviceAccount:7-compute@developer.gserviceaccount.com":               false,
+		"serviceAccount:": false,
+		"":                false,
+	} {
+		if got := googleServiceAgent(m, 7); got != want {
+			t.Errorf("googleServiceAgent(%q, 7) = %v, want %v", m, got, want)
+		}
+	}
+	if googleServiceAgent("serviceAccount:service-0@gcp-sa-cloudbuild.iam.gserviceaccount.com", 0) {
+		t.Error("number 0 must classify nothing")
 	}
 }

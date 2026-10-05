@@ -21,6 +21,7 @@ type CRM struct {
 	projects map[string]int64
 	policies map[string][]Binding
 	states   map[string]string
+	noGet    map[string]bool // projects whose plain read answers 403 (the policy stays readable)
 
 	// PropagationReads is how many reads of a project answer 403 right
 	// after its creation, as happens while a new project propagates.
@@ -59,7 +60,7 @@ var (
 // NewCRM starts a Resource Manager fake that lives until the test ends.
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
-	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, states: map[string]string{},
+	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
 		taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{}, nextProj: 900000000000}
 	f.Server = newServer(t, f.handle)
 	return f
@@ -77,6 +78,14 @@ func (f *CRM) SetPolicy(project string, bindings ...Binding) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.policies[project] = bindings
+}
+
+// DenyGet makes the plain read of project (its number, say) answer 403 while
+// its IAM policy stays readable.
+func (f *CRM) DenyGet(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noGet[project] = true
 }
 
 // SetLifecycle makes project report state (ACTIVE by default).
@@ -228,7 +237,7 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	n, ok := f.projects[m[1]]
-	if !ok {
+	if !ok || f.noGet[m[1]] {
 		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
