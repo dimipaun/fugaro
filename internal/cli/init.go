@@ -127,7 +127,22 @@ so later runs ask nothing; without a terminal, or with --non-interactive,
 --yes or --json, it names every missing flag in one error. Where the
 installation already exists and this machine has no local config for it,
 init adopts it: it writes the config from the installation and applies
-nothing, and says which roles to ask an owner for.
+nothing, and says which roles to ask an owner for. There the name is asked
+after the GCP project and the region and defaults to the installation's own
+(from the runs bucket's marker), not the directory's, and the budget section
+(rtdb_url, firebase_project, firebase_api_key, token_signer: none a secret) is
+filled from the Firebase root's outputs, read only; --name must be the
+installation's name. With several project configs, --name of a project that
+has none is a first run of that name, and a checkout whose origin repository
+exactly one project lists selects that project.
+
+Before the first billable image build of a GitHub repository, init asks GitHub
+(as the App, with the App's key read from Secret Manager into memory only)
+whether the App is installed on the repository with the permissions runs ask
+for (Contents: Write, Pull requests: Write, Issues: Read, Metadata: Read): if
+not, the build is left for you with each missing permission and its fix and
+nothing is billed. A repository the local config does not list is asked about
+first, at the start, before any plan.
 
 init runs as a converge of stages (preflight, installation, with --firebase
 the Firebase backend and the images, the secrets, the plugin wiring and the
@@ -292,7 +307,7 @@ secrets stage is behind the same gate.`,
 	}
 	addCloudFlags(cmd, &o.cloud)
 	f := cmd.Flags()
-	f.StringVar(&o.name, "name", "", "the project's name: for a project config fugaro init creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes)")
+	f.StringVar(&o.name, "name", "", "the project's name: for a project config fugaro init creates, and what names an installation that has no name yet (with a config, it must be its name; an installation's name never changes; with several project configs it names the one to create or use; adopting an installation defaults it to the installation's)")
 	f.StringVar(&o.schedulerRegion, "scheduler-region", "", "Cloud Scheduler region of the daily image checks (default: the region, or the nearest one Scheduler offers)")
 	f.StringVar(&o.runsBucket, "runs-bucket", "", "the runs bucket (default: the project config's, else fugaro-runs-<gcp-project>)")
 	f.StringVar(&o.stateBucket, "state-bucket", "", "the Terraform state bucket (default: the project config's, else fugaro-tfstate-<gcp-project>)")
