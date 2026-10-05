@@ -330,3 +330,197 @@ func TestSetupSkillDoesNotRunRepoCommandsOrLoosenBudget(t *testing.T) {
 		}
 	}
 }
+
+// TestSetupSkillSplitsMachineSizeAndReviewRounds: live Check 27 saw one
+// combined question with bundled options. They are two topics, each with its
+// own evidence and recommendation.
+func TestSetupSkillSplitsMachineSizeAndReviewRounds(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	topicRE := func(s string) bool { return regexp.MustCompile(s).MatchString(skill) }
+	if !topicRE("(?m)^\\d+\\. `resources` \\(machine size\\)[^\\n]*CI configuration[^\\n]*test footprint[^\\n]*language defaults") {
+		t.Error("SKILL.md has no topic for `resources` with its own evidence (CI configuration, test footprint, language defaults)")
+	}
+	if !topicRE("(?m)^\\d+\\. `agent.review_rounds`: its own question, from how risky or critical") {
+		t.Error("SKILL.md has no topic for `agent.review_rounds` with its own evidence (how risky or critical)")
+	}
+	if !strings.Contains(skill, "Never ask 7 and 8 together or bundle their options") {
+		t.Error("SKILL.md does not forbid asking machine size and review rounds together")
+	}
+	for _, h := range []string{"## 7. `resources` (machine size)", "## 8. `agent.review_rounds`"} {
+		if !strings.Contains(dec, h) {
+			t.Errorf("decisions.md has no section %q", h)
+		}
+	}
+	if strings.Contains(dec, "## 6. `review_rounds`, `resources`") {
+		t.Error("decisions.md still joins review_rounds and resources in one topic")
+	}
+}
+
+// TestSetupSkillVerifiesBeforeRecommending: a recommendation that depends on
+// a fact is made only after the fact is checked; vertex is never recommended
+// unchecked, and every recommendation says why.
+func TestSetupSkillVerifiesBeforeRecommending(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	for name, re := range map[string]string{
+		"the general rule":             `\*\*Verify before you recommend\.\*\*[^\n]*do not mark the option recommended`,
+		"the rule asks for the reason": `Say why each recommendation is the recommendation`,
+	} {
+		if !regexp.MustCompile(re).MatchString(skill) {
+			t.Errorf("SKILL.md lacks %s (/%s/)", name, re)
+		}
+	}
+	for _, want := range []string{
+		"never mark `vertex` recommended on a guess", "could not verify it", "`oauth` when the user says they have a subscription",
+		"`api-key` when the team wants pay-per-token dollar caps", "Claude on Vertex AI is verified usable",
+		"give the reason for each role", "because it writes the change", "never recommend a model only because it is the biggest",
+	} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md never says %q", want)
+		}
+	}
+	// The vertex row must not recommend on an unchecked premise.
+	if strings.Contains(dec, "has Claude on Vertex AI enabled |") {
+		t.Error("decisions.md recommends vertex on an unchecked premise")
+	}
+}
+
+// githubAppFacts are what the skill and docs must say about the GitHub App;
+// the permissions are derived from the code that mints the token.
+func githubAppPermissions(t *testing.T) []string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "internal", "gitprov", "github", "apptoken.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?s)var tokenPermissions = map\[string\]string\{(.*?)\n\}`).FindStringSubmatch(string(data))
+	if m == nil {
+		t.Fatal("tokenPermissions not found in apptoken.go")
+	}
+	var out []string
+	for _, kv := range regexp.MustCompile(`"(\w+)":\s*"(\w+)"`).FindAllStringSubmatch(m[1], -1) {
+		name := map[string]string{"contents": "Contents", "pull_requests": "Pull requests", "issues": "Issues", "metadata": "Metadata"}[kv[1]]
+		if name == "" {
+			t.Fatalf("unknown permission %q in apptoken.go: update the skill and docs", kv[1])
+		}
+		access := map[string]string{"write": "Read & write", "read": "Read"}[kv[2]]
+		out = append(out, name+" "+access)
+	}
+	if len(out) != 4 {
+		t.Fatalf("apptoken.go asks for %d permissions, the skill says four", len(out))
+	}
+	return out
+}
+
+// TestSetupSkillGitHubApp: the App is named <yourname>-fugaro (names are
+// globally unique), has the four repository permissions and never Workflows,
+// is installed on the repository, and its permission changes are accepted;
+// the ID is asked early.
+func TestSetupSkillGitHubApp(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	perms := githubAppPermissions(t)
+	for _, p := range perms {
+		if !strings.Contains(dec, p) {
+			t.Errorf("decisions.md does not list the App permission %q", p)
+		}
+		if !strings.Contains(skill, p) {
+			t.Errorf("SKILL.md does not list the App permission %q", p)
+		}
+	}
+	for name, text := range files {
+		if regexp.MustCompile("(?i)(suggest|use|call|name)[^.\\n]*the (bare )?name `Fugaro`[^.\\n]*(App|token)").MatchString(text) && !strings.Contains(text, "is taken") {
+			t.Errorf("%s suggests naming the App `Fugaro`", name)
+		}
+	}
+	for _, want := range []string{"`<yourname>-fugaro`", "the bare `Fugaro` is taken", "Never Workflows", "accept the change on the installation", "Install it on this repository", "What is the GitHub App ID", "not a secret"} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md never says %q", want)
+		}
+	}
+	for _, want := range []string{"`<yourname>-fugaro`", "never Workflows", "accept the change on the installation", "Install it on this repository", "--github-app-id <id>"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("SKILL.md never says %q", want)
+		}
+	}
+	// The App ID is asked in the decisions, before the secrets and the plan.
+	if i, j := strings.Index(skill, "the GitHub App: its ID"), strings.Index(skill, "## 8. Secrets"); i < 0 || i > j {
+		t.Error("SKILL.md does not ask for the GitHub App ID before the secrets and the hand-off")
+	}
+	if !strings.HasPrefix(strings.SplitN(dec[strings.Index(dec, "## 1."):], "\n", 2)[0], "## 1. The GitHub App") {
+		t.Error("the GitHub App ID is not the first topic of decisions.md")
+	}
+}
+
+// TestDocsGitHubAppGuidance: the docs say the same four permissions and the
+// same name guidance as the skill.
+func TestDocsGitHubAppGuidance(t *testing.T) {
+	perms := githubAppPermissions(t)
+	for _, doc := range []string{"docs/git-providers.md", "docs/gcp-setup.md", "README.md"} {
+		data, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(doc)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(data)
+		for _, p := range perms {
+			// git-providers.md writes "**Contents: Read & write**", the others "Contents Read & write".
+			colon := strings.Replace(p, " Read", ": Read", 1)
+			if !strings.Contains(text, p) && !strings.Contains(text, colon) {
+				t.Errorf("%s does not list the App permission %q", doc, p)
+			}
+		}
+		if !strings.Contains(text, "<yourname>-fugaro") {
+			t.Errorf("%s does not tell the user to name the App <yourname>-fugaro", doc)
+		}
+		if !strings.Contains(text, "Workflows") {
+			t.Errorf("%s does not say never to grant Workflows", doc)
+		}
+		if !strings.Contains(text, "accept") {
+			t.Errorf("%s does not say to accept permission changes on the installation", doc)
+		}
+	}
+}
+
+// TestSetupSkillHandlesSeveralProjects: with several project configs and no
+// fugaro.yaml, doctor fails with an error the skill must act on; the quoted
+// words are the CLI's own, and the skill asks, then passes --project.
+func TestSetupSkillHandlesSeveralProjects(t *testing.T) {
+	skill := setupFiles(t)["skills/setup/SKILL.md"]
+	src, err := os.ReadFile(filepath.Join("..", "internal", "localcfg", "select.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phrase := range []string{"several project configs", "nothing selects one"} {
+		if !strings.Contains(string(src), phrase) {
+			t.Fatalf("localcfg no longer says %q: update the skill", phrase)
+		}
+		if !strings.Contains(skill, phrase) {
+			t.Errorf("SKILL.md does not recognise the error %q", phrase)
+		}
+	}
+	for _, want := range []string{"Ask the user which Fugaro project this repository belongs to", "pass `--project <name>` to every fugaro command you run", "same `--project <name>`", "don't open the config directory"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("SKILL.md never says %q", want)
+		}
+	}
+}
+
+// TestSkillsSayOwnTerminal: init, secrets set and a cloud image build go to
+// the user's own terminal window, never through the agent, and never with a
+// ! prefix (the lint also checks the prefix and each user-runs lead-in).
+func TestSkillsSayOwnTerminal(t *testing.T) {
+	files := setupFiles(t)
+	skill := files["skills/setup/SKILL.md"]
+	for _, want := range []string{"in your own terminal window, not through the agent", "A `!` shell inside Claude Code is not a terminal"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("SKILL.md never says %q", want)
+		}
+	}
+	if n := strings.Count(skill, "in their own terminal window, not through the agent"); n < 3 {
+		t.Errorf("SKILL.md says 'in their own terminal window, not through the agent' %d times, want it at each user-runs lead-in", n)
+	}
+	if !strings.Contains(files["skills/setup/reference/validation.md"], "in their own terminal window, not through the agent") {
+		t.Error("validation.md does not say the cloud image build runs in the user's own terminal window")
+	}
+}

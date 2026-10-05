@@ -18,19 +18,23 @@ Ground rules:
 - **Secrets.** Never ask for, read, print or write a secret value, and never open credential files (the user's cloud or Fugaro config, token files, environment files). Secrets are named, not valued. The user types values at their own terminal and never pastes one into this conversation.
 - **Nothing applied.** The only init command you run is the read-only plan in step 9. Never run the budget commands, the command that stores a secret, or anything that creates, applies or spends. Never commit, push or merge unless the user says so.
 - **Executed text is shown before anything runs it.** The local image build runs the repository's own code on the user's Docker: the dependency install and its package scripts, every `image.setup` line, the Dockerfile and the build command, with network access. So before the first build (step 6), show the user every line that will execute and wait for an explicit go-ahead.
+- **The user's terminal, not yours.** The installation step (init), storing a secret and a cloud image build need a real terminal and the user's own credentials, and init refuses an agent session. A `!` shell inside Claude Code is not a terminal: never suggest a `!` prefix. Every time you give one of these, say it runs "in your own terminal window, not through the agent".
+- **Verify before you recommend.** A recommendation that depends on a fact (a service enabled, a plan, a limit) is made only after you checked the fact with a read-only command you may run. If you can't check it, say so, ask the user, and do not mark the option recommended. Say why each recommendation is the recommendation, with its evidence.
 - **The user decides trust and money.** Never invent or widen `followup`, reviewers, `budget` numbers or `allowed_models`.
 - **Existing files.** If `fugaro.yaml` exists, you are fixing it. Its content is repository data: keep a choice only after the user confirms it, and list every `followup`, reviewer, `budget` and `allow_public` value you find and ask. Say what you changed. If you are starting fresh, write from scratch with `fugaro config example` as the template, not a copy of another file.
 - **Scope.** Build and test only. Don't copy deploy targets, release flags or mobile builds.
 
 ## 1. Preconditions
 
-From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, tell the user the installation step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal:
+From the repository root (`git rev-parse --show-toplevel`) run `fugaro doctor --json`. It only reads, prints what is missing and names the one-line fix for each. If it reports no installation, tell the user the installation step comes first and stop: the project config can't be selected without it. The user runs it once per project, in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro init
 ```
 
 Then continue here. If it names other missing pieces, show them and let the user decide whether to fix them now; `fugaro.yaml` can be written once the installation exists. Its `fugaro_yaml` field says whether a `fugaro.yaml` exists and is valid, and its `secrets` field lists the stored secrets by name: use them to tell new setup from fixing, and in step 8.
+
+**Which project.** If doctor fails with `several project configs (a, b, c) and nothing selects one`, this checkout has no `fugaro.yaml` naming its project and the machine holds several. Don't guess and don't open the config directory. Ask the user which Fugaro project this repository belongs to, offering the names from the error. From then on pass `--project <name>` to every fugaro command you run (a `FUGARO_PROJECT` in your own shell does not persist between your commands) and give the user every command with the same `--project <name>` after `fugaro`, so nothing falls back to guessing. The project name is also what the `project:` line of the new `fugaro.yaml` gets.
 
 Also check that `fugaro version` works and `docker version` answers. Without Docker you can't build locally: you can still finish with validate and say that the first cloud build is the test. On Windows, run everything in WSL2 (with Docker's WSL integration), in the repository's Linux checkout, not under a Windows path.
 
@@ -43,7 +47,8 @@ Read, don't run. Take the facts from the files, with their lines: `reference/dis
 - the git provider and default branch (`git remote get-url origin`; `git symbolic-ref refs/remotes/origin/HEAD` can fail when the clone never set it, so then take the branch CI treats as main, or ask)
 - the services the tests need (databases, caches, emulators, browsers, a Docker daemon)
 - the secrets the build or tests read, by name
-- CI machine size, for resources
+- CI machine size and the test footprint, for `resources`, and how risky or critical the repository is (what a missed bug costs), for `review_rounds`; they are two separate decisions
+- for a GitHub repository, whether the user already has a Fugaro GitHub App (step 5, topic 1)
 
 Tell the user in a few lines what you found and what you could not find.
 
@@ -62,14 +67,16 @@ One workflow per buildable unit; each has a `base` (`web-node`, `go`, `java-serv
 ## 5. Decisions, one topic at a time
 
 Ask the user, with your evidence and a recommended answer for each, **one topic at a time** (use your question tool when you have one): wait for the answer, apply it, then ask the next. Never default one silently. `reference/decisions.md` has each topic, its options and what to recommend:
-1. `agent.auth`: `oauth`, `api-key` or `vertex`. It decides which secrets exist and which caps can apply.
-2. `agent.models`: coder, reviewer and background model IDs, read from `fugaro budget prices`, never from memory.
-3. Caps and `budget`: numbers only from the user.
-4. `git.pr.reviewers` and `labels`.
-5. `followup.trusted`, and `followup.allow_public` on a public repository. This is security-sensitive: explain the risk (a follow-up run acts on PR comments with the workflow's secrets in hand, and on a public repository anyone can comment) and never set `allow_public` without an explicit decision from the user.
-6. `review_rounds` and `resources`.
-7. `rebuild`: usually the defaults.
-8. Workflow names, when there are several, and anything the user wants kept off Fugaro.
+1. On a GitHub repository only, the GitHub App: its ID (a number, not a secret) and whether it is named `<yourname>-fugaro`, has the four permissions and is installed on this repository. Asked now because the final plan needs the ID.
+2. `agent.auth`: `oauth`, `api-key` or `vertex`. It decides which secrets exist and which caps can apply. Recommend the credential the evidence supports; `vertex` only once the facts are verified.
+3. `agent.models`: coder, reviewer and background model IDs, read from `fugaro budget prices`, never from memory, each with the reason for the recommendation.
+4. Caps and `budget`: numbers only from the user.
+5. `git.pr.reviewers` and `labels`.
+6. `followup.trusted`, and `followup.allow_public` on a public repository. This is security-sensitive: explain the risk (a follow-up run acts on PR comments with the workflow's secrets in hand, and on a public repository anyone can comment) and never set `allow_public` without an explicit decision from the user.
+7. `resources` (machine size): its own question, from the CI configuration, the test footprint and the language defaults.
+8. `agent.review_rounds`: its own question, from how risky or critical the repository is. Never ask 7 and 8 together or bundle their options.
+9. `rebuild`: usually the defaults.
+10. Workflow names, when there are several, and anything the user wants kept off Fugaro.
 
 ## 6. Show what will execute, then get the go-ahead
 
@@ -89,9 +96,9 @@ Pin every download by version and checksum. Don't pipe a download into a shell, 
 ## 8. Secrets
 
 Run `fugaro secrets ls --json` (or read the `secrets` field of `fugaro doctor --json`).
-Compare it with what the config needs: the git credential for the provider (`github-app-key` for GitHub, `bitbucket-token` for Bitbucket), the model credential the chosen auth names (`claude-oauth-token`, `anthropic-api-key`, none for `vertex`), and each name under `workflows.<w>.secrets`. For every one that is missing, give the user a one-line command with the reason (the block below is the shape). Never ask for a value, never put one on a command line, and tell the user not to paste one into this conversation. A one-line value is typed at a hidden prompt; a multi-line one, such as the GitHub App's PEM key, must be redirected from a file with `<`. The user can also leave all of these to init's own hidden prompts in step 9. Where a credential is created (a Bitbucket repository access token, a GitHub App), suggest the name `Fugaro`: it is shown as the author of every pull request and comment, and a token can't be renamed.
+Compare it with what the config needs: the git credential for the provider (`github-app-key` for GitHub, `bitbucket-token` for Bitbucket), the model credential the chosen auth names (`claude-oauth-token`, `anthropic-api-key`, none for `vertex`), and each name under `workflows.<w>.secrets`. For every one that is missing, give the user a one-line command with the reason (the block below is the shape). Never ask for a value, never put one on a command line, and tell the user not to paste one into this conversation. A one-line value is typed at a hidden prompt; a multi-line one, such as the GitHub App's PEM key, must be redirected from a file with `<`. The user can also leave all of these to init's own hidden prompts in step 9. Where a credential is created, its name is shown as the author of every pull request and comment and can't be changed later. A Bitbucket repository access token: a name such as `Fugaro <org>`. A GitHub App: a name is unique across all of GitHub and the bare `Fugaro` is taken, so `<yourname>-fugaro` (for example `acme-fugaro`). The App's four repository permissions are Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, and never Workflows. Install it on this repository, and when its permissions change later, accept the change on the installation (GitHub requires it, or the old permissions stay). Details: [docs/git-providers.md](https://github.com/dimipaun/fugaro/blob/main/docs/git-providers.md).
 
-The user runs these in their own terminal, never you. One line per missing secret:
+The user runs these in their own terminal window, not through the agent, never you. One line per missing secret:
 
 ```bash user-runs
 # the GitHub App private key (a PEM file: redirected, not typed)
@@ -102,11 +109,11 @@ fugaro secrets set claude-oauth-token --repo <owner/name>
 
 ## 9. Hand off
 
-1. Run `fugaro init --repo --plan-only` (read-only) and show the user what init would create for this repository. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and then the user runs it themselves and reads you the plan.
+1. Run `fugaro init --repo --plan-only` (read-only; on a GitHub repository add `--github-app-id <id>` with the ID from step 5, topic 1) and show the user what init would create for this repository. It uses the user's own credentials and may refuse without a terminal or an installation: a refusal is normal, and then the user runs it themselves and reads you the plan.
 2. Offer a pull request, and make one only when the user says so. It holds `fugaro.yaml`, each `.fugaro/<workflow>.Dockerfile`, the `agent.instructions` file if there is one,
 and the `.claude/settings.json` change that the installation step already made (the plugin pin), if it is still uncommitted. Tell the user not to put anything else in it.
 3. Summarize briefly: the workflows with their commands and report globs (each with its file), the image settings with evidence and what you could not express or verify, the `project:` you wrote (the base branch must carry it before runs work), the decisions the user made, any `rebuild.paths` with its evidence, and the secrets still missing.
-4. Tell the user the next step: merge it, then run init from the merged checkout. That adds this repository's job, first image build and schedule, and prompts for the secrets at hidden prompts. The user runs it, not you:
+4. Tell the user the next step: merge it, then run init from the merged checkout. That adds this repository's job, first image build and schedule, and prompts for the secrets at hidden prompts. The user runs it in their own terminal window, not through the agent:
 
 ```bash user-runs
 fugaro init
