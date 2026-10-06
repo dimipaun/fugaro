@@ -75,7 +75,13 @@ func newBudgetCmd() *cobra.Command {
 // money is a dollar amount for people: whole cents at least, sub-cent
 // precision when there is some.
 func money(m budget.Micros) string {
-	s := strconv.FormatFloat(m.USD(), 'f', 6, 64)
+	// The magnitude as uint64: -MinInt64 overflows int64, and the counters come
+	// from database nodes that may hold anything.
+	sign, u := "", uint64(m)
+	if m < 0 {
+		sign, u = "-", -uint64(m)
+	}
+	s := fmt.Sprintf("%d.%06d", u/1_000_000, u%1_000_000)
 	s = strings.TrimRight(s, "0")
 	if i := strings.IndexByte(s, '.'); i >= 0 && len(s)-i-1 < 2 {
 		s += strings.Repeat("0", 2-(len(s)-i-1))
@@ -83,7 +89,7 @@ func money(m budget.Micros) string {
 	if strings.HasSuffix(s, ".00") {
 		s = strings.TrimSuffix(s, ".00")
 	}
-	return "$" + s
+	return sign + "$" + s
 }
 
 func moneyPtr(m *budget.Micros) string {
@@ -557,11 +563,7 @@ func usdText(v *float64) string {
 type figures struct{ counted, spent, notional budget.Micros }
 
 func countersText(c figures) string {
-	f := func(m budget.Micros) string { return usdVal(m.USD()) }
-	if c.counted < 0 || c.spent < 0 || c.notional < 0 {
-		f = func(m budget.Micros) string { return fmt.Sprintf("%.6f", m.USD()) }
-	}
-	return "counted " + f(c.counted) + ", spent " + f(c.spent) + ", notional " + f(c.notional)
+	return "counted " + money(c.counted) + ", spent " + money(c.spent) + ", notional " + money(c.notional)
 }
 
 func usdVal(v float64) string {
