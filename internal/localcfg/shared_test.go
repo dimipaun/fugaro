@@ -60,6 +60,14 @@ budget:
 watch:
   burn_alert_usd_per_hour: 2
 user: someone@example.com
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [acme/web]
 max_parallel: 7
 endpoints: { run: "http://127.0.0.1:1/", no_auth: true }
 repos:
@@ -81,7 +89,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -91,7 +99,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 		t.Errorf("published file does not parse: %v", err)
 	}
 	// The receiver is untouched.
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -175,9 +183,33 @@ func TestMergeSharedDoesNotMutateInputsOrLeak(t *testing.T) {
 		t.Errorf("input repos changed: %v %v", local.Repos, existing.Repos)
 	}
 	out, _ := got.Marshal()
-	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:"} {
+	for _, f := range []string{"terraform:", "user:", "endpoints:", "bucket_url", "registry:", "providers:"} {
 		if strings.Contains(string(out), f) {
 			t.Errorf("merged output contains %q", f)
 		}
+	}
+}
+
+// TestMergeSharedNeverCarriesProviders: providers are local-only (a model
+// provider's base_url is where a key and code go), so neither the local
+// nor the published ones reach the output.
+func TestMergeSharedNeverCarriesProviders(t *testing.T) {
+	block := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
+	existing := sharedBase(t, block)
+	local := sharedBase(t, strings.ReplaceAll(strings.ReplaceAll(block, "openrouter", "other"), "deepseek", "qwen"))
+	if len(existing.Providers) != 1 || len(local.Providers) != 1 {
+		t.Fatalf("fixtures: %v %v", existing.Providers, local.Providers)
+	}
+	for name, got := range map[string]*Config{"merged": MergeShared(existing, local), "nil published": MergeShared(nil, local), "published only": MergeShared(existing, sharedBase(t, ""))} {
+		if got.Providers != nil {
+			t.Errorf("%s: providers = %v", name, got.Providers)
+		}
+		out, _ := got.Marshal()
+		if strings.Contains(string(out), "providers") {
+			t.Errorf("%s: output carries providers:\n%s", name, out)
+		}
+	}
+	if len(local.Providers) != 1 {
+		t.Error("MergeShared cleared the local providers")
 	}
 }

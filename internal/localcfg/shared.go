@@ -5,8 +5,9 @@ const SharedMaxBytes = 64 << 10
 
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
-// (terraform:), personal (user:, endpoints:) or derived (bucket_url, the
-// legacy registry). The receiver is not modified. The copy is shallow: its
+// (terraform:), personal (user:, endpoints:), derived (bucket_url, the
+// legacy registry) or local-only (providers:, whose base_url is where a
+// key and a repository's code are sent: a teammate configures their own). The receiver is not modified. The copy is shallow: its
 // maps, slices and pointers alias the receiver's, which is safe because the
 // result is only marshalled, and Marshal only reads.
 func (c *Config) Shared() *Config {
@@ -16,6 +17,7 @@ func (c *Config) Shared() *Config {
 	s.Endpoints = Endpoints{}
 	s.Bucket = ""
 	s.Registry = ""
+	s.Providers = nil
 	return &s
 }
 
@@ -30,7 +32,7 @@ func SameInstallation(published, local *Config) bool {
 // already holds (nil when absent) and local is this machine's config: the
 // shared subset of local, filled in from published so that a machine that
 // lacks what another onboarded does not erase it. Map fields (repos,
-// base_images, model_prices, compute_prices, providers) are unioned, the
+// base_images, model_prices, compute_prices) are unioned, the
 // local entry winning a key clash; scalar and pointer fields take the local
 // value when it is non-zero, else the published one; name, gcp_project,
 // runs_bucket and version always come from local. A published object of
@@ -45,7 +47,6 @@ func MergeShared(published, local *Config) *Config {
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
-	out.Providers = unionMaps(published.Providers, local.Providers)
 	keep := func(dst *string, old string) {
 		if *dst == "" {
 			*dst = old

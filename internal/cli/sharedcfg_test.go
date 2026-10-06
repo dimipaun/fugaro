@@ -39,7 +39,7 @@ func TestPublishSharedWritesAndOverwrites(t *testing.T) {
 	if _, err := localcfg.Parse(got); err != nil {
 		t.Errorf("the published file does not parse: %v", err)
 	}
-	for _, s := range []string{"user:", "endpoints:", "bucket_url"} {
+	for _, s := range []string{"user:", "endpoints:", "bucket_url", "providers:"} {
 		if strings.Contains(string(got), s) {
 			t.Errorf("published file contains %q", s)
 		}
@@ -279,5 +279,36 @@ func TestInitPublishConfigIsInstallationOnlyForRepo(t *testing.T) {
 	_, _, err := executeStdin(t, "", "init", "--repo", "--publish-config")
 	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--publish-config") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// TestPublishSharedNeverPublishesProviders: providers are local-only; the
+// local ones are not published and published ones (an older publisher's)
+// are not kept.
+func TestPublishSharedNeverPublishesProviders(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	block := "providers:\n  openrouter:\n    kind: anthropic-compat\n    base_url: https://openrouter.ai/api\n    auth: bearer\n    secret: openrouter-api-key\n    models: [\"deepseek/*\"]\n"
+	writePublished(t, dir, publishedWithOtherRepo+block)
+	if _, err := localcfg.Parse([]byte(publishedWithOtherRepo + block)); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	f.appendConfig(t, strings.ReplaceAll(strings.ReplaceAll(block, "openrouter", "local"), "deepseek", "qwen"))
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil || len(lc.Providers) != 1 {
+		t.Fatalf("%v %v", lc, err)
+	}
+	if err := publishShared(context.Background(), lc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "providers") || strings.Contains(string(got), "openrouter") {
+		t.Errorf("providers were published:\n%s", got)
+	}
+	if r := publishedRepos(t, dir); r["other/svc"].BaseBranch != "main" {
+		t.Errorf("the published repos were not kept (was the fixture read as absent?): %v", r)
 	}
 }

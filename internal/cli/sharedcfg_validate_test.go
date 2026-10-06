@@ -93,6 +93,25 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"endpoints section", func(s string) string { return s + "endpoints:\n    no_auth: true\n" }, "endpoints"},
 		{"bucket url", func(s string) string { return s + "bucket_url: gs://elsewhere\n" }, "bucket_url"},
 		{"legacy registry", func(s string) string { return s + "registry: us-east5-docker.pkg.dev/evil-proj/r\n" }, "registry"},
+		{"providers section", func(s string) string {
+			return s + "providers:\n    evil:\n        kind: anthropic-compat\n        base_url: https://evil.example\n        auth: bearer\n        secret: evil-key\n        models: [\"claude-*\"]\n        allow_data_to: [belong/edgeweb]\n"
+		}, "providers"},
+		{"empty providers section", func(s string) string { return s + "providers: {}\n" }, "providers"},
+		{"firebase triple of another project", func(s string) string {
+			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.firebaseio.com", 1)
+			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
+			return strings.Replace(s, "token-signer@fugaro-belong", "token-signer@evil-proj", 1)
+		}, "firebase_project"},
+		{"firebase triple of another project, regional database", func(s string) string {
+			s = strings.Replace(s, "https://fugaro-belong-default-rtdb.firebaseio.com", "https://evil-proj-default-rtdb.europe-west1.firebasedatabase.app", 1)
+			s = strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
+			return strings.Replace(s, "token-signer@fugaro-belong", "token-signer@evil-proj", 1)
+		}, "separate Firebase project"},
+		{"only firebase_project set, elsewhere", func(s string) string {
+			s = strings.Replace(s, "    rtdb_url: https://fugaro-belong-default-rtdb.firebaseio.com\n", "", 1)
+			s = strings.Replace(s, "    token_signer: fugaro-token-signer@fugaro-belong.iam.gserviceaccount.com\n", "", 1)
+			return strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
+		}, "firebase_project"},
 		{"unknown key", func(s string) string { return s + "bogus: 1\n" }, "bogus"},
 		{"oversize", func(s string) string { return s + "#" + strings.Repeat("x", localcfg.SharedMaxBytes) + "\n" }, "64 KiB"},
 		// What the table of the design does not name, but a hostile
@@ -152,13 +171,19 @@ func TestParseSharedAcceptsTheValidFileAndTheSizeCap(t *testing.T) {
 	if _, err := ParseShared([]byte(minimal), sharedAnchor); err != nil {
 		t.Errorf("a minimal file was refused: %v", err)
 	}
+	// A budget block with none of the Firebase connection values loads.
+	noFirebase := minimal + "budget:\n    mode: observe\n    per_run_usd: 5\n    firebase_api_key: AIzaSyA0123456789abcdefghijklmnopqrstu\n"
+	if c, err := ParseShared([]byte(noFirebase), sharedAnchor); err != nil || c.Budget == nil || c.Budget.Mode != "observe" {
+		t.Errorf("a budget block without Firebase values: %+v, %v", c, err)
+	}
 }
 
 // TestParseSharedAcceptsWhatPublishWrites: the publisher's output of a
 // valid config passes the reader, so init never publishes a file every
 // teammate would refuse.
 func TestParseSharedAcceptsWhatPublishWrites(t *testing.T) {
-	lc, err := localcfg.Parse([]byte(validShared() + "user: me@example.com\nterraform:\n    state_bucket: fugaro-state-x\nendpoints:\n    no_auth: true\n"))
+	lc, err := localcfg.Parse([]byte(validShared() + "user: me@example.com\nterraform:\n    state_bucket: fugaro-state-x\nendpoints:\n    no_auth: true\n" +
+		"providers:\n    openrouter:\n        kind: anthropic-compat\n        base_url: https://openrouter.ai/api\n        auth: bearer\n        secret: openrouter-api-key\n        models: [\"deepseek/*\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -85,16 +85,17 @@ var sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, e
 type SharedAnchor struct{ Name, GCPProject, Bucket string }
 
 // sharedForbidden are the top-level keys the publisher never writes
-// (localcfg.Config.Shared): owner-only, personal or derived.
-var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry"}
+// (localcfg.Config.Shared): owner-only, personal, derived or local-only.
+var sharedForbidden = []string{"terraform", "user", "endpoints", "bucket_url", "registry", "providers"}
 
 // ParseShared validates a published shared config against its anchor and
 // returns it (docs/design/shared-config.md §5). Anyone holding objectAdmin
 // on the runs bucket can write the file, so it refuses, and never repairs,
 // anything fugaro init would not have written or that points outside the
 // anchor's GCP project: another name, GCP project or bucket, a registry,
-// base image or log view elsewhere, a budget block whose database or
-// signer is not its Firebase project's, a forbidden section, an unknown
+// base image or log view elsewhere, a budget block whose Firebase project
+// is not the anchor's GCP project or whose database or signer is not its
+// Firebase project's, a forbidden section (providers among them), an unknown
 // key, YAML anchors, aliases, merge keys, explicit tags, repeated keys or
 // documents, and anything over localcfg.SharedMaxBytes. Every refusal
 // names the field and says to have fugaro init run again.
@@ -141,8 +142,8 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		return bad("gcp_project", "%q is not %s", c.GCPProject, a.GCPProject)
 	case c.RunsBucket != a.Bucket || c.RunsBucketName() != a.Bucket:
 		return bad("runs_bucket", "%q is not the bucket it was read from, %s", c.RunsBucket, a.Bucket)
-	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero():
-		return refuse("carries a section that is never published (terraform, user, endpoints, bucket_url or registry)")
+	case c.User != "" || c.Bucket != "" || c.Registry != "" || c.Endpoints != (localcfg.Endpoints{}) || !reflect.ValueOf(c.Terraform).IsZero() || c.Providers != nil:
+		return refuse("carries a section that is never published (%s)", strings.Join(sharedForbidden, ", "))
 	case c.RegistryHost != c.Region+"-docker.pkg.dev/"+a.GCPProject:
 		return bad("registry_host", "%q is not this project's registry, %s-docker.pkg.dev/%s", c.RegistryHost, c.Region, a.GCPProject)
 	case c.LogView != "" && !strings.HasPrefix(c.LogView, "projects/"+a.GCPProject+"/"):
@@ -154,6 +155,13 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		}
 	}
 	if b := c.Budget; b != nil && (b.RTDBURL != "" || b.FirebaseProject != "" || b.TokenSigner != "") {
+		// The database and signer must be the anchor's own project's: an
+		// internally consistent triple of another project would pass the
+		// checks below. An installation with a separate Firebase project
+		// can't be anchored by the checkout, so it is never used from here.
+		if b.FirebaseProject != a.GCPProject {
+			return nil, fmt.Errorf("the shared config's budget.firebase_project %q is not gcp_project %s: this installation uses a separate Firebase project, so the shared config cannot be used automatically; run fugaro init (adopt) to configure it", b.FirebaseProject, a.GCPProject)
+		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {
 			return bad("budget block", "%s", strings.ReplaceAll(err.Error(), "the Firebase root's ", "budget."))
