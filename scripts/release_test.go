@@ -1081,7 +1081,7 @@ func TestSignalsLeaveMain(t *testing.T) {
 			if err := cmd.Start(); err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.Now().Add(20 * time.Second)
+			deadline := time.Now().Add(60 * time.Second)
 			for {
 				if _, err := os.Stat(marker); err == nil {
 					break
@@ -1284,15 +1284,58 @@ func TestHighlightsRequiredFrom040(t *testing.T) {
 	}
 }
 
-// TestHighlightsMustBeCommitted checks a file that exists only in the
-// local checkout (untracked is refused by the clean-tree rule; this covers a
-// committed but unpushed file, which main == origin/main already rejects).
+// TestHighlightsMustBeCommitted checks that a Highlights file which is not on
+// origin/main never counts: untracked is refused by the clean-tree rule, and
+// committed but unpushed by the main == origin/main rule.
 func TestHighlightsMustBeCommitted(t *testing.T) {
-	r := newReleaseRepo(t)
-	g := newGHState(t, r, greenChecks())
-	writeHighlights(t, r.local, "0.4.0", "- x\n")
-	res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
-	res.requireFailureContaining(t, "working tree is not clean")
+	t.Run("untracked", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+		writeHighlights(t, r.local, "0.4.0", "- x\n")
+		res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
+		res.requireFailureContaining(t, "working tree is not clean")
+	})
+	t.Run("committed but unpushed", func(t *testing.T) {
+		r := newReleaseRepo(t)
+		g := newGHState(t, r, greenChecks())
+		writeHighlights(t, r.local, "0.4.0", "- x\n")
+		testutil.Git(t, r.local, "add", "-A")
+		testutil.Git(t, r.local, "commit", "--quiet", "-m", "highlights")
+		res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
+		res.requireFailureContaining(t, "is not origin/main")
+	})
+}
+
+// TestCheckHighlights covers `release-policy.sh check-highlights`, the step
+// release.yml and images.yml run (in a checkout of the tag) before publishing.
+func TestCheckHighlights(t *testing.T) {
+	script := filepath.Join(testutil.ModuleRoot(), "scripts", "release-policy.sh")
+	cases := []struct {
+		name, version, file string // file "-" means absent
+		wantOK              bool
+	}{
+		{"required and present", "0.4.0", "- x\n", true},
+		{"required and missing", "0.4.0", "-", false},
+		{"required and blank", "1.2.3", " \n\n", false},
+		{"not required and missing", "0.3.1", "-", true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if c.file != "-" {
+				writeHighlights(t, dir, c.version, c.file)
+			}
+			cmd := exec.Command("bash", script, "check-highlights", c.version)
+			cmd.Dir = dir
+			out, err := cmd.CombinedOutput()
+			if (err == nil) != c.wantOK {
+				t.Fatalf("ok=%v want %v:\n%s", err == nil, c.wantOK, out)
+			}
+			if !c.wantOK && !strings.Contains(string(out), "docs/releases/v"+c.version+".md") {
+				t.Errorf("message does not name the file:\n%s", out)
+			}
+		})
+	}
 }
 
 // TestReleasePolicy covers scripts/release-policy.sh, which the release

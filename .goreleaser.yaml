@@ -52,16 +52,18 @@ signs:
     output: true
 
 # The generated part of the release notes (the "## Changelog" section): one
-# line per commit with its title only (no SHA), oldest first. `use: git` needs
-# no API token. Our titles do not use feat:/fix: prefixes, so groups would only
-# ever fill "Other changes"; there are none. Housekeeping is filtered out.
+# line per commit with its title only (no SHA), in git-log order (newest first,
+# as GitHub lists pull requests; `sort: asc` would sort alphabetically by
+# message, so none is set). `use: git` needs no API token. Our titles do not
+# use feat:/fix: prefixes, so groups would only ever fill "Other changes";
+# there are none. Housekeeping is filtered out, including only the version
+# bump commits release.sh writes ("release: vX.Y.Z"), not real "release:" PRs.
 changelog:
-  sort: asc
   use: git
   format: "{{ .Message }}"
   filters:
     exclude:
-      - '^release:'
+      - '^release: v[0-9]+\.[0-9]+\.[0-9]+'
       - '^docs?(\(.+\))?:'
       - '^test(s)?(\(.+\))?:'
       - '^chore(\(.+\))?:'

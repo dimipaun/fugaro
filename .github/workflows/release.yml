@@ -88,10 +88,7 @@ jobs:
           # From 0.4.0 the release notes' Highlights come from this file in
           # the tag's tree (.goreleaser.yaml); a missing file would publish a
           # release with no Highlights, so refuse before anything is built.
-          if scripts/release-policy.sh highlights-required "${TAG#v}" && [ -z "$(tr -d '[:space:]' < "docs/releases/$TAG.md")" ]; then
-            echo "::error::docs/releases/$TAG.md is missing or empty; releases from 0.4.0 need it (docs/releases/README.md)"
-            exit 1
-          fi
+          scripts/release-policy.sh check-highlights "${TAG#v}"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod

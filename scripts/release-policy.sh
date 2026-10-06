@@ -4,6 +4,7 @@
 #
 #   scripts/release-policy.sh prerelease X.Y.Z            exit 0: mark the release as a pre-release
 #   scripts/release-policy.sh highlights-required X.Y.Z   exit 0: docs/releases/vX.Y.Z.md is required
+#   scripts/release-policy.sh check-highlights X.Y.Z      exit 1 if it is required and missing or empty here
 #
 # Exit 1 means "no", exit 2 a usage error or a version that is not strict
 # SemVer X.Y.Z. v0.1.0 to v0.3.x are pre-releases and need no highlights file;
@@ -34,6 +35,17 @@ fi
 case "$cmd" in
   prerelease) [ "$from_040" = 0 ] ;;
   highlights-required) [ "$from_040" = 1 ] ;;
+  check-highlights)
+    # Run from the root of a checkout of the tag: fails (exit 1) when the
+    # Highlights file is required and missing or blank.
+    if [ "$from_040" = 1 ]; then
+      f="docs/releases/v$version.md"
+      if [ ! -f "$f" ] || [ -z "$(tr -d '[:space:]' <"$f")" ]; then
+        echo "$f is missing or empty; releases from 0.4.0 need it (docs/releases/README.md)" >&2
+        exit 1
+      fi
+    fi
+    ;;
   *)
     echo "unknown command '$cmd' (want prerelease or highlights-required)" >&2
     exit 2

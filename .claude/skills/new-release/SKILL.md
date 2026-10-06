@@ -9,8 +9,10 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 ## Rules
 
-- Run only when the user asked for a release of a specific version, or you proposed one and they confirmed it. The tag push is outward-facing and permanent; without that go-ahead stop before step 4.
-- Never move, delete or re-create a published tag; never force-push; never bypass the release gate. A bad release is rolled back and superseded by the next patch (`docs/release.md#rolling-back`).
+- Run only when the user asked for a release of a specific version, or you proposed one and they confirmed it. The tag push is outward-facing and permanent.
+- Allowed before the user confirms the version: reading, preflight checks, proposing a version, drafting the Highlights text in the chat or in a local branch. Needs the user's go-ahead: merging the Highlights PR to main and running `scripts/release.sh` (step 4). Without it, stop before step 4.
+- Never move, delete or re-create a tag; never force-push; never bypass the release gate. Rolling back a published release is the USER's decision and the user runs it ([docs/release.md#rolling-back](../../../docs/release.md#rolling-back), which deletes the tag); you never run it. Your remedy for a bad release is to supersede it with the next patch release.
+- `.claude/` may be locally excluded in a clone (`.git/info/exclude`), so a new file under `.claude/skills` needs `git add -f`.
 - No secrets in the Highlights, PR text or your report. Read every check and every script output; do not assume green.
 - When any step fails: stop, report the failing command and its output, and wait. Do not improvise a workaround.
 
@@ -26,7 +28,7 @@ Procedure for one Fugaro release. Detail lives in `docs/release.md` (read it fir
 
 - Collect the changes: `git log vPREV..main --oneline` and `gh pr list --state merged --search "merged:>=<date of vPREV>" --limit 100`. Read the PRs, not just titles.
 - Write `docs/releases/vX.Y.Z.md` per `docs/releases/README.md`: 3 to 6 user-facing bullets, one sentence each, no commit-title echo, nothing internal-only (CI, tests, refactors). Add `### For operators` with ordered steps when a rollout order matters (shared config: upgrade CLIs and CI pins, rebuild images, then merge `gcp_project:`; `fugaro init --publish-config` is run by the user in their own terminal).
-- Branch, commit, push, open a PR, merge it (squash) once its checks pass; then `git switch main && git pull --ff-only`.
+- Branch, commit, push, open a PR; after the user's go-ahead, merge it (squash) once its checks pass; then `git switch main && git pull --ff-only`.
 
 ## 3. Dry run
 
@@ -49,7 +51,7 @@ Watch both workflows: `gh run list --limit 6` and `gh run watch <id>` for `relea
 
 ## 6. Post-release
 
-- From a fresh build of the tag (`go build -o /tmp/fugaro-vX ./cmd/fugaro` after `git switch --detach vX.Y.Z`, then back to main), run `fugaro doctor` against the dogfood project (`dimipaun/fugaro`) and report each line.
+- From a fresh build of the tag in a separate worktree (`git worktree add /tmp/fugaro-vX vX.Y.Z`, build there with `go build -o /tmp/fugaro-vX/fugaro ./cmd/fugaro`, then `git worktree remove /tmp/fugaro-vX`), so the main checkout stays on main (`go install github.com/dimipaun/fugaro/cmd/fugaro@vX.Y.Z` also works but reports `dev`), run `fugaro doctor` against the dogfood project (`dimipaun/fugaro`) and report each line.
 - If the release changes the operator order, update the rollout section of `docs/release.md` and the memory notes in the same PR or a follow-up.
 - Tell the user what only they can do: `brew upgrade`, `fugaro init --publish-config` in their own terminal, upgrading CI pins and teammates' CLIs before any repository merges `gcp_project:`, rebuilding job images, the owner-only repository settings still unset.
 - Final report: version, release URL, commit, what was verified with the command, what was not, and the user's to-do list.
