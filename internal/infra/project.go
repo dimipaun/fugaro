@@ -21,6 +21,12 @@ import (
 // boundary: no job account can write it, but a launcher could.
 const ProjectMarkerObject = "fugaro/project.json"
 
+// SharedConfigObject is the object in the runs bucket that holds the
+// installation-wide, non-secret part of the project config (localcfg
+// Config.Shared), published by fugaro init for the installation's other
+// users.
+const SharedConfigObject = "fugaro/config.yaml"
+
 // ProjectMarker is ProjectMarkerObject's content.
 type ProjectMarker struct {
 	Version    int    `json:"version"`

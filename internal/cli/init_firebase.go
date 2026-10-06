@@ -294,7 +294,7 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 			next.Terraform.BudgetAdmins = slices.Clone(r.budgetAdmins(lc))
 		}
 	}
-	if err := r.writeConfig(lc, spec, outs, path, old, confirmed); err != nil {
+	if err := r.writeConfig(ctx, lc, spec, outs, path, old, confirmed); err != nil {
 		return err
 	}
 	if lc.BudgetMode() == localcfg.BudgetOff && mode == "" {

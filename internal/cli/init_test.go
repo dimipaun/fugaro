@@ -1267,7 +1267,7 @@ func TestInitWriteConfigChecksName(t *testing.T) {
 	cmd := newInitCmd()
 	cmd.SetOut(io.Discard)
 	ir := newInitRun(cmd, &initOptions{})
-	err = ir.writeConfig(lc, spec, infra.InstallationOutputs{ProjectName: "borealis", RunsBucket: initRunsBucket}, r.cfg, nil, true)
+	err = ir.writeConfig(context.Background(), lc, spec, infra.InstallationOutputs{ProjectName: "borealis", RunsBucket: initRunsBucket}, r.cfg, nil, true)
 	if err == nil || !strings.Contains(err.Error(), "borealis") {
 		t.Fatalf("err = %v", err)
 	}

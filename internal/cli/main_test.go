@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -35,6 +36,15 @@ func TestMain(m *testing.M) {
 	// checkout makes its own (git doesn't enter a ceiling directory itself).
 	if wd, err := os.Getwd(); err == nil {
 		os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(filepath.Dir(wd)))
+	}
+	// The shared config is published to the runs bucket after init writes
+	// the local one: tests that don't look at it publish to memory, never
+	// to a real bucket.
+	sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "file://") {
+			return blobx.Open(ctx, url)
+		}
+		return blobx.Open(ctx, "mem://")
 	}
 	os.Exit(m.Run())
 }
