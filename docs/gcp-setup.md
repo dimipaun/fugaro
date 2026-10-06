@@ -240,7 +240,7 @@ When the Firebase root's state is lost (a new state bucket, a recreated installa
 
 An empty default instance that carries no Fugaro mark is adopted too (the database step writes the mark right after the apply); one that holds data without our mark is refused by the database check, as before. IAM members are **not** imported: they are non-authoritative and creating one that exists changes nothing, so the plan shows them as creates. The project services and `google_firebase_project.this` are not imported either; creating them when they exist is accepted.
 
-**What is refused, and why.** Names and descriptions are public, so a look-alike can carry them; the checks that matter are on shape. Every refusal is printed together with what was found and what was expected, and the run stops before anything is written or planned. Nothing is ever imported and then changed, or deleted.
+**What is refused, and why.** Names and descriptions are public, so a look-alike can carry them; the checks that matter are on shape. Every refusal is printed together with what was found and what was expected, and the run stops before the Firebase root is written or planned (the installation root has already been planned, and applied if it needed it). Nothing is ever imported and then changed, or deleted.
 
 - **The signer**, because its signature admits a run to the database: another display name or description (the description names this Fugaro project); disabled; any user-managed key (whoever holds one signs tokens without IAM; the message gives the `gcloud iam service-accounts keys delete` command); any grant on it but the minter role to this run's launchers and operators (see below).
 - **The minter role**: its permissions must be exactly `iam.serviceAccounts.signJwt`, and its title `Fugaro token minter`. A wider role would make every grant of it reach further. The message gives the `gcloud iam roles update` command that sets it back. A deleted role is not imported; a note says the plan's create restores it.
@@ -265,16 +265,21 @@ Run the printed command for each member, or add the member as a launcher or oper
 
 **What discovery does not see.** It checks the signer's own policy. A role on the project (or inherited from a folder or the organization) that lets someone sign as the signer is not visible to it; run `fugaro doctor` after adopting, whose `token-signers` check lists the project-level grants (it needs the budget backend in the local config; inherited bindings are not checked at all). The run prints a note saying so when it adopts the signer.
 
-**The manual fallback.** If you cannot use the discovery (an older `fugaro`, or you prefer to see each command), import by hand in the Firebase root's working directory, `$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/firebase/gcp/roots/firebase` (`~/.local/state` when `XDG_STATE_HOME` is unset). A run that got as far as the Firebase root's apply left `terraform.tfvars.json` and `backend.hcl` there; run `terraform init -backend-config=backend.hcl` first. This is outside fugaro's guard, so check each resource yourself against the list above:
+**The manual fallback.** If you cannot use the discovery (an older `fugaro`, or you prefer to see each command), import by hand. This is outside fugaro's guard: check each resource yourself against the list above. Every fugaro run deletes the root's files (`backend.hcl`, `terraform.tfvars.json`, `imports.tf.json`) and rebuilds them, so supply the backend and variables yourself, with the data directory fugaro uses:
 
 ```sh
+W="${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/<gcp-project>/firebase"
+cd "$W/gcp/roots/firebase"      # exists once a fugaro run reached the Firebase root
+export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
+terraform init -input=false -lockfile=readonly -backend-config=bucket=fugaro-tfstate-<gcp-project> -backend-config=prefix=fugaro/firebase
+fugaro init --firebase <fp> --print-vars | jq .firebase > terraform.tfvars.json    # import needs the root's variables
 terraform import 'module.firebase.google_firebase_database_instance.this' 'projects/<fp>/locations/us-central1/instances/<fp>-default-rtdb'
 terraform import 'module.firebase.google_apikeys_key.web' 'projects/<fp>/locations/global/keys/fugaro-web'
 terraform import 'module.firebase.google_service_account.signer' 'projects/<fp>/serviceAccounts/fugaro-token-signer@<fp>.iam.gserviceaccount.com'
 terraform import 'module.firebase.google_project_iam_custom_role.token_minter' 'projects/<fp>/roles/fugaroTokenMinter'
 ```
 
-Terraform reads `terraform.tfvars.json` there by itself. The next `fugaro init --firebase <fp>` rebuilds the directory (keeping terraform's data directory), writes an empty `imports.tf.json` and shows `No changes`.
+Use your own state bucket name if `--state-bucket` was set. `--print-vars` prints the installation's and the Firebase root's variables as one JSON object (`firebase` is the root's) and makes no cloud call, so its admins list is not the one a real run reads; the imports do not depend on it. The next `fugaro init --firebase <fp>` rebuilds the directory and should show `No changes`.
 
 ## Spend history and reports (M9d)
 
