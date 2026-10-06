@@ -488,9 +488,16 @@ func TestPRFailedCheckStopsWaiting(t *testing.T) {
 	}
 }
 
-// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT to the process group) is handled
-// with a message telling the caller how to continue, rather than leaving
-// the terminal on a bare stack trace.
+// TestInterruptPrintsResumeInstructions checks an interrupt delivered to the
+// process group is handled with a message telling the caller how to continue,
+// rather than leaving the terminal on a bare stack trace.
+//
+// The test sends SIGTERM, not SIGINT: when the test process itself starts with
+// SIGINT ignored (background job, nohup-style CI launchers), the bash child
+// inherits SIG_IGN, and a signal ignored on entry can never be trapped, so the
+// script would never exit. SIGTERM is not ignored by inheritance. release.sh
+// handles INT and TERM with the same trap, so this covers the handler a
+// terminal's Ctrl-C (SIGINT) reaches.
 func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
@@ -522,10 +529,10 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	// Like a terminal's Ctrl-C, signal the whole process group: the poll
+	// Like a terminal's Ctrl-C, deliver to the whole process group: the poll
 	// loop runs in a subshell, which a signal sent to the parent alone would
 	// never reach (bash defers its trap until that child exits).
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
+	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -535,10 +542,10 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-done
-		t.Fatalf("release.sh did not exit within 30s of SIGINT; output:\n%s", out.String())
+		t.Fatalf("release.sh did not exit within 30s of SIGTERM; output:\n%s", out.String())
 	}
 	if !strings.Contains(out.String(), "resume") {
-		t.Fatalf("expected resume instructions after SIGINT, got:\n%s", out.String())
+		t.Fatalf("expected resume instructions after SIGTERM, got:\n%s", out.String())
 	}
 }
 
