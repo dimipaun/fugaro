@@ -208,6 +208,7 @@ In the commands below, `T` is short for
 | 23 | Spend history and `fugaro report` against the real project: the Firestore database, the rollover job, finality, the prune, a non-owner viewer (M9d) | See "Check 23" below; **you** run or approve every step. | Firestore is within the free tier; the image pushes are about 1.5 GB of registry storage at most. |
 | 26 | The same-project layout (Firebase project = the installation's project) on a scratch project: the three applies with one project, no API owned twice, and a job account refused by the RTDB, Firestore and Identity Toolkit | See "Check 26" below; **you** run it, never on `belong` | Never run. Everything offline passed; every answer is a `FACT:` line. |
 | 27 | M11's simple setup on a throwaway project: the plugin wiring and the four Claude Code spikes (V1 to V4, all verified live 2026-10-04), `--create-project` and `--link-billing`, a clean `fugaro init` from nothing, the image mirror against real ghcr.io and Artifact Registry, hidden secret prompts, the hostile-clone gate, `doctor`, `update-skills`, a teammate's adopt run, `/fugaro:setup` and a prompt-injection probe | See "Check 27" below; **you** run it at your own terminal, on a **throwaway project, never `belong`, `fugaro-dev` or `edge-devel-dimi`**. | A throwaway project with billing for a day (cents), a registry of about 2 to 5 GB for the images you copy, Cloud Build for one image build, and a few Claude Code sessions. **NOT RUN.** |
+| 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -834,6 +835,56 @@ Check the values before anything else. A stale `XDG_CONFIG_HOME` left in a termi
 **Paste back** (no secret, no token): the version, the numbered steps' results (pass, fail, not run), and the exact text of every unexpected message.
 
 **Clean up.** `rm -r "$XDG_CONFIG_HOME"`, unset both variables, restore the scratch object (step 7), uncommit any `fugaro.yaml` experiment.
+
+## Check 29: adopting an existing Firebase root (sandbox only, run by you; USER-RUN, NOT RUN)
+
+**No step below has been run; nothing here is a claim that it works.** Adopting a Firebase root ([design/adopt-firebase-root.md](design/adopt-firebase-root.md)) ran offline only: fake Google APIs, `faketerraform` and golden plans synthesized from real ones (a real import plan needs the network). This check is the first time the four imports meet the real provider.
+
+**Never run this against a real installation's Firebase project** (`belong`, `fugaro-dev`, `edge-devel-dimi`, or any project whose database holds budget counters you want). `terraform state rm` makes Terraform forget the database, the signer, the key and the role, and every step that writes below applies to the Firebase project. Use the SANDBOX installation and its Firebase project, `<sandbox-p>` and `<fp>`, whose backend you can lose. Because `--plan-only` with `--firebase` plans only the installation root and never reaches the Firebase root, there is no read-only version of this check: the plan is shown by a real run, before its typed confirmation.
+
+**Setup.** Record `fugaro version` and the date, and `gcloud config get project` (it must not matter, nothing here relies on it, but note it). The sandbox must already have a Firebase root applied (`fugaro init --firebase <fp>` ran before), so the four resources exist and are in `gs://fugaro-tfstate-<sandbox-p>` under `fugaro/firebase`. Get to the root's workdir and backend as `init` itself does:
+
+```sh
+cd "${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/<sandbox-p>/firebase/gcp/roots/firebase"
+ls backend.hcl terraform.tfvars.json        # both are written by the last init --firebase run
+terraform init -backend-config=backend.hcl
+terraform state list | grep -E 'google_firebase_database_instance.this|google_apikeys_key.web|google_service_account.signer|google_project_iam_custom_role.token_minter'
+```
+
+Expect the four addresses under `module.firebase.`. Save the state first: `terraform state pull > ~/fugaro-firebase.tfstate.bak` (mode 600, it holds the key string).
+
+**A. Lost state, adopted by a real run.**
+
+1. **⚠ CONFIRM** (this removes the four from the SANDBOX's Firebase root state only; the resources stay live):
+
+   ```sh
+   terraform state rm 'module.firebase.google_firebase_database_instance.this' \
+     'module.firebase.google_apikeys_key.web' \
+     'module.firebase.google_service_account.signer' \
+     'module.firebase.google_project_iam_custom_role.token_minter'
+   ```
+
+   `terraform state list` no longer shows them.
+2. **⚠ CONFIRM** `fugaro init --firebase <fp>` (add the flags the sandbox used before, for example `--budget-mode observe`). Read the output **before** typing the name. Expect, in the Firebase root's plan: a note that the token signer was adopted and pointing at `fugaro doctor`; `Plan: 4 to import`; the four lines `import module.firebase.google_firebase_database_instance.this (id projects/<fp>/locations/us-central1/instances/<fp>-default-rtdb)`, `import module.firebase.google_apikeys_key.web (id projects/<fp>/locations/global/keys/fugaro-web)`, `import module.firebase.google_service_account.signer (id projects/<fp>/serviceAccounts/fugaro-token-signer@<fp>.iam.gserviceaccount.com)` and `import module.firebase.google_project_iam_custom_role.token_minter (id projects/<fp>/roles/fugaroTokenMinter)`; **no create or delete of those four**; and the confirmation text `applies 4 imports, ... (adopting the existing Realtime Database <fp>-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role; ...)`. If the plan shows a create of any of the four, or a delete, decline (anything but the project's name). The database step that follows is the usual one; the mark is already there.
+3. Type the project's name. Expect the apply to finish, the database step to find nothing to change, and the run to end as a normal `init --firebase` does.
+4. **Rerun** `fugaro init --firebase <fp>` with the same flags: expect no import lines and `No changes: the firebase root matches the plan.` In the workdir, `cat imports.tf.json` is empty of imports. `terraform state list` shows the four again.
+5. `fugaro doctor` (with the sandbox's local config): the `token-signers` check shows the signer's expected holders only.
+
+**B. A squat is refused, with nothing written.**
+
+6. **⚠ CONFIRM** (changes the SANDBOX's minter role by hand): add one permission to the live role, then forget it in the state so discovery sees it: `gcloud iam roles update fugaroTokenMinter --project <fp> --add-permissions=iam.serviceAccounts.getAccessToken` and `terraform state rm 'module.firebase.google_project_iam_custom_role.token_minter'`. Run `fugaro init --firebase <fp>`: expect exit 1 and the refusal `custom role projects/<fp>/roles/fugaroTokenMinter includes iam.serviceAccounts.getAccessToken, iam.serviceAccounts.signJwt, not exactly iam.serviceAccounts.signJwt: ...` with the `gcloud iam roles update` command, **before any plan**: no `Plan:` line, and `imports.tf.json` in the workdir is the one from step 4 (the run stopped before it was written). Record the exact text.
+7. Restore: `gcloud iam roles update fugaroTokenMinter --project <fp> --permissions=iam.serviceAccounts.signJwt`, then rerun `fugaro init --firebase <fp>` and type the name: expect `Plan: 1 to import` (the role only) and an apply that imports it, then a further rerun with `No changes`.
+
+**C. A foreign minter on the signer.**
+
+8. **⚠ CONFIRM** (grants a role on the SANDBOX's signer to a throwaway member, a Google account you control that is not a launcher or operator of the sandbox): `gcloud iam service-accounts add-iam-policy-binding fugaro-token-signer@<fp>.iam.gserviceaccount.com --project <fp> --member=user:<other> --role=projects/<fp>/roles/fugaroTokenMinter`. Then forget the signer in the state, `terraform state rm 'module.firebase.google_service_account.signer'`, and run `fugaro init --firebase <fp>`. Expect exit 1 and the message `token signer fugaro-token-signer@<fp>.iam.gserviceaccount.com grants fugaroTokenMinter to members who are not this installation's launchers or operators:` naming `user:<other>`, the `gcloud iam service-accounts remove-iam-policy-binding ... --member=user:<other> --role=projects/<fp>/roles/fugaroTokenMinter` command, and no plan.
+9. Run the printed command, rerun `fugaro init --firebase <fp>` and type the name: expect `Plan: 1 to import` (the signer), then a rerun with `No changes`.
+
+**FACT lines to record:** the `fugaro version`; the exact `Plan:` line and the four `import` lines of step 2; the confirmation text of step 2; whether step 4 said `No changes`; the exact refusal text of steps 6 and 8; whether any plan showed a create, update or delete of the singletons (it must not).
+
+**Paste back** (no secret, no token, no key string): the version, each numbered step's result (pass, fail, not run), and the exact text of every unexpected message.
+
+**Restore.** Everything above is undone by steps 7 and 9, so the sandbox ends with the four singletons in its state, the minter role with its one permission and the signer with only the launchers' and operators' grants. `terraform state list` shows the four; delete `~/fugaro-firebase.tfstate.bak`. If a run was aborted half-way, rerun `fugaro init --firebase <fp>`: what landed in the state is skipped and the rest imported. If the state is beyond that, push the saved copy back only after reading it (`terraform state push`), and record it as a finding.
 
 ## Not covered by these tests (manual)
 
