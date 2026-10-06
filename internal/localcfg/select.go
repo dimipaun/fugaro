@@ -284,7 +284,7 @@ func (s *selector) named(name, from string) (Selection, *Config, error) {
 			return sel, c, serr
 		}
 		if in.Shared != nil {
-			return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s: add `gcp_project: <id>` next to `project:` in fugaro.yaml (whoever onboarded the repository can run fugaro init --repo to add it), or run `fugaro init --config-only --gcp-project <id>`", name, name)
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s: add `gcp_project: <id>` next to `project:` in fugaro.yaml (whoever onboarded the repository can run fugaro init in the checkout to add it), or run `fugaro init --config-only --gcp-project <id>`", name, name)
 		}
 		return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s (run `fugaro init --config-only --gcp-project <id>`)", name, name)
 	case errors.Is(err, ErrMissing):

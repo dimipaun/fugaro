@@ -221,11 +221,11 @@ func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly
 
 // Warning texts of warnOldImages.
 func oldImageWarning(repo, wf string) string {
-	return fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro image build --repo %s --workflow %s before you merge a change that adds gcp_project", repo, wf, repo, wf)
+	return fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro init (it copies the current base image), then fugaro image build --repo %s --workflow %s, then fugaro init again, before you merge a change that adds gcp_project", repo, wf, repo, wf)
 }
 
 func unknownImageWarning(repo, wf, why string) string {
-	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so run fugaro image build --repo %s --workflow %s before you merge a change that adds gcp_project", repo, wf, why, repo, wf)
+	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so run fugaro init (it copies the current base image), then fugaro image build --repo %s --workflow %s, then fugaro init again, before you merge a change that adds gcp_project", repo, wf, why, repo, wf)
 }
 
 // warnOldImages says which workflows' job images predate the field (or have
