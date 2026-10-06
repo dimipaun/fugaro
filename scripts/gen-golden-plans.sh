@@ -78,7 +78,7 @@ adopt_variant "$golden/firebase.plan.json" "$golden/firebase-adopt.plan.json" '{
   "module.firebase.google_apikeys_key.web": "projects/aurora-fp/locations/global/keys/fugaro-web",
   "module.firebase.google_service_account.signer": "projects/aurora-fp/serviceAccounts/fugaro-token-signer@aurora-fp.iam.gserviceaccount.com",
   "module.firebase.google_project_iam_custom_role.token_minter": "projects/aurora-fp/roles/fugaroTokenMinter"}' '
-  if .type == "google_service_account_iam_member" then
+  if (.address | startswith("module.firebase.google_service_account_iam_member.minter[")) then
     .change.after.role = "projects/aurora-fp/roles/fugaroTokenMinter"
     | .change.after.service_account_id = "projects/aurora-fp/serviceAccounts/fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"
     | del(.change.after_unknown.role, .change.after_unknown.service_account_id)
