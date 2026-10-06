@@ -5,7 +5,7 @@ on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
-    paths: [".goreleaser.yaml", ".github/workflows/release.yml", "scripts/bump-plugin-version.sh"]
+    paths: [".goreleaser.yaml", ".github/workflows/release.yml", "scripts/bump-plugin-version.sh", "scripts/release-policy.sh"]
   workflow_dispatch: # dry run: a snapshot build, nothing published or signed
 permissions:
   contents: read
@@ -85,6 +85,13 @@ jobs:
           set -eu
           scripts/release-gate.sh "$TAG"
           scripts/bump-plugin-version.sh --check "${TAG#v}"
+          # From 0.4.0 the release notes' Highlights come from this file in
+          # the tag's tree (.goreleaser.yaml); a missing file would publish a
+          # release with no Highlights, so refuse before anything is built.
+          if scripts/release-policy.sh highlights-required "${TAG#v}" && [ -z "$(tr -d '[:space:]' < "docs/releases/$TAG.md")" ]; then
+            echo "::error::docs/releases/$TAG.md is missing or empty; releases from 0.4.0 need it (docs/releases/README.md)"
+            exit 1
+          fi
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -111,16 +118,17 @@ jobs:
       # GoReleaser cannot do this at creation (v2.18.2 reads release.prerelease
       # as the literal auto|true|false, untemplated). `always()` so a failure
       # after the release exists (an expired tap PAT) still marks it.
-      - name: Mark a pre-1.0 release as a pre-release
-        if: always() && startsWith(github.ref_name, 'v0.')
+      # Only v0.1.0 to v0.3.x: from v0.4.0 a release is a normal one
+      # (scripts/release-policy.sh decides, numerically; tested in
+      # scripts/release_test.go).
+      - name: Mark a v0.1 to v0.3 release as a pre-release
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          case "$TAG" in
-            v0.*)
-              if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-                gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
-              fi
-              ;;
-          esac
+          if scripts/release-policy.sh prerelease "${TAG#v}"; then
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --prerelease
+            fi
+          fi

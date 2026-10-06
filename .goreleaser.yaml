@@ -51,20 +51,17 @@ signs:
       - ${artifact}
     output: true
 
+# The generated part of the release notes (the "## Changelog" section): one
+# line per commit with its title only (no SHA), oldest first. `use: git` needs
+# no API token. Our titles do not use feat:/fix: prefixes, so groups would only
+# ever fill "Other changes"; there are none. Housekeeping is filtered out.
 changelog:
   sort: asc
   use: git
-  groups:
-    - title: Features
-      regexp: '^.*?(feat|add)(\([[:word:]]+\))??!?:.*$'
-      order: 0
-    - title: Fixes
-      regexp: '^.*?(fix|bug)(\([[:word:]]+\))??!?:.*$'
-      order: 1
-    - title: Other changes
-      order: 999
+  format: "{{ .Message }}"
   filters:
     exclude:
+      - '^release:'
       - '^docs?(\(.+\))?:'
       - '^test(s)?(\(.+\))?:'
       - '^chore(\(.+\))?:'
@@ -77,8 +74,9 @@ release:
     owner: dimipaun
     name: fugaro
   # `auto` marks only semver-suffixed tags (v1.2.3-rc1) as pre-releases, and
-  # the workflows accept strict vX.Y.Z tags alone; so v0.x.y is marked by the
-  # release workflow's last step (GoReleaser cannot do it).
+  # the workflows accept strict vX.Y.Z tags alone, so it never fires. v0.1.0 to
+  # v0.3.x are marked by the release workflow's last step, which asks
+  # scripts/release-policy.sh; from v0.4.0 on a release is a normal one.
   prerelease: auto
   header: |
     ## Fugaro {{ .Tag }}
@@ -88,6 +86,11 @@ release:
     - Homebrew: `brew install dimipaun/tap/fugaro`
     - Go: `go install github.com/dimipaun/fugaro/cmd/fugaro@{{ .Tag }}`
     - Or download an archive below and verify it against `checksums.txt` (see docs/release.md).
+    {{ with readFile (printf "docs/releases/%s.md" .Tag) }}
+    ## Highlights
+
+    {{ . }}
+    {{ end }}
   footer: |
     ## Base images
 

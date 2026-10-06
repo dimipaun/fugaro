@@ -45,6 +45,11 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 			t.Fatalf("copying %s: %v", name, err)
 		}
 	}
+	// Releases from 0.4.0 need docs/releases/vX.Y.Z.md on main; give the
+	// versions these tests release a Highlights file by default.
+	for _, v := range []string{"1.0.0", "1.0.10"} {
+		writeHighlights(t, seed, v, "- A user-facing change.\n")
+	}
 	testutil.Git(t, seed, "add", "-A")
 	testutil.Git(t, seed, "commit", "--quiet", "-m", "seed")
 	testutil.Git(t, seed, "push", "--quiet", "origin", "HEAD:refs/heads/main")
@@ -52,6 +57,17 @@ func newReleaseRepo(t *testing.T) *releaseRepo {
 	local := filepath.Join(root, "work")
 	testutil.Git(t, root, "clone", "--quiet", bare, local)
 	return &releaseRepo{bare: bare, local: local}
+}
+
+func writeHighlights(t *testing.T, dir, version, body string) {
+	t.Helper()
+	path := filepath.Join(dir, "docs", "releases", "v"+version+".md")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // ghState is the directory backing scripts/testdata/fake-gh.sh's state
@@ -1222,4 +1238,104 @@ func TestCancelledCheckIsRetriedOnce(t *testing.T) {
 			t.Errorf("a cancelled check must be given one more poll:\n%s", g.log(t))
 		}
 	})
+}
+
+// TestHighlightsRequiredFrom040 checks that a release from 0.4.0 on stops in
+// the preconditions, naming the file, when docs/releases/vX.Y.Z.md is not on
+// main (or is empty), and that older versions are unaffected.
+func TestHighlightsRequiredFrom040(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		file    string // content to commit on main; "-" leaves the file out
+		want    string // "" means the dry run must succeed
+	}{
+		{"missing for 0.4.0", "0.4.0", "-", "docs/releases/v0.4.0.md"},
+		{"missing for 1.2.3", "1.2.3", "-", "docs/releases/v1.2.3.md"},
+		{"missing for 0.10.0 (numeric compare)", "0.10.0", "-", "docs/releases/v0.10.0.md"},
+		{"empty for 0.4.0", "0.4.0", "  \n", "is empty"},
+		{"present for 0.4.0", "0.4.0", "- Something.\n", ""},
+		{"not needed for 0.3.2", "0.3.2", "-", ""},
+		{"not needed for 0.0.1", "0.0.1", "-", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReleaseRepo(t)
+			g := newGHState(t, r, greenChecks())
+			if c.file != "-" {
+				writeHighlights(t, r.local, c.version, c.file)
+				testutil.Git(t, r.local, "add", "-A")
+				testutil.Git(t, r.local, "commit", "--quiet", "-m", "highlights")
+				testutil.Git(t, r.local, "push", "--quiet", "origin", "main")
+			}
+			res := runRelease(t, r, g, "", c.version, "--dry-run")
+			if c.want == "" {
+				res.requireSuccess(t)
+				return
+			}
+			res.requireFailureContaining(t, c.want)
+			if countLog(t, g, "pr ") != 0 {
+				t.Errorf("a missing highlights file must stop before any pull request:\n%s", res.out)
+			}
+			if out := testutil.Git(t, r.bare, "branch", "--list", "release/v"+c.version); out != "" {
+				t.Errorf("a branch was created: %s", out)
+			}
+		})
+	}
+}
+
+// TestHighlightsMustBeCommitted checks a file that exists only in the
+// local checkout (untracked is refused by the clean-tree rule; this covers a
+// committed but unpushed file, which main == origin/main already rejects).
+func TestHighlightsMustBeCommitted(t *testing.T) {
+	r := newReleaseRepo(t)
+	g := newGHState(t, r, greenChecks())
+	writeHighlights(t, r.local, "0.4.0", "- x\n")
+	res := runRelease(t, r, g, "", "0.4.0", "--dry-run")
+	res.requireFailureContaining(t, "working tree is not clean")
+}
+
+// TestReleasePolicy covers scripts/release-policy.sh, which the release
+// workflow uses to decide the pre-release flag and whether highlights are
+// required.
+func TestReleasePolicy(t *testing.T) {
+	script := filepath.Join(testutil.ModuleRoot(), "scripts", "release-policy.sh")
+	cases := []struct {
+		cmd, version string
+		want         int // exit code: 0 yes, 1 no, 2 usage
+	}{
+		{"prerelease", "0.1.0", 0},
+		{"prerelease", "0.3.1", 0},
+		{"prerelease", "0.3.99", 0},
+		{"prerelease", "0.4.0", 1},
+		{"prerelease", "0.4.1", 1},
+		{"prerelease", "0.10.0", 1},
+		{"prerelease", "0.100.0", 1},
+		{"prerelease", "1.0.0", 1},
+		{"prerelease", "10.0.0", 1},
+		{"highlights-required", "0.3.1", 1},
+		{"highlights-required", "0.4.0", 0},
+		{"highlights-required", "0.9.0", 0},
+		{"highlights-required", "0.10.0", 0},
+		{"highlights-required", "1.0.0", 0},
+		{"highlights-required", "0.0.1", 1},
+		{"prerelease", "v0.3.1", 2},
+		{"prerelease", "0.4", 2},
+		{"prerelease", "04.0.0", 2},
+		{"prerelease", "0.4.0-rc1", 2},
+		{"prerelease", "", 2},
+		{"bogus", "0.4.0", 2},
+	}
+	for _, c := range cases {
+		t.Run(c.cmd+" "+c.version, func(t *testing.T) {
+			out, err := exec.Command("bash", script, c.cmd, c.version).CombinedOutput()
+			got := 0
+			if err != nil {
+				got = exitCode(err)
+			}
+			if got != c.want {
+				t.Errorf("exit %d, want %d:\n%s", got, c.want, out)
+			}
+		})
+	}
 }
