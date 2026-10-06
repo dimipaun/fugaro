@@ -199,8 +199,98 @@ func TestCoverNotCovered(t *testing.T) {
 			if tc.changes != nil {
 				p = &Plan{ResourceChanges: tc.changes}
 			}
-			if got := testCover.NotCovered(p); (len(got) == 0) != tc.covered {
+			if got := testCover.NotCovered(p, tableImports); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+		})
+	}
+}
+
+// tableImports are the imports TestCoverNotCovered's discovery wrote: both of
+// its import cases are on it, so the other project's import is refused for
+// its project alone.
+var tableImports = []ImportKey{{"a.google_storage_bucket.x", "proj-1/fugaro-runs-proj-1"}, {"a.google_storage_bucket.x", "other/fugaro-runs"}}
+
+// launcherPerms are fugaroLauncher's pinned permissions, as a plan lists them.
+func launcherPerms(extra ...any) []any {
+	var out []any
+	for _, p := range RolePermissions["fugaroLauncher"] {
+		out = append(out, p)
+	}
+	return append(out, extra...)
+}
+
+// importRole is an import of the launcher role at addr with ID id, as the
+// modules declare it (actions acts; an update keeps its permissions unless
+// after says otherwise).
+func importRole(addr, id string, after []any, acts ...string) ResourceChange {
+	return ResourceChange{Address: addr, Type: "google_project_iam_custom_role", Change: Change{Actions: acts, Importing: &Importing{ID: id},
+		Before:       map[string]any{"role_id": "fugaroLauncher", "project": "proj-1", "permissions": launcherPerms()},
+		After:        map[string]any{"role_id": "fugaroLauncher", "project": "proj-1", "permissions": after},
+		AfterUnknown: map[string]any{}}}
+}
+
+// An import is covered only when its address and ID are exactly a pair the
+// root's discovery wrote, and its ID is in one of the run's projects; the
+// other checks still apply to it.
+func TestImportsAreCoveredOnlyWhenDiscoveryWroteThem(t *testing.T) {
+	const addr = "module.installation.google_project_iam_custom_role.launcher"
+	key := ImportKey{addr, "projects/proj-1/roles/fugaroLauncher"}
+	keyAddr := "module.firebase.google_apikeys_key.web"
+	keyID := "projects/proj-1/locations/global/keys/fugaro-web"
+	apiKey := func(targets ...string) ResourceChange {
+		var ts []any
+		for _, s := range targets {
+			ts = append(ts, map[string]any{"service": s})
+		}
+		return ResourceChange{Address: keyAddr, Type: "google_apikeys_key", Change: Change{Actions: []string{"update"}, Importing: &Importing{ID: keyID},
+			After: map[string]any{"restrictions": []any{map[string]any{"api_targets": ts}}}, AfterUnknown: map[string]any{}}}
+	}
+	other := ImportKey{"module.installation.google_service_account.scheduler", "projects/proj-1/serviceAccounts/fugaro-scheduler@proj-1.iam.gserviceaccount.com"}
+	sa := ResourceChange{Address: other.Address, Type: "google_service_account", Change: Change{Actions: []string{"no-op"}, Importing: &Importing{ID: other.ID},
+		After: map[string]any{"project": "proj-1"}, AfterUnknown: map[string]any{}}}
+	for _, tc := range []struct {
+		name    string
+		changes []ResourceChange
+		list    []ImportKey
+		covered bool
+		why     string // a not-covered reason must contain it
+	}{
+		{"on the list", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "no-op")}, []ImportKey{key}, true, ""},
+		{"import and update on the list", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "update")}, []ImportKey{key}, true, ""},
+		{"empty list", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "no-op")}, nil, false,
+			addr + " (imports " + key.ID + ", which this run's discovery did not find)"},
+		{"same id other address", []ResourceChange{importRole("module.installation.google_project_iam_custom_role.tag_mover", key.ID, launcherPerms(), "no-op")}, []ImportKey{key}, false,
+			"module.installation.google_project_iam_custom_role.tag_mover (imports " + key.ID + ", which this run's discovery did not find)"},
+		{"same address other id in the project", []ResourceChange{importRole(addr, "projects/proj-1/roles/other", launcherPerms(), "no-op")}, []ImportKey{key}, false,
+			"imports projects/proj-1/roles/other, which this run's discovery did not find"},
+		{"another project's id, even listed", []ResourceChange{importRole(addr, "projects/evil/roles/fugaroLauncher", launcherPerms(), "no-op")}, []ImportKey{{addr, "projects/evil/roles/fugaroLauncher"}}, false,
+			"imports projects/evil/roles/fugaroLauncher, which is not in this run's projects"},
+		{"no imports in the plan, list not empty", []ResourceChange{customRole("fugaroLauncher", "proj-1", launcherPerms())}, []ImportKey{key}, true, ""},
+		{"two imports, one listed", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "no-op"), sa}, []ImportKey{key}, false,
+			other.Address + " (imports " + other.ID + ", which this run's discovery did not find)"},
+		{"two imports, both listed", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "no-op"), sa}, []ImportKey{key, other}, true, ""},
+		{"import and update widening the role, listed", []ResourceChange{importRole(addr, key.ID, launcherPerms("iam.serviceAccounts.getAccessToken"), "update")}, []ImportKey{key}, false,
+			"changes a custom role's permissions"},
+		{"import and update of the key as the module writes it, listed", []ResourceChange{apiKey(APITargets()...)}, []ImportKey{{keyAddr, keyID}}, true, ""},
+		{"import and update widening the key, listed", []ResourceChange{apiKey("identitytoolkit.googleapis.com", "storage.googleapis.com")}, []ImportKey{{keyAddr, keyID}}, false, keyAddr},
+		{"delete with an import, listed", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "delete")}, []ImportKey{key}, false, "actions delete"},
+		{"replace with an import, listed", []ResourceChange{importRole(addr, key.ID, launcherPerms(), "delete", "create")}, []ImportKey{key}, false, "actions delete, create"},
+		{"a type outside the modules, listed", []ResourceChange{{Address: "module.x.google_compute_instance.vm", Type: "google_compute_instance",
+			Change: Change{Actions: []string{"no-op"}, Importing: &Importing{ID: "projects/proj-1/zones/z/instances/vm"}, After: map[string]any{}, AfterUnknown: map[string]any{}}}},
+			[]ImportKey{{"module.x.google_compute_instance.vm", "projects/proj-1/zones/z/instances/vm"}}, false, "a resource type outside the installation's modules"},
+		{"an import by identity, listed", []ResourceChange{importRole(addr, "", launcherPerms(), "no-op")}, []ImportKey{{addr, ""}}, false, "not in this run's projects"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := testCover.NotCovered(&Plan{ResourceChanges: tc.changes}, tc.list)
+			if (len(got) == 0) != tc.covered {
+				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
+			}
+			if tc.covered {
+				return
+			}
+			if len(got) != 1 || !strings.Contains(got[0], tc.why) {
+				t.Fatalf("NotCovered = %q, want one reason containing %q", got, tc.why)
 			}
 		})
 	}
@@ -347,7 +437,7 @@ func TestCoverCheckSpec(t *testing.T) {
 		"spec unknown":                                    {jobWithSpec("", true), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}); (len(got) == 0) != tc.covered {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{tc.job}}, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
 			}
 		})
@@ -359,7 +449,7 @@ func TestCoverCheckSpecEveryEntry(t *testing.T) {
 	j := jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
 	cs := j.Change.After["template"].([]any)[0].(map[string]any)["template"].([]any)[0].(map[string]any)["containers"].([]any)[0].(map[string]any)
 	cs["env"] = append(cs["env"].([]any), map[string]any{"name": "FUGARO_CHECK_SPEC", "value": `{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"evil.example/x"}`})
-	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}); len(got) == 0 {
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}, nil); len(got) == 0 {
 		t.Fatal("a second, foreign FUGARO_CHECK_SPEC is covered")
 	}
 }
@@ -472,7 +562,7 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 		return j
 	}
 	ok := jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false)
-	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ok}}); len(got) != 0 {
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ok}}, nil); len(got) != 0 {
 		t.Fatalf("baseline not covered: %q", got)
 	}
 	for name, path := range map[string][]any{
@@ -490,14 +580,14 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			j := flag(jobWithSpec(`{"build_service_account":"fugaro-b-acme-webapp-5b8bba58@proj-1.iam.gserviceaccount.com","registry":"us-east5-docker.pkg.dev/proj-1/r"}`, false), path...)
-			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}); len(got) == 0 {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{j}}, nil); len(got) == 0 {
 				t.Fatal("covered")
 			}
 		})
 	}
 	// An environment only known after apply could hold any spec.
 	nospec := jobUnknown([]any{"fugaro"}, []any{"image", "check", "--job"}, "env")
-	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{nospec}}); len(got) == 0 {
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{nospec}}, nil); len(got) == 0 {
 		t.Fatal("a job with an unknown environment is covered")
 	}
 }

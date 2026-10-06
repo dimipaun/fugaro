@@ -122,12 +122,13 @@ func (r *initRun) declinedRun() error {
 // installation's own resource types, granting only the roles the modules use
 // to people the review listed or to Fugaro's own service accounts, is covered
 // (tf.Cover). Anything else, a plan that could not be read included, asks its
-// own typed confirmation.
-func (r *initRun) notCovered(p *tf.Plan) string {
+// own typed confirmation. imports are the import blocks the root's discovery
+// wrote: an import that is not one of them is not covered.
+func (r *initRun) notCovered(p *tf.Plan, imports []tf.ImportKey) string {
 	if r.review == nil || r.review.cover == nil {
 		return ""
 	}
-	b := r.review.cover().NotCovered(p)
+	b := r.review.cover().NotCovered(p, imports)
 	if len(b) == 0 {
 		return ""
 	}
@@ -485,9 +486,9 @@ func (r *initRun) firebaseReason() string {
 
 // notCoveredFirebase is notCovered for a plan of the Firebase root, which is
 // also not covered when the Firebase project is not verified as Fugaro's.
-func (r *initRun) notCoveredFirebase(p *tf.Plan) string {
+func (r *initRun) notCoveredFirebase(p *tf.Plan, imports []tf.ImportKey) string {
 	if why := r.firebaseReason(); why != "" {
 		return why
 	}
-	return r.notCovered(p)
+	return r.notCovered(p, imports)
 }

@@ -82,8 +82,8 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 // runs, which is not the installation (installRoot does that). what says
 // where; stop means --plan-only ended the run.
 //
-// imports are the import blocks the root's discovery wrote: they are not read
-// yet (the plan's classifier will compare each import against them).
+// imports are the import blocks the root's discovery wrote: the run's one
+// confirmation covers an import only when it is one of them.
 func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
@@ -106,7 +106,7 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 		return false, true, nil
 	}
-	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan)); err != nil {
+	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
 		return false, false, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {

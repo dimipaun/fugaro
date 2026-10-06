@@ -1191,7 +1191,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, true, nil
 		}
 		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan)); err != nil {
+		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
 			return outs, false, err
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -2258,7 +2258,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !first {
 		what += ", deploying the images just built"
 	}
-	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan)); err != nil {
+	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
 		return nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {

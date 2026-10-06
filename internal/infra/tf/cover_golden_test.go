@@ -50,7 +50,7 @@ func TestGoldenPlansAreCovered(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			p := goldenPlan(t, name)
-			if got := goldenCover(listed...).NotCovered(p); len(got) != 0 {
+			if got := goldenCover(listed...).NotCovered(p, nil); len(got) != 0 {
 				t.Fatalf("a real %s plan is not covered: %q", name, got)
 			}
 			for _, rc := range p.ResourceChanges {
@@ -149,7 +149,7 @@ func TestShapeDriftFailsClosed(t *testing.T) {
 		"custom role id renamed":    mutate("installation", "google_project_iam_custom_role", func(a map[string]any) { a["id"] = a["role_id"]; delete(a, "role_id") }),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := goldenCover(listed...).NotCovered(p); len(got) == 0 {
+			if got := goldenCover(listed...).NotCovered(p, nil); len(got) == 0 {
 				t.Fatal("a plan of a drifted shape is covered")
 			}
 		})
@@ -163,7 +163,7 @@ func TestShapeDriftFailsClosed(t *testing.T) {
 func TestGoldenSameProjectFirebasePlan(t *testing.T) {
 	p := goldenPlan(t, "firebase-same-project")
 	cover := Cover{Projects: []string{"proj-1234"}, Registry: "us-east5-docker.pkg.dev", Region: "us-east5", Listed: []string{"user:owner@example.com"}}
-	if got := cover.NotCovered(p); len(got) != 0 {
+	if got := cover.NotCovered(p, nil); len(got) != 0 {
 		t.Fatalf("a real same-project firebase plan is not covered: %q", got)
 	}
 	var members, services int
@@ -195,7 +195,7 @@ func TestGoldenSameProjectFirebasePlan(t *testing.T) {
 		"the owner not on the review screen": {Projects: cover.Projects, Registry: cover.Registry, Region: cover.Region},
 		"another project":                    {Projects: []string{"other"}, Registry: cover.Registry, Region: cover.Region, Listed: cover.Listed},
 	} {
-		if got := c.NotCovered(p); len(got) == 0 {
+		if got := c.NotCovered(p, nil); len(got) == 0 {
 			t.Errorf("covered for %s", name)
 		}
 	}

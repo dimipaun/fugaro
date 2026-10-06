@@ -243,8 +243,8 @@ func TestCoverNamesAreTheCodes(t *testing.T) {
 	c := tf.Cover{Projects: []string{"proj-1"}}
 	for _, id := range []string{gcp.ServiceAccountID("acme-web", "web"), gcp.BuildServiceAccountID("acme-web")} {
 		if p := &(tf.Plan{ResourceChanges: []tf.ResourceChange{{Address: "m.google_project_iam_member.x", Type: "google_project_iam_member",
-			Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + id + "@proj-1.iam.gserviceaccount.com", "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}); len(c.NotCovered(p)) != 0 {
-			t.Errorf("%s: %v", id, c.NotCovered(p))
+			Change: tf.Change{Actions: []string{"create"}, After: map[string]any{"member": "serviceAccount:" + id + "@proj-1.iam.gserviceaccount.com", "role": "roles/logging.logWriter"}, AfterUnknown: map[string]any{}}}}}); len(c.NotCovered(p, nil)) != 0 {
+			t.Errorf("%s: %v", id, c.NotCovered(p, nil))
 		}
 	}
 }

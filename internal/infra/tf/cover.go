@@ -189,7 +189,13 @@ func APITargets() []string {
 // covered: its stage asks its own typed confirmation. It never allows: iam
 // bindings, iam policies, audit configs, service account keys, an unknown
 // resource type, allUsers and domain members.
-func (c Cover) NotCovered(p *Plan) []string {
+//
+// imports are the import blocks the root's discovery wrote: an import is
+// covered only when its address and ID are exactly one of them (and its ID is
+// in one of the run's projects), so a stale imports.tf.json or a hand edit in
+// the workdir never adopts something discovery did not check. An import is
+// otherwise checked as any other change (an import and update included).
+func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
@@ -228,6 +234,8 @@ func (c Cover) NotCovered(p *Plan) []string {
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in this run's projects")
+		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
