@@ -36,6 +36,21 @@ func TestAPIKeysFakeServesAKeyAndNotFound(t *testing.T) {
 	}
 }
 
+func TestAPIKeysFakeMethodsAndServiceAccount(t *testing.T) {
+	f := NewAPIKeys(t)
+	f.AddKey("fp-1234", "fugaro-web", "Fugaro run sign-in", []string{"identitytoolkit.googleapis.com", "securetoken.googleapis.com"}, false, false)
+	f.SetTargetMethods("fp-1234", "fugaro-web", "securetoken.googleapis.com", "GrantToken")
+	f.BindServiceAccount("fp-1234", "fugaro-web", "x@fp-1234.iam.gserviceaccount.com")
+	svc, _ := apikeys.NewService(context.Background(), option.WithEndpoint(f.URL), option.WithoutAuthentication())
+	k, err := svc.Projects.Locations.Keys.Get("projects/fp-1234/locations/global/keys/fugaro-web").Do()
+	if err != nil || k.ServiceAccountEmail != "x@fp-1234.iam.gserviceaccount.com" || len(k.Restrictions.ApiTargets) != 2 {
+		t.Fatalf("%v %+v", err, k)
+	}
+	if ts := k.Restrictions.ApiTargets; len(ts[0].Methods) != 0 || ts[1].Service != "securetoken.googleapis.com" || len(ts[1].Methods) != 1 || ts[1].Methods[0] != "GrantToken" {
+		t.Errorf("targets %+v %+v", ts[0], ts[1])
+	}
+}
+
 func TestFirebaseDBFakeInstanceAttributes(t *testing.T) {
 	f := NewFirebaseDB(t)
 	f.AddInstance("fp-1234", "https://a.example")

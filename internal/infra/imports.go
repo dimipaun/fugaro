@@ -67,6 +67,12 @@ const (
 	importTagMoverRole       importKind = "tag mover role"
 	importSchedulerSA        importKind = "scheduler account"
 	importLogBucket          importKind = "log bucket"
+	// The Firebase root's singletons (DiscoverFirebase), whose create fails
+	// once they exist.
+	importFirebaseDB importKind = "Realtime Database instance"
+	importAPIKey     importKind = "web API key"
+	importSignerSA   importKind = "token signer"
+	importMinterRole importKind = "token minter role"
 )
 
 // importTable is each kind's address and import ID, with {project},
@@ -90,6 +96,10 @@ var importTable = map[importKind]struct{ to, id string }{
 	importTagMoverRole:       {TagMoverRoleAddress, "projects/{project}/roles/{name}"},
 	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
 	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
+	importFirebaseDB:         {"module.firebase.google_firebase_database_instance.this", "projects/{project}/locations/{region}/instances/{name}"},
+	importAPIKey:             {"module.firebase.google_apikeys_key.web", "projects/{project}/locations/global/keys/{name}"},
+	importSignerSA:           {"module.firebase.google_service_account.signer", "projects/{project}/serviceAccounts/{name}"},
+	importMinterRole:         {"module.firebase.google_project_iam_custom_role.token_minter", "projects/{project}/roles/{name}"},
 }
 
 // newImport is the import of a resource of kind k.

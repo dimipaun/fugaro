@@ -53,6 +53,33 @@ func (f *APIKeys) AddKey(project, id, displayName string, targets []string, othe
 	f.keys[name] = k
 }
 
+// SetTargetMethods restricts the API target service of the key id of
+// project (AddKey made it) to methods.
+func (f *APIKeys) SetTargetMethods(project, id, service string, methods ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := f.keys["projects/"+project+"/locations/global/keys/"+id]
+	restrictions, _ := k["restrictions"].(map[string]any)
+	ts, _ := restrictions["apiTargets"].([]map[string]string)
+	var out []map[string]any
+	for _, t := range ts {
+		m := map[string]any{"service": t["service"]}
+		if t["service"] == service {
+			m["methods"] = methods
+		}
+		out = append(out, m)
+	}
+	restrictions["apiTargets"] = out
+}
+
+// BindServiceAccount binds the key id of project (AddKey made it) to the
+// service account email, as an authenticating key is.
+func (f *APIKeys) BindServiceAccount(project, id, email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys["projects/"+project+"/locations/global/keys/"+id]["serviceAccountEmail"] = email
+}
+
 func (f *APIKeys) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 	m := apiKeyRE.FindStringSubmatch(r.URL.Path)
 	if r.Method != http.MethodGet || m == nil {
