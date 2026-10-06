@@ -80,9 +80,10 @@ The `fugaro.yaml` parser is strict, and job images carry a baked-in `fugaro` bin
 1. Merge and release the version that adds the field.
 2. Upgrade the CLI; run `fugaro init` once per installation. This only publishes the shared file. No repository changes.
 3. Rebuild each repository's image (`fugaro image build`), baking in the new binary.
-4. Run `fugaro init --repo` in each checkout to add the line; commit and merge it. `init --repo` warns when the repository's current image predates the field and says to rebuild first.
+4. Every teammate's CLI and every CI job or pin that runs `fugaro` against the repository (validate, doctor --plugin --strict, run) must be on the new release BEFORE the gcp_project line is merged: older versions refuse the key as unknown (the parser is strict).
+5. Run `fugaro init --repo` in each checkout to add the line; commit and merge it. `init --repo` warns when the repository's current image predates the field and says to rebuild first, and says the same of teammates' CLIs and CI pins when it offers the line.
 
-Until step 4 nothing changes for teammates; a checkout without the line gets the clear "add this line" error and can use `init` as today.
+Until step 5 nothing changes for teammates; a checkout without the line gets the clear "add this line" error and can use `init` as today.
 
 ## 10. Tests
 

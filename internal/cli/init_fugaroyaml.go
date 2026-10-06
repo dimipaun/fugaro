@@ -191,7 +191,7 @@ func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly
 	}
 	if changed {
 		fmt.Fprintf(r.w, "%s\n%s", path, lineDiff(string(old), string(out)))
-		addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: gcp_project: %s\n", path, id)
+		addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: gcp_project: %s (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n", path, id)
 		switch {
 		case planOnly:
 			fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
@@ -221,11 +221,11 @@ func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly
 
 // Warning texts of warnOldImages.
 func oldImageWarning(repo, wf string) string {
-	return fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro image build --repo %s --workflow %s BEFORE merging this change", repo, wf, repo, wf)
+	return fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro image build --repo %s --workflow %s before you merge a change that adds gcp_project", repo, wf, repo, wf)
 }
 
 func unknownImageWarning(repo, wf, why string) string {
-	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so run fugaro image build --repo %s --workflow %s BEFORE merging this change", repo, wf, why, repo, wf)
+	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so run fugaro image build --repo %s --workflow %s before you merge a change that adds gcp_project", repo, wf, why, repo, wf)
 }
 
 // warnOldImages says which workflows' job images predate the field (or have

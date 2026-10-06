@@ -101,10 +101,11 @@ The release that adds `gcp_project:` to `fugaro.yaml` needs an ordered rollout, 
 1. Merge and release the version that adds the field (check `gcpProjectFieldSince` above).
 2. Upgrade the CLI and run `fugaro init` once per installation (default-named runs bucket only). It publishes the shared file and changes no repository.
 3. Rebuild each repository's image: `fugaro image build --repo <repo> --workflow <workflow>`, which bakes in the new binary.
-4. In each checkout, run `fugaro init --repo` to add the `gcp_project:` line (confirm the diff), then commit and merge it. `init --repo` warns, naming the build command, while the repository's current image predates the field.
-5. Check it: in a fresh clone with an empty config and cache directory, `fugaro doctor` shows the `shared-config` line ([gcp-live-checklist.md](gcp-live-checklist.md) Check 28).
+4. Every teammate's CLI and every CI job or pin that runs `fugaro` against the repository (validate, doctor --plugin --strict, run) must be on the new release BEFORE the gcp_project line is merged: older versions refuse the key as unknown.
+5. In each checkout, run `fugaro init --repo` to add the `gcp_project:` line (confirm the diff), then commit and merge it. `init --repo` warns, naming the build command, while the repository's current image predates the field.
+6. Check it: in a fresh clone with an empty config and cache directory, `fugaro doctor` shows the `shared-config` line ([gcp-live-checklist.md](gcp-live-checklist.md) Check 28).
 
-Until step 4 nothing changes for teammates: a checkout without the line gets the clear "add this line" error and can use `fugaro init` as today. Teammate-facing description: "Teammates: no setup" in [gcp-setup.md](gcp-setup.md).
+Until step 5 nothing changes for teammates: a checkout without the line gets the clear "add this line" error and can use `fugaro init` as today. Teammate-facing description: "Teammates: no setup" in [gcp-setup.md](gcp-setup.md).
 
 ## Verifying a release
 

@@ -155,7 +155,7 @@ func readYAML(t *testing.T, dir string) string {
 // Exact texts of what the stage prints.
 func diffText(path string) string { return path + "\n  + gcp_project: fugaro-aurora\n" }
 func addLineText(path string) string {
-	return "to let teammates use this installation without setup, add this line to " + path + ": gcp_project: fugaro-aurora\n"
+	return "to let teammates use this installation without setup, add this line to " + path + ": gcp_project: fugaro-aurora (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n"
 }
 func updatedText(path string) string {
 	return "Updated " + path + " with gcp_project. Review it with git diff and commit it like any change.\n"
@@ -363,7 +363,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.HasPrefix(got, "warning: could not read the build record of acme/app workflow app (unknown image age): ") || strings.Contains(got, "the job image of") ||
-		!strings.HasSuffix(got, "run fugaro image build --repo acme/app --workflow app BEFORE merging this change\n") {
+		!strings.HasSuffix(got, "run fugaro image build --repo acme/app --workflow app before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }
