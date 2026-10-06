@@ -595,7 +595,7 @@ func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, e
 	c, err := infra.NewClients(ctx, gcpOptions(lc),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
 			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler,
-			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase})
+			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase, APIKeys: lc.Endpoints.APIKeys})
 	if err != nil {
 		return nil, remote(err)
 	}
