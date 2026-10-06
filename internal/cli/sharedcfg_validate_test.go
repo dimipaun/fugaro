@@ -141,6 +141,15 @@ func TestParseSharedRefusals(t *testing.T) {
 		{"base image with an overlong tag", func(s string) string {
 			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:"+strings.Repeat("t", 129), 1)
 		}, "base_images.web-node"},
+		{"base image with a dot-dot tag", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:..", 1)
+		}, "base_images.web-node"},
+		{"base image with a leading dash tag", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:-x", 1)
+		}, "base_images.web-node"},
+		{"base image with a leading dot tag", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:.x", 1)
+		}, "base_images.web-node"},
 		{"base image registry itself", func(s string) string {
 			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", 1)
 		}, "base_images.web-node"},

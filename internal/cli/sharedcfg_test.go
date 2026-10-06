@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -413,5 +414,58 @@ func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
 	}
 	if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
 		t.Errorf("published anyway: %v", err)
+	}
+}
+
+// TestPublishSharedOversizeMergeFallsBackToLocal: a valid published object
+// just under the cap (a writer bloated model_prices) would push every merge
+// over it; the publisher then replaces it with this machine's view instead
+// of failing for good.
+func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	pub, err := localcfg.Parse([]byte(publishedWithOtherRepo))
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, two := 1.0, 2.0
+	pub.ModelPrices = map[string]localcfg.ModelPrice{}
+	size := func() []byte {
+		d, err := pub.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	for i := 0; len(size()) <= localcfg.SharedMaxBytes-150; i++ {
+		pub.ModelPrices["claude-sonnet-"+strconv.Itoa(i)+"-0"] = localcfg.ModelPrice{InputPerM: &one, OutputPerM: &two}
+	}
+	// One more entry, its key lengthened until the file is within 40 bytes
+	// of the cap: every merge with this machine's repos goes over.
+	var data []byte
+	for l := 1; l < 100; l++ {
+		key := "claude-sonnet-" + strings.Repeat("a", l)
+		pub.ModelPrices[key] = localcfg.ModelPrice{InputPerM: &one, OutputPerM: &two}
+		if data = size(); len(data) > localcfg.SharedMaxBytes-40 {
+			break
+		}
+		delete(pub.ModelPrices, key)
+	}
+	if len(data) <= localcfg.SharedMaxBytes-40 || len(data) > localcfg.SharedMaxBytes {
+		t.Fatalf("fixture is %d bytes", len(data))
+	}
+	writePublished(t, dir, string(data))
+	lc := publishable(t)
+	var warned []string
+	written, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) })
+	if err != nil || !written {
+		t.Fatalf("written=%v err=%v", written, err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "too large to merge") || !strings.Contains(warned[0], "replacing it with this machine's view") {
+		t.Errorf("warnings = %q", warned)
+	}
+	got, _ := os.ReadFile(sharedObjectPath(dir))
+	if len(got) > localcfg.SharedMaxBytes || strings.Contains(string(got), "claude-sonnet-0-0") || !strings.Contains(string(got), "acme/app") {
+		t.Errorf("published %d bytes:\n%.400s", len(got), got)
 	}
 }

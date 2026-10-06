@@ -416,7 +416,7 @@ func (s *imagesStage) Apply(ctx context.Context, env initflow.Env) (initflow.Out
 		changed = changed || res.Changed
 		done = append(done, p)
 	}
-	if err := s.record(done); err != nil {
+	if err := s.record(ctx, done); err != nil {
 		return initflow.Outcome{}, err
 	}
 	if !changed {
@@ -470,7 +470,7 @@ func (s *imagesStage) confirmReplace(pl []planned) error {
 // re-reading the file the earlier stages wrote, and prints the digest each
 // tag resolved to. The history image is named by the installation, not
 // recorded. A recorded mirrored image newer than this CLI's is kept.
-func (s *imagesStage) record(pl []planned) error {
+func (s *imagesStage) record(ctx context.Context, pl []planned) error {
 	r := s.e.r
 	want := map[string]planned{}
 	for _, p := range pl {
@@ -510,7 +510,13 @@ func (s *imagesStage) record(pl []planned) error {
 	}
 	// The stage's own confirmation covered the copy; the config line it
 	// records is shown as a diff like every config write.
-	return r.writeLocalConfig(&next, s.e.path, old, true)
+	if err := r.writeLocalConfig(&next, s.e.path, old, true); err != nil {
+		return err
+	}
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	return nil
 }
 
 // reviewLine is the images stage's line of the run's review screen: what it

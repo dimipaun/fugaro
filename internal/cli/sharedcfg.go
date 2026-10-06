@@ -77,6 +77,14 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 	if err != nil {
 		return false, err
 	}
+	if len(data) > localcfg.SharedMaxBytes && published != nil {
+		// A writer bloated the published object (model_prices) to just under
+		// the cap, so every merge goes over: replace it with the local view.
+		warn("the published shared config was too large to merge; replacing it with this machine's view")
+		if data, err = localcfg.MergeShared(nil, src).Marshal(); err != nil {
+			return false, err
+		}
+	}
 	if len(data) > localcfg.SharedMaxBytes {
 		return false, fmt.Errorf("the shared config is %d bytes, over the %d byte limit", len(data), localcfg.SharedMaxBytes)
 	}
@@ -222,7 +230,7 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 func baseImageRE(host string) *regexp.Regexp {
 	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
 	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
-		component + `(?:/` + component + `)*` + `(?::[A-Za-z0-9_.-]{1,128})?(?:@sha256:[0-9a-f]{64})?$`)
+		component + `(?:/` + component + `)*` + `(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?(?:@sha256:[0-9a-f]{64})?$`)
 }
 
 // sharedTopLevel checks the YAML's shape, which fugaro init's Marshal
