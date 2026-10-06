@@ -10,10 +10,12 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -24,56 +26,101 @@ import (
 const gcpProjectFieldSince = "0.4.0"
 
 var (
-	projectLineRE    = regexp.MustCompile(`^project:\s`)
-	gcpProjectLineRE = regexp.MustCompile(`^gcp_project:`)
-	versionPrefixRE  = regexp.MustCompile(`^v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})`)
+	// A top-level project: line that is safe to insert after: a plain or
+	// quoted scalar on one line, then at most a trailing comment. A block
+	// scalar (> |), a flow collection, an anchor, a tag or a quote that does
+	// not close on the line do not match.
+	projectLineRE = regexp.MustCompile(`^project:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s"'>|\[\]{}&*!#%@` + "`" + `,][^#]*?)[ \t]*(?:#.*)?$`)
+	// Any line that is a top-level project: key at all.
+	projectKeyRE = regexp.MustCompile(`^["']?project["']?[ \t]*:`)
+	// Any line that looks like a top-level gcp_project key, quoted or not.
+	gcpProjectKeyRE = regexp.MustCompile(`^["']?gcp_project["']?[ \t]*:`)
+	versionPrefixRE = regexp.MustCompile(`^v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})`)
 )
+
+// byHandError is an edit setGCPProjectLine will not make: the file's shape
+// leaves no safe insertion point, or the result would not read back as
+// intended. The line is the user's to add.
+type byHandError struct{ reason, id string }
+
+func (e *byHandError) Error() string {
+	return e.reason + "; fugaro.yaml is not edited: add this line to it by hand, at the top level: " + e.line()
+}
+
+func (e *byHandError) line() string { return "gcp_project: " + e.id }
 
 // setGCPProjectLine inserts gcp_project: id on the line after the top-level
 // project: line, leaving every other byte as it is. It is a no-op when the
-// file already holds id, and an error when it holds anything else (a
-// reviewed value is never rewritten) or id is not a GCP project ID.
+// file already holds id (in any quoting), and an error when it holds
+// anything else (a reviewed value is never rewritten), id is not a GCP
+// project ID, or the project: line is not a simple one-line scalar. The
+// result is parsed again and must read back with no new problems, the same
+// project and the new gcp_project; otherwise nothing is edited (*byHandError).
 func setGCPProjectLine(data []byte, id string) (out []byte, changed bool, err error) {
 	if !config.GCPProjectRE.MatchString(id) {
 		return nil, false, fmt.Errorf("%q is not a GCP project ID", id)
 	}
+	byHand := func(format string, args ...any) error {
+		return &byHandError{reason: fmt.Sprintf(format, args...), id: id}
+	}
 	cur, err := config.GCPProjectOf(data)
 	if err != nil {
-		return nil, false, err
+		return nil, false, byHand("fugaro.yaml cannot be read for gcp_project (%v)", err)
 	}
 	if cur == id {
 		return data, false, nil
 	}
+	if cur != "" {
+		return nil, false, fmt.Errorf("fugaro.yaml has gcp_project: %s, not %s: not rewritten; change it by hand if that is intended", cur, id)
+	}
 	lines := bytes.SplitAfter(data, []byte("\n"))
 	at := -1
 	for i, l := range lines {
+		t := bytes.TrimRight(l, "\r\n")
 		switch {
-		case gcpProjectLineRE.Match(l):
-			if cur != "" {
-				return nil, false, fmt.Errorf("fugaro.yaml has gcp_project: %s, not %s: not rewritten; change it by hand if that is intended", cur, id)
+		case gcpProjectKeyRE.Match(t):
+			return nil, false, byHand("fugaro.yaml has a gcp_project: line with no usable value")
+		case at < 0 && projectKeyRE.Match(t):
+			if !projectLineRE.Match(t) {
+				return nil, false, byHand("the project: line is not a simple one-line value")
 			}
-			return nil, false, errors.New("fugaro.yaml has a gcp_project: line with no usable value: fix or remove it, then rerun")
-		case at < 0 && projectLineRE.Match(l):
+			if i+1 < len(lines) {
+				next := lines[i+1]
+				if rest := bytes.TrimLeft(next, " \t"); len(rest) < len(next) && len(bytes.TrimSpace(rest)) > 0 && rest[0] != '#' {
+					return nil, false, byHand("the project: value continues on the next line")
+				}
+			}
 			at = i
 		}
 	}
 	if at < 0 {
-		return nil, false, errors.New("fugaro.yaml has no top-level project: line to put gcp_project: after")
+		return nil, false, byHand("fugaro.yaml has no top-level project: line to put it after")
 	}
 	l := lines[at]
-	eol := "\n"
+	var ins []byte
+	var eol string
 	switch {
 	case bytes.HasSuffix(l, []byte("\r\n")):
 		eol = "\r\n"
-	case !bytes.HasSuffix(l, []byte("\n")): // the last line, unterminated
-		lines[at] = append(slices.Clone(l), '\n')
-		out = bytes.Join(lines[:at+1], nil)
-		return append(out, []byte("gcp_project: "+id)...), true, nil
+		ins = []byte("gcp_project: " + id + eol)
+	case bytes.HasSuffix(l, []byte("\n")):
+		eol = "\n"
+		ins = []byte("gcp_project: " + id + eol)
+	default: // the last line, unterminated: the new line is unterminated too
+		ins = []byte("\ngcp_project: " + id)
 	}
-	ins := []byte("gcp_project: " + id + eol)
 	out = bytes.Join(lines[:at+1], nil)
 	out = append(out, ins...)
 	out = append(out, bytes.Join(lines[at+1:], nil)...)
+	// Read it back: the file must mean what it did, plus the one line.
+	_, before := config.Parse(data)
+	cfg, after := config.Parse(out)
+	oldProject, _ := config.ProjectOf(data)
+	newProject, perr := config.ProjectOf(out)
+	got, gerr := config.GCPProjectOf(out)
+	if cfg == nil || len(after) != len(before) || perr != nil || newProject != oldProject || gerr != nil || got != id {
+		return nil, false, byHand("the edited file would not read back as intended")
+	}
 	return out, true, nil
 }
 
@@ -109,18 +156,22 @@ func parseNumeric(v string) ([]int, bool) {
 	return n, true
 }
 
-// anchor writes the checkout's gcp_project: line (the trust anchor shared
-// config is found from) and warns when a job image would refuse it. It runs
-// under the stage's existing authorization for writes to the checkout.
-// planOnly prints what it would do and writes nothing.
-func (s *repositoryStage) anchor(ctx context.Context, planOnly bool) error {
+// anchor puts the checkout's gcp_project: line (the trust anchor shared
+// config is found from) into fugaro.yaml, after the plugin stage's pattern:
+// the diff, then --yes writes, a terminal asks [y/N], and anything else
+// leaves the file alone and prints the line to add. The repository stage's
+// typed authorization (an unlisted repository) covers onboarding, not an edit
+// to a committed file, so this keeps its own single prompt. planOnly prints
+// what it would do and writes nothing. It also warns when a job image
+// predates the field.
+func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly bool) error {
 	e, tg := s.e, s.tg
 	if tg == nil || e.lc == nil || e.lc.GCPProject == "" {
 		return nil
 	}
-	w := e.r.w
-	if want := "fugaro-runs-" + e.lc.GCPProject; e.lc.RunsBucketName() != want {
-		fmt.Fprintf(w, "note: gcp_project is not written to fugaro.yaml: shared config needs the default runs-bucket name %s (this installation's is %q)\n", want, e.lc.RunsBucketName())
+	r, id := e.r, e.lc.GCPProject
+	if want := "fugaro-runs-" + id; e.lc.RunsBucketName() != want {
+		fmt.Fprintf(r.w, "note: gcp_project is not written to fugaro.yaml: shared config needs the default runs-bucket name %s (this installation's is %q)\n", want, e.lc.RunsBucketName())
 		return nil
 	}
 	path := filepath.Join(tg.root, "fugaro.yaml")
@@ -128,26 +179,59 @@ func (s *repositoryStage) anchor(ctx context.Context, planOnly bool) error {
 	if err != nil {
 		return err
 	}
-	out, changed, err := setGCPProjectLine(old, e.lc.GCPProject)
-	if err != nil {
+	out, changed, err := setGCPProjectLine(old, id)
+	var bh *byHandError
+	switch {
+	case errors.As(err, &bh):
+		fmt.Fprintf(r.w, "note: %s\n", bh.Error())
+		s.warnOldImages(ctx)
+		return nil
+	case err != nil:
 		return userErr("%v", err)
 	}
-	if !changed {
-		return nil
-	}
-	fmt.Fprintf(w, "%s\n%s", path, lineDiff(string(old), string(out)))
-	if planOnly {
-		fmt.Fprintln(w, "  (plan only: fugaro.yaml is not written)")
-	} else if err := writeFileAtomic(path, out); err != nil {
-		return err
-	} else {
-		fmt.Fprintf(w, "Updated %s with gcp_project. Review it with git diff and commit it like any change.\n", path)
+	if changed {
+		fmt.Fprintf(r.w, "%s\n%s", path, lineDiff(string(old), string(out)))
+		addLine := fmt.Sprintf("to let teammates use this installation without setup, add this line to %s: gcp_project: %s\n", path, id)
+		switch {
+		case planOnly:
+			fmt.Fprintln(r.w, "  (plan only: fugaro.yaml is not written)")
+		case env.Yes:
+			fmt.Fprintln(r.w, "  confirmed by --yes")
+		case env.Interactive:
+			fmt.Fprintf(r.w, "Write this to %s? [y/N]: ", path)
+			line, _ := r.in.ReadString('\n') // an ended input is a no
+			if a := strings.ToLower(strings.TrimSpace(line)); a != "y" && a != "yes" {
+				fmt.Fprint(r.w, addLine)
+				changed = false
+			}
+		default:
+			fmt.Fprint(r.w, addLine)
+			changed = false
+		}
+		if changed && !planOnly {
+			if err := writeFileAtomic(path, out); err != nil {
+				return err
+			}
+			fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change.\n", path)
+		}
 	}
 	s.warnOldImages(ctx)
 	return nil
 }
 
-// warnOldImages says which workflows' job images predate the field.
+// Warning texts of warnOldImages.
+func oldImageWarning(repo, wf string) string {
+	return fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro image build --repo %s --workflow %s BEFORE merging this change", repo, wf, repo, wf)
+}
+
+func unknownImageWarning(repo, wf, why string) string {
+	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so run fugaro image build --repo %s --workflow %s BEFORE merging this change", repo, wf, why, repo, wf)
+}
+
+// warnOldImages says which workflows' job images predate the field (or have
+// no record), or whose record could not be read. It is said every run while
+// the line is, or is about to be, in the file: the owner merges it only after
+// the rebuild.
 func (s *repositoryStage) warnOldImages(ctx context.Context) {
 	e, tg := s.e, s.tg
 	slug, err := task.Slug(tg.cfg.Git.Provider, tg.repo)
@@ -159,23 +243,24 @@ func (s *repositoryStage) warnOldImages(ctx context.Context) {
 		defer b.Close()
 	}
 	for _, wf := range slices.Sorted(maps.Keys(tg.cfg.Workflows)) {
-		old, unknown := true, ""
-		if err == nil {
-			data, _, rerr := b.Read(ctx, imagecheck.RecordKey(slug, wf))
-			switch {
-			case errors.Is(rerr, blobx.ErrNotExist):
-			case rerr != nil:
-				unknown = " (its build record could not be read: " + oneLineCLI(rerr.Error()) + ")"
-			default:
-				if rec, perr := imagecheck.ParseRecord(data); perr == nil {
-					old = imagePredates(rec.FugaroVersion, gcpProjectFieldSince)
-				}
-			}
-		} else {
-			unknown = " (the build records could not be read: " + oneLineCLI(err.Error()) + ")"
+		if err != nil {
+			e.r.warn(unknownImageWarning(tg.repo, wf, oneLineCLI(err.Error())))
+			continue
 		}
-		if old {
-			e.r.warn(fmt.Sprintf("the job image of %s workflow %s was built before fugaro.yaml could carry gcp_project%s: runs and the daily image check will refuse the file until the image is rebuilt; run fugaro image build --repo %s --workflow %s BEFORE merging this change", tg.repo, wf, unknown, tg.repo, wf))
+		data, _, rerr := b.Read(ctx, imagecheck.RecordKey(slug, wf))
+		switch {
+		case errors.Is(rerr, blobx.ErrNotExist):
+			e.r.warn(oldImageWarning(tg.repo, wf))
+		case rerr != nil:
+			e.r.warn(unknownImageWarning(tg.repo, wf, oneLineCLI(rerr.Error())))
+		default:
+			rec, perr := imagecheck.ParseRecord(data)
+			switch {
+			case perr != nil:
+				e.r.warn(unknownImageWarning(tg.repo, wf, oneLineCLI(perr.Error())))
+			case imagePredates(rec.FugaroVersion, gcpProjectFieldSince):
+				e.r.warn(oldImageWarning(tg.repo, wf))
+			}
 		}
 	}
 }
