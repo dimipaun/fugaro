@@ -49,6 +49,7 @@ Homebrew warns that a cask using a `postflight` quarantine removal is deprecated
 - **Run `scripts/bump-plugin-version.sh X.Y.Z` and commit it** (through a PR to main). The release gate refuses a tag whose plugin version or any skill header differs from it, and a repository pinned to the tag would otherwise load a plugin that disagrees with the binary.
 - **Check that each new ghcr.io package is public** (see "Making the image packages public"): a package published from this public repository inherits its visibility (it did for v0.2.0), so this is only a check; `verify-public` passing is the proof.
 - **Turn on tag protection and immutable releases (the repository owner's setting; Fugaro does not change repository settings).** A git tag is mutable, and the plugin pin and the image tags are anchored to it, so: add a GitHub ruleset that restricts updates and deletions of `v*` tags (Settings, Rules, Rulesets, target tags `v*`, restrict updates and deletions), and enable immutable releases. Without them, anyone who can push tags can move `vX.Y.Z` after users pin to it.
+- **Verify `gcpProjectFieldSince`** (`internal/cli/init_fugaroyaml.go`, currently the placeholder `"0.4.0"`) equals the release that ships the `gcp_project:` field. `init --repo` compares a job image's build record with it to warn about images that predate the field; a wrong value warns too late or too early.
 - **Refresh `internal/pricing`'s `checkedAt` date** after checking the vendor's price page (`fugaro budget prices` warns that the table is older than 90 days: the table was last checked 2026-09-30, so it warns from 2026-12-29).
 - The binary prints the commit it was built from (`fugaro doctor --plugin`, `fugaro update-skills`) with the one line that checks the tag: `git ls-remote https://github.com/dimipaun/fugaro 'refs/tags/vX.Y.Z^{}' 'refs/tags/vX.Y.Z'` must print that commit: on the `^{}` line for an annotated tag, on the only line for a lightweight tag (the `^{}` pattern alone prints nothing for one, which is why both are given). Run it once after tagging.
 
@@ -92,6 +93,18 @@ Only needed if `scripts/release.sh` can't run (no `gh`, or something it doesn't 
 5. Watch both workflows (`gh run watch`), then verify.
 
 Pull requests that touch `.goreleaser.yaml`, `release.yml` or the bump script run `goreleaser check` as the `check` job of `release.yml`. It is not a required check.
+
+## Rolling out the shared installation config
+
+The release that adds `gcp_project:` to `fugaro.yaml` needs an ordered rollout, because job images carry a baked-in `fugaro` binary that reads the repository's `fugaro.yaml` from the base branch (and the daily image check reads it too), and that parser refuses unknown keys. **Do not add `gcp_project:` to a repository's `fugaro.yaml` before its image is rebuilt with the new binary**: runs and the daily check refuse the file until it is. Put this order in the release notes ([design/shared-config.md](design/shared-config.md) §9):
+
+1. Merge and release the version that adds the field (check `gcpProjectFieldSince` above).
+2. Upgrade the CLI and run `fugaro init` once per installation (default-named runs bucket only). It publishes the shared file and changes no repository.
+3. Rebuild each repository's image: `fugaro image build --repo <repo> --workflow <workflow>`, which bakes in the new binary.
+4. In each checkout, run `fugaro init --repo` to add the `gcp_project:` line (confirm the diff), then commit and merge it. `init --repo` warns, naming the build command, while the repository's current image predates the field.
+5. Check it: in a fresh clone with an empty config and cache directory, `fugaro doctor` shows the `shared-config` line ([gcp-live-checklist.md](gcp-live-checklist.md) Check 28).
+
+Until step 4 nothing changes for teammates: a checkout without the line gets the clear "add this line" error and can use `fugaro init` as today. Teammate-facing description: "Teammates: no setup" in [gcp-setup.md](gcp-setup.md).
 
 ## Verifying a release
 

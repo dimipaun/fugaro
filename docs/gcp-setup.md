@@ -347,6 +347,35 @@ M4's single build account, `fugaro-build`, could read every repository's secrets
 2. **⚠ CONFIRM** disable it: `gcloud iam service-accounts disable fugaro-build@<gcp-project>.iam.gserviceaccount.com`. This is reversible with `enable`.
 3. A week later, **⚠ CONFIRM** delete it: `gcloud iam service-accounts delete fugaro-build@<gcp-project>.iam.gserviceaccount.com`.
 
+## Teammates: no setup
+
+A launcher or operator in a checkout of an onboarded repository can run `fugaro run`, `ls`, `diagnose` and the other cloud commands on a fresh machine with no local config and no `fugaro init`. Design: [design/shared-config.md](design/shared-config.md).
+
+**The shared file.** `fugaro/config.yaml` in the runs bucket (`gs://fugaro-runs-<gcp-project>`) holds the installation-wide, non-secret part of the project config: name, GCP project, region, runs bucket, registry host, base images, build settings, log view, scheduler region, the budget block (mode, database URL, Firebase project, API key, token signer, per-run default), model and compute prices, `watch`, `max_parallel`, and the repositories (provider, workflows, GitHub App ID). Launchers and operators already hold `objectAdmin` on that bucket, so reading it needs no new grant. It never holds the `terraform:` section, `user:`, `endpoints:`, `providers:`, a repository's `base_branch` (the checkout's `fugaro.yaml` names it) or any secret.
+
+**Who publishes it.** An operator: `fugaro init` publishes it after it writes the local config (so do `init --repo` and `init --base`), and `fugaro init --publish-config` publishes it and stops. It merges into what is published, so a machine that lacks another's repositories does not erase them. To republish after changing the local config or adding a repository, run `fugaro init --publish-config`; to remove an entry (an offboarded repository, a price) or clear a value, edit `fugaro/config.yaml` by hand (`gcloud storage cp` it down, edit, copy it up). Only installations whose runs bucket is the default name `fugaro-runs-<gcp-project>` publish; others get a warning.
+
+**The `gcp_project:` line.** The checkout's `fugaro.yaml` carries `gcp_project: <id>` next to `project:`. It is the trust anchor: the GCP project is never guessed. `fugaro init --repo` writes it (diff first; `--yes` writes, a terminal asks `[y/N]`, otherwise it prints the line to add by hand); commit it like any change. **Rebuild the repository's image first** ("Rolling out", [release.md](release.md)): a job image built before the field existed refuses a `fugaro.yaml` that has it, and `init --repo` warns while that is so. Without the line, or `--gcp-project <id>`, the error says which line to add.
+
+**The cache.** The first command reads the marker and the file and caches the validated config under `$XDG_CACHE_HOME/fugaro/shared-config/<project>.json` (else `~/.cache`). It is used as is for 24 hours; after that the bucket is read again. If the bucket cannot be reached at all, a cache up to 7 days old is used with a warning that says how old it is, and after that the command fails. Any answer from the server, a refused access above all, never falls back to the cache.
+
+**A local config wins.** `--config`, `$FUGARO_CONFIG` and `~/.config/fugaro/projects/<project>.yaml` always take precedence, and nothing is fetched then. `validate`, `config example` and `init` never fetch. A command that would write the project config refuses when it is the shared one: run `fugaro init` to make your own.
+
+**`fugaro doctor`** prints a `shared-config` line when the config came from the shared file (generation and age of the cache entry), or a `shared-config-differs` line when you have a local config and the published one differs, naming the fields.
+
+**When it refuses.** Every refusal names the field. None is repaired.
+
+| Message says | What it means, and what to do |
+|---|---|
+| add `gcp_project: <id>` next to `project:` | the checkout has no anchor: add the line, or ask whoever onboarded the repository to run `fugaro init --repo` |
+| no Fugaro installation at gs://... / the installation ... is project X, not Y | `gcp_project:` is wrong, or names another project's installation: fix the line |
+| has not published a shared config | an operator runs `fugaro init --publish-config` |
+| no access to gs://... | you hold neither the launcher nor the operator role: ask an operator |
+| the shared config has a bad `<field>` / carries `<section>:` / is not valid | the object was tampered with, edited wrongly or written by another fugaro version: ask an operator to run `fugaro init` again (it replaces a refused object, with a warning); update `fugaro` if versions differ |
+| `budget.firebase_project` is not `gcp_project` | a separate Firebase project: run `fugaro init` (adopt) for your own local config |
+| over the 64 KiB limit | an operator runs `fugaro init` again, or edits the object |
+| `--gcp-project` contradicts this checkout | the flag and `fugaro.yaml` disagree: drop the flag or fix the line |
+
 ## Offboarding a repository
 
 There is no offboarding command. **Only step 1 is implemented.** Steps 2 and 3 are an unsupported outline: no fugaro command produces a removal or destroy plan (`init --repo` always plans the whole `fugaro.yaml`), so they mean running `terraform` by hand in the workdir, outside fugaro's guard and environment allowlist, and `PrepareWorkdir` overwrites hand edits the next time `init --repo` runs. Every resource that could lose data is protected on purpose: jobs by `deletion_protection`, and secrets, the runs bucket and every registry by `prevent_destroy`, which makes a destroy plan fail at plan time until you edit the module.
@@ -355,7 +384,7 @@ There is no offboarding command. **Only step 1 is implemented.** Steps 2 and 3 a
 2. **Keep the secrets.** They hold values Terraform never saw, and `prevent_destroy` would refuse to delete them. Take them out of the repository's state first, with a `removed { from = … lifecycle { destroy = false } }` block for each secret in the repository's working directory (`$XDG_STATE_HOME/fugaro/terraform/<gcp-project>/repos/<slug>`), so that Terraform forgets them and leaves them in Secret Manager. Delete them yourself later with `gcloud secrets delete` if you want them gone.
 3. **Destroy the rest, by hand.** The repository's registry has `prevent_destroy`, so this needs the module edited first, and nothing checks the plan for you: read it line by line. The registry, its images, the job accounts, the build account and the check job and schedule go with it, and the runs bucket keeps the repository's `runs/`, `cache/` and `builds/` objects until their lifecycle rules delete them (`builds/` never expires: delete it by hand).
 
-Finish with `fugaro init --repo --forget` if any state remains, and remove the repository from the local config's `repos`. Steps 2 and 3 haven't been exercised live.
+Finish with `fugaro init --repo --forget` if any state remains, and remove the repository from the local config's `repos`. The repository stays in the published shared config until you edit `fugaro/config.yaml` by hand (a later `init --publish-config` merges, so it does not remove it). Steps 2 and 3 haven't been exercised live.
 
 ## What it costs, and what it never does
 

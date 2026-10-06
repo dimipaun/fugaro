@@ -1,6 +1,6 @@
 # Shared installation config (design)
 
-*Status: 2026-10-06, design approved in conversation with the user (parts 1 to 3), written spec awaiting review. Background: [m11-setup-and-skills.md](m11-setup-and-skills.md) (adopt, `init`), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (project identity, the marker), [../gcp-setup.md](../gcp-setup.md). Code references below are from a read of the tree at v0.3.1 and are to be re-checked by the plan's first task.*
+*Status: 2026-10-06, built on branch `design-shared-config`; the task numbers are those of [../plans/2026-10-06-shared-config.md](../plans/2026-10-06-shared-config.md). Rulings made during review are folded into the sections below, and §13 lists the accepted limits. Background: [m11-setup-and-skills.md](m11-setup-and-skills.md) (adopt, `init`), [m9-budget-and-dashboard.md](m9-budget-and-dashboard.md) (project identity, the marker), [../gcp-setup.md](../gcp-setup.md). The text below says what the code does.*
 
 ## 1. Problem and goal
 
@@ -26,13 +26,23 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 
 ## 4. The published file
 
-**Writer.** `fugaro init` writes `fugaro/config.yaml` to the runs bucket at the end of any run that writes the local config (after `writeConfig`), from the final merged config, through `Marshal` of a published subset. `fugaro init --publish-config` does only that step. No Terraform change: Terraform does not own this object. An installation that predates this feature gets the file the next time `init` runs against it.
+**Writer.** `fugaro init` writes `fugaro/config.yaml` to the runs bucket at the end of any run that writes the local config (after `writeConfig`), including `init --repo` and `init --base`, through `Marshal` of a published subset. `fugaro init --publish-config` does only that step. No Terraform change: Terraform does not own this object. An installation that predates this feature gets the file the next time `init` runs against it.
 
-**Included** (installation-wide, not secret): `version`, `name`, `gcp_project`, `region`, `runs_bucket`, `registry_host`, `base_images`, `build`, `log_view`, `scheduler_region`, the `budget` block (`mode`, `rtdb_url`, `firebase_project`, `firebase_api_key`, `token_signer`, per-run default), `model_prices`, `compute_prices`, `providers`, `watch`, `max_parallel`, and `repos` (provider, base branch, workflows, GitHub App ID). The four budget connection values are documented as not secret.
+**Publishing is a merge.** The publisher first reads the object that is there (through `ParseShared`, against the local config's own name, GCP project and bucket) and merges the local view into it, so a machine that lacks what another onboarded does not erase it: maps (`repos`, `base_images`, `model_prices`, `compute_prices`) are unioned with the local entry winning on a key clash; scalars and pointers take the local value when non-zero, else the existing one; `version`, `name`, `gcp_project` and `runs_bucket` always come from the local config. An existing object of another installation is ignored with a warning. One that is unparseable, over 64 KiB or refused by `ParseShared` is replaced, with a warning. If the merged output is over 64 KiB (a writer bloated a price table below the cap) the publisher falls back to the local view alone, with a warning. The publisher then runs `ParseShared` on the exact bytes it is about to write, and never writes a file teammates would refuse (it warns instead).
 
-**Excluded:** the whole `terraform:` section (state bucket, launchers, operators, budget admins, alert email, cleanup flags), `user:`, and `endpoints:` (test and fake overrides). These are owner-only or per-person.
+**Only for the default runs bucket.** Teammates find the bucket from `gcp_project:` alone (`fugaro-runs-<gcp_project>`), so the publisher, and the `gcp_project:` line that `init --repo` writes (§8), apply only to installations whose runs bucket has that name. A custom `--runs-bucket` installation does not publish and gets a warning.
 
-**Format and size.** YAML through the same strict `localcfg.Parse` (unknown keys refused). The read cap is 64 KiB, larger than the marker's 4 KiB because `repos` grows.
+**Included** (installation-wide, not secret): `version`, `name`, `gcp_project`, `region`, `runs_bucket`, `registry_host`, `base_images`, `build`, `log_view`, `scheduler_region`, the `budget` block (`mode`, `rtdb_url`, `firebase_project`, `firebase_api_key`, `token_signer`, per-run default), `model_prices`, `compute_prices`, `watch`, `max_parallel`, and `repos` (provider, workflows, GitHub App ID). The four budget connection values are documented as not secret.
+
+**Excluded:** the whole `terraform:` section (state bucket, launchers, operators, budget admins, alert email, cleanup flags), `user:`, and `endpoints:` (test and fake overrides), which are owner-only or per-person; `bucket_url` and the legacy `registry`, which are derived; and three things that are not published and are **refused when read**, each for a reason:
+
+- `providers:`: a hostile `base_url` would send model traffic and provider data to another host, and no host can be pinned. Runs take providers from the repository's reviewed `fugaro.yaml`; a teammate who needs overrides sets them locally.
+- each repository's `base_branch`: it would override the reviewed checkout's `git.base_branch` in the image build, `init` and `run`, so a writer could get an operator's image build to clone an unreviewed branch. Consumers use the checkout's value, else `main`.
+- `build.service_account`: deprecated.
+
+`build.region` and `build.machine_type` are validated when any local config is loaded (a region pattern; `^[A-Za-z0-9_-]{1,40}$`), because they reach a Cloud Build resource path.
+
+**Format and size.** YAML through the same strict `localcfg.Parse` (unknown keys refused), after a shape check: one document holding a mapping, with no merge keys (`<<`), anchors, aliases, explicit tags or repeated keys at any depth. Without that check a merge key could carry a forbidden section past the key checks. The read cap is 64 KiB, larger than the marker's 4 KiB because `repos` grows.
 
 ## 5. Reading and validating
 
@@ -43,22 +53,25 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 2. Read `fugaro/config.yaml`, at most 64 KiB, through `blobx`, and `Parse` it strictly.
 3. Cross-check and refuse (never repair) on any failure, naming the field and telling the user to ask an operator to re-run `fugaro init`:
    - `name`, `gcp_project` and `runs_bucket` equal the marker and the bucket the file was read from;
-   - `registry_host` is `<region>-docker.pkg.dev/<gcp_project>`, and every `base_images` entry is under it;
+   - `registry_host` is `<region>-docker.pkg.dev/<gcp_project>`, and every `base_images` entry is `<registry_host>/fugaro-base/<path>` with an optional tag and `@sha256:` digest, in the Docker reference grammar (no `..` or `.` path component);
    - `log_view` is under `projects/<gcp_project>/`;
+   - `budget.firebase_project` equals `gcp_project`. An installation with a separate Firebase project is refused with "run fugaro init (adopt)": the checkout anchors only one project, and an internally consistent triple (database, signer, project) of a different project would otherwise pass. The same-project layout is the supported default;
    - the budget block passes the existing Firebase output validation (`CheckFirebaseOutputsFor`): the database host derives from `firebase_project`, and `token_signer` is `fugaro-token-signer@<firebase_project>.iam.gserviceaccount.com`;
-   - no `endpoints:`, `user:` or `terraform:` section is present.
+   - no `endpoints:`, `user:`, `terraform:`, `bucket_url:`, `registry:` or `providers:` section, no `build.service_account`, and no repository `base_branch`.
+
+Error messages quote hostile text (`%q`) so a writer cannot inject terminal escapes or newlines. A 403 from the bucket is an error ("no access"), never "absent": `blobx.Read` and `ReadMax` return it as itself, not as `ErrNotExist`.
 
 ## 6. Cache
 
-One file per project in the user's cache directory (not the config directory), holding the validated config, the object's generation, the bucket and the last check time. Within a day it is used as is. After a day: the object is re-read (at most 64 KiB) and its generation compared with the cached one (unchanged only refreshes the stamp); `blobx` has no conditional-read primitive, and the extra read is small. If the refresh fails for lack of network, the cache is used for up to 7 days with a warning, then the command fails. If the marker or object is gone, or the new content fails validation, the cache is dropped and the command fails. The existing name-check cache (`localcfg/checkcache.go`) is the pattern to follow, including its location (see §12).
+One file per project in the user's cache directory (not the config directory), holding the validated config, the object's generation, the bucket and the last check time. Within a day it is used as is. After a day: the object is re-read (at most 64 KiB) and its generation compared with the cached one (unchanged only refreshes the stamp); `blobx` has no conditional-read primitive, and the extra read is small. If the refresh fails for lack of network, the cache is used for up to 7 days with a warning, then the command fails. The cache is dropped only when the entry itself fails validation, or when the marker or object has vanished or been refused; a cancel, a 5xx, a 403 or an unreachable bucket past the allowance fails the command and leaves the entry in place. The offline fallback applies only when the bucket cannot be reached at all (no route, DNS failure, timeout): any answer from the server, a refusal above all, means no fallback, so a revoked or tampered installation does not keep working from the cache. The existing name-check cache (`localcfg/checkcache.go`) is the pattern to follow, including its location (see §12).
 
 ## 7. Selection and commands
 
-The fallback lives at the one choke point, `localcfg.Select` (`select.go`), before it returns `ErrMissing` (`selector.run`, `named`); every cloud command reaches it through `selectNamed`, `selectFrom`, `selectProject`. `validate` and `config example` (`selectedProjectConfig`) stay offline and never fetch. `fugaro doctor` gains one information line: the config came from the shared file (generation, age), or a local file overrides it and whether it differs from the shared one. `init`'s adopt flow is unchanged; operators still adopt through Terraform state.
+The fallback lives at the one choke point, `localcfg.Select` (`select.go`), before it returns `ErrMissing` (`selector.run`, `named`); every cloud command reaches it through `selectNamed`, `selectFrom`, `selectProject`. `validate` and `config example` (`selectedProjectConfig`) stay offline and never fetch, and so does `init`, which only writes a local config (a command that would write the selected config refuses when it is the shared one). `--gcp-project` must agree with the checkout's `gcp_project:` where the shared config is looked up. `fugaro doctor` gains one information line: the config came from the shared file (generation, age), or a local file overrides it and whether it differs from the shared one. `init`'s adopt flow is unchanged; operators still adopt through Terraform state.
 
 ## 8. The `gcp_project:` line
 
-`config.Config` (`internal/config/config.go`) gains an optional `gcp_project:` (validated as a GCP project ID) beside `project:`, because its parser refuses unknown keys. `config.ProjectOf` (the lenient scan) gets a sibling that reads it, and `localcfg.Checkout` carries it. The runner ignores the value. `fugaro init --repo` writes the line into the checkout's `fugaro.yaml` (the diff shown first, as for the plugin settings); the owner commits it with the repo's other changes, and on EdgeWeb the user merges.
+`config.Config` (`internal/config/config.go`) gains an optional `gcp_project:` (validated as a GCP project ID) beside `project:`, because its parser refuses unknown keys. `config.ProjectOf` (the lenient scan) gets a sibling that reads it, and `localcfg.Checkout` carries it. The runner ignores the value. `fugaro init --repo` writes the line into the checkout's `fugaro.yaml` only for a default-named runs bucket (§4), after the plugin stage's pattern: the diff is shown first; `--yes` writes; a terminal is asked `[y/N]`; non-interactive without `--yes` writes nothing and prints the line for the user to add by hand; `--plan-only` writes nothing. It inserts only after a simple single-line top-level `project:` scalar and refuses other shapes (quoted or block-scalar `gcp_project:`, multi-line values, a different existing `gcp_project:`), printing the line instead; it re-parses its own edit and refuses it unless the project and `gcp_project` are as intended; CRLF files keep their line endings. The owner commits it with the repo's other changes, and on EdgeWeb the user merges. `init --repo` also warns, naming the `fugaro image build` command, while the repository's current image predates the field (§9), and also when the line is already present.
 
 ## 9. Compatibility hazard and rollout
 
@@ -87,3 +100,17 @@ About six tasks: (1) the `gcp_project:` field and its parser; (2) the publisher 
 ## 12. Open items
 
 None blocking. To decide in the plan: the 64 KiB cap and the 7-day offline allowance are starting values, and the cache location follows `localcfg/checkcache.go` (`getenv`, `XDG_CACHE_HOME`, else `$HOME/.cache`), not `os.UserCacheDir`.
+
+## 13. Known limits and accepted residual risks
+
+Found in review and not fixed, on purpose:
+
+- **Zero values cannot clear a published scalar.** The merge takes the local value only when it is non-zero, so removing a scalar locally leaves the published one. Edit or delete the object by hand.
+- **Offboarding is not published.** A repository removed from the local config stays in the published `repos` until the object is edited, or republished by hand.
+- **Version skew.** A legitimate object written by a newer or older fugaro (a key this binary does not know, or one it now refuses) fails `ParseShared`, so the publisher replaces it, dropping other machines' repositories and prices, and teammates on that binary are refused with "ask an operator to run fugaro init again".
+- **A writer can relax policy for people who use the shared file.** Anyone holding `objectAdmin` on the runs bucket can set `budget.mode: off`, `per_run_usd` or `allowed_models`. A launcher can already launch with `--no-budget-check`, so this adds no capability, but teammates without a local config inherit it.
+- **A foreign `firebase_api_key`** can only cause denial of service.
+- **Repository keys such as `../..`** are accepted; no sink that builds a path from one is known.
+- **A fixed object can outlive its fix in a cache** for up to 24 hours, by design (§6).
+- **Custom runs-bucket names are unsupported for auto-fetch.** The anchor is written only for default names because a stranger could create `fugaro-runs-<project>` for a custom-bucket installation, and a teammate who passed that project with `--gcp-project` would read the stranger's object (it must still pass every check of §5, but a squatter controls the marker too).
+- **The publish convention check and the write differ in source.** The check compares `RunsBucketName()`; the write goes to `lc.BucketURL()`. A config whose `bucket_url` does not match its runs bucket publishes where teammates do not look.
