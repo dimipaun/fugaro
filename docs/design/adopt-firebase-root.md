@@ -1,6 +1,6 @@
 # Adopting an existing Firebase root (design)
 
-*Status: 2026-10-06, design proposal, awaiting review. Nothing here is built. Background: [m11-setup-and-skills.md](m11-setup-and-skills.md) (one confirmation per run, `tf.Cover`), [../gcp-setup.md](../gcp-setup.md) ("Retrying the migration later": what the installation root imports again), [v1.md](v1.md). Code references are to `main` at `bfee1e8`.*
+*Status: 2026-10-06, design proposal; the three open questions are decided (see Decisions); awaiting the user's approval to implement. Nothing here is built. Background: [m11-setup-and-skills.md](m11-setup-and-skills.md) (one confirmation per run, `tf.Cover`), [../gcp-setup.md](../gcp-setup.md) ("Retrying the migration later": what the installation root imports again), [v1.md](v1.md). Code references are to `main` at `bfee1e8`.*
 
 ## 1. Problem
 
@@ -44,7 +44,7 @@ It has no label, but its *data* carries the mark: `/fugaro/mark`, checked by `DB
 
 - In another location or under another ID: refused (a default instance cannot move, and only one is allowed). The message says the Firebase project cannot host the backend as the module defines it.
 - `DISABLED` or `DELETED`: refused with the console step to re-enable or the wait.
-- Empty and unmarked (Firebase or the console created it): `DB.Check` passes it today, and the database step writes our mark right after the apply. Proposed: adopt it (open question 1).
+- Empty and unmarked (Firebase or the console created it): adopted (decision 1, §9). `DB.Check` passes it today, the import is shown in the plan like any other and needs the stage's confirmation (covered by the run's typed confirmation when the plan is covered, else its own typed name), and the database step writes our mark right after the apply. An unmarked instance that holds data is still refused by `DB.Check`.
 
 The module comment on the instance ("an adopted project keeps it") is wrong today, since the create fails when the instance exists; this change makes it true.
 
@@ -66,7 +66,17 @@ Mark: display name `Fugaro token signer` and description `Signs the custom token
 
 - no user-managed key (`serviceAccounts.keys.list` with `keyTypes=USER_MANAGED` is empty): the module never creates one, and one someone holds signs tokens without IAM;
 - not disabled;
-- its own IAM policy grants nothing but the `fugaroTokenMinter` role of this project (open question 2 for members of that role who are not this run's launchers or operators).
+- its own IAM policy grants nothing but the `fugaroTokenMinter` role of this project, and only to this run's launchers and operators (decision 2, §9). Any other member of that role (for example a person of the old installation) is refused, since each could mint run tokens. The message names every such member and the command that removes it, one line each:
+
+  ```
+  token signer fugaro-token-signer@<fp>.iam.gserviceaccount.com grants fugaroTokenMinter to members who are not this installation's launchers or operators:
+    user:old@example.com
+  Each could mint run tokens. Remove them, then rerun fugaro init --firebase <fp>:
+    gcloud iam service-accounts remove-iam-policy-binding fugaro-token-signer@<fp>.iam.gserviceaccount.com --project <fp> --member=user:old@example.com --role=projects/<fp>/roles/fugaroTokenMinter
+  Or add them as launchers or operators if they should keep it.
+  ```
+
+  A grant of any other role on the signer is refused the same way, with the same removal command for that role.
 
 ### 3.4 The token minter role
 
@@ -84,7 +94,7 @@ Mark: title `Fugaro token minter` (as `installationSingletons` matches the insta
 2. **Import blocks.** Four new rows in `importTable`, and `infra.WriteImports(fwd.Root, im)` writes `imports.tf.json` next to the root's tfvars, as `prepare` does for the installation. Import blocks, not `terraform import`: they are part of the saved plan, so what is shown and confirmed is what is applied, and they need no extra apply. An empty discovery writes an empty file, which replaces an earlier run's imports.
 3. **Already managed.** Terraform skips an import block whose address is already in the state (the installation root relies on this: it writes the runs bucket's import on every run). Discovery still drops addresses that `TF.ShowState` lists, so the summary and the notes are exact and a state entry with another ID is never shadowed. A rerun after adoption therefore writes an empty `imports.tf.json` and plans `No changes`.
 4. **Plan, summary, confirmation.** `applyRoot` is unchanged: `tf.Summary` already prints `Plan: N to import, ...` and an `import <address> (<id>)` line per import, and `CountPlan` counts them. The confirmation text (`what` in `initFirebase`) gains the imported resources by name, for example `applies 4 imports, 12 creates, 0 updates to the Firebase project fugaro-belong (adopting the existing Realtime Database fugaro-belong-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role; ...)`. Notes from discovery print before the plan, as `installRoot` prints `im.Notes`.
-5. **What the classifier allows.** `tf.Guard` is unchanged: no delete and no replace without `--allow-delete`; an import never needs one. `tf.Cover` today accepts any import whose ID is in one of the run's projects (`Cover.importOK`). The proposal tightens that: `Cover` gets the discovery's address-to-ID list, and an import is covered only when its address and ID are exactly one discovery wrote. An `import and update` is covered under the existing attribute and custom-role checks (`Cover.customRole`, `Cover.attributes`), which already run on imports; in practice discovery's shape checks leave only cosmetic updates. When the Firebase project is not verified as Fugaro's (`firebaseVerified`), the plan is not covered, as today, and the stage asks its own typed name, after the summary that lists the imports.
+5. **What the classifier allows.** `tf.Guard` is unchanged: no delete and no replace without `--allow-delete`; an import never needs one. `tf.Cover` today accepts any import whose ID is in one of the run's projects (`Cover.importOK`). This is tightened for every Terraform root, not only the Firebase root (decision 3, §9): an import is covered only when its address and ID are exactly one that root's discovery wrote. The `Cover` the review builds once per run (`initEngine` in `internal/cli/init_review.go`) holds no per-root data, so each confirmation passes its own discovery's list along with the plan: `installRoot` (`DiscoverInstallation`'s), the repository stage (`DiscoverRepo`'s) and `applyRoot` (`DiscoverFirebase`'s), through `notCovered` and `notCoveredFirebase`. `importOK`'s project check stays as a second condition. An import not on the list (a stale `imports.tf.json`, a hand edit in the workdir) makes the plan not covered, so the stage asks its own typed name. An `import and update` is covered under the existing attribute and custom-role checks (`Cover.customRole`, `Cover.attributes`), which already run on imports; in practice discovery's shape checks leave only cosmetic updates. When the Firebase project is not verified as Fugaro's (`firebaseVerified`), the plan is not covered, as today, and the stage asks its own typed name, after the summary that lists the imports.
 6. **Partial failure and resume.** An import block either lands in the state with the apply or not at all; a failed apply leaves a state with some resources, and the rerun's discovery finds the rest (step 3 skips what is managed). A create that fails because the resource appeared between discovery and apply (or because an API was disabled at discovery, which reads as absent) fails as today, and the rerun imports it. No step deletes or rewrites anything outside the state.
 
 ## 5. Security
@@ -92,6 +102,9 @@ Mark: title `Fugaro token minter` (as `installationSingletons` matches the insta
 - **Squatting.** Names, titles and descriptions are public (they are in this repository), so they only stop accidental adoption; someone with IAM rights in the FP can copy them. The checks that protect the backend are the ones on shape: the signer holds no user-managed key and no grant but ours (§3.3), the minter role's permissions are exactly the pinned ones (§3.4), the key's restrictions are exactly the module's (§3.2), and the database holds no data that is not marked as this project's (§3.1, `DB.Check`). A resource that fails any of them is refused with what was found and what was expected, never imported, never changed.
 - **Verified, not trusted.** An adopted key's restrictions and an adopted role's permissions are compared before the import, and the plan's attribute checks apply after it. Nothing in the old state is read or trusted: the state bucket the resources were first recorded in may be gone or someone else's.
 - **No secrets read.** Discovery never calls `getKeyString` and never reads key material of the signer (it lists key metadata only). The API key string enters the state as it does for a created key; `CheckFirebaseOutputsFor` still checks the outputs.
+- **Foreign minters.** A signer that lets anyone but this run's launchers and operators mint tokens is refused, with the members named (§3.3); adopting it would hand them run tokens without any review screen showing them.
+- **Empty databases.** An empty, unmarked default instance is adopted (§3.1): it holds nothing to take over, and the import is listed and confirmed. One with data is not.
+- **Imports are allowlisted** in every root's covered plan (§4.5), so a covered confirmation can never adopt something discovery did not check.
 - **IAM members** are not adopted (§3.5); only the four singleton resource types of §3 are imported, at the four exact addresses.
 - **Who may adopt.** The stage needs the same credentials as today; adoption adds read calls only.
 
@@ -109,26 +122,29 @@ With the repository's fakes: `gcpfake` (`IAM.AddRole`, `IAM.SetRolePermissions`,
 |---|---|
 | Clean FP | No imports, empty `imports.tf.json`, plan as today (`TestDiscoverInstallation`'s pattern) |
 | FP with the four resources, unmanaged | Four imports with the exact addresses and IDs; the confirmation text names them |
-| Each squat: role with an extra permission; signer with another description, a user-managed key, or a foreign grant; key with a third API target or a browser restriction; default instance in another region | Refused (exit 1) with found and expected; nothing written, no terraform plan run |
+| Empty, unmarked default instance | Imported; the database step then writes the mark |
+| Each squat: role with an extra permission; signer with another description, a user-managed key, or another role granted on it; key with a third API target or a browser restriction; default instance in another region | Refused (exit 1) with found and expected; nothing written, no terraform plan run |
+| Signer with `fugaroTokenMinter` granted to a member who is not a launcher or operator (and with one who is) | Refused (exit 1); the message names exactly the foreign members, each with its `remove-iam-policy-binding` command; a signer whose minters are all launchers or operators is imported |
 | State already manages some or all | Those addresses are not imported; all managed gives an empty imports file |
 | Rerun after an adopting apply | No imports, `No changes` |
-| `tf.Cover` | An import at an address or with an ID discovery did not write is not covered; a golden `firebase-adopt.plan.json` (from real terraform with import blocks) is covered |
+| `tf.Cover`, every root | An import at an address or with an ID that root's discovery did not write is not covered; the existing goldens (`installation.plan.json`, `repo.plan.json`, `firebase.plan.json`) gain import variants (from real terraform with import blocks: the runs bucket and a role for the installation, a secret and a job account for a repository, the four singletons as `firebase-adopt.plan.json`), each covered with its discovery's list and not covered with the list empty or one ID changed |
+| Call sites | The installation, repository and Firebase confirmations each pass their own discovery's list (a stage test per root with a stale `imports.tf.json` asks its own typed name) |
 | API disabled at discovery | Treated as absent, as `absent` does |
 
 **Live check (sandbox only).** In the sandbox's Firebase project: `terraform state rm` the four addresses from the Firebase root's state (simulating the lost state), run `fugaro init --firebase <fp> --plan-only` (expect `4 to import`, no create of them), then apply, then rerun (expect `No changes`). Then a squat: give the minter role an extra permission by hand, remove it from the state, rerun (expect the refusal), restore.
 
 ## 8. Work breakdown
 
-1. `infra`: `DiscoverFirebase`, the four `importTable` rows, the API Keys client and endpoint, unit tests with new `gcpfake` handlers. *1 day.*
+1. `infra`: `DiscoverFirebase`, the four `importTable` rows, the API Keys client and endpoint, the signer's policy check with the foreign-minter refusal and its message, unit tests with new `gcpfake` handlers. *1.25 days.*
 2. `cli`: call it in `initFirebase`, write `imports.tf.json` in the Firebase workdir, drop managed addresses via `ShowState`, print notes, name the imports in the confirmation; `faketerraform` stage tests. *0.5 day.*
-3. `tf.Cover`: the import allowlist (address and ID) for the Firebase root; the golden adopt plan. *0.5 day.*
-4. Docs: `gcp-setup.md` (what `init --firebase` adopts and refuses), the module comment on the instance, a live-checklist entry. *0.25 day.*
-5. Live check on the sandbox (§7). *0.25 day.*
+3. `tf.Cover`, all roots: the import allowlist (address and ID) in `cover.go`, passed from each root's discovery at the installation, repository and Firebase confirmation call sites; import variants of the installation, repository and Firebase golden plans, generated with real terraform; stage tests per root. *1 day.*
+4. Docs: `gcp-setup.md` (what `init --firebase` adopts and refuses, the foreign-minter fix), the module comment on the instance, the covered-plan rule in `m11-setup-and-skills.md`, a live-checklist entry. *0.25 day.*
+5. Live check on the sandbox (§7), including a foreign minter on the signer. *0.25 day.*
 
-About 2.5 days, one PR.
+About 3.25 days, one PR (task 3 can ship first on its own if wanted).
 
-## 9. Open questions
+## 9. Decisions (2026-10-06, by the user)
 
-1. **An empty, unmarked default database instance** (created by Firebase or the console, not by Fugaro): adopt it, as `DB.Check` already accepts an empty database, or refuse until it carries our mark? Proposed: adopt.
-2. **Extra minters on an adopted signer:** members holding `fugaroTokenMinter` on it who are not this run's launchers or operators (for example, people of the old installation). Refuse until removed, or adopt with a warning listing them? Each could still mint run tokens. Proposed: refuse.
-3. **Scope of the import allowlist in `tf.Cover`:** tighten it for the Firebase root only, or for the installation and repository roots too in the same change? Proposed: all roots, since discovery already knows every import.
+1. **An empty default Realtime Database instance with no Fugaro mark is adopted:** shown as an import in the plan and covered by the typed confirmation. It holds nothing to take over, and the database step marks it right away (§3.1).
+2. **A signer whose `fugaroTokenMinter` members include anyone who is not this run's launchers or operators is refused,** naming those members and how to remove them: each could mint run tokens, and no review screen would show them (§3.3).
+3. **The `tf.Cover` rule "accept only imports whose address and ID discovery wrote" applies to all Terraform roots** (installation, repository and Firebase): every root already has a discovery, and a covered confirmation should never adopt what discovery did not check (§4.5).
