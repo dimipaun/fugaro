@@ -136,6 +136,22 @@ if [ "$local_main" != "$origin_main" ]; then
   exit 1
 fi
 
+# From 0.4.0 on a release needs its hand-written Highlights, committed on main
+# before the release PR: GoReleaser reads docs/releases/vX.Y.Z.md from the
+# tag's tree (docs/releases/README.md). Read from origin/main, which the
+# checks above tie to the working tree.
+if scripts/release-policy.sh highlights-required "$version"; then
+  highlights="docs/releases/$tag.md"
+  if ! git cat-file -e "origin/main:$highlights" 2>/dev/null; then
+    echo "$highlights does not exist on main, and releases from 0.4.0 need it (the Highlights section of the release notes). Write it (see docs/releases/README.md), merge it to main through a PR, then re-run scripts/release.sh $version" >&2
+    exit 1
+  fi
+  if [ -z "$(git show "origin/main:$highlights" | tr -d '[:space:]')" ]; then
+    echo "$highlights on main is empty; write the Highlights (see docs/releases/README.md), merge it, then re-run scripts/release.sh $version" >&2
+    exit 1
+  fi
+fi
+
 if ! command -v gh >/dev/null 2>&1; then
   echo "gh is not installed; see https://cli.github.com" >&2
   exit 1

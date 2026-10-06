@@ -36,6 +36,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: scripts/release-gate.sh "$TAG"
+      # The same Highlights check as release.yml: a tag release.yml refuses
+      # must not leave images published behind it (the tag cannot be moved).
+      - name: Highlights file
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: scripts/release-policy.sh check-highlights "${TAG#v}"
       - name: Pick the version
         id: version
         run: |
