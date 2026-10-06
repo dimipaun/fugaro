@@ -1297,3 +1297,41 @@ func TestCheckJobSpecKeysCoverReads(t *testing.T) {
 		t.Fatalf("CheckJobSpec encodes as %s, tf/cover.go reads registry and base_images", b)
 	}
 }
+
+// TestRepoSpecBaseBranchFallsBackToTheCheckout: a project config whose
+// repo entry has no base_branch (every shared config: it is never
+// published) builds and checks the checkout's reviewed git.base_branch,
+// never an empty branch.
+func TestRepoSpecBaseBranchFallsBackToTheCheckout(t *testing.T) {
+	in := sandboxInputs(t, m5Additions)
+	r := in.LC.Repos["acme/sandbox"]
+	r.BaseBranch = ""
+	in.LC.Repos["acme/sandbox"] = r
+	want := in.Cfg.Git.BaseBranch
+	if want == "" {
+		t.Fatal("the checkout has no base branch")
+	}
+	rs, err := Repo(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rs.BaseBranch != want || rs.Check == nil {
+		t.Fatalf("base branch %q, want the checkout's %q", rs.BaseBranch, want)
+	}
+	var spec CheckJobSpec
+	if err := json.Unmarshal([]byte(rs.Check.Env[CheckSpecEnv]), &spec); err != nil {
+		t.Fatal(err)
+	}
+	if spec.BaseBranch != want {
+		t.Errorf("check spec base branch %q, want %q", spec.BaseBranch, want)
+	}
+	// A checkout that names none gets fugaro.yaml's default, main.
+	in.Cfg.Git.BaseBranch = ""
+	data, _ := os.ReadFile("../../deploy/sandbox/fugaro.yaml")
+	cfg := parseCfg(t, []byte(strings.Replace(string(data), "base_branch: "+want, "", 1)))
+	in.Cfg = cfg
+	rs, err = Repo(in)
+	if err != nil || rs.BaseBranch == "" {
+		t.Errorf("no base_branch anywhere: %q, %v (config base_branch %q)", rs.BaseBranch, err, cfg.Git.BaseBranch)
+	}
+}

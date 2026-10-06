@@ -43,6 +43,10 @@ func validBranchName(b string) bool {
 	return branchNameRE.MatchString(b) && !badBranchRE.MatchString(b)
 }
 
+// ValidBranchName is validBranchName for the other config files that name
+// a base branch (the local config's repos.<r>.base_branch).
+func ValidBranchName(b string) bool { return validBranchName(b) }
+
 // A workflow secret's variable is mounted into the runner's own
 // environment on the job and into the image build step, so it must not be
 // one that Fugaro sets, or that changes how the runner, git, a shell, the

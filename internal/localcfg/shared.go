@@ -6,10 +6,13 @@ const SharedMaxBytes = 64 << 10
 // Shared is the installation-wide, non-secret part of the config, the part
 // that is published to the runs bucket. It drops what is owner-only
 // (terraform:), personal (user:, endpoints:), derived (bucket_url, the
-// legacy registry) or local-only (providers:, whose base_url is where a
-// key and a repository's code are sent: a teammate configures their own). The receiver is not modified. The copy is shallow: its
-// maps, slices and pointers alias the receiver's, which is safe because the
-// result is only marshalled, and Marshal only reads.
+// legacy registry), deprecated (build.service_account) or local-only:
+// providers:, whose base_url is where a key and a repository's code are
+// sent, and each repo's base_branch, which the checkout's reviewed
+// fugaro.yaml names. The receiver is not modified. The copy is shallow
+// except for repos: its other maps, slices and pointers alias the
+// receiver's, which is safe because the result is only marshalled, and
+// Marshal only reads.
 func (c *Config) Shared() *Config {
 	s := *c
 	s.Terraform = Terraform{}
@@ -18,7 +21,22 @@ func (c *Config) Shared() *Config {
 	s.Bucket = ""
 	s.Registry = ""
 	s.Providers = nil
+	s.Build.ServiceAccount = ""
+	s.Repos = withoutBaseBranches(c.Repos)
 	return &s
+}
+
+// withoutBaseBranches is a copy of repos with every base_branch cleared.
+func withoutBaseBranches(repos map[string]Repo) map[string]Repo {
+	if repos == nil {
+		return nil
+	}
+	out := make(map[string]Repo, len(repos))
+	for k, r := range repos {
+		r.BaseBranch = ""
+		out[k] = r
+	}
+	return out
 }
 
 // SameInstallation reports whether a published object names the same
@@ -30,20 +48,20 @@ func SameInstallation(published, local *Config) bool {
 
 // MergeShared is what to publish when published is what the runs bucket
 // already holds (nil when absent) and local is this machine's config: the
-// shared subset of local, filled in from published so that a machine that
-// lacks what another onboarded does not erase it. Map fields (repos,
-// base_images, model_prices, compute_prices) are unioned, the
-// local entry winning a key clash; scalar and pointer fields take the local
-// value when it is non-zero, else the published one; name, gcp_project,
-// runs_bucket and version always come from local. A published object of
-// another installation (SameInstallation) is ignored. Neither argument is
-// modified.
+// shared subset of local (Shared), filled in from published so that a
+// machine that lacks what another onboarded does not erase it. Map fields
+// (repos, base_images, model_prices, compute_prices) are unioned, the local
+// entry winning a key clash; scalar and pointer fields take the local value
+// when it is non-zero, else the published one; name, gcp_project,
+// runs_bucket and version always come from local. What Shared drops is
+// never taken from published either. A published object of another
+// installation (SameInstallation) is ignored. Neither argument is modified.
 func MergeShared(published, local *Config) *Config {
 	out := local.Shared()
 	if !SameInstallation(published, local) {
 		return out
 	}
-	out.Repos = unionMaps(published.Repos, local.Repos)
+	out.Repos = withoutBaseBranches(unionMaps(published.Repos, out.Repos))
 	out.BaseImages = unionMaps(published.BaseImages, local.BaseImages)
 	out.ModelPrices = unionMaps(published.ModelPrices, local.ModelPrices)
 	out.ComputePrices = unionMaps(published.ComputePrices, local.ComputePrices)
@@ -59,6 +77,7 @@ func MergeShared(published, local *Config) *Config {
 	keep(&out.SchedulerRegion, published.SchedulerRegion)
 	if out.Build == (Build{}) {
 		out.Build = published.Build
+		out.Build.ServiceAccount = ""
 	}
 	if out.Budget == nil {
 		out.Budget = published.Budget

@@ -21,6 +21,5 @@ max_parallel: 7
 repos:
     acme/web:
         provider: github
-        base_branch: main
         workflows:
             - web

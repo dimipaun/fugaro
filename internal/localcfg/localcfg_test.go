@@ -813,3 +813,46 @@ func TestConfigWithEndpointAndAdoptKeysLoads(t *testing.T) {
 		t.Error("a bad cleanup mode was accepted")
 	}
 }
+
+// TestRepoBaseBranchValidated: a repo's base_branch reaches git, Cloud
+// Build and `fugaro run`'s ref, so even a local config refuses a hostile
+// one, by the same rule as fugaro.yaml's git.base_branch.
+func TestRepoBaseBranchValidated(t *testing.T) {
+	for _, ok := range []string{"main", "release/1.2", "dev_x"} {
+		if _, err := Parse([]byte(strings.Replace(sample, "base_branch: main", "base_branch: "+ok, 1))); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{`"--upload-pack=x"`, `"main\n"`, `"a..b"`, `"$(id)"`, `"x y"`, `"\e[31m"`, `".hidden"`, `"main.lock"`, `"/x"`} {
+		_, err := Parse([]byte(strings.Replace(sample, "base_branch: main", "base_branch: "+bad, 1)))
+		if err == nil || !strings.Contains(err.Error(), "base_branch") {
+			t.Errorf("%s: err = %v", bad, err)
+		}
+	}
+	// No base_branch at all is fine (the checkout's is used).
+	if _, err := Parse([]byte(strings.Replace(sample, "base_branch: main, ", "", 1))); err != nil {
+		t.Errorf("no base_branch: %v", err)
+	}
+}
+
+// TestBuildBlockValidated: build.region goes into Cloud Build resource
+// paths and build.machine_type into the build request.
+func TestBuildBlockValidated(t *testing.T) {
+	for _, ok := range []string{"build: { region: us-east5 }", "build: { machine_type: E2_HIGHCPU_32 }", "build: { machine_type: e2-medium }"} {
+		if _, err := Parse([]byte(sample + ok + "\n")); err != nil {
+			t.Errorf("%s refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []struct{ yaml, want string }{
+		{`build: { region: "us-east5/../../../projects/evil-proj/locations/us-east5" }`, "build.region"},
+		{`build: { region: "x?alt=json#" }`, "build.region"},
+		{`build: { region: "US-EAST5" }`, "build.region"},
+		{`build: { machine_type: "E2 HIGHCPU" }`, "build.machine_type"},
+		{`build: { machine_type: "x/../y" }`, "build.machine_type"},
+		{`build: { machine_type: "` + strings.Repeat("A", 41) + `" }`, "build.machine_type"},
+	} {
+		if _, err := Parse([]byte(sample + bad.yaml + "\n")); err == nil || !strings.Contains(err.Error(), bad.want) {
+			t.Errorf("%s: err = %v", bad.yaml, err)
+		}
+	}
+}

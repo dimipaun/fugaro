@@ -18,12 +18,23 @@ func sharedObjectPath(dir string) string {
 	return filepath.Join(dir, filepath.FromSlash(infra.SharedConfigObject))
 }
 
-func TestPublishSharedWritesAndOverwrites(t *testing.T) {
-	f := newCloudFixture(t)
+// publishable is the cloud fixture's config made publishable: the
+// convention runs bucket name and the installation's registry host (the
+// fixture reaches its bucket through bucket_url, which is not published).
+func publishable(t *testing.T) *localcfg.Config {
+	t.Helper()
 	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	lc.RunsBucket = "fugaro-runs-proj-1234"
+	lc.RegistryHost = "us-east5-docker.pkg.dev/proj-1234"
+	return lc
+}
+
+func TestPublishSharedWritesAndOverwrites(t *testing.T) {
+	f := newCloudFixture(t)
+	lc := publishable(t)
 	if err := publishShared(context.Background(), lc); err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +67,7 @@ func TestPublishSharedWritesAndOverwrites(t *testing.T) {
 
 func TestPublishSharedTooLarge(t *testing.T) {
 	newCloudFixture(t)
-	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	lc := publishable(t)
 	lc.LogView = strings.Repeat("x", localcfg.SharedMaxBytes)
 	if err := publishShared(context.Background(), lc); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Errorf("err = %v, want the size limit", err)
@@ -158,12 +166,13 @@ const publishedWithOtherRepo = `version: 1
 name: aurora
 gcp_project: proj-1234
 region: us-east5
-runs_bucket: unused-bucket
+runs_bucket: fugaro-runs-proj-1234
+registry_host: us-east5-docker.pkg.dev/proj-1234
 build:
   machine_type: E2_HIGHCPU_8
 max_parallel: 2
 repos:
-  other/svc: { provider: github, base_branch: main, workflows: [web] }
+  other/svc: { provider: github, workflows: [svc] }
 `
 
 func writePublished(t *testing.T, dir, content string) {
@@ -194,26 +203,23 @@ func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := filepath.Join(f.dir, "runs")
 	writePublished(t, dir, publishedWithOtherRepo)
-	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	lc := publishable(t)
 	lc.Repos = nil // an adopter's config
 	if err := publishShared(context.Background(), lc); err != nil {
 		t.Fatal(err)
 	}
-	if r := publishedRepos(t, dir); len(r) != 1 || r["other/svc"].BaseBranch != "main" {
+	if r := publishedRepos(t, dir); len(r) != 1 || r["other/svc"].Workflows[0] != "svc" {
 		t.Errorf("published repos = %v", r)
 	}
 	// A local repo is added, and wins a clash.
 	lc.Repos = map[string]localcfg.Repo{
-		"other/svc": {Provider: "github", BaseBranch: "dev", Workflows: []string{"web"}},
+		"other/svc": {Provider: "github", BaseBranch: "dev", Workflows: []string{"dev"}},
 		"acme/app":  {Provider: "github", BaseBranch: "main", Workflows: []string{"web"}},
 	}
 	if err := publishShared(context.Background(), lc); err != nil {
 		t.Fatal(err)
 	}
-	if r := publishedRepos(t, dir); len(r) != 2 || r["other/svc"].BaseBranch != "dev" {
+	if r := publishedRepos(t, dir); len(r) != 2 || r["other/svc"].Workflows[0] != "dev" || r["other/svc"].BaseBranch != "" {
 		t.Errorf("published repos = %v", r)
 	}
 }
@@ -221,14 +227,14 @@ func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
 func TestPublishSharedIgnoresAForeignObjectAndWarns(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := filepath.Join(f.dir, "runs")
-	writePublished(t, dir, strings.Replace(publishedWithOtherRepo, "proj-1234", "other-proj", 1))
-	lc, _ := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	writePublished(t, dir, strings.Replace(publishedWithOtherRepo, "gcp_project: proj-1234", "gcp_project: other-proj", 1))
+	lc := publishable(t)
 	lc.Repos = nil
 	var warned []string
-	if err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
 		t.Fatal(err)
 	}
-	if len(warned) != 1 || !strings.Contains(warned[0], "another installation") {
+	if len(warned) != 1 || !strings.Contains(warned[0], "the published shared config was refused (") || !strings.Contains(warned[0], "gcp_project") || !strings.Contains(warned[0], "replacing it") {
 		t.Errorf("warnings = %q", warned)
 	}
 	if r := publishedRepos(t, dir); len(r) != 0 {
@@ -239,7 +245,7 @@ func TestPublishSharedIgnoresAForeignObjectAndWarns(t *testing.T) {
 func TestPublishSharedTreatsABadExistingObjectAsAbsent(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := filepath.Join(f.dir, "runs")
-	lc, _ := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	lc := publishable(t)
 	for name, content := range map[string]string{
 		"unparseable": "this: [is not\n",
 		"oversized":   publishedWithOtherRepo + "# " + strings.Repeat("x", localcfg.SharedMaxBytes) + "\n",
@@ -248,7 +254,7 @@ func TestPublishSharedTreatsABadExistingObjectAsAbsent(t *testing.T) {
 		if err := publishShared(context.Background(), lc); err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
-		if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].BaseBranch != "main" {
+		if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Workflows[0] != "web" {
 			t.Errorf("%s: published repos = %v", name, r)
 		}
 	}
@@ -259,7 +265,7 @@ func TestRepoOnboardingPublishesAndKeepsOtherReposPublished(t *testing.T) {
 	dir := sharedRuns(t)
 	writePublished(t, dir, publishedWithOtherRepo)
 	path := filepath.Join(t.TempDir(), "aurora.yaml")
-	e.lc = &localcfg.Config{Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket}
+	e.lc = &localcfg.Config{Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket, RegistryHost: "us-east5-docker.pkg.dev/" + initProject}
 	cfg, problems := config.Parse([]byte(checkoutYAML("github", "oauth", "aurora", "")))
 	if cfg == nil {
 		t.Fatal(problems)
@@ -269,7 +275,7 @@ func TestRepoOnboardingPublishesAndKeepsOtherReposPublished(t *testing.T) {
 	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
 		t.Fatal(err)
 	}
-	if r := publishedRepos(t, dir); len(r) != 2 || r["acme/app"].BaseBranch != "main" || r["other/svc"].BaseBranch != "main" {
+	if r := publishedRepos(t, dir); len(r) != 2 || r["acme/app"].Provider != "github" || r["other/svc"].Workflows[0] != "svc" {
 		t.Errorf("published repos = %v", r)
 	}
 }
@@ -283,8 +289,8 @@ func TestInitPublishConfigIsInstallationOnlyForRepo(t *testing.T) {
 }
 
 // TestPublishSharedNeverPublishesProviders: providers are local-only; the
-// local ones are not published and published ones (an older publisher's)
-// are not kept.
+// local ones are not published, and a published object carrying some (an
+// older publisher's) is refused and replaced, not merged.
 func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 	f := newCloudFixture(t)
 	dir := filepath.Join(f.dir, "runs")
@@ -294,12 +300,16 @@ func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 		t.Fatalf("fixture: %v", err)
 	}
 	f.appendConfig(t, strings.ReplaceAll(strings.ReplaceAll(block, "openrouter", "local"), "deepseek", "qwen"))
-	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
-	if err != nil || len(lc.Providers) != 1 {
-		t.Fatalf("%v %v", lc, err)
+	lc := publishable(t)
+	if len(lc.Providers) != 1 {
+		t.Fatalf("%v", lc.Providers)
 	}
-	if err := publishShared(context.Background(), lc); err != nil {
+	var warned []string
+	if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
 		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "refused") || !strings.Contains(warned[0], "providers") {
+		t.Errorf("warnings = %q", warned)
 	}
 	got, err := os.ReadFile(sharedObjectPath(dir))
 	if err != nil {
@@ -308,7 +318,100 @@ func TestPublishSharedNeverPublishesProviders(t *testing.T) {
 	if strings.Contains(string(got), "providers") || strings.Contains(string(got), "openrouter") {
 		t.Errorf("providers were published:\n%s", got)
 	}
-	if r := publishedRepos(t, dir); r["other/svc"].BaseBranch != "main" {
-		t.Errorf("the published repos were not kept (was the fixture read as absent?): %v", r)
+	if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].Provider != "github" {
+		t.Errorf("published repos = %v; want only the local acme/app", r)
+	}
+}
+
+// TestPublishSharedRefusesALaunderedObject: a published object that Parse
+// accepts but ParseShared refuses (a tampered signer, a base_branch) is
+// never merged from: it is replaced, with a warning naming why.
+func TestPublishSharedRefusesALaunderedObject(t *testing.T) {
+	budget := "budget:\n  mode: observe\n  rtdb_url: https://evil-proj-default-rtdb.firebaseio.com\n  firebase_project: evil-proj\n  token_signer: fugaro-token-signer@evil-proj.iam.gserviceaccount.com\n"
+	for name, content := range map[string]string{
+		"foreign budget": publishedWithOtherRepo + budget,
+		"base_branch":    strings.Replace(publishedWithOtherRepo, "workflows: [svc]", "base_branch: attacker, workflows: [svc]", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := filepath.Join(f.dir, "runs")
+			if _, err := localcfg.Parse([]byte(content)); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			writePublished(t, dir, content)
+			lc := publishable(t)
+			var warned []string
+			if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+				t.Fatal(err)
+			}
+			if len(warned) != 1 || !strings.Contains(warned[0], "the published shared config was refused (") || !strings.Contains(warned[0], "replacing it") {
+				t.Errorf("warnings = %q", warned)
+			}
+			got, _ := os.ReadFile(sharedObjectPath(dir))
+			if strings.Contains(string(got), "evil-proj") || strings.Contains(string(got), "other/svc") || strings.Contains(string(got), "attacker") {
+				t.Errorf("the refused object was merged:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestPublishSharedSelfCheck: what would be written is checked with
+// ParseShared first; a file teammates would refuse is not published, and
+// what is there stays as it was.
+func TestPublishSharedSelfCheck(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(*localcfg.Config)
+		want   string
+	}{
+		"base image outside the registry": {func(lc *localcfg.Config) {
+			lc.BaseImages = map[string]string{"web-node": "ghcr.io/dimipaun/fugaro-web-node:1"}
+		}, "base_images.web-node"},
+		"separate Firebase project": {func(lc *localcfg.Config) {
+			lc.Budget = &localcfg.Budget{Mode: "observe", RTDBURL: "https://my-fp1-default-rtdb.firebaseio.com", FirebaseProject: "my-fp1", TokenSigner: "fugaro-token-signer@my-fp1.iam.gserviceaccount.com"}
+		}, "separate Firebase project"},
+		"registry host of another region": {func(lc *localcfg.Config) { lc.RegistryHost = "us-west1-docker.pkg.dev/proj-1234" }, "registry_host"},
+		"non-default runs bucket":         {func(lc *localcfg.Config) { lc.RunsBucket = "my-own-runs" }, "default runs bucket name"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			dir := filepath.Join(f.dir, "runs")
+			writePublished(t, dir, publishedWithOtherRepo)
+			lc := publishable(t)
+			tc.mutate(lc)
+			var warned []string
+			if _, err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+				t.Fatal(err)
+			}
+			if len(warned) != 1 || !strings.Contains(warned[0], "not publishing the shared config: ") || !strings.Contains(warned[0], tc.want) {
+				t.Errorf("warnings = %q, want one naming %q", warned, tc.want)
+			}
+			if got, _ := os.ReadFile(sharedObjectPath(dir)); string(got) != publishedWithOtherRepo {
+				t.Errorf("the object was rewritten:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestInitPublishConfigSaysSoWhenItDoesNotPublish: a refused self-check
+// warns and is never reported as published.
+func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
+	r := newInitRig(t)
+	dir := sharedRuns(t)
+	data, err := os.ReadFile(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.cfg, []byte(strings.Replace(string(data), "runs_bucket: fugaro-runs-proj-1234", "runs_bucket: my-own-runs", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := executeStdin(t, "", "init", "--publish-config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "published the shared config") || !strings.Contains(out, "not publishing the shared config") || !strings.Contains(out, "default runs bucket name") {
+		t.Errorf("output:\n%s", out)
+	}
+	if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("published anyway: %v", err)
 	}
 }

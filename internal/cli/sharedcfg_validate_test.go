@@ -32,7 +32,6 @@ max_parallel: 20
 repos:
     belong/edgeweb:
         provider: bitbucket
-        base_branch: main
         workflows:
             - web
 `
@@ -112,6 +111,39 @@ func TestParseSharedRefusals(t *testing.T) {
 			s = strings.Replace(s, "    token_signer: fugaro-token-signer@fugaro-belong.iam.gserviceaccount.com\n", "", 1)
 			return strings.Replace(s, "firebase_project: fugaro-belong", "firebase_project: evil-proj", 1)
 		}, "firebase_project"},
+		{"repo base_branch", func(s string) string {
+			return strings.Replace(s, "provider: bitbucket", "provider: bitbucket\n        base_branch: attacker-branch", 1)
+		}, "base_branch"},
+		{"repo base_branch, hostile", func(s string) string {
+			return strings.Replace(s, "provider: bitbucket", "provider: bitbucket\n        base_branch: \"--upload-pack=x\\n\\e[31m\"", 1)
+		}, "base_branch"},
+		{"build service account", func(s string) string {
+			return strings.Replace(s, "    machine_type: E2_HIGHCPU_8", "    machine_type: E2_HIGHCPU_8\n    service_account: evil@evil-proj.iam.gserviceaccount.com", 1)
+		}, "build.service_account"},
+		{"build region path", func(s string) string {
+			return strings.Replace(s, "    machine_type: E2_HIGHCPU_8", "    machine_type: E2_HIGHCPU_8\n    region: us-east5/../../../projects/evil-proj/locations/us-east5", 1)
+		}, "build.region"},
+		{"build machine type", func(s string) string {
+			return strings.Replace(s, "machine_type: E2_HIGHCPU_8", "machine_type: \"x?alt=json#\"", 1)
+		}, "build.machine_type"},
+		{"base image outside fugaro-base", func(s string) string {
+			return strings.Replace(s, "fugaro-belong/fugaro-base/fugaro-web-node", "fugaro-belong/other-repo/fugaro-web-node", 1)
+		}, "base_images.web-node"},
+		{"base image with a .. segment", func(s string) string {
+			return strings.Replace(s, "fugaro-base/fugaro-web-node", "fugaro-base/../evil/fugaro-web-node", 1)
+		}, "base_images.web-node"},
+		{"base image with a stray @", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node@evil.example:0.3.1", 1)
+		}, "base_images.web-node"},
+		{"base image with a bad digest", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node@sha256:abc", 1)
+		}, "base_images.web-node"},
+		{"base image with an overlong tag", func(s string) string {
+			return strings.Replace(s, "fugaro-web-node:0.3.1", "fugaro-web-node:"+strings.Repeat("t", 129), 1)
+		}, "base_images.web-node"},
+		{"base image registry itself", func(s string) string {
+			return strings.Replace(s, "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base", 1)
+		}, "base_images.web-node"},
 		{"unknown key", func(s string) string { return s + "bogus: 1\n" }, "bogus"},
 		{"oversize", func(s string) string { return s + "#" + strings.Repeat("x", localcfg.SharedMaxBytes) + "\n" }, "64 KiB"},
 		// What the table of the design does not name, but a hostile
@@ -149,6 +181,9 @@ func TestParseSharedRefusals(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "fugaro init") {
 				t.Errorf("the refusal does not say to run fugaro init again: %v", err)
+			}
+			if strings.ContainsAny(err.Error(), "\n\x1b\a") {
+				t.Errorf("the refusal is not one clean line: %q", err.Error())
 			}
 		})
 	}
@@ -193,5 +228,52 @@ func TestParseSharedAcceptsWhatPublishWrites(t *testing.T) {
 	}
 	if _, err := ParseShared(data, sharedAnchor); err != nil {
 		t.Errorf("the published file is refused: %v\n%s", err, data)
+	}
+}
+
+// TestParseSharedQuotesHostileText: text the writer controls (keys,
+// tags, values that Parse or yaml.v3 echo) never reaches the terminal raw.
+func TestParseSharedQuotesHostileText(t *testing.T) {
+	for name, extra := range map[string]string{
+		"unknown key, CSI":     "\"\\e[31m\": 1\n",
+		"unknown key, OSC":     "\"\\e]0;x\\a\": 1\n",
+		"repeated key":         "\"\\e]0;x\\a\": 1\n\"\\e]0;x\\a\": 2\n",
+		"repo key":             "repos:\n    \"\\e[31m/x\": {workflows: [web]}\n",
+		"nested unknown key":   "watch:\n    \"\\e[31m\\nx\": 1\n",
+		"explicit tag":         "max_parallel: !<tag:\\e[31m> 3\n",
+		"budget signer":        "",
+		"bad value in a model": "model_prices:\n    \"\\e[31m\": {input_per_m: 1, output_per_m: 1}\n",
+	} {
+		data := validShared()
+		if name == "budget signer" {
+			data = strings.Replace(data, "token_signer: fugaro-token-signer@fugaro-belong.iam.gserviceaccount.com", "token_signer: \"fugaro-token-signer@fugaro-belong.iam.gserviceaccount.com\\e[31m\"", 1)
+		} else if strings.HasPrefix(extra, "repos:") {
+			data = data[:strings.Index(data, "repos:")] + extra
+		} else {
+			data += extra
+		}
+		_, err := ParseShared([]byte(data), sharedAnchor)
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+			continue
+		}
+		if strings.ContainsAny(err.Error(), "\x1b\a\n") {
+			t.Errorf("%s: raw control text in %q", name, err.Error())
+		}
+	}
+}
+
+func TestParseSharedAcceptsDigestPinnedBaseImages(t *testing.T) {
+	digest := "@sha256:" + strings.Repeat("ab", 32)
+	for _, ref := range []string{
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node" + digest,
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1" + digest,
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node",
+		"us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/team/fugaro-web-node:dev-abc_1.2",
+	} {
+		data := strings.Replace(validShared(), "us-east5-docker.pkg.dev/fugaro-belong/fugaro-base/fugaro-web-node:0.3.1", ref, 1)
+		if _, err := ParseShared([]byte(data), sharedAnchor); err != nil {
+			t.Errorf("%s refused: %v", ref, err)
+		}
 	}
 }

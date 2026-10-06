@@ -43,6 +43,7 @@ base_images:
   web-node: us-central1-docker.pkg.dev/my-project/fugaro-web-node/base:1
 build:
   machine_type: E2_HIGHCPU_8
+  service_account: fugaro-build@my-project.iam.gserviceaccount.com
 terraform:
   state_bucket: my-state
   alert_email: ops@example.com
@@ -89,7 +90,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter"} {
+	for _, forbidden := range []string{"terraform:", "launchers", "alert_email", "user:", "endpoints:", "bucket_url", "registry:", "providers:", "openrouter", "base_branch", "service_account"} {
 		if strings.Contains(string(out), forbidden) {
 			t.Errorf("published file contains %q:\n%s", forbidden, out)
 		}
@@ -99,7 +100,7 @@ func TestSharedSubsetNeverLeaksOwnerOrPersonalFields(t *testing.T) {
 		t.Errorf("published file does not parse: %v", err)
 	}
 	// The receiver is untouched.
-	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 {
+	if lc.Terraform.StateBucket == "" || lc.User == "" || lc.Bucket == "" || len(lc.Providers) != 1 || lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" {
 		t.Errorf("Shared modified its receiver: %+v", lc)
 	}
 }
@@ -128,11 +129,21 @@ func TestMergeSharedAdopterKeepsPublishedRepos(t *testing.T) {
 }
 
 func TestMergeSharedLocalRepoWinsAndNewIsAdded(t *testing.T) {
-	existing := sharedBase(t, "repos:\n  acme/web: { provider: github, base_branch: main, workflows: [web] }\n  acme/old: { provider: github, base_branch: main, workflows: [web] }\n")
-	local := sharedBase(t, "repos:\n  acme/web: { provider: github, base_branch: dev, workflows: [web] }\n  acme/new: { provider: github, base_branch: main, workflows: [web] }\n")
+	existing := sharedBase(t, "repos:\n  acme/web: { provider: github, base_branch: main, workflows: [web] }\n  acme/old: { provider: github, base_branch: main, workflows: [old] }\n")
+	local := sharedBase(t, "repos:\n  acme/web: { provider: github, base_branch: dev, workflows: [api] }\n  acme/new: { provider: github, base_branch: main, workflows: [new] }\n")
 	got := MergeShared(existing, local)
-	if got.Repos["acme/web"].BaseBranch != "dev" || got.Repos["acme/old"].BaseBranch != "main" || got.Repos["acme/new"].BaseBranch != "main" || len(got.Repos) != 3 {
+	if got.Repos["acme/web"].Workflows[0] != "api" || got.Repos["acme/old"].Workflows[0] != "old" || got.Repos["acme/new"].Workflows[0] != "new" || len(got.Repos) != 3 {
 		t.Errorf("repos = %+v", got.Repos)
+	}
+	// base_branch is never published: the checkout's reviewed fugaro.yaml
+	// names it. Neither side's comes through, and the inputs keep theirs.
+	for k, r := range got.Repos {
+		if r.BaseBranch != "" {
+			t.Errorf("repos.%s.base_branch = %q was merged", k, r.BaseBranch)
+		}
+	}
+	if local.Repos["acme/web"].BaseBranch != "dev" || existing.Repos["acme/old"].BaseBranch != "main" {
+		t.Error("MergeShared cleared an input's base_branch")
 	}
 }
 
@@ -211,5 +222,23 @@ func TestMergeSharedNeverCarriesProviders(t *testing.T) {
 	}
 	if len(local.Providers) != 1 {
 		t.Error("MergeShared cleared the local providers")
+	}
+}
+
+// TestSharedDropsBaseBranchAndBuildAccount: Shared() clears every repo's
+// base_branch and the deprecated build.service_account, without touching
+// the receiver.
+func TestSharedDropsBaseBranchAndBuildAccount(t *testing.T) {
+	lc := fullLocalConfig(t)
+	s := lc.Shared()
+	if s.Repos["acme/web"].BaseBranch != "" || s.Repos["acme/web"].Provider != "github" || s.Build.ServiceAccount != "" || s.Build.MachineType != "E2_HIGHCPU_8" {
+		t.Errorf("shared = %+v %+v", s.Repos, s.Build)
+	}
+	if lc.Repos["acme/web"].BaseBranch != "main" || lc.Build.ServiceAccount == "" {
+		t.Errorf("the receiver changed: %+v %+v", lc.Repos, lc.Build)
+	}
+	m := MergeShared(sharedBase(t, "build: { machine_type: E2_HIGHCPU_8 }\n"), lc)
+	if m.Build.ServiceAccount != "" {
+		t.Errorf("merged build = %+v", m.Build)
 	}
 }

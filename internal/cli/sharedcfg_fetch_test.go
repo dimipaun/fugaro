@@ -22,6 +22,7 @@ import (
 	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -324,6 +325,57 @@ func TestFetchSharedOfflineUsesCacheUpToSevenDays(t *testing.T) {
 	if !strings.Contains(err.Error(), belongBucketURL) {
 		t.Errorf("err = %v", err)
 	}
+	// Past the allowance the entry is not used, but it is kept: the next
+	// successful read replaces it, and nothing about it was found wrong.
+	if !cacheExists(t) {
+		t.Error("an unreachable bucket past the allowance dropped the cache")
+	}
+}
+
+// TestFetchSharedKeepsTheCacheOnTransientFailures: only a refusal of the
+// content or a vanished object drops the cache; a cancel, a server error
+// or a refused access leaves a valid entry in place (and unused).
+func TestFetchSharedKeepsTheCacheOnTransientFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		open   func(t *testing.T) func(context.Context) (*blobx.Bucket, error)
+		cancel bool
+	}{
+		"cancel": {func(t *testing.T) func(context.Context) (*blobx.Bucket, error) {
+			return func(ctx context.Context) (*blobx.Bucket, error) { return nil, ctx.Err() }
+		}, true},
+		"503": {func(t *testing.T) func(context.Context) (*blobx.Bucket, error) {
+			return statusGCS(t, http.StatusServiceUnavailable)
+		}, false},
+		"500": {func(t *testing.T) func(context.Context) (*blobx.Bucket, error) {
+			return statusGCS(t, http.StatusInternalServerError)
+		}, false},
+		"403": {func(t *testing.T) func(context.Context) (*blobx.Bucket, error) {
+			return statusGCS(t, http.StatusForbidden)
+		}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r := newFetchRig(t)
+			r.installation(t)
+			if _, _, err := r.fetch(fetchT0); err != nil {
+				t.Fatal(err)
+			}
+			r.open = tc.open(t)
+			ctx := context.Background()
+			if tc.cancel {
+				c, cancel := context.WithCancel(ctx)
+				cancel()
+				ctx = c
+			}
+			c, note, err := fetchSharedConfig(ctx, os.Getenv, fetchT0.Add(2*24*time.Hour), "belong", "fugaro-belong")
+			if err == nil || c != nil || note != "" {
+				t.Fatalf("fetch = %+v, %q, %v; want an error and no fallback", c, note, err)
+			}
+			e, ok := localcfg.LoadSharedCache(os.Getenv, "belong")
+			if !ok || !e.CheckedAt.Equal(fetchT0) {
+				t.Errorf("the cache was dropped or changed: %+v, %v", e, ok)
+			}
+		})
+	}
 }
 
 // TestFetchSharedOfflineNeverUsesAForeignOrFutureCache: an unreachable
@@ -348,7 +400,46 @@ func TestFetchSharedOfflineNeverUsesAForeignOrFutureCache(t *testing.T) {
 	}
 }
 
-func TestFetchSharedStaleCacheRefreshesWhenGenerationChanged(t *testing.T) {
+// TestFetchSharedCachesTheGeneration: against GCS (the fake), the cache
+// records the object's generation, and a refresh after a rewrite records
+// the new one (doctor shows it).
+func TestFetchSharedCachesTheGeneration(t *testing.T) {
+	r := newFetchRig(t)
+	g := gcpfake.NewGCS(t)
+	r.open = func(context.Context) (*blobx.Bucket, error) { return g.Bucket(t, "fugaro-runs-fugaro-belong"), nil }
+	ctx := context.Background()
+	b := g.Bucket(t, "fugaro-runs-fugaro-belong")
+	marker, _ := json.Marshal(infra.ProjectMarker{Version: 1, Name: "belong", GCPProject: "fugaro-belong"})
+	if err := b.WriteAll(ctx, infra.ProjectMarkerObject, marker, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.WriteAll(ctx, infra.SharedConfigObject, []byte(validShared()), nil); err != nil {
+		t.Fatal(err)
+	}
+	_, gen1, err := b.Read(ctx, infra.SharedConfigObject)
+	if err != nil || gen1 == 0 {
+		t.Fatalf("gen %d, %v", gen1, err)
+	}
+	if _, _, err := r.fetch(fetchT0); err != nil {
+		t.Fatal(err)
+	}
+	if e, ok := localcfg.LoadSharedCache(os.Getenv, "belong"); !ok || e.Generation != gen1 {
+		t.Fatalf("cache = %+v, %v; want generation %d", e, ok, gen1)
+	}
+	if err := b.WriteAll(ctx, infra.SharedConfigObject, []byte(strings.Replace(validShared(), "max_parallel: 20", "max_parallel: 9", 1)), nil); err != nil {
+		t.Fatal(err)
+	}
+	_, gen2, _ := b.Read(ctx, infra.SharedConfigObject)
+	c, _, err := r.fetch(fetchT0.Add(25 * time.Hour))
+	if err != nil || c.MaxParallel != 9 {
+		t.Fatalf("refresh = %+v, %v", c, err)
+	}
+	if e, ok := localcfg.LoadSharedCache(os.Getenv, "belong"); !ok || e.Generation != gen2 || gen2 == gen1 {
+		t.Errorf("cache = %+v, %v; want generation %d (was %d)", e, ok, gen2, gen1)
+	}
+}
+
+func TestFetchSharedStaleCacheRefreshesWhenContentChanged(t *testing.T) {
 	r := newFetchRig(t)
 	r.installation(t)
 	if _, _, err := r.fetch(fetchT0); err != nil {

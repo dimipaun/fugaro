@@ -468,10 +468,13 @@ func runInit(r *initRun) error {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
 		}
-		if err := publishSharedWarn(cmd.Context(), lc, r.warn); err != nil {
+		written, err := publishSharedWarn(cmd.Context(), lc, r.warn)
+		if err != nil {
 			return remote(err)
 		}
-		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		if written {
+			fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		}
 		return r.printResult()
 	}
 	spec, err := installOptions(o, lc)
@@ -1410,11 +1413,14 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 // publishSharedConfig publishes the shared config after the local config is
 // written. A failure only warns: the installation works without it.
 func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
-	if err := publishSharedWarn(ctx, lc, r.warn); err != nil {
+	written, err := publishSharedWarn(ctx, lc, r.warn)
+	if err != nil {
 		r.warn("could not publish the shared config: " + err.Error() + " (teammates will need fugaro init until it is published)")
 		return
 	}
-	fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+	if written {
+		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+	}
 }
 
 // writeLocalConfig writes next to path, showing the diff first and backing

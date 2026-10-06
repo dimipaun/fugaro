@@ -8,9 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net"
 	"net/http"
 	"reflect"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,50 +34,81 @@ import (
 // merged with what is published there already, so a machine that lacks
 // what another onboarded does not erase it.
 func publishShared(ctx context.Context, lc *localcfg.Config) error {
-	return publishSharedWarn(ctx, lc, func(string) {})
+	_, err := publishSharedWarn(ctx, lc, func(string) {})
+	return err
 }
 
-// publishSharedWarn is publishShared that reports what it set aside through
-// warn: a published object of another installation, which it ignores.
-func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) error {
+// publishSharedWarn is publishShared that reports through warn what it
+// set aside or would not do: a published object that ParseShared refuses
+// for this installation (it is replaced, never merged from), and a file
+// that teammates would refuse themselves (it is not written at all: a
+// non-default runs bucket name, which teammates can't find from
+// gcp_project, or content ParseShared refuses). written says whether the
+// object was written.
+func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(string)) (written bool, err error) {
+	anchor := SharedAnchor{Name: lc.Name, GCPProject: lc.GCPProject, Bucket: "fugaro-runs-" + lc.GCPProject}
+	if lc.RunsBucketName() != anchor.Bucket {
+		warn(fmt.Sprintf("not publishing the shared config: the runs bucket is %q, and a shared config needs the default runs bucket name %s, which teammates find from gcp_project", lc.RunsBucketName(), anchor.Bucket))
+		return false, nil
+	}
+	// An older config has no registry_host; publish the one every command
+	// derives (infra.RegistryHost), which ParseShared then checks.
+	src := lc
+	if lc.RegistryHost == "" {
+		if host, err := infra.RegistryHost(lc); err == nil {
+			cp := *lc
+			cp.RegistryHost = host
+			src = &cp
+		}
+	}
 	b, err := sharedBucketOpener(ctx, lc.BucketURL())
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer b.Close()
-	published, err := readShared(ctx, b)
+	published, refused, err := readShared(ctx, b, anchor)
 	if err != nil {
-		return err
+		return false, err
 	}
-	if published != nil && !localcfg.SameInstallation(published, lc) {
-		warn(fmt.Sprintf("the published shared config is another installation's (project %s, GCP project %s), so it is replaced, not merged", published.Name, published.GCPProject))
+	if refused != "" {
+		warn(fmt.Sprintf("the published shared config was refused (%s); replacing it", refused))
 	}
-	data, err := localcfg.MergeShared(published, lc).Marshal()
+	data, err := localcfg.MergeShared(published, src).Marshal()
 	if err != nil {
-		return err
+		return false, err
 	}
 	if len(data) > localcfg.SharedMaxBytes {
-		return fmt.Errorf("the shared config is %d bytes, over the %d byte limit", len(data), localcfg.SharedMaxBytes)
+		return false, fmt.Errorf("the shared config is %d bytes, over the %d byte limit", len(data), localcfg.SharedMaxBytes)
 	}
-	return b.Bucket.WriteAll(ctx, infra.SharedConfigObject, data, &blob.WriterOptions{ContentType: "application/yaml"})
+	// The exact bytes are checked as a teammate will check them.
+	if _, err := ParseShared(data, anchor); err != nil {
+		warn("not publishing the shared config: " + err.Error())
+		return false, nil
+	}
+	if err := b.Bucket.WriteAll(ctx, infra.SharedConfigObject, data, &blob.WriterOptions{ContentType: "application/yaml"}); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-// readShared is the published object, nil when it is absent, over
-// localcfg.SharedMaxBytes or not a valid config: those count as absent. A
-// read that fails otherwise is an error.
-func readShared(ctx context.Context, b *blobx.Bucket) (*localcfg.Config, error) {
+// readShared is the published object as ParseShared accepts it for anchor,
+// nil when it is absent. One that is too large or that ParseShared refuses
+// is nil too, with refused saying why, so the caller can say it replaces
+// it. A read that fails otherwise is an error.
+func readShared(ctx context.Context, b *blobx.Bucket, anchor SharedAnchor) (c *localcfg.Config, refused string, err error) {
 	data, _, err := b.ReadMax(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
-	case errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrTooLarge):
-		return nil, nil
+	case errors.Is(err, blobx.ErrNotExist):
+		return nil, "", nil
+	case errors.Is(err, blobx.ErrTooLarge):
+		return nil, "it is over the 64 KiB limit", nil
 	case err != nil:
-		return nil, err
+		return nil, "", err
 	}
-	c, err := localcfg.Parse(data)
-	if err != nil {
-		return nil, nil
+	if c, err = ParseShared(data, anchor); err != nil {
+		return nil, err.Error(), nil
 	}
-	return c, nil
+	return c, "", nil
 }
 
 // sharedBucketOpener is a test seam; production opens the bucket with blobx.
@@ -132,7 +167,9 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	}
 	c, err := localcfg.Parse(data) // strict: an unknown key is refused here
 	if err != nil {
-		return refuse("is not valid: %s", strings.ReplaceAll(err.Error(), "local config: ", ""))
+		// Parse and yaml.v3 echo keys and values as written: quoted, so
+		// the writer's text can't carry terminal escapes or newlines.
+		return refuse("is not valid: %s", strconv.Quote(strings.ReplaceAll(err.Error(), "local config: ", "")))
 	}
 	// Again on the decoded values, which are what the commands use.
 	switch {
@@ -149,9 +186,18 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 	case c.LogView != "" && !strings.HasPrefix(c.LogView, "projects/"+a.GCPProject+"/"):
 		return bad("log_view", "%q is not under projects/%s/", c.LogView, a.GCPProject)
 	}
-	for kind, ref := range c.BaseImages {
-		if !strings.HasPrefix(ref, c.RegistryHost+"/") {
-			return bad("base_images."+kind, "%q is not in this project's registry, %s", ref, c.RegistryHost)
+	baseRE := baseImageRE(c.RegistryHost)
+	for _, kind := range slices.Sorted(maps.Keys(c.BaseImages)) {
+		if ref := c.BaseImages[kind]; !baseRE.MatchString(ref) {
+			return bad("base_images."+kind, "%q is not an image of this project's base registry, %s/%s/<image>[:tag][@sha256:<digest>]", ref, c.RegistryHost, infra.BaseRegistry)
+		}
+	}
+	if c.Build.ServiceAccount != "" {
+		return bad("build.service_account", "%q is set; it is deprecated and never published", c.Build.ServiceAccount)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Repos)) {
+		if c.Repos[name].BaseBranch != "" {
+			return bad("repos."+name+".base_branch", "%q is set; it is never published: the base branch comes from the checkout's reviewed fugaro.yaml", c.Repos[name].BaseBranch)
 		}
 	}
 	if b := c.Budget; b != nil && (b.RTDBURL != "" || b.FirebaseProject != "" || b.TokenSigner != "") {
@@ -164,10 +210,19 @@ func ParseShared(data []byte, a SharedAnchor) (*localcfg.Config, error) {
 		}
 		o := infra.FirebaseOutputs{RTDBURL: b.RTDBURL, FirebaseAPIKey: b.FirebaseAPIKey, TokenSigner: b.TokenSigner, FirebaseProject: b.FirebaseProject}
 		if err := infra.CheckFirebaseOutputsFor(o, "", false); err != nil {
-			return bad("budget block", "%s", strings.ReplaceAll(err.Error(), "the Firebase root's ", "budget."))
+			return bad("budget block", "%s", strconv.Quote(strings.ReplaceAll(err.Error(), "the Firebase root's ", "budget.")))
 		}
 	}
 	return c, nil
+}
+
+// baseImageRE matches an image of the installation's base registry under
+// host: <host>/fugaro-base/<path>, with an optional tag and digest; the
+// path's components can't be "." or "..", and there is no other "@".
+func baseImageRE(host string) *regexp.Regexp {
+	const component = `[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*`
+	return regexp.MustCompile(`^` + regexp.QuoteMeta(host+"/"+infra.BaseRegistry+"/") +
+		component + `(?:/` + component + `)*` + `(?::[A-Za-z0-9_.-]{1,128})?(?:@sha256:[0-9a-f]{64})?$`)
 }
 
 // sharedTopLevel checks the YAML's shape, which fugaro init's Marshal
@@ -179,7 +234,7 @@ func sharedTopLevel(data []byte) (map[string]string, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
 	if err := dec.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("is not valid YAML: %v", err)
+		return nil, fmt.Errorf("is not valid YAML: %q", err.Error())
 	}
 	var more yaml.Node
 	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
@@ -208,7 +263,7 @@ func checkSharedNode(n *yaml.Node) error {
 		return fmt.Errorf("uses a YAML anchor or alias (line %d), which fugaro init never writes", n.Line)
 	}
 	if n.Style&yaml.TaggedStyle != 0 {
-		return fmt.Errorf("uses an explicit YAML tag %s (line %d), which fugaro init never writes", n.Tag, n.Line)
+		return fmt.Errorf("uses an explicit YAML tag %q (line %d), which fugaro init never writes", n.Tag, n.Line)
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -220,7 +275,7 @@ func checkSharedNode(n *yaml.Node) error {
 			case k.Value == "<<" || k.Tag == "!!merge":
 				return fmt.Errorf("uses a YAML merge key << (line %d), which fugaro init never writes", k.Line)
 			case seen[k.Value]:
-				return fmt.Errorf("repeats the key %s (line %d)", k.Value, k.Line)
+				return fmt.Errorf("repeats the key %q (line %d)", k.Value, k.Line)
 			}
 			seen[k.Value] = true
 		}
@@ -254,8 +309,14 @@ func fetchSharedConfig(ctx context.Context, getenv func(string) string, now time
 	anchor := SharedAnchor{Name: name, GCPProject: gcp, Bucket: bucket}
 	cached, ok := localcfg.LoadSharedCache(getenv, name)
 	ours := ok && cached.GCPProject == gcp && cached.Bucket == bucket
-	if ours && cached.Fresh(now) {
-		if c, err := ParseShared([]byte(cached.YAML), anchor); err == nil {
+	if ours {
+		c, err := ParseShared([]byte(cached.YAML), anchor)
+		switch {
+		case err != nil:
+			// A cache that fails validation is never used again.
+			_ = localcfg.DropSharedCache(getenv, name)
+			ours = false
+		case cached.Fresh(now):
 			return c, "", nil
 		}
 	}
@@ -270,11 +331,25 @@ func fetchSharedConfig(ctx context.Context, getenv func(string) string, now time
 			return c, fmt.Sprintf("using the cached shared config of project %s, %s old: gs://%s is unreachable", name, ageDays(now.Sub(cached.CheckedAt)), bucket), nil
 		}
 	}
-	// A refusal, a vanished object or a cache past its allowance must not
-	// leave a usable cache.
-	_ = localcfg.DropSharedCache(getenv, name)
+	// Content that was refused, or a marker or object that is gone, must
+	// not leave a usable cache. A cancel, a server error, a refused access
+	// or an unreachable bucket past the allowance says nothing against the
+	// entry: it is kept (and not used).
+	var gone sharedGone
+	if errors.As(err, &gone) {
+		_ = localcfg.DropSharedCache(getenv, name)
+	}
 	return nil, "", err
 }
+
+// sharedGone marks a fetch failure that invalidates the cached shared
+// config: the marker or object refused or no longer there.
+type sharedGone struct{ error }
+
+func (g sharedGone) Unwrap() error { return g.error }
+
+// gone marks err as a sharedGone.
+func gone(err error) error { return sharedGone{err} }
 
 // ageDays is d in whole days, for a note.
 func ageDays(d time.Duration) string {
@@ -304,7 +379,7 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 	data, _, err := b.ReadMax(ctx, infra.ProjectMarkerObject, markerMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
-		return nil, 0, nil, userErr("no Fugaro installation at %s (it has no %s): check gcp_project in the checkout's fugaro.yaml", url, infra.ProjectMarkerObject)
+		return nil, 0, nil, gone(userErr("no Fugaro installation at %s (it has no %s): check gcp_project in the checkout's fugaro.yaml", url, infra.ProjectMarkerObject))
 	case errors.Is(err, blobx.ErrTooLarge):
 		data = nil // not a marker
 	case err != nil:
@@ -312,26 +387,26 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 	}
 	var m infra.ProjectMarker
 	if data == nil || json.Unmarshal(data, &m) != nil || m.Version != 1 || !config.ProjectNameRE.MatchString(m.Name) {
-		return nil, 0, nil, userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro init", infra.ProjectMarkerObject, url)
+		return nil, 0, nil, gone(userErr("%s in %s is not a version 1 project marker; ask an operator to run fugaro init", infra.ProjectMarkerObject, url))
 	}
 	switch {
 	case m.Name != a.Name:
-		return nil, 0, nil, userErr("the installation at %s is project %s, not %s (%s says so): check project and gcp_project in the checkout's fugaro.yaml", url, m.Name, a.Name, infra.ProjectMarkerObject)
+		return nil, 0, nil, gone(userErr("the installation at %s is project %s, not %s (%s says so): check project and gcp_project in the checkout's fugaro.yaml", url, m.Name, a.Name, infra.ProjectMarkerObject))
 	case m.GCPProject != a.GCPProject:
-		return nil, 0, nil, userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro init", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject)
+		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro init", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
 	}
 	data, gen, err := b.ReadMax(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
-		return nil, 0, nil, userErr("project %s has not published a shared config; ask an operator to run fugaro init (it writes %s to %s)", a.Name, infra.SharedConfigObject, url)
+		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro init (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))
 	case errors.Is(err, blobx.ErrTooLarge):
-		return nil, 0, nil, userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro init again", infra.SharedConfigObject, url)
+		return nil, 0, nil, gone(userErr("%s in %s is over the 64 KiB limit; ask an operator to run fugaro init again", infra.SharedConfigObject, url))
 	case err != nil:
 		return nil, 0, nil, bucketErr(url, "reading "+infra.SharedConfigObject, err)
 	}
 	c, err := ParseShared(data, a)
 	if err != nil {
-		return nil, 0, nil, userErr("%s in %s: %w", infra.SharedConfigObject, url, err)
+		return nil, 0, nil, gone(userErr("%s in %s: %w", infra.SharedConfigObject, url, err))
 	}
 	return c, gen, data, nil
 }
