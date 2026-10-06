@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -50,7 +51,9 @@ func TestShowExplainsProjectTotalVersusRows(t *testing.T) {
 
 // Money that can be negative reads "-$0.01", never "$-0.01" or a bare number.
 func TestMoneyNegative(t *testing.T) {
-	for m, want := range map[budget.Micros]string{-10_000: "-$0.01", -1_500_000: "-$1.50", -500_000: "-$0.50", 0: "$0", 10_000: "$0.01"} {
+	for m, want := range map[budget.Micros]string{-10_000: "-$0.01", -1_500_000: "-$1.50", -500_000: "-$0.50", 0: "$0", 10_000: "$0.01",
+		// Corrupt counters can hold the extremes; -MinInt64 overflows.
+		math.MinInt64: "-$9223372036854.775808", math.MinInt64 + 1: "-$9223372036854.775807", math.MaxInt64: "$9223372036854.775807"} {
 		if got := money(m); got != want {
 			t.Errorf("money(%d) = %q, want %q", m, got, want)
 		}
