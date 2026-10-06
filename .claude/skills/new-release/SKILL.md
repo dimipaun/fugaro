@@ -51,7 +51,7 @@ Watch both workflows: `gh run list --limit 6` and `gh run watch <id>` for `relea
 
 ## 6. Post-release
 
-- From a fresh build of the tag in a separate worktree (`git worktree add /tmp/fugaro-vX vX.Y.Z`, build there with `go build -o /tmp/fugaro-vX/fugaro ./cmd/fugaro`, then `git worktree remove /tmp/fugaro-vX`), so the main checkout stays on main (`go install github.com/dimipaun/fugaro/cmd/fugaro@vX.Y.Z` also works but reports `dev`), run `fugaro doctor` against the dogfood project (`dimipaun/fugaro`) and report each line.
+- From a fresh build of the tag in a separate worktree (`git worktree add /tmp/fugaro-wt-vX.Y.Z vX.Y.Z`, build with `go build -o /tmp/fugaro-vX.Y.Z ./cmd/fugaro` from there, a path outside the worktree), so the main checkout stays on main (`go install github.com/dimipaun/fugaro/cmd/fugaro@vX.Y.Z` also works but reports `dev`). Run `/tmp/fugaro-vX.Y.Z doctor` against the dogfood project (`dimipaun/fugaro`), report each line, then `git worktree remove /tmp/fugaro-wt-vX.Y.Z`.
 - If the release changes the operator order, update the rollout section of `docs/release.md` and the memory notes in the same PR or a follow-up.
 - Tell the user what only they can do: `brew upgrade`, `fugaro init --publish-config` in their own terminal, upgrading CI pins and teammates' CLIs before any repository merges `gcp_project:`, rebuilding job images, the owner-only repository settings still unset.
 - Final report: version, release URL, commit, what was verified with the command, what was not, and the user's to-do list.

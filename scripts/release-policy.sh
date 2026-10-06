@@ -12,7 +12,7 @@
 set -eu
 
 if [ $# -ne 2 ]; then
-  echo "usage: $0 prerelease|highlights-required X.Y.Z" >&2
+  echo "usage: $0 prerelease|highlights-required|check-highlights X.Y.Z" >&2
   exit 2
 fi
 cmd=$1
@@ -47,7 +47,7 @@ case "$cmd" in
     fi
     ;;
   *)
-    echo "unknown command '$cmd' (want prerelease or highlights-required)" >&2
+    echo "unknown command '$cmd' (want prerelease, highlights-required or check-highlights)" >&2
     exit 2
     ;;
 esac

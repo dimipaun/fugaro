@@ -72,7 +72,7 @@ Homebrew warns that a cask using a `postflight` quarantine removal is deprecated
 
 Only needed if `scripts/release.sh` can't run (no `gh`, or something it doesn't handle):
 
-1. Main is green: `test`, `terraform` and `rules` passed on the commit to be released (`gh run list --branch main`). From 0.4.0 on, `docs/releases/vX.Y.Z.md` (the Highlights, non-empty) is on `main` before the tag: both tag workflows refuse without it (`scripts/release-policy.sh highlights-required`).
+1. Main is green: `test`, `terraform` and `rules` passed on the commit to be released (`gh run list --branch main`). From 0.4.0 on, `docs/releases/vX.Y.Z.md` (the Highlights, non-empty) is on `main` before the tag: both tag workflows refuse without it (`scripts/release-policy.sh check-highlights`).
 2. Bump the plugin and commit it through a PR to main:
 
    ```sh
