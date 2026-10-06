@@ -56,11 +56,17 @@ func signerDescription(name string) string {
 // together. What does not exist (404, or its API disabled) is left for the
 // plan to create.
 //
+// managed are the addresses the Firebase root's state already manages
+// (true; a nil map is a first run's empty state). A singleton whose import
+// address is managed is Terraform's already: it is neither read, vetted,
+// noted nor imported, and the plan, the guard and the stage's confirmation
+// handle its drift and its grants' removal as for any managed resource.
+//
 // It only reads: it never reads the API key's string nor any key of the
 // signer (it lists the signer's key metadata only). IAM members, project
 // services and google_firebase_project are never imported: their creates
 // succeed when they exist.
-func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec) (Imports, error) {
+func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec, managed map[string]bool) (Imports, error) {
 	if c.FirebaseDB == nil {
 		return Imports{}, errors.New("no Realtime Database management client (endpoints.firebase_database is not set)")
 	}
@@ -85,12 +91,28 @@ func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec) (Impor
 		return Imports{}, fmt.Errorf("reading project %s: Resource Manager answered with no project number", spec.Project)
 	}
 	d := &discovery{ctx: ctx, c: c, project: spec.Project, number: num}
-	for _, step := range []func(FirebaseSpec) error{d.firebaseDB, d.webKey, d.tokenSigner, d.minterRole} {
-		if err := step(spec); err != nil {
+	for _, step := range []struct {
+		kind importKind
+		run  func(FirebaseSpec) error
+	}{{importFirebaseDB, d.firebaseDB}, {importAPIKey, d.webKey}, {importSignerSA, d.tokenSigner}, {importMinterRole, d.minterRole}} {
+		if managed[firebaseAddress(step.kind)] {
+			continue
+		}
+		if err := step.run(spec); err != nil {
 			return Imports{}, err
 		}
 	}
 	return d.result()
+}
+
+// firebaseAddress is the import address of the Firebase root's singleton
+// of kind k, which has no for_each key.
+func firebaseAddress(k importKind) string {
+	a, ok := importTable[k]
+	if !ok || strings.Contains(a.to, "{") {
+		panic("infra: no plain import address for " + string(k))
+	}
+	return a.to
 }
 
 // firebaseDB adopts the project's default Realtime Database instance when

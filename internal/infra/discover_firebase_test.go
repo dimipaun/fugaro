@@ -107,7 +107,7 @@ func TestDiscoverFirebase(t *testing.T) {
 	ctx := context.Background()
 	t.Run("clean project imports nothing", func(t *testing.T) {
 		f := newFBCloud(t)
-		im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 		if err != nil || len(im.List) != 0 || len(im.Notes) != 0 {
 			t.Fatalf("imports %v, notes %v, err %v", im.List, im.Notes, err)
 		}
@@ -115,7 +115,7 @@ func TestDiscoverFirebase(t *testing.T) {
 	t.Run("the four exist and are ours", func(t *testing.T) {
 		f := newFBCloud(t)
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
-		im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestDiscoverFirebase(t *testing.T) {
 		if marked, err := db.Check(ctx); err != nil || marked {
 			t.Fatalf("DB.Check: marked %v, err %v; want an empty, unmarked database that passes", marked, err)
 		}
-		im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -158,7 +158,7 @@ func TestDiscoverFirebase(t *testing.T) {
 				f := newFBCloud(t)
 				f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 				f.su.Disable(tc.service, tc.server(f))
-				im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+				im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -193,7 +193,7 @@ func TestDiscoverFirebaseAccessDenied(t *testing.T) {
 			f := newFBCloud(t)
 			f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 			tc.server(f).Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission denied")
-			im, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+			im, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 			var ue *UserError
 			if err == nil || errors.As(err, &ue) || len(im.List) != 0 {
 				t.Fatalf("imports %v, err %v; want a remote error", im.List, err)
@@ -212,7 +212,7 @@ func TestDiscoverFirebaseAccessDenied(t *testing.T) {
 		f := newFBCloud(t)
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 		f.iam.RefusePath(tc.path, http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission denied")
-		im, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+		im, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 		var ue *UserError
 		if err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "403") {
 			t.Errorf("%s denied: imports %v, err %v; want an access error naming %q", tc.path, im.List, err, tc.want)
@@ -223,7 +223,7 @@ func TestDiscoverFirebaseAccessDenied(t *testing.T) {
 	f := newFBCloud(t)
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.iam.HidePolicy("projects/" + fbTestProject + "/serviceAccounts/" + fbSigner)
-	im, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+	im, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 	var ue *UserError
 	if err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "IAM policy") {
 		t.Fatalf("hidden policy: imports %v, err %v; want a remote error naming the policy", im.List, err)
@@ -236,7 +236,7 @@ func TestDiscoverFirebaseAccessDenied(t *testing.T) {
 func TestDiscoverFirebaseOnlyReads(t *testing.T) {
 	f := newFBCloud(t)
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
-	if _, err := DiscoverFirebase(context.Background(), f.c, fbSpec()); err != nil {
+	if _, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil); err != nil {
 		t.Fatal(err)
 	}
 	for name, s := range map[string]*gcpfake.Server{"rtdb": f.fbdb.Server, "apikeys": f.keys.Server, "iam": f.iam.Server} {
@@ -376,7 +376,7 @@ func TestDiscoverFirebaseRefuses(t *testing.T) {
 			f.addSigner()
 			f.addRole()
 			tc.arrange(f)
-			im, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+			im, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 			var ue *UserError
 			if !errors.As(err, &ue) {
 				t.Fatalf("err = %v (imports %v); want a refusal", err, im.List)
@@ -397,7 +397,7 @@ func TestDiscoverFirebaseRefuses(t *testing.T) {
 		f.addAll(url)
 		f.iam.SetRolePermissions(fbMinterRole, "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
 		f.keys.AddKey(fbTestProject, "fugaro-web", "Fugaro run sign-in", append(slices.Clone(fbWebTargets), "storage.googleapis.com"), false, false)
-		_, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+		_, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 		var ue *UserError
 		if !errors.As(err, &ue) || !strings.Contains(err.Error(), "iam.serviceAccounts.getAccessToken") || !strings.Contains(err.Error(), "storage.googleapis.com") {
 			t.Fatalf("err = %v; want both refusals in one error", err)
@@ -412,7 +412,7 @@ func TestDiscoverFirebaseDeletedRole(t *testing.T) {
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.iam.AddRole(fbTestProject, "fugaroTokenMinter", "Fugaro token minter", true)
 	f.iam.SetRolePermissions(fbMinterRole, "iam.serviceAccounts.signJwt")
-	im, err := DiscoverFirebase(context.Background(), f.c, fbSpec())
+	im, err := DiscoverFirebase(context.Background(), f.c, fbSpec(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestDiscoverFirebaseMinterMembersAreCompared(t *testing.T) {
 	t.Run("exactly the launchers and operators", func(t *testing.T) {
 		f := newFBCloud(t)
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
-		im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 		if err != nil || len(im.List) != 4 {
 			t.Fatalf("imports %v, err %v", im.List, err)
 		}
@@ -451,7 +451,7 @@ func TestDiscoverFirebaseMinterMembersAreCompared(t *testing.T) {
 			f := newFBCloud(t)
 			f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 			f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, bs...)
-			im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+			im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 			if err != nil || len(im.List) != 4 {
 				t.Fatalf("bindings %v: imports %v, err %v", bs, im.List, err)
 			}
@@ -463,7 +463,7 @@ func TestDiscoverFirebaseMinterMembersAreCompared(t *testing.T) {
 			f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 			f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner,
 				gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:a@x.com", "group:ops@x.com", stranger}})
-			_, err := DiscoverFirebase(ctx, f.c, fbSpec())
+			_, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 			var ue *UserError
 			if !errors.As(err, &ue) {
 				t.Fatalf("err = %v; want a refusal", err)
@@ -587,12 +587,12 @@ func TestDiscoverFirebaseServiceAccountMembers(t *testing.T) {
 			f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:a@x.com", "group:ops@x.com", sa}})
 			spec := fbSpec()
 			tc.spec(&spec)
-			im, err := DiscoverFirebase(ctx, f.c, spec)
+			im, err := DiscoverFirebase(ctx, f.c, spec, nil)
 			if err != nil || len(im.List) != 4 {
 				t.Fatalf("imports %v, err %v", im.List, err)
 			}
 			// The same policy against a spec without it.
-			_, err = DiscoverFirebase(ctx, f.c, fbSpec())
+			_, err = DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 			var ue *UserError
 			if !errors.As(err, &ue) || !strings.Contains(err.Error(), foreignMinterMessage(fbSigner, fbTestProject, []string{sa})) {
 				t.Fatalf("without it: err = %v; want it refused as foreign", err)
@@ -613,7 +613,7 @@ func TestDiscoverFirebaseMemberEmailCase(t *testing.T) {
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole,
 		Members: []string{"user:a@x.com", "serviceAccount:bot@p.iam.gserviceaccount.com", "group:ops@x.com"}})
-	if im, err := DiscoverFirebase(ctx, f.c, spec); err != nil || len(im.List) != 4 {
+	if im, err := DiscoverFirebase(ctx, f.c, spec, nil); err != nil || len(im.List) != 4 {
 		t.Fatalf("lower-cased grants: imports %v, err %v", im.List, err)
 	}
 
@@ -623,7 +623,7 @@ func TestDiscoverFirebaseMemberEmailCase(t *testing.T) {
 	f = newFBCloud(t)
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:jürgen@x.com", "user:Ömer@x.com"}})
-	if im, err := DiscoverFirebase(ctx, f.c, spec); err != nil || len(im.List) != 4 {
+	if im, err := DiscoverFirebase(ctx, f.c, spec, nil); err != nil || len(im.List) != 4 {
 		t.Fatalf("byte-identical non-ASCII members: imports %v, err %v", im.List, err)
 	}
 
@@ -632,7 +632,7 @@ func TestDiscoverFirebaseMemberEmailCase(t *testing.T) {
 		f := newFBCloud(t)
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 		f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:a@x.com", foreign}})
-		_, err := DiscoverFirebase(ctx, f.c, spec)
+		_, err := DiscoverFirebase(ctx, f.c, spec, nil)
 		var ue *UserError
 		if !errors.As(err, &ue) || !strings.Contains(err.Error(), foreignMinterMessage(fbSigner, fbTestProject, []string{foreign})) {
 			t.Errorf("%s: err = %v; want it refused as foreign", foreign, err)
@@ -650,7 +650,7 @@ func TestDiscoverFirebaseDisabledConsumer(t *testing.T) {
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 		f.su.Consumer = consumer
 		f.su.Disable("apikeys.googleapis.com", f.keys.Server)
-		im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 		if err != nil || len(im.List) != 3 {
 			t.Errorf("%s: imports %v, err %v; want the key absent", consumer, im.List, err)
 		}
@@ -659,7 +659,7 @@ func TestDiscoverFirebaseDisabledConsumer(t *testing.T) {
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.su.Consumer = "projects/999"
 	f.su.Disable("apikeys.googleapis.com", f.keys.Server)
-	im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+	im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 	var ue *UserError
 	if err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "API key") {
 		t.Fatalf("another project's SERVICE_DISABLED: imports %v, err %v; want an error", im.List, err)
@@ -674,13 +674,13 @@ func TestDiscoverFirebaseDisabledConsumer(t *testing.T) {
 	f.crm.AddProject(fbTestProject, 0)
 	f.su.Consumer = "projects/999"
 	f.su.Disable("apikeys.googleapis.com", f.keys.Server)
-	if im, err := DiscoverFirebase(ctx, f.c, fbSpec()); err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "no project number") {
+	if im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil); err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "no project number") {
 		t.Fatalf("project number 0: imports %v, err %v; want an error", im.List, err)
 	}
 
 	f = newFBCloud(t)
 	f.crm.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission denied")
-	if _, err := DiscoverFirebase(ctx, f.c, fbSpec()); err == nil || errors.As(err, &ue) || !strings.Contains(err.Error(), "fp-1234") {
+	if _, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil); err == nil || errors.As(err, &ue) || !strings.Contains(err.Error(), "fp-1234") {
 		t.Fatalf("project number unreadable: err = %v", err)
 	}
 }
@@ -695,7 +695,7 @@ func TestDiscoverFirebaseNilClients(t *testing.T) {
 		f := newFBCloud(t)
 		c := *f.c
 		drop(&c)
-		if _, err := DiscoverFirebase(context.Background(), &c, fbSpec()); err == nil || !strings.Contains(err.Error(), name) {
+		if _, err := DiscoverFirebase(context.Background(), &c, fbSpec(), nil); err == nil || !strings.Contains(err.Error(), name) {
 			t.Errorf("no %s client: err = %v", name, err)
 		}
 	}
@@ -708,7 +708,7 @@ func TestDiscoverFirebaseSeveralInstances(t *testing.T) {
 	f := newFBCloud(t)
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.fbdb.AddInstanceFull(fbTestProject, "europe-west1", "fp-1234-eu", "USER_DATABASE", "ACTIVE", "https://fp-1234-eu.europe-west1.firebasedatabase.app")
-	im, err := DiscoverFirebase(ctx, f.c, fbSpec())
+	im, err := DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 	if err != nil || !slices.Equal(sortedImports(im.List), fbAllFour) {
 		t.Fatalf("imports %v, err %v", im.List, err)
 	}
@@ -716,7 +716,7 @@ func TestDiscoverFirebaseSeveralInstances(t *testing.T) {
 	f = newFBCloud(t)
 	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 	f.fbdb.AddInstanceFull(fbTestProject, "europe-west1", "fp-1234-default-eu", "DEFAULT_DATABASE", "ACTIVE", "https://x.example")
-	_, err = DiscoverFirebase(ctx, f.c, fbSpec())
+	_, err = DiscoverFirebase(ctx, f.c, fbSpec(), nil)
 	var ue *UserError
 	if !errors.As(err, &ue) || !strings.Contains(err.Error(), "fp-1234-default-eu") {
 		t.Fatalf("err = %v; want the second default instance refused", err)
@@ -846,7 +846,7 @@ func TestDiscoverFirebaseMinterIsTheSpecs(t *testing.T) {
 	f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: role, Members: []string{"user:a@x.com", "user:old@example.com"}})
 	spec := fbSpec()
 	spec.Names.MinterRoleID = "otherMinter"
-	_, err := DiscoverFirebase(context.Background(), f.c, spec)
+	_, err := DiscoverFirebase(context.Background(), f.c, spec, nil)
 	var ue *UserError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %v; want a refusal", err)
@@ -855,4 +855,96 @@ func TestDiscoverFirebaseMinterIsTheSpecs(t *testing.T) {
 	if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "--member=user:a@x.com") || !strings.Contains(err.Error(), "--role="+role) {
 		t.Fatalf("refusal:\n%v\nwant the minter message for %s, naming only the stranger", err, role)
 	}
+}
+
+// fbManaged is the managed set of the given imports' addresses.
+func fbManaged(l ...Import) map[string]bool {
+	m := map[string]bool{}
+	for _, i := range l {
+		m[i.To] = true
+	}
+	return m
+}
+
+// What the Firebase state already manages is Terraform's: discovery
+// neither vets nor imports it, and adds no note for it. Each singleton
+// here would be refused if it were vetted.
+func TestDiscoverFirebaseSkipsManaged(t *testing.T) {
+	ctx := context.Background()
+	drifted := func(f *fbCloud) {
+		f.fbdb.AddInstanceFull(fbTestProject, "us-central1", fbTestProject+"-default-rtdb", "DEFAULT_DATABASE", "DISABLED", "https://fp-1234-default-rtdb.firebaseio.com")
+		f.keys.AddKey(fbTestProject, "fugaro-web", "Something else", fbWebTargets, false, false)
+		f.iam.AddServiceAccountFull(fbTestProject, fbSigner, "Fugaro token signer", fbSignerDescription, false)
+		// A launcher dropped: the signer still grants the minter to them.
+		f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"group:ops@x.com", "user:a@x.com", "user:old@example.com"}})
+		f.iam.AddRole(fbTestProject, "fugaroTokenMinter", "Fugaro token minter", false)
+		f.iam.SetRolePermissions(fbMinterRole, "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
+	}
+	t.Run("all four managed", func(t *testing.T) {
+		f := newFBCloud(t)
+		drifted(f)
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), fbManaged(fbAllFour...))
+		if err != nil || len(im.List) != 0 || len(im.Notes) != 0 {
+			t.Fatalf("imports %v, notes %v, err %v; want nothing vetted", im.List, im.Notes, err)
+		}
+		for name, s := range map[string]*gcpfake.Server{"rtdb": f.fbdb.Server, "apikeys": f.keys.Server, "iam": f.iam.Server} {
+			if r := s.Requests(); len(r) != 0 {
+				t.Errorf("%s read a managed singleton: %v", name, r)
+			}
+		}
+	})
+	t.Run("healthy and managed: no adopted note", func(t *testing.T) {
+		f := newFBCloud(t)
+		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), fbManaged(fbAllFour...))
+		if err != nil || len(im.List) != 0 || len(im.Notes) != 0 {
+			t.Fatalf("imports %v, notes %v, err %v", im.List, im.Notes, err)
+		}
+	})
+	t.Run("managed role drifted, the others vetted and imported", func(t *testing.T) {
+		f := newFBCloud(t)
+		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+		f.iam.SetRolePermissions(fbMinterRole, "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), fbManaged(fbAllFour[2]))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []Import{fbAllFour[0], fbAllFour[1], fbAllFour[3]}
+		if got := sortedImports(im.List); !slices.Equal(got, want) {
+			t.Fatalf("imports\n got %v\nwant %v", got, want)
+		}
+		if len(im.Notes) != 1 || !strings.Contains(im.Notes[0], "was adopted") {
+			t.Errorf("notes %v; want the adopted signer's note", im.Notes)
+		}
+		for _, r := range f.iam.Requests() {
+			if strings.Contains(r.Path, "/roles/") {
+				t.Errorf("the managed role was read: %s %s", r.Method, r.Path)
+			}
+		}
+	})
+	t.Run("an unmanaged look-alike is refused", func(t *testing.T) {
+		f := newFBCloud(t)
+		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+		f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"group:ops@x.com", "user:a@x.com", "user:old@example.com"}})
+		im, err := DiscoverFirebase(ctx, f.c, fbSpec(), fbManaged(fbAllFour[0], fbAllFour[1], fbAllFour[2]))
+		var ue *UserError
+		if !errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "user:old@example.com") {
+			t.Fatalf("imports %v, err %v; want the foreign-minter refusal", im.List, err)
+		}
+	})
+	t.Run("only true entries of exact addresses are managed", func(t *testing.T) {
+		f := newFBCloud(t)
+		drifted(f)
+		managed := map[string]bool{fbAllFour[0].To: false, fbAllFour[1].To + "[0]": true, "google_service_account.signer": true, fbAllFour[2].To + " ": true}
+		_, err := DiscoverFirebase(ctx, f.c, fbSpec(), managed)
+		var ue *UserError
+		if !errors.As(err, &ue) {
+			t.Fatalf("err = %v; want every singleton vetted and refused", err)
+		}
+		for _, want := range []string{"Something else", "DISABLED", "user:old@example.com", "iam.serviceAccounts.getAccessToken"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("no %q in %v", want, err)
+			}
+		}
+	})
 }

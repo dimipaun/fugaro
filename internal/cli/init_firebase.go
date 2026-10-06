@@ -228,21 +228,6 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return initErr(err)
 	}
-	// Read-only discovery of the Firebase project's own singletons, before
-	// anything is written to the root's workdir: a look-alike is refused
-	// with nothing written and no terraform run. The Firebase project pays
-	// for these reads, as the root's provider does.
-	dc, err := r.discoveryClients(ctx, c, lc, fp)
-	if err != nil {
-		return err
-	}
-	im, err := infra.DiscoverFirebase(ctx, dc, fspec)
-	if err != nil {
-		return initErr(err)
-	}
-	for _, n := range im.Notes {
-		r.warn(n)
-	}
 	vars, err := infra.FirebaseVars(fspec)
 	if err != nil {
 		return err
@@ -254,18 +239,45 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return userErr("%v", err)
 	}
+	// An earlier run's imports.tf.json is removed before terraform reads
+	// the root: only this run's discovery writes the file, below, and a
+	// refusal leaves none.
+	if err := os.Remove(filepath.Join(fwd.Root, infra.ImportsFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return userErr("removing the Firebase imports of an earlier run: %v", err)
+	}
 	if err := ft.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	// What the state already manages is not imported. A first run has no
-	// state, which lists nothing. The file is written on every run, empty
-	// when there is nothing to import, so another run's imports.tf.json
-	// can never be applied.
+	// The state is read before discovery (both only read): what it manages
+	// is Terraform's already, so discovery neither vets nor imports it, and
+	// the plan, the guard and the confirmation handle it as they always
+	// have. A first run has no state, which manages nothing; a state that
+	// cannot be read stops the run.
 	st, err := ft.ShowState(ctx)
 	if err != nil {
 		return remote(err)
 	}
-	im = withoutManaged(im, st.Addresses())
+	managed := map[string]bool{}
+	for _, a := range st.Addresses() {
+		managed[a] = true
+	}
+	// Read-only discovery of the Firebase project's own singletons that the
+	// state does not manage: a look-alike is refused before any plan or
+	// apply and before imports.tf.json is written. The Firebase project
+	// pays for these reads, as the root's provider does.
+	dc, err := r.discoveryClients(ctx, c, lc, fp)
+	if err != nil {
+		return err
+	}
+	im, err := infra.DiscoverFirebase(ctx, dc, fspec, managed)
+	if err != nil {
+		return initErr(err)
+	}
+	for _, n := range im.Notes {
+		r.warn(n)
+	}
+	// The file is written on every run, empty when there is nothing to
+	// import.
 	if err := infra.WriteImports(fwd.Root, im); err != nil {
 		return userErr("writing the Firebase imports: %v", err)
 	}
@@ -347,13 +359,6 @@ func (r *initRun) discoveryClients(ctx context.Context, c *infra.Clients, lc *lo
 		return c, nil
 	}
 	return newInitClientsFor(ctx, lc, fp)
-}
-
-// withoutManaged is im without the imports of addresses the state already
-// manages.
-func withoutManaged(im infra.Imports, managed []string) infra.Imports {
-	im.List = slices.DeleteFunc(slices.Clone(im.List), func(i infra.Import) bool { return slices.Contains(managed, i.To) })
-	return im
 }
 
 // adoptedNames names the resources im imports, for the confirmation: the

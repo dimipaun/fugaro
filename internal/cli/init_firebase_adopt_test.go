@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
@@ -35,7 +36,13 @@ func (r *fbRig) adoptExisting() {
 // imports (importing, no-op) and creates, and a state that lists managed.
 func (r *fbRig) fbPlan(t *testing.T, imports []infra.Import, creates, managed []string) {
 	t.Helper()
-	var changes []map[string]any
+	r.fbPlanWith(t, imports, creates, managed, nil)
+}
+
+// fbPlanWith is fbPlan whose plan also holds the resource changes extra.
+func (r *fbRig) fbPlanWith(t *testing.T, imports []infra.Import, creates, managed []string, extra []map[string]any) {
+	t.Helper()
+	changes := slices.Clone(extra)
 	for _, i := range imports {
 		changes = append(changes, map[string]any{"address": i.To, "type": strings.Split(strings.TrimPrefix(i.To, "module.firebase."), ".")[0],
 			"change": map[string]any{"actions": []string{"no-op"}, "before": map[string]any{}, "after": map[string]any{}, "importing": map[string]any{"id": i.ID}}})
@@ -170,13 +177,16 @@ func TestInitFirebaseAdoptCleanWritesEmpty(t *testing.T) {
 	}
 }
 
-// A look-alike is refused with what was found and expected, before
-// anything is written to the Firebase workdir or terraform runs there.
+// A look-alike is refused with what was found and expected. The Firebase
+// root's tfvars, backend and terraform init (which read the state bucket
+// only) have run, but no plan, no apply and no imports.tf.json: a stale
+// one from an earlier run is removed before terraform init.
 func TestInitFirebaseAdoptRefusal(t *testing.T) {
 	r := newFBRig(t)
 	r.adoptExisting()
 	r.iam.SetRolePermissions("projects/"+r.fp+"/roles/fugaroTokenMinter", "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
 	r.fbPlan(t, fbAdoptImports, fbCreates, nil)
+	r.staleImports(t)
 	out, err := r.runAdopt(t, "--budget-mode", "observe")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
@@ -186,17 +196,34 @@ func TestInitFirebaseAdoptRefusal(t *testing.T) {
 			t.Errorf("no %q in %v", want, err)
 		}
 	}
-	if b := r.fbImportsFile(t); b != nil {
-		t.Errorf("imports.tf.json written: %s", b)
+	r.refusedBeforePlan(t)
+}
+
+// staleImports leaves an earlier run's imports.tf.json in the Firebase
+// workdir.
+func (r *fbRig) staleImports(t *testing.T) {
+	t.Helper()
+	if err := os.MkdirAll(r.fbRoot(), 0o700); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(r.fbRoot(), infra.VarsFile)); !os.IsNotExist(err) {
-		t.Errorf("tfvars written (stat err %v)", err)
+	stale := `{"import":[{"to":"module.firebase.google_apikeys_key.web","id":"projects/other-fp/locations/global/keys/fugaro-web"}]}`
+	if err := os.WriteFile(filepath.Join(r.fbRoot(), infra.ImportsFile), []byte(stale), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// refusedBeforePlan checks that the Firebase root ran nothing past reading
+// its state: no imports.tf.json, no plan, no apply.
+func (r *fbRig) refusedBeforePlan(t *testing.T) {
+	t.Helper()
+	if b := r.fbImportsFile(t); b != nil {
+		t.Errorf("imports.tf.json present: %s", b)
 	}
 	if got := r.applies(t); !slices.Equal(got, []string{"installation"}) {
 		t.Errorf("applies %v, want only the installation's", got)
 	}
-	if got := r.fbRootCalls(t); len(got) != 0 {
-		t.Errorf("terraform ran in the Firebase root: %v", got)
+	if got := r.fbRootCalls(t); !slices.Equal(got, []string{"init", "show"}) {
+		t.Errorf("terraform in the Firebase root: %v, want init and the state's show only", got)
 	}
 }
 
@@ -281,6 +308,9 @@ func TestInitFirebaseAdoptRerunImportsNothing(t *testing.T) {
 	if !strings.Contains(out, "No changes: the firebase root matches the plan.") {
 		t.Errorf("no 'No changes' in\n%s", out)
 	}
+	if strings.Contains(out, "was adopted") {
+		t.Errorf("a healthy rerun warns that the managed signer was adopted:\n%s", out)
+	}
 }
 
 // The Firebase project's discovery reads are billed to it, not to the
@@ -294,4 +324,101 @@ func TestQuotaOptions(t *testing.T) {
 	if got := quotaOptions(lc, fpID); got.GCPProject != fpID || got.Region != lc.Region || got.Endpoints != gcpOptions(lc).Endpoints {
 		t.Errorf("options %+v: want the Firebase project as quota and the rest unchanged", got)
 	}
+}
+
+// fbManagedAll are the four singletons' addresses, as a state that
+// manages them lists them.
+func fbManagedAll() []string {
+	var out []string
+	for _, i := range fbAdoptImports {
+		out = append(out, i.To)
+	}
+	return out
+}
+
+// An installation whose state manages the four drops a launcher: the
+// signer's policy still grants the minter role to them. Discovery does not
+// re-vet the managed signer, so the plan runs as before adoption existed:
+// it deletes the grant, the guard stops it with the --allow-delete hint,
+// and --allow-delete applies it.
+func TestInitFirebaseManagedLauncherDropped(t *testing.T) {
+	r := newFBRig(t)
+	r.adoptExisting()
+	r.iam.SetServiceAccountPolicy(r.fp, fpSigner, gcpfake.Binding{Role: "projects/" + r.fp + "/roles/fugaroTokenMinter", Members: []string{"user:old@example.com"}})
+	addr := `module.firebase.google_service_account_iam_member.minter["user:old@example.com"]`
+	r.fbPlanWith(t, nil, nil, fbManagedAll(), []map[string]any{{"address": addr, "type": "google_service_account_iam_member",
+		"change": map[string]any{"actions": []string{"delete"}, "before": map[string]any{}, "after": nil}}})
+	r.script["plan@installation"] = map[string]any{"exit": 0}
+	r.script["show@installation"] = map[string]any{"stdout": `{"format_version":"1.2","resource_changes":[]}`}
+	r.save(t)
+	out, err := r.runAdoptIn(t, "us-east5\n", "--yes")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), addr) || !strings.Contains(err.Error(), "name the address in --allow-delete") {
+		t.Fatalf("exit %d, err %v\n%s; want the guard's refusal with the --allow-delete hint", ExitCode(err), err, out)
+	}
+	if strings.Contains(err.Error(), "not this installation's launchers") || strings.Contains(out, "was adopted") {
+		t.Errorf("the managed signer was re-vetted:\n%v\n%s", err, out)
+	}
+	if !slices.Contains(r.fbRootCalls(t), "plan") || len(r.applies(t)) != 0 {
+		t.Errorf("calls %v, applies %v; want a plan and no apply", r.fbRootCalls(t), r.applies(t))
+	}
+	if out, err := r.runAdoptIn(t, "us-east5\n", "--yes", "--allow-delete", addr); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.applies(t); !slices.Equal(got, []string{"firebase"}) {
+		t.Errorf("applies = %v", got)
+	}
+	if got := strings.TrimSpace(string(r.fbImportsFile(t))); got != "{}" {
+		t.Errorf("imports.tf.json = %q, want {}", got)
+	}
+}
+
+// The role is managed and has drifted; the others are not managed: they
+// are vetted and imported, and the role is left to the plan.
+func TestInitFirebaseManagedRoleDrift(t *testing.T) {
+	r := newFBRig(t)
+	r.adoptExisting()
+	r.iam.SetRolePermissions("projects/"+r.fp+"/roles/fugaroTokenMinter", "iam.serviceAccounts.signJwt", "iam.serviceAccounts.getAccessToken")
+	want := []infra.Import{fbAdoptImports[0], fbAdoptImports[1], fbAdoptImports[3]}
+	r.fbPlan(t, want, fbCreates, []string{fbAdoptImports[2].To})
+	out, err := r.runAdopt(t, "--budget-mode", "observe")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if got := r.importRows(t); !slices.Equal(got, want) {
+		t.Errorf("rows\n got %v\nwant %v", got, want)
+	}
+	if !strings.Contains(out, "was adopted") {
+		t.Errorf("the imported signer has no adopted note:\n%s", out)
+	}
+}
+
+// A partly managed state does not let an unmanaged look-alike through.
+func TestInitFirebasePartlyManagedLookAlike(t *testing.T) {
+	r := newFBRig(t)
+	r.adoptExisting()
+	r.iam.SetServiceAccountPolicy(r.fp, fpSigner, gcpfake.Binding{Role: "projects/" + r.fp + "/roles/fugaroTokenMinter", Members: []string{"user:old@example.com"}})
+	r.fbPlan(t, nil, fbCreates, []string{fbAdoptImports[0].To, fbAdoptImports[1].To, fbAdoptImports[2].To})
+	out, err := r.runAdopt(t, "--budget-mode", "observe")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "user:old@example.com") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	r.refusedBeforePlan(t)
+}
+
+// A state that cannot be read is an error, never an empty (or a full)
+// managed set: nothing is discovered, imported or planned.
+func TestInitFirebaseStateUnreadable(t *testing.T) {
+	r := newFBRig(t)
+	r.adoptExisting()
+	r.script["show@firebase"] = map[string]any{"exit": 1, "stderr": "Error: Failed to load state: storage: object doesn't exist"}
+	r.save(t)
+	r.staleImports(t)
+	out, err := r.runAdopt(t, "--budget-mode", "observe")
+	if err == nil || ExitCode(err) == ExitUserError {
+		t.Fatalf("exit %d, err %v\n%s; want a remote error", ExitCode(err), err, out)
+	}
+	if strings.Contains(out, "was adopted") {
+		t.Errorf("discovery ran:\n%s", out)
+	}
+	r.refusedBeforePlan(t)
 }
