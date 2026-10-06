@@ -311,3 +311,28 @@ func TestSelectNameAndOrigin(t *testing.T) {
 		t.Fatalf("one config: %+v, %v", sel, err)
 	}
 }
+
+// With exactly one project config, fugaro init's --name for another project
+// is a first run of that project; its own name selects it; without Creating
+// --name never selects.
+func TestSelectNameWithOneConfig(t *testing.T) {
+	xdg := t.TempDir()
+	getenv := func(k string) string { return map[string]string{"XDG_CONFIG_HOME": xdg}[k] }
+	writeFile(t, filepath.Join(xdg, "fugaro", "projects", "aurora.yaml"), projectYAML("aurora", "aurora-gcp-1"))
+	sel, cfg, err := Select(SelectInput{Name: "cyan", Creating: true, Getenv: getenv})
+	if err != nil || cfg != nil || sel.Name != "cyan" || sel.From != "--name" || !strings.HasSuffix(sel.Path, "cyan.yaml") {
+		t.Fatalf("--name cyan beside aurora: %+v, %+v, %v", sel, cfg, err)
+	}
+	sel, cfg, err = Select(SelectInput{Name: "aurora", Creating: true, Getenv: getenv})
+	if err != nil || cfg == nil || sel.Name != "aurora" {
+		t.Fatalf("--name aurora: %+v, %v", sel, err)
+	}
+	sel, _, err = Select(SelectInput{Creating: true, Getenv: getenv})
+	if err != nil || sel.Name != "aurora" || sel.From != "only project config" {
+		t.Fatalf("no --name: %+v, %v", sel, err)
+	}
+	sel, _, err = Select(SelectInput{Name: "cyan", Getenv: getenv})
+	if err != nil || sel.Name != "aurora" || sel.From != "only project config" {
+		t.Fatalf("--name without Creating: %+v, %v", sel, err)
+	}
+}

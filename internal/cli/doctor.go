@@ -219,6 +219,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
 		o.Checks = append(o.Checks, fromPreflight(c))
 	}
+	o.Checks = append(o.Checks, tempXDGChecks(os.Getenv)...)
 	_, tf := preflight.Terraform(doctorLookPath)
 	o.Checks = append(o.Checks, fromPreflight(tf))
 	// preflight.Docker is deliberately not run here: it is only meaningful

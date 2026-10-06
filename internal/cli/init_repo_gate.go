@@ -60,6 +60,10 @@ func (e *initEngine) authState(o originInfo) (repoAuth, error) {
 	return authNeeded, nil
 }
 
+// checkoutNote is printed once before the gate when installation-only flags
+// are given in a checkout that the gate would ask about.
+const checkoutNote = "this checkout's repository is not onboarded; init in a checkout also onboards its repository. To set up only the installation, run fugaro init from outside the checkout."
+
 // gateEarly asks the unknown-repository question at the start of a converge,
 // before any stage plans: the installation's and Firebase's Terraform plans
 // take minutes, and the question used to come only after them (live Check
@@ -79,6 +83,9 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 	tg := e.repo.tg
 	if tg == nil {
 		return
+	}
+	if !repoKnown(e.lc, tg.origin) && len(e.r.o.installationFlags()) > 0 {
+		fmt.Fprintln(e.r.w, "note: "+checkoutNote)
 	}
 	if a, err := e.authState(tg.origin); err != nil || a != authAsk {
 		return

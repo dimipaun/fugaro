@@ -450,6 +450,7 @@ func runInit(r *initRun) error {
 	if err := o.check(); err != nil {
 		return err
 	}
+	r.warnTempXDG()
 	if !o.printVars {
 		// Refused before anything else: every later step talks to Google.
 		if err := refuseHTTP2Debug(os.Getenv); err != nil {
@@ -741,8 +742,6 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 		switch sel.From {
 		case "checkout":
 			return nil, "", nil, userErr("this checkout belongs to project %s; --name says %s", name, o.name)
-		case "only project config":
-			return nil, "", nil, userErr("the only project config is project %s's; --name says %s (renaming a project isn't supported; to set up another project, pass --project %s too)", name, o.name, o.name)
 		}
 		return nil, "", nil, userErr("%s selects project %s; --name says %s (renaming a project isn't supported)", sel.From, name, o.name)
 	}
@@ -1708,6 +1707,15 @@ func (o *initOptions) checkRepo() error {
 	if o.forget && (len(o.allowDelete) > 0 || o.allowJobDelete || o.noBuild) {
 		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
 	}
+	if set := o.installationFlags(); len(set) > 0 {
+		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
+	}
+	return nil
+}
+
+// installationFlags are the flags set that only mean something for the
+// installation, sorted.
+func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
 		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
@@ -1722,10 +1730,7 @@ func (o *initOptions) checkRepo() error {
 			set = append(set, f)
 		}
 	}
-	if len(set) > 0 {
-		return userErr("%s set(s) up the installation, not a repository: run fugaro init with it, then fugaro init --repo", strings.Join(set, ", "))
-	}
-	return nil
+	return set
 }
 
 // runInitRepo onboards the repository of a checkout: its resources are

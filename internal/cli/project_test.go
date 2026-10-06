@@ -11,6 +11,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
@@ -186,10 +187,19 @@ func TestInitCreatesProjectConfig(t *testing.T) {
 	if !strings.Contains(string(data), "name: aurora\n") || !strings.Contains(string(data), "gcp_project: proj-1234\n") {
 		t.Fatalf("file:\n%s", data)
 	}
-	// With the project config there, --name must be its name.
-	o.name = "borealis"
-	if _, _, _, err := loadInitConfig(context.Background(), o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "borealis") {
-		t.Fatalf("another --name: %v", err)
+	// With the project config there, another --name is a first run of that
+	// project, which needs its own --gcp-project and --region.
+	o.name, o.cloud.gcpProject, o.cloud.region = "borealis", "", ""
+	if _, _, _, err := loadInitConfig(context.Background(), o); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "pass --gcp-project and --region") {
+		t.Fatalf("another --name without its inputs: %v", err)
+	}
+	o.cloud.gcpProject, o.cloud.region = "proj-1234", "us-east5"
+	if lc, _, old, err := loadInitConfig(context.Background(), o); err != nil || lc.Name != "borealis" || old != nil {
+		t.Fatalf("another --name: %+v, %v", lc, err)
+	}
+	// A rename of the installation is refused downstream, by its name.
+	if err := checkInstallationName("borealis", "borealis", infra.InstallationOutputs{ProjectName: "aurora"}, true); err == nil || !strings.Contains(err.Error(), "renaming isn't supported") {
+		t.Fatalf("rename: %v", err)
 	}
 	o.name = "aurora"
 	if lc, _, old, err := loadInitConfig(context.Background(), o); err != nil || lc.Name != "aurora" || old == nil {
