@@ -14,7 +14,7 @@ Every person who uses an installation keeps a local project config, `~/.config/f
 
 1. The project ID comes from an optional `gcp_project:` in the checkout's `fugaro.yaml`, next to `project:`. It is never guessed from the project name (§5).
 2. A fetched config is cached in the user's cache directory and refreshed daily (§6).
-3. `init` publishes the shared file; a repository's `init --repo` writes the `gcp_project:` line (§4, §8).
+3. `init` publishes the shared file; plain `fugaro init`, run in a repository's checkout, writes the `gcp_project:` line (§4, §8).
 
 ## 3. Approach
 
@@ -30,7 +30,7 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 
 **Publishing is a merge.** The publisher first reads the object that is there (through `ParseShared`, against the local config's own name, GCP project and bucket) and merges the local view into it, so a machine that lacks what another onboarded does not erase it: maps (`repos`, `base_images`, `model_prices`, `compute_prices`) are unioned with the local entry winning on a key clash; scalars and pointers take the local value when non-zero, else the existing one; `version`, `name`, `gcp_project` and `runs_bucket` always come from the local config. An existing object that is unparseable, over 64 KiB or refused by `ParseShared` is replaced, with a warning; that includes one of another installation, which fails the identity check (`MergeShared` also ignores a foreign object, a second line of defence the CLI path does not reach). If the merged output is over 64 KiB (a writer bloated a price table below the cap) the publisher falls back to the local view alone, with a warning. The publisher then runs `ParseShared` on the exact bytes it is about to write, and never writes a file teammates would refuse (it warns instead).
 
-**Only for the default runs bucket.** Teammates find the bucket from `gcp_project:` alone (`fugaro-runs-<gcp_project>`), so the publisher, and the `gcp_project:` line that `init --repo` writes (§8), apply only to installations whose runs bucket has that name. A custom `--runs-bucket` installation does not publish and gets a warning.
+**Only for the default runs bucket.** Teammates find the bucket from `gcp_project:` alone (`fugaro-runs-<gcp_project>`), so the publisher, and the `gcp_project:` line that `fugaro init` writes in the checkout (§8), apply only to installations whose runs bucket has that name. A custom `--runs-bucket` installation does not publish and gets a warning.
 
 **Included:** everything in the local project config (`localcfg.Config.Shared()`) except what is listed under Excluded: so the whole `budget` block (mode, per-run cap, token ceiling, allowed models, database URL, Firebase project, API key, token signer, grace), `backend`, prices, `repos` (including each repository's `vertex` flag) and the rest. The four budget connection values are documented as not secret.
 
@@ -46,7 +46,7 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 
 ## 5. Reading and validating
 
-**When.** Only when selection finds no local config for the project: `--config` and a local `projects/<name>.yaml` always win. The project name is the checkout's `project:`. The GCP project is the checkout's `gcp_project:`, or the existing `--gcp-project` flag. The bucket is `fugaro-runs-<gcp_project>`. If `gcp_project:` is missing the error says exactly which line to add and that whoever onboarded the repo can run `fugaro init --repo` to add it. **There is no guessing and no hint of a guess:** the committed, reviewed value is the trust anchor. A guessed project ID would make the claim self-fulfilling (a stranger's project of that name with a matching marker would pass every consistency check), and the convention does not even hold for our own installations (`fugaro` is in `fugaro-dev`, belong was in `edge-devel-dimi`).
+**When.** Only when selection finds no local config for the project: `--config` and a local `projects/<name>.yaml` always win. The project name is the checkout's `project:`. The GCP project is the checkout's `gcp_project:`, or the existing `--gcp-project` flag. The bucket is `fugaro-runs-<gcp_project>`. If `gcp_project:` is missing the error says exactly which line to add and that whoever onboarded the repo can run `fugaro init` in the checkout to add it. **There is no guessing and no hint of a guess:** the committed, reviewed value is the trust anchor. A guessed project ID would make the claim self-fulfilling (a stranger's project of that name with a matching marker would pass every consistency check), and the convention does not even hold for our own installations (`fugaro` is in `fugaro-dev`, belong was in `edge-devel-dimi`).
 
 **Sequence.**
 1. Read the marker with the same plain bucket read `checkCloudName` uses (`blobx`, at most 4 KiB, `Version == 1`), and require its name and GCP project to equal the checkout's. `infra.ReadProjectMarker` is not used: it needs the project number from Cloud Resource Manager (`projects.get`), which a plain launcher's custom role does not have, and the launcher is the primary user. The trust level is the status quo: every cloud command already trusts this marker through `checkCloudName`, which runs again after selection.
@@ -71,7 +71,7 @@ The fallback lives at the one choke point, `localcfg.Select` (`select.go`), befo
 
 ## 8. The `gcp_project:` line
 
-`config.Config` (`internal/config/config.go`) gains an optional `gcp_project:` (validated as a GCP project ID) beside `project:`, because its parser refuses unknown keys. `config.ProjectOf` (the lenient scan) gets a sibling that reads it, and `localcfg.Checkout` carries it. The runner ignores the value. `fugaro init --repo` writes the line into the checkout's `fugaro.yaml` only for a default-named runs bucket (§4), after the plugin stage's pattern: the diff is shown first; `--yes` writes; a terminal is asked `[y/N]`; non-interactive without `--yes` writes nothing and prints the line for the user to add by hand; `--plan-only` writes nothing. It inserts only after a simple single-line top-level `project:` scalar and refuses other shapes (quoted or block-scalar `gcp_project:`, multi-line values, a different existing `gcp_project:`), printing the line instead; it re-parses its own edit and refuses it unless the project and `gcp_project` are as intended; CRLF files keep their line endings. The owner commits it with the repo's other changes, and on EdgeWeb the user merges. `init --repo` also warns, naming the `fugaro image build` command, while the repository's current image predates the field (§9), and also when the line is already present.
+`config.Config` (`internal/config/config.go`) gains an optional `gcp_project:` (validated as a GCP project ID) beside `project:`, because its parser refuses unknown keys. `config.ProjectOf` (the lenient scan) gets a sibling that reads it, and `localcfg.Checkout` carries it. The runner ignores the value. Plain `fugaro init`, run in the checkout, writes the line into its `fugaro.yaml` (the repository stage's `anchor`; `fugaro init --repo` is a separate mode and does not) only for a default-named runs bucket (§4), after the plugin stage's pattern: the diff is shown first; `--yes` writes; a terminal is asked `[y/N]`; non-interactive without `--yes` writes nothing and prints the line for the user to add by hand; `--plan-only` writes nothing. It inserts only after a simple single-line top-level `project:` scalar and refuses other shapes (quoted or block-scalar `gcp_project:`, multi-line values, a different existing `gcp_project:`), printing the line instead; it re-parses its own edit and refuses it unless the project and `gcp_project` are as intended; CRLF files keep their line endings. The owner commits it with the repo's other changes, and on EdgeWeb the user merges. `fugaro init` also warns, naming the `fugaro image build` command, while the repository's current image predates the field (§9), and also when the line is already present.
 
 ## 9. Compatibility hazard and rollout
 
@@ -81,7 +81,7 @@ The `fugaro.yaml` parser is strict, and job images carry a baked-in `fugaro` bin
 2. Upgrade the CLI; run `fugaro init` once per installation. This only publishes the shared file. No repository changes.
 3. Rebuild each repository's image (`fugaro image build`), baking in the new binary.
 4. Every teammate's CLI and every CI job or pin that runs `fugaro` against the repository (validate, doctor --plugin --strict, run) must be on the new release BEFORE the gcp_project line is merged: older versions refuse the key as unknown (the parser is strict).
-5. Run `fugaro init --repo` in each checkout to add the line; commit and merge it. `init --repo` warns when the repository's current image predates the field and says to rebuild first, and says the same of teammates' CLIs and CI pins when it offers the line.
+5. Run plain `fugaro init` in each checkout to add the line; commit and merge it. `fugaro init` warns when the repository's current image predates the field and says to rebuild first, and says the same of teammates' CLIs and CI pins when it offers the line.
 
 Until step 5 nothing changes for teammates; a checkout without the line gets the clear "add this line" error and can use `init` as today.
 
@@ -96,7 +96,7 @@ Until step 5 nothing changes for teammates; a checkout without the line gets the
 
 ## 11. Work breakdown and review
 
-About six tasks: (1) the `gcp_project:` field and its parser; (2) the publisher in `init` and `--publish-config`; (3) the fetch, validate and cache reader; (4) the selector fallback and the `doctor` line; (5) `init --repo` writing the line and the image warning; (6) docs and the live check. Task 3 (validation) gets a second, independent reviewer. Estimated half a day to a day with review.
+About six tasks: (1) the `gcp_project:` field and its parser; (2) the publisher in `init` and `--publish-config`; (3) the fetch, validate and cache reader; (4) the selector fallback and the `doctor` line; (5) the repository stage of `fugaro init` writing the line and the image warning; (6) docs and the live check. Task 3 (validation) gets a second, independent reviewer. Estimated half a day to a day with review.
 
 ## 12. Open items
 

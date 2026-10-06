@@ -85,7 +85,7 @@ func TestLsWithNoLocalConfigAndNoGCPProjectAsksForTheLine(t *testing.T) {
 	if ExitCode(err) != ExitUserError || err == nil {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
-	for _, want := range []string{"add `gcp_project: <id>` next to `project:` in fugaro.yaml", "fugaro init --repo"} {
+	for _, want := range []string{"add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro init in the checkout"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error lacks %q: %v", want, err)
 		}
