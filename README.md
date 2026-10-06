@@ -8,27 +8,26 @@
 
 ## Why Fugaro
 
-- **The agent does not run on your machine.** It runs in a throwaway container in your cloud project, so it has no access to your laptop: not your files, your shell history, your SSH keys or your other credentials. What it can reach is limited per repository and listed under [Safety and cost controls](#safety-and-cost-controls).
-- **Real parallelism.** Each task is its own job execution. Several agents with sub-agents, compiles and test suites no longer fight over one laptop's CPU, memory and battery.
-- **Always a pull request, which a person merges.** Every run that pushed ends in a pull request, a draft one if it failed, with the diff, the report and the logs. Fugaro never merges; a person does.
-- **Cost control.** Per-run dollar or token caps, optional project-wide daily caps with kill switches, and a cost line on every run.
-- **Your cloud, your model credentials.** It runs in your GCP project with your Claude subscription token, Anthropic API key or Vertex AI. There is no Fugaro service in between, and compute is billed only while a task runs.
+- **The agent does not run on your machine.** It runs in a throwaway container in your cloud project, so it cannot read your laptop: not your files, your shell history, your SSH keys or your other credentials. It can reach the internet without restriction, its repository's secrets and git token, and (on GitHub) every repository its App is installed on: see [Safety and cost controls](#safety-and-cost-controls).
+- **Real parallelism.** Each task is its own job execution (up to `max_parallel`, 20 by default). Several agents with sub-agents, compiles and test suites no longer fight over one laptop's CPU, memory and battery.
+- **Always a pull request.** Every run that pushed ends in a pull request, a draft one if it failed, with the diff, the report and the logs. Fugaro never merges; protect the base branch so that only a person can.
+- **Cost control.** A per-stage dollar limit on every run; opt-in per-run dollar or token caps; optional project-wide daily caps with kill switches (they start in `observe`, which only counts); and a cost line on every run.
+- **Your cloud, your model credentials.** It runs in your GCP project with your Claude subscription token, Anthropic API key or Vertex AI. There is no Fugaro service in between, and Cloud Run bills a task only while it runs (storage, the registries, a daily image check and image builds bill separately).
 
 ## Getting started
 
-You need a Google Cloud project with billing, `gcloud` signed in with Application Default Credentials, Terraform 1.7 or newer, and a GitHub or Bitbucket Cloud repository (details in [Requirements](#requirements)). Install the CLI:
+You need Claude Code, a Google Cloud project with billing (or a billing account and `--create-project`), `gcloud` signed in with Application Default Credentials, Terraform 1.7 or newer, and a GitHub or Bitbucket Cloud repository; for GitHub, create the GitHub App first ([below](#safety-and-cost-controls); the full list is in [Requirements](#requirements)). Install the CLI:
 
 ```sh
 brew install dimipaun/tap/fugaro                      # Homebrew cask (tested on macOS)
-go install github.com/dimipaun/fugaro/cmd/fugaro@latest   # or, a development build (see below)
 ```
 
-Or download an archive from [Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64) and [verify it with cosign](docs/release.md#verifying-a-release). A `go install` build reports the version `dev`, so `fugaro init` copies no release images and pins no plugin with it: for setup, use Homebrew or an archive. Then, in the repository's checkout:
+Or download an archive from [Releases](https://github.com/dimipaun/fugaro/releases) (darwin and linux, amd64 and arm64) and [verify it with cosign](docs/release.md#verifying-a-release). `go install github.com/dimipaun/fugaro/cmd/fugaro@latest` is for development only: it builds a `dev` version with no release images or plugin pin. Then, in the repository's checkout:
 
 1. Run `fugaro init` in your own terminal. It sets up the cloud side behind confirmations you type, asks for secrets at hidden prompts, and wires the Fugaro plugin into `.claude/settings.json`.
-2. Open your coding agent and run `/fugaro:setup`. It writes `fugaro.yaml` with you and opens a pull request; merge it, then run `fugaro init` again to add the repository's job and first image build.
+2. Open Claude Code and run `/fugaro:setup`. It writes `fugaro.yaml` with you and opens a pull request; merge it, then run `fugaro init` again to add the repository's job and first image build.
 
-Commit the `.claude/settings.json` change: a teammate who opens the folder in Claude Code and trusts it gets the plugin installed by itself, and one who holds the launcher role needs no setup of their own. Then hand it work:
+Commit the `.claude/settings.json` change: a teammate who opens the folder in Claude Code and trusts it gets the plugin installed by itself (a repository's settings can install plugins, so only trust folders you trust), and one whom the owner made a launcher, a person allowed to start runs (`fugaro init --launcher user:<email>`), needs only the CLI and `gcloud auth application-default login`, no `fugaro init`. Then hand it work:
 
 ```sh
 fugaro run "add a --verbose flag to the export command"
@@ -52,7 +51,7 @@ fugaro CLI ---- run ------------->    one execution per task, then gone
                                     Firebase (optional): the shared budget
 ```
 
-1. **Start** from the repository's own image: a base (`web-node`, `go` or `java-services`) plus its checkout and dependencies, rebuilt by Cloud Build when a daily check finds it stale.
+1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): a base (`web-node`, `go` or `java-services`) plus its checkout and dependencies, rebuilt by Cloud Build when a daily check finds it stale.
 2. **Sync** to the exact target commit and restore the dependency caches.
 3. **Loop:** Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes, for as many review rounds as configured.
 4. **Push and open the pull request**: a draft at the first verified push, marked ready only when the run passes. Reviewers are requested only then.
@@ -63,23 +62,25 @@ The engine is generic: everything specific to a repository lives in its `fugaro.
 ## Safety and cost controls
 
 **What a run's agent cannot reach**
-- **Your machine.** Your laptop runs only the `fugaro` CLI and your own agent; the run's agent is in a Cloud Run container.
-- **Other repositories.** Each workflow's job runs as its own service account, which can read only the secrets that workflow mounts and only its own repository's run, cache and lock objects. Each repository builds with its own account into its own registry.
-- **Your GitHub Actions workflows.** On GitHub the App has exactly four repository permissions, Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, never Workflows, so GitHub refuses a push that changes `.github/workflows/`; each run's token is for one repository only. Name the App `<yourname>-fugaro`, install it on the repository, and accept any later permission change on the installation ([docs/git-providers.md](docs/git-providers.md)).
+- **Your machine.** Your laptop runs the `fugaro` CLI, Terraform and `gcloud` (during `init`) and your own agent; the run's agent is in a Cloud Run container.
+- **Other repositories' cloud resources.** Each workflow's job runs as its own service account, which can read only the secrets that workflow mounts and only its own repository's run, cache and lock objects. Each repository builds with its own account into its own registry. **On GitHub the job holds the App's private key**, so a compromised run can mint tokens for every repository the App is installed on: install the App only on repositories Fugaro serves, or use one App per repository for isolation.
+- **Your GitHub Actions workflow files.** On GitHub the App has exactly four repository permissions, Contents Read & write, Pull requests Read & write, Issues Read and Metadata Read, never Workflows, so GitHub refuses a push that changes `.github/workflows/`; each run's token is for one repository only. Code it pushes still runs in the workflows you already have (a `push` trigger runs your scripts with the secrets they expose). Fugaro has no equivalent guard for Bitbucket pipelines. Name the App `<yourname>-fugaro`, install it on the repository, and accept any later permission change on the installation ([docs/git-providers.md](docs/git-providers.md)).
 
 **What it can reach, by design**
 - The repository, and the secrets its workflow mounts: the repository-scoped git token, the model credential and the workflow's declared secrets. The agent runs with permission prompts bypassed; the container is the boundary.
 - **The network, without restriction.** Egress is not limited, so it reaches the model provider and the git host, but also package registries and any other host. A prompt injection in repository content or a dependency could send code or those tokens out.
 - The other runs of the same repository, which share its service account.
+- Whatever you run from its work. Its branches can carry scripts, hooks or a `.claude/` config: review a Fugaro pull request before you check it out and run it or open it in Claude Code. Its logs and PR text reach your own agent when it watches runs; the plugin treats that text as data, not instructions.
 - The repository's branches and pull requests, with its git token. Fugaro itself never merges, but **protect the base branch** (required reviews): that is what stops a push or a merge into it.
 
 **The controls**
 - **One container per task:** a job execution with no retries and a task timeout, plus stage and total timeouts.
-- **Secrets are typed only at your own terminal.** `fugaro secrets set` and `fugaro init` read a value from stdin or a hidden prompt, never from an argument, and the plugin's skills never ask for, read or print one (a lint enforces it). Secrets are never baked into images or kept in Terraform state, and run logs and transcripts are redacted, best effort.
+- **Secrets never pass through an argument or the plugin.** `fugaro secrets set` reads a value from stdin or a hidden prompt, and `fugaro init` asks only at hidden prompts in a real terminal; the plugin's skills tell the agent never to ask for, read or print one (a lint checks the skills). Secrets are never baked into images or kept in Terraform state, and run logs and transcripts are redacted, best effort.
 - **Typed confirmations for money and permanent steps.** `fugaro init` shows each plan before applying it; creating a project, linking billing, a secret and the first billable build are typed at a real terminal and never covered by `--yes`. It applies nothing when a coding agent's environment variable is set: a mitigation, not a barrier.
-- **Spend caps.** Every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25). With the budget on and `api-key`, a gateway in the runner prices every model call and, in `enforce` mode, halts the run at its dollar cap; `oauth` runs can get a token cap. With a Firebase project (`fugaro init --firebase`), runs also share daily caps per repository and project, and kill switches (`fugaro budget kill`, or `k`/`K` in `fugaro watch`) halt running runs within seconds. The caps guard against mistakes and expensive tasks, not against a hostile agent. An optional GCP billing budget alert (`--budget`) is the backstop.
+- **Spend caps, on by default:** every stage passes Claude Code a dollar limit (`agent.max_budget_usd`, default 25).
+- **Spend caps, opt-in:** with the budget on and `agent.auth: api-key` (an Anthropic API key), a gateway (a local proxy in the runner that every model call goes through) prices each call and, in `enforce` mode, halts the run at its dollar cap; `oauth` runs can get a token cap. The budget is off by default, and a Firebase budget starts in `observe`, which counts and refuses nothing until you switch to `enforce`. With a Firebase project (`fugaro init --firebase`), runs also share daily caps per repository and project, and kill switches (`fugaro budget kill`, or `k`/`K` in `fugaro watch`) halt running runs within seconds. The caps guard against mistakes and expensive tasks, not against a hostile agent. An optional GCP billing budget alert (`--budget`) is the backstop.
 - **Log isolation.** Run logs carry agent output, so by default they go to Fugaro's own log bucket, which only launchers and operators (and the project's owners and editors) can read.
-- **Pinned releases.** Release checksums are signed with cosign; `fugaro init` copies base images by verified digest from the release tag (`--expect-digest` pins one), and pins the plugin to the binary's release. Signing the images is planned.
+- **Pinned releases.** Release checksums are signed with cosign; `fugaro init` copies base images from the release tag in ghcr.io and checks the copy by digest; to pin what the tag must resolve to, pass `--expect-digest`. It pins the plugin to the binary's release. Signing the images is planned.
 
 The full model, with its residual risks: [design §6](docs/design/v1.md#6-security-model). Budget setup: [docs/gcp-setup.md](docs/gcp-setup.md#turning-the-model-budget-on).
 
@@ -96,7 +97,7 @@ git:
   base_branch: main
 agent:
   auth: oauth                 # oauth | api-key | vertex
-  review_rounds: 2            # review and fix rounds before the PR is opened
+  review_rounds: 2            # review and fix rounds before the PR is marked ready
   max_budget_usd: 25          # per stage
 workflows:
   web:
@@ -118,7 +119,8 @@ workflows:
 - `gcloud` signed in with Application Default Credentials, and Terraform 1.7 or newer (before 2.0) on `PATH`.
 - A GitHub or Bitbucket Cloud repository, and a GitHub App or a Bitbucket repository access token for it.
 - A Claude credential: a subscription token (`claude setup-token`), an Anthropic API key, or Vertex AI.
-- macOS or Linux (Windows through WSL2). Docker is optional, for local image builds.
+- Claude Code, for `/fugaro:setup` and the plugin.
+- macOS or Linux (Windows: untested). Docker is optional, for local image builds.
 
 ## Other clouds: help wanted
 
