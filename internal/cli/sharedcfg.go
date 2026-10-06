@@ -104,7 +104,7 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 // is nil too, with refused saying why, so the caller can say it replaces
 // it. A read that fails otherwise is an error.
 func readShared(ctx context.Context, b *blobx.Bucket, anchor SharedAnchor) (c *localcfg.Config, refused string, err error) {
-	data, _, err := b.ReadMax(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
+	data, _, err := b.ReadMaxStrict(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return nil, "", nil
@@ -384,7 +384,7 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 		return nil, 0, nil, bucketErr(url, "opening the bucket", err)
 	}
 	defer b.Close()
-	data, _, err := b.ReadMax(ctx, infra.ProjectMarkerObject, markerMaxBytes)
+	data, _, err := b.ReadMaxStrict(ctx, infra.ProjectMarkerObject, markerMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return nil, 0, nil, gone(userErr("no Fugaro installation at %s (it has no %s): check gcp_project in the checkout's fugaro.yaml", url, infra.ProjectMarkerObject))
@@ -403,7 +403,7 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 	case m.GCPProject != a.GCPProject:
 		return nil, 0, nil, gone(userErr("%s in %s says gcp_project %q, not %s; ask an operator to run fugaro init", infra.ProjectMarkerObject, url, m.GCPProject, a.GCPProject))
 	}
-	data, gen, err := b.ReadMax(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
+	data, gen, err := b.ReadMaxStrict(ctx, infra.SharedConfigObject, localcfg.SharedMaxBytes)
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return nil, 0, nil, gone(userErr("project %s has not published a shared config; ask an operator to run fugaro init (it writes %s to %s)", a.Name, infra.SharedConfigObject, url))

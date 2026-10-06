@@ -132,18 +132,38 @@ func (b *Bucket) Create(ctx context.Context, key string, data []byte, contentTyp
 }
 
 // Read returns key's content and generation (0 off GCS) from one reader.
-// An object larger than MaxReadBytes is ErrTooLarge.
+// An object larger than MaxReadBytes is ErrTooLarge. An HTTP 403 is
+// ErrNotExist, as gocloud's GCS driver maps it: the job and build service
+// accounts hold storage.objectUser only under a prefix condition, so they
+// lack storage.objects.list and GCS answers a GET of a missing object with
+// 403. Callers that treat "absent" as normal depend on this.
 func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
-	return b.ReadMax(ctx, key, MaxReadBytes)
+	return b.read(ctx, key, MaxReadBytes, false)
 }
 
 // ReadMax is Read with a cap of limit bytes instead of MaxReadBytes: an
 // object larger is ErrTooLarge, and no more than limit+1 bytes are read.
-// A refusal (HTTP 403) is returned as itself, never as ErrNotExist,
-// although gocloud's GCS driver reports it as not found.
 func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error) {
+	return b.read(ctx, key, limit, false)
+}
+
+// ReadStrict is Read, except that an HTTP 403 is returned as an error
+// (the googleapi.Error stays reachable with errors.As), not as ErrNotExist.
+// Only the shared-config readers (internal/cli/sharedcfg.go) may use the
+// strict variants: they run as launchers or operators holding unconditional
+// objectAdmin (which includes list), for whom a 403 means no access.
+func (b *Bucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
+	return b.read(ctx, key, MaxReadBytes, true)
+}
+
+// ReadMaxStrict is ReadMax with ReadStrict's treatment of a 403.
+func (b *Bucket) ReadMaxStrict(ctx context.Context, key string, limit int) ([]byte, int64, error) {
+	return b.read(ctx, key, limit, true)
+}
+
+func (b *Bucket) read(ctx context.Context, key string, limit int, strict bool) ([]byte, int64, error) {
 	r, err := b.NewReader(ctx, key, nil)
-	if gcerrors.Code(err) == gcerrors.NotFound && !isForbidden(err) {
+	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return nil, 0, ErrNotExist
 	}
 	if err != nil {

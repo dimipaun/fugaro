@@ -267,9 +267,12 @@ func TestReadMaxIsCapped(t *testing.T) {
 	}
 }
 
-// TestReadReportsAForbiddenObjectAsSuch: gocloud's GCS driver maps a 403
-// to NotFound; Read must not turn a refusal into "absent".
-func TestReadReportsAForbiddenObjectAsSuch(t *testing.T) {
+// forbiddenBucket is a real gcsblob bucket whose server answers every GET
+// with 403, as GCS does for a missing object when the caller lacks
+// storage.objects.list (the job and build service accounts, whose
+// objectUser grants are conditioned on an object-name prefix).
+func forbiddenBucket(t *testing.T) *blobx.Bucket {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
@@ -288,9 +291,55 @@ func TestReadReportsAForbiddenObjectAsSuch(t *testing.T) {
 	}
 	b := &blobx.Bucket{Bucket: gb, GCSName: "b"}
 	t.Cleanup(func() { _ = b.Close() })
-	_, _, err = b.Read(ctx, "k")
-	var ae *googleapi.Error
-	if err == nil || errors.Is(err, blobx.ErrNotExist) || !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
-		t.Fatalf("Read of a forbidden object = %v, want the 403", err)
+	return b
+}
+
+// TestReadTreatsForbiddenAsAbsent pins the prefix-conditioned grant
+// scenario: without storage.objects.list GCS answers a GET of a missing
+// object with 403, so Read and ReadMax must report ErrNotExist (callers
+// such as the image gate and lock.Acquire rely on it).
+func TestReadTreatsForbiddenAsAbsent(t *testing.T) {
+	b := forbiddenBucket(t)
+	ctx := context.Background()
+	if _, _, err := b.Read(ctx, "k"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("Read of a 403 object = %v, want ErrNotExist", err)
+	}
+	if _, _, err := b.ReadMax(ctx, "k", 10); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadMax of a 403 object = %v, want ErrNotExist", err)
+	}
+}
+
+// TestStrictReadsReportAForbiddenObject: the strict variants return the 403.
+func TestStrictReadsReportAForbiddenObject(t *testing.T) {
+	b := forbiddenBucket(t)
+	ctx := context.Background()
+	check := func(name string, err error) {
+		t.Helper()
+		var ae *googleapi.Error
+		if err == nil || errors.Is(err, blobx.ErrNotExist) || !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
+			t.Fatalf("%s of a forbidden object = %v, want the 403", name, err)
+		}
+	}
+	_, _, err := b.ReadStrict(ctx, "k")
+	check("ReadStrict", err)
+	_, _, err = b.ReadMaxStrict(ctx, "k", 10)
+	check("ReadMaxStrict", err)
+}
+
+// TestStrictReadsKeepAbsentAndCap: strict variants differ only on 403.
+func TestStrictReadsKeepAbsentAndCap(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	if err := b.WriteAll(ctx, "k", make([]byte, 100), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.ReadStrict(ctx, "missing"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadStrict missing = %v", err)
+	}
+	if _, _, err := b.ReadMaxStrict(ctx, "k", 99); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("ReadMaxStrict over cap = %v", err)
+	}
+	if data, _, err := b.ReadMaxStrict(ctx, "k", 100); err != nil || len(data) != 100 {
+		t.Fatalf("ReadMaxStrict at cap = %d, %v", len(data), err)
 	}
 }
