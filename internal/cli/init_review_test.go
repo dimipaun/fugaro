@@ -208,7 +208,8 @@ func TestRunConfirmationNeverCoversTheSeparateSteps(t *testing.T) {
 }
 
 // A plan outside the allowlist (a destroy, a replace, an IAM binding, a
-// grant to someone the review did not list) is not covered: the step shows why
+// grant to someone the review did not list, an import the root's discovery did
+// not write) is not covered: the step shows why
 // and asks its own typed confirmation, even after the run confirmation was
 // taken; a known additive plan is covered.
 func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
@@ -223,6 +224,8 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		"unlisted user": mk("google_project_iam_member", map[string]any{"member": "user:eve@example.com", "role": "roles/storage.objectUser"}, "create"),
 		"owner":         mk("google_project_iam_member", map[string]any{"member": "user:me@example.com", "role": "roles/owner"}, "create"),
 		"nil":           nil,
+		"an import discovery did not write": {ResourceChanges: []tf.ResourceChange{{Address: "module.x.google_storage_bucket.z", Type: "google_storage_bucket",
+			Change: tf.Change{Actions: []string{"no-op"}, Importing: &tf.Importing{ID: initProject + "/elsewhere"}, After: map[string]any{"public_access_prevention": "enforced", "uniform_bucket_level_access": true}, AfterUnknown: map[string]any{}}}}},
 	} {
 		for sname, tc := range map[string]struct {
 			stdin string
@@ -230,13 +233,13 @@ func TestPlanOutsideTheAllowlistAsksItsOwn(t *testing.T) {
 		}{"its own answer": {initProjectName + "\n" + initProjectName + "\n", false}, "only the run's answer": {initProjectName + "\n", true}} {
 			t.Run(name+"/"+sname, func(t *testing.T) {
 				r, _, out, _, _ := c.reviewRun(t, tc.stdin, true)
-				if r.notCovered(additive) != "" || r.notCovered(bad) == "" {
-					t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive), r.notCovered(bad))
+				if r.notCovered(additive, nil) != "" || r.notCovered(bad, nil) == "" {
+					t.Fatalf("notCovered: additive %q, bad %q", r.notCovered(additive, nil), r.notCovered(bad, nil))
 				}
-				if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive)); err != nil {
+				if err := r.confirmOrdinary("applies the additive plan", "x", r.notCovered(additive, nil)); err != nil {
 					t.Fatal(err)
 				}
-				err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad))
+				err := r.confirmOrdinary("applies the other plan", "nothing was applied", r.notCovered(bad, nil))
 				if (err != nil) != tc.err {
 					t.Fatalf("err %v\n%s", err, out)
 				}

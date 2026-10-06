@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -80,7 +81,10 @@ func (r *initRun) historyJob(ctx context.Context, c *infra.Clients, lc *localcfg
 // applyRoot plans, shows, guards and (once confirmed) applies the root t
 // runs, which is not the installation (installRoot does that). what says
 // where; stop means --plan-only ended the run.
-func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, root, what string) (applied, stop bool, err error) {
+//
+// imports are the import blocks the root's discovery wrote: the run's one
+// confirmation covers an import only when it is one of them.
+func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, root, what string, imports []tf.ImportKey) (applied, stop bool, err error) {
 	changed, err := t.Plan(ctx, infra.PlanFile)
 	if err != nil {
 		return false, false, remote(err)
@@ -102,7 +106,7 @@ func (r *initRun) applyRoot(ctx context.Context, t *tf.TF, wd *infra.Workdir, ro
 		fmt.Fprintf(r.w, "--plan-only: nothing applied; the plan is %s\n", filepath.Join(wd.Root, infra.PlanFile))
 		return false, true, nil
 	}
-	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan)); err != nil {
+	if err := r.confirmOrdinary("applies "+counts.String()+" "+what, "nothing was applied", r.notCoveredFirebase(plan, imports)); err != nil {
 		return false, false, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -235,10 +239,54 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return userErr("%v", err)
 	}
+	// No imports.tf.json is here yet: PrepareWorkdir (r.terraform) rebuilt
+	// the root's tree, so only this run's discovery writes it, below, and a
+	// refusal leaves none.
 	if err := ft.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	applied, stop, err := r.applyRoot(ctx, ft, fwd, "firebase", fmt.Sprintf("to the Firebase project %s (the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp))
+	// The state is read before discovery. terraform init and show read the
+	// installation's state bucket, and on a first run Terraform's GCS
+	// backend may create an EMPTY state object there (taking and releasing
+	// its lock); nothing is written to the Firebase project. What the state
+	// manages is Terraform's already, so discovery neither vets nor imports
+	// it, and the plan, the guard and the confirmation handle it as they
+	// always have. A first run has no state ({"format_version":"1.0"}, no
+	// values), which manages nothing; a state that cannot be read stops the
+	// run.
+	st, err := ft.ShowState(ctx)
+	if err != nil {
+		return remote(err)
+	}
+	managed := map[string]bool{}
+	for _, a := range st.Addresses() {
+		managed[a] = true
+	}
+	// Read-only discovery of the Firebase project's own singletons that the
+	// state does not manage: a look-alike is refused before any plan or
+	// apply and before imports.tf.json is written. The Firebase project
+	// pays for these reads, as the root's provider does.
+	dc, err := r.discoveryClients(ctx, c, lc, fp)
+	if err != nil {
+		return err
+	}
+	im, err := infra.DiscoverFirebase(ctx, dc, fspec, managed)
+	if err != nil {
+		return initErr(err)
+	}
+	for _, n := range im.Notes {
+		r.warn(n)
+	}
+	// The file is written on every run, empty when there is nothing to
+	// import.
+	if err := infra.WriteImports(fwd.Root, im); err != nil {
+		return userErr("writing the Firebase imports: %v", err)
+	}
+	what := fmt.Sprintf("to the Firebase project %s (the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp)
+	if names := adoptedNames(im); names != "" {
+		what = fmt.Sprintf("to the Firebase project %s (adopting the existing %s; the Realtime Database, a restricted web API key, the token signer and the grants on it)", fp, names)
+	}
+	applied, stop, err := r.applyRoot(ctx, ft, fwd, "firebase", what, im.Keys())
 	if err != nil || stop {
 		return err
 	}
@@ -302,6 +350,64 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	}
 
 	return nil
+}
+
+// discoveryClients are the clients that read the Firebase project's
+// resources: the Firebase project is their quota project, not the
+// installation's, when the two differ. The Resource Manager client stays
+// the installation's (c.CRM), as CheckFirebaseProject's reads of the
+// Firebase project are: a fresh Firebase project may not have the Resource
+// Manager API enabled, and its project number is read before anything is
+// applied there.
+func (r *initRun) discoveryClients(ctx context.Context, c *infra.Clients, lc *localcfg.Config, fp string) (*infra.Clients, error) {
+	if fp == lc.GCPProject {
+		return c, nil
+	}
+	dc, err := newInitClientsFor(ctx, lc, fp)
+	if err != nil {
+		return nil, err
+	}
+	dc.CRM = c.CRM
+	return dc, nil
+}
+
+// adoptedNames names the resources im imports, for the confirmation: the
+// database and the key by their names, the signer, and the role by its ID.
+func adoptedNames(im infra.Imports) string {
+	last := func(id string) string { return id[strings.LastIndex(id, "/")+1:] }
+	var names []string
+	for _, i := range im.List {
+		switch {
+		case strings.HasSuffix(i.To, "google_firebase_database_instance.this"):
+			names = append(names, "Realtime Database "+last(i.ID))
+		case strings.HasSuffix(i.To, "google_apikeys_key.web"):
+			names = append(names, "web API key "+last(i.ID))
+		case strings.HasSuffix(i.To, "google_service_account.signer"):
+			names = append(names, "token signer")
+		case strings.HasSuffix(i.To, "google_project_iam_custom_role.token_minter"):
+			names = append(names, last(i.ID)+" role")
+		default:
+			names = append(names, i.To)
+		}
+	}
+	slices.SortStableFunc(names, func(a, b string) int { return cmp.Compare(adoptOrder(a), adoptOrder(b)) })
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// adoptOrder puts the database first, then the key, the signer and the role.
+func adoptOrder(name string) int {
+	switch {
+	case strings.HasPrefix(name, "Realtime Database"):
+		return 0
+	case strings.HasPrefix(name, "web API key"):
+		return 1
+	case name == "token signer":
+		return 2
+	}
+	return 3
 }
 
 // firebaseHistory is init --firebase's last step, the installation root

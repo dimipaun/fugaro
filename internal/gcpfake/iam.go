@@ -74,6 +74,8 @@ type IAM struct {
 	roles    map[string]map[string]any    // projects/<p>/roles/<id> → fields
 	policies map[string][]Binding         // projects/<p>/serviceAccounts/<email> → its IAM policy
 	hidden   map[string]bool              // accounts whose policy answers PERMISSION_DENIED
+	disabled map[string]bool              // accounts served with disabled: true
+	userKeys map[string]int               // accounts → how many user-managed keys they have
 	// PageSize, when set, is the most accounts one list page holds, whatever
 	// the request asks for, so a caller's paging is exercised.
 	PageSize int
@@ -82,6 +84,7 @@ type IAM struct {
 var (
 	serviceAccountRE  = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)$`)
 	serviceAccountsRE = regexp.MustCompile(`^/v1/(projects/[^/]+)/serviceAccounts$`)
+	saKeysRE          = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+)/keys$`)
 	saPolicyRE        = regexp.MustCompile(`^/v1/(projects/[^/]+/serviceAccounts/[^/:]+):getIamPolicy$`)
 	customRoleRE      = regexp.MustCompile(`^/v1/((?:(?:projects|organizations)/[^/]+/)?roles/[^/:]+)$`)
 )
@@ -89,7 +92,7 @@ var (
 // NewIAM starts an IAM fake that lives until the test ends.
 func NewIAM(t *testing.T) *IAM {
 	t.Helper()
-	f := &IAM{accounts: map[string]map[string]string{}, roles: map[string]map[string]any{}, policies: map[string][]Binding{}, hidden: map[string]bool{}}
+	f := &IAM{accounts: map[string]map[string]string{}, roles: map[string]map[string]any{}, policies: map[string][]Binding{}, hidden: map[string]bool{}, disabled: map[string]bool{}, userKeys: map[string]int{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -134,15 +137,64 @@ func (f *IAM) HidePolicy(name string) {
 // AddServiceAccount makes the account email exist in project with
 // displayName.
 func (f *IAM) AddServiceAccount(project, email, displayName string) {
+	f.AddServiceAccountFull(project, email, displayName, "", false)
+}
+
+// AddServiceAccountFull makes the account email exist in project with
+// displayName and description, disabled or not.
+func (f *IAM) AddServiceAccountFull(project, email, displayName, description string, disabled bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.disabled["projects/"+project+"/serviceAccounts/"+email] = disabled
 	f.accounts["projects/"+project+"/serviceAccounts/"+email] = map[string]string{
 		"name":        "projects/" + project + "/serviceAccounts/" + email,
 		"email":       email,
 		"projectId":   project,
 		"displayName": displayName,
+		"description": description,
 		"uniqueId":    strconv.Itoa(100000 + len(f.accounts)),
 	}
+}
+
+// AddUserKey gives the account email of project one more user-managed key.
+func (f *IAM) AddUserKey(project, email string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.userKeys["projects/"+project+"/serviceAccounts/"+email]++
+}
+
+// account is the JSON of the account name's fields: strings, plus disabled.
+func (f *IAM) account(name string) map[string]any {
+	out := map[string]any{}
+	for k, v := range f.accounts[name] {
+		if k == "description" && v == "" {
+			continue
+		}
+		out[k] = v
+	}
+	if f.disabled[name] {
+		out["disabled"] = true
+	}
+	return out
+}
+
+// listKeys serves the keys of the account name; only the user-managed ones
+// exist, so a keyTypes filter that leaves them out gets none.
+func (f *IAM) listKeys(w http.ResponseWriter, r *http.Request, name string) {
+	if f.accounts[name] == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Unknown service account")
+		return
+	}
+	keys := []map[string]string{}
+	types := r.URL.Query()["keyTypes"]
+	if len(types) == 0 || slices.Contains(types, "USER_MANAGED") {
+		for i := range f.userKeys[name] {
+			id := "k" + strconv.Itoa(i+1)
+			keys = append(keys, map[string]string{"name": name + "/keys/" + id, "keyType": "USER_MANAGED", "keyOrigin": "GOOGLE_PROVIDED",
+				"validAfterTime": "2026-01-01T00:00:00Z", "validBeforeTime": "9999-12-31T23:59:59Z"})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"keys": keys})
 }
 
 func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
@@ -169,6 +221,10 @@ func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		servePolicy(w, r.URL.Query(), f.policies[m[1]])
 		return
 	}
+	if m := saKeysRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
+		f.listKeys(w, r, m[1])
+		return
+	}
 	if m := serviceAccountsRE.FindStringSubmatch(r.URL.Path); r.Method == http.MethodGet && m != nil {
 		f.listAccounts(w, r, m[1])
 		return
@@ -183,7 +239,7 @@ func (f *IAM) handle(w http.ResponseWriter, r *http.Request, _ []byte) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Unknown service account")
 		return
 	}
-	writeJSON(w, http.StatusOK, maps.Clone(a))
+	writeJSON(w, http.StatusOK, f.account(m[1]))
 }
 
 // listAccounts serves one page of project's accounts, in name order. The
@@ -206,9 +262,9 @@ func (f *IAM) listAccounts(w http.ResponseWriter, r *http.Request, project strin
 	}
 	start = min(start, len(names))
 	end := min(start+size, len(names))
-	page := []map[string]string{}
+	page := []map[string]any{}
 	for _, n := range names[start:end] {
-		page = append(page, maps.Clone(f.accounts[n]))
+		page = append(page, f.account(n))
 	}
 	out := map[string]any{"accounts": page}
 	if end < len(names) {

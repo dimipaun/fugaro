@@ -38,7 +38,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 			for kind, member := range map[who]string{toPeople: person, toAccounts: account} {
 				want := row[key]&kind != 0
 				ch := rc(typ, map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
-				got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}})
+				got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 				if (len(got) == 0) != want {
 					t.Errorf("%s: %s to %s: NotCovered = %q, covered want %v", typ, role, member, got, want)
 				}
@@ -47,7 +47,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 			// module is an account.
 			sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
 			ch := rc(typ, map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{"member": true}, "create")
-			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}})
+			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}}, nil)
 			if want := row[key]&toAccounts != 0; (len(got) == 0) != want {
 				t.Errorf("%s: %s to a computed account: NotCovered = %q, covered want %v", typ, role, got, want)
 			}
@@ -57,7 +57,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 			"projects/proj-1/roles/fugaroEverything", "projects/other/roles/fugaroLauncher"} {
 			for _, member := range []string{person, account} {
 				ch := rc(typ, map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
-				if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}); len(got) == 0 {
+				if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil); len(got) == 0 {
 					t.Errorf("%s: %s to %s is covered", typ, role, member)
 				}
 			}
@@ -67,7 +67,7 @@ func TestGrantRulesMatrix(t *testing.T) {
 	// and the member is still checked.
 	role := customRole("fugaroJobRunner", "proj-1", []any{"run.jobs.run", "run.jobs.runWithOverrides"})
 	ch := rc("google_cloud_run_v2_job_iam_member", map[string]any{"member": "user:eve@example.com"}, map[string]any{"role": true}, "create")
-	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}}); len(got) == 0 {
+	if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}}, nil); len(got) == 0 {
 		t.Error("a computed role to a stranger is covered")
 	}
 }
@@ -94,7 +94,7 @@ func TestComputedRoleWithCreatedCustomRoleIsTableChecked(t *testing.T) {
 		{"google_cloud_run_v2_job_iam_member", "user:eve@example.com", false, "who is not on the review screen"},
 	} {
 		ch := rc(c.typ, map[string]any{"member": c.member, "bucket": "fugaro-runs-proj-1"}, map[string]any{"role": true}, "create")
-		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}})
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}}, nil)
 		if (len(got) == 0) != c.covered {
 			t.Errorf("%s computed role to %s: NotCovered = %q, covered want %v", c.typ, c.member, got, c.covered)
 		}
@@ -209,7 +209,7 @@ func TestCoverCheckSpecBuildAccount(t *testing.T) {
 		"duplicate key, the good one is last": {spec(`,"build_service_account":"evil@x.example","build_service_account":"` + okBuild + `"`), true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{jobWithSpec(tc.spec, false)}}); (len(got) == 0) != tc.covered {
+			if got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{jobWithSpec(tc.spec, false)}}, nil); (len(got) == 0) != tc.covered {
 				t.Fatalf("NotCovered = %q, covered want %v", got, tc.covered)
 			}
 		})
@@ -273,7 +273,7 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{logview, "roles/logging.logWriter", account, false},
 	} {
 		ch := rc(c.typ, map[string]any{"member": c.member, "role": c.role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
-		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}})
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 		if (len(got) == 0) != c.covered {
 			t.Errorf("%s: %s to %s: NotCovered = %q, covered want %v", c.typ, c.role, c.member, got, c.covered)
 		}

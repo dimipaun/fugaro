@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // Import adopts an existing resource into Terraform's state at the address
@@ -67,6 +69,12 @@ const (
 	importTagMoverRole       importKind = "tag mover role"
 	importSchedulerSA        importKind = "scheduler account"
 	importLogBucket          importKind = "log bucket"
+	// The Firebase root's singletons (DiscoverFirebase), whose create fails
+	// once they exist.
+	importFirebaseDB importKind = "Realtime Database instance"
+	importAPIKey     importKind = "web API key"
+	importSignerSA   importKind = "token signer"
+	importMinterRole importKind = "token minter role"
 )
 
 // importTable is each kind's address and import ID, with {project},
@@ -90,9 +98,21 @@ var importTable = map[importKind]struct{ to, id string }{
 	importTagMoverRole:       {TagMoverRoleAddress, "projects/{project}/roles/{name}"},
 	importSchedulerSA:        {"module.installation.google_service_account.scheduler", "projects/{project}/serviceAccounts/{name}"},
 	importLogBucket:          {LogBucketAddress, "projects/{project}/locations/global/buckets/{name}"},
+	importFirebaseDB:         {"module.firebase.google_firebase_database_instance.this", "projects/{project}/locations/{region}/instances/{name}"},
+	importAPIKey:             {"module.firebase.google_apikeys_key.web", "projects/{project}/locations/global/keys/{name}"},
+	importSignerSA:           {"module.firebase.google_service_account.signer", "projects/{project}/serviceAccounts/{name}"},
+	importMinterRole:         {"module.firebase.google_project_iam_custom_role.token_minter", "projects/{project}/roles/{name}"},
 }
 
 // newImport is the import of a resource of kind k.
+//
+// Several repository kinds (secrets, job accounts, jobs) are for_each rows
+// whose {key} is quoted with strconv.Quote. Their keys are restricted by
+// config.SecretNameRE and config.WorkflowNameRE to [a-z0-9-], where strconv.Quote and
+// Terraform's HCL quoting give identical text, so the address matches the
+// plan's and tf.Cover's (address, ID) allowlist accepts it. A looser key
+// regex later would make Cover refuse such an import, and re-prompt on
+// every run: extend this quoting to HCL's rules if that changes.
 func newImport(k importKind, project, region, key, name string) Import {
 	a, ok := importTable[k]
 	if !ok {
@@ -100,6 +120,16 @@ func newImport(k importKind, project, region, key, name string) Import {
 	}
 	r := strings.NewReplacer("{project}", project, "{region}", region, "{name}", name, "{key}", strconv.Quote(key))
 	return Import{To: r.Replace(a.to), ID: r.Replace(a.id)}
+}
+
+// Keys are the imports as the address and ID pairs the plan's classifier
+// compares against.
+func (im Imports) Keys() []tf.ImportKey {
+	out := make([]tf.ImportKey, 0, len(im.List))
+	for _, i := range im.List {
+		out = append(out, tf.ImportKey{Address: i.To, ID: i.ID})
+	}
+	return out
 }
 
 // ImportsFile is the file WriteImports writes into a root.

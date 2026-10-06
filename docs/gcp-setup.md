@@ -225,6 +225,66 @@ What to know:
 - **Verification.** Firebase and Realtime Database behaviour that cannot be checked offline is recorded by live check 21 in [gcp-live-checklist.md](gcp-live-checklist.md).
 - **Backstop at the vendor.** Set a spend limit on the Anthropic Console workspace the key belongs to; Fugaro's caps are a guard, not a replacement.
 
+## `init --firebase` on a project that already has the Firebase resources
+
+When the Firebase root's state is lost (a new state bucket, a recreated installation, a second machine on another bucket) while the Firebase project still holds what an earlier apply created, `fugaro init --firebase <fp>` adopts those resources instead of failing on four creates. Before it plans the Firebase root it reads the root's state, then reads the project (read-only, as you, with the Firebase project as the quota project), checks each singleton the state does not already manage, and writes an import block for each one that is ours. The design is [design/adopt-firebase-root.md](design/adopt-firebase-root.md).
+
+**What is adopted** (only at these four addresses, under `module.firebase.`):
+
+| Resource | Name | Address |
+|---|---|---|
+| The default Realtime Database instance | `<fp>-default-rtdb`, in `us-central1`, `ACTIVE` | `google_firebase_database_instance.this` |
+| The web API key | `fugaro-web`, display name `Fugaro run sign-in` | `google_apikeys_key.web` |
+| The token signer account | `fugaro-token-signer@<fp>.iam.gserviceaccount.com` | `google_service_account.signer` |
+| The token minter role | `fugaroTokenMinter` | `google_project_iam_custom_role.token_minter` |
+
+An empty default instance that carries no Fugaro mark is adopted too (the database step writes the mark right after the apply); one that holds data without our mark is refused by the database check, as before. IAM members are **not** imported: they are non-authoritative and creating one that exists changes nothing, so the plan shows them as creates. The project services and `google_firebase_project.this` are not imported either; creating them when they exist is accepted.
+
+**What is refused, and why.** Names and descriptions are public, so a look-alike can carry them; the checks that matter are on shape. Every refusal is printed together with what was found and what was expected, and the run stops before the Firebase root is planned or applied and before its `imports.tf.json` is written (its tfvars and backend are written and `terraform init` and the state read have run: they read the installation's state bucket and, on a first run, may create an empty state object there, but write nothing to the Firebase project; the installation root has already been planned, and applied if it needed it). Nothing is ever imported and then changed, or deleted.
+
+- **The signer**, because its signature admits a run to the database: another display name or description (the description names this Fugaro project); disabled; any user-managed key (whoever holds one signs tokens without IAM; the message gives the `gcloud iam service-accounts keys delete` command); any grant on it but the minter role to this run's launchers and operators (see below).
+- **The minter role**: its permissions must be exactly `iam.serviceAccounts.signJwt`, and its title `Fugaro token minter`. A wider role would make every grant of it reach further. The message gives the `gcloud iam roles update` command that sets it back. A deleted role is not imported; a note says the plan's create restores it.
+- **The web key**: its restrictions must be exactly the two API targets `identitytoolkit.googleapis.com` and `securetoken.googleapis.com`, no methods, no browser, server, Android or iOS restriction, and it must not be bound to a service account. A deleted key is refused with the `gcloud services api-keys undelete` command.
+- **The instance**: it must be the project's `DEFAULT_DATABASE`, named `<fp>-default-rtdb`, in `us-central1` and `ACTIVE`. A default instance in another region cannot be moved or renamed, so that Firebase project cannot host the backend: use another one. `DISABLED` or `DELETED` instances are refused with the step to take.
+
+**A foreign minter on the signer.** If `fugaroTokenMinter` (or any other role) is granted on the signer to someone who is not one of this run's launchers or operators, the run is refused and names each one, for example:
+
+```
+token signer fugaro-token-signer@<fp>.iam.gserviceaccount.com grants fugaroTokenMinter to members who are not this installation's launchers or operators:
+  user:old@example.com
+Each could mint run tokens. Remove them, then rerun fugaro init --firebase <fp>:
+  gcloud iam service-accounts remove-iam-policy-binding fugaro-token-signer@<fp>.iam.gserviceaccount.com --project <fp> --member=user:old@example.com --role=projects/<fp>/roles/fugaroTokenMinter
+Or add them as launchers or operators if they should keep it.
+```
+
+Run the printed command for each member, or add the member as a launcher or operator, then rerun. A grant under a condition is marked `(under a condition)` and its command ends with `--all`. Member emails compare case-insensitively over ASCII (IAM stores them lower-cased); the type prefix must match exactly.
+
+**What to expect.** The run prints the plan before it asks: `Plan: 4 to import, ...` and one line `import <address> (id <id>)` per import. The confirmation names what is adopted (`adopting the existing Realtime Database <fp>-default-rtdb, web API key fugaro-web, token signer and fugaroTokenMinter role; ...`). Type the project's name as for any apply (`--yes` answers it too, as for any plan the review did not announce). A rerun imports nothing and ends with `No changes`. If an apply fails half-way, rerun: what landed in the state is skipped and the rest is imported again.
+
+**What the state already manages is not checked again.** A singleton the Firebase root's state already manages is Terraform's: discovery skips it (no read, no check, no note), and the plan, the guard and the stage's typed confirmation handle it as on any rerun. So on an installation that drops a launcher, the plan deletes that member's `module.firebase.google_service_account_iam_member.minter["<member>"]` and the guard stops it until you pass `--allow-delete 'module.firebase.google_service_account_iam_member.minter["<member>"]'` (or remove the grant with the `gcloud iam service-accounts remove-iam-policy-binding` line yourself); a managed role, key or signer that drifted is restored by the plan behind the confirmation. Only what the state does not manage is checked, so a partly managed state never lets a look-alike through, and a state that cannot be read stops the run. A token-minter grant added out of band to a signer the state already manages is therefore not refused by `fugaro init` (the IAM-member resources are non-authoritative, so the plan shows nothing), and `fugaro doctor`'s `token-signers` check lists its holder as "can sign as designed" without comparing it with the launchers and operators: after offboarding someone, review the signer's policy by hand (`gcloud iam service-accounts get-iam-policy fugaro-token-signer@<fp>.iam.gserviceaccount.com --project <fp>`). A doctor check comparing the holders with the launchers and operators is a possible follow-up.
+
+**The installation's GCP project must be unchanged.** Adoption works when the installation keeps its GCP project (a new state bucket, a lost state, a second machine). Moving the installation to a **new** GCP project is refused before adoption is reached, by the database checks: the Realtime Database's `fugaro/mark` and the Firestore database's mark name the old GCP project, and one Firebase project serves one installation. `init` has no remedy for that today: the marks must be dealt with first, which means emptying the Realtime Database (and handling the Firestore mark), as the move of the `belong` installation did.
+
+**`--plan-only` does not show this.** With `--firebase`, `--plan-only` plans the installation root and stops there; the Firebase root, its discovery and the imports are only reached by a real run, which shows them before the confirmation.
+
+**What discovery does not see.** It checks the signer's own policy. A role on the project (or inherited from a folder or the organization) that lets someone sign as the signer is not visible to it; run `fugaro doctor` after adopting, whose `token-signers` check lists the project-level grants (it needs the budget backend in the local config; inherited bindings are not checked at all). The run prints a note saying so when it adopts (imports) the signer; a rerun whose state already manages the signer prints none.
+
+**The manual fallback.** If you cannot use the discovery (an older `fugaro`, or you prefer to see each command), import by hand. This is outside fugaro's guard: check each resource yourself against the list above. Every fugaro run deletes the root's files (`backend.hcl`, `terraform.tfvars.json`, `imports.tf.json`) and rebuilds them, so supply the backend and variables yourself, with the data directory fugaro uses:
+
+```sh
+W="${XDG_STATE_HOME:-$HOME/.local/state}/fugaro/terraform/<gcp-project>/firebase"
+cd "$W/gcp/roots/firebase"      # exists once a fugaro run reached the Firebase root
+export TF_DATA_DIR="$W/.terraform" TF_CLI_CONFIG_FILE="$W/terraformrc"
+terraform init -input=false -lockfile=readonly -backend-config=bucket=fugaro-tfstate-<gcp-project> -backend-config=prefix=fugaro/firebase
+fugaro init --firebase <fp> --print-vars | jq .firebase > terraform.tfvars.json    # import needs the root's variables
+terraform import 'module.firebase.google_firebase_database_instance.this' 'projects/<fp>/locations/us-central1/instances/<fp>-default-rtdb'
+terraform import 'module.firebase.google_apikeys_key.web' 'projects/<fp>/locations/global/keys/fugaro-web'
+terraform import 'module.firebase.google_service_account.signer' 'projects/<fp>/serviceAccounts/fugaro-token-signer@<fp>.iam.gserviceaccount.com'
+terraform import 'module.firebase.google_project_iam_custom_role.token_minter' 'projects/<fp>/roles/fugaroTokenMinter'
+```
+
+Use your own state bucket name if `--state-bucket` was set. `--print-vars` prints the installation's and the Firebase root's variables as one JSON object (`firebase` is the root's) and makes no cloud call, so its admins list is not the one a real run reads; the imports do not depend on it. The next `fugaro init --firebase <fp>` rebuilds the directory and should show `No changes`.
+
 ## Spend history and reports (M9d)
 
 With the shared budget on, finished days move from the Realtime Database to **Firestore** and `fugaro report` reads them. Until [check 23](gcp-live-checklist.md#check-23-spend-history-and-fugaro-report) has been run against a real project, treat the Firestore calls as unverified.

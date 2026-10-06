@@ -112,7 +112,7 @@ func TestImportAddressesExistInModule(t *testing.T) {
 // has an index and for_each where it has a key.
 func checkModuleAddress(t *testing.T, to string) {
 	t.Helper()
-	roots := map[string]string{"installation": "gcp/roots/installation", "repo": "gcp/roots/repo"}
+	roots := map[string]string{"installation": "gcp/roots/installation", "repo": "gcp/roots/repo", "firebase": "gcp/roots/firebase"}
 	steps := joinSteps(splitAddress(to))
 	if len(steps) < 2 {
 		t.Errorf("address %s names no module", to)

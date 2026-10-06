@@ -55,7 +55,7 @@ func validate(t *testing.T, root string, im Imports) (string, error) {
 	return string(out), err
 }
 
-// TestGeneratedRootValidates writes both roots with every kind of import
+// TestGeneratedRootValidates writes the three roots with every kind of import
 // discovery generates, and has terraform validate them: validate fails on
 // an import whose target block doesn't exist.
 func TestGeneratedRootValidates(t *testing.T) {
@@ -78,9 +78,18 @@ func TestGeneratedRootValidates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fc := newFBCloud(t)
+	fc.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+	fbIm, err := DiscoverFirebase(ctx, fc.c, fbSpec(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fbIm.List) != 4 {
+		t.Fatalf("Firebase imports %v, want the four singletons", fbIm.List)
+	}
 	// Every kind of import is exercised.
 	seen := map[string]bool{}
-	for _, i := range append(append([]Import{}, repoIm.List...), instIm.List...) {
+	for _, i := range append(append(append([]Import{}, repoIm.List...), instIm.List...), fbIm.List...) {
 		seen[i.To] = true
 	}
 	for kind := range importTable {
@@ -107,6 +116,7 @@ func TestGeneratedRootValidates(t *testing.T) {
 		{filepath.Join(dir, "gcp/roots/installation"), instIm},
 		// A fresh project imports nothing: the file is then empty.
 		{filepath.Join(dir, "gcp/roots/installation"), Imports{}},
+		{filepath.Join(dir, "gcp/roots/firebase"), fbIm},
 	} {
 		if out, err := validate(t, r.root, r.im); err != nil {
 			t.Errorf("%s: terraform validate: %v\n%s", r.root, err, out)

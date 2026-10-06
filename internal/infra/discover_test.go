@@ -66,6 +66,21 @@ func TestNewClientsNoAuthNeedsEveryEndpoint(t *testing.T) {
 	}
 }
 
+// The API Keys client is optional like FirebaseDB's: without credentials it
+// exists only when its endpoint is set, and a missing one is not an error.
+func TestNewClientsAPIKeysIsOptionalUnderNoAuth(t *testing.T) {
+	f := newCloud(t)
+	if f.c.APIKeys != nil {
+		t.Fatal("APIKeys built without an endpoint under NoAuth")
+	}
+	e := f.endpoints()
+	e.APIKeys = gcpfake.NewAPIKeys(t).URL + "/"
+	c, err := NewClients(context.Background(), f.options(nil), e)
+	if err != nil || c.APIKeys == nil {
+		t.Fatalf("%v %v", err, c)
+	}
+}
+
 // options are the Google API options of the fakes, with hc (when set) as
 // the HTTP client.
 func (f *cloud) options(hc *http.Client) gcp.Options {

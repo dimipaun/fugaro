@@ -175,8 +175,11 @@ var knownCommands = [][2][]string{
 	{{"fugaro"}, {"image", "check", "--job"}},
 }
 
-// apiTargets are the two services the Firebase web key may call.
-var apiTargets = []string{"identitytoolkit.googleapis.com", "securetoken.googleapis.com"}
+// APITargets are the two services the Firebase web key may call, sorted;
+// a fresh slice each call, so no caller can change the rule.
+func APITargets() []string {
+	return []string{"identitytoolkit.googleapis.com", "securetoken.googleapis.com"}
+}
 
 // NotCovered lists why the plan is not covered, empty when it is. A plan that
 // is nil, or that holds anything but creates and in-place updates of the
@@ -186,7 +189,13 @@ var apiTargets = []string{"identitytoolkit.googleapis.com", "securetoken.googlea
 // covered: its stage asks its own typed confirmation. It never allows: iam
 // bindings, iam policies, audit configs, service account keys, an unknown
 // resource type, allUsers and domain members.
-func (c Cover) NotCovered(p *Plan) []string {
+//
+// imports are the import blocks the root's discovery wrote: an import is
+// covered only when its address and ID are exactly one of them (and its ID is
+// in one of the run's projects), so a stale imports.tf.json or a hand edit in
+// the workdir never adopts something discovery did not check. An import is
+// otherwise checked as any other change (an import and update included).
+func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 	if p == nil {
 		return []string{"no plan"}
 	}
@@ -225,6 +234,8 @@ func (c Cover) NotCovered(p *Plan) []string {
 			add(rc, c.customRole(rc))
 		case rc.Change.Importing != nil && !c.importOK(rc.Change.Importing.ID):
 			add(rc, "imports "+rc.Change.Importing.ID+", which is not in this run's projects")
+		case rc.Change.Importing != nil && !slices.Contains(imports, ImportKey{rc.Address, rc.Change.Importing.ID}):
+			add(rc, "imports "+rc.Change.Importing.ID+", which this run's discovery did not find")
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
@@ -614,7 +625,7 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 			got = append(got, str(t["service"]))
 		}
 		slices.Sort(got)
-		if !slices.Equal(got, apiTargets) {
+		if !slices.Equal(got, APITargets()) {
 			return "a key whose API targets are not the web key's two"
 		}
 	}

@@ -37,6 +37,9 @@ type Server struct {
 	// disabled, when set, names the API the fake serves if a ServiceUsage
 	// fake has it disabled; such a call is answered SERVICE_DISABLED.
 	disabled func() (service, consumer string, off bool)
+	// pathRefusals answer the calls whose path holds their key instead of
+	// the handler (see RefusePath).
+	pathRefusals map[string]*apiError
 }
 
 // apiError is an error answer in Google's shape.
@@ -61,6 +64,11 @@ func newServer(t *testing.T, h func(w http.ResponseWriter, r *http.Request, body
 		s.mu.Lock()
 		s.reqs = append(s.reqs, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Body: body})
 		refusal, disabled := s.refusal, s.disabled
+		for sub, e := range s.pathRefusals {
+			if strings.Contains(r.URL.Path, sub) {
+				refusal = e
+			}
+		}
 		s.mu.Unlock()
 		if refusal != nil {
 			writeErrorInfo(w, refusal.code, refusal.status, refusal.msg, refusal.reason, nil)
@@ -108,6 +116,21 @@ func (s *Server) Refuse(code int, status, reason, msg string) {
 		return
 	}
 	s.refusal = &apiError{code: code, status: status, reason: reason, msg: msg}
+}
+
+// RefusePath is Refuse for the calls whose path contains sub only, so one
+// read can fail while the others pass. A code of 0 lifts it.
+func (s *Server) RefusePath(sub string, code int, status, reason, msg string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if code == 0 {
+		delete(s.pathRefusals, sub)
+		return
+	}
+	if s.pathRefusals == nil {
+		s.pathRefusals = map[string]*apiError{}
+	}
+	s.pathRefusals[sub] = &apiError{code: code, status: status, reason: reason, msg: msg}
 }
 
 // writeErrorInfo answers in Google's error shape with an ErrorInfo detail

@@ -3,6 +3,7 @@ package gcpfake
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -34,5 +35,18 @@ func TestServerDropsRequestsWhoseBodyNeverArrived(t *testing.T) {
 	}
 	if n := len(l.Requests()); n != 0 {
 		t.Errorf("%d requests recorded, want 0: the client never finished sending", n)
+	}
+}
+
+func TestRefusePathRefusesOnlyThatPath(t *testing.T) {
+	f := NewIAM(t)
+	f.AddRole("p", "r", "R", false)
+	f.AddServiceAccount("p", "a@p.iam.gserviceaccount.com", "A")
+	f.RefusePath("/roles/", http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "denied")
+	if r, err := http.Get(f.URL + "/v1/projects/p/roles/r"); err != nil || r.StatusCode != http.StatusForbidden {
+		t.Fatalf("role: %v %v", r, err)
+	}
+	if r, err := http.Get(f.URL + "/v1/projects/p/serviceAccounts/a@p.iam.gserviceaccount.com"); err != nil || r.StatusCode != http.StatusOK {
+		t.Fatalf("account: %v %v", r, err)
 	}
 }

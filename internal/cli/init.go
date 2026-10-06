@@ -591,11 +591,25 @@ func gcpOptions(lc *localcfg.Config) gcp.Options {
 		NoAuth: lc.Endpoints.NoAuth}}
 }
 
+// quotaOptions are gcpOptions with quota as the project the calls are
+// billed to.
+func quotaOptions(lc *localcfg.Config, quota string) gcp.Options {
+	o := gcpOptions(lc)
+	o.GCPProject = quota
+	return o
+}
+
 func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
-	c, err := infra.NewClients(ctx, gcpOptions(lc),
+	return newInitClientsFor(ctx, lc, lc.GCPProject)
+}
+
+// newInitClientsFor is newInitClients with quota as the quota project of
+// the calls.
+func newInitClientsFor(ctx context.Context, lc *localcfg.Config, quota string) (*infra.Clients, error) {
+	c, err := infra.NewClients(ctx, quotaOptions(lc, quota),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
 			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler,
-			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase})
+			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase, APIKeys: lc.Endpoints.APIKeys})
 	if err != nil {
 		return nil, remote(err)
 	}
@@ -1177,7 +1191,7 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, true, nil
 		}
 		// 6. Confirm, 7. apply the plan shown.
-		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan)); err != nil {
+		if err := r.confirmOrdinary("applies "+counts.String()+r.installLabel, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
 			return outs, false, err
 		}
 		if err := t.Apply(ctx, infra.PlanFile); err != nil {
@@ -2244,7 +2258,7 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	if !first {
 		what += ", deploying the images just built"
 	}
-	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan)); err != nil {
+	if err := r.confirmOrdinary(what, "nothing was applied", r.notCovered(plan, im.Keys())); err != nil {
 		return nil, err
 	}
 	if err := t.Apply(ctx, infra.PlanFile); err != nil {

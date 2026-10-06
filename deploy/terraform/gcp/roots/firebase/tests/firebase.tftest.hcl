@@ -15,7 +15,7 @@ variables {
   names = {
     signer_account_id = "fugaro-token-signer"
     minter_role_id    = "fugaroTokenMinter"
-    api_key           = "fugaro-run-signin"
+    api_key           = "fugaro-web"
   }
   launchers       = ["user:launcher@example.com"]
   operators       = ["user:operator@example.com"]
@@ -645,7 +645,7 @@ run "bad_signer_account_id" {
     names = {
       signer_account_id = "X"
       minter_role_id    = "fugaroTokenMinter"
-      api_key           = "fugaro-run-signin"
+      api_key           = "fugaro-web"
     }
   }
 
@@ -663,7 +663,7 @@ run "bad_minter_role_id" {
     names = {
       signer_account_id = "fugaro-token-signer"
       minter_role_id    = "bad role"
-      api_key           = "fugaro-run-signin"
+      api_key           = "fugaro-web"
     }
   }
 

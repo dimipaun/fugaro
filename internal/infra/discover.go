@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"google.golang.org/api/apikeys/v2"
 	artifactregistry "google.golang.org/api/artifactregistry/v1"
 	billing "google.golang.org/api/cloudbilling/v1"
 	crm "google.golang.org/api/cloudresourcemanager/v1"
@@ -56,6 +57,8 @@ type Clients struct {
 	// FirebaseDB lists the Firebase project's databases (init --firebase
 	// checks them before anything is granted on the project); nil like Billing.
 	FirebaseDB *firebasedatabase.Service
+	// APIKeys reads the Firebase project's API keys (init --firebase adoption); nil like Billing.
+	APIKeys *apikeys.Service
 	// NoAuth is set with fakes: no credentials, so no quota project to ask about.
 	NoAuth bool
 }
@@ -74,6 +77,10 @@ type Endpoints struct {
 	Billing string
 	// FirebaseDatabase is the Firebase Realtime Database management API's.
 	FirebaseDatabase string
+	// APIKeys is the API Keys API's, which init --firebase reads the
+	// project's keys through. Without credentials and without it, there is
+	// no API Keys client.
+	APIKeys string
 }
 
 // discardLogger keeps the clients from logging requests (and their
@@ -160,6 +167,11 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	if !o.Endpoints.NoAuth || e.FirebaseDatabase != "" {
 		if c.FirebaseDB, err = firebasedatabase.NewService(ctx, opts(e.FirebaseDatabase)...); err != nil {
 			return nil, fmt.Errorf("connecting to Firebase Realtime Database management: %w", err)
+		}
+	}
+	if !o.Endpoints.NoAuth || e.APIKeys != "" {
+		if c.APIKeys, err = apikeys.NewService(ctx, opts(e.APIKeys)...); err != nil {
+			return nil, fmt.Errorf("connecting to API Keys: %w", err)
 		}
 	}
 	return &c, nil
