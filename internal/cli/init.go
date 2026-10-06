@@ -468,7 +468,7 @@ func runInit(r *initRun) error {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
 		}
-		if err := publishShared(cmd.Context(), lc); err != nil {
+		if err := publishSharedWarn(cmd.Context(), lc, r.warn); err != nil {
 			return remote(err)
 		}
 		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
@@ -1402,15 +1402,15 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 		return err
 	}
 	if !r.o.planOnly {
-		r.publishShared(ctx, &next)
+		r.publishSharedConfig(ctx, &next)
 	}
 	return nil
 }
 
-// publishShared publishes the shared config after the local config is
+// publishSharedConfig publishes the shared config after the local config is
 // written. A failure only warns: the installation works without it.
-func (r *initRun) publishShared(ctx context.Context, lc *localcfg.Config) {
-	if err := publishShared(ctx, lc); err != nil {
+func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
+	if err := publishSharedWarn(ctx, lc, r.warn); err != nil {
 		r.warn("could not publish the shared config: " + err.Error() + " (teammates will need fugaro init until it is published)")
 		return
 	}
@@ -1894,7 +1894,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			// it joins the local config (and says what it still needs)
 			// before the build's failure ends the run.
 			r.printMissing(spec, versions, missing)
-			if cerr := r.writeRepoConfig(lc, spec, cfg, path, old); cerr != nil {
+			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
 			return err
@@ -1913,7 +1913,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 
 	// 8. The local config.
-	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
+	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
 		return err
 	}
 	if len(r.buildsLeft) > 0 {
@@ -2296,7 +2296,7 @@ func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, mi
 
 // writeRepoConfig adds the repository to the local config's repos, or
 // updates its entry, keeping everything else.
-func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
+func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
 	next := *lc
 	next.Repos = maps.Clone(lc.Repos)
 	if next.Repos == nil {
@@ -2323,7 +2323,13 @@ func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg 
 		// and this is the first.
 		r.warn(spec.Name + " authenticates its agent through Vertex AI, which the installation has not enabled: rerun fugaro init once the local config records it, which enables the Vertex AI API")
 	}
-	return r.writeLocalConfig(&next, path, old, r.res.Applied)
+	if err := r.writeLocalConfig(&next, path, old, r.res.Applied); err != nil {
+		return err
+	}
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	return nil
 }
 
 // forgetRepo is the repository's rollback: every address leaves

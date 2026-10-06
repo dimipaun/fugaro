@@ -2,12 +2,14 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -149,5 +151,133 @@ func TestInitPublishFailureWarnsAndSucceeds(t *testing.T) {
 	}
 	if !strings.Contains(out, "warning: could not publish the shared config: ") || !strings.Contains(out, "teammates will need fugaro init until it is published") {
 		t.Errorf("no warning:\n%s", out)
+	}
+}
+
+const publishedWithOtherRepo = `version: 1
+name: aurora
+gcp_project: proj-1234
+region: us-east5
+runs_bucket: unused-bucket
+build:
+  machine_type: E2_HIGHCPU_8
+max_parallel: 2
+repos:
+  other/svc: { provider: github, base_branch: main, workflows: [web] }
+`
+
+func writePublished(t *testing.T, dir, content string) {
+	t.Helper()
+	p := sharedObjectPath(dir)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func publishedRepos(t *testing.T, dir string) map[string]localcfg.Repo {
+	t.Helper()
+	data, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc, err := localcfg.Parse(data)
+	if err != nil {
+		t.Fatalf("%v:\n%s", err, data)
+	}
+	return lc.Repos
+}
+
+func TestPublishSharedKeepsTheReposOfOtherMachines(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	writePublished(t, dir, publishedWithOtherRepo)
+	lc, err := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.Repos = nil // an adopter's config
+	if err := publishShared(context.Background(), lc); err != nil {
+		t.Fatal(err)
+	}
+	if r := publishedRepos(t, dir); len(r) != 1 || r["other/svc"].BaseBranch != "main" {
+		t.Errorf("published repos = %v", r)
+	}
+	// A local repo is added, and wins a clash.
+	lc.Repos = map[string]localcfg.Repo{
+		"other/svc": {Provider: "github", BaseBranch: "dev", Workflows: []string{"web"}},
+		"acme/app":  {Provider: "github", BaseBranch: "main", Workflows: []string{"web"}},
+	}
+	if err := publishShared(context.Background(), lc); err != nil {
+		t.Fatal(err)
+	}
+	if r := publishedRepos(t, dir); len(r) != 2 || r["other/svc"].BaseBranch != "dev" {
+		t.Errorf("published repos = %v", r)
+	}
+}
+
+func TestPublishSharedIgnoresAForeignObjectAndWarns(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	writePublished(t, dir, strings.Replace(publishedWithOtherRepo, "proj-1234", "other-proj", 1))
+	lc, _ := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	lc.Repos = nil
+	var warned []string
+	if err := publishSharedWarn(context.Background(), lc, func(m string) { warned = append(warned, m) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(warned) != 1 || !strings.Contains(warned[0], "another installation") {
+		t.Errorf("warnings = %q", warned)
+	}
+	if r := publishedRepos(t, dir); len(r) != 0 {
+		t.Errorf("a foreign object was merged: %v", r)
+	}
+}
+
+func TestPublishSharedTreatsABadExistingObjectAsAbsent(t *testing.T) {
+	f := newCloudFixture(t)
+	dir := filepath.Join(f.dir, "runs")
+	lc, _ := localcfg.Load(os.Getenv("FUGARO_CONFIG"))
+	for name, content := range map[string]string{
+		"unparseable": "this: [is not\n",
+		"oversized":   publishedWithOtherRepo + "# " + strings.Repeat("x", localcfg.SharedMaxBytes) + "\n",
+	} {
+		writePublished(t, dir, content)
+		if err := publishShared(context.Background(), lc); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if r := publishedRepos(t, dir); len(r) != 1 || r["acme/app"].BaseBranch != "main" {
+			t.Errorf("%s: published repos = %v", name, r)
+		}
+	}
+}
+
+func TestRepoOnboardingPublishesAndKeepsOtherReposPublished(t *testing.T) {
+	e, _ := stageEngine(t, "", nil)
+	dir := sharedRuns(t)
+	writePublished(t, dir, publishedWithOtherRepo)
+	path := filepath.Join(t.TempDir(), "aurora.yaml")
+	e.lc = &localcfg.Config{Version: 1, Name: "aurora", GCPProject: initProject, Region: "us-east5", RunsBucket: initRunsBucket}
+	cfg, problems := config.Parse([]byte(checkoutYAML("github", "oauth", "aurora", "")))
+	if cfg == nil {
+		t.Fatal(problems)
+	}
+	e.r.cmd.SetErr(io.Discard)
+	e.r.res.Applied = true // the apply confirmed the config write
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
+		t.Fatal(err)
+	}
+	if r := publishedRepos(t, dir); len(r) != 2 || r["acme/app"].BaseBranch != "main" || r["other/svc"].BaseBranch != "main" {
+		t.Errorf("published repos = %v", r)
+	}
+}
+
+func TestInitPublishConfigIsInstallationOnlyForRepo(t *testing.T) {
+	newInitRig(t)
+	_, _, err := executeStdin(t, "", "init", "--repo", "--publish-config")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "--publish-config") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 }
