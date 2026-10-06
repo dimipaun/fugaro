@@ -134,7 +134,15 @@ func (s *repositoryStage) Plan(ctx context.Context, env initflow.Env) (initflow.
 	if err := s.authorize(ctx, env); err != nil {
 		return initflow.Plan{}, err
 	}
-	return s.engineStage.Plan(ctx, env)
+	p, err := s.engineStage.Plan(ctx, env)
+	if err != nil {
+		return p, err
+	}
+	// What the checkout's gcp_project: line would be, printed and not written.
+	if err := s.anchor(ctx, true); err != nil {
+		return initflow.Plan{}, err
+	}
+	return p, nil
 }
 
 func (s *repositoryStage) Apply(ctx context.Context, env initflow.Env) (initflow.Outcome, error) {
@@ -145,5 +153,14 @@ func (s *repositoryStage) Apply(ctx context.Context, env initflow.Env) (initflow
 	if err := s.authorize(ctx, env); err != nil {
 		return initflow.Outcome{}, err
 	}
-	return s.engineStage.Apply(ctx, env)
+	out, err := s.engineStage.Apply(ctx, env)
+	if err != nil {
+		return out, err
+	}
+	// The engine has onboarded the repository (and may have built its first
+	// image, with this binary): now the checkout's gcp_project: line.
+	if err := s.anchor(ctx, s.e.r.o.planOnly); err != nil {
+		return initflow.Outcome{}, err
+	}
+	return out, nil
 }
