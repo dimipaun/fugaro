@@ -520,3 +520,53 @@ func TestUnknownRepoQuestionComesBeforeAnyPlan(t *testing.T) {
 		t.Error("--yes asked for the repository")
 	}
 }
+
+// An installation-only flag run inside a checkout of a repository the project
+// does not list yet gets one note before the guard's prompt: init in a
+// checkout also onboards its repository. Nothing else prints it, and the
+// guard itself is unchanged.
+func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
+	const note = "this checkout's repository is not onboarded; init in a checkout also onboards its repository. To set up only the installation, run fugaro init from outside the checkout."
+	releaseBuild(t, "0.2.0")
+	checkout := func(t *testing.T) {
+		t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
+	}
+	for name, tc := range map[string]struct {
+		o       *initOptions
+		known   bool
+		outside bool
+		want    int
+	}{
+		"--base, unknown repo":       {o: &initOptions{baseKinds: []string{"web-node"}}, want: 1},
+		"--budget, unknown repo":     {o: &initOptions{budget: 5}, want: 1},
+		"two flags, still once":      {o: &initOptions{baseKinds: []string{"go"}, budget: 5}, want: 1},
+		"no installation flag":       {o: &initOptions{}, want: 0},
+		"--yes: no prompt":           {o: &initOptions{baseKinds: []string{"go"}, yes: true}, want: 0},
+		"--non-interactive":          {o: &initOptions{baseKinds: []string{"go"}, nonInteractive: true}, want: 0},
+		"--json: no prompt":          {o: &initOptions{baseKinds: []string{"go"}, asJSON: true}, want: 0},
+		"--onboard-repo given":       {o: &initOptions{baseKinds: []string{"go"}, onboardRepo: "acme/app"}, want: 0},
+		"--base, repository listed":  {o: &initOptions{baseKinds: []string{"web-node"}}, known: true, want: 0},
+		"--base, outside a checkout": {o: &initOptions{baseKinds: []string{"web-node"}}, outside: true, want: 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if tc.outside {
+				t.Chdir(t.TempDir())
+			} else {
+				checkout(t)
+			}
+			fakeTerminal(t)
+			e, out := stageEngine(t, "no\n", tc.o)
+			if !tc.known {
+				unknownRepo(e)
+			}
+			e.repo = newRepositoryStage(e)
+			e.gateEarly(t.Context())
+			if n := strings.Count(out.String(), note); n != tc.want {
+				t.Errorf("the note printed %d times, want %d:\n%s", n, tc.want, out.String())
+			}
+			if tc.want == 1 && strings.Index(out.String(), note) > strings.Index(out.String(), "Type acme/app") {
+				t.Errorf("the note came after the prompt:\n%s", out.String())
+			}
+		})
+	}
+}

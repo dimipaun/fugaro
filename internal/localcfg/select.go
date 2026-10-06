@@ -80,7 +80,8 @@ func (e *SelectError) Error() string { return e.Msg }
 //  3. the checkout's fugaro.yaml project:;
 //  4. $FUGARO_PROJECT;
 //  5. $FUGARO_CONFIG;
-//  6. exactly one project config.
+//  6. exactly one project config (unless fugaro init's --name names another
+//     project: that project's first run).
 //
 // Two selectors naming different projects are refused (the checkout
 // against --config, --project or $FUGARO_PROJECT; --config against
@@ -215,6 +216,12 @@ func (s *selector) run() (Selection, *Config, error) {
 	}
 	switch len(names) {
 	case 1:
+		// --name (fugaro init) for another project than the only one is a
+		// first run of that project, as with several configs. Renaming the
+		// installation is refused later, by the installation's own name.
+		if in.Creating && in.Name != "" && in.Name != names[0] {
+			return s.named(in.Name, "--name")
+		}
 		c, path, err := LoadProject(in.Getenv, names[0])
 		if err != nil {
 			return Selection{}, nil, err
@@ -232,9 +239,7 @@ func (s *selector) run() (Selection, *Config, error) {
 		}
 		return Selection{}, nil, s.refuse("%s", msg)
 	default:
-		// --name (fugaro init) names the project, for a first run too. With
-		// one project config it never selects: that is the "renaming isn't
-		// supported" refusal.
+		// --name (fugaro init) names the project, for a first run too.
 		if in.Creating && in.Name != "" {
 			return s.named(in.Name, "--name")
 		}
