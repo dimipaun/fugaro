@@ -21,8 +21,8 @@ import (
 
 // gcpProjectFieldSince is the first fugaro release whose fugaro.yaml parser
 // knows gcp_project:. A job image built by an older binary refuses the key.
-// It is a placeholder for the release that adds the field: the release task
-// bumps it if that number differs.
+// It must equal the release that ships the field: docs/release.md ("Before
+// you tag") has the release checklist verify it.
 const gcpProjectFieldSince = "0.4.0"
 
 var (
