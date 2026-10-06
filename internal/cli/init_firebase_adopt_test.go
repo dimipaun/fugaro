@@ -314,7 +314,11 @@ func TestInitFirebaseAdoptRerunImportsNothing(t *testing.T) {
 }
 
 // The Firebase project's discovery reads are billed to it, not to the
-// installation's project, when the two differ.
+// installation's project, when the two differ: its own clients for the
+// database, the keys and IAM. The project-number read reuses the
+// installation's Resource Manager client, as CheckFirebaseProject's do:
+// Resource Manager may not be enabled in a fresh Firebase project yet.
+// One project is one set of clients.
 func TestQuotaOptions(t *testing.T) {
 	r := newFBRig(t)
 	lc := r.localConfig(t)
@@ -323,6 +327,28 @@ func TestQuotaOptions(t *testing.T) {
 	}
 	if got := quotaOptions(lc, fpID); got.GCPProject != fpID || got.Region != lc.Region || got.Endpoints != gcpOptions(lc).Endpoints {
 		t.Errorf("options %+v: want the Firebase project as quota and the rest unchanged", got)
+	}
+	ctx := t.Context()
+	c, err := newInitClients(ctx, lc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dc, err := (&initRun{}).discoveryClients(ctx, c, lc, fpID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dc == c || dc.APIKeys == c.APIKeys || dc.FirebaseDB == c.FirebaseDB || dc.IAM == c.IAM {
+		t.Errorf("the Firebase project's reads use the installation's clients")
+	}
+	if dc.APIKeys == nil || dc.FirebaseDB == nil || dc.IAM == nil {
+		t.Errorf("discovery clients missing: %+v", dc)
+	}
+	if dc.CRM != c.CRM {
+		t.Errorf("the project-number read does not use the installation's Resource Manager client")
+	}
+	same, err := (&initRun{}).discoveryClients(ctx, c, lc, lc.GCPProject)
+	if err != nil || same != c {
+		t.Errorf("one project: clients %p (err %v), want the installation's %p", same, err, c)
 	}
 }
 

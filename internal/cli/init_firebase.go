@@ -353,12 +353,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 
 // discoveryClients are the clients that read the Firebase project's
 // resources: the Firebase project is their quota project, not the
-// installation's, when the two differ.
+// installation's, when the two differ. The Resource Manager client stays
+// the installation's (c.CRM), as CheckFirebaseProject's reads of the
+// Firebase project are: a fresh Firebase project may not have the Resource
+// Manager API enabled, and its project number is read before anything is
+// applied there.
 func (r *initRun) discoveryClients(ctx context.Context, c *infra.Clients, lc *localcfg.Config, fp string) (*infra.Clients, error) {
 	if fp == lc.GCPProject {
 		return c, nil
 	}
-	return newInitClientsFor(ctx, lc, fp)
+	dc, err := newInitClientsFor(ctx, lc, fp)
+	if err != nil {
+		return nil, err
+	}
+	dc.CRM = c.CRM
+	return dc, nil
 }
 
 // adoptedNames names the resources im imports, for the confirmation: the
