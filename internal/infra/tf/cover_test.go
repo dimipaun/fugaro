@@ -501,3 +501,13 @@ func TestCoverUnknownFlagsWin(t *testing.T) {
 		t.Fatal("a job with an unknown environment is covered")
 	}
 }
+
+// APITargets hands out a fresh slice: a caller that changes it cannot
+// change the rule.
+func TestAPITargetsIsAFreshSlice(t *testing.T) {
+	a := APITargets()
+	a[0] = "storage.googleapis.com"
+	if got := APITargets(); got[0] != "identitytoolkit.googleapis.com" || len(got) != 2 {
+		t.Fatalf("APITargets() = %v after a caller changed its copy", got)
+	}
+}

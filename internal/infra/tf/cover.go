@@ -175,8 +175,11 @@ var knownCommands = [][2][]string{
 	{{"fugaro"}, {"image", "check", "--job"}},
 }
 
-// APITargets are the two services the Firebase web key may call.
-var APITargets = []string{"identitytoolkit.googleapis.com", "securetoken.googleapis.com"}
+// APITargets are the two services the Firebase web key may call, sorted;
+// a fresh slice each call, so no caller can change the rule.
+func APITargets() []string {
+	return []string{"identitytoolkit.googleapis.com", "securetoken.googleapis.com"}
+}
 
 // NotCovered lists why the plan is not covered, empty when it is. A plan that
 // is nil, or that holds anything but creates and in-place updates of the
@@ -614,7 +617,7 @@ func (c Cover) attributes(rc ResourceChange, creates map[string]bool) string {
 			got = append(got, str(t["service"]))
 		}
 		slices.Sort(got)
-		if !slices.Equal(got, APITargets) {
+		if !slices.Equal(got, APITargets()) {
 			return "a key whose API targets are not the web key's two"
 		}
 	}

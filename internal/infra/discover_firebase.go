@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"google.golang.org/api/apikeys/v2"
 	firebasedatabase "google.golang.org/api/firebasedatabase/v1beta"
@@ -37,6 +38,10 @@ const (
 	signerKeyTypeSystem = "SYSTEM_MANAGED"
 )
 
+// firebaseDBInstanceID is the default instance's ID in the Firebase
+// project fp.
+func firebaseDBInstanceID(fp string) string { return fp + "-default-rtdb" }
+
 // signerDescription is the signer's description for the Fugaro project
 // name, which a signer of another Fugaro project does not carry.
 func signerDescription(name string) string {
@@ -62,7 +67,19 @@ func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec) (Impor
 	if c.APIKeys == nil {
 		return Imports{}, errors.New("no API Keys client (endpoints.api_keys is not set)")
 	}
-	d := &discovery{ctx: ctx, c: c, project: spec.Project}
+	if c.IAM == nil {
+		return Imports{}, errors.New("no IAM client")
+	}
+	if c.CRM == nil {
+		return Imports{}, errors.New("no Resource Manager client")
+	}
+	// The Firebase project's number: only its own SERVICE_DISABLED reads
+	// as absent, not one that names another project (the quota project's).
+	num, err := ProjectNumber(ctx, c, spec.Project)
+	if err != nil {
+		return Imports{}, err
+	}
+	d := &discovery{ctx: ctx, c: c, project: spec.Project, number: num}
 	for _, step := range []func(FirebaseSpec) error{d.firebaseDB, d.webKey, d.tokenSigner, d.minterRole} {
 		if err := step(spec); err != nil {
 			return Imports{}, err
@@ -77,7 +94,7 @@ func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec) (Impor
 // which refuses data without our mark; an empty, unmarked instance is
 // adopted (design decision 1).
 func (d *discovery) firebaseDB(spec FirebaseSpec) error {
-	wantID := d.project + "-default-rtdb"
+	wantID := firebaseDBInstanceID(d.project)
 	var found []*firebasedatabase.DatabaseInstance
 	call := d.c.FirebaseDB.Projects.Locations.Instances.List("projects/" + d.project + "/locations/-").Context(d.ctx)
 	err := call.Pages(d.ctx, func(r *firebasedatabase.ListDatabaseInstancesResponse) error {
@@ -112,6 +129,8 @@ func (d *discovery) firebaseDB(spec FirebaseSpec) error {
 			d.refuse(fmt.Errorf("%s is DELETED, not ACTIVE: it is being deleted; wait until it is gone (the plan then creates it), then rerun fugaro init --firebase %s", where, d.project))
 		case i.State != "ACTIVE":
 			d.refuse(fmt.Errorf("%s is %s, not ACTIVE: rerun fugaro init --firebase %s once it is ACTIVE", where, cmp.Or(i.State, "in no state"), d.project))
+		case i.DatabaseUrl == "":
+			d.refuse(fmt.Errorf("%s has no database URL, so neither fugaro nor its runs could reach it; fugaro refuses to adopt it. Rerun fugaro init --firebase %s once the Firebase console shows its URL", where, d.project))
 		default:
 			ok = true
 		}
@@ -158,7 +177,7 @@ func (d *discovery) webKey(spec FirebaseSpec) error {
 	default:
 		if found, ok := webKeyRestrictions(k.Restrictions); !ok {
 			d.refuse(fmt.Errorf("%s has these restrictions: %s. The web key's are exactly API targets %s, with no methods and no browser, server, Android or iOS restriction. It may be in use by something else, so fugaro refuses to adopt and narrow it: if it is Fugaro's, set exactly those restrictions on it (Credentials in the Google Cloud console), then rerun fugaro init --firebase %s",
-				where, found, strings.Join(tf.APITargets, " and "), d.project))
+				where, found, strings.Join(tf.APITargets(), " and "), d.project))
 			return nil
 		}
 		d.add(importAPIKey, "", "", id)
@@ -167,7 +186,7 @@ func (d *discovery) webKey(spec FirebaseSpec) error {
 }
 
 // webKeyRestrictions describes r, and reports whether it is exactly the
-// module's: one API target per service of tf.APITargets, no methods, and
+// module's: one API target per service of tf.APITargets(), no methods, and
 // no restriction of another kind (the rule tf.Cover applies to a planned
 // key, plus the other kinds).
 func webKeyRestrictions(r *apikeys.V2Restrictions) (string, bool) {
@@ -202,7 +221,7 @@ func webKeyRestrictions(r *apikeys.V2Restrictions) (string, bool) {
 	if desc == "" {
 		desc = "none"
 	}
-	return desc, !methods && !other && slices.Equal(services, tf.APITargets)
+	return desc, !methods && !other && slices.Equal(services, tf.APITargets())
 }
 
 // tokenSigner adopts the signer account when it carries our display name
@@ -263,6 +282,7 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 
 	if len(d.refusals) == refused {
 		d.add(importSignerSA, "", "", email)
+		d.im.Notes = append(d.im.Notes, fmt.Sprintf("the token signer %s was adopted; it holds no grants but the minter role of this installation's launchers and operators, which was checked, but roles on project %s (or inherited) that can sign as it are not visible here: fugaro doctor's token-signers check lists them", email, d.project))
 	}
 	return nil
 }
@@ -275,7 +295,7 @@ func (d *discovery) signerPolicy(spec FirebaseSpec, email string, p *iam.Policy)
 	minter := minterRoleName(d.project, spec.Names.MinterRoleID)
 	allowed := map[string]bool{}
 	for _, m := range slices.Concat(spec.Launchers, spec.Operators) {
-		allowed[m] = true
+		allowed[memberKey(m)] = true
 	}
 	foreign := map[string][]signerGrant{}
 	for _, b := range p.Bindings {
@@ -283,7 +303,7 @@ func (d *discovery) signerPolicy(spec FirebaseSpec, email string, p *iam.Policy)
 			continue
 		}
 		for _, m := range b.Members {
-			if b.Role == minter && allowed[m] {
+			if b.Role == minter && allowed[memberKey(m)] {
 				continue // ours; a condition only narrows it
 			}
 			g := signerGrant{member: m, conditional: b.Condition != nil}
@@ -299,6 +319,19 @@ func (d *discovery) signerPolicy(spec FirebaseSpec, email string, p *iam.Policy)
 		})
 		d.refuse(errors.New(signerGrantMessage(email, d.project, role, gs)))
 	}
+}
+
+// memberKey is the IAM member m as it compares: IAM keeps the emails of
+// user:, group: and serviceAccount: members lower-cased, so their email
+// compares without case; the type, and every other kind of member
+// (allUsers, domain:, deleted:, principal://...), compares byte for byte.
+func memberKey(m string) string {
+	for _, prefix := range []string{"user:", "group:", "serviceAccount:"} {
+		if email, ok := strings.CutPrefix(m, prefix); ok {
+			return prefix + strings.ToLower(email)
+		}
+	}
+	return m
 }
 
 // minterRoleName is the minter role's full name in project fp.
@@ -334,7 +367,7 @@ func signerGrantMessage(sa, fp, role string, gs []signerGrant) string {
 		fmt.Fprintf(&b, "token signer %s grants %s, which Fugaro never grants on it, to:\n", sa, role)
 	}
 	for _, g := range gs {
-		b.WriteString("  " + g.member)
+		b.WriteString("  " + shellWord(g.member))
 		if g.conditional {
 			b.WriteString(" (under a condition)")
 		}
@@ -362,13 +395,40 @@ func signerGrantMessage(sa, fp, role string, gs []signerGrant) string {
 // plainWord is what a shell passes through unquoted and unexpanded.
 var plainWord = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
 
-// shellWord is s as one shell word: as is when nothing in it is special,
-// else single-quoted.
+// shellWord is s as one shell word on one line: as is when nothing in it
+// is special, else single-quoted, or ANSI-C quoted ($'...') when it holds
+// a control character, so a line break in a member can never print a line
+// of its own (one that reads as a command to copy).
 func shellWord(s string) string {
 	if plainWord.MatchString(s) {
 		return s
 	}
-	return shellQuote(s)
+	if !strings.ContainsFunc(s, unicode.IsControl) {
+		return shellQuote(s)
+	}
+	var b strings.Builder
+	b.WriteString("$'")
+	for _, r := range s {
+		switch {
+		case r == '\\' || r == '\'':
+			b.WriteRune('\\')
+			b.WriteRune(r)
+		case r == '\n':
+			b.WriteString(`\n`)
+		case r == '\t':
+			b.WriteString(`\t`)
+		case r == '\r':
+			b.WriteString(`\r`)
+		case unicode.IsControl(r) && r < 0x100:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		case unicode.IsControl(r):
+			fmt.Fprintf(&b, `\u%04x`, r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteString("'")
+	return b.String()
 }
 
 // minterRole adopts the minter role when it carries our title and exactly
