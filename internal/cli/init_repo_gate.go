@@ -84,11 +84,11 @@ func (e *initEngine) gateEarly(ctx context.Context) {
 	if tg == nil {
 		return
 	}
-	if !repoKnown(e.lc, tg.origin) && len(e.r.o.installationFlags()) > 0 {
-		fmt.Fprintln(e.r.w, "note: "+checkoutNote)
-	}
 	if a, err := e.authState(tg.origin); err != nil || a != authAsk {
 		return
+	}
+	if len(e.r.o.installationFlags()) > 0 {
+		fmt.Fprintln(e.r.w, "note: "+checkoutNote)
 	}
 	if ok, err := e.confirmRepo(tg.root, tg.origin); err == nil && !ok {
 		if e.declined == nil {

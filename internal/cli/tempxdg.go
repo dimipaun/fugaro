@@ -18,6 +18,9 @@ func tempRoots() []string {
 	if runtime.GOOS == "darwin" {
 		roots = append(roots, "/var/folders", "/private/var/folders")
 	}
+	if runtime.GOOS != "windows" {
+		roots = append(roots, "/tmp", "/private/tmp", "/var/tmp")
+	}
 	return roots
 }
 
@@ -44,17 +47,19 @@ func tempXDGProblems(getenv func(string) string) []string {
 	var out []string
 	for _, v := range tempXDGVars {
 		if p := getenv(v); inTempDir(p) {
-			out = append(out, fmt.Sprintf("%s is %s, inside the temporary directory: what fugaro writes there is easily lost; unset it if you did not mean this", v, p))
+			out = append(out, fmt.Sprintf("%s is %s, inside the temporary directory: what fugaro writes there is easily lost", v, p))
 		}
 	}
 	return out
 }
 
+const tempXDGAdvice = "unset it if you did not mean this"
+
 // tempXDGChecks are tempXDGProblems as doctor's information lines.
 func tempXDGChecks(getenv func(string) string) []doctorCheck {
 	var out []doctorCheck
 	for _, p := range tempXDGProblems(getenv) {
-		out = append(out, doctorCheck{ID: "xdg-temp-dir", Severity: "info", Problem: p, Fix: "unset it if you did not mean this"})
+		out = append(out, doctorCheck{ID: "xdg-temp-dir", Severity: "info", Problem: p, Fix: tempXDGAdvice})
 	}
 	return out
 }
@@ -63,6 +68,7 @@ func tempXDGChecks(getenv func(string) string) []doctorCheck {
 // stdout the tfvars alone, so its warning goes to stderr.
 func (r *initRun) warnTempXDG() {
 	for _, p := range tempXDGProblems(os.Getenv) {
+		p += "; " + tempXDGAdvice
 		if r.o.printVars {
 			fmt.Fprintln(r.cmd.ErrOrStderr(), "warning: "+p)
 			continue

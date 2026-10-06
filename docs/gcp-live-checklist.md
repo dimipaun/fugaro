@@ -815,7 +815,7 @@ export XDG_CONFIG_HOME=$(mktemp -d) XDG_CACHE_HOME=$XDG_CONFIG_HOME   # same new
 echo "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
 ```
 
-Check the values before anything else. A stale `XDG_CONFIG_HOME` left in a terminal sent live config writes to a temporary directory during D19, and an unset `XDG_CACHE_HOME` would let a cache from an earlier session answer for the fetch. Both must name the new directory. Then `ls "$XDG_CONFIG_HOME/fugaro"` finds nothing.
+Check the values before anything else. A stale `XDG_CONFIG_HOME` left in a terminal sent live config writes to a temporary directory during D19, and an unset `XDG_CACHE_HOME` would let a cache from an earlier session answer for the fetch. Both must name the new directory (init and doctor will warn that the variable points at a temporary directory, which is expected here). Then `ls "$XDG_CONFIG_HOME/fugaro"` finds nothing.
 
 **A. Publish and read (an installation you name).**
 

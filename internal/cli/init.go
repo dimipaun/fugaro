@@ -716,8 +716,10 @@ func (r *initRun) setProject(lc *localcfg.Config) {
 // init: a missing one is to be created) with --gcp-project, --region and
 // --runs-bucket applied; without one, it starts a new one,
 // projects/<name>.yaml, from --name (else the name that selected it, such
-// as the checkout's project:), --gcp-project and --region. With one,
-// --name must be its name. old is the file's content (nil when there is
+// as the checkout's project:), --gcp-project and --region. A --name that
+// is not an existing project's name (even beside one config) is such a first
+// run; the selected config's own name is accepted, and a selector that already
+// named another project (checkout, --config) refuses a different --name. old is the file's content (nil when there is
 // none).
 func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, path string, old []byte, err error) {
 	co, err := checkoutProject(ctx, "")
@@ -1482,7 +1484,18 @@ func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byt
 		return userErr("writing the local config: %v", err)
 	}
 	fmt.Fprintf(r.w, "wrote %s\n", path)
+	if old == nil {
+		r.noteSecondProject()
+	}
 	return nil
+}
+
+// noteSecondProject says, once a new project config is written beside
+// another, what that means for commands run outside a checkout.
+func (r *initRun) noteSecondProject() {
+	if names, err := localcfg.Projects(os.Getenv); err == nil && len(names) > 1 {
+		fmt.Fprintln(r.w, "note: two project configs now exist; commands outside a checkout need FUGARO_PROJECT=<name> or --project <name> (a checkout's fugaro.yaml project: selects by itself)")
+	}
 }
 
 // backupFile writes old next to path as path.bak-<UTC timestamp>, mode

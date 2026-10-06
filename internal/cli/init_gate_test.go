@@ -541,6 +541,10 @@ func TestInstallationFlagNoteInUnonboardedCheckout(t *testing.T) {
 		"--budget, unknown repo":     {o: &initOptions{budget: 5}, want: 1},
 		"two flags, still once":      {o: &initOptions{baseKinds: []string{"go"}, budget: 5}, want: 1},
 		"no installation flag":       {o: &initOptions{}, want: 0},
+		"--yes: no prompt":           {o: &initOptions{baseKinds: []string{"go"}, yes: true}, want: 0},
+		"--non-interactive":          {o: &initOptions{baseKinds: []string{"go"}, nonInteractive: true}, want: 0},
+		"--json: no prompt":          {o: &initOptions{baseKinds: []string{"go"}, asJSON: true}, want: 0},
+		"--onboard-repo given":       {o: &initOptions{baseKinds: []string{"go"}, onboardRepo: "acme/app"}, want: 0},
 		"--base, repository listed":  {o: &initOptions{baseKinds: []string{"web-node"}}, known: true, want: 0},
 		"--base, outside a checkout": {o: &initOptions{baseKinds: []string{"web-node"}}, outside: true, want: 0},
 	} {

@@ -34,8 +34,8 @@ func TestTempXDGWarnings(t *testing.T) {
 			}
 			for i, v := range tc.want {
 				p := got[i]
-				if !strings.Contains(p, v) || !strings.Contains(p, os.Getenv(v)) || !strings.Contains(p, "unset it if you did not mean this") {
-					t.Errorf("%q: want %s, its path and the advice", p, v)
+				if !strings.Contains(p, v) || !strings.Contains(p, os.Getenv(v)) {
+					t.Errorf("%q: want %s, its path", p, v)
 				}
 			}
 		})
@@ -58,7 +58,7 @@ func TestTempXDGInInitAndDoctor(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", "/home/u/.cache")
 	e, out := stageEngine(t, "", &initOptions{})
 	e.r.warnTempXDG()
-	if len(e.r.res.Warnings) != 1 || !strings.Contains(e.r.res.Warnings[0], "XDG_CONFIG_HOME") || !strings.Contains(out.String(), "warning: ") {
+	if len(e.r.res.Warnings) != 1 || !strings.Contains(e.r.res.Warnings[0], "XDG_CONFIG_HOME") || !strings.HasSuffix(e.r.res.Warnings[0], "unset it if you did not mean this") || !strings.Contains(out.String(), "warning: ") {
 		t.Fatalf("warnings %q, output %q", e.r.res.Warnings, out.String())
 	}
 	cs := tempXDGChecks(os.Getenv)
