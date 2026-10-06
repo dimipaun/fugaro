@@ -105,6 +105,14 @@ var importTable = map[importKind]struct{ to, id string }{
 }
 
 // newImport is the import of a resource of kind k.
+//
+// Several repository kinds (secrets, job accounts, jobs) are for_each rows
+// whose {key} is quoted with strconv.Quote. Their keys are restricted by
+// config.SecretNameRE and config.WorkflowNameRE to [a-z0-9-], where strconv.Quote and
+// Terraform's HCL quoting give identical text, so the address matches the
+// plan's and tf.Cover's (address, ID) allowlist accepts it. A looser key
+// regex later would make Cover refuse such an import, and re-prompt on
+// every run: extend this quoting to HCL's rules if that changes.
 func newImport(k importKind, project, region, key, name string) Import {
 	a, ok := importTable[k]
 	if !ok {
