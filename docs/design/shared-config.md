@@ -22,7 +22,7 @@ A separate object, `fugaro/config.yaml`, in the runs bucket, written by `fugaro 
 
 Rejected: extending the marker `fugaro/project.json` (Terraform-written, three fields, 4 KiB read cap, and the budget values come from a different Terraform root, so one file would couple two roots); keeping it in the Firebase database (not every launcher can read it, and its mark logic is delicate).
 
-Trust level: launchers and operators already hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`), so they can read the file with no new grant, and any of them can already overwrite the marker. The shared file is exactly as trustworthy as the marker. The validation in §5 is defence in depth, not a new boundary.
+Trust level: launchers and operators already hold `roles/storage.objectAdmin` on the runs bucket (`modules/installation/iam.tf`), so they can read the file with no new grant, and any of them can already overwrite the marker. The shared file is exactly as trustworthy as the marker, which is read the way `checkCloudName` reads it. The validation in §5 is defence in depth, not a new boundary.
 
 ## 4. The published file
 
@@ -39,7 +39,7 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 **When.** Only when selection finds no local config for the project: `--config` and a local `projects/<name>.yaml` always win. The project name is the checkout's `project:`. The GCP project is the checkout's `gcp_project:`, or the existing `--gcp-project` flag. The bucket is `fugaro-runs-<gcp_project>`. If `gcp_project:` is missing the error says exactly which line to add and that whoever onboarded the repo can run `fugaro init --repo` to add it. **There is no guessing and no hint of a guess:** the committed, reviewed value is the trust anchor. A guessed project ID would make the claim self-fulfilling (a stranger's project of that name with a matching marker would pass every consistency check), and the convention does not even hold for our own installations (`fugaro` is in `fugaro-dev`, belong was in `edge-devel-dimi`).
 
 **Sequence.**
-1. Read the marker through the existing `ReadProjectMarker`, which requires the managed label on the bucket and a matching project number. Its name and GCP project must equal what the checkout said.
+1. Read the marker with the same plain bucket read `checkCloudName` uses (`blobx`, at most 4 KiB, `Version == 1`), and require its name and GCP project to equal the checkout's. `infra.ReadProjectMarker` is not used: it needs the project number from Cloud Resource Manager (`projects.get`), which a plain launcher's custom role does not have, and the launcher is the primary user. The trust level is the status quo: every cloud command already trusts this marker through `checkCloudName`, which runs again after selection.
 2. Read `fugaro/config.yaml`, at most 64 KiB, through `blobx`, and `Parse` it strictly.
 3. Cross-check and refuse (never repair) on any failure, naming the field and telling the user to ask an operator to re-run `fugaro init`:
    - `name`, `gcp_project` and `runs_bucket` equal the marker and the bucket the file was read from;
@@ -50,7 +50,7 @@ Trust level: launchers and operators already hold `roles/storage.objectAdmin` on
 
 ## 6. Cache
 
-One file per project in the user's cache directory (not the config directory), holding the validated config, the object's generation, the bucket and the last check time. Within a day it is used as is. After a day: a conditional read by generation (unchanged only refreshes the stamp). If the refresh fails for lack of network, the cache is used for up to 7 days with a warning, then the command fails. If the marker or object is gone, or the new content fails validation, the cache is dropped and the command fails. The existing name-check cache (`localcfg/checkcache.go`) is the pattern to follow.
+One file per project in the user's cache directory (not the config directory), holding the validated config, the object's generation, the bucket and the last check time. Within a day it is used as is. After a day: the object is re-read (at most 64 KiB) and its generation compared with the cached one (unchanged only refreshes the stamp); `blobx` has no conditional-read primitive, and the extra read is small. If the refresh fails for lack of network, the cache is used for up to 7 days with a warning, then the command fails. If the marker or object is gone, or the new content fails validation, the cache is dropped and the command fails. The existing name-check cache (`localcfg/checkcache.go`) is the pattern to follow, including its location (see §12).
 
 ## 7. Selection and commands
 
@@ -73,8 +73,8 @@ Until step 4 nothing changes for teammates; a checkout without the line gets the
 
 ## 10. Tests
 
-- **Validation** (security-critical, table-driven, one tampered fixture per rule): wrong registry host, signer outside the Firebase project, mismatched name, GCP project or bucket, `endpoints:`, `user:` or `terraform:` present, unknown key, oversize file, marker without the managed label. Each is refused with the field named.
-- **Cache:** use within the day, conditional refresh by generation, the 7-day offline allowance, dropping on a missing or invalid object.
+- **Validation** (security-critical, table-driven, one tampered fixture per rule): wrong registry host, signer outside the Firebase project, mismatched name, GCP project or bucket, `endpoints:`, `user:` or `terraform:` present, unknown key, oversize file, marker with the wrong version or a different name or GCP project. Each is refused with the field named.
+- **Cache:** use within the day, refresh by re-reading and comparing generations, the 7-day offline allowance, dropping on a missing or invalid object.
 - **Selection:** a local file and `--config` win; the missing-`gcp_project:` message; `validate` and `config example` never touch the network.
 - **Publish:** a golden file proving the published subset, and that `terraform:`, `user:` and `endpoints:` never appear.
 - **End to end** against the existing fakes: fresh config and cache directories and a checkout with `gcp_project:`; `fugaro ls` and a launch resolve the shared config with no local file.
@@ -86,4 +86,4 @@ About six tasks: (1) the `gcp_project:` field and its parser; (2) the publisher 
 
 ## 12. Open items
 
-None blocking. To decide in the plan: the 64 KiB cap and the 7-day offline allowance are starting values, and the cache location follows the platform's user cache directory (`os.UserCacheDir`).
+None blocking. To decide in the plan: the 64 KiB cap and the 7-day offline allowance are starting values, and the cache location follows `localcfg/checkcache.go` (`getenv`, `XDG_CACHE_HOME`, else `$HOME/.cache`), not `os.UserCacheDir`.
