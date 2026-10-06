@@ -715,6 +715,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	if err != nil {
 		return nil, "", nil, err
 	}
+	if err := refuseSharedWrite(sel); err != nil {
+		return nil, "", nil, err
+	}
 	if lc != nil {
 		// A config to be created is announced once it exists, below.
 		if err := announce(o.cloud, sel, lc); err != nil {
@@ -1427,6 +1430,10 @@ func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) 
 // up the file it replaces. A diff is confirmed by an apply's confirmation
 // (confirmed), else it asks on its own. An unchanged file isn't written.
 func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byte, confirmed bool) error {
+	if path == "" {
+		// A shared selection has no file; never write to an empty path.
+		return userErr("there is no local config file to write (a shared config has none): run fugaro init to create your own local config")
+	}
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -2046,6 +2053,9 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	}
 	sel, lc, err := selectFrom(o.cloud, co, false)
 	if err != nil {
+		return nil, "", nil, err
+	}
+	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
 	if err := announce(o.cloud, sel, lc); err != nil {

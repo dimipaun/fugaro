@@ -1,5 +1,12 @@
 package localcfg
 
+import (
+	"reflect"
+	"slices"
+
+	"gopkg.in/yaml.v3"
+)
+
 // SharedMaxBytes caps the published file when read back.
 const SharedMaxBytes = 64 << 10
 
@@ -105,4 +112,33 @@ func unionMaps[K comparable, V any](a, b map[K]V) map[K]V {
 		m[k] = v
 	}
 	return m
+}
+
+// SharedDiff names the top-level fields on which the published shared
+// config differs from what local would publish (local.Shared()), sorted;
+// none when they agree. It is for `fugaro doctor`: a local config wins over
+// the published one, and a difference is worth saying.
+func SharedDiff(published, local *Config) []string {
+	toMap := func(c *Config) map[string]any {
+		data, err := c.Marshal()
+		m := map[string]any{}
+		if err == nil {
+			_ = yaml.Unmarshal(data, &m)
+		}
+		return m
+	}
+	p, l := toMap(published), toMap(local.Shared())
+	var out []string
+	for k, v := range l {
+		if !reflect.DeepEqual(v, p[k]) {
+			out = append(out, k)
+		}
+	}
+	for k := range p {
+		if _, ok := l[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	slices.Sort(out)
+	return out
 }

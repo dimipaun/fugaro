@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	billing "google.golang.org/api/cloudbilling/v1"
@@ -182,7 +183,13 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	// refusal (ambiguous projects, a wrong --project) needs the raw list,
 	// not localcfg.Select's wrapped error (design: "no installation means
 	// run fugaro init first").
-	if names, err := localcfg.Projects(os.Getenv); err == nil && len(names) == 0 {
+	// A checkout that names its gcp_project:, or --gcp-project, reaches
+	// selection on a fresh machine: the shared config may stand in.
+	namesGCP := cloudOpts.gcpProject != ""
+	if co, err := checkoutProject(ctx, ""); err == nil && co != nil && co.GCPProject != "" {
+		namesGCP = true
+	}
+	if names, err := localcfg.Projects(os.Getenv); err == nil && len(names) == 0 && !namesGCP {
 		o.Checks = append(o.Checks, doctorCheck{ID: "installation", OK: false,
 			Problem: "no Fugaro installation is configured",
 			Fix:     "run fugaro init"})
@@ -203,10 +210,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		}
 		return err
 	}
-	_, lc, err := selectProject(ctx, cloudOpts)
+	sel, lc, err := selectProject(ctx, cloudOpts)
 	if err != nil {
 		return failed(err)
 	}
+	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
 
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
 		o.Checks = append(o.Checks, fromPreflight(c))
@@ -514,4 +522,33 @@ func emitDoctor(cmd *cobra.Command, o doctorOutput, asJSON bool) error {
 		return &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro doctor found a problem; see above")}
 	}
 	return nil
+}
+
+// sharedConfigChecks are doctor's information lines about the shared config
+// published to the runs bucket: that the project's config is that file (no
+// local one), or that a local config won over a published one that differs
+// from it. Reading the published file is best effort: any failure says
+// nothing and never fails doctor.
+func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcfg.Config, now time.Time) []doctorCheck {
+	if sel.From == "shared config" {
+		problem := "the project's config is the shared file published to the runs bucket"
+		if e, ok := localcfg.LoadSharedCache(os.Getenv, sel.Name); ok {
+			problem += fmt.Sprintf(" (generation %d, checked %s ago)", e.Generation, ageDays(now.Sub(e.CheckedAt)))
+		}
+		return []doctorCheck{{ID: "shared-config", Severity: "info", Problem: problem, Fix: "fugaro init creates your own local config"}}
+	}
+	if sel.Path == "" || lc == nil {
+		return nil
+	}
+	published, _, err := sharedFetch(ctx, os.Getenv, now, lc.Name, lc.GCPProject)
+	if err != nil || published == nil {
+		return nil
+	}
+	diff := localcfg.SharedDiff(published, lc)
+	if len(diff) == 0 {
+		return nil
+	}
+	return []doctorCheck{{ID: "shared-config-differs", Severity: "info",
+		Problem: "the shared config published to the runs bucket differs from your local config on " + strings.Join(diff, ", ") + "; yours is used",
+		Fix:     "fugaro init publishes your local config's installation-wide fields"}}
 }

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -66,7 +67,10 @@ func selectProject(ctx context.Context, o cloudOptions) (localcfg.Selection, *lo
 	if err != nil {
 		return localcfg.Selection{}, nil, err
 	}
-	sel, lc, err := selectFrom(o, co, false)
+	// Only here may a missing local config fall back to the shared one: the
+	// offline commands, init and the writers never fetch it.
+	o.sharedOK = true
+	sel, lc, err := selectWith(ctx, o, co, false, "")
 	if err != nil {
 		return sel, nil, err
 	}
@@ -84,15 +88,69 @@ func selectFrom(o cloudOptions, co *localcfg.Checkout, creating bool) (localcfg.
 // selects one of several project configs, it names the project (a first run
 // of that name too).
 func selectNamed(o cloudOptions, co *localcfg.Checkout, creating bool, name string) (localcfg.Selection, *localcfg.Config, error) {
-	sel, lc, err := localcfg.Select(localcfg.SelectInput{
+	// o.sharedOK is set by selectProject alone.
+	return selectWith(context.Background(), o, co, creating, name)
+}
+
+// sharedFetch is fetchSharedConfig; a test seam.
+var sharedFetch = fetchSharedConfig
+
+// sharedGCPProject is the GCP project a shared config is looked up in: the
+// checkout's committed gcp_project:, or --gcp-project, and nothing else.
+// The two must agree when both are given.
+func sharedGCPProject(o cloudOptions, co *localcfg.Checkout) (string, error) {
+	var fromCheckout string
+	if co != nil {
+		fromCheckout = co.GCPProject
+	}
+	if o.gcpProject != "" && fromCheckout != "" && o.gcpProject != fromCheckout {
+		return "", userErr("--gcp-project %s contradicts this checkout's gcp_project %s in fugaro.yaml", o.gcpProject, fromCheckout)
+	}
+	return cmp.Or(o.gcpProject, fromCheckout), nil
+}
+
+// selectWith is selectNamed that, with o.sharedOK, falls back to the shared
+// config published to the runs bucket where there is no local one (ctx is
+// its fetch's).
+func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, creating bool, name string) (localcfg.Selection, *localcfg.Config, error) {
+	in := localcfg.SelectInput{
 		Config: o.config, Project: o.project, Checkout: co, Name: name, Origin: checkoutOrigin,
 		EnvProject: os.Getenv("FUGARO_PROJECT"), EnvConfig: os.Getenv("FUGARO_CONFIG"),
 		Creating: creating, Getenv: os.Getenv,
-	})
+	}
+	if o.sharedOK && !creating {
+		gcp, err := sharedGCPProject(o, co)
+		if err != nil {
+			return localcfg.Selection{}, nil, err
+		}
+		in.GCPProject = gcp
+		in.Shared = func(name, gcpProject string) (*localcfg.Config, string, error) {
+			return sharedFetch(ctx, os.Getenv, time.Now(), name, gcpProject)
+		}
+	}
+	sel, lc, err := localcfg.Select(in)
 	if err != nil {
+		var ee *ExitError
+		if errors.As(err, &ee) {
+			return sel, nil, err // a fetch's own refusal keeps its exit code
+		}
 		return sel, nil, userErr("%v", err)
 	}
 	return sel, lc, nil
+}
+
+// errSharedWrite is the refusal of a command that would write the local
+// project config while the selected one is the shared config.
+const errSharedWrite = "this project's config is the shared one published by an operator, so it can't be changed here; run fugaro init to create your own local config"
+
+// refuseSharedWrite is the refusal for a command about to write the
+// selected project config when that is the shared config (which has no
+// file).
+func refuseSharedWrite(sel localcfg.Selection) error {
+	if sel.From == "shared config" {
+		return userErr("%s", errSharedWrite)
+	}
+	return nil
 }
 
 // announce prints the project header (when there is a config) and the
@@ -101,6 +159,9 @@ func selectNamed(o cloudOptions, co *localcfg.Checkout, creating bool, name stri
 func announce(o cloudOptions, sel localcfg.Selection, lc *localcfg.Config) error {
 	if lc != nil {
 		printProjectHeader(o.errw(), lc)
+		if sel.From == "shared config" {
+			fmt.Fprintf(o.errw(), "fugaro: note: no local config for %s: using the shared config published to gs://fugaro-runs-%s\n", lc.Name, lc.GCPProject)
+		}
 	}
 	for _, n := range sel.Notes {
 		fmt.Fprintf(o.errw(), "fugaro: note: %s\n", n)
