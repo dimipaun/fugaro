@@ -25,8 +25,11 @@ type Config struct {
 	// (ProjectNameRE). Validate requires it; the runner refuses a job of
 	// another project.
 	Project string `yaml:"project,omitempty"`
-	Git     Git    `yaml:"git"`
-	Agent   Agent  `yaml:"agent"`
+	// GCPProject is the GCP project of the installation this repository
+	// belongs to (GCPProjectRE); optional. Never derived from Project.
+	GCPProject string `yaml:"gcp_project,omitempty"`
+	Git        Git    `yaml:"git"`
+	Agent      Agent  `yaml:"agent"`
 	// Budget is the repository's cost and model policy. It can only
 	// tighten the owner's ceiling (the project config); see Policy.
 	Budget    *Budget             `yaml:"budget,omitempty"`
@@ -395,6 +398,9 @@ func Parse(data []byte) (*Config, []Problem) {
 	// name is a YAML string, as ProjectOf (which the runner and the CLI
 	// use) insists, so the two cannot disagree about a file.
 	if _, err := ProjectOf(data); err != nil {
+		return nil, []Problem{problemFromYAML(err.Error())}
+	}
+	if _, err := GCPProjectOf(data); err != nil {
 		return nil, []Problem{problemFromYAML(err.Error())}
 	}
 	applyDefaults(&c)

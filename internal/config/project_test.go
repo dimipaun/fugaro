@@ -82,3 +82,39 @@ func TestProjectMustBeAStringInBothPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestGCPProjectOf(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+		wantErr        bool
+	}{
+		{"absent", "project: belong\n", "", false},
+		{"present", "project: belong\ngcp_project: fugaro-belong\n", "fugaro-belong", false},
+		{"null", "project: belong\ngcp_project:\n", "", false},
+		{"not a string", "project: belong\ngcp_project: [a]\n", "", true},
+		{"duplicate", "project: belong\ngcp_project: a-b-cde\ngcp_project: a-b-cdf\n", "", true},
+	}
+	for _, c := range cases {
+		got, err := GCPProjectOf([]byte(c.in))
+		if (err != nil) != c.wantErr || got != c.want {
+			t.Errorf("%s: got %q, %v", c.name, got, err)
+		}
+	}
+}
+
+func TestValidateGCPProject(t *testing.T) {
+	for _, bad := range []string{"Fugaro-Belong", "../x", "a/b", "ab", strings.Repeat("a", 31), "1abcde"} {
+		c, _ := Parse([]byte(minimalYAML))
+		if c == nil {
+			t.Fatal("minimalYAML does not parse")
+		}
+		c.GCPProject = bad
+		if probs := Validate(c); !hasProblem(probs, "gcp_project", "", 0) {
+			t.Errorf("%q accepted", bad)
+		}
+	}
+	cfg, probs := Parse([]byte(minimalYAML + "gcp_project: fugaro-belong\n"))
+	if cfg == nil || cfg.GCPProject != "fugaro-belong" {
+		t.Errorf("valid ID refused: %v", probs)
+	}
+}

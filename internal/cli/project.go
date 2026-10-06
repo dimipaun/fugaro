@@ -46,7 +46,15 @@ func checkoutProject(ctx context.Context, dir string) (*localcfg.Checkout, error
 	if err != nil {
 		return nil, userErr("%s can't say which project it belongs to: %v", filepath.Join(root, "fugaro.yaml"), err)
 	}
-	return &localcfg.Checkout{Root: root, Project: project}, nil
+	gcp, err := config.GCPProjectOf(data)
+	if err != nil {
+		return nil, userErr("%s can't say which GCP project it names: %v", filepath.Join(root, "fugaro.yaml"), err)
+	}
+	// Refuse a hostile value here, before anything builds a name from it.
+	if gcp != "" && !config.GCPProjectRE.MatchString(gcp) {
+		return nil, userErr("%s: gcp_project %q is not a GCP project ID", filepath.Join(root, "fugaro.yaml"), gcp)
+	}
+	return &localcfg.Checkout{Root: root, Project: project, GCPProject: gcp}, nil
 }
 
 // selectProject picks the project config a cloud command acts on

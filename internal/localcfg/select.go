@@ -14,6 +14,8 @@ import (
 type Checkout struct {
 	Root    string // git toplevel
 	Project string // its fugaro.yaml's project:, "" when absent
+	// GCPProject is its fugaro.yaml's gcp_project:, "" when absent.
+	GCPProject string
 }
 
 // SelectInput is everything that can select a project config.

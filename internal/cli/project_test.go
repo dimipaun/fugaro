@@ -556,3 +556,20 @@ func TestOriginRepositorySelectsItsProject(t *testing.T) {
 		t.Fatalf("an unlisted origin: %v", err)
 	}
 }
+
+func TestCheckoutProjectGCPProject(t *testing.T) {
+	ctx := context.Background()
+	dir := gitCheckout(t, filepath.Join(t.TempDir(), "app"), "project: belong\ngcp_project: fugaro-belong\n")
+	co, err := checkoutProject(ctx, dir)
+	if err != nil || co == nil || co.GCPProject != "fugaro-belong" {
+		t.Fatalf("checkout = %+v, %v", co, err)
+	}
+	for _, bad := range []string{"../x", "Fugaro-Belong", "a/b", strings.Repeat("a", 31), "[a]"} {
+		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte("project: belong\ngcp_project: "+bad+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := checkoutProject(ctx, dir); ExitCode(err) != ExitUserError {
+			t.Errorf("gcp_project %q: err = %v, want a user error", bad, err)
+		}
+	}
+}

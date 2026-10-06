@@ -100,6 +100,9 @@ func Validate(c *Config) []Problem {
 	case !ProjectNameRE.MatchString(c.Project):
 		add("project", "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
+	if c.GCPProject != "" && !GCPProjectRE.MatchString(c.GCPProject) {
+		add("gcp_project", "must be a GCP project ID: 6 to 30 of a-z, 0-9 and '-', starting with a letter")
+	}
 	if !slices.Contains(Providers, c.Git.Provider) {
 		add("git.provider", "must be one of %s", strings.Join(Providers, ", "))
 	}
