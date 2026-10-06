@@ -47,3 +47,28 @@ func TestShowExplainsProjectTotalVersusRows(t *testing.T) {
 		t.Fatalf("a real mismatch is not reported:\n%s", out)
 	}
 }
+
+// Money that can be negative reads "-$0.01", never "$-0.01" or a bare number.
+func TestMoneyNegative(t *testing.T) {
+	for m, want := range map[budget.Micros]string{-10_000: "-$0.01", -1_500_000: "-$1.50", -500_000: "-$0.50", 0: "$0", 10_000: "$0.01"} {
+		if got := money(m); got != want {
+			t.Errorf("money(%d) = %q, want %q", m, got, want)
+		}
+	}
+}
+
+// A project counter under the repositories' sum is reported with signed money.
+func TestShowNegativeMismatchHasSign(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedCaps(f, 100, 20)
+	d := today()
+	f.db.Set(budget.PathSpendGlobal(d), map[string]any{"counted": 5*usd1 - 10_000})
+	f.db.Set(budget.PathSpendRepo(d, appSlug), map[string]any{"counted": 5 * usd1})
+	out, _, err := execute(t, "budget", "show", "--all")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "do not add up") || !strings.Contains(out, "counted -$0.01") {
+		t.Fatalf("the negative difference is not signed:\n%s", out)
+	}
+}

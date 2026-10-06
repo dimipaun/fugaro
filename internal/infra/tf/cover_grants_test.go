@@ -72,6 +72,33 @@ func TestGrantRulesMatrix(t *testing.T) {
 	}
 }
 
+// A plan that creates a custom role and binds it through a computed role is
+// still checked against the table: the type's row must name a custom role for
+// that kind of principal, and the member is checked as for any other grant.
+func TestComputedRoleWithCreatedCustomRoleIsTableChecked(t *testing.T) {
+	const person = "user:me@example.com"
+	const account = "serviceAccount:fugaro-history@proj-1.iam.gserviceaccount.com"
+	role := customRole("fugaroJobRunner", "proj-1", []any{"run.jobs.run", "run.jobs.runWithOverrides"})
+	for _, c := range []struct {
+		typ, member string
+		covered     bool
+	}{
+		{"google_cloud_run_v2_job_iam_member", person, true},
+		{"google_cloud_run_v2_job_iam_member", account, true},
+		{"google_project_iam_member", person, true},
+		{"google_service_account_iam_member", account, false}, // its only custom role is for people
+		{"google_storage_bucket_iam_member", person, false},   // the row has no custom role
+		{"google_secret_manager_secret_iam_member", account, false},
+		{"google_cloud_run_v2_job_iam_member", "user:eve@example.com", false},
+	} {
+		ch := rc(c.typ, map[string]any{"member": c.member, "bucket": "fugaro-runs-proj-1"}, map[string]any{"role": true}, "create")
+		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{role, ch}})
+		if (len(got) == 0) != c.covered {
+			t.Errorf("%s computed role to %s: NotCovered = %q, covered want %v", c.typ, c.member, got, c.covered)
+		}
+	}
+}
+
 func TestGrantRulesNameOnlyKnownTypesAndRoles(t *testing.T) {
 	for typ, row := range grantRules {
 		if !allowedTypes[typ] || !strings.HasSuffix(typ, "_iam_member") {

@@ -376,7 +376,14 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 		if !createsRole {
 			return "a role that is not known and no custom role is created with it"
 		}
-		return ""
+		// Which custom role is not known, but the table still bounds it: the
+		// type's row must name some custom role for this kind of principal.
+		for key, w := range rules {
+			if strings.HasPrefix(key, customKey) && w&kind != 0 {
+				return ""
+			}
+		}
+		return fmt.Sprintf("a computed role on a %s for a kind of principal to which the installation's modules grant no custom role there", typ)
 	}
 	role, _ := ch.After["role"].(string)
 	key, ok := c.roleKey(role)
@@ -398,8 +405,16 @@ func (c Cover) fugaroAccount(m string) bool {
 	if sm == nil || !slices.Contains(c.Projects, sm[2]) {
 		return false
 	}
-	return slices.Contains(FugaroAccounts, sm[1]) || jobAccount.MatchString(sm[1])
+	return fixedAccountID(sm[1]) || jobAccountID(sm[1])
 }
+
+// fixedAccountID is whether a service account ID is one of the accounts the
+// modules create once per installation.
+func fixedAccountID(id string) bool { return slices.Contains(FugaroAccounts, id) }
+
+// jobAccountID is whether a service account ID has the shape of a per-job
+// account (fugaro-<name>-<8 hex>).
+func jobAccountID(id string) bool { return jobAccount.MatchString(id) }
 
 // roleKey is the grantRules key of a role: a predefined role by name, a
 // custom role of this run's projects as customKey+ID. ok is false for any
@@ -625,7 +640,7 @@ var refChars = regexp.MustCompile(`^[A-Za-z0-9._:/@-]+$`)
 // accounts (scheduler, history, token signer) are not build accounts.
 func (c Cover) buildAccount(email string) bool {
 	sm := saMember.FindStringSubmatch("serviceAccount:" + email)
-	return sm != nil && slices.Contains(c.Projects, sm[2]) && jobAccount.MatchString(sm[1])
+	return sm != nil && slices.Contains(c.Projects, sm[2]) && jobAccountID(sm[1])
 }
 
 // checkSpecs checks every FUGARO_CHECK_SPEC entry of a container's
