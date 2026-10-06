@@ -2,7 +2,7 @@
 
 A run's coder can be a model served by OpenRouter (the first one is `deepseek/deepseek-v4-flash`) while Claude Code stays the harness and Claude reviews. Fugaro sends the model traffic through its own gateway, which picks the upstream by the request's model ID, attaches the provider's key (the agent never holds it) and prices every call. Nothing is translated: OpenRouter's Anthropic-compatible endpoint receives the same Messages request Claude Code sends (assumed until Check 25: that the endpoint exists at that path, accepts `Authorization: Bearer` and answers in the Anthropic stream format). The design and its open assumptions are in [design/m10-multi-model.md](design/m10-multi-model.md); the live check that settles them is Check 25 of [gcp-live-checklist.md](gcp-live-checklist.md).
 
-This is an experiment, not a default. Treat the first runs as measurements: the cost to reach a Claude-approved pull request is the number that matters.
+This is an experiment, not a default: `agent.models` stays Claude unless a repository names a provider model, and a cheaper run is never "more ready" than a Claude one, because the Claude review alone decides readiness. The provider traffic goes through the same gateway as Claude's, so pinning, the dollar caps and the kill switches hold. The **owner** enables it, in the project's local config, because it sends a repository's code to a third party; a repository's `fugaro.yaml` cannot add a provider, a URL or a price, only name a model the owner has opened to it. Treat the first runs as measurements: the cost to reach a Claude-approved pull request is the number that matters.
 
 ## 1. On the OpenRouter account (before anything in Fugaro)
 

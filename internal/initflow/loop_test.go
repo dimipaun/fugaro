@@ -804,7 +804,7 @@ func (s *selfStage) Apply(ctx context.Context, env Env) (Outcome, error) {
 }
 
 // TestApplyMatrix: every stage in every mode, and what could apply. The
-// truth the help and the README state: --yes covers every stage but the
+// truth the help and docs/gcp-setup.md state: --yes covers every stage but the
 // project, billing and the secrets; --non-interactive alone only plans; a
 // coding agent's environment applies nothing at all, whatever flags it passes.
 func TestApplyMatrix(t *testing.T) {
