@@ -364,7 +364,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.HasPrefix(got, "warning: could not read the build record of acme/app workflow app (unknown image age): ") || strings.Contains(got, "the job image of") ||
-		!strings.HasSuffix(got, "run fugaro image build --repo acme/app --workflow app before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "run fugaro init (it copies the current base image), then fugaro image build --repo acme/app --workflow app, then fugaro init again, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }
