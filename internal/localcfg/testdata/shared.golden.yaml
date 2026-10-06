@@ -1,0 +1,25 @@
+version: 1
+name: aurora
+gcp_project: my-project
+region: us-central1
+runs_bucket: my-runs
+registry_host: us-central1-docker.pkg.dev/my-project
+base_images:
+    web-node: us-central1-docker.pkg.dev/my-project/fugaro-web-node/base:1
+build:
+    machine_type: E2_HIGHCPU_8
+budget:
+    mode: observe
+    per_run_usd: 5
+    rtdb_url: https://my-fp1-default-rtdb.firebaseio.com
+    firebase_project: my-fp1
+    firebase_api_key: AIzaFakeKeyForTests0123
+    token_signer: signer@my-fp1.iam.gserviceaccount.com
+watch:
+    burn_alert_usd_per_hour: 2
+max_parallel: 7
+repos:
+    acme/web:
+        provider: github
+        workflows:
+            - web

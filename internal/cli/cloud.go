@@ -35,6 +35,9 @@ type cloudOptions struct {
 	config, project, gcpProject, region string
 	// stderr is the command's stderr, for notes; nil is os.Stderr.
 	stderr func() io.Writer
+	// sharedOK lets a missing local config fall back to the shared config
+	// published to the runs bucket. Only selectProject sets it.
+	sharedOK bool
 }
 
 // addCloudFlags registers --config, --project (a Fugaro project name),

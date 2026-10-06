@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,20 @@ func TestMain(m *testing.M) {
 	if wd, err := os.Getwd(); err == nil {
 		os.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(filepath.Dir(wd)))
 	}
+	// The shared config is published to the runs bucket after init writes
+	// the local one: tests that don't look at it publish to memory, never
+	// to a real bucket.
+	sharedBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "file://") {
+			return blobx.Open(ctx, url)
+		}
+		return blobx.Open(ctx, "mem://")
+	}
+	// Production skips a gs:// bucket (publish, build-record read) when the
+	// config's endpoints are fakes; the tests reach buckets through seams
+	// while their configs carry fake endpoints, so they turn the skip off and
+	// the tests of the skip itself turn it on.
+	skipGSOnFakeEndpoints = false
 	os.Exit(m.Run())
 }
 

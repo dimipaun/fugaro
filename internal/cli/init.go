@@ -59,6 +59,7 @@ type initOptions struct {
 	noLogIsolation                      bool
 	registryCleanup                     string
 	planOnly, printVars, configOnly     bool
+	publishConfig                       bool // --publish-config: publish the shared config to the runs bucket and stop
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
@@ -335,6 +336,7 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.planOnly, "plan-only", false, "stop after showing the plan (never takes --yes: it creates nothing on a flag's word)")
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
+	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop (init does it after it writes the local config)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
 	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included; that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
@@ -462,6 +464,31 @@ func runInit(r *initRun) error {
 		return err
 	}
 	r.setProject(lc)
+	if o.publishConfig {
+		if old == nil {
+			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
+		}
+		if m := agentMarker(os.Getenv); m != "" {
+			return userErr("--publish-config writes to the cloud: %s", initflow.AgentRefusal(m))
+		}
+		var why []string
+		written, err := publishSharedWarn(cmd.Context(), lc, func(m string) { why = append(why, m); r.warn(m) })
+		if err != nil {
+			return remote(err)
+		}
+		if !written {
+			// An explicit publish request that publishes nothing is a failure.
+			reason := "it was skipped"
+			if len(why) > 0 {
+				reason = why[len(why)-1]
+			} else if fakeEndpointsOnGS(lc, lc.BucketURL()) {
+				reason = "the local config's endpoints are fakes, so the real bucket is not opened"
+			}
+			return userErr("nothing was published: %s", reason)
+		}
+		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		return r.printResult()
+	}
 	spec, err := installOptions(o, lc)
 	if err != nil {
 		return err
@@ -621,13 +648,13 @@ func (o *initOptions) check() error {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget} {
+	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars, --config-only and --forget exclude one another")
+		return userErr("--plan-only, --print-vars, --config-only, --forget and --publish-config exclude one another")
 	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
@@ -698,6 +725,9 @@ func loadInitConfig(ctx context.Context, o *initOptions) (lc *localcfg.Config, p
 	}
 	sel, lc, err := selectNamed(o.cloud, co, true, o.name)
 	if err != nil {
+		return nil, "", nil, err
+	}
+	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
 	if lc != nil {
@@ -1029,7 +1059,7 @@ func (r *initRun) install(ctx context.Context, c *infra.Clients, t *tf.TF, wd *i
 		return err
 	}
 	// 8. The local config.
-	return r.writeConfig(lc, spec, outs, path, old, r.res.Applied)
+	return r.writeConfig(ctx, lc, spec, outs, path, old, r.res.Applied)
 }
 
 // installRoot is the installation root's discovery, plan, guard, confirmation
@@ -1302,7 +1332,7 @@ func (r *initRun) configOnly(ctx context.Context, c *infra.Clients, t *tf.TF, wd
 	case outs.ProjectName != lc.Name:
 		return userErr("the installation's project name is %s; renaming isn't supported (design §2.5): project config %s names it %s", outs.ProjectName, path, lc.Name)
 	}
-	return r.writeConfig(lc, spec, outs, path, old, false)
+	return r.writeConfig(ctx, lc, spec, outs, path, old, false)
 }
 
 // errNoState is a state bucket that doesn't exist yet.
@@ -1335,7 +1365,7 @@ func (r *initRun) readOutputs(ctx context.Context, c *infra.Clients, t *tf.TF, w
 // endpoints) and dropping build.service_account. It shows the diff first,
 // and backs up the file it replaces. A diff is confirmed by the apply's
 // confirmation (confirmed), else it asks on its own.
-func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, outs infra.InstallationOutputs, path string, old []byte, confirmed bool) error {
+func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec infra.InstallationSpec, outs infra.InstallationOutputs, path string, old []byte, confirmed bool) error {
 	if outs.ProjectName != "" && outs.ProjectName != lc.Name {
 		return userErr("the installation's project name is %s, but the project config names %s; it isn't rewritten (renaming isn't supported, design §2.5)", outs.ProjectName, lc.Name)
 	}
@@ -1386,13 +1416,40 @@ func (r *initRun) writeConfig(lc *localcfg.Config, spec infra.InstallationSpec, 
 		}
 		next.SchedulerRegion = sr
 	}
-	return r.writeLocalConfig(&next, path, old, confirmed)
+	if err := r.writeLocalConfig(&next, path, old, confirmed); err != nil {
+		return err
+	}
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	return nil
+}
+
+// publishSharedConfig publishes the shared config after the local config is
+// written. A failure only warns: the installation works without it.
+func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
+	if m := agentMarker(os.Getenv); m != "" {
+		fmt.Fprintf(r.w, "note: the shared config was not published: %s; run fugaro init --publish-config in your own terminal\n", initflow.AgentRefusal(m))
+		return
+	}
+	written, err := publishSharedWarn(ctx, lc, r.warn)
+	if err != nil {
+		r.warn("could not publish the shared config: " + err.Error() + " (teammates will need fugaro init until it is published)")
+		return
+	}
+	if written {
+		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+	}
 }
 
 // writeLocalConfig writes next to path, showing the diff first and backing
 // up the file it replaces. A diff is confirmed by an apply's confirmation
 // (confirmed), else it asks on its own. An unchanged file isn't written.
 func (r *initRun) writeLocalConfig(next *localcfg.Config, path string, old []byte, confirmed bool) error {
+	if path == "" {
+		// A shared selection has no file; never write to an empty path.
+		return userErr("there is no local config file to write (a shared config has none): run fugaro init to create your own local config")
+	}
 	data, err := next.Marshal()
 	if err != nil {
 		return err
@@ -1652,7 +1709,7 @@ func (o *initOptions) checkRepo() error {
 		return userErr("--forget only removes the repository from Terraform's state; it takes no --allow-delete, --allow-job-delete or --no-build")
 	}
 	installationOnly := map[string]bool{
-		"--config-only": o.configOnly, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
+		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
@@ -1866,7 +1923,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 			// it joins the local config (and says what it still needs)
 			// before the build's failure ends the run.
 			r.printMissing(spec, versions, missing)
-			if cerr := r.writeRepoConfig(lc, spec, cfg, path, old); cerr != nil {
+			if cerr := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); cerr != nil {
 				r.warn(fmt.Sprintf("the local config was not updated: %v", cerr))
 			}
 			return err
@@ -1885,7 +1942,7 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	}
 
 	// 8. The local config.
-	if err := r.writeRepoConfig(lc, spec, cfg, path, old); err != nil {
+	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
 		return err
 	}
 	if len(r.buildsLeft) > 0 {
@@ -2012,6 +2069,9 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	}
 	sel, lc, err := selectFrom(o.cloud, co, false)
 	if err != nil {
+		return nil, "", nil, err
+	}
+	if err := refuseSharedWrite(sel); err != nil {
 		return nil, "", nil, err
 	}
 	if err := announce(o.cloud, sel, lc); err != nil {
@@ -2268,7 +2328,7 @@ func (r *initRun) printMissing(spec infra.RepoSpec, versions map[string]bool, mi
 
 // writeRepoConfig adds the repository to the local config's repos, or
 // updates its entry, keeping everything else.
-func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
+func (r *initRun) writeRepoConfig(ctx context.Context, lc *localcfg.Config, spec infra.RepoSpec, cfg *config.Config, path string, old []byte) error {
 	next := *lc
 	next.Repos = maps.Clone(lc.Repos)
 	if next.Repos == nil {
@@ -2295,7 +2355,13 @@ func (r *initRun) writeRepoConfig(lc *localcfg.Config, spec infra.RepoSpec, cfg 
 		// and this is the first.
 		r.warn(spec.Name + " authenticates its agent through Vertex AI, which the installation has not enabled: rerun fugaro init once the local config records it, which enables the Vertex AI API")
 	}
-	return r.writeLocalConfig(&next, path, old, r.res.Applied)
+	if err := r.writeLocalConfig(&next, path, old, r.res.Applied); err != nil {
+		return err
+	}
+	if !r.o.planOnly {
+		r.publishSharedConfig(ctx, &next)
+	}
+	return nil
 }
 
 // forgetRepo is the repository's rollback: every address leaves

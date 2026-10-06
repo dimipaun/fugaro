@@ -132,31 +132,65 @@ func (b *Bucket) Create(ctx context.Context, key string, data []byte, contentTyp
 }
 
 // Read returns key's content and generation (0 off GCS) from one reader.
-// An object larger than MaxReadBytes is ErrTooLarge.
+// An object larger than MaxReadBytes is ErrTooLarge. An HTTP 403 is
+// ErrNotExist, as gocloud's GCS driver maps it: the job and build service
+// accounts hold storage.objectUser only under a prefix condition, so they
+// lack storage.objects.list and GCS answers a GET of a missing object with
+// 403. Callers that treat "absent" as normal depend on this.
 func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
+	return b.read(ctx, key, MaxReadBytes, false)
+}
+
+// ReadMax is Read with a cap of limit bytes instead of MaxReadBytes: an
+// object larger is ErrTooLarge, and no more than limit+1 bytes are read.
+func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error) {
+	return b.read(ctx, key, limit, false)
+}
+
+// ReadStrict is Read, except that an HTTP 403 is returned as an error
+// (the googleapi.Error stays reachable with errors.As), not as ErrNotExist.
+// Only the shared-config readers (internal/cli/sharedcfg.go) may use the
+// strict variants: they run as launchers or operators holding unconditional
+// objectAdmin (which includes list), for whom a 403 means no access.
+func (b *Bucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
+	return b.read(ctx, key, MaxReadBytes, true)
+}
+
+// ReadMaxStrict is ReadMax with ReadStrict's treatment of a 403.
+func (b *Bucket) ReadMaxStrict(ctx context.Context, key string, limit int) ([]byte, int64, error) {
+	return b.read(ctx, key, limit, true)
+}
+
+func (b *Bucket) read(ctx context.Context, key string, limit int, strict bool) ([]byte, int64, error) {
 	r, err := b.NewReader(ctx, key, nil)
-	if gcerrors.Code(err) == gcerrors.NotFound {
+	if gcerrors.Code(err) == gcerrors.NotFound && !(strict && isForbidden(err)) {
 		return nil, 0, ErrNotExist
 	}
 	if err != nil {
 		return nil, 0, err
 	}
 	defer r.Close()
-	if r.Size() > MaxReadBytes {
-		return nil, 0, fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), MaxReadBytes)
+	if r.Size() > int64(limit) {
+		return nil, 0, fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), limit)
 	}
-	data, err := io.ReadAll(io.LimitReader(r, MaxReadBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(data) > MaxReadBytes {
-		return nil, 0, fmt.Errorf("%s: %w (the cap is %d bytes)", key, ErrTooLarge, MaxReadBytes)
+	if len(data) > limit {
+		return nil, 0, fmt.Errorf("%s: %w (the cap is %d bytes)", key, ErrTooLarge, limit)
 	}
 	var sr *storage.Reader
 	if r.As(&sr) {
 		return data, sr.Attrs.Generation, nil
 	}
 	return data, 0, nil
+}
+
+// isForbidden reports an HTTP 403 from GCS.
+func isForbidden(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
 }
 
 // ReplaceIf overwrites key with data only if it is still generation gen

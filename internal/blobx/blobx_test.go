@@ -6,15 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
+	"gocloud.dev/blob/gcsblob"
 	"gocloud.dev/blob/memblob"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -240,5 +246,100 @@ func TestDeleteExistingIsStrict(t *testing.T) {
 		if err := b.DeleteIf(ctx, "k", gen, data); err != nil {
 			t.Fatalf("%s: DeleteIf must stay idempotent: %v", name, err)
 		}
+	}
+}
+
+// TestReadMaxIsCapped: ReadMax refuses an object over its own cap.
+func TestReadMaxIsCapped(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	if err := b.WriteAll(ctx, "k", make([]byte, 100), nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := b.ReadMax(ctx, "k", 100); err != nil || len(data) != 100 {
+		t.Fatalf("ReadMax at the cap = %d bytes, %v", len(data), err)
+	}
+	if _, _, err := b.ReadMax(ctx, "k", 99); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("ReadMax past the cap = %v, want ErrTooLarge", err)
+	}
+	if _, _, err := b.ReadMax(ctx, "missing", 99); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadMax of a missing key = %v", err)
+	}
+}
+
+// forbiddenBucket is a real gcsblob bucket whose server answers every GET
+// with 403, as GCS does for a missing object when the caller lacks
+// storage.objects.list (the job and build service accounts, whose
+// objectUser grants are conditioned on an object-name prefix).
+func forbiddenBucket(t *testing.T) *blobx.Bucket {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"code":403,"message":"denied"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithEndpoint(srv.URL+"/storage/v1/"), option.WithoutAuthentication(), storage.WithJSONReads())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetRetry(storage.WithPolicy(storage.RetryNever))
+	gb, err := gcsblob.OpenBucket(ctx, nil, "b", &gcsblob.Options{Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &blobx.Bucket{Bucket: gb, GCSName: "b"}
+	t.Cleanup(func() { _ = b.Close() })
+	return b
+}
+
+// TestReadTreatsForbiddenAsAbsent pins the prefix-conditioned grant
+// scenario: without storage.objects.list GCS answers a GET of a missing
+// object with 403, so Read and ReadMax must report ErrNotExist (callers
+// such as the image gate and lock.Acquire rely on it).
+func TestReadTreatsForbiddenAsAbsent(t *testing.T) {
+	b := forbiddenBucket(t)
+	ctx := context.Background()
+	if _, _, err := b.Read(ctx, "k"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("Read of a 403 object = %v, want ErrNotExist", err)
+	}
+	if _, _, err := b.ReadMax(ctx, "k", 10); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadMax of a 403 object = %v, want ErrNotExist", err)
+	}
+}
+
+// TestStrictReadsReportAForbiddenObject: the strict variants return the 403.
+func TestStrictReadsReportAForbiddenObject(t *testing.T) {
+	b := forbiddenBucket(t)
+	ctx := context.Background()
+	check := func(name string, err error) {
+		t.Helper()
+		var ae *googleapi.Error
+		if err == nil || errors.Is(err, blobx.ErrNotExist) || !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
+			t.Fatalf("%s of a forbidden object = %v, want the 403", name, err)
+		}
+	}
+	_, _, err := b.ReadStrict(ctx, "k")
+	check("ReadStrict", err)
+	_, _, err = b.ReadMaxStrict(ctx, "k", 10)
+	check("ReadMaxStrict", err)
+}
+
+// TestStrictReadsKeepAbsentAndCap: strict variants differ only on 403.
+func TestStrictReadsKeepAbsentAndCap(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	if err := b.WriteAll(ctx, "k", make([]byte, 100), nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.ReadStrict(ctx, "missing"); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadStrict missing = %v", err)
+	}
+	if _, _, err := b.ReadMaxStrict(ctx, "k", 99); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("ReadMaxStrict over cap = %v", err)
+	}
+	if data, _, err := b.ReadMaxStrict(ctx, "k", 100); err != nil || len(data) != 100 {
+		t.Fatalf("ReadMaxStrict at cap = %d, %v", len(data), err)
 	}
 }

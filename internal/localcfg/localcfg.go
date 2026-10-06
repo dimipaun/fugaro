@@ -389,9 +389,11 @@ var ErrMissing = errors.New("no local fugaro config")
 var (
 	projectRE = regexp.MustCompile(`^[a-z][a-z0-9-]{4,28}[a-z0-9]$`)
 	regionRE  = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+$`)
-	bucketRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
-	repoRE    = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
-	logViewRE = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/buckets/[a-z0-9_-]+/views/[A-Za-z0-9_-]+$`)
+	// machineTypeRE is a Cloud Build machine type (E2_HIGHCPU_8, e2-medium).
+	machineTypeRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
+	bucketRE      = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$`)
+	repoRE        = regexp.MustCompile(`^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$`)
+	logViewRE     = regexp.MustCompile(`^projects/[a-z][a-z0-9-]{4,28}[a-z0-9]/locations/[a-z0-9-]+/buckets/[a-z0-9_-]+/views/[A-Za-z0-9_-]+$`)
 	// registryHostRE captures the project of <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^[a-z]+-[a-z]+[0-9]+-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
 	appIDRE        = regexp.MustCompile(`^[0-9]{1,20}$`)
@@ -639,6 +641,13 @@ func (c *Config) validate() error {
 	if c.SchedulerRegion != "" && !regionRE.MatchString(c.SchedulerRegion) {
 		bad("scheduler_region %q is not a region such as us-east4", c.SchedulerRegion)
 	}
+	// The build block goes into Cloud Build resource paths and requests.
+	if c.Build.Region != "" && !regionRE.MatchString(c.Build.Region) {
+		bad("build.region %q is not a region such as us-east5", c.Build.Region)
+	}
+	if !machineTypeRE.MatchString(c.Build.MachineType) {
+		bad("build.machine_type %q is not a machine type such as E2_HIGHCPU_8", c.Build.MachineType)
+	}
 	if c.BackendName != "" && c.BackendName != backend.CloudRun {
 		bad("backend %q is not a known backend (%s)", c.BackendName, backend.CloudRun)
 	}
@@ -723,6 +732,9 @@ func (c *Config) validate() error {
 		}
 		if r.Provider != "" && !slices.Contains(config.Providers, r.Provider) {
 			bad("repos.%s: provider %q must be one of %s", repo, r.Provider, strings.Join(config.Providers, ", "))
+		}
+		if r.BaseBranch != "" && !config.ValidBranchName(r.BaseBranch) {
+			bad("repos.%s: base_branch %q is not a plain git branch name", repo, r.BaseBranch)
 		}
 		if r.GitHubAppID != "" && !appIDRE.MatchString(r.GitHubAppID) {
 			bad("repos.%s: github_app_id %q is not a GitHub App ID (1 to 20 digits)", repo, r.GitHubAppID)

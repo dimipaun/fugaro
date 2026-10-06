@@ -14,6 +14,8 @@ import (
 type Checkout struct {
 	Root    string // git toplevel
 	Project string // its fugaro.yaml's project:, "" when absent
+	// GCPProject is its fugaro.yaml's gcp_project:, "" when absent.
+	GCPProject string
 }
 
 // SelectInput is everything that can select a project config.
@@ -36,6 +38,13 @@ type SelectInput struct {
 	// checkout's project still has to agree.
 	Creating bool
 	Getenv   func(string) string
+	// GCPProject is the GCP project the checkout's fugaro.yaml names, or
+	// --gcp-project: the only way a shared config is found. Never guessed.
+	GCPProject string
+	// Shared, when set (cloud commands), fetches project name's published
+	// config from the runs bucket of gcpProject, with an optional note. It is
+	// tried only where no local config exists. Nil is the offline commands.
+	Shared func(name, gcpProject string) (*Config, string, error)
 }
 
 // Selection is the project config a command acts on, and why.
@@ -45,7 +54,9 @@ type Selection struct {
 	// may be "".
 	Path, Name string
 	// From is what selected it: "--config", "--project", "checkout",
-	// "FUGARO_PROJECT", "FUGARO_CONFIG" or "only project config".
+	// "FUGARO_PROJECT", "FUGARO_CONFIG", "only project config" or "shared
+	// config" (the one published to the runs bucket: Path is "" then, and
+	// nothing may write it).
 	From string
 	// Notes are selectors that lost to a higher one, for stderr.
 	Notes []string
@@ -264,13 +275,42 @@ func (s *selector) named(name, from string) (Selection, *Config, error) {
 	case errors.Is(err, ErrMissing) && in.Creating:
 		return s.withNotes(Selection{Path: path, Name: name, From: from}, nil)
 	case errors.Is(err, ErrMissing) && from == "checkout":
+		if sel, c, ok, serr := s.shared(name, from); ok {
+			return sel, c, serr
+		}
+		if in.Shared != nil {
+			return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s: add `gcp_project: <id>` next to `project:` in fugaro.yaml (whoever onboarded the repository can run fugaro init --repo to add it), or run `fugaro init --config-only --gcp-project <id>`", name, name)
+		}
 		return Selection{}, nil, s.refuse("this checkout belongs to project %s; there is no project config for %s (run `fugaro init --config-only --gcp-project <id>`)", name, name)
 	case errors.Is(err, ErrMissing):
+		if sel, c, ok, serr := s.shared(name, from); ok {
+			return sel, c, serr
+		}
 		return Selection{}, nil, s.refuseListing("%s names project %s, which has no project config", from, name)
 	case err != nil:
 		return Selection{}, nil, err
 	}
 	return s.withNotes(Selection{Path: path, Name: name, From: from}, c)
+}
+
+// shared fetches the project's published config when the caller allows it
+// (cloud commands) and the GCP project is known from the checkout or
+// --gcp-project; ok says it did (or tried to: err). The GCP project is never
+// guessed.
+func (s *selector) shared(name, from string) (sel Selection, c *Config, ok bool, err error) {
+	in := s.in
+	if in.Shared == nil || in.GCPProject == "" || in.Creating {
+		return Selection{}, nil, false, nil
+	}
+	c, note, err := in.Shared(name, in.GCPProject)
+	if err != nil {
+		return Selection{}, nil, true, err
+	}
+	sel = Selection{Name: name, From: "shared config"}
+	if note != "" {
+		sel.Notes = append(sel.Notes, note)
+	}
+	return sel, c, true, nil
 }
 
 // withNotes adds a note for each ambient selector that lost to sel's, or

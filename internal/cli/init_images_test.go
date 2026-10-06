@@ -9,10 +9,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
@@ -593,5 +595,41 @@ func TestReplaceImageUnusedKindIsAnError(t *testing.T) {
 	}
 	if r.dst.puts != 0 {
 		t.Fatal("copied with an unused --replace-image")
+	}
+}
+
+// init --base republishes the shared config after recording the base
+// images, like the other init paths, and not under --plan-only.
+func TestInitBaseRepublishesSharedConfig(t *testing.T) {
+	newImagesRig(t, "v1.2.3")
+	dir := sharedRuns(t)
+	open := sharedBucketOpener
+	publishes := 0
+	sharedBucketOpener = func(ctx context.Context, u string) (*blobx.Bucket, error) { publishes++; return open(ctx, u) }
+	if _, _, err := executeStdin(t, "", "init", "--yes", "--plan-only", "--base", "go"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
+		t.Fatalf("--plan-only published: %v", err)
+	}
+	if publishes != 0 {
+		t.Fatalf("--plan-only published %d times", publishes)
+	}
+	out, _, err := executeStdin(t, "", "init", "--yes", "--base", "go")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// One publish from the installation stage's config write (before the
+	// images exist) and exactly one from the images stage's record of them:
+	// the base-image write adds one republish, not a second.
+	if publishes != 2 {
+		t.Errorf("init --base published %d times, want 2 (installation stage, then images stage)", publishes)
+	}
+	data, err := os.ReadFile(sharedObjectPath(dir))
+	if err != nil {
+		t.Fatalf("not published: %v\n%s", err, out)
+	}
+	if lc, err := localcfg.Parse(data); err != nil || !strings.HasSuffix(lc.BaseImages["go"], "fugaro-go:1.2.3") {
+		t.Errorf("published %+v, %v:\n%s", lc, err, data)
 	}
 }

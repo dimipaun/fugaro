@@ -240,7 +240,7 @@ func TestAppIDAskedOnceAndStored(t *testing.T) {
 		t.Fatal(problems)
 	}
 	e.r.cmd.SetErr(io.Discard)
-	if err := e.r.writeRepoConfig(e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
+	if err := e.r.writeRepoConfig(t.Context(), e.lc, infra.RepoSpec{Name: "acme/app", Provider: "github", BaseBranch: "main", GitHubAppID: "12345"}, cfg, path, nil); err != nil {
 		t.Fatal(err)
 	}
 	lc, err := localcfg.Load(path)

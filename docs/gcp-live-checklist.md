@@ -793,6 +793,48 @@ Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary
 - **Fixed (setup skill, PR #129):** it recommended `vertex` without checking it was enabled, bundles review rounds with machine size, told the user to name the App `Fugaro` (taken) and listed three App permissions, and suggested `! fugaro init` (needs a real terminal); also the project selection with several configs. Now: separate topics, verify before recommending, `<yourname>-fugaro` with four permissions, own-terminal wording and a lint, the App ID asked first, `--project` handling.
 - **Open (misc):** Homebrew warns the cask uses the deprecated `postflight` (GoReleaser generates it); `fugaro watch` shows the kill actor from the current directory's git email.
 
+## Check 28: the shared installation config (an installation you name, run by you; USER-RUN, NOT RUN)
+
+**No step below has been run; nothing here is a claim that it works.** The shared config ([design/shared-config.md](design/shared-config.md)) ran offline only: fake buckets and a faked Google. This check is the first time a launcher or operator reads `fugaro/config.yaml` from a real runs bucket.
+
+**Rules.** Use an installation you name (`<p>`, its GCP project, and `<name>`, its Fugaro project) whose runs bucket is the default `fugaro-runs-<p>`, and a checkout of one of its repositories. Every command that writes the object (`fugaro init`, `init --repo`, `init --config-only`, `init --publish-config`) publishes the shared config, so Part A step 1 is the only write to the live installation, and everything else that writes runs in a SCRATCH installation (`<scratch-p>`, its own bucket and a scratch checkout), never `belong` or `fugaro-dev`. Run every command in your own terminal with a **release build** that has the feature (`fugaro version`). Record `fugaro version` and the date.
+
+**Two shells.** Open two terminals and keep them apart:
+
+| Shell | `XDG_CONFIG_HOME` / `XDG_CACHE_HOME` | Runs |
+|---|---|---|
+| Operator shell | your normal environment, holding the local config of the installation being published | `fugaro init --publish-config` (steps 1 and 7), `gcloud storage` edits of the object |
+| Clean teammate shell | one new empty directory for BOTH, exported as below | `fugaro doctor`, `fugaro ls` and every other check of what a teammate sees (steps 2 to 6) |
+
+`init --publish-config` needs an existing local config for the project, so it fails in the clean shell ("there is none: run fugaro init first"); `doctor` and `ls` run in the operator shell would read your local config and prove nothing.
+
+**Clean teammate shell.** Make the new empty directory and export it as BOTH variables, explicitly:
+
+```sh
+export XDG_CONFIG_HOME=$(mktemp -d) XDG_CACHE_HOME=$XDG_CONFIG_HOME   # same new empty directory for both
+echo "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME"
+```
+
+Check the values before anything else. A stale `XDG_CONFIG_HOME` left in a terminal sent live config writes to a temporary directory during D19, and an unset `XDG_CACHE_HOME` would let a cache from an earlier session answer for the fetch. Both must name the new directory. Then `ls "$XDG_CONFIG_HOME/fugaro"` finds nothing.
+
+**A. Publish and read (an installation you name).**
+
+1. **Operator shell.** **⚠ CONFIRM** (this writes `gs://fugaro-runs-<p>/fugaro/config.yaml` of the live installation) `fugaro init --publish-config --project <name>`. Expect `published the shared config to gs://fugaro-runs-<p>/fugaro/config.yaml`. `gcloud storage cat gs://fugaro-runs-<p>/fugaro/config.yaml`: no `terraform:`, `user:`, `endpoints:`, `providers:`, `bucket_url:`, no `base_branch`, no secret; `gcp_project`, `runs_bucket` and `name` match. Record the object's generation (`gcloud storage objects describe ... --format='value(generation)'`). Run it again: still the same content (a merge changes nothing); the repositories you onboarded are all in it.
+2. **Clean teammate shell.** In the checkout, the line committed (`fugaro init --repo` wrote `gcp_project: <p>`, or add it): with the clean `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` of the rules, `fugaro doctor` shows a `shared-config` line ("the project's config is the shared file ... generation <n>, checked less than a day ago") and `fugaro ls` lists runs, with no file under `$XDG_CONFIG_HOME/fugaro/projects/`. `ls "$XDG_CACHE_HOME/fugaro/shared-config"` holds `<name>.json`.
+3. **Clean teammate shell.** Without the line: remove `gcp_project:` from `fugaro.yaml` (uncommitted): `fugaro ls` fails naming the line to add. `fugaro ls --gcp-project <p>` works. `fugaro ls --gcp-project <other-id>` with the line present fails with `contradicts`. Restore the line.
+4. **A local config wins (SCRATCH installation only).** `init --config-only` publishes the shared config too, so do not run it against the live installation. In the scratch checkout, in a third clean directory exported for both variables, **⚠ CONFIRM** `fugaro init --config-only --gcp-project <scratch-p> --region <region>`: it writes a local config and publishes (merging; local non-zero values win). Then `fugaro doctor` shows no `shared-config` line saying the config is the shared file, and `fugaro ls` works from the local file. Change one local value (for example `max_parallel`) without publishing: `fugaro doctor` shows a `shared-config-differs` line naming that field. Remove the local config again.
+5. **Clean teammate shell.** Offline: break the network to the bucket (airplane mode, after step 2's cache exists) and run `fugaro ls`: it uses the cache and prints a warning saying how old it is. (A cache past 24 hours goes through the same path; do not wait for it, record that it was not tried.)
+
+**B. Tamper test (as an operator, in a SCRATCH installation only).**
+
+6. **Scratch checkout required**, with `gcp_project: <scratch-p>` in its `fugaro.yaml`, and a clean teammate shell for the reads. In the operator shell, save the published object (`gcloud storage cp gs://fugaro-runs-<scratch-p>/fugaro/config.yaml ./good.yaml`; this only reads). Edit a copy: change `registry_host` to another project's, and **⚠ CONFIRM** upload it over the object (`gcloud storage cp ./tampered.yaml gs://fugaro-runs-<scratch-p>/fugaro/config.yaml`; this overwrites the scratch installation's object). In the clean teammate shell, with a clean cache directory (a new `XDG_CACHE_HOME`), a command in a checkout of that installation (`fugaro ls`) is refused with a message naming `registry_host` and saying to ask an operator to run `fugaro init` again, and `$XDG_CACHE_HOME/fugaro/shared-config` holds no entry. Repeat with, one at a time: `terraform:` added; `providers:` added; a repository `base_branch:` added; `budget.firebase_project` changed; a YAML merge key (`<<: {}`). Each is refused naming its field or section.
+7. Upload `good.yaml` back; in the clean teammate shell `fugaro ls` works again. **⚠ CONFIRM** then upload a tampered object once more and run `fugaro init --publish-config --project <scratch-name>` in the operator shell, with the SCRATCH installation's local config (it must be in the operator shell's config directory: run `fugaro init --config-only --project <scratch-name> --gcp-project <scratch-p> --region <region>` in the operator shell first, which publishes to the scratch installation, or pass `--config <file>`): expect a warning that the published object was refused and is being replaced, and the object is `good.yaml`'s content again.
+8. **FACT lines to record:** the `fugaro version`, the generation of step 1, the exact text of each refusal in step 6, whether step 5's warning named an age, and any 403 text.
+
+**Paste back** (no secret, no token): the version, the numbered steps' results (pass, fail, not run), and the exact text of every unexpected message.
+
+**Clean up.** `rm -r "$XDG_CONFIG_HOME"`, unset both variables, restore the scratch object (step 7), uncommit any `fugaro.yaml` experiment.
+
 ## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the
