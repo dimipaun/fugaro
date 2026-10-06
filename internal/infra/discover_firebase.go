@@ -79,6 +79,11 @@ func DiscoverFirebase(ctx context.Context, c *Clients, spec FirebaseSpec) (Impor
 	if err != nil {
 		return Imports{}, err
 	}
+	if num == 0 {
+		// target.consumes reads 0 as "not known yet" and accepts any
+		// consumer, which would let another project's answer pass.
+		return Imports{}, fmt.Errorf("reading project %s: Resource Manager answered with no project number", spec.Project)
+	}
 	d := &discovery{ctx: ctx, c: c, project: spec.Project, number: num}
 	for _, step := range []func(FirebaseSpec) error{d.firebaseDB, d.webKey, d.tokenSigner, d.minterRole} {
 		if err := step(spec); err != nil {
@@ -282,15 +287,18 @@ func (d *discovery) tokenSigner(spec FirebaseSpec) error {
 
 	if len(d.refusals) == refused {
 		d.add(importSignerSA, "", "", email)
-		d.im.Notes = append(d.im.Notes, fmt.Sprintf("the token signer %s was adopted; it holds no grants but the minter role of this installation's launchers and operators, which was checked, but roles on project %s (or inherited) that can sign as it are not visible here: fugaro doctor's token-signers check lists them", email, d.project))
+		d.im.Notes = append(d.im.Notes, fmt.Sprintf("the token signer %s was adopted. Its own IAM policy was checked: it grants nothing but the minter role, to this installation's launchers and operators. "+
+			"Roles on project %s that can sign as it are not visible here: fugaro doctor's token-signers check lists the project-level ones; folder- and organization-inherited bindings are not checked", email, d.project))
 	}
 	return nil
 }
 
 // signerPolicy refuses every grant on the signer but the minter role of
 // this project to a launcher or operator, one refusal per role, naming
-// each member and the command that removes it. Members are compared as
-// the spec writes them, byte for byte.
+// each member and the command that removes it. Members compare by
+// memberKey: the type prefix exactly, the email of a user:, group: or
+// serviceAccount: member with ASCII case folding, anything else byte for
+// byte.
 func (d *discovery) signerPolicy(spec FirebaseSpec, email string, p *iam.Policy) {
 	minter := minterRoleName(d.project, spec.Names.MinterRoleID)
 	allowed := map[string]bool{}
@@ -317,21 +325,34 @@ func (d *discovery) signerPolicy(spec FirebaseSpec, email string, p *iam.Policy)
 		slices.SortFunc(gs, func(a, b signerGrant) int {
 			return cmp.Or(cmp.Compare(a.member, b.member), cmp.Compare(strconv.FormatBool(a.conditional), strconv.FormatBool(b.conditional)))
 		})
-		d.refuse(errors.New(signerGrantMessage(email, d.project, role, gs)))
+		d.refuse(errors.New(signerGrantMessage(email, d.project, role, role == minter, gs)))
 	}
 }
 
 // memberKey is the IAM member m as it compares: IAM keeps the emails of
 // user:, group: and serviceAccount: members lower-cased, so their email
-// compares without case; the type, and every other kind of member
-// (allUsers, domain:, deleted:, principal://...), compares byte for byte.
+// compares with ASCII A-Z folded to a-z, and nothing else folded (Unicode
+// folding would match the Kelvin sign with k, İ with i); the type, and
+// every other kind of member (allUsers, domain:, deleted:,
+// principal://...), compares byte for byte.
 func memberKey(m string) string {
 	for _, prefix := range []string{"user:", "group:", "serviceAccount:"} {
 		if email, ok := strings.CutPrefix(m, prefix); ok {
-			return prefix + strings.ToLower(email)
+			return prefix + asciiLower(email)
 		}
 	}
 	return m
+}
+
+// asciiLower is s with A-Z lower-cased and every other byte as is.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // minterRoleName is the minter role's full name in project fp.
@@ -351,18 +372,18 @@ func foreignMinterMessage(sa, fp string, members []string) string {
 	for i, m := range members {
 		gs[i] = signerGrant{member: m}
 	}
-	return signerGrantMessage(sa, fp, minterRoleName(fp, MinterRoleID), gs)
+	return signerGrantMessage(sa, fp, minterRoleName(fp, MinterRoleID), true, gs)
 }
 
 // signerGrantMessage is the refusal of the grants gs of role on the signer
 // sa of fp: the minter role's to members who are not launchers or
 // operators (design §3.3, byte for byte when no grant is conditional), or
-// any other role's. A conditional grant's removal needs --all.
-func signerGrantMessage(sa, fp, role string, gs []signerGrant) string {
+// any other role's; minter says role is the spec's minter role. A
+// conditional grant's removal needs --all.
+func signerGrantMessage(sa, fp, role string, minter bool, gs []signerGrant) string {
 	var b strings.Builder
-	minter := role == minterRoleName(fp, MinterRoleID)
 	if minter {
-		fmt.Fprintf(&b, "token signer %s grants %s to members who are not this installation's launchers or operators:\n", sa, MinterRoleID)
+		fmt.Fprintf(&b, "token signer %s grants %s to members who are not this installation's launchers or operators:\n", sa, shellWord(role[strings.LastIndex(role, "/")+1:]))
 	} else {
 		fmt.Fprintf(&b, "token signer %s grants %s, which Fugaro never grants on it, to:\n", sa, role)
 	}
@@ -397,13 +418,15 @@ var plainWord = regexp.MustCompile(`^[A-Za-z0-9@%+=:,./_-]+$`)
 
 // shellWord is s as one shell word on one line: as is when nothing in it
 // is special, else single-quoted, or ANSI-C quoted ($'...') when it holds
-// a control character, so a line break in a member can never print a line
-// of its own (one that reads as a command to copy).
+// a rune that does not print, escaped: a line break, U+2028, a bidi
+// override or a zero-width space in a member can never print raw (a line
+// of its own that reads as a command to copy, or text that hides).
 func shellWord(s string) string {
 	if plainWord.MatchString(s) {
 		return s
 	}
-	if !strings.ContainsFunc(s, unicode.IsControl) {
+	notPrint := func(r rune) bool { return !unicode.IsPrint(r) }
+	if !strings.ContainsFunc(s, notPrint) {
 		return shellQuote(s)
 	}
 	var b strings.Builder
@@ -419,10 +442,12 @@ func shellWord(s string) string {
 			b.WriteString(`\t`)
 		case r == '\r':
 			b.WriteString(`\r`)
-		case unicode.IsControl(r) && r < 0x100:
+		case notPrint(r) && r < 0x80:
 			fmt.Fprintf(&b, `\x%02x`, r)
-		case unicode.IsControl(r):
+		case notPrint(r) && r <= 0xffff:
 			fmt.Fprintf(&b, `\u%04x`, r)
+		case notPrint(r):
+			fmt.Fprintf(&b, `\U%08x`, r)
 		default:
 			b.WriteRune(r)
 		}

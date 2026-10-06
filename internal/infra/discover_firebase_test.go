@@ -122,7 +122,9 @@ func TestDiscoverFirebase(t *testing.T) {
 		if got := sortedImports(im.List); !slices.Equal(got, fbAllFour) {
 			t.Fatalf("imports\n got %v\nwant %v", got, fbAllFour)
 		}
-		if len(im.Notes) != 1 || !strings.Contains(im.Notes[0], "the token signer "+fbSigner+" was adopted") || !strings.Contains(im.Notes[0], "token-signers") {
+		wantNote := "the token signer " + fbSigner + " was adopted. Its own IAM policy was checked: it grants nothing but the minter role, to this installation's launchers and operators. " +
+			"Roles on project fp-1234 that can sign as it are not visible here: fugaro doctor's token-signers check lists the project-level ones; folder- and organization-inherited bindings are not checked"
+		if len(im.Notes) != 1 || im.Notes[0] != wantNote {
 			t.Errorf("notes %v; want the adopted signer's note", im.Notes)
 		}
 	})
@@ -506,7 +508,7 @@ Or add them as launchers or operators if they should keep it.`
 
 	// A grant of another role on the signer: refused the same way, with
 	// the removal command for that role.
-	got = signerGrantMessage("fugaro-token-signer@fp-1234.iam.gserviceaccount.com", "fp-1234", "roles/owner", []signerGrant{{member: "user:a@x.com"}, {member: "user:b@x.com", conditional: true}})
+	got = signerGrantMessage("fugaro-token-signer@fp-1234.iam.gserviceaccount.com", "fp-1234", "roles/owner", false, []signerGrant{{member: "user:a@x.com"}, {member: "user:b@x.com", conditional: true}})
 	want = `token signer fugaro-token-signer@fp-1234.iam.gserviceaccount.com grants roles/owner, which Fugaro never grants on it, to:
   user:a@x.com
   user:b@x.com (under a condition)
@@ -537,6 +539,20 @@ Each could act as the signer and mint run tokens. Remove them, then rerun fugaro
 	}
 	if !strings.Contains(got, "  $'user:b@x.com\\n  gcloud evil'\n") {
 		t.Errorf("the member is not quoted with its escape:\n%s", got)
+	}
+
+	// Nothing that does not print prints raw: line and paragraph
+	// separators, bidi overrides, a zero-width space.
+	for r, esc := range map[rune]string{0x2028: `\u2028`, 0x2029: `\u2029`, 0x202e: `\u202e`, 0x200b: `\u200b`, 0x7f: `\x7f`, 0xa0: `\u00a0`, 0xe0001: `\U000e0001`} {
+		m := "user:b@x.com" + string(r) + "x"
+		got := foreignMinterMessage("s@p.iam.gserviceaccount.com", "p", []string{m})
+		if strings.ContainsRune(got, r) || !strings.Contains(got, "$'user:b@x.com"+esc+"x'") {
+			t.Errorf("U+%04X: %q", r, got)
+		}
+	}
+	// A printable non-ASCII member is single-quoted, as is.
+	if got := shellWord("user:jürgen@x.com"); got != "'user:jürgen@x.com'" {
+		t.Errorf("shellWord = %q", got)
 	}
 }
 
@@ -601,7 +617,18 @@ func TestDiscoverFirebaseMemberEmailCase(t *testing.T) {
 		t.Fatalf("lower-cased grants: imports %v, err %v", im.List, err)
 	}
 
-	for _, foreign := range []string{"User:a@x.com", "user:b@x.com", "user:Old@example.com", "domain:x.com", "group:a@x.com", "serviceAccount:a@x.com"} {
+	// Only ASCII letters fold: Google lower-cases ASCII email only, and
+	// Unicode folding would turn the Kelvin sign into k and İ into i.
+	spec.Launchers = append(spec.Launchers, "user:kim@x.com", "user:i@x.com", "user:jürgen@x.com", "user:Ömer@x.com")
+	f = newFBCloud(t)
+	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+	f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:jürgen@x.com", "user:Ömer@x.com"}})
+	if im, err := DiscoverFirebase(ctx, f.c, spec); err != nil || len(im.List) != 4 {
+		t.Fatalf("byte-identical non-ASCII members: imports %v, err %v", im.List, err)
+	}
+
+	for _, foreign := range []string{"User:a@x.com", "user:b@x.com", "user:Old@example.com", "domain:x.com", "group:a@x.com", "serviceAccount:a@x.com",
+		"user:\u212aim@x.com", "user:\u0130@x.com", "user:ömer@x.com", "user:JÜRGEN@x.com"} {
 		f := newFBCloud(t)
 		f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
 		f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: fbMinterRole, Members: []string{"user:a@x.com", foreign}})
@@ -640,6 +667,17 @@ func TestDiscoverFirebaseDisabledConsumer(t *testing.T) {
 
 	// Without the Firebase project's number, nothing can be told apart:
 	// fail closed.
+	// A project number of 0 (an answer without one) would accept any
+	// consumer: fail closed too.
+	f = newFBCloud(t)
+	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+	f.crm.AddProject(fbTestProject, 0)
+	f.su.Consumer = "projects/999"
+	f.su.Disable("apikeys.googleapis.com", f.keys.Server)
+	if im, err := DiscoverFirebase(ctx, f.c, fbSpec()); err == nil || errors.As(err, &ue) || len(im.List) != 0 || !strings.Contains(err.Error(), "no project number") {
+		t.Fatalf("project number 0: imports %v, err %v; want an error", im.List, err)
+	}
+
 	f = newFBCloud(t)
 	f.crm.Refuse(http.StatusForbidden, "PERMISSION_DENIED", "IAM_PERMISSION_DENIED", "Permission denied")
 	if _, err := DiscoverFirebase(ctx, f.c, fbSpec()); err == nil || errors.As(err, &ue) || !strings.Contains(err.Error(), "fp-1234") {
@@ -796,5 +834,25 @@ func TestFirebaseMarksMatchModule(t *testing.T) {
 		if r.got != (Import{To: r.to, ID: r.id}) {
 			t.Errorf("import row %v, want %s %s", r.got, r.to, r.id)
 		}
+	}
+}
+
+// The minter role is the spec's (names.minter_role_id), not the constant:
+// a stranger holding it is refused with the minter message.
+func TestDiscoverFirebaseMinterIsTheSpecs(t *testing.T) {
+	f := newFBCloud(t)
+	f.addAll("https://fp-1234-default-rtdb.firebaseio.com")
+	role := "projects/" + fbTestProject + "/roles/otherMinter"
+	f.iam.SetServiceAccountPolicy(fbTestProject, fbSigner, gcpfake.Binding{Role: role, Members: []string{"user:a@x.com", "user:old@example.com"}})
+	spec := fbSpec()
+	spec.Names.MinterRoleID = "otherMinter"
+	_, err := DiscoverFirebase(context.Background(), f.c, spec)
+	var ue *UserError
+	if !errors.As(err, &ue) {
+		t.Fatalf("err = %v; want a refusal", err)
+	}
+	want := "token signer " + fbSigner + " grants otherMinter to members who are not this installation's launchers or operators:\n  user:old@example.com\n"
+	if !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "--member=user:a@x.com") || !strings.Contains(err.Error(), "--role="+role) {
+		t.Fatalf("refusal:\n%v\nwant the minter message for %s, naming only the stranger", err, role)
 	}
 }
