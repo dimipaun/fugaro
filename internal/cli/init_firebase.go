@@ -239,20 +239,21 @@ func (r *initRun) initFirebase(ctx context.Context, c *infra.Clients, t *tf.TF, 
 	if err != nil {
 		return userErr("%v", err)
 	}
-	// An earlier run's imports.tf.json is removed before terraform reads
-	// the root: only this run's discovery writes the file, below, and a
+	// No imports.tf.json is here yet: PrepareWorkdir (r.terraform) rebuilt
+	// the root's tree, so only this run's discovery writes it, below, and a
 	// refusal leaves none.
-	if err := os.Remove(filepath.Join(fwd.Root, infra.ImportsFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return userErr("removing the Firebase imports of an earlier run: %v", err)
-	}
 	if err := ft.Init(ctx, backend); err != nil {
 		return remote(err)
 	}
-	// The state is read before discovery (both only read): what it manages
-	// is Terraform's already, so discovery neither vets nor imports it, and
-	// the plan, the guard and the confirmation handle it as they always
-	// have. A first run has no state, which manages nothing; a state that
-	// cannot be read stops the run.
+	// The state is read before discovery. terraform init and show read the
+	// installation's state bucket, and on a first run Terraform's GCS
+	// backend may create an EMPTY state object there (taking and releasing
+	// its lock); nothing is written to the Firebase project. What the state
+	// manages is Terraform's already, so discovery neither vets nor imports
+	// it, and the plan, the guard and the confirmation handle it as they
+	// always have. A first run has no state ({"format_version":"1.0"}, no
+	// values), which manages nothing; a state that cannot be read stops the
+	// run.
 	st, err := ft.ShowState(ctx)
 	if err != nil {
 		return remote(err)

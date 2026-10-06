@@ -180,7 +180,7 @@ func TestInitFirebaseAdoptCleanWritesEmpty(t *testing.T) {
 // A look-alike is refused with what was found and expected. The Firebase
 // root's tfvars, backend and terraform init (which read the state bucket
 // only) have run, but no plan, no apply and no imports.tf.json: a stale
-// one from an earlier run is removed before terraform init.
+// one from an earlier run is gone (PrepareWorkdir rebuilds the root's tree).
 func TestInitFirebaseAdoptRefusal(t *testing.T) {
 	r := newFBRig(t)
 	r.adoptExisting()
