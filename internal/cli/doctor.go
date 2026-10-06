@@ -540,6 +540,11 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 	if sel.Path == "" || lc == nil {
 		return nil
 	}
+	// The file as written: --region and --gcp-project are already applied to
+	// lc, and must not make the local file look different.
+	if fromFile, err := localcfg.Load(sel.Path); err == nil {
+		lc = fromFile
+	}
 	published, _, err := sharedFetch(ctx, os.Getenv, now, lc.Name, lc.GCPProject)
 	if err != nil || published == nil {
 		return nil

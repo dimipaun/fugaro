@@ -2,7 +2,6 @@ package localcfg
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -123,7 +122,6 @@ func TestSelectFallsBackToTheSharedConfig(t *testing.T) {
 			t.Fatalf("%+v %v %v calls=%d", sel, c, err, st.calls)
 		}
 	})
-	_ = os.Stdout
 }
 
 func TestSharedDiff(t *testing.T) {

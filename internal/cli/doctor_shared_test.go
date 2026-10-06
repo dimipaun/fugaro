@@ -142,3 +142,32 @@ func TestDoctorToleratesAnUnreadablePublishedConfig(t *testing.T) {
 		t.Fatalf("doctor failed: %s", o.Error)
 	}
 }
+
+// An override must not make the local file look different from the
+// published one: the local config is compared as written.
+func TestDoctorDiffIgnoresTheRegionOverride(t *testing.T) {
+	r := newDoctorRig(t)
+	// The local file is the published one plus the personal part.
+	local := auroraShared() + "user: someone@example.com\nendpoints: { resource_manager: " + r.crm.URL + "/, cloud_billing: " + r.billing.URL + "/, secret_manager: " + r.sm.URL + "/, no_auth: true }\n"
+	if err := os.WriteFile(r.cfgPath, []byte(local), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	publishFor(t, r, auroraShared())
+	t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+
+	// Control: with the file as written, nothing differs and doctor ran through.
+	base := doctorJSON(t)
+	if base.Project == nil {
+		t.Fatalf("doctor did not reach the project: %+v", base)
+	}
+	if c, ok := doctorCheckByID(base.Checks, "shared-config-differs"); ok {
+		t.Fatalf("control differs: %+v", c)
+	}
+	o := doctorJSON(t, "--region", "europe-west1")
+	if o.Project == nil || o.Project.Region != "europe-west1" {
+		t.Fatalf("the region override was not applied: %+v", o.Project)
+	}
+	if c, ok := doctorCheckByID(o.Checks, "shared-config-differs"); ok {
+		t.Fatalf("the override made the file look different: %+v", c)
+	}
+}

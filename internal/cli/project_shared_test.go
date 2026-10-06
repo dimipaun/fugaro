@@ -185,8 +185,11 @@ func TestInitSelectionNeverUsesTheSharedConfig(t *testing.T) {
 		t.Fatalf("%+v %v %v calls=%d", sel, lc, err, calls)
 	}
 	o := &initOptions{}
-	if _, path, _, err := loadInitConfig(context.Background(), o); err == nil && path == "" {
-		t.Fatalf("init found no path to write")
+	_, path, oldData, err := loadInitConfig(context.Background(), o)
+	// No config to create from: init says what it still needs, never a path
+	// into the shared config.
+	if err == nil || path != "" || oldData != nil || !strings.Contains(err.Error(), "there is no project config for aurora yet: pass --gcp-project and --region to create one") {
+		t.Fatalf("loadInitConfig: path %q, err %v", path, err)
 	}
 	if calls != 0 {
 		t.Fatalf("init fetched the shared config")
@@ -214,5 +217,91 @@ func TestLocalConfigWinsOverTheSharedOne(t *testing.T) {
 	}
 	if strings.Contains(errOut.String(), "shared") {
 		t.Fatalf("a local config won noisily: %s", errOut.String())
+	}
+}
+
+// --config and a local config always win: the checkout's gcp_project never
+// contradicts the flag then (Override compares the flag with the selected
+// config only).
+func TestConfigFileIgnoresTheCheckoutsGCPProject(t *testing.T) {
+	f := newCloudFixture(t)
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\ngcp_project: other-proj\n"))
+	cfg := os.Getenv("FUGARO_CONFIG")
+	_, errOut, err := execute(t, "ls", "--config", cfg, "--gcp-project", "proj-1234")
+	if err != nil {
+		t.Fatalf("ls: %v\n%s", err, errOut)
+	}
+	if strings.Contains(errOut, "shared config") {
+		t.Errorf("the shared config was used:\n%s", errOut)
+	}
+	// Override still compares the flag with the selected config.
+	_, _, err = execute(t, "ls", "--config", cfg, "--gcp-project", "other-proj")
+	if err == nil || !strings.Contains(err.Error(), "can't be pointed at another GCP project") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+// With no local config, --gcp-project alone (no line in the checkout) is
+// the GCP project to look the shared config up in.
+func TestSharedConfigFromTheFlagAlone(t *testing.T) {
+	f := sharedEnd2End(t)
+	t.Chdir(gitCheckout(t, filepath.Join(f.dir, "app"), "version: 1\nproject: aurora\n"))
+	_, errOut, err := execute(t, "ls", "--gcp-project", "proj-1234")
+	if err != nil {
+		t.Fatalf("ls: %v\n%s", err, errOut)
+	}
+	if !strings.Contains(errOut, "using the shared config") {
+		t.Errorf("errOut = %s", errOut)
+	}
+}
+
+// Outside a checkout --project names the project; the bucket's marker still
+// has to name it: a marker of another project is refused.
+func TestSharedSelectionPassesTheRequestedNameToTheMarkerCheck(t *testing.T) {
+	f := sharedEnd2End(t)
+	runs := strings.TrimPrefix(f.bucket, "file://")
+	if err := os.WriteFile(filepath.Join(runs, filepath.FromSlash(infra.ProjectMarkerObject)), []byte(`{"version":1,"name":"borealis","gcp_project":"proj-1234"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(t.TempDir())
+	_, _, err := execute(t, "ls", "--project", "aurora", "--gcp-project", "proj-1234")
+	if err == nil || !strings.Contains(err.Error(), "is project borealis, not aurora") {
+		t.Fatalf("err = %v", err)
+	}
+	if cacheExistsFor(t, "aurora") {
+		t.Errorf("a refused marker left a cache")
+	}
+}
+
+// The offline commands never reach the bucket, with no local config and a
+// checkout that names project and gcp_project: they behave as before.
+func TestOfflineCommandsNeverFetchTheSharedConfig(t *testing.T) {
+	dir := t.TempDir()
+	isolateProjects(t, dir)
+	oldOpen, oldFetch := sharedBucketOpener, sharedFetch
+	sharedBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		t.Fatal("an offline command opened the runs bucket")
+		return nil, nil
+	}
+	sharedFetch = func(context.Context, func(string) string, time.Time, string, string) (*localcfg.Config, string, error) {
+		t.Fatal("an offline command fetched the shared config")
+		return nil, "", nil
+	}
+	t.Cleanup(func() { sharedBucketOpener, sharedFetch = oldOpen, oldFetch })
+	t.Chdir(gitCheckout(t, filepath.Join(dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+
+	if _, errOut, err := execute(t, "validate"); err != nil && ExitCode(err) != ExitUserError {
+		t.Fatalf("validate: %v\n%s", err, errOut)
+	}
+	if out, _, err := execute(t, "config", "example"); err != nil || !strings.Contains(out, "project:") {
+		t.Fatalf("config example: %v\n%s", err, out)
+	}
+	// budget prices selects through pricesConfig: nothing selectable is a note.
+	out, errOut, err := execute(t, "budget", "prices")
+	if err != nil || !strings.Contains(errOut, "no project config selected, so the built-in prices only") || !strings.Contains(errOut, "there is no project config for aurora") || out == "" {
+		t.Fatalf("budget prices: %v\nstdout %q\nstderr %s", err, out, errOut)
+	}
+	if strings.Contains(errOut, "gcp_project: <id>") {
+		t.Errorf("the offline refusal changed: %s", errOut)
 	}
 }

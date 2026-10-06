@@ -127,7 +127,7 @@ func SharedDiff(published, local *Config) []string {
 		}
 		return m
 	}
-	p, l := toMap(published), toMap(local.Shared())
+	p, l := toMap(published.Shared()), toMap(local.Shared())
 	var out []string
 	for k, v := range l {
 		if !reflect.DeepEqual(v, p[k]) {

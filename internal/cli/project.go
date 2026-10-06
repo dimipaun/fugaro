@@ -95,20 +95,6 @@ func selectNamed(o cloudOptions, co *localcfg.Checkout, creating bool, name stri
 // sharedFetch is fetchSharedConfig; a test seam.
 var sharedFetch = fetchSharedConfig
 
-// sharedGCPProject is the GCP project a shared config is looked up in: the
-// checkout's committed gcp_project:, or --gcp-project, and nothing else.
-// The two must agree when both are given.
-func sharedGCPProject(o cloudOptions, co *localcfg.Checkout) (string, error) {
-	var fromCheckout string
-	if co != nil {
-		fromCheckout = co.GCPProject
-	}
-	if o.gcpProject != "" && fromCheckout != "" && o.gcpProject != fromCheckout {
-		return "", userErr("--gcp-project %s contradicts this checkout's gcp_project %s in fugaro.yaml", o.gcpProject, fromCheckout)
-	}
-	return cmp.Or(o.gcpProject, fromCheckout), nil
-}
-
 // selectWith is selectNamed that, with o.sharedOK, falls back to the shared
 // config published to the runs bucket where there is no local one (ctx is
 // its fetch's).
@@ -119,12 +105,20 @@ func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, crea
 		Creating: creating, Getenv: os.Getenv,
 	}
 	if o.sharedOK && !creating {
-		gcp, err := sharedGCPProject(o, co)
-		if err != nil {
-			return localcfg.Selection{}, nil, err
+		// The GCP project is the checkout's committed gcp_project: or
+		// --gcp-project, nothing else. They must agree, but only where the
+		// shared config is actually looked up: a local config, --config and
+		// $FUGARO_CONFIG never see the contradiction (Override compares the
+		// flag with the selected config as before).
+		var fromCheckout string
+		if co != nil {
+			fromCheckout = co.GCPProject
 		}
-		in.GCPProject = gcp
+		in.GCPProject = cmp.Or(o.gcpProject, fromCheckout)
 		in.Shared = func(name, gcpProject string) (*localcfg.Config, string, error) {
+			if o.gcpProject != "" && fromCheckout != "" && o.gcpProject != fromCheckout {
+				return nil, "", userErr("--gcp-project %s contradicts this checkout's gcp_project %s in fugaro.yaml", o.gcpProject, fromCheckout)
+			}
 			return sharedFetch(ctx, os.Getenv, time.Now(), name, gcpProject)
 		}
 	}
