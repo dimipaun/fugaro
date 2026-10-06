@@ -158,8 +158,11 @@ func addLineText(path string) string {
 	return "to let teammates use this installation without setup, add this line to " + path + ": gcp_project: fugaro-aurora (every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before the line is merged: older versions refuse the key as unknown)\n"
 }
 func updatedText(path string) string {
-	return "Updated " + path + " with gcp_project. Review it with git diff and commit it like any change.\n"
+	return "Updated " + path + " with gcp_project. Review it with git diff and commit it like any change. " + cliCaution + "\n"
 }
+
+const cliCaution = "Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown."
+
 func warnedLine(msg string) string { return "warning: " + msg + "\n" }
 
 func TestRepoStageAnchorYesWrites(t *testing.T) {

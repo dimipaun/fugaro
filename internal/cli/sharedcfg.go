@@ -117,7 +117,7 @@ func readShared(ctx context.Context, b *blobx.Bucket, anchor SharedAnchor) (c *l
 	case errors.Is(err, blobx.ErrTooLarge):
 		return nil, "it is over the 64 KiB limit", nil
 	case err != nil:
-		return nil, "", err
+		return nil, "", bucketErr("gs://"+anchor.Bucket, "reading "+infra.SharedConfigObject, err)
 	}
 	if c, err = ParseShared(data, anchor); err != nil {
 		return nil, err.Error(), nil

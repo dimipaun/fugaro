@@ -373,7 +373,7 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	}
 	cmd := exec.CommandContext(ctx, r.fugaro, append([]string{"init"}, args...)...)
 	cmd.Dir = r.dir
-	cmd.Env = env
+	cmd.Env = hermeticEnv(env)
 	if stdin != nil {
 		cmd.Stdin = stdin
 	}

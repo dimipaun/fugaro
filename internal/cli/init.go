@@ -468,8 +468,8 @@ func runInit(r *initRun) error {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
 		}
-		if agentEnv(os.Getenv) {
-			return userErr("--publish-config writes to the cloud, and a coding agent's session is present: run fugaro init --publish-config in your own terminal")
+		if m := agentMarker(os.Getenv); m != "" {
+			return userErr("--publish-config writes to the cloud: %s", initflow.AgentRefusal(m))
 		}
 		var why []string
 		written, err := publishSharedWarn(cmd.Context(), lc, func(m string) { why = append(why, m); r.warn(m) })
@@ -1428,8 +1428,8 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 // publishSharedConfig publishes the shared config after the local config is
 // written. A failure only warns: the installation works without it.
 func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
-	if agentEnv(os.Getenv) {
-		fmt.Fprintln(r.w, "note: not publishing the shared config from a coding agent's session: run fugaro init --publish-config in your own terminal")
+	if m := agentMarker(os.Getenv); m != "" {
+		fmt.Fprintf(r.w, "note: the shared config was not published: %s; run fugaro init --publish-config in your own terminal\n", initflow.AgentRefusal(m))
 		return
 	}
 	written, err := publishSharedWarn(ctx, lc, r.warn)

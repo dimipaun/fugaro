@@ -13,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -505,25 +506,33 @@ func TestFakeEndpointsNeverOpenARealBucket(t *testing.T) {
 }
 
 // A coding agent's session publishes nothing: --publish-config refuses, and
-// the publish at the end of the other init paths is skipped with a note.
+// the publish at the end of the other init paths is skipped with a note. Both
+// use the standard refusal text, which names the marker and, for the IDE
+// extension's, says how to unset it.
 func TestInitPublishFromACodingAgentSession(t *testing.T) {
-	r := newInitRig(t)
-	r.stateBucket()
-	dir := sharedRuns(t)
-	t.Setenv("CLAUDECODE", "1")
-	_, _, err := executeStdin(t, "", "init", "--publish-config")
-	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "coding agent's session") {
-		t.Fatalf("--publish-config: exit %d, err %v", ExitCode(err), err)
-	}
-	// The automatic publish of the other init paths, which init itself
-	// refuses to reach here (a coding agent's session applies nothing), is
-	// skipped with a note.
-	var buf strings.Builder
-	(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
-	if !strings.Contains(buf.String(), "not publishing the shared config from a coding agent's session: run fugaro init --publish-config in your own terminal") {
-		t.Errorf("no note:\n%s", buf.String())
-	}
-	if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
-		t.Errorf("published from an agent's session: %v", err)
+	for _, marker := range []string{"CLAUDECODE", initflow.IDEMarker} {
+		t.Run(marker, func(t *testing.T) {
+			r := newInitRig(t)
+			r.stateBucket()
+			dir := sharedRuns(t)
+			t.Setenv(marker, "1")
+			refusal := initflow.AgentRefusal(marker)
+			_, _, err := executeStdin(t, "", "init", "--publish-config")
+			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), refusal) {
+				t.Fatalf("--publish-config: exit %d, err %v; want %q", ExitCode(err), err, refusal)
+			}
+			if hint := strings.Contains(err.Error(), "you can unset "+initflow.IDEMarker); hint != (marker == initflow.IDEMarker) {
+				t.Errorf("IDE hint present = %v for %s: %v", hint, marker, err)
+			}
+			var buf strings.Builder
+			(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
+			want := "note: the shared config was not published: " + refusal + "; run fugaro init --publish-config in your own terminal\n"
+			if buf.String() != want {
+				t.Errorf("note:\n%q\nwant:\n%q", buf.String(), want)
+			}
+			if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
+				t.Errorf("published from an agent's session: %v", err)
+			}
+		})
 	}
 }

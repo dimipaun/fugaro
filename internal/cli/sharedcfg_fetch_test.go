@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -599,5 +600,63 @@ func TestIsUnreachableOnRealDriverErrors(t *testing.T) {
 		if err == nil || isUnreachable(err) != c.want {
 			t.Errorf("%s: %v: isUnreachable = %v", name, err, !c.want)
 		}
+	}
+}
+
+// markerOnlyGCS is a GCS endpoint, read through the real client and gocloud
+// driver, that serves the marker of a belong installation and answers 403 for
+// the shared config object (as GCS does for an account without the access).
+// configGets counts the requests that named the config object.
+func markerOnlyGCS(t *testing.T, configGets *int) func(context.Context) (*blobx.Bucket, error) {
+	t.Helper()
+	marker, _ := json.Marshal(infra.ProjectMarker{Version: 1, Name: "belong", GCPProject: "fugaro-belong"})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.EscapedPath(), "config.yaml") {
+			*configGets++
+			w.WriteHeader(http.StatusForbidden)
+			fmt.Fprint(w, `{"error":{"code":403,"message":"Forbidden"}}`)
+			return
+		}
+		if r.Method != http.MethodGet || !strings.Contains(r.URL.EscapedPath(), "project.json") && !strings.Contains(r.URL.EscapedPath(), strings.ReplaceAll(infra.ProjectMarkerObject, "/", "%2F")) {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL)
+		}
+		w.Header().Set("X-Goog-Generation", "1")
+		w.Header().Set("Content-Length", strconv.Itoa(len(marker)))
+		w.Write(marker)
+	}))
+	t.Cleanup(srv.Close)
+	return gcsAt(t, srv.URL, srv.Client())
+}
+
+// A marker that reads fine and a config object that answers 403 is "no
+// access": not "has not published", and never a cache hit.
+func TestFetchSharedConfigObjectForbidden(t *testing.T) {
+	r := newFetchRig(t)
+	gets := 0
+	r.open = markerOnlyGCS(t, &gets)
+	saveCache(t, localcfg.SharedCacheEntry{GCPProject: "fugaro-belong", Bucket: "fugaro-runs-fugaro-belong", CheckedAt: fetchT0.Add(-3 * 24 * time.Hour), YAML: validShared()})
+	c, note, err := r.fetch(fetchT0)
+	if err == nil || c != nil || note != "" {
+		t.Fatalf("fetch = %+v, %q, %v; want the access error", c, note, err)
+	}
+	if gets == 0 || !strings.Contains(err.Error(), "access") || strings.Contains(err.Error(), "has not published") {
+		t.Errorf("config gets %d, err = %v", gets, err)
+	}
+}
+
+// The publisher must not overwrite an object it was refused a read of.
+func TestPublishSharedForbiddenExistingObjectIsNotOverwritten(t *testing.T) {
+	newFetchRig(t)
+	gets := 0
+	open := markerOnlyGCS(t, &gets)
+	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return open(ctx) }
+	lc, err := localcfg.Parse([]byte("version: 1\nname: belong\ngcp_project: fugaro-belong\nregion: us-east5\nruns_bucket: fugaro-runs-fugaro-belong\nregistry_host: us-east5-docker.pkg.dev/fugaro-belong\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	written, err := publishSharedWarn(context.Background(), lc, func(string) {})
+	if written || err == nil || !strings.Contains(err.Error(), "access") {
+		t.Fatalf("written %v, err %v; want no write and an access error", written, err)
 	}
 }

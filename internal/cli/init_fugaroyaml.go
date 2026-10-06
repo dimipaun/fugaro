@@ -212,7 +212,7 @@ func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly
 			if err := writeFileAtomic(path, out); err != nil {
 				return err
 			}
-			fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change.\n", path)
+			fmt.Fprintf(r.w, "Updated %s with gcp_project. Review it with git diff and commit it like any change. Every teammate's CLI and every CI job or pin that runs fugaro against the repository must be on this release before you merge a change that adds gcp_project: older versions refuse the key as unknown.\n", path)
 		}
 	}
 	s.warnOldImages(ctx)

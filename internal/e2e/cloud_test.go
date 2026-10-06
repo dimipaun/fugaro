@@ -236,7 +236,7 @@ func (r *cloudRig) execute(full, run, tmp string) int {
 		"CLOUD_RUN_EXECUTION="+id.Name, "CLOUD_RUN_JOB="+id.Job,
 		"FUGARO_BACKEND=cloud-run", "FUGARO_GCP_PROJECT="+cloudProject, "FUGARO_PROJECT="+cloudProjectName, "FUGARO_REGION="+cloudRegion,
 		"ANTHROPIC_API_KEY="+cloudSecret, "FIXTURE_FAILS_FILE="+failsFile, "HOME="+tmp)
-	cmd.Env = append(cmd.Env, budgetEnv...)
+	cmd.Env = hermeticEnv(append(cmd.Env, budgetEnv...))
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGQUIT) } // a hang leaves a goroutine dump
 	cmd.WaitDelay = 5 * time.Second
 	var stdout bytes.Buffer
@@ -325,6 +325,7 @@ func (r *cloudRig) cli(args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, r.fugaro, args...)
 	cmd.Env = append(withoutEnv(os.Environ(), "ANTHROPIC_API_KEY", "FUGARO_CONFIG", "FUGARO_PROJECT", "FUGARO_GCP_PROJECT", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"),
 		"XDG_CONFIG_HOME="+r.xdgConfig, "XDG_CACHE_HOME="+filepath.Join(r.dir, "xdg-cache"))
+	cmd.Env = hermeticEnv(cmd.Env)
 	cmd.Dir = r.t.TempDir() // not a checkout
 	cmd.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
