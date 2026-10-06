@@ -32,8 +32,9 @@ func GCPProjectOf(data []byte) (string, error) {
 	return topLevelString(data, "gcp_project", "a GCP project ID")
 }
 
-// topLevelString reads the top-level string key of a fugaro.yaml; what is
-// "a project name"-style wording for the not-a-string error.
+// topLevelString reads the top-level string key of a fugaro.yaml. what is
+// the wording ("a project name", "a GCP project ID") of the error for a
+// value that is not a string.
 func topLevelString(data []byte, key, what string) (string, error) {
 	var doc yaml.Node
 	if err := yaml.NewDecoder(bytes.NewReader(data)).Decode(&doc); err != nil {

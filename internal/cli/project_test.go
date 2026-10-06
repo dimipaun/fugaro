@@ -568,8 +568,8 @@ func TestCheckoutProjectGCPProject(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "fugaro.yaml"), []byte("project: belong\ngcp_project: "+bad+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := checkoutProject(ctx, dir); ExitCode(err) != ExitUserError {
-			t.Errorf("gcp_project %q: err = %v, want a user error", bad, err)
+		if _, err := checkoutProject(ctx, dir); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "gcp_project") {
+			t.Errorf("gcp_project %q: err = %v, want a user error naming gcp_project", bad, err)
 		}
 	}
 }

@@ -171,3 +171,35 @@ func TestDoctorDiffIgnoresTheRegionOverride(t *testing.T) {
 		t.Fatalf("the override made the file look different: %+v", c)
 	}
 }
+
+// A custom-bucket installation's convention-named bucket could be a
+// stranger's: doctor does not fetch from it.
+func TestDoctorSkipsTheFetchForACustomRunsBucket(t *testing.T) {
+	r := newDoctorRig(t)
+	data, err := os.ReadFile(r.cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	kept := lines[:0]
+	for _, l := range lines {
+		if !strings.HasPrefix(l, "runs_bucket:") && !strings.HasPrefix(l, "bucket_url:") {
+			kept = append(kept, l)
+		}
+	}
+	if err := os.WriteFile(r.cfgPath, []byte(strings.Join(kept, "\n")+"\nruns_bucket: my-own-runs\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	calls := 0
+	old := sharedFetch
+	sharedFetch = func(context.Context, func(string) string, time.Time, string, string) (*localcfg.Config, string, error) {
+		calls++
+		return nil, "", userErr("no access")
+	}
+	t.Cleanup(func() { sharedFetch = old })
+	t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
+	doctorJSON(t)
+	if calls != 0 {
+		t.Fatalf("doctor fetched from the convention bucket %d times", calls)
+	}
+}

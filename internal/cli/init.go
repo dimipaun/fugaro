@@ -468,13 +468,25 @@ func runInit(r *initRun) error {
 		if old == nil {
 			return userErr("--publish-config publishes an existing project config, and there is none: run fugaro init first")
 		}
-		written, err := publishSharedWarn(cmd.Context(), lc, r.warn)
+		if agentEnv(os.Getenv) {
+			return userErr("--publish-config writes to the cloud, and a coding agent's session is present: run fugaro init --publish-config in your own terminal")
+		}
+		var why []string
+		written, err := publishSharedWarn(cmd.Context(), lc, func(m string) { why = append(why, m); r.warn(m) })
 		if err != nil {
 			return remote(err)
 		}
-		if written {
-			fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
+		if !written {
+			// An explicit publish request that publishes nothing is a failure.
+			reason := "it was skipped"
+			if len(why) > 0 {
+				reason = why[len(why)-1]
+			} else if fakeEndpointsOnGS(lc, lc.BucketURL()) {
+				reason = "the local config's endpoints are fakes, so the real bucket is not opened"
+			}
+			return userErr("nothing was published: %s", reason)
 		}
+		fmt.Fprintf(r.w, "published the shared config to %s/%s\n", lc.BucketURL(), infra.SharedConfigObject)
 		return r.printResult()
 	}
 	spec, err := installOptions(o, lc)
@@ -1416,6 +1428,10 @@ func (r *initRun) writeConfig(ctx context.Context, lc *localcfg.Config, spec inf
 // publishSharedConfig publishes the shared config after the local config is
 // written. A failure only warns: the installation works without it.
 func (r *initRun) publishSharedConfig(ctx context.Context, lc *localcfg.Config) {
+	if agentEnv(os.Getenv) {
+		fmt.Fprintln(r.w, "note: not publishing the shared config from a coding agent's session: run fugaro init --publish-config in your own terminal")
+		return
+	}
 	written, err := publishSharedWarn(ctx, lc, r.warn)
 	if err != nil {
 		r.warn("could not publish the shared config: " + err.Error() + " (teammates will need fugaro init until it is published)")

@@ -2,6 +2,7 @@ package localcfg
 
 import (
 	"errors"
+	"maps"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -136,5 +137,30 @@ func TestSharedDiff(t *testing.T) {
 	other.Region = "europe-west1"
 	if d := SharedDiff(other, local); strings.Join(d, ",") != "max_parallel,region" {
 		t.Fatalf("diff = %v", d)
+	}
+}
+
+// The published repos, base_images and prices are a union across machines,
+// while a local config holds only its own: an entry only the published
+// object has is not a difference; one present in both that differs is, and
+// so is a local entry the published object lacks.
+func TestSharedDiffIgnoresPublishedOnlyEntries(t *testing.T) {
+	local := &Config{Version: 1, Name: "aurora", GCPProject: "g1", Region: "us-east5",
+		Repos:      map[string]Repo{"a/b": {Provider: "github", BaseBranch: "main"}},
+		BaseImages: map[string]string{"web": "x@sha256:1"}}
+	pub := local.Shared()
+	pub.Repos, pub.BaseImages = maps.Clone(pub.Repos), maps.Clone(pub.BaseImages) // Shared() aliases the maps
+	pub.Repos["other/svc"] = Repo{Provider: "github"}
+	pub.BaseImages["py"] = "y@sha256:2"
+	if d := SharedDiff(pub, local); len(d) != 0 {
+		t.Fatalf("published-only entries counted: %v", d)
+	}
+	pub.Repos["a/b"] = Repo{Provider: "bitbucket", BaseBranch: "dev"}
+	if d := SharedDiff(pub, local); strings.Join(d, ",") != "repos" {
+		t.Fatalf("a changed entry = %v", d)
+	}
+	local.BaseImages["extra"] = "z@sha256:3"
+	if d := SharedDiff(pub, local); strings.Join(d, ",") != "base_images,repos" {
+		t.Fatalf("a local-only entry = %v", d)
 	}
 }

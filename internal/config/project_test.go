@@ -99,6 +99,9 @@ func TestGCPProjectOf(t *testing.T) {
 		if (err != nil) != c.wantErr || got != c.want {
 			t.Errorf("%s: got %q, %v", c.name, got, err)
 		}
+		if c.wantErr && err != nil && !strings.Contains(err.Error(), "gcp_project") {
+			t.Errorf("%s: the error does not name gcp_project: %v", c.name, err)
+		}
 	}
 }
 
@@ -116,5 +119,16 @@ func TestValidateGCPProject(t *testing.T) {
 	cfg, probs := Parse([]byte(minimalYAML + "gcp_project: fugaro-belong\n"))
 	if cfg == nil || cfg.GCPProject != "fugaro-belong" {
 		t.Errorf("valid ID refused: %v", probs)
+	}
+}
+
+// A gcp_project that is a list or a number is a Problem from Parse, never a
+// panic.
+func TestParseGCPProjectOfTheWrongType(t *testing.T) {
+	for _, bad := range []string{"[a]", "123"} {
+		_, probs := Parse([]byte(minimalYAML + "gcp_project: " + bad + "\n"))
+		if len(probs) == 0 {
+			t.Errorf("gcp_project: %s produced no problem", bad)
+		}
 	}
 }

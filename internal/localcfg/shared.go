@@ -129,13 +129,30 @@ func SharedDiff(published, local *Config) []string {
 	}
 	p, l := toMap(published.Shared()), toMap(local.Shared())
 	var out []string
+	// These maps are a union across machines when published, while a local
+	// config holds only its own entries: only the keys present locally are
+	// compared, so an entry only the published object has is no difference.
+	union := map[string]bool{"repos": true, "base_images": true, "model_prices": true, "compute_prices": true}
+	differs := func(k string, lv, pv any) bool {
+		lm, lok := lv.(map[string]any)
+		if !union[k] || !lok {
+			return !reflect.DeepEqual(lv, pv)
+		}
+		pm, _ := pv.(map[string]any)
+		for name, v := range lm {
+			if !reflect.DeepEqual(v, pm[name]) {
+				return true
+			}
+		}
+		return false
+	}
 	for k, v := range l {
-		if !reflect.DeepEqual(v, p[k]) {
+		if differs(k, v, p[k]) {
 			out = append(out, k)
 		}
 	}
 	for k := range p {
-		if _, ok := l[k]; !ok {
+		if _, ok := l[k]; !ok && !union[k] {
 			out = append(out, k)
 		}
 	}

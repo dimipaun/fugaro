@@ -407,8 +407,9 @@ func TestInitPublishConfigSaysSoWhenItDoesNotPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _, err := executeStdin(t, "", "init", "--publish-config")
-	if err != nil {
-		t.Fatal(err)
+	// An explicit publish request that publishes nothing is a failure.
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "nothing was published") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
 	}
 	if strings.Contains(out, "published the shared config") || !strings.Contains(out, "not publishing the shared config") || !strings.Contains(out, "default runs bucket name") {
 		t.Errorf("output:\n%s", out)
@@ -500,5 +501,29 @@ func TestFakeEndpointsNeverOpenARealBucket(t *testing.T) {
 		if fakeEndpointsOnGS(lc, "file:///x") || fakeEndpointsOnGS(lc, "mem://") {
 			t.Errorf("%s: a file:// or mem:// bucket was skipped", name)
 		}
+	}
+}
+
+// A coding agent's session publishes nothing: --publish-config refuses, and
+// the publish at the end of the other init paths is skipped with a note.
+func TestInitPublishFromACodingAgentSession(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	dir := sharedRuns(t)
+	t.Setenv("CLAUDECODE", "1")
+	_, _, err := executeStdin(t, "", "init", "--publish-config")
+	if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "coding agent's session") {
+		t.Fatalf("--publish-config: exit %d, err %v", ExitCode(err), err)
+	}
+	// The automatic publish of the other init paths, which init itself
+	// refuses to reach here (a coding agent's session applies nothing), is
+	// skipped with a note.
+	var buf strings.Builder
+	(&initRun{w: &buf}).publishSharedConfig(t.Context(), publishable(t))
+	if !strings.Contains(buf.String(), "not publishing the shared config from a coding agent's session: run fugaro init --publish-config in your own terminal") {
+		t.Errorf("no note:\n%s", buf.String())
+	}
+	if _, err := os.Stat(sharedObjectPath(dir)); !os.IsNotExist(err) {
+		t.Errorf("published from an agent's session: %v", err)
 	}
 }

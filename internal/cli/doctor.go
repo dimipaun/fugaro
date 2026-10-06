@@ -545,6 +545,11 @@ func sharedConfigChecks(ctx context.Context, sel localcfg.Selection, lc *localcf
 	if fromFile, err := localcfg.Load(sel.Path); err == nil {
 		lc = fromFile
 	}
+	// The convention-named bucket could be a stranger's for an installation
+	// with a custom runs bucket: nothing is fetched from it.
+	if lc.GCPProject == "" || lc.RunsBucketName() != "fugaro-runs-"+lc.GCPProject {
+		return nil
+	}
 	published, _, err := sharedFetch(ctx, os.Getenv, now, lc.Name, lc.GCPProject)
 	if err != nil || published == nil {
 		return nil

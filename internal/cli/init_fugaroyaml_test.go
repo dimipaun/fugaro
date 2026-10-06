@@ -342,7 +342,7 @@ func TestRepoStageAnchorAlreadySetStillWarns(t *testing.T) {
 }
 
 func TestRepoStageAnchorNoRecordWarnsOld(t *testing.T) {
-	s, out, _ := anchorRig(t, withAnchorLC(), withAnchor(anchorYAML()), "")
+	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
 	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -350,8 +350,6 @@ func TestRepoStageAnchorNoRecordWarnsOld(t *testing.T) {
 		t.Errorf("output:\n%s", out)
 	}
 }
-
-func withAnchorLC() *localcfg.Config { return anchorLC() }
 
 // A record that cannot be read or parsed is not "old": the warning says the
 // image's age is unknown, and the run does not fail.
