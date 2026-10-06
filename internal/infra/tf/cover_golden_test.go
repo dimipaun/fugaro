@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -197,6 +198,181 @@ func TestGoldenSameProjectFirebasePlan(t *testing.T) {
 	} {
 		if got := c.NotCovered(p, nil); len(got) == 0 {
 			t.Errorf("covered for %s", name)
+		}
+	}
+}
+
+// The import variants (*-adopt.plan.json) are the real goldens with chosen
+// creates turned into what Terraform emits for a matching import (jq, in
+// scripts/gen-golden-plans.sh: a real import plan needs the live resource).
+// Their addresses are the plan's own, so Cover's attribute and custom role
+// checks run on them as on the fresh plans.
+var adoptVariants = []struct {
+	name, golden string
+	cover        Cover
+	imports      []ImportKey
+}{
+	{"installation-adopt", "installation", goldenCover(), []ImportKey{
+		{"module.installation.google_storage_bucket.runs", "proj-1234/fugaro-runs-proj-1234"},
+		{"module.installation.google_project_iam_custom_role.launcher", "projects/proj-1234/roles/fugaroLauncher"},
+	}},
+	{"repo-adopt", "repo", goldenCover("user:launcher@example.com", "user:operator@example.com"), []ImportKey{
+		{`module.repo.google_secret_manager_secret.this["github-app-key"]`, "projects/proj-1234/secrets/fugaro-acme-webapp-github-app-key-35b331db19bcc682"},
+		{`module.repo.module.workflow["api"].google_service_account.job`, "projects/proj-1234/serviceAccounts/fugaro-acme-webapp-ap-7daad322@proj-1234.iam.gserviceaccount.com"},
+	}},
+	{"firebase-adopt", "firebase", goldenCover("user:launcher@example.com", "user:operator@example.com", "user:extra@example.com", "user:owner@example.com", "group:editors@example.com"), []ImportKey{
+		{"module.firebase.google_firebase_database_instance.this", "projects/aurora-fp/locations/us-central1/instances/aurora-fp-default-rtdb"},
+		{"module.firebase.google_apikeys_key.web", "projects/aurora-fp/locations/global/keys/fugaro-web"},
+		{"module.firebase.google_service_account.signer", "projects/aurora-fp/serviceAccounts/fugaro-token-signer@aurora-fp.iam.gserviceaccount.com"},
+		{"module.firebase.google_project_iam_custom_role.token_minter", "projects/aurora-fp/roles/fugaroTokenMinter"},
+	}},
+}
+
+func TestGoldenAdoptVariants(t *testing.T) {
+	for _, v := range adoptVariants {
+		t.Run(v.name, func(t *testing.T) {
+			p := goldenPlan(t, v.name)
+			// The imports, and only they, are no-op rows with an importing ID;
+			// the rest of the plan is the fresh create plan.
+			got := map[string]string{}
+			for _, rc := range p.ResourceChanges {
+				if rc.Change.Importing != nil {
+					got[rc.Address] = rc.Change.Importing.ID
+					if !slices.Equal(rc.Change.Actions, []string{"no-op"}) || !reflect.DeepEqual(rc.Change.Before, rc.Change.After) {
+						t.Errorf("%s: actions %v, before == after %v", rc.Address, rc.Change.Actions, reflect.DeepEqual(rc.Change.Before, rc.Change.After))
+					}
+				} else if !slices.Equal(rc.Change.Actions, []string{"create"}) {
+					t.Errorf("%s: actions %v, want create", rc.Address, rc.Change.Actions)
+				}
+			}
+			if len(got) != len(v.imports) {
+				t.Fatalf("importing %v, want %v", got, v.imports)
+			}
+			for _, k := range v.imports {
+				if got[k.Address] != k.ID {
+					t.Errorf("%s imports %q, want %q", k.Address, got[k.Address], k.ID)
+				}
+			}
+			if out := v.cover.NotCovered(p, v.imports); len(out) != 0 {
+				t.Fatalf("the variant is not covered with its discovery's list: %q", out)
+			}
+			if out := v.cover.NotCovered(p, nil); len(out) != len(v.imports) {
+				t.Errorf("with an empty list %d not covered, want %d: %q", len(out), len(v.imports), out)
+			}
+			for i, k := range v.imports {
+				badID := slices.Clone(v.imports)
+				badID[i].ID += "x"
+				if out := v.cover.NotCovered(p, badID); len(out) != 1 || !strings.HasPrefix(out[0], k.Address) {
+					t.Errorf("%s: one ID changed gives %q", k.Address, out)
+				}
+				badAddr := slices.Clone(v.imports)
+				badAddr[i].Address += "x"
+				if out := v.cover.NotCovered(p, badAddr); len(out) != 1 || !strings.HasPrefix(out[0], k.Address) {
+					t.Errorf("%s: one address changed gives %q", k.Address, out)
+				}
+			}
+		})
+	}
+}
+
+// The attribute and custom role checks run on imported resources: an import
+// of a role with an extra permission, or of a key with a wider restriction,
+// is not covered (the variants are edited in memory, not committed twice).
+func TestGoldenAdoptVariantsStillCheckAttributes(t *testing.T) {
+	edit := func(name, address string, f func(a map[string]any)) (*Plan, ImportKey) {
+		p := goldenPlan(t, name)
+		for _, rc := range p.ResourceChanges {
+			if rc.Address == address {
+				f(rc.Change.After)
+				f(rc.Change.Before)
+				return p, ImportKey{address, rc.Change.Importing.ID}
+			}
+		}
+		t.Fatalf("%s has no %s", name, address)
+		return nil, ImportKey{}
+	}
+	byName := map[string]int{}
+	for i, v := range adoptVariants {
+		byName[v.name] = i
+	}
+	for name, tc := range map[string]struct {
+		variant, address string
+		f                func(a map[string]any)
+	}{
+		"launcher role with an extra permission": {"installation-adopt", "module.installation.google_project_iam_custom_role.launcher", func(a map[string]any) {
+			a["permissions"] = append(a["permissions"].([]any), "resourcemanager.projects.setIamPolicy")
+		}},
+		"token minter role with an extra permission": {"firebase-adopt", "module.firebase.google_project_iam_custom_role.token_minter", func(a map[string]any) {
+			a["permissions"] = append(a["permissions"].([]any), "resourcemanager.projects.setIamPolicy")
+		}},
+		"web key with a third api target": {"firebase-adopt", "module.firebase.google_apikeys_key.web", func(a map[string]any) {
+			r := a["restrictions"].([]any)[0].(map[string]any)
+			r["api_targets"] = append(r["api_targets"].([]any), map[string]any{"methods": nil, "service": "firebasedatabase.googleapis.com"})
+		}},
+		"runs bucket without public access prevention": {"installation-adopt", "module.installation.google_storage_bucket.runs", func(a map[string]any) {
+			a["public_access_prevention"] = "inherited"
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			v := adoptVariants[byName[tc.variant]]
+			p, _ := edit(tc.variant, tc.address, tc.f)
+			out := v.cover.NotCovered(p, v.imports)
+			if len(out) != 1 || !strings.HasPrefix(out[0], tc.address) {
+				t.Fatalf("got %q, want only %s not covered", out, tc.address)
+			}
+		})
+	}
+}
+
+// What the script writes into a variant's changes has the field set real
+// terraform emits for an import (testdata/plan_import.json, made by
+// real_terraform_test.go with an import block), so the variants cannot drift
+// from the plan JSON the classifier reads in production.
+func TestAdoptVariantShapeMatchesRealTerraform(t *testing.T) {
+	keys := func(raw []byte, pick func(rc map[string]any) bool) (change, importing []string) {
+		var doc struct {
+			ResourceChanges []map[string]any `json:"resource_changes"`
+		}
+		if err := json.Unmarshal(raw, &doc); err != nil {
+			t.Fatal(err)
+		}
+		for _, rc := range doc.ResourceChanges {
+			ch := rc["change"].(map[string]any)
+			if ch["importing"] == nil || !pick(rc) {
+				continue
+			}
+			for k := range ch {
+				if k == "after_identity" { // set by newer providers for resources with an identity; the fixture's terraform_data has none
+					continue
+				}
+				change = append(change, k)
+			}
+			for k := range ch["importing"].(map[string]any) {
+				importing = append(importing, k)
+			}
+			slices.Sort(change)
+			slices.Sort(importing)
+			return change, importing
+		}
+		t.Fatal("no importing change")
+		return nil, nil
+	}
+	realRaw, err := os.ReadFile(filepath.Join("testdata", "plan_import.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantChange, wantImporting := keys(realRaw, func(map[string]any) bool { return true })
+	for _, v := range adoptVariants {
+		raw, err := os.ReadFile(filepath.Join("testdata", "golden", v.name+".plan.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		gotChange, gotImporting := keys(raw, func(map[string]any) bool { return true })
+		if !slices.Equal(gotChange, wantChange) {
+			t.Errorf("%s: change fields %v, real terraform has %v", v.name, gotChange, wantChange)
+		}
+		if !slices.Equal(gotImporting, wantImporting) {
+			t.Errorf("%s: importing fields %v, real terraform has %v", v.name, gotImporting, wantImporting)
 		}
 	}
 }
