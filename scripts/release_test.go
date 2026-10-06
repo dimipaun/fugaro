@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -106,6 +107,56 @@ func countLog(t *testing.T, g *ghState, prefix string) int {
 		}
 	}
 	return n
+}
+
+// lockedBuffer is a bytes.Buffer safe to read while a command still writes it.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// viewsAfterMerge counts the "pr view" calls logged after the first "pr merge".
+func viewsAfterMerge(t *testing.T, g *ghState) int {
+	t.Helper()
+	merged, n := false, 0
+	for _, line := range strings.Split(g.log(t), "\n") {
+		switch {
+		case strings.HasPrefix(line, "pr merge"):
+			merged = true
+		case merged && strings.HasPrefix(line, "pr view"):
+			n++
+		}
+	}
+	return n
+}
+
+// releaseProcs lists the processes of the given group, or running release.sh,
+// as a diagnostic for a script that will not die.
+func releaseProcs(pgid int) string {
+	out, err := exec.Command("ps", "-axo", "pid,ppid,pgid,stat,command").CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("ps failed: %v", err)
+	}
+	var keep []string
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Fields(line)
+		if len(f) >= 3 && (f[2] == fmt.Sprint(pgid) || strings.Contains(line, "release.sh")) {
+			keep = append(keep, line)
+		}
+	}
+	return strings.Join(keep, "\n")
 }
 
 // fakeBinDir returns a directory on PATH ahead of the real one, holding the
@@ -488,9 +539,16 @@ func TestPRFailedCheckStopsWaiting(t *testing.T) {
 	}
 }
 
-// TestInterruptPrintsResumeInstructions checks Ctrl-C (SIGINT to the process group) is handled
-// with a message telling the caller how to continue, rather than leaving
-// the terminal on a bare stack trace.
+// TestInterruptPrintsResumeInstructions checks an interrupt delivered to the
+// process group is handled with a message telling the caller how to continue,
+// rather than leaving the terminal on a bare stack trace.
+//
+// The test sends SIGTERM, not SIGINT: when the test process itself starts with
+// SIGINT ignored (background job, nohup-style CI launchers), the bash child
+// inherits SIG_IGN, and a signal ignored on entry can never be trapped, so the
+// script would never exit. SIGTERM is not ignored by inheritance. release.sh
+// handles INT and TERM with the same trap, so this covers the handler a
+// terminal's Ctrl-C (SIGINT) reaches.
 func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	r := newReleaseRepo(t)
 	g := newGHState(t, r, greenChecks())
@@ -502,43 +560,62 @@ func TestInterruptPrintsResumeInstructions(t *testing.T) {
 	cmd.Dir = r.local
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "RELEASE_SH_POLL_SECONDS=1")
 	cmd.Env = append(cmd.Env, g.env...)
-	var out bytes.Buffer
+	var out lockedBuffer
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.WaitDelay = 5 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	// Signal only once the script has issued its merge call, i.e. it is past
-	// the preconditions with its traps installed and heading into the poll
-	// loop. A fixed sleep raced a slow runner: the signal could land before
-	// the trap existed, or while the script was elsewhere, and the run hung.
+	// Signal only once the poll loop is demonstrably running: it has polled
+	// "pr view" at least twice after the merge call (the state lookup just
+	// before the loop is one more view) and announced "waiting for".
+	// Signalling right after the merge call can land just after the loop's
+	// subshell forked but before it reset its inherited traps; bash then
+	// swallows the signal in the child while the parent defers its trap until
+	// the child exits, and the run hangs.
 	deadline := time.Now().Add(60 * time.Second)
-	for countLog(t, g, "pr merge") == 0 {
+	for !(viewsAfterMerge(t, g) >= 3 && strings.Contains(out.String(), "waiting for")) {
 		if time.Now().After(deadline) {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			_ = cmd.Wait()
-			t.Fatalf("release.sh never reached the merge step; output:\n%s", out.String())
+			t.Fatalf("release.sh never reached the poll loop; output:\n%s", out.String())
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	// Like a terminal's Ctrl-C, signal the whole process group: the poll
-	// loop runs in a subshell, which a signal sent to the parent alone would
-	// never reach (bash defers its trap until that child exits).
-	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT); err != nil {
-		t.Fatal(err)
-	}
+	pgid := cmd.Process.Pid
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(30 * time.Second):
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	// Like a terminal's Ctrl-C, deliver to the whole process group: the poll
+	// loop runs in a subshell, which a signal sent to the parent alone would
+	// never reach (bash defers its trap until that child exits). Repeat it,
+	// as a user would, if the script has not exited after 5s.
+	exited := false
+	for sends := 0; sends < 3 && !exited; sends++ {
+		if err := syscall.Kill(-pgid, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+			exited = true
+		case <-time.After(5 * time.Second):
+		}
+	}
+	if !exited {
+		select {
+		case <-done:
+			exited = true
+		case <-time.After(15 * time.Second):
+		}
+	}
+	if !exited {
+		procs := releaseProcs(pgid)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		<-done
-		t.Fatalf("release.sh did not exit within 30s of SIGINT; output:\n%s", out.String())
+		t.Fatalf("release.sh did not exit within 30s of SIGTERM; output:\n%s\nprocesses:\n%s", out.String(), procs)
 	}
 	if !strings.Contains(out.String(), "resume") {
-		t.Fatalf("expected resume instructions after SIGINT, got:\n%s", out.String())
+		t.Fatalf("expected resume instructions after SIGTERM, got:\n%s", out.String())
 	}
 }
 
