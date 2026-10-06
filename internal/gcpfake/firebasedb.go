@@ -48,6 +48,13 @@ func (f *FirebaseDB) AddInstanceFull(project, location, id, instType, state, url
 	f.instances[project] = append(f.instances[project], fbInstance{location, id, instType, state, url})
 }
 
+// RemoveInstances makes the Firebase project have no database at all.
+func (f *FirebaseDB) RemoveInstances(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.instances, project)
+}
+
 func (i fbInstance) json(project string) map[string]any {
 	return map[string]any{"name": "projects/" + project + "/locations/" + i.location + "/instances/" + i.id,
 		"project": "projects/" + project, "databaseUrl": i.url, "type": i.typ, "state": i.state}

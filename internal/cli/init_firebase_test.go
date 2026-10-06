@@ -34,6 +34,7 @@ type fbRig struct {
 	idt     *gcpfake.IdentityToolkit
 	fs      *gcpfake.Firestore
 	rules   *gcpfake.FirebaseRules
+	keys    *gcpfake.APIKeys
 	fp      string
 }
 
@@ -48,7 +49,8 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	r.idt = gcpfake.NewIdentityToolkit(t, nil, "key", fp)
 	r.fs, r.rules = gcpfake.NewFirestore(t), gcpfake.NewFirebaseRules(t, fp)
 	r.fs.RemoveDatabase() // a fresh Firebase project has none
-	r.fbdb.AddInstance(fp, r.db.URL)
+	r.keys = gcpfake.NewAPIKeys(t)
+	r.fbdb.AddInstanceFull(fp, "us-central1", fp+"-default-rtdb", "DEFAULT_DATABASE", "ACTIVE", r.db.URL)
 	r.stateBucket()
 	if fp != initProject {
 		r.crm.AddProject(fp, 987654321098)
@@ -64,7 +66,7 @@ func newFBRigFor(t *testing.T, fp string) *fbRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, identity_toolkit: "+r.idt.URL+"/, firestore: "+r.fs.URL+", firebase_rules: "+r.rules.URL+", no_auth: true }", 1)
+	cfg := strings.Replace(string(b), "no_auth: true }", "cloud_billing: "+r.billing.URL+"/, firebase_database: "+r.fbdb.URL+"/, api_keys: "+r.keys.URL+"/, identity_toolkit: "+r.idt.URL+"/, firestore: "+r.fs.URL+", firebase_rules: "+r.rules.URL+", no_auth: true }", 1)
 	if err := os.WriteFile(r.cfg, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}

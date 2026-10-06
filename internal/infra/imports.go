@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
 // Import adopts an existing resource into Terraform's state at the address
@@ -110,6 +112,16 @@ func newImport(k importKind, project, region, key, name string) Import {
 	}
 	r := strings.NewReplacer("{project}", project, "{region}", region, "{name}", name, "{key}", strconv.Quote(key))
 	return Import{To: r.Replace(a.to), ID: r.Replace(a.id)}
+}
+
+// Keys are the imports as the address and ID pairs the plan's classifier
+// compares against.
+func (im Imports) Keys() []tf.ImportKey {
+	out := make([]tf.ImportKey, 0, len(im.List))
+	for _, i := range im.List {
+		out = append(out, tf.ImportKey{Address: i.To, ID: i.ID})
+	}
+	return out
 }
 
 // ImportsFile is the file WriteImports writes into a root.

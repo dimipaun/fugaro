@@ -11,10 +11,12 @@ resource "google_firebase_project" "this" {
 
 # RTDB offers three locations and can't move one later; D4 chose
 # us-central1. The default instance's ID is <project>-default-rtdb, which is
-# also the one Firebase creates itself, so an adopted project keeps it. It
-# holds the budget counters and the run registry, so a plan never deletes
-# it. The rules and the /fugaro/mark are written by fugaro init over REST,
-# not by Terraform.
+# also the one Firebase creates itself. An instance that already exists is
+# adopted by fugaro init --firebase: its discovery checks it and writes an
+# import block for it (imports.tf.json), so this resource is not created
+# twice. It holds the budget counters and the run registry, so a plan never
+# deletes it. The rules and the /fugaro/mark are written by fugaro init over
+# REST, not by Terraform.
 resource "google_firebase_database_instance" "this" {
   provider = google-beta
 

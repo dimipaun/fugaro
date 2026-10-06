@@ -213,6 +213,35 @@ func (s *State) Managed() bool {
 	return holds(s.Values.RootModule)
 }
 
+// Addresses are the addresses of every resource instance the state holds,
+// in the root module and all its child modules, in the order terraform
+// lists them. A root with no state has none.
+func (s *State) Addresses() []string {
+	if s == nil || s.Values == nil {
+		return nil
+	}
+	var out []string
+	var walk func(m StateModule)
+	walk = func(m StateModule) {
+		for _, raw := range m.Resources {
+			var r struct {
+				Address string `json:"address"`
+			}
+			if json.Unmarshal(raw, &r) == nil && r.Address != "" {
+				out = append(out, r.Address)
+			}
+		}
+		for _, c := range m.ChildModules {
+			walk(c)
+		}
+	}
+	walk(s.Values.RootModule)
+	return out
+}
+
+// ImportKey is one import block's address and ID, as discovery wrote it.
+type ImportKey struct{ Address, ID string }
+
 // ShowState reads the current state.
 func (t *TF) ShowState(ctx context.Context) (*State, error) {
 	data, err := t.capture(ctx, "show", "-json")

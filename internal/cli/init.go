@@ -591,8 +591,22 @@ func gcpOptions(lc *localcfg.Config) gcp.Options {
 		NoAuth: lc.Endpoints.NoAuth}}
 }
 
+// quotaOptions are gcpOptions with quota as the project the calls are
+// billed to.
+func quotaOptions(lc *localcfg.Config, quota string) gcp.Options {
+	o := gcpOptions(lc)
+	o.GCPProject = quota
+	return o
+}
+
 func newInitClients(ctx context.Context, lc *localcfg.Config) (*infra.Clients, error) {
-	c, err := infra.NewClients(ctx, gcpOptions(lc),
+	return newInitClientsFor(ctx, lc, lc.GCPProject)
+}
+
+// newInitClientsFor is newInitClients with quota as the quota project of
+// the calls.
+func newInitClientsFor(ctx context.Context, lc *localcfg.Config, quota string) (*infra.Clients, error) {
+	c, err := infra.NewClients(ctx, quotaOptions(lc, quota),
 		infra.Endpoints{IAM: lc.Endpoints.IAM, ArtifactRegistry: lc.Endpoints.ArtifactRegistry,
 			Storage: lc.Endpoints.Storage, ResourceManager: lc.Endpoints.ResourceManager, Scheduler: lc.Endpoints.CloudScheduler,
 			ServiceUsage: lc.Endpoints.ServiceUsage, Billing: lc.Endpoints.CloudBilling, FirebaseDatabase: lc.Endpoints.FirebaseDatabase, APIKeys: lc.Endpoints.APIKeys})

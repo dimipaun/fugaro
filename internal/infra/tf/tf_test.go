@@ -246,3 +246,60 @@ func TestShowState(t *testing.T) {
 		}
 	}
 }
+
+// Addresses lists every resource instance of a state, in the root module
+// and in nested child modules, as terraform show -json writes them.
+func TestStateAddresses(t *testing.T) {
+	const doc = `{
+  "format_version": "1.0",
+  "terraform_version": "1.9.0",
+  "values": {
+    "outputs": {"firebase_project": {"sensitive": false, "value": "fp-1", "type": "string"}},
+    "root_module": {
+      "resources": [
+        {"address": "google_project_service.root", "mode": "managed", "type": "google_project_service", "name": "root", "provider_name": "registry.terraform.io/hashicorp/google", "schema_version": 0, "values": {"id": "x"}}
+      ],
+      "child_modules": [
+        {
+          "address": "module.firebase",
+          "resources": [
+            {"address": "module.firebase.google_apikeys_key.web", "mode": "managed", "type": "google_apikeys_key", "name": "web", "values": {}},
+            {"address": "module.firebase.google_project_service.this[\"iam.googleapis.com\"]", "mode": "managed", "type": "google_project_service", "name": "this", "index": "iam.googleapis.com", "values": {}}
+          ],
+          "child_modules": [
+            {"address": "module.firebase.module.inner", "resources": [{"address": "module.firebase.module.inner.google_service_account.a", "mode": "managed"}]}
+          ]
+        }
+      ]
+    }
+  }
+}`
+	for name, tc := range map[string]struct {
+		stdout string
+		want   []string
+	}{
+		"nested modules": {doc, []string{
+			"google_project_service.root",
+			"module.firebase.google_apikeys_key.web",
+			`module.firebase.google_project_service.this["iam.googleapis.com"]`,
+			"module.firebase.module.inner.google_service_account.a",
+		}},
+		"no state":     {`{"format_version":"1.0"}`, nil},
+		"outputs only": {`{"format_version":"1.0","values":{"outputs":{"a":{"value":"x"}},"root_module":{}}}`, nil},
+	} {
+		r := newRig(t)
+		r.script["show"] = map[string]any{"stdout": tc.stdout}
+		st, err := r.tf(t, nil).ShowState(context.Background())
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := st.Addresses()
+		if !slices.Equal(got, tc.want) {
+			t.Errorf("%s: addresses\n got %q\nwant %q", name, got, tc.want)
+		}
+	}
+	var nilState *State
+	if got := nilState.Addresses(); len(got) != 0 {
+		t.Errorf("nil state: %q", got)
+	}
+}
