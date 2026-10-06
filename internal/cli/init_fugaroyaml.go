@@ -239,7 +239,9 @@ func (s *repositoryStage) warnOldImages(ctx context.Context) {
 		return
 	}
 	var b *blobx.Bucket
-	if b, err = openRecordBucket(ctx, recordReadURL(e.lc)); err == nil {
+	if u := recordReadURL(e.lc); fakeEndpointsOnGS(e.lc, u) {
+		err = errors.New("the storage endpoint is a fake, so the real bucket is not read")
+	} else if b, err = openRecordBucket(ctx, u); err == nil {
 		defer b.Close()
 	}
 	for _, wf := range slices.Sorted(maps.Keys(tg.cfg.Workflows)) {

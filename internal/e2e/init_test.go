@@ -381,6 +381,11 @@ func (r *initRepoRig) fugaroInitIn(t *testing.T, stdin *os.File, args ...string)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
 	res := cliResult{stdout: stdout.String(), stderr: stderr.String()}
+	// gocloud says this when a gs:// bucket is opened without credentials: the
+	// rig's endpoints are fakes, and nothing in init may open a real bucket.
+	if strings.Contains(res.stderr+res.stdout, "Default Credentials") {
+		t.Fatalf("fugaro init tried to open a real gs:// bucket:\n%s\n%s", res.stderr, res.stdout)
+	}
 	var xe *exec.ExitError
 	switch {
 	case errors.As(err, &xe):

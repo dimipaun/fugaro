@@ -379,3 +379,24 @@ func TestRepoStageAnchorBucketFailure(t *testing.T) {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
 }
+
+// With fake endpoints in the local config the record read never opens the
+// real gs:// bucket: the warning says the image age is unknown.
+func TestRepoStageAnchorFakeEndpointsSkipTheRecordRead(t *testing.T) {
+	lc := anchorLC()
+	lc.Endpoints.NoAuth = true
+	s, out, _ := anchorRig(t, lc, withAnchor(anchorYAML()), "")
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) {
+		t.Error("the record bucket was opened against fake endpoints")
+		return nil, errors.New("opened")
+	}
+	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "unknown image age") {
+		t.Errorf("output:\n%s", out)
+	}
+}

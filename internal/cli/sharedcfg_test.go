@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -467,5 +468,37 @@ func TestPublishSharedOversizeMergeFallsBackToLocal(t *testing.T) {
 	got, _ := os.ReadFile(sharedObjectPath(dir))
 	if len(got) > localcfg.SharedMaxBytes || strings.Contains(string(got), "claude-sonnet-0-0") || !strings.Contains(string(got), "acme/app") {
 		t.Errorf("published %d bytes:\n%.400s", len(got), got)
+	}
+}
+
+// TestFakeEndpointsNeverOpenARealBucket: with a gs:// bucket and fake
+// endpoints in the local config (no_auth or a storage endpoint) nothing
+// opens the bucket: the publish is skipped without error, and so is the
+// build-record read. A file:// bucket is not skipped.
+func TestFakeEndpointsNeverOpenARealBucket(t *testing.T) {
+	newCloudFixture(t)
+	old, oldRec := skipGSOnFakeEndpoints, openRecordBucket
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints, openRecordBucket = old, oldRec })
+	opened := 0
+	sharedBucketOpener = func(context.Context, string) (*blobx.Bucket, error) { opened++; return nil, errors.New("opened") }
+	openRecordBucket = func(context.Context, string) (*blobx.Bucket, error) { opened++; return nil, errors.New("opened") }
+	for name, edit := range map[string]func(*localcfg.Config){
+		"no_auth": func(lc *localcfg.Config) { lc.Endpoints.NoAuth = true },
+		"storage": func(lc *localcfg.Config) { lc.Endpoints.Storage = "http://127.0.0.1:1/" },
+	} {
+		lc := publishable(t)
+		lc.Bucket = ""
+		edit(lc)
+		written, err := publishSharedWarn(context.Background(), lc, func(string) {})
+		if written || err != nil || opened != 0 {
+			t.Errorf("%s: written %v, err %v, opens %d; want a silent skip", name, written, err, opened)
+		}
+		if !fakeEndpointsOnGS(lc, lc.BucketURL()) {
+			t.Errorf("%s: gs:// with fake endpoints not recognised", name)
+		}
+		if fakeEndpointsOnGS(lc, "file:///x") || fakeEndpointsOnGS(lc, "mem://") {
+			t.Errorf("%s: a file:// or mem:// bucket was skipped", name)
+		}
 	}
 }

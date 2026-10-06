@@ -46,6 +46,11 @@ func TestMain(m *testing.M) {
 		}
 		return blobx.Open(ctx, "mem://")
 	}
+	// Production skips a gs:// bucket (publish, build-record read) when the
+	// config's endpoints are fakes; the tests reach buckets through seams
+	// while their configs carry fake endpoints, so they turn the skip off and
+	// the tests of the skip itself turn it on.
+	skipGSOnFakeEndpoints = false
 	os.Exit(m.Run())
 }
 

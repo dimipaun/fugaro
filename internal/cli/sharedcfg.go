@@ -61,6 +61,12 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 			src = &cp
 		}
 	}
+	if fakeEndpointsOnGS(lc, lc.BucketURL()) {
+		// The config's endpoints are fakes (tests, emulators): the gs://
+		// bucket is not the one they stand for, and opening it would reach
+		// the real network with the developer's credentials.
+		return false, nil
+	}
 	b, err := sharedBucketOpener(ctx, lc.BucketURL())
 	if err != nil {
 		return false, err
@@ -117,6 +123,17 @@ func readShared(ctx context.Context, b *blobx.Bucket, anchor SharedAnchor) (c *l
 		return nil, err.Error(), nil
 	}
 	return c, "", nil
+}
+
+// skipGSOnFakeEndpoints is true in production; this package's tests, which
+// reach buckets through seams, turn it off.
+var skipGSOnFakeEndpoints = true
+
+// fakeEndpointsOnGS reports whether url is a gs:// URL while lc's endpoints
+// are fakes (no_auth or a storage endpoint): there, no real bucket may be
+// opened. file:// and mem:// URLs (tests' stand-ins) are never skipped.
+func fakeEndpointsOnGS(lc *localcfg.Config, url string) bool {
+	return skipGSOnFakeEndpoints && strings.HasPrefix(url, "gs://") && (lc.Endpoints.NoAuth || lc.Endpoints.Storage != "")
 }
 
 // sharedBucketOpener is a test seam; production opens the bucket with blobx.
