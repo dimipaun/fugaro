@@ -6,15 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/fileblob"
+	"gocloud.dev/blob/gcsblob"
 	"gocloud.dev/blob/memblob"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -240,5 +246,51 @@ func TestDeleteExistingIsStrict(t *testing.T) {
 		if err := b.DeleteIf(ctx, "k", gen, data); err != nil {
 			t.Fatalf("%s: DeleteIf must stay idempotent: %v", name, err)
 		}
+	}
+}
+
+// TestReadMaxIsCapped: ReadMax refuses an object over its own cap.
+func TestReadMaxIsCapped(t *testing.T) {
+	ctx := context.Background()
+	b := blobx.Wrap(memblob.OpenBucket(nil))
+	if err := b.WriteAll(ctx, "k", make([]byte, 100), nil); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, err := b.ReadMax(ctx, "k", 100); err != nil || len(data) != 100 {
+		t.Fatalf("ReadMax at the cap = %d bytes, %v", len(data), err)
+	}
+	if _, _, err := b.ReadMax(ctx, "k", 99); !errors.Is(err, blobx.ErrTooLarge) {
+		t.Fatalf("ReadMax past the cap = %v, want ErrTooLarge", err)
+	}
+	if _, _, err := b.ReadMax(ctx, "missing", 99); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("ReadMax of a missing key = %v", err)
+	}
+}
+
+// TestReadReportsAForbiddenObjectAsSuch: gocloud's GCS driver maps a 403
+// to NotFound; Read must not turn a refusal into "absent".
+func TestReadReportsAForbiddenObjectAsSuch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprint(w, `{"error":{"code":403,"message":"denied"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithEndpoint(srv.URL+"/storage/v1/"), option.WithoutAuthentication(), storage.WithJSONReads())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetRetry(storage.WithPolicy(storage.RetryNever))
+	gb, err := gcsblob.OpenBucket(ctx, nil, "b", &gcsblob.Options{Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &blobx.Bucket{Bucket: gb, GCSName: "b"}
+	t.Cleanup(func() { _ = b.Close() })
+	_, _, err = b.Read(ctx, "k")
+	var ae *googleapi.Error
+	if err == nil || errors.Is(err, blobx.ErrNotExist) || !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
+		t.Fatalf("Read of a forbidden object = %v, want the 403", err)
 	}
 }

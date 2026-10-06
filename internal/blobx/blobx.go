@@ -134,29 +134,43 @@ func (b *Bucket) Create(ctx context.Context, key string, data []byte, contentTyp
 // Read returns key's content and generation (0 off GCS) from one reader.
 // An object larger than MaxReadBytes is ErrTooLarge.
 func (b *Bucket) Read(ctx context.Context, key string) ([]byte, int64, error) {
+	return b.ReadMax(ctx, key, MaxReadBytes)
+}
+
+// ReadMax is Read with a cap of limit bytes instead of MaxReadBytes: an
+// object larger is ErrTooLarge, and no more than limit+1 bytes are read.
+// A refusal (HTTP 403) is returned as itself, never as ErrNotExist,
+// although gocloud's GCS driver reports it as not found.
+func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, int64, error) {
 	r, err := b.NewReader(ctx, key, nil)
-	if gcerrors.Code(err) == gcerrors.NotFound {
+	if gcerrors.Code(err) == gcerrors.NotFound && !isForbidden(err) {
 		return nil, 0, ErrNotExist
 	}
 	if err != nil {
 		return nil, 0, err
 	}
 	defer r.Close()
-	if r.Size() > MaxReadBytes {
-		return nil, 0, fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), MaxReadBytes)
+	if r.Size() > int64(limit) {
+		return nil, 0, fmt.Errorf("%s: %w (%d bytes, the cap is %d)", key, ErrTooLarge, r.Size(), limit)
 	}
-	data, err := io.ReadAll(io.LimitReader(r, MaxReadBytes+1))
+	data, err := io.ReadAll(io.LimitReader(r, int64(limit)+1))
 	if err != nil {
 		return nil, 0, err
 	}
-	if len(data) > MaxReadBytes {
-		return nil, 0, fmt.Errorf("%s: %w (the cap is %d bytes)", key, ErrTooLarge, MaxReadBytes)
+	if len(data) > limit {
+		return nil, 0, fmt.Errorf("%s: %w (the cap is %d bytes)", key, ErrTooLarge, limit)
 	}
 	var sr *storage.Reader
 	if r.As(&sr) {
 		return data, sr.Attrs.Generation, nil
 	}
 	return data, 0, nil
+}
+
+// isForbidden reports an HTTP 403 from GCS.
+func isForbidden(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
 }
 
 // ReplaceIf overwrites key with data only if it is still generation gen

@@ -28,6 +28,13 @@ type NameCheck struct {
 // nameCheckPath is $XDG_CACHE_HOME/fugaro/project-check/<name>.json, else
 // under ~/.cache.
 func nameCheckPath(getenv func(string) string, name string) (string, error) {
+	return cachePath(getenv, "project-check", name)
+}
+
+// cachePath is $XDG_CACHE_HOME/fugaro/<kind>/<name>.json, else under
+// ~/.cache. name is a project name (config.ProjectNameRE), so it can't
+// leave the directory.
+func cachePath(getenv func(string) string, kind, name string) (string, error) {
 	if !config.ProjectNameRE.MatchString(name) {
 		return "", fmt.Errorf("%q is not a project name", name)
 	}
@@ -35,11 +42,11 @@ func nameCheckPath(getenv func(string) string, name string) (string, error) {
 	if dir == "" {
 		home := getenv("HOME")
 		if home == "" {
-			return "", errors.New("neither XDG_CACHE_HOME nor HOME is set, so the project check can't be cached")
+			return "", errors.New("neither XDG_CACHE_HOME nor HOME is set, so the " + kind + " cache can't be written")
 		}
 		dir = filepath.Join(home, ".cache")
 	}
-	return filepath.Join(dir, "fugaro", "project-check", name+".json"), nil
+	return filepath.Join(dir, "fugaro", kind, name+".json"), nil
 }
 
 // CachedNameCheck is the project's last check when it is less than a day
@@ -72,14 +79,21 @@ func SaveNameCheck(getenv func(string) string, name string, c NameCheck) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(c)
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".check-*")
+	return writeCacheFile(path, data)
+}
+
+// writeCacheFile writes data to path, mode 0600 in a 0700 directory,
+// through a temporary file renamed over it: a reader sees the old file or
+// the new one, never a part.
+func writeCacheFile(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".tmp-*")
 	if err != nil {
 		return err
 	}
