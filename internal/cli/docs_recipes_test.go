@@ -89,6 +89,11 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 			t.Errorf("reserved key %s is not refused with a message of its own: %v", key, ps)
 		}
 	}
+	for _, sub := range []string{"ls", "show", "validate"} {
+		if !strings.Contains(doc, "`"+sub+"`") || !strings.Contains(doc, "take `--json`") {
+			t.Errorf("docs/recipes.md does not say that recipes %s takes --json", sub)
+		}
+	}
 	readme, _ := os.ReadFile("../../README.md")
 	if !strings.Contains(string(readme), "docs/recipes.md") {
 		t.Error("README.md does not link docs/recipes.md")

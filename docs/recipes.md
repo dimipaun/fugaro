@@ -59,7 +59,7 @@ The first of these wins:
 
 `agent.recipe` applies to first runs only. A follow-up (`fugaro run --pr`) keeps the recipe of the run it continues unless `--recipe` names another.
 
-`fugaro run` prints one line to stderr before it launches: `recipe: <name> (<source>)` when the CLI resolved the recipe; `recipe: default (catalog)` when it resolved the catalog `default`; and `recipe: chosen by the runner (agent.recipe in fugaro.yaml at <ref>, else default)` when you launch with no `--recipe` and there is no local checkout of the repository. In that last case the CLI validates nothing locally and cannot see a project recipe: the runner reads `agent.recipe` at the ref, so a malformed or unknown recipe fails in the run, not at your terminal, and a project recipe is not found there (name it with `--recipe` instead).
+`fugaro run` prints one line to stderr before it launches: `recipe: <name> (<source>)` when the CLI resolved the recipe; `recipe: default (catalog)` when it resolved the catalog `default`; and `recipe: chosen by the runner (agent.recipe in fugaro.yaml at <ref>, else default)` when you launch with no `--recipe`, there is no local checkout of the repository, and the project has no recipe named `default`. In that case the CLI validates nothing about `agent.recipe` locally: the runner reads it at the ref, so a malformed or unknown recipe fails in the run, not at your terminal, and a project recipe other than `default` is not found there (name it with `--recipe` instead). If the project has a `default`, the CLI embeds it and the line reads `recipe: default (project)`.
 
 ## 4. Where a recipe comes from
 
