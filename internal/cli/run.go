@@ -18,6 +18,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
@@ -47,6 +49,12 @@ var (
 	claimPoll = time.Second
 )
 
+// launchRecipe is the recipe a launch said it runs.
+type launchRecipe struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`
+}
+
 // launchResult is what fugaro run reports, and its --json output.
 type launchResult struct {
 	Project   string `json:"project"` // the Fugaro project
@@ -61,6 +69,9 @@ type launchResult struct {
 	// continues; Branch is then the PR's branch.
 	PR          int    `json:"pr,omitempty"`
 	PreviousRun string `json:"previous_run,omitempty"`
+	// Recipe is the run's recipe; nil when the runner chooses it (no
+	// --recipe and no checkout of the repository: agent.recipe at the ref).
+	Recipe *launchRecipe `json:"recipe,omitempty"`
 }
 
 // launchHooks lets tests stop launchRun between its steps, to make the
@@ -86,6 +97,7 @@ type runOptions struct {
 	pr                                    int
 	asJSON                                bool
 	noBudgetCheck                         bool
+	recipe                                string
 }
 
 func newRunCmd() *cobra.Command {
@@ -114,6 +126,7 @@ func newRunCmd() *cobra.Command {
 	f.StringVar(&o.retry, "retry", "", "launch the stored task of RUN (<repo-slug>/<run-id> or a run ID) that never started")
 	f.StringVar(&o.totalTimeout, "total-timeout", "", "override the workflow's timeouts.total for this run, such as 45m")
 	f.IntVar(&o.pr, "pr", 0, "continue Fugaro PR N: act on its trusted review comments (TEXT adds instructions)")
+	f.StringVar(&o.recipe, "recipe", "", "the recipe (task loop) to run: .fugaro/recipes/NAME.yaml, the project's, or the catalog's (default, cheap-loop-senior, claude-solo); default: agent.recipe in fugaro.yaml, else default; a follow-up (--pr) keeps its previous run's")
 	f.BoolVar(&o.asJSON, "json", false, "print machine-readable output")
 	f.BoolVar(&o.noBudgetCheck, "no-budget-check", false, "skip the launch pre-check of the budget (kill switches, missing caps, no headroom); the run is held to the same limits when it starts")
 	addCloudFlags(cmd, &o.cloud)
@@ -121,7 +134,7 @@ func newRunCmd() *cobra.Command {
 }
 
 // taskFlags are the flags --retry excludes: the stored task.json supplies them.
-var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr"}
+var taskFlags = []string{"repo", "ref", "workflow", "run-id", "batch", "task-file", "total-timeout", "pr", "recipe"}
 
 // prFlags are the flags --pr excludes: the previous run on the PR supplies them.
 var prFlags = []string{"ref", "workflow"}
@@ -180,7 +193,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	case prSet:
 		slug, spec, reused, err = prSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	default:
-		slug, spec, err = newSpec(ctx, env, o, text, total)
+		slug, spec, err = newSpec(ctx, env, o, text, total, cmd.ErrOrStderr())
 	}
 	if err != nil {
 		return err
@@ -196,6 +209,18 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 	}
 	if prior == nil {
+		agentRecipe, kind := "", ""
+		if co := checkoutConfig(ctx, spec.Repo); co != nil {
+			agentRecipe = co.Agent.Recipe
+			if w, ok := co.Workflows[spec.Workflow]; ok {
+				kind = w.Base
+			}
+		}
+		if needsRecipeImage(spec, agentRecipe) {
+			if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return err
 		}
@@ -208,6 +233,8 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			return err
 		}
 	}
+	chooses := runnerChooses(ctx, spec)
+	fmt.Fprintln(cmd.ErrOrStderr(), recipeLine(spec, chooses))
 	res, err := launchRun(ctx, env, slug, spec, time.Now())
 	if err != nil {
 		return err
@@ -217,6 +244,7 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			"To see how it went, run fugaro diagnose %s; to redo it, start a new run.\n", res.Run, res.Run)
 	}
 	res.Project = env.lc.Name
+	res.Recipe = launchRecipeOf(spec, chooses)
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 
@@ -255,7 +283,7 @@ func taskText(cmd *cobra.Command, file string, args []string, optional bool) (st
 
 // newSpec builds a new run's spec, and its repository's slug, from the
 // flags, the local config and the checkout in the working directory.
-func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration) (string, *task.Spec, error) {
+func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, total time.Duration, warn io.Writer) (string, *task.Spec, error) {
 	repo := o.repo
 	if repo == "" {
 		var err error
@@ -302,7 +330,11 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 			return "", nil, err
 		}
 	}
-	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch}
+	rcp, err := chooseRecipe(ctx, env, o.recipe, checkout, checkoutRoot(ctx, repo), warn)
+	if err != nil {
+		return "", nil, err
+	}
+	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: ref, Workflow: workflow, Task: text, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
@@ -310,6 +342,59 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 		return "", nil, userErr("%v", err)
 	}
 	return slug, spec, nil
+}
+
+// chooseRecipe is the recipe of a new first run: --recipe, else the
+// checkout's agent.recipe, else default, resolved over the checkout at root,
+// the project and the catalog. With no flag and no checkout it resolves
+// default (a project default included), and a catalog default leaves the
+// choice to the runner, which reads agent.recipe at the task's ref.
+func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer) (*task.Recipe, error) {
+	name := flag
+	if name == "" {
+		if c := checkout(); c != nil {
+			name = c.Agent.Recipe
+		}
+	}
+	if name == "" {
+		name = recipe.DefaultName
+	}
+	rr, err := resolveRecipe(ctx, env, root, name, time.Now(), false)
+	if err != nil {
+		return nil, err
+	}
+	if rr.Note != "" {
+		io.WriteString(warn, noteLine(rr.Note))
+	}
+	return rr.taskRecipe(), nil
+}
+
+// runnerChooses reports whether the runner, not this CLI, decides spec's
+// recipe: a first run with no recipe in its task and no checkout here.
+func runnerChooses(ctx context.Context, spec *task.Spec) bool {
+	return spec.Recipe == nil && !spec.IsFollowUp() && checkoutConfig(ctx, spec.Repo) == nil
+}
+
+// recipeLine is the launch's one-line recipe preview (decision D3).
+func recipeLine(spec *task.Spec, chooses bool) string {
+	switch {
+	case spec.Recipe != nil:
+		return fmt.Sprintf("recipe: %s (%s)", spec.Recipe.Name, spec.Recipe.Source)
+	case chooses:
+		return fmt.Sprintf("recipe: chosen by the runner (agent.recipe in fugaro.yaml at %s, else default)", oneLine(spec.Ref))
+	}
+	return "recipe: default (catalog)"
+}
+
+// launchRecipeOf is the --json form of recipeLine; nil when the runner chooses.
+func launchRecipeOf(spec *task.Spec, chooses bool) *launchRecipe {
+	switch {
+	case spec.Recipe != nil:
+		return &launchRecipe{Name: spec.Recipe.Name, Source: spec.Recipe.Source}
+	case chooses:
+		return nil
+	}
+	return &launchRecipe{Name: recipe.DefaultName, Source: string(recipe.SourceCatalog)}
 }
 
 // OverrideCap is the longest total time a run may ask for with
@@ -789,4 +874,10 @@ func waitForLaunch(ctx context.Context, env *cloudEnv, s *runstore.Store, spec *
 func claimHolder() string {
 	host, _ := os.Hostname()
 	return fmt.Sprintf("%s/%d/%d", host, os.Getpid(), rand.Uint64())
+}
+
+// noteLine is a recipe's note as a stderr line; the note can carry text
+// from the installation's config, so it is escaped like other such text.
+func noteLine(note string) string {
+	return "note: " + pluginwire.Printable(oneLineCLI(note)) + "\n"
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -32,6 +33,7 @@ type prChain struct {
 	// Ref and Workflow are the previous run's: a follow-up keeps the base
 	// branch and workflow of the runs before it.
 	Ref, Workflow string
+	Recipe        *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
 }
 
 // resolvePR finds pull request pr of slug through the runs bucket, and
@@ -114,6 +116,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// The base the PR targets, which the previous run recorded; a record
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
+	c.Recipe = prev.Recipe
 	recorded := c.Ref != ""
 	if !recorded {
 		c.Ref = prev.Ref
@@ -253,7 +256,7 @@ func prSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tota
 	if err != nil {
 		return "", nil, false, err
 	}
-	spec, err = newFollowUpSpec(ctx, env, o, repo, c, text, total)
+	spec, err = newFollowUpSpec(ctx, env, o, repo, c, text, total, warn)
 	return slug, spec, false, err
 }
 
@@ -278,7 +281,11 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 	if err := errors.Join(err1, err2); err != nil {
 		return nil, err
 	}
-	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) {
+	haveRecipe := recipe.DefaultName
+	if have.Recipe != nil {
+		haveRecipe = have.Recipe.Name
+	}
+	if have.PR != o.pr || have.Task != text || have.Batch != o.batch || string(a) != string(b) || (o.recipe != "" && o.recipe != haveRecipe) {
 		return nil, userErr("run ID %s already holds a different task", o.runID)
 	}
 	return have, nil
@@ -287,7 +294,7 @@ func storedFollowUp(ctx context.Context, env *cloudEnv, slug string, o *runOptio
 // newFollowUpSpec is the task of a new follow-up of chain c: its branch and
 // PR, the previous run it continues, and that run's base branch and
 // workflow; nothing else is inherited.
-func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo string, c *prChain, text string, total time.Duration) (*task.Spec, error) {
+func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo string, c *prChain, text string, total time.Duration, warn io.Writer) (*task.Spec, error) {
 	workflow := c.Workflow
 	checkout := checkoutOf(ctx, repo)
 	if workflow == "" {
@@ -316,8 +323,19 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 			return nil, err
 		}
 	}
+	rcp := c.Recipe
+	if o.recipe != "" {
+		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), o.recipe, time.Now(), false)
+		if err != nil {
+			return nil, err
+		}
+		if rr.Note != "" {
+			io.WriteString(warn, noteLine(rr.Note))
+		}
+		rcp = rr.taskRecipe()
+	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
-		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch}
+		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}
 	if total > 0 {
 		spec.Overrides.TotalTimeout = total.String()
 	}
