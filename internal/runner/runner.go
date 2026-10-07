@@ -825,7 +825,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
 		r.d.Log.Info("agent.models.reviewer ignored: recipe maps reviewer to coder", "recipe", rrec.Name, "reviewer", cfg.Agent.Models.Reviewer)
 	}
-	applyRoles(&cfg.Agent, rcp)
+	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()

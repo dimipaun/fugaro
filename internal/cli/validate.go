@@ -266,9 +266,14 @@ func newValidateCmd() *cobra.Command {
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
 				lc := selectedProjectConfig(cmd.Context())
-				bp, bw := budgetProblems(cfg, lc)
-				problems, warnings = append(problems, bp...), bw
-				pp, pw := providerProblems(cmd.Context(), cfg, lc)
+				rp, rw := recipeDirProblems(filepath.Dir(path), cfg)
+				problems = append(problems, rp...)
+				// The model checks judge the roles as the effective recipe
+				// leaves them.
+				ecfg := withRecipeRoles(filepath.Dir(path), cfg)
+				bp, bw := budgetProblems(ecfg, lc)
+				problems, warnings = append(problems, bp...), append(bw, rw...)
+				pp, pw := providerProblems(cmd.Context(), ecfg, lc)
 				problems, warnings = append(problems, pp...), append(warnings, pw...)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
