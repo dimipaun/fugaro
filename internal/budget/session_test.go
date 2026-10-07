@@ -929,3 +929,45 @@ func TestAdmitNeedsMaxReserveInEveryMode(t *testing.T) {
 		}
 	}
 }
+
+func TestStartKeepsRecipe(t *testing.T) {
+	f := newFixture(t)
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
+		t.Fatal(h, err)
+	}
+	if err := s.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Stage: "bootstrap"}); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Finish(context.Background(), "succeeded")
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e == nil || e["recipe"] != "claude-solo" {
+		t.Fatalf("entry = %v", e)
+	}
+}
+
+// Review Focus 3: rules deployed before 0.5.0 refuse the new key (and the
+// whole entry with it); the run goes on without it.
+func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
+	f := newFixture(t)
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
+		t.Fatal(h, err)
+	}
+	f.db.DenyNext(1)
+	if err := s.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Stage: "bootstrap"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Finish(context.Background(), "succeeded")
+	e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+	if e == nil || e["stage"] != "bootstrap" || e["recipe"] != nil {
+		t.Fatalf("entry = %v", e)
+	}
+	s.Update(func(e *budget.AgentEntry) { e.Stage, e.Recipe = "review", "claude-solo" })
+	waitFor(t, "a heartbeat with the new stage", func() bool {
+		e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
+		return e != nil && e["stage"] == "review"
+	})
+	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["recipe"] != nil {
+		t.Fatalf("the recipe came back: %v", e)
+	}
+}

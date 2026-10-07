@@ -193,6 +193,9 @@
           "reviewer": {
             ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },
+          "recipe": {
+            ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
+          },
           "auth": {
             ".validate": "(newData.isString() && newData.val().length <= 200) && (auth.token.rb != null && newData.parent().child('requestedBy').val() == auth.token.rb)"
           },

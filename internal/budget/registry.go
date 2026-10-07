@@ -30,7 +30,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Auth, &e.PRURL, &e.Halted} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted} {
 		*p = clipString(*p)
 	}
 }
@@ -47,9 +47,20 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 	s.mu.Lock()
 	s.entry = entry
 	s.mu.Unlock()
-	err := s.retryBoot(ctx, "registry", func() error {
+	write := func() error {
 		return s.db.Patch(ctx, "", map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): entry})
-	})
+	}
+	err := s.retryBoot(ctx, "registry", write)
+	if errors.Is(err, ErrPermissionDenied) && entry.Recipe != "" {
+		// Rules from before 0.5.0 have no recipe key, and their $other
+		// refuses the whole entry: go on without it for the whole session.
+		s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init to update the rules")
+		entry.Recipe = ""
+		s.mu.Lock()
+		s.entry, s.noRecipe = entry, true
+		s.mu.Unlock()
+		err = s.retryBoot(ctx, "registry", write)
+	}
 	if err != nil {
 		return err
 	}
@@ -112,6 +123,9 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	fn(&s.entry)
+	if s.noRecipe {
+		s.entry.Recipe = ""
+	}
 	clipEntry(&s.entry)
 }
 

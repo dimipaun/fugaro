@@ -111,6 +111,7 @@ type Session struct {
 
 	mu       sync.Mutex
 	entry    AgentEntry
+	noRecipe bool // the rules refused the recipe key at Start
 	haltOnce sync.Once
 	halted   bool
 	used     func() Micros
