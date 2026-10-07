@@ -822,6 +822,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
 	}
 	r.plan = plan
+	applyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()

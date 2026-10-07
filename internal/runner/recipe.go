@@ -104,3 +104,16 @@ func (r *run) readRepoRecipe(ctx context.Context, name string) (data []byte, fou
 	}
 	return data, true, nil
 }
+
+// applyRoles makes the reviewer role run as the coder role does when the
+// recipe maps reviewer to coder: the coder's model and per-call output
+// limit. The review prompt, its fresh session and the readiness rule stay
+// the reviewer's. It runs before every model check, so the pins, the
+// allow-list and the prices see ordinary model IDs.
+func applyRoles(a *config.Agent, rcp *recipe.Recipe) {
+	if !rcp.ReviewerIsCoder {
+		return
+	}
+	a.Models.Reviewer = a.ModelFor(config.RoleCoder)
+	a.MaxOutputTokens.Reviewer = a.MaxOutputTokens.Coder
+}
