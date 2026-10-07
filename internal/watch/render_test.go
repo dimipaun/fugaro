@@ -318,3 +318,11 @@ func TestFrameShortTerminalPinsStatusAndBanner(t *testing.T) {
 		}
 	}
 }
+
+func TestFrameShowsRecipe(t *testing.T) {
+	v := fixture()
+	v.Repos[0].Runs[0].Recipe = "claude-solo"
+	if out := frame(v, 140, 0); !strings.Contains(out, "opus / sonnet · claude-solo") {
+		t.Fatalf("frame:\n%s", out)
+	}
+}

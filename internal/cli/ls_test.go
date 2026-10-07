@@ -917,3 +917,16 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestLsRecipeColumn(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Recipe: "default"}}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || strings.Contains(b.String(), "RECIPE") {
+		t.Fatalf("default only:\n%s", b.String())
+	}
+	b.Reset()
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"})
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "RECIPE") || !strings.Contains(b.String(), "claude-solo") {
+		t.Fatalf("with a recipe:\n%s", b.String())
+	}
+}

@@ -58,10 +58,13 @@ type Row struct {
 	Run      string `json:"run"`
 	Repo     string `json:"repo"`
 	Workflow string `json:"workflow,omitempty"`
-	RunID    string `json:"run_id"`
-	Status   string `json:"status"`
-	Stage    string `json:"stage,omitempty"`
-	Reason   string `json:"reason,omitempty"`
+	// Recipe is the run's recipe: the record's, else the task's; "" when
+	// neither names one (a default run launched before 0.5.0, or not started).
+	Recipe string `json:"recipe,omitempty"`
+	RunID  string `json:"run_id"`
+	Status string `json:"status"`
+	Stage  string `json:"stage,omitempty"`
+	Reason string `json:"reason,omitempty"`
 	// Halt is why a halted run was halted.
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
@@ -156,6 +159,12 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 	}
 	r, e := in.Record, in.Exec
 	followUpFields(&row, in.Task, r)
+	switch {
+	case r != nil && r.Recipe != nil:
+		row.Recipe = r.Recipe.Name
+	case in.Task != nil && in.Task.Recipe != nil:
+		row.Recipe = in.Task.Recipe.Name
+	}
 	if r != nil {
 		row.Stage = r.Stage
 		if r.Reason != "" {

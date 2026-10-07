@@ -104,6 +104,7 @@ type RunRow struct {
 	Round     string
 	Verify    string
 	Models    string
+	Recipe    string // the run's recipe when not default
 	Auth      string
 	Notional  bool // auth is oauth: Spent is notional dollars
 	Spent     budget.Micros
@@ -342,6 +343,7 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 		Spent:     nonneg(e.Spent),
 		HasSpent:  e.Spent != 0,
 		Halted:    clean(e.Halted),
+		Recipe:    clean(e.Recipe),
 		StartedAt: e.StartedAt,
 	}
 	if e.Round > 0 {

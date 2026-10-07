@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -508,7 +509,12 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		fmt.Fprintln(w, line)
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR")
+	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
+	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
+	if showRecipe {
+		header += "\tRECIPE"
+	}
+	fmt.Fprintln(tw, header)
 	for _, r := range rows {
 		cost := fmt.Sprintf("$%.2f", r.Cost.TotalUSD)
 		if r.Cost.ModelBasis == runstore.BasisSubscription && r.Cost.ModelUSD > 0 {
@@ -517,7 +523,15 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 		if !r.Cost.ComputeEstimated {
 			cost += ", compute not estimated" // never "free" (design §10.1)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		line := fmt.Sprintf("%s\t%s\t%s\t%s\t%s\t%s", oneLine(r.Run), oneLine(statusCell(r)), oneLine(r.Stage), age(now.Sub(r.Created)), cost, prColumn(r))
+		if showRecipe {
+			name := r.Recipe
+			if name == "" {
+				name = recipe.DefaultName
+			}
+			line += "\t" + oneLine(name)
+		}
+		fmt.Fprintln(tw, line)
 	}
 	if err := tw.Flush(); err != nil {
 		return err
