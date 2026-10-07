@@ -2,6 +2,7 @@
 # Schema: https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/fugaro.schema.json
 version: 1
 project: fugaro
+gcp_project: fugaro-dev
 
 git:
   provider: github
