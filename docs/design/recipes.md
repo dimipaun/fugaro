@@ -64,7 +64,7 @@ Task-shaped recipes (fix a bug, add a feature, refactor) wait until the format h
 
 - **Choosing.** The first of: `--recipe NAME` (on `fugaro run` and the follow-up command), `agent.recipe: NAME` in `fugaro.yaml`, `default`. A follow-up keeps the recipe of the run it continues unless one is named.
 - **Finding.** For a name, the first match wins: repository `.fugaro/recipes/<name>.yaml`; project `fugaro/recipes/<name>.yaml` in the runs bucket (`fugaro-runs-<gcp_project>`); catalog. A project recipe named `default` replaces the catalog default for the whole project.
-- **Who resolves.** The CLI resolves the project and catalog layers and embeds the result in `task.json` with its sha256. The runner reads the repository layer from the checkout (the base branch for follow-ups, as for `fugaro.yaml`) at bootstrap, parses it once, and prefers it over the embedded recipe.
+- **Who resolves.** The CLI resolves all three layers so a malformed or unknown recipe fails before any cloud work: it reads the repository layer from the local working tree's `.fugaro/recipes/`, then the project and catalog layers, and embeds a project or catalog recipe in `task.json` with its sha256. When the repository file wins, the task carries only its name and source; the runner reads that file from the checkout at the task's ref at bootstrap, parses it once, and fails the run with "commit and push it" if it is not there. A first run with no recipe in the task uses `agent.recipe` from the `fugaro.yaml` it read; a follow-up gets its recipe only from the launching CLI (`--recipe`, else the previous run's task).
 - **Project storage.** `fugaro recipes publish <file>` writes `fugaro/recipes/<name>.yaml`. The CLI reads it with the same strict read, cache (24 h fresh, 7 days offline with a warning) and trust rules as the shared config (`internal/localcfg/sharedcache.go`, `blobx.ReadStrict`). Publishing is refused in a coding-agent session and exits non-zero when nothing was written. Only default-named runs buckets are supported, as for the shared config.
 - **Commands.** `fugaro recipes ls`, `show <name>` (with the layer it comes from), `publish <file>`, `validate <file>`. `fugaro validate` also checks the repository's `.fugaro/recipes/`.
 
@@ -85,14 +85,16 @@ Task-shaped recipes (fix a bug, add a feature, refactor) wait until the format h
 ## 8. Records and the dashboard
 
 - The run record (`result.json`) gets `recipe: {name, source, sha256}`, where source is `repo`, `project` or `catalog`.
-- The registry entry (`agents/<slug>/<run>`) gets the recipe name. This needs a field in `budget.AgentEntry`, `clipEntry` and the RTDB rules.
+- The registry entry (`agents/<slug>/<run>`) gets the recipe name for non-`default` recipes. This needs a field in `budget.AgentEntry`, `clipEntry` and the RTDB rules, which only `fugaro init` deploys.
 - `fugaro watch` and `fugaro ls` show it.
 
 ## 9. Compatibility and errors
 
 - A task spec without a recipe field runs as `default`. Queued tasks stay valid.
 - **Version skew.** A runner older than this feature rejects a task spec carrying a recipe. The CLI therefore checks the workflow's build record (`base_ref`, as `init --anchor` does for `gcp_project`) and refuses to launch a recipe run on an image older than the release that ships recipes, naming the fix: `init --base <kind>`, `init --repo`, `image build`. Runs of `default` carry no recipe field and are unaffected.
-- A malformed or unknown recipe fails at the CLI before any cloud work, with the path of the problem. A bad repository recipe found by the runner at bootstrap ends the run as a failed draft with the reason in the PR comment; it never falls back to `default` silently.
+- A malformed or unknown recipe fails at the CLI before any cloud work, with the path of the problem. A bad repository recipe found by the runner at bootstrap ends the run as `infra_error` with no outcome and the reason in the run's error, because bootstrap runs before any PR exists; it never falls back to `default` silently.
+- **`agent.recipe` in `fugaro.yaml`.** Binaries older than 0.5.0 refuse the key as unknown, exactly as they did `gcp_project`. `fugaro validate` warns when it is set, the image check runs whenever the checkout sets it, and the 0.5.0 Highlights say every CLI, CI pin and job image must be on 0.5.0 before it is merged.
+- **Old RTDB rules.** The deployed rules refuse an entry with an unknown key, which would halt runs on an installation that has not rerun `fugaro init`. The runner therefore writes the registry `recipe` field only for recipes other than `default`, and drops it once with a warning naming `fugaro init` if the rules refuse the entry.
 
 ## 10. Testing
 
@@ -117,8 +119,10 @@ Released as 0.5.0.
 
 Check steps run by the runner, `goto` and bounces, `extends`, arbitrary roles and per-recipe model pins, `on_pass` and `on_fail`, task-shaped catalog recipes, executable recipes (which need a sandboxing story).
 
-## 13. Open for the implementation plan
+## 13. Settled in the implementation plan
 
-- The exact RTDB rules change and the order of deploying it against existing installations.
-- The 0.5.0 base-image check: which build-record field names the minimum, and the wording of the refusal.
-- Whether `fugaro run` shows the resolved recipe and its source before launching.
+`docs/plans/2026-10-07-recipes.md` settles these, in its decisions D1 to D11:
+
+- RTDB rules: a `recipe` string under the agent entry, deployed only by `fugaro init`, with the two guards in section 9.
+- The 0.5.0 image check reads the build record's `base_ref`, against a `recipesSince = "0.5.0"` constant.
+- `fugaro run` prints `recipe: <name> (<source>)` to stderr before launching, and `--json` carries the same.
