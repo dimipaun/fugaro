@@ -80,3 +80,21 @@ func TestRecipeCacheRefusesOversizedAndBadNames(t *testing.T) {
 		t.Error("a bad project name was written")
 	}
 }
+
+func TestRecipeCacheEscapedMaxRecipe(t *testing.T) {
+	dir := t.TempDir()
+	getenv := func(k string) string {
+		if k == "XDG_CACHE_HOME" {
+			return dir
+		}
+		return ""
+	}
+	e := SharedCacheEntry{GCPProject: "proj-1234", Bucket: "b", CheckedAt: time.Now(), YAML: strings.Repeat("<", 16<<10)}
+	if err := SaveRecipeCache(getenv, "aurora", "team", e); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := LoadRecipeCache(getenv, "aurora", "team")
+	if !ok || got.YAML != e.YAML {
+		t.Fatal("a 16 KiB recipe of escaped characters did not round-trip")
+	}
+}

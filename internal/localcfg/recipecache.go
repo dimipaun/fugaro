@@ -34,7 +34,7 @@ func LoadRecipeCache(getenv func(string) string, project, name string) (SharedCa
 		return SharedCacheEntry{}, false
 	}
 	data, err := os.ReadFile(path)
-	if err != nil || len(data) > 2*recipe.MaxBytes+1024 {
+	if err != nil || len(data) > 6*recipe.MaxBytes+1024 {
 		return SharedCacheEntry{}, false
 	}
 	var e SharedCacheEntry

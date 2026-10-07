@@ -88,7 +88,7 @@ func fetchProjectRecipe(ctx context.Context, env *cloudEnv, now time.Time, name 
 	case isUnreachable(err) && ours && cached.UsableOffline(now):
 		return []byte(cached.YAML), fmt.Sprintf("using the cached project recipe %s, %s old: gs://%s is unreachable", name, ageDays(now.Sub(cached.CheckedAt)), bucket), nil
 	}
-	return nil, "", bucketErr("gs://"+bucket, "reading "+key, err)
+	return nil, "", bucketErrFor("gs://"+bucket, "reading "+key, "the project recipe "+name, err)
 }
 
 // resolveRecipe finds name in the repository checkout at root ("" for none),
@@ -112,8 +112,8 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			return &resolvedRecipe{Name: name, Source: recipe.SourceRepo, Text: data, Recipe: rcp, Where: where}, nil
 		}
 	}
-	var note string
-	if projectRecipesNote(env.lc) == "" {
+	note := projectRecipesNote(env.lc)
+	if note == "" {
 		data, n, err := fetchProjectRecipe(ctx, env, now, name, refresh)
 		if err != nil {
 			return nil, err
@@ -127,7 +127,6 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			}
 			return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: n}, nil
 		}
-		note = n
 	}
 	if text, ok := recipe.CatalogText(name); ok {
 		rcp, err := parseRecipeAt(text, name, "catalog recipe "+name)
