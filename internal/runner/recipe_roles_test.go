@@ -40,10 +40,15 @@ func soloGW(t *testing.T, recipeLine, extra string) string {
 }
 
 func TestRecipeSoloPinsTheCoder(t *testing.T) {
-	g := newGW(t, soloGW(t, "  recipe: claude-solo\n", ""), "observe", "")
-	rec, err := g.run(t, implement("feature"), review("ship", 0))
-	if err != nil || rec.Outcome != runstore.OutcomeReady {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
+	reply := anthropicfake.MessageOK(sonnet, pricing.Usage{Output: 10})
+	g := newGW(t, soloGW(t, "  recipe: claude-solo\n", ""), "observe", "", reply)
+	var st []int
+	rec, err := g.run(t, implement("feature"), calling(&st, review("ship", 0), call{sonnet, 100}, call{opus, 100}))
+	if err != nil || len(st) != 2 || st[0] != 200 || st[1] != 400 {
+		t.Fatalf("rec = %+v, err = %v, statuses = %v (the gateway pins the coder's model for the review stage and refuses the old reviewer's)", rec, err, st)
+	}
+	if n := strings.Count(g.logs.String(), "agent.models.reviewer ignored: recipe maps reviewer to coder"); n != 1 {
+		t.Fatalf("the dropped reviewer model was logged %d times:\n%s", n, g.logs.String())
 	}
 	c := g.agent.calls
 	if c[1].Model != sonnet {
