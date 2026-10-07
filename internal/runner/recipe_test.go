@@ -9,6 +9,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/recipe"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -215,7 +216,7 @@ func TestRecipeFollowUpIgnoresAgentRecipe(t *testing.T) {
 func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
 	h := followUpHarness(t, "", func(h *harness) {
 		commitToRemote(t, h, func(dir string) {
-			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/big.yaml": "# " + strings.Repeat("x", recipe.MaxBytes)})
+			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/big.yaml": "# " + strings.Repeat("x", 2<<20)})
 		})
 	})
 	h.followUp(t, followID, runID, "Tidy up.")
@@ -227,6 +228,7 @@ func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
 	if err := h.store.WriteTask(context.Background(), spec); err != nil {
 		t.Fatal(err)
 	}
+	defer runner.FailOnShowRepoFile(func() { t.Error("the base file was read before its size was checked") })()
 	rec, err := h.run(t, implement("tidy"))
 	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "16 KiB") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)

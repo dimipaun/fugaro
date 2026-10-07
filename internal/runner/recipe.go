@@ -1,8 +1,12 @@
 package runner
 
 import (
+	"errors"
+	"io/fs"
+
 	"context"
 	"fmt"
+	"github.com/dimipaun/fugaro/internal/gitops"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -55,6 +59,12 @@ func (r *run) resolveRecipe(ctx context.Context, cfg *config.Config) (*recipe.Re
 	return rcp, runstore.RecipeRecord{Name: name, Source: string(src), SHA256: sum}, nil
 }
 
+// showRepoFile is the read of a base file; a test replaces it to prove the
+// size check comes first.
+var showRepoFile = func(ctx context.Context, repo *gitops.Repo, rev, rel string) ([]byte, error) {
+	return repo.ShowFile(ctx, rev, rel)
+}
+
 // readRepoRecipe reads .fugaro/recipes/<name>.yaml: for a first run from the
 // checkout at the task's ref, for a follow-up from origin/<ref> (the base, as
 // readBaseConfig reads fugaro.yaml). Only a regular file is read: a symbolic
@@ -73,7 +83,17 @@ func (r *run) readRepoRecipe(ctx context.Context, name string) (data []byte, fou
 		case mode != "100644" && mode != "100755":
 			return nil, false, fmt.Errorf("%s at %s is not a regular file", rel, rev)
 		}
-		if data, err = r.repo.ShowFile(ctx, rev, rel); err != nil {
+		// Size the blob first: show would load all of it.
+		n, err := r.repo.BlobSize(ctx, rev, rel)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil, false, nil
+		case err != nil:
+			return nil, false, err
+		case n > recipe.MaxBytes:
+			return nil, false, fmt.Errorf("%s is %d bytes, over the 16 KiB limit", rel, n)
+		}
+		if data, err = showRepoFile(ctx, r.repo, rev, rel); err != nil {
 			return nil, false, err
 		}
 	} else {
