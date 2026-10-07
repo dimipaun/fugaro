@@ -98,7 +98,7 @@ func TestWiringStageConfirmsAndMergesOnly(t *testing.T) {
 			t.Errorf("the merged file lacks %s:\n%s", want, data)
 		}
 	}
-	for _, want := range []string{"Updated", "git diff", "installs by itself", "/plugin marketplace update fugaro"} {
+	for _, want := range []string{"Updated", "git diff", "Claude Code installs the plugin", "/plugin install fugaro@fugaro", "/plugin marketplace update fugaro"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("the output lacks %q:\n%s", want, out.String())
 		}
