@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,5 +104,91 @@ func TestValidateAliasesReviewerForRecipe(t *testing.T) {
 	path = budgetProject(t, ceiling, agent+"\n  recipe: default")
 	if out, err = validateProblems(t, path); ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") {
 		t.Fatalf("default recipe: exit %d: %s", ExitCode(err), out)
+	}
+}
+
+func TestRecipeDirRefusesSymlinks(t *testing.T) {
+	// A symlinked recipe file.
+	isolateProjects(t, t.TempDir())
+	dir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "x.yaml")
+	if err := os.WriteFile(outside, []byte("version: 1\nname: loop\nsteps:\n  - review: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".fugaro", "recipes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, ".fugaro", "recipes", "loop.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": strings.Replace(validateYAML, "%s", "", 1)})
+	out, _, err := execute(t, "validate", "--json", filepath.Join(dir, "fugaro.yaml"))
+	var doc validateOutput
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("%q: %v", out, jerr)
+	}
+	if ExitCode(err) != ExitUserError || !has(doc.Problems, ".fugaro/recipes/loop.yaml", "not a regular file") {
+		t.Fatalf("file link: doc = %+v, err = %v", doc, err)
+	}
+	// A symlinked recipes directory.
+	dir2 := t.TempDir()
+	real := filepath.Join(t.TempDir(), "recipes")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(real, "loop.yaml"), []byte("version: 1\nname: loop\nsteps:\n  - review: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir2, ".fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real, filepath.Join(dir2, ".fugaro", "recipes")); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, dir2, map[string]string{"fugaro.yaml": strings.Replace(validateYAML, "%s", "", 1)})
+	out, _, err = execute(t, "validate", "--json", filepath.Join(dir2, "fugaro.yaml"))
+	doc = validateOutput{}
+	if jerr := json.Unmarshal([]byte(out), &doc); jerr != nil {
+		t.Fatalf("%q: %v", out, jerr)
+	}
+	if ExitCode(err) != ExitUserError || !has(doc.Problems, ".fugaro/recipes/loop.yaml", "is not a directory") {
+		t.Fatalf("dir link: doc = %+v, err = %v", doc, err)
+	}
+}
+
+func TestRecipeDirNonYAMLAndBadName(t *testing.T) {
+	doc, err := validateDir(t, "", map[string]string{
+		".fugaro/recipes/notes.txt":     "x",
+		".fugaro/recipes/Bad_Name.yaml": "version: 1\nname: bad\nsteps:\n  - review: {}\n",
+	})
+	if ExitCode(err) != ExitUserError || !has(doc.Warnings, ".fugaro/recipes/notes.txt", "is not a .yaml file") ||
+		!has(doc.Problems, ".fugaro/recipes/Bad_Name.yaml", "not a recipe name") {
+		t.Fatalf("doc = %+v, err = %v", doc, err)
+	}
+}
+
+func TestValidateProjectRecipeAnnotatesReviewerProblems(t *testing.T) {
+	const agent = "  auth: api-key\n  model: claude-sonnet-5-5\n  models: { background: claude-haiku-4-5, reviewer: claude-opus-5-5 }"
+	const ceiling = "budget: { allowed_models: [claude-sonnet-5-5, claude-haiku-4-5] }\n"
+	path := budgetProject(t, ceiling, agent+"\n  recipe: team")
+	out, err := validateProblems(t, path)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "agent.models.reviewer") || !strings.Contains(out, "(if project recipe team maps reviewer to coder, this key is ignored; remove it)") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+	// A recipe found locally gets no such hint.
+	path = budgetProject(t, ceiling, agent+"\n  recipe: default")
+	if out, err = validateProblems(t, path); !strings.Contains(out, "agent.models.reviewer") || strings.Contains(out, "if project recipe") {
+		t.Fatalf("exit %d: %s", ExitCode(err), out)
+	}
+}
+
+func TestValidateWarnsCatalogRecipeMayBeShadowed(t *testing.T) {
+	doc, _ := validateDir(t, "  recipe: claude-solo\n", map[string]string{})
+	if !has(doc.Warnings, "agent.recipe", "a project recipe of this name takes precedence") {
+		t.Fatalf("warnings = %+v", doc.Warnings)
+	}
+	doc, _ = validateDir(t, "  recipe: claude-solo\n", map[string]string{".fugaro/recipes/claude-solo.yaml": "version: 1\nname: claude-solo\nsteps:\n  - review: {}\n"})
+	if has(doc.Warnings, "agent.recipe", "takes precedence") {
+		t.Fatalf("a repository recipe wins over any project one: %+v", doc.Warnings)
 	}
 }

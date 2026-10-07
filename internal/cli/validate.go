@@ -275,6 +275,7 @@ func newValidateCmd() *cobra.Command {
 				problems, warnings = append(problems, bp...), append(bw, rw...)
 				pp, pw := providerProblems(cmd.Context(), ecfg, lc)
 				problems, warnings = append(problems, pp...), append(warnings, pw...)
+				annotateProjectRecipe(filepath.Dir(path), cfg, problems)
 				if lc != nil && lc.Name == cfg.Project && setsPolicy(cfg) {
 					if n := branchNote(cmd.Context(), path); n != "" {
 						warnings = append(warnings, config.Problem{Path: "branch", Message: n})

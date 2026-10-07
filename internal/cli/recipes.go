@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -107,6 +108,9 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 		for _, e := range entries {
 			name, ok := strings.CutSuffix(e.Name(), ".yaml")
 			if !ok || !recipe.NameRE.MatchString(name) {
+				if !strings.HasPrefix(e.Name(), ".") {
+					notes = append(notes, fmt.Sprintf("skipped %s/%s: not <recipe name>.yaml (the runner reads only that)", recipe.RepoDir, e.Name()))
+				}
 				continue
 			}
 			data, found, err := recipe.ReadRepoFile(root, name)
@@ -130,6 +134,7 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 			}
 			name, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, recipe.ObjectPrefix), ".yaml")
 			if !ok || !recipe.NameRE.MatchString(name) {
+				notes = append(notes, fmt.Sprintf("skipped gs://fugaro-runs-%s/%s: not <recipe name>.yaml (the runner reads only that)", env.lc.GCPProject, obj.Key))
 				continue
 			}
 			data, note, err := fetchProjectRecipe(ctx, env, now, name, true)
@@ -244,24 +249,15 @@ func newRecipesPublishCmd() *cobra.Command {
 			if m := agentMarker(os.Getenv); m != "" {
 				return userErr("nothing was published: fugaro recipes publish writes to the cloud and changes the loop of every run of the project that names this recipe: %s", initflow.AgentRefusal(m))
 			}
-			fi, err := os.Stat(args[0])
+			data, err := readRecipeFile(args[0])
 			if err != nil {
 				return userErr("nothing was published: %v", err)
 			}
-			if fi.Size() > recipe.MaxBytes {
-				return userErr("nothing was published: %s is %d bytes, over the 16 KiB limit", args[0], fi.Size())
-			}
-			data, err := os.ReadFile(args[0])
-			if err != nil {
-				return userErr("nothing was published: %v", err)
-			}
-			rcp, ps := recipe.Parse(data)
-			if len(ps) > 0 {
+			// The same checks as fugaro recipes validate.
+			if ps := recipeFileProblems(args[0], data); len(ps) > 0 {
 				return userErr("nothing was published: %s is invalid: %s", args[0], pluginwire.Printable(recipe.ProblemsText(ps)))
 			}
-			if stem, ok := strings.CutSuffix(filepath.Base(args[0]), ".yaml"); !ok || stem != rcp.Name {
-				return userErr("nothing was published: the file must be named %s.yaml, after the recipe's name (the runner looks a recipe up by its file name)", rcp.Name)
-			}
+			rcp, _ := recipe.Parse(data)
 			env, err := openCloud(ctx, o)
 			if err != nil {
 				return err
@@ -274,24 +270,12 @@ func newRecipesPublishCmd() *cobra.Command {
 				return userErr("nothing was published: the project's storage endpoint is a fake")
 			}
 			key := recipe.ObjectKey(rcp.Name)
-			// Show what a replacement changes, before it happens.
-			old, _, err := env.bucket.ReadMaxStrict(ctx, key, recipe.MaxBytes)
-			switch {
-			case err == nil:
-				if string(old) == string(data) {
-					fmt.Fprintf(cmd.ErrOrStderr(), "note: the project already has this exact %s; writing it again\n", rcp.Name)
-				} else {
-					fmt.Fprintf(cmd.ErrOrStderr(), "replacing the project's %s (sha256 %s -> %s):\n%s", rcp.Name, recipe.Sum(old), recipe.Sum(data), printableLines(lineDiff(string(old), string(data))))
-				}
-			case errors.Is(err, blobx.ErrNotExist), errors.Is(err, blobx.ErrTooLarge):
-			default:
-				return remote(fmt.Errorf("nothing was published: reading %s before replacing it: %w", key, err))
-			}
-			if err := env.bucket.Bucket.WriteAll(ctx, key, data, &blob.WriterOptions{ContentType: "application/yaml"}); err != nil {
-				return remote(fmt.Errorf("nothing was published: writing %s: %w", key, err))
+			gen, err := publishRecipe(ctx, cmd.ErrOrStderr(), env.bucket, key, rcp.Name, data)
+			if err != nil {
+				return err
 			}
 			bucket := "fugaro-runs-" + env.lc.GCPProject
-			_ = localcfg.SaveRecipeCache(os.Getenv, env.lc.Name, rcp.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, CheckedAt: time.Now(), YAML: string(data)})
+			_ = localcfg.SaveRecipeCache(os.Getenv, env.lc.Name, rcp.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
 			fmt.Fprintf(cmd.OutOrStdout(), "published %s to gs://%s/%s (sha256 %s)\n", rcp.Name, bucket, key, recipe.Sum(data))
 			if _, ok := recipe.CatalogText(rcp.Name); ok {
 				fmt.Fprintf(cmd.ErrOrStderr(), "note: it replaces the catalog's %s for every repository of project %s that has no %s/%s.yaml\n", rcp.Name, env.lc.Name, recipe.RepoDir, rcp.Name)
@@ -303,19 +287,85 @@ func newRecipesPublishCmd() *cobra.Command {
 	return cmd
 }
 
-// recipeFileProblems are a recipe file's problems: the parse's, and, for a
-// file under .fugaro/recipes/, a file name that is not the recipe's name.
+// readRecipeFile reads a recipe file the user names: a regular file only
+// (so a FIFO or device is never read), opened without blocking and read
+// through a cap of the recipe size limit.
+func readRecipeFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, recipe.MaxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > recipe.MaxBytes {
+		return nil, fmt.Errorf("%s is over the 16 KiB limit", path)
+	}
+	return data, nil
+}
+
+// recipeFileProblems are a recipe file's problems: the parse's, and a file
+// name that is not the recipe's name plus .yaml (the runner and the project's
+// bucket both look a recipe up by it, so publish needs it too).
 func recipeFileProblems(path string, data []byte) []recipe.Problem {
 	rcp, ps := recipe.Parse(data)
 	if len(ps) > 0 {
 		return ps
 	}
-	dir := filepath.Dir(path)
-	stem := strings.TrimSuffix(filepath.Base(path), ".yaml")
-	if filepath.Base(dir) == "recipes" && filepath.Base(filepath.Dir(dir)) == ".fugaro" && stem != rcp.Name {
-		return []recipe.Problem{{Path: "name", Message: fmt.Sprintf("the file is %s.yaml but the recipe names itself %q; the file name and the name must agree (the runner looks a recipe up by its file name)", stem, rcp.Name)}}
+	base := filepath.Base(path)
+	if base != rcp.Name+".yaml" {
+		return []recipe.Problem{{Path: "name", Message: fmt.Sprintf("the file is %s but the recipe names itself %q; the file name must be %s.yaml, the file name and the name must agree (the runner looks a recipe up by its file name)", base, rcp.Name, rcp.Name)}}
 	}
 	return nil
+}
+
+// recipePublishRace is a test seam: it runs between publish's read of the
+// existing object and its conditional write.
+var recipePublishRace = func(ctx context.Context, b *blobx.Bucket, key string) {}
+
+// publishRecipe writes data to key, showing what it replaces on w, and only
+// if the object is still the one that was shown (or still absent): a
+// concurrent publisher is refused, never overwritten. It returns the new
+// generation.
+func publishRecipe(ctx context.Context, w io.Writer, b *blobx.Bucket, key, name string, data []byte) (int64, error) {
+	old, gen, err := b.ReadMaxStrict(ctx, key, recipe.MaxBytes)
+	switch {
+	case err == nil:
+		if string(old) == string(data) {
+			fmt.Fprintf(w, "note: the project already has this exact %s; writing it again\n", name)
+		} else {
+			fmt.Fprintf(w, "replacing the project's %s (sha256 %s -> %s):\n%s", name, recipe.Sum(old), recipe.Sum(data), printableLines(lineDiff(string(old), string(data))))
+		}
+	case errors.Is(err, blobx.ErrNotExist):
+	case errors.Is(err, blobx.ErrTooLarge):
+		// Its generation is not known, so it can't be replaced under a
+		// precondition, and a blind write is not made.
+		return 0, userErr("nothing was published: the existing object %s is an oversized one (over 16 KiB): delete it by hand, then run this again", key)
+	default:
+		return 0, remote(fmt.Errorf("nothing was published: reading %s before replacing it: %w", key, err))
+	}
+	recipePublishRace(ctx, b, key)
+	if err == nil {
+		gen, err = b.ReplaceIf(ctx, key, data, gen, old)
+	} else {
+		gen, err = b.Create(ctx, key, data, "application/yaml")
+	}
+	switch {
+	case errors.Is(err, blobx.ErrConflict), errors.Is(err, blobx.ErrExists):
+		return 0, userErr("nothing was published: another publisher changed %s while this ran; look at it (fugaro recipes show %s) and run this again", key, name)
+	case err != nil:
+		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", key, err))
+	}
+	return gen, nil
 }
 
 func newRecipesValidateCmd() *cobra.Command {
@@ -325,7 +375,7 @@ func newRecipesValidateCmd() *cobra.Command {
 		Short: "Check a recipe file (no cloud access)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			data, err := os.ReadFile(args[0])
+			data, err := readRecipeFile(args[0])
 			if err != nil {
 				return userErr("%v", err)
 			}
