@@ -6,17 +6,27 @@ A Fugaro run implements the task, then loops: an optional first-line review by t
 
 ## 1. What a recipe is
 
-A recipe is a small YAML file:
+A recipe is a small YAML file. This is the catalog's `cheap-loop-senior` exactly as `fugaro recipes show cheap-loop-senior` prints it (without the header):
 
 ```yaml
 version: 1
 name: cheap-loop-senior
-description: Cheap first-line review/fix loop, then one senior review
-roles:                       # optional; aliasing only
-  reviewer: coder            # the reviewer role uses the coder's model
+description: Cheap first-line review/fix loop by the coder's model (2 rounds), then one senior review
 steps:
-  - first_line: { max_rounds: 2 }   # optional
-  - review:     { max_rounds: 3 }   # required
+  - first_line: { max_rounds: 2 }
+  - review: { max_rounds: 1 }
+```
+
+The keys are `version` (must be 1), `name`, `description` (optional, at most 200 bytes), `roles` (optional, see below) and `steps`. `version`, `name` and `steps` are required. The catalog's `claude-solo` shows `roles`:
+
+```yaml
+version: 1
+name: claude-solo
+description: One model plays both parts. The coder's model reviews in a fresh session, one senior round, no first line.
+roles:
+  reviewer: coder
+steps:
+  - review: { max_rounds: 1 }
 ```
 
 - `implement` always runs first. `steps` lists what follows it, in order.
@@ -33,8 +43,8 @@ steps:
 
 | Name | Behaviour |
 |---|---|
-| `default` | Today's loop. A first-line review only when `agent.first_line_review` turns it on (by default `auto`: only when a provider serves the coder and none serves the reviewer), for `agent.first_line_rounds` rounds, then the senior review for `agent.review_rounds` rounds. |
-| `cheap-loop-senior` | Two first-line rounds by the coder's model, then one senior round. For a cheap coder with a Claude reviewer. |
+| `default` | Today's loop. A first-line review only when `agent.first_line_review` turns it on (`auto`, the default for that key, turns it on when a provider serves the coder and none serves the reviewer), for `agent.first_line_rounds` rounds, then the senior review for `agent.review_rounds` rounds. |
+| `cheap-loop-senior` | Two first-line rounds by the coder's model, then one senior round. |
 | `claude-solo` | `reviewer: coder`: the coder's model also reviews, in a fresh session, for one round. No first line. |
 
 Only the catalog's own `default` follows `agent.first_line_review`. Every other recipe, including a `default` you define yourself in the repository or the project, is taken as written: a `first_line` step in it always runs.
@@ -47,7 +57,9 @@ The first of these wins:
 2. `agent.recipe: NAME` in `fugaro.yaml`
 3. `default`
 
-A follow-up (`fugaro run --pr`) keeps the recipe of the run it continues unless `--recipe` names another. `fugaro run` prints `recipe: <name> (<source>)` to stderr before it launches.
+`agent.recipe` applies to first runs only. A follow-up (`fugaro run --pr`) keeps the recipe of the run it continues unless `--recipe` names another.
+
+`fugaro run` prints one line to stderr before it launches: `recipe: <name> (<source>)` when the CLI resolved the recipe; `recipe: default (catalog)` when it resolved the catalog `default`; and `recipe: chosen by the runner (agent.recipe in fugaro.yaml at <ref>, else default)` when you launch with no `--recipe` and there is no local checkout of the repository. In that last case the CLI validates nothing locally and cannot see a project recipe: the runner reads `agent.recipe` at the ref, so a malformed or unknown recipe fails in the run, not at your terminal, and a project recipe is not found there (name it with `--recipe` instead).
 
 ## 4. Where a recipe comes from
 
@@ -57,20 +69,23 @@ For a name, the first match wins:
 2. The project: `fugaro/recipes/<name>.yaml` in the runs bucket `fugaro-runs-<gcp_project>`, for every repository of the project.
 3. The catalog.
 
-A project recipe named `default` replaces the catalog's `default` for the whole project. The file name must equal the recipe's `name:`. A name is 1 to 40 of `a-z`, `0-9` and `-`.
+A project recipe named `default` replaces the catalog's `default` for the whole project. It is then an ordinary recipe-carrying launch: it is embedded in every task, so every launch needs 0.5.0 job images (section 7). The file name must equal the recipe's `name:`. A name is 1 to 40 of `a-z`, `0-9` and `-`.
 
-The launching CLI resolves the recipe before any cloud work, so a malformed or unknown recipe fails at your terminal with the path of the problem. A project or catalog recipe is embedded in the task with its sha256, and the run record (`result.json`) records the recipe's name, source and sha256. A repository recipe is not embedded: the task carries its name and the runner reads the file at the ref. A bad repository recipe found by the runner ends the run as `infra_error` with the reason; it never falls back to `default`.
+When the CLI resolves the recipe (`--recipe`, or a local checkout), it does so before any cloud work, so a malformed or unknown recipe fails at your terminal with the path of the problem. A project recipe, or a catalog recipe other than `default`, is embedded in the task with its sha256; the catalog `default` is deliberately not embedded (so a default run needs no 0.5.0 runner), except when `--recipe default` must override an `agent.recipe` that could apply. The run record (`result.json`) records the recipe's name, source and sha256. A repository recipe is not embedded: the task carries its name and the runner reads the file at the ref. A bad repository recipe found by the runner ends the run as `infra_error` with the reason; it never falls back to `default`.
 
 ## 5. Commands
 
 - `fugaro recipes ls` lists the recipes of this checkout, the project and the catalog, and which layer wins for each name.
 - `fugaro recipes show NAME` prints the recipe a run would get, the layer it comes from and its sha256.
 - `fugaro recipes validate FILE` checks a recipe file; it needs no cloud access.
+- `ls`, `show` and `validate` take `--json` for machine-readable output.
 - `fugaro recipes publish FILE` writes the file to the project as `fugaro/recipes/<name>.yaml`. It shows what it replaces and refuses to overwrite a concurrent change. It is refused in a coding-agent session: run it in your own terminal. Project recipes need the default-named runs bucket (`fugaro-runs-<gcp_project>`); with a custom-named bucket, `publish` is refused with a note that gives the required name, and `ls` and name lookups skip the project layer and print the same note.
 - To remove a project recipe, delete the object: `gcloud storage rm gs://fugaro-runs-<gcp_project>/fugaro/recipes/<name>.yaml`.
 - `fugaro validate` also checks the repository's `.fugaro/recipes/` and warns when `agent.recipe` is set (see section 7).
 
-`fugaro watch` and `fugaro ls` show the recipe name of a run that does not use `default`. In `fugaro watch` a name longer than 24 columns is shortened, and at widths of about 100 to 130 columns a long recipe name can be clipped further.
+A published project recipe is cached on each machine for 24 hours (up to 7 days when the bucket cannot be reached, with a note), so another machine's `fugaro run` may launch the old text for up to 24 hours. `ls` and `show` refresh the cache; `fugaro run` does not.
+
+`fugaro watch` shows the recipe name of a run that does not use `default`. `fugaro ls` adds a RECIPE column once any listed run is not `default`; the column then has a value on every row, `default` included. In `fugaro watch` a name longer than 24 columns is shortened, and at widths of about 100 to 130 columns a long recipe name can be clipped further.
 
 ## 6. What is refused
 
@@ -90,7 +105,7 @@ What recipes do not do in 0.5.0: run check steps, jump with `goto`, extend anoth
 Order matters:
 
 1. Upgrade every CLI, every CI pin and every workflow's job image to 0.5.0 **before** you merge `agent.recipe` into `fugaro.yaml` or launch a non-default recipe. A binary older than 0.5.0 refuses `agent.recipe` as an unknown key, and an older runner rejects a task that carries a recipe. `fugaro validate` warns when `agent.recipe` is set.
-2. `fugaro run` checks the workflow's build record and refuses a recipe run (or a checkout that sets `agent.recipe`) on a job image older than 0.5.0. The fix is, in order: `fugaro init --base <kind>` from outside the checkout, `fugaro init --repo` in the checkout, `fugaro image build`. Then use the recipe. Runs of `default` are unaffected.
+2. `fugaro run` checks the workflow's build record and refuses a recipe run (or a checkout that sets `agent.recipe`) on a job image older than 0.5.0. The fix is, in order: `fugaro init --base <kind>` from outside the checkout, `fugaro init --repo` in the checkout, `fugaro image build`. Then use the recipe. A launch of the catalog `default` carries no recipe and needs no 0.5.0 image, unless `--recipe default` must override an `agent.recipe` that could apply; a project or repository recipe named `default` is a recipe-carrying launch and does need it.
 3. Deployed Firebase rules are updated only by `fugaro init`. Until you rerun it, the dashboard shows no recipe name; the runs still work, and the run logs a warning that names `fugaro init`.
 
 ## 8. Safety
