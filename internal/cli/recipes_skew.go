@@ -9,6 +9,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -33,7 +34,10 @@ func needsRecipeImage(spec *task.Spec, checkoutRecipe string) bool {
 func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind string, warn io.Writer) error {
 	subject, alt := "fugaro.yaml's agent.recipe", ""
 	if spec.Recipe != nil {
-		subject, alt = "recipe "+spec.Recipe.Name, "; or launch with --recipe default to run today's loop"
+		subject = "recipe " + spec.Recipe.Name
+		if spec.Recipe.Name != recipe.DefaultName { // a carried default cannot be the way out
+			alt = "; or launch with --recipe default to run today's loop"
+		}
 	}
 	if kind == "" {
 		kind = "<kind>"
@@ -63,6 +67,9 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	}
 	ref := pluginwire.Printable(rec.BaseRef)
 	m := baseRefReleaseRE.FindStringSubmatch(rec.BaseRef)
+	// Only the binary's release matters: the image's base kind may differ from
+	// the workflow's (a rebuilt image, a renamed kind) and that is deliberately
+	// not judged here; init and image build own that.
 	switch {
 	case m == nil:
 		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows recipes is not checked\n", spec.Repo, spec.Workflow, ref)

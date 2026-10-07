@@ -350,10 +350,12 @@ func newSpec(ctx context.Context, env *cloudEnv, o *runOptions, text string, tot
 // default (a project default included), and a catalog default leaves the
 // choice to the runner, which reads agent.recipe at the task's ref.
 func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func() *config.Config, root string, warn io.Writer) (*task.Recipe, error) {
-	name := flag
-	if name == "" {
-		if c := checkout(); c != nil {
-			name = c.Agent.Recipe
+	name, explicit := flag, flag != ""
+	var cfg *config.Config
+	if c := checkout(); c != nil {
+		cfg = c
+		if name == "" && c.Agent.Recipe != "" {
+			name, explicit = c.Agent.Recipe, true
 		}
 	}
 	if name == "" {
@@ -363,10 +365,26 @@ func chooseRecipe(ctx context.Context, env *cloudEnv, flag string, checkout func
 	if err != nil {
 		return nil, err
 	}
-	if rr.Note != "" {
-		io.WriteString(warn, noteLine(rr.Note))
+	printRecipeNote(warn, rr, explicit)
+	// An explicit --recipe default overrides agent.recipe, which applies when
+	// the checkout sets it, or when there is no checkout and the runner reads
+	// it at the ref: then the default is carried in the task.
+	override := flag == recipe.DefaultName && (cfg == nil || cfg.Agent.Recipe != "")
+	return rr.taskRecipeEmbedding(override), nil
+}
+
+// printRecipeNote prints rr's note when the user chose the recipe by name
+// (--recipe or agent.recipe), that is not default, and the lookup fell
+// through to the catalog; an offline-cache note (a project recipe in use)
+// is always printed.
+func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
+	if rr.Note == "" {
+		return
 	}
-	return rr.taskRecipe(), nil
+	if rr.Source == recipe.SourceCatalog && (!explicit || rr.Name == recipe.DefaultName) {
+		return
+	}
+	io.WriteString(warn, noteLine(rr.Note))
 }
 
 // runnerChooses reports whether the runner, not this CLI, decides spec's

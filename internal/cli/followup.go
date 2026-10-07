@@ -329,10 +329,13 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		if err != nil {
 			return nil, err
 		}
-		if rr.Note != "" {
-			io.WriteString(warn, noteLine(rr.Note))
-		}
+		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
+	} else if rcp != nil && rcp.YAML != "" {
+		// An inherited recipe is parsed again: a bad one fails here, not in the cloud.
+		if _, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")"); err != nil {
+			return nil, err
+		}
 	}
 	spec := &task.Spec{Version: 1, RunID: runID, Repo: repo, Ref: c.Ref, Workflow: workflow, Task: text,
 		Branch: c.Branch, PR: o.pr, PreviousRun: c.Previous.RunID, RequestedBy: me, Batch: o.batch, Recipe: rcp}

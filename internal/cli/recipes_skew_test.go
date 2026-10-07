@@ -27,6 +27,8 @@ func TestCheckRecipeImage(t *testing.T) {
 		{"", "does not say which base image", ""},
 		{"ghcr.io/dimipaun/fugaro-web-node:0.4.1", "built from base image ghcr.io/dimipaun/fugaro-web-node:0.4.1, release 0.4.1", ""},
 		{"ghcr.io/dimipaun/fugaro-web-node:0.5.0", "", ""},
+		{"ghcr.io/dimipaun/fugaro-web-node:0.10.0", "", ""},
+		{"ghcr.io/dimipaun/fugaro-web-node:0.4.10", "release 0.4.10", ""},
 		{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.6.2@sha256:" + strings.Repeat("a", 64), "", ""},
 		{"us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-1a2b3c", "", "not a release base image"},
 	} {

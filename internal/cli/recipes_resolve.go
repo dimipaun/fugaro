@@ -29,9 +29,14 @@ type resolvedRecipe struct {
 // taskRecipe is what task.json carries: nothing for the catalog default (so
 // a default run needs no 0.5.0 runner), the name alone for a repository
 // recipe (the runner reads it at the task's ref), else the exact text.
-func (r *resolvedRecipe) taskRecipe() *task.Recipe {
+func (r *resolvedRecipe) taskRecipe() *task.Recipe { return r.taskRecipeEmbedding(false) }
+
+// taskRecipeEmbedding is taskRecipe, except that with embed the catalog
+// default is carried too: an explicit --recipe default that must beat
+// agent.recipe, which the runner would otherwise apply to a task without one.
+func (r *resolvedRecipe) taskRecipeEmbedding(embed bool) *task.Recipe {
 	switch {
-	case r.Name == recipe.DefaultName && r.Source == recipe.SourceCatalog:
+	case r.Name == recipe.DefaultName && r.Source == recipe.SourceCatalog && !embed:
 		return nil
 	case r.Source == recipe.SourceRepo:
 		return &task.Recipe{Name: r.Name, Source: string(recipe.SourceRepo)}
@@ -135,6 +140,10 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 		}
 		return &resolvedRecipe{Name: name, Source: recipe.SourceCatalog, Text: text, Recipe: rcp, Where: "the catalog", Note: note}, nil
 	}
-	return nil, userErr("recipe %s is not in %s, not in project %s (fugaro recipes ls) and not in the catalog (%s)",
+	msg := fmt.Sprintf("recipe %s is not in %s, not in project %s (fugaro recipes ls) and not in the catalog (%s)",
 		name, recipe.RepoDir, env.lc.Name, strings.Join(recipe.CatalogNames(), ", "))
+	if note != "" {
+		msg += "; note: " + note
+	}
+	return nil, userErr("%s", msg)
 }
