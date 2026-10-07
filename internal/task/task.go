@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 var (
@@ -55,6 +56,17 @@ type Spec struct {
 	Overrides   Overrides `json:"overrides"`
 	RequestedBy string    `json:"requested_by,omitempty"`
 	Batch       string    `json:"batch,omitempty"`
+	// Recipe is the task loop the launching CLI resolved; nil is the
+	// default recipe from the catalog.
+	Recipe *Recipe `json:"recipe,omitempty"`
+}
+
+// Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
+type Recipe struct {
+	Name   string `json:"name"`
+	Source string `json:"source"`           // "repo" | "project" | "catalog"
+	SHA256 string `json:"sha256,omitempty"` // of YAML; empty for repo
+	YAML   string `json:"yaml,omitempty"`   // the exact text; empty for repo
 }
 
 // Overrides are the only config values a single task may change.
@@ -211,6 +223,24 @@ func (s *Spec) Validate() error {
 	if o.TotalTimeout != "" {
 		if d, err := time.ParseDuration(o.TotalTimeout); err != nil || d <= 0 {
 			bad("task spec: overrides.total_timeout %q must be a positive duration such as 45m", o.TotalTimeout)
+		}
+	}
+	if rc := s.Recipe; rc != nil {
+		switch {
+		case !recipe.NameRE.MatchString(rc.Name):
+			bad("task spec: recipe.name %q is not a recipe name", rc.Name)
+		case rc.Source == string(recipe.SourceRepo):
+			if rc.YAML != "" || rc.SHA256 != "" {
+				bad("task spec: a repo recipe is read from the checkout; recipe.yaml and recipe.sha256 must be empty")
+			}
+		case rc.Source == string(recipe.SourceProject) || rc.Source == string(recipe.SourceCatalog):
+			if rc.YAML == "" || len(rc.YAML) > recipe.MaxBytes {
+				bad("task spec: recipe.yaml must hold the recipe, at most %d bytes", recipe.MaxBytes)
+			} else if rc.SHA256 != recipe.Sum([]byte(rc.YAML)) {
+				bad("task spec: recipe.sha256 does not match recipe.yaml")
+			}
+		default:
+			bad("task spec: recipe.source must be repo, project or catalog")
 		}
 	}
 	return errors.Join(errs...)

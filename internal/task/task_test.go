@@ -293,3 +293,37 @@ func TestTaskOverrideModelReachesAllStagesWithoutRoleModels(t *testing.T) {
 		t.Fatalf("agent = %+v", a)
 	}
 }
+
+func TestRecipeValidate(t *testing.T) {
+	const text = "version: 1\nname: solo\nsteps:\n  - review: {}\n"
+	const sum = "8a9f3fd7432aabb347069c3108bdeddd8b834a55ebbeb3ba4af8ff8dd54754e0"
+	base := func(r *Recipe) *Spec {
+		return &Spec{Version: 1, RunID: "20260926-221530-a1b2", Repo: "acme/app", Ref: "main", Task: "x", Recipe: r}
+	}
+	for _, r := range []*Recipe{
+		nil,
+		{Name: "solo", Source: "catalog", SHA256: sum, YAML: text},
+		{Name: "solo", Source: "project", SHA256: sum, YAML: text},
+		{Name: "solo", Source: "repo"},
+	} {
+		if err := base(r).Validate(); err != nil {
+			t.Errorf("%+v: %v", r, err)
+		}
+	}
+	for want, r := range map[string]*Recipe{
+		"is not a recipe name":       {Name: "Solo", Source: "catalog", SHA256: sum, YAML: text},
+		"must be repo, project":      {Name: "solo", Source: "bucket", SHA256: sum, YAML: text},
+		"does not match recipe.yaml": {Name: "solo", Source: "project", SHA256: strings.Repeat("0", 64), YAML: text},
+		"must hold the recipe":       {Name: "solo", Source: "catalog"},
+		"must be empty":              {Name: "solo", Source: "repo", YAML: text},
+	} {
+		if err := base(r).Validate(); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: err = %v, want %q", r, err, want)
+		}
+	}
+	// A task.json written before recipes still parses (no recipe: default).
+	s, err := Parse([]byte(`{"version":1,"run_id":"20260926-221530-a1b2","repo":"acme/app","ref":"main","task":"x","overrides":{}}`))
+	if err != nil || s.Recipe != nil {
+		t.Fatalf("old spec: %+v, %v", s, err)
+	}
+}
