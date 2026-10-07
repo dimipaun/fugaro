@@ -190,3 +190,45 @@ func TestRecipeRoundsComeFromThePlan(t *testing.T) {
 		t.Fatalf("stages = %v", got)
 	}
 }
+
+// A follow-up's recipe is the task's or default, never agent.recipe (§5).
+func TestRecipeFollowUpIgnoresAgentRecipe(t *testing.T) {
+	cfg := strings.Replace(followUpYAML(t, ""), "  review_rounds: 2\n", "  review_rounds: 2\n  recipe: two-rounds\n", 1)
+	h := followUpHarness(t, cfg, func(h *harness) {
+		commitToRemote(t, h, func(dir string) {
+			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/two-rounds.yaml": twoRounds})
+		})
+	})
+	if h.first.Recipe == nil || h.first.Recipe.Name != "two-rounds" {
+		t.Fatalf("first run recipe = %+v", h.first.Recipe)
+	}
+	h.followUp(t, followID, runID, "Tidy up.")
+	rec, err := h.run(t, implement("tidy"), review("ship", 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.Recipe == nil || rec.Recipe.Name != "default" || rec.Recipe.Source != "catalog" {
+		t.Fatalf("recipe = %+v, want default", rec.Recipe)
+	}
+}
+
+func TestRecipeFollowUpOversizeBaseFileFails(t *testing.T) {
+	h := followUpHarness(t, "", func(h *harness) {
+		commitToRemote(t, h, func(dir string) {
+			testutil.WriteFiles(t, dir, map[string]string{".fugaro/recipes/big.yaml": "# " + strings.Repeat("x", recipe.MaxBytes)})
+		})
+	})
+	h.followUp(t, followID, runID, "Tidy up.")
+	spec, err := h.store.ReadTask(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec.Recipe = &task.Recipe{Name: "big", Source: "repo"}
+	if err := h.store.WriteTask(context.Background(), spec); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t, implement("tidy"))
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "16 KiB") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}

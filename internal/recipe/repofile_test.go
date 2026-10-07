@@ -42,3 +42,12 @@ func TestReadRepoFile(t *testing.T) {
 		t.Fatalf("big: %v", err)
 	}
 }
+
+func TestReadRepoFileRefusesBadNames(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"", "../../../tmp/x", "..", "a/b", `a\b`, "a\x00b", "Upper", "-x", "x-"} {
+		if _, found, err := ReadRepoFile(root, name); err == nil || found {
+			t.Errorf("ReadRepoFile(%q): found %v, err %v; want an error", name, found, err)
+		}
+	}
+}

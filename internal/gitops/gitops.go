@@ -245,6 +245,23 @@ func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
 	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
 }
 
+// BlobSize returns the size in bytes of the file at path in revision rev
+// (`git cat-file -s`), without reading it. path and rev are checked as
+// ShowFile checks them.
+func (r *Repo) BlobSize(ctx context.Context, rev, path string) (int64, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") || strings.ContainsAny(rev, ": \t\n") {
+		return 0, fmt.Errorf("refusing to size a file at revision %q", rev)
+	}
+	if !cleanRelPath(path) {
+		return 0, fmt.Errorf("refusing to size %q: the path must be relative and clean, without ..", path)
+	}
+	out, err := r.git(ctx, "cat-file", "-s", rev+":"+path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(out), 10, 64)
+}
+
 // TreeEntryMode returns the mode of path in revision rev's tree
 // (`git ls-tree`), such as "100644" for a file or "120000" for a symbolic
 // link, or "" when the tree has no such entry. path must be as ShowFile
