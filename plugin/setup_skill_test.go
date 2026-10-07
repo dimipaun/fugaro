@@ -276,7 +276,7 @@ func TestSetupSkillContent(t *testing.T) {
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",
-			"own terminal", "Only the people the user names", "list only the people the user names", "recommend asking the user for a number", "`vertex` supports `observe` only", "Ask the user whether the repository is public", "never from CODEOWNERS",
+			"own terminal", "## 9. `agent.recipe`", "Only the people the user names", "list only the people the user names", "recommend asking the user for a number", "`vertex` supports `observe` only", "Ask the user whether the repository is public", "never from CODEOWNERS",
 		},
 		"skills/setup/reference/validation.md": {
 			"root-scan", "managed-settings-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
@@ -355,6 +355,25 @@ func TestSetupSkillSplitsMachineSizeAndReviewRounds(t *testing.T) {
 	}
 	if strings.Contains(dec, "## 6. `review_rounds`, `resources`") {
 		t.Error("decisions.md still joins review_rounds and resources in one topic")
+	}
+}
+
+// TestSetupSkillAsksRecipe: the recipe is its own topic, after review rounds,
+// and the reference explains the catalog without recommending a non-default
+// recipe the evidence does not support.
+func TestSetupSkillAsksRecipe(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	if !regexp.MustCompile("(?m)^9\\. `agent.recipe`: its own question").MatchString(skill) {
+		t.Error("SKILL.md has no topic 9 for agent.recipe")
+	}
+	for _, want := range []string{"## 9. `agent.recipe`", "`default`", "`cheap-loop-senior`", "`claude-solo`", "fugaro recipes ls", "leave `agent.recipe` out", "0.5.0"} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md never says %q", want)
+		}
+	}
+	if !strings.Contains(skill, "Never ask 7 and 8 together or bundle their options") {
+		t.Error("the machine size and review rounds rule moved")
 	}
 }
 
