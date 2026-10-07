@@ -215,6 +215,10 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		return failed(err)
 	}
 	o.Checks = append(o.Checks, sharedConfigChecks(ctx, sel, lc, time.Now())...)
+	if co, err := checkoutProject(ctx, ""); err == nil && needsAnchorHint(ctx, co, lc) {
+		o.Checks = append(o.Checks, doctorCheck{ID: "gcp-project-line", Severity: "info", Problem: anchorHintText,
+			Fix: "fugaro init --anchor writes the gcp_project line into fugaro.yaml after checking the job images"})
+	}
 
 	for _, c := range preflight.Environment(os.Getenv, lc.GCPProject) {
 		o.Checks = append(o.Checks, fromPreflight(c))

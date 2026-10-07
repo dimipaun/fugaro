@@ -56,7 +56,7 @@ func TestSelectFallsBackToTheSharedConfig(t *testing.T) {
 		if err == nil || c != nil {
 			t.Fatalf("err = %v", err)
 		}
-		for _, want := range []string{"there is no project config for aurora", "add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro init in the checkout", "fugaro init --config-only --gcp-project <id>"} {
+		for _, want := range []string{"there is no project config for aurora", "add `gcp_project: <id>` next to `project:` in fugaro.yaml", "run fugaro init --anchor in the checkout", "fugaro init --config-only --gcp-project <id>"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("refusal lacks %q: %v", want, err)
 			}

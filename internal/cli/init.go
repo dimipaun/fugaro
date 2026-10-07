@@ -60,6 +60,7 @@ type initOptions struct {
 	registryCleanup                     string
 	planOnly, printVars, configOnly     bool
 	publishConfig                       bool // --publish-config: publish the shared config to the runs bucket and stop
+	anchor                              bool // --anchor: write the checkout's gcp_project line, after its checks, and stop
 	forget, yes, asJSON                 bool
 	nonInteractive                      bool
 	onboardRepo                         string // --onboard-repo owner/name: the explicit opt-in to onboard the checkout's repository
@@ -155,6 +156,32 @@ only planned), 1 a refusal, or a step left for you (see left_for_you in
 --json), 2 a cloud failure; --json prints the stages, left_for_you and the
 failed stage on every outcome.
 
+init --anchor, run in the checkout of a repository the project lists, writes
+only the gcp_project: line of its fugaro.yaml (the line teammates find the
+shared config from), with no Terraform, no discovery, no publish and no image
+copy; plain fugaro init writes the same line as its last stage, after the whole
+converge. Before it writes anything it checks, and reports together (one
+line per workflow, with its fix in order), that every workflow's build record
+in the runs bucket exists and was submitted by a fugaro release at or after
+the one that added the field, and that the base image the image was built
+FROM (the record's base_ref, whose fugaro binary the image holds) is such a
+release too: a missing record, a record that does not say its base, an older
+or development CLI, or an older, development or hand-pushed base fails. It
+also checks that each base image the local config sets for those workflows is
+a release image init copied, at or after that release, since the next build
+starts from it (a development or hand-pushed one is never replaced by fugaro
+init --base: remove its base_images entry first). The fix it names is: that
+removal when needed, fugaro init --base <kind> from outside the checkout,
+fugaro init --repo in the checkout (so the daily image check job follows the
+new base), fugaro image build --repo <owner/name> --workflow <name>, then
+fugaro init --anchor. The image checks trust the build records (written by
+the builds, unsigned: the same trust as the shared config), and a hand-pushed
+image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
+prints the line and writes nothing. Exit codes: 0 written or already present
+and safe, 1 a check failed or nothing was written, 2 a build record could not
+be read from the cloud (missing credentials included). A coding agent's
+session may run it, --yes included: it edits only a local file.
+
 --forget is the rollback: it turns log isolation and registry cleanup off
 with a guarded apply, then removes every address from Terraform's state,
 destroying nothing else.
@@ -234,7 +261,8 @@ intent; the project's name is typed at a real terminal): with --yes,
 line to run. In a coding agent's environment (CLAUDECODE, CLAUDE_CODE_ENTRYPOINT,
 CLAUDE_CODE_SSE_PORT, CLAUDE_CODE_REMOTE, CURSOR_AGENT or AI_AGENT is set) init
 applies nothing, --yes included, and says to run it in your own terminal
-window; --plan-only and the read-only checks still work. That is a mitigation,
+window; --plan-only and the read-only checks still work, and so does init
+--anchor (with --yes), which edits only the checkout's fugaro.yaml. That is a mitigation,
 not a barrier: an agent can unset its own environment. A run that adopted an
 existing installation changes nothing in the cloud in the same run (the local
 config and, in a checkout, the plugin wiring in .claude/settings.json are the
@@ -337,9 +365,10 @@ secrets stage is behind the same gate.`,
 	f.BoolVar(&o.printVars, "print-vars", false, "print the Terraform variables and exit, with no cloud calls and no Terraform (ungated: no discovery, and with --repo no readiness gates)")
 	f.BoolVar(&o.configOnly, "config-only", false, "only write the local config, from the installation's outputs (else the flags)")
 	f.BoolVar(&o.publishConfig, "publish-config", false, "publish the shared config to the runs bucket and stop (init does it after it writes the local config)")
+	f.BoolVar(&o.anchor, "anchor", false, "in a checkout of an onboarded repository, only write the gcp_project line into its fugaro.yaml, after checking that every workflow's job image was submitted by fugaro "+gcpProjectFieldSince+" or later and built FROM a release base image of "+gcpProjectFieldSince+" or later, and that no base image the local config sets is a development or older one (no Terraform, no publish, no image copy; the diff, then --yes writes or a terminal asks)")
 	f.BoolVar(&o.forget, "forget", false, "roll back: turn log isolation and registry cleanup off, then remove every address from Terraform's state")
 	f.StringArrayVar(&o.allowDelete, "allow-delete", nil, "a resource address the plan may delete or replace (repeatable)")
-	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included; that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
+	f.BoolVar(&o.yes, "yes", false, "confirm the ordinary steps without asking (only after reading what they do). Never covers creating a project, billing, a secret, an unlisted repository, the Firestore location, a billable first image build or replacing an image tag (typed at a real terminal). Under a coding agent's environment variable (CLAUDECODE and the like) init applies nothing, --yes included (except init --anchor, which only edits the checkout's fugaro.yaml and honours --yes there); that is a mitigation, not a barrier: an agent that unsets its own variables is not stopped, and the real controls are the typed confirmations and the skills' lint")
 	f.StringVar(&o.onboardRepo, "onboard-repo", "", "owner/name of the checkout's origin repository (compared case-insensitively, without .git): the one non-interactive opt-in to wire and onboard a repository the project does not list yet, on github.com or bitbucket.org with an origin git config does not rewrite (--yes never covers it, and a coding agent's environment refuses it; any other origin takes the typed confirmation)")
 	f.BoolVar(&o.allowFork, "allow-fork", false, "let the plugin-wiring stage move the ref of a fugaro marketplace in .claude/settings.json that names a repository other than dimipaun/fugaro (a fork you host); never done otherwise")
 	f.BoolVar(&o.nonInteractive, "non-interactive", false, "never prompt, and never read stdin: a step that needs you is listed under left_for_you (exit 1), and applying needs --yes, else the run only plans (a fresh state bucket needs its typed confirmation even then, so that plan exits 1); --yes never covers the typed-only steps (see --yes). With --forget and --config-only it only stops them prompting: their confirmations then need --yes")
@@ -372,6 +401,7 @@ type initRun struct {
 	installLabel string
 	historyNoted bool
 	printed      bool // the --json result has been printed
+	anchorNoted  bool // init --repo's pointer at --anchor has been said
 
 	// buildsLeft is the workflows whose first image build was not offered
 	// because this run cannot take a typed confirmation (--yes, --json, a pipe
@@ -423,6 +453,8 @@ type initResult struct {
 	// Firebase and RTDBURL are set by init --firebase.
 	Firebase string `json:"firebase_project,omitempty"`
 	RTDBURL  string `json:"rtdb_url,omitempty"`
+	// Anchor is set by init --anchor.
+	Anchor *anchorResult `json:"anchor,omitempty"`
 }
 
 func newInitRun(cmd *cobra.Command, o *initOptions) *initRun {
@@ -456,6 +488,11 @@ func runInit(r *initRun) error {
 		if err := refuseHTTP2Debug(os.Getenv); err != nil {
 			return err
 		}
+	}
+	if o.anchor {
+		// A local file's edit behind its own checks: no inputs to gather,
+		// no Terraform, no publish.
+		return r.runAnchor(cmd.Context())
 	}
 	if err := r.gatherInputs(cmd.Context()); err != nil {
 		return err
@@ -663,13 +700,28 @@ func (o *initOptions) check() error {
 		return userErr("--github-app-id is for the repository stage of the converge (or --repo); it has no use with --forget, --config-only and --print-vars")
 	}
 	n := 0
-	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig} {
+	for _, b := range []bool{o.planOnly, o.printVars, o.configOnly, o.forget, o.publishConfig, o.anchor} {
 		if b {
 			n++
 		}
 	}
 	if n > 1 {
-		return userErr("--plan-only, --print-vars, --config-only, --forget and --publish-config exclude one another")
+		return userErr("--plan-only, --print-vars, --config-only, --forget, --publish-config and --anchor exclude one another")
+	}
+	if o.anchor {
+		set := slices.DeleteFunc(o.installationFlags(), func(f string) bool { return f == "--anchor" })
+		for _, f := range []struct {
+			name string
+			on   bool
+		}{{"--onboard-repo", o.onboardRepo != ""}, {"--github-app-id", o.githubAppID != ""}, {"--allow-delete", len(o.allowDelete) > 0},
+			{"--allow-fork", o.allowFork}, {"--check-github-app", o.checkApp}} {
+			if f.on {
+				set = append(set, f.name)
+			}
+		}
+		if len(set) > 0 {
+			return userErr("--anchor only writes the gcp_project line of an onboarded repository's checkout; it excludes %s", strings.Join(set, ", "))
+		}
 	}
 	if o.forget && len(o.allowDelete) > 0 {
 		return userErr("--forget allows exactly the log isolation's deletes; it takes no --allow-delete")
@@ -1716,6 +1768,9 @@ func (r *initRun) printResult() error {
 
 // checkRepo refuses flag combinations that mean nothing for --repo.
 func (o *initOptions) checkRepo() error {
+	if o.anchor {
+		return userErr("--anchor and --repo exclude one another: --anchor writes the gcp_project line of an onboarded repository's checkout (run fugaro init --anchor there), and fugaro init --repo does not write it")
+	}
 	if err := o.checkAppID(); err != nil {
 		return err
 	}
@@ -1744,7 +1799,7 @@ func (o *initOptions) checkRepo() error {
 // installation, sorted.
 func (o *initOptions) installationFlags() []string {
 	installationOnly := map[string]bool{
-		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
+		"--config-only": o.configOnly, "--publish-config": o.publishConfig, "--anchor": o.anchor, "--budget": o.budget != 0, "--budget-currency": o.budgetCurrency != "",
 		"--billing-account": o.billingAccount != "", "--alert-email": o.alertEmailChanged, "--launcher": o.launchersChanged,
 		"--operator": o.operatorsChanged, "--base-image": o.baseImageChanged, "--base": len(o.baseKinds) > 0, "--image-source": o.imageSource != "", "--expect-digest": len(o.expectDigests) > 0, "--replace-image": len(o.replaceImages) > 0, "--no-log-isolation": o.noLogIsolation,
 		"--registry-cleanup": o.registryCleanup != "", "--runs-bucket": o.runsBucket != "", "--scheduler-region": o.schedulerRegion != "",
@@ -1976,6 +2031,10 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 	// 8. The local config.
 	if err := r.writeRepoConfig(ctx, lc, spec, cfg, path, old); err != nil {
 		return err
+	}
+	if !embedded {
+		// The converge's repository stage writes the line itself.
+		r.noteAnchor(ctx, root, lc)
 	}
 	if len(r.buildsLeft) > 0 {
 		// Everything else is done; the billable build is the user's to type.
