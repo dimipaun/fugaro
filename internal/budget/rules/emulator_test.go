@@ -234,6 +234,15 @@ func TestAllowedPaths(t *testing.T) {
 		entry := map[string]any{"repo": "aurora/web", "workflow": "implement", "title": "fix the thing", "stage": "code", "round": 1,
 			"auth": "api-key", "startedAt": time.Now().UnixMilli(), "updatedAt": time.Now().UnixMilli(), "spent": 0, "requestedBy": "alice@example.invalid"}
 		h.mustAllow(c, "create the entry", map[string]any{budget.PathAgent("aurora", "r1"): entry})
+		h.mustAllow(c, "an entry with a recipe", map[string]any{budget.PathAgent("aurora", "r1") + "/recipe": "claude-solo"})
+		recipeEntry := map[string]any{}
+		for k, v := range entry {
+			recipeEntry[k] = v
+		}
+		recipeEntry["recipe"] = "claude-solo"
+		h.mustAllow(c, "a whole entry carrying a recipe", map[string]any{budget.PathAgent("aurora", "r1"): recipeEntry})
+		h.mustDeny(c, "a recipe over 200 characters", map[string]any{budget.PathAgent("aurora", "r1") + "/recipe": strings.Repeat("r", 201)})
+		h.mustDeny(c, "a recipe that is not a string", map[string]any{budget.PathAgent("aurora", "r1") + "/recipe": 7})
 		h.mustAllow(c, "a heartbeat with the usage report in the same write", map[string]any{
 			budget.PathAgent("aurora", "r1") + "/stage":     "verify",
 			budget.PathAgent("aurora", "r1") + "/updatedAt": time.Now().UnixMilli(),

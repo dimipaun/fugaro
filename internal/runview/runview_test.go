@@ -371,3 +371,20 @@ func TestJoinStaleDraft(t *testing.T) {
 		t.Errorf("follow-up flagged: %+v", row)
 	}
 }
+
+func TestJoinRecipe(t *testing.T) {
+	sub := runstore.NewCost(2, 0.1, runstore.BasisSubscription)
+	r := rec(runstore.StatusSucceeded, &sub)
+	r.Recipe = &runstore.RecipeRecord{Name: "claude-solo", Source: "catalog", SHA256: strings.Repeat("a", 64)}
+	if got := Join(Input{Task: spec, Launch: launch, Record: r}, prices, now); got.Recipe != "claude-solo" {
+		t.Fatalf("from the record: %q", got.Recipe)
+	}
+	t2 := *spec
+	t2.Recipe = &task.Recipe{Name: "mine", Source: "repo"}
+	if got := Join(Input{Task: &t2}, prices, now); got.Recipe != "mine" {
+		t.Fatalf("from the task: %q", got.Recipe)
+	}
+	if got := Join(Input{Task: spec}, prices, now); got.Recipe != "" {
+		t.Fatalf("none: %q", got.Recipe)
+	}
+}

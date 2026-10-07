@@ -95,6 +95,9 @@ type rend struct {
 	g   glyphs
 	col bool // colour on
 	dim bool // the data is not live: draw the body greyed
+	// recW is the room the widest recipe name needs after the models in the
+	// tier-3 table; 0 when no run shows one.
+	recW int
 }
 
 func (r *rend) paint(c, t string) string {
@@ -212,7 +215,7 @@ func Render(v View, o RenderOptions) Frame {
 	if o.Width <= 0 {
 		o.Width = 80
 	}
-	r := &rend{w: o.Width, g: glyphsOf(o.ASCII), col: o.Color}
+	r := &rend{w: o.Width, g: glyphsOf(o.ASCII), col: o.Color, recW: recipeWidth(v)}
 	tier := tierOf(o.Width)
 	if tier == 0 {
 		return Frame{Lines: []string{r.clipW(tooNarrow, o.Width)}}
@@ -493,9 +496,9 @@ func (r *rend) scope(tier int, label string, b Bar, counted, spent, notional bud
 // runCols are the widths of the run table (tiers 2 and 3).
 type runCols struct{ run, title, stage, round, age, spend, flags, verify, models int }
 
-func colsOf(tier, w int) runCols {
+func colsOf(tier, w, recW int) runCols {
 	if tier == 3 {
-		c := runCols{run: 8, stage: 9, round: 3, age: 7, spend: 15, flags: 30, verify: 9, models: 14}
+		c := runCols{run: 8, stage: 9, round: 3, age: 7, spend: 15, flags: 30, verify: 9, models: 14 + recW}
 		c.title = max(10, w-(2+c.run+c.stage+c.round+c.age+c.spend+c.flags+c.verify+c.models+8))
 		return c
 	}
@@ -555,7 +558,7 @@ func (r *rend) repo(tier int, b RepoBlock, selected, collapsed bool) []string {
 	if collapsed {
 		return out
 	}
-	c := colsOf(tier, r.w)
+	c := colsOf(tier, r.w, r.recW)
 	for _, run := range b.Runs {
 		out = append(out, r.runRows(tier, c, run)...)
 	}
@@ -596,13 +599,31 @@ func (r *rend) runRows(tier int, c runCols, run RunRow) []string {
 		{r.fit(fl, c.flags), fc},
 	}
 	if tier == 3 {
-		segs = append(segs, seg{" " + r.fit(run.Verify, c.verify) + " " + run.Models, ""})
+		models := run.Models
+		if run.Recipe != "" {
+			models += " · " + r.clipW(run.Recipe, 24)
+		}
+		segs = append(segs, seg{" " + r.fit(run.Verify, c.verify) + " " + models, ""})
 	}
 	return []string{r.line(segs...)}
 }
 
+// recipeWidth is the width of " · <recipe>" for the widest recipe name among
+// the runs, capped; 0 when no run has one.
+func recipeWidth(v View) int {
+	w := 0
+	for _, b := range v.Repos {
+		for _, run := range b.Runs {
+			if run.Recipe != "" {
+				w = max(w, 3+min(rw.StringWidth(run.Recipe), 24))
+			}
+		}
+	}
+	return w
+}
+
 func (r *rend) colHeader(tier int) string {
-	c := colsOf(tier, r.w)
+	c := colsOf(tier, r.w, r.recW)
 	segs := []seg{
 		{"  " + r.fit("RUN", c.run) + " " + r.fit("TITLE", c.title) + " " + r.fit("STAGE", c.stage) + " " +
 			r.fit("R", c.round) + " " + r.fit("AGE", c.age) + " " + r.fit("SPENT", c.spend) + " " + r.fit("FLAGS", c.flags), cFaint},

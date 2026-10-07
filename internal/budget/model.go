@@ -305,14 +305,18 @@ func (c Counters) Models() map[string]ModelUse {
 // AgentEntry is /agents/<slug>/<run>, the live registry; every string is
 // untrusted and clipped to 200 characters by the rules.
 type AgentEntry struct {
-	Repo           string `json:"repo"`
-	Workflow       string `json:"workflow,omitempty"`
-	Title          string `json:"title,omitempty"`
-	Stage          string `json:"stage,omitempty"`
-	Round          int    `json:"round,omitempty"`
-	Verify         string `json:"verify,omitempty"`
-	Coder          string `json:"coder,omitempty"`
-	Reviewer       string `json:"reviewer,omitempty"`
+	Repo     string `json:"repo"`
+	Workflow string `json:"workflow,omitempty"`
+	Title    string `json:"title,omitempty"`
+	Stage    string `json:"stage,omitempty"`
+	Round    int    `json:"round,omitempty"`
+	Verify   string `json:"verify,omitempty"`
+	Coder    string `json:"coder,omitempty"`
+	Reviewer string `json:"reviewer,omitempty"`
+	// Recipe is the run's recipe when it is not default (docs/design/
+	// recipes.md §8). Rules deployed before 0.5.0 refuse it; Start then
+	// drops it.
+	Recipe         string `json:"recipe,omitempty"`
 	Auth           string `json:"auth,omitempty"`
 	PRURL          string `json:"prUrl,omitempty"`
 	StartedAt      int64  `json:"startedAt,omitempty"`

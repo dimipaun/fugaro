@@ -917,3 +917,59 @@ func TestLsShowsDraftInProgress(t *testing.T) {
 		}
 	}
 }
+
+func TestLsRecipeColumn(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{{Run: "acme-app/20261007-100000-abcd", Status: "succeeded", Recipe: "default"}}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || strings.Contains(b.String(), "RECIPE") {
+		t.Fatalf("default only:\n%s", b.String())
+	}
+	b.Reset()
+	rows = append(rows, runview.Row{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"})
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil || !strings.Contains(b.String(), "RECIPE") || !strings.Contains(b.String(), "claude-solo") {
+		t.Fatalf("with a recipe:\n%s", b.String())
+	}
+}
+
+func TestLsRecipeColumnDefaultsEmpty(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
+	}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), false); err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(b.String(), "\n") {
+		if strings.Contains(l, "100000") {
+			line = l
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(line), "default") {
+		t.Fatalf("line %q in:\n%s", line, b.String())
+	}
+}
+
+func TestLsJSONRecipeOmitempty(t *testing.T) {
+	var b strings.Builder
+	rows := []runview.Row{
+		{Run: "acme-app/20261007-100000-abcd", Status: "succeeded"},
+		{Run: "acme-app/20261007-110000-abcd", Status: "running", Recipe: "claude-solo"},
+	}
+	if err := printRows(&b, "aurora", rows, nil, time.Now(), true); err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs []map[string]any `json:"runs"`
+	}
+	if err := json.Unmarshal([]byte(b.String()), &doc); err != nil || len(doc.Runs) != 2 {
+		t.Fatalf("%v\n%s", err, b.String())
+	}
+	if _, ok := doc.Runs[0]["recipe"]; ok {
+		t.Fatalf("unset recipe present: %v", doc.Runs[0])
+	}
+	if doc.Runs[1]["recipe"] != "claude-solo" {
+		t.Fatalf("recipe = %v", doc.Runs[1])
+	}
+}

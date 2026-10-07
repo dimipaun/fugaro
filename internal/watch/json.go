@@ -60,6 +60,7 @@ type JSONRun struct {
 	Round    string   `json:"round"`
 	Verify   string   `json:"verify"`
 	Models   string   `json:"models"`
+	Recipe   string   `json:"recipe,omitempty"`
 	Auth     string   `json:"auth"`
 	Notional bool     `json:"notional"` // SpentUSD is a subscription's list price
 	SpentUSD *float64 `json:"spent_usd"`
@@ -122,7 +123,7 @@ func BuildJSON(project string, v View) JSONDoc {
 		d.Repos = append(d.Repos, jr)
 		for _, run := range r.Runs {
 			j := JSONRun{Run: run.Run, Slug: jr.Slug, Repo: r.Name, Title: run.Title, Stage: run.Stage, Round: run.Round,
-				Verify: run.Verify, Models: run.Models, Auth: run.Auth, Notional: run.Notional, Halted: run.Halted,
+				Verify: run.Verify, Models: run.Models, Recipe: run.Recipe, Auth: run.Auth, Notional: run.Notional, Halted: run.Halted,
 				Health:   [...]string{HealthOK: "ok", HealthSilent: "silent", HealthLost: "lost"}[run.Health],
 				Deadline: [...]string{DeadlineOK: "ok", DeadlineNear: "near", DeadlineOver: "over"}[run.Deadline]}
 			if run.HasSpent {

@@ -525,3 +525,14 @@ func TestRepoNameFromConfig(t *testing.T) {
 		}
 	}
 }
+
+func TestRunRowRecipe(t *testing.T) {
+	r := runRow("acme__app", "r1", budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Coder: "opus", Reviewer: "opus"}, time.Now())
+	if r.Recipe != "claude-solo" {
+		t.Fatalf("row = %+v", r)
+	}
+	v := View{Repos: []RepoBlock{{Slug: "acme__app", Name: "acme/app", Runs: []RunRow{r}}}}
+	if doc := BuildJSON("aurora", v); len(doc.Runs) != 1 || doc.Runs[0].Recipe != "claude-solo" {
+		t.Fatalf("json = %+v", doc.Runs)
+	}
+}

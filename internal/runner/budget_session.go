@@ -15,6 +15,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
@@ -264,6 +265,9 @@ func (r *run) registryEntry() budget.AgentEntry {
 	}
 	if r.rec.Deadline != nil {
 		e.StageDeadline = r.rec.Deadline.UnixMilli()
+	}
+	if rr := r.rec.Recipe; rr != nil && rr.Name != recipe.DefaultName {
+		e.Recipe = rr.Name
 	}
 	return e
 }
