@@ -80,7 +80,7 @@ func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
 	}
 }
 
-// Verified live (Claude Code 2.1.289): the plugin installs by itself on trust,
+// Verified live (Claude Code 2.1.289): the plugin may need a manual install (observed 2026-10-07),
 // and a changed pin needs /plugin marketplace update fugaro. The outputs say
 // exactly that, and never that teammates are offered or prompted.
 func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
@@ -90,7 +90,7 @@ func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "installs by itself, silently", "only trust folders you trust"} {
+	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "Claude Code installs the plugin when you open", "the folder was already trusted", "/plugin install fugaro@fugaro", "only trust folders you trust"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("update-skills lacks %q:\n%s", want, out)
 		}

@@ -22,13 +22,16 @@ import (
 // dev build has no tag to pin to and the stage is skipped saying so; outside a
 // checkout it prints the settings to add. It never commits.
 
-// pluginFirstRun ends the wiring. Verified live with Claude Code 2.1.289: once
-// the settings are committed, the plugin installs by itself, with no install
-// prompt, when the folder is trusted (the trust dialog does not mention it),
-// and its skills are there in the first session, no restart (design §4.7).
-const pluginFirstRun = "Once this is committed, the plugin installs by itself, silently, when someone opens this folder in Claude Code and trusts it\n" +
-	"(the trust dialog does not mention it), and its skills are there in the first session. A repository's settings can install a plugin\n" +
-	"from the marketplace they name, so only trust folders you trust. To install it now: claude plugin install fugaro@fugaro --scope project\n"
+// pluginFirstRun ends the wiring. Observed live 2026-10-07 (cause not
+// verified): after init wired the settings, opening Claude Code in the folder
+// did not make the skills available and the plugin had to be installed by hand
+// with /plugin marketplace add and /plugin install. So the text promises
+// nothing: Claude Code is expected to install it on trust, and the manual
+// commands are given for when it did not (design §4.7).
+const pluginFirstRun = "Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
+	"If the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and\n" +
+	"/plugin install fugaro@fugaro in Claude Code, then restart the session; fugaro doctor then shows the plugin as installed.\n" +
+	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
 
 // pluginRefresh follows a changed pin: Claude Code reports the new version but
 // shows the plugin as "not cached" and its skills disappear until the

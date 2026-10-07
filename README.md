@@ -27,7 +27,7 @@ Or download an archive from [Releases](https://github.com/dimipaun/fugaro/releas
 1. Run `fugaro init` in your own terminal. It sets up the cloud side behind confirmations you type, asks for secrets at hidden prompts, and wires the Fugaro plugin into `.claude/settings.json`.
 2. Open Claude Code and run `/fugaro:setup`. It writes `fugaro.yaml` with you and opens a pull request; merge it, then run `fugaro init` again to add the repository's job and first image build.
 
-Commit the `.claude/settings.json` change: a teammate who opens the folder in Claude Code and trusts it gets the plugin installed by itself (a repository's settings can install plugins, so only trust folders you trust), and one whom an owner made a launcher, a person allowed to start runs (`fugaro init --launcher` once per launcher; the flag replaces the list, so name the current ones too), needs only the CLI and `gcloud auth application-default login`, no `fugaro init`. Then hand it work:
+Commit the `.claude/settings.json` change: a teammate who opens the folder in a new Claude Code session and trusts it should get the plugin installed; if the `/fugaro:` skills are not listed (for example the folder was already trusted), run `/plugin marketplace add dimipaun/fugaro` and `/plugin install fugaro@fugaro` in Claude Code, then restart the session (a repository's settings can install plugins, so only trust folders you trust), and one whom an owner made a launcher, a person allowed to start runs (`fugaro init --launcher` once per launcher; the flag replaces the list, so name the current ones too), needs only the CLI and `gcloud auth application-default login`, no `fugaro init`. Then hand it work:
 
 ```sh
 fugaro run "add a --verbose flag to the export command"

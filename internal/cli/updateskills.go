@@ -109,7 +109,7 @@ func runUpdateSkills(cmd *cobra.Command, dir string, check, allowFork, asJSON bo
 	// warnFork says it loudly, in every output mode: the file points agents at
 	// someone else's plugin repository.
 	warnFork := func(repo string) {
-		fmt.Fprintf(errOut, "WARNING: the %q marketplace in this repository's settings is %s, not %s. Its skills are not Fugaro's; that plugin installs by itself, without a prompt, for anyone who trusts the folder. Check it is yours.\n", pluginwire.Marketplace, repo, pluginwire.Repo)
+		fmt.Fprintf(errOut, "WARNING: the %q marketplace in this repository's settings is %s, not %s. Its skills are not Fugaro's; Claude Code can install that plugin for anyone who trusts the folder. Check it is yours.\n", pluginwire.Marketplace, repo, pluginwire.Repo)
 	}
 	if l := releaseLine(); l != "" {
 		say("%s\n", l)

@@ -145,8 +145,13 @@ func TestNotInstalledIsInformational(t *testing.T) {
 	if r.Pin != OK || r.Install != NotInstalled || r.Worst() != SeverityInfo {
 		t.Fatalf("%+v", r)
 	}
-	if !strings.Contains(NotInstalled.Fix(), "trust") {
-		t.Error("no fix text")
+	for _, want := range []string{"trust", "/plugin marketplace add dimipaun/fugaro", "/plugin install fugaro@fugaro", "restart"} {
+		if !strings.Contains(NotInstalled.Fix(), want) {
+			t.Errorf("fix text lacks %q: %s", want, NotInstalled.Fix())
+		}
+	}
+	if strings.Contains(NotInstalled.Fix(), "by itself") || strings.Contains(NotInstalled.Fix(), "without a prompt") {
+		t.Error("the fix still claims a silent install")
 	}
 }
 

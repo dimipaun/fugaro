@@ -54,7 +54,7 @@ func (s State) Fix() string {
 	case InstalledDiffers:
 		return "in Claude Code run /plugin marketplace update fugaro"
 	case NotInstalled:
-		return "open Claude Code in this folder and trust it: the plugin installs by itself, without a prompt"
+		return "open Claude Code in this folder in a new session and trust it; if the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and /plugin install fugaro@fugaro in Claude Code, then restart the session"
 	}
 	return ""
 }

@@ -771,7 +771,7 @@ Run 2026-10-04 and 2026-10-05 by the maintainer, with the `0.2.0` release binary
 
 | Item | Result |
 |---|---|
-| V1 install at folder trust | VERIFIED: installs by itself at trust, no prompt |
+| V1 install at folder trust | VERIFIED 2026-10-04 in a fresh clone: installed at trust, no prompt. Observed 2026-10-07 in a checkout wired by init: not installed, manual `/plugin marketplace add` + `/plugin install` needed (cause not verified) |
 | V2 an existing install follows a changed `ref` | VERIFIED: needs `/plugin marketplace update fugaro`, then works in the same session |
 | V3 headless `claude -p` ignores the project plugin | VERIFIED in the base image (Claude Code 2.1.283) |
 | V4 first use in a fresh clone | VERIFIED: first session, no restart |
