@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -243,6 +244,29 @@ func (r *Repo) ShowFile(ctx context.Context, rev, path string) ([]byte, error) {
 		return nil, fmt.Errorf("refusing to read %q: the path must be relative and clean, without ..", path)
 	}
 	return r.gitRaw(ctx, "show", "--no-textconv", rev+":"+path)
+}
+
+// BlobSize returns the size in bytes of the file at path in revision rev
+// (`git cat-file -s`), without reading it. path and rev are checked as
+// ShowFile checks them; a path the tree lacks is an error wrapping
+// fs.ErrNotExist.
+func (r *Repo) BlobSize(ctx context.Context, rev, path string) (int64, error) {
+	if rev == "" || strings.HasPrefix(rev, "-") || strings.ContainsAny(rev, ": \t\n") {
+		return 0, fmt.Errorf("refusing to size a file at revision %q", rev)
+	}
+	if !cleanRelPath(path) {
+		return 0, fmt.Errorf("refusing to size %q: the path must be relative and clean, without ..", path)
+	}
+	if mode, err := r.TreeEntryMode(ctx, rev, path); err != nil {
+		return 0, err
+	} else if mode == "" {
+		return 0, fmt.Errorf("%s at %s: %w", path, rev, fs.ErrNotExist)
+	}
+	out, err := r.git(ctx, "cat-file", "-s", rev+":"+path)
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(strings.TrimSpace(out), 10, 64)
 }
 
 // TreeEntryMode returns the mode of path in revision rev's tree

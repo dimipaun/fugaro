@@ -34,6 +34,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/logtail"
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -119,11 +120,15 @@ type Deps struct {
 }
 
 type run struct {
-	d       Deps
-	rec     *runstore.Record
-	spec    *task.Spec
-	cfg     *config.Config
-	wf      config.Workflow
+	d    Deps
+	rec  *runstore.Record
+	spec *task.Spec
+	cfg  *config.Config
+	wf   config.Workflow
+	// plan is the loop after implement, from the recipe resolved at
+	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
+	// ends with a review step.
+	plan    []planStep
 	repo    *gitops.Repo
 	env     []string
 	secrets []string
@@ -806,6 +811,21 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
+	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	r.rec.Recipe = &rrec
+	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
+	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)
+	if err := checkPlan(plan); err != nil {
+		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	}
+	r.plan = plan
+	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
+		r.d.Log.Info("agent.models.reviewer ignored: recipe maps reviewer to coder", "recipe", rrec.Name, "reviewer", cfg.Agent.Models.Reviewer)
+	}
+	applyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()
@@ -1010,14 +1030,27 @@ func (r *run) agentLoop(ctx context.Context) {
 		}
 	}
 	tier := ""
-	if r.cfg.Agent.FirstLineOn(r.d.Providers) {
-		tier = runstore.TierSenior
-		var ok bool
-		if sessionID, ok = r.firstLine(ctx, reviewPrompt, sys, sessionID); !ok {
+	for _, st := range r.plan {
+		switch st.Kind {
+		case recipe.StepFirstLine:
+			tier = runstore.TierSenior
+			var ok bool
+			if sessionID, ok = r.firstLine(ctx, st.Rounds, reviewPrompt, sys, sessionID); !ok {
+				return
+			}
+		case recipe.StepReview:
+			// The last step (recipe.Parse refuses any other order).
+			r.seniorLoop(ctx, st.Rounds, tier, reviewPrompt, sys, sessionID)
 			return
 		}
 	}
-	rounds := r.cfg.Agent.ReviewRounds
+}
+
+// seniorLoop is a review step: up to rounds senior reviews on the reviewer's
+// model, each followed by a fix while it asks for changes. Its verdict alone
+// decides readiness (seniorReview). tier is "senior" when a first line came
+// before it, "" otherwise, as runs without a first line always recorded.
+func (r *run) seniorLoop(ctx context.Context, rounds int, tier, reviewPrompt, sys, sessionID string) {
 	for round := 1; round <= rounds; round++ {
 		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
 		r.countTokens(res)
@@ -1057,16 +1090,15 @@ func (r *run) fix(ctx context.Context, v Verdict, sys, sessionID string) (string
 	return sessionID, !r.pr.gone
 }
 
-// firstLine is the first-line review (design m10 §11a): up to
-// agent.first_line_rounds reviews by the coder's model, each followed by a
+// firstLine is the first-line review (design m10 §11a): up to rounds
+// reviews (the plan's first_line step) by the coder's model, each followed by a
 // fix when it asks for changes. Its verdict never decides readiness: it is
 // recorded with its tier, and the senior review that follows is told
 // nothing of it. A first-line stage that fails or has no verdict is
 // recorded and skipped, never failing the run; a halt or a cancel still
 // ends it. It reports the session to go on with, and whether the run may
 // go on to the senior review.
-func (r *run) firstLine(ctx context.Context, reviewPrompt, sys, sessionID string) (string, bool) {
-	rounds := r.cfg.Agent.FirstLineRounds
+func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sessionID string) (string, bool) {
 	for round := 1; round <= rounds; round++ {
 		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
 		r.countTokens(res)

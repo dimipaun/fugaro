@@ -660,3 +660,25 @@ func TestRecipeSchemaCorpus(t *testing.T) {
 		}
 	}
 }
+func TestResultSchemaRecipe(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 7, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		rr *runstore.RecipeRecord
+		ok bool
+	}{
+		{&runstore.RecipeRecord{Name: "claude-solo", Source: "catalog", SHA256: strings.Repeat("a", 64)}, true},
+		{&runstore.RecipeRecord{Name: "claude-solo", Source: "bucket", SHA256: strings.Repeat("a", 64)}, false},
+		{&runstore.RecipeRecord{Name: "claude-solo", Source: "repo", SHA256: "short"}, false},
+	} {
+		data, err := json.Marshal(runstore.Record{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app",
+			Status: runstore.StatusRunning, Stage: "review", StartedAt: at, Recipe: tc.rr})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, _ := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err := sch.Validate(inst); (err == nil) != tc.ok {
+			t.Errorf("%+v: err = %v, want ok %v", tc.rr, err, tc.ok)
+		}
+	}
+}
