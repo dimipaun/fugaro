@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dimipaun/fugaro/internal/budget"
 )
@@ -323,6 +324,37 @@ func TestFrameShowsRecipe(t *testing.T) {
 	v := fixture()
 	v.Repos[0].Runs[0].Recipe = "claude-solo"
 	if out := frame(v, 140, 0); !strings.Contains(out, "opus / sonnet · claude-solo") {
+		t.Fatalf("frame:\n%s", out)
+	}
+}
+
+func TestFrameRecipeMixedRowsAligned(t *testing.T) {
+	v := fixture()
+	v.Repos[0].Runs[0].Recipe = "claude-solo"
+	out := frame(v, 140, 0)
+	var a, b string
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.Contains(l, "r-aaaa11"):
+			a = l
+		case strings.Contains(l, "r-bbbb22"):
+			b = l
+		}
+	}
+	if a == "" || b == "" || !strings.Contains(a, "claude-solo") || strings.Contains(b, "claude") {
+		t.Fatalf("frame:\n%s", out)
+	}
+	if ia, ib := utf8.RuneCountInString(a[:strings.Index(a, "unit")]), utf8.RuneCountInString(b[:strings.Index(b, "unit")]); ia != ib {
+		t.Fatalf("verify column at %d and %d:\n%s", ia, ib, out)
+	}
+}
+
+func TestFrameRecipeLongNameClipped(t *testing.T) {
+	v := fixture()
+	long := strings.Repeat("abcdefghij", 3)
+	v.Repos[0].Runs[0].Recipe = long
+	out := frame(v, 160, 0)
+	if strings.Contains(out, long) || !strings.Contains(out, long[:20]) {
 		t.Fatalf("frame:\n%s", out)
 	}
 }

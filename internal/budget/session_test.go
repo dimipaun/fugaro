@@ -3,7 +3,9 @@ package budget_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -949,6 +951,7 @@ func TestStartKeepsRecipe(t *testing.T) {
 // whole entry with it); the run goes on without it.
 func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
 	f := newFixture(t)
+	logs := captureLog(f)
 	s := f.open()
 	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
 		t.Fatal(h, err)
@@ -956,6 +959,9 @@ func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
 	f.db.DenyNext(1)
 	if err := s.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Stage: "bootstrap"}); err != nil {
 		t.Fatalf("Start: %v", err)
+	}
+	if n := strings.Count(logs.String(), "predate recipes"); n != 1 {
+		t.Fatalf("fallback warning logged %d times:\n%s", n, logs.String())
 	}
 	defer s.Finish(context.Background(), "succeeded")
 	e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any)
@@ -970,4 +976,37 @@ func TestStartDropsRecipeWhenRulesRefuse(t *testing.T) {
 	if e, _ := f.db.Value(budget.PathAgent(slug, runID)).(map[string]any); e["recipe"] != nil {
 		t.Fatalf("the recipe came back: %v", e)
 	}
+}
+
+// A refusal of both writes is a bad credential, not old rules: the error
+// stands and the operator is not pointed at fugaro init.
+func TestStartRecipeRefusedTwiceIsAnError(t *testing.T) {
+	f := newFixture(t)
+	logs := captureLog(f)
+	s := f.open()
+	if h, err := s.Admit(context.Background(), budget.AdmitOptions{Gateway: true}); h != nil || err != nil {
+		t.Fatal(h, err)
+	}
+	f.db.DenyNext(2)
+	err := s.Start(context.Background(), budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Stage: "bootstrap"})
+	if !errors.Is(err, budget.ErrPermissionDenied) {
+		t.Fatalf("err = %v, want ErrPermissionDenied", err)
+	}
+	if strings.Contains(logs.String(), "predate recipes") {
+		t.Fatalf("misleading warning:\n%s", logs.String())
+	}
+}
+
+type syncBuf struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuf) Write(p []byte) (int, error) { s.mu.Lock(); defer s.mu.Unlock(); return s.b.Write(p) }
+func (s *syncBuf) String() string              { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }
+
+func captureLog(f *fixture) *syncBuf {
+	b := &syncBuf{}
+	f.cfg.Log = slog.New(slog.NewTextHandler(b, nil))
+	return b
 }

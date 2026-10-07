@@ -54,12 +54,16 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 	if errors.Is(err, ErrPermissionDenied) && entry.Recipe != "" {
 		// Rules from before 0.5.0 have no recipe key, and their $other
 		// refuses the whole entry: go on without it for the whole session.
-		s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init to update the rules")
+		// Warn only once the second write succeeded: a second refusal is a
+		// genuinely bad credential, not old rules.
 		entry.Recipe = ""
 		s.mu.Lock()
 		s.entry, s.noRecipe = entry, true
 		s.mu.Unlock()
 		err = s.retryBoot(ctx, "registry", write)
+		if err == nil {
+			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init to update the rules")
+		}
 	}
 	if err != nil {
 		return err
