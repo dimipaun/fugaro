@@ -23,10 +23,12 @@ const (
 	MaxBytes           = 16 << 10
 	MaxFirstLineRounds = 3
 	MaxReviewRounds    = 10
-	MaxDescription     = 200
-	DefaultName        = "default"
-	RepoDir            = ".fugaro/recipes"
-	ObjectPrefix       = "fugaro/recipes/"
+	// MaxDescription is the longest description, counted in bytes (not
+	// characters), so a multi-byte description has fewer characters.
+	MaxDescription = 200
+	DefaultName    = "default"
+	RepoDir        = ".fugaro/recipes"
+	ObjectPrefix   = "fugaro/recipes/"
 )
 
 // NameRE is a recipe name: the shape of a project name.
@@ -225,6 +227,7 @@ func (p *parser) str(path string, v *yaml.Node) (string, bool) {
 func (p *parser) top(m *yaml.Node) *Recipe {
 	r := &Recipe{}
 	seen := map[string]bool{}
+	var srcIdx []int
 	for i := 0; i+1 < len(m.Content); i += 2 {
 		k, v := m.Content[i], m.Content[i+1]
 		seen[k.Value] = true
@@ -253,7 +256,7 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 		case "roles":
 			r.ReviewerIsCoder = p.roles(v)
 		case "steps":
-			r.Steps = p.steps(v)
+			r.Steps, srcIdx = p.steps(v)
 		default:
 			p.key("", k)
 		}
@@ -264,7 +267,7 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 		}
 	}
 	if seen["steps"] {
-		p.order(r.Steps)
+		p.order(r.Steps, srcIdx)
 	}
 	return r
 }
@@ -285,19 +288,23 @@ func (p *parser) roles(v *yaml.Node) bool {
 			alias = true
 		case val.Kind == yaml.ScalarNode && (val.Value == "reviewer" || val.Value == "background"):
 			p.add(path, val.Line, "can only be coder in recipe version 1")
-		default:
+		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value != "":
 			p.add(path, val.Line, "can only be coder: %s", modelMsg)
+		default:
+			p.add(path, val.Line, "must be a string; the only allowed value is coder")
 		}
 	}
 	return alias
 }
 
-func (p *parser) steps(v *yaml.Node) []Step {
+// steps returns the valid steps and each one's position in the source list.
+func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 	if v.Kind != yaml.SequenceNode {
 		p.add("steps", v.Line, "must be a list of steps")
-		return nil
+		return nil, nil
 	}
 	var out []Step
+	var idx []int
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
@@ -347,14 +354,17 @@ func (p *parser) steps(v *yaml.Node) []Step {
 			p.add(kpath, body.Line, "must be a mapping such as {max_rounds: 2}, or empty")
 		}
 		out = append(out, s)
+		idx = append(idx, i)
 	}
-	return out
+	return out, idx
 }
 
-func (p *parser) order(steps []Step) {
+// order checks the sequence of the valid steps; src[i] is steps[i]'s position
+// in the source list, so messages point at the line the author wrote.
+func (p *parser) order(steps []Step, src []int) {
 	firsts, reviews := 0, 0
 	for i, s := range steps {
-		path := fmt.Sprintf("steps[%d]", i)
+		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
 		case StepFirstLine:
 			firsts++

@@ -37,3 +37,17 @@ func TestCatalog(t *testing.T) {
 		t.Fatal("a path is a catalog name")
 	}
 }
+
+// TestCatalogTextIsACopy: a caller that edits the bytes cannot change the
+// catalog for the next caller.
+func TestCatalogTextIsACopy(t *testing.T) {
+	a, _ := CatalogText("default")
+	want := string(a)
+	for i := range a {
+		a[i] = 'X'
+	}
+	b, _ := CatalogText("default")
+	if string(b) != want {
+		t.Fatalf("second call = %q, want %q", b, want)
+	}
+}

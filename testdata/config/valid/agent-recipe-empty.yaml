@@ -1,0 +1,8 @@
+version: 1
+project: example
+git: { provider: github, base_branch: main }
+agent:
+  auth: api-key
+  recipe: ""
+workflows:
+  app: { base: go, commands: { build: go build ./..., test: go test ./... } }

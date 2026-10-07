@@ -1,0 +1,6 @@
+version: 1
+name: first-line-twice
+steps:
+  - first_line: {}
+  - first_line: {}
+  - review: {}
