@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -472,4 +473,43 @@ func earlyDraftBase(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestAgentRecipe(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  recipe: claude-solo\n")))
+	if len(ps) > 0 || cfg.Agent.Recipe != "claude-solo" {
+		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "")))
+	if len(ps) > 0 || cfg.Agent.Recipe != "" {
+		t.Fatalf("unset: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  recipe: Claude_Solo\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.recipe" || !strings.Contains(ps[0].Message, "must be a recipe name") {
+		t.Fatalf("bad name: %v", ps)
+	}
+	// "" is the default, the same as unset; 40 characters is the longest name.
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "  recipe: \"\"\n")))
+	if len(ps) > 0 || cfg.Agent.Recipe != "" {
+		t.Fatalf("empty: %+v, %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "  recipe: "+strings.Repeat("a", 40)+"\n")))
+	if len(ps) > 0 || len(cfg.Agent.Recipe) != 40 {
+		t.Fatalf("40 chars: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  recipe: "+strings.Repeat("a", 41)+"\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.recipe" {
+		t.Fatalf("41 chars: %v", ps)
+	}
+	for file, ok := range map[string]bool{"valid/agent-recipe-empty": true, "invalid/agent-recipe-long": false} {
+		data, err := os.ReadFile("../../testdata/config/" + file + ".yaml")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg, ps := Parse(data); (cfg != nil) != ok {
+			t.Errorf("%s: %+v, %v", file, cfg, ps)
+		}
+	}
 }

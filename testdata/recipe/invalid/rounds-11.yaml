@@ -1,0 +1,4 @@
+version: 1
+name: rounds-11
+steps:
+  - review: { max_rounds: 11 }

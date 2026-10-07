@@ -1,0 +1,8 @@
+version: 1
+name: full
+description: Every key
+roles:
+  reviewer: coder
+steps:
+  - first_line: { max_rounds: 3 }
+  - review: { max_rounds: 10 }

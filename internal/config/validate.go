@@ -15,6 +15,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/policy"
 	"github.com/dimipaun/fugaro/internal/pricing"
+	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
 // WorkflowNameRE is a workflow's name, in fugaro.yaml and wherever else a
@@ -124,6 +125,9 @@ func Validate(c *Config) []Problem {
 	}
 	if c.Agent.FirstLineRounds < 1 || c.Agent.FirstLineRounds > MaxFirstLineRounds {
 		add("agent.first_line_rounds", "must be between 1 and %d", MaxFirstLineRounds)
+	}
+	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
+		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
 	if c.Agent.MaxBudgetUSD < 0 {
 		add("agent.max_budget_usd", "must not be negative")

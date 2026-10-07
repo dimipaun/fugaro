@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/recipe.schema.json",
+  "title": "Fugaro recipe",
+  "description": ".fugaro/recipes/<name>.yaml, or fugaro/recipes/<name>.yaml in the runs bucket. See docs/design/recipes.md. At most 16 KiB; anchors, aliases, tags, repeated keys and extra documents are refused.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "steps"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "Must equal the file name (repository) or the object name (project)." },
+    "description": { "type": "string", "maxLength": 200 },
+    "roles": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "reviewer": { "const": "coder", "description": "The reviewer role runs on the coder's model and output limit." } }
+    },
+    "steps": {
+      "oneOf": [
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/review" }], "items": false, "minItems": 1 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/review" }], "items": false, "minItems": 2 }
+      ]
+    }
+  },
+  "$defs": {
+    "body": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": { "max_rounds": { "type": "integer" } }
+    },
+    "firstLine": {
+      "type": "object", "additionalProperties": false, "required": ["first_line"],
+      "properties": { "first_line": { "allOf": [{ "$ref": "#/$defs/body" }], "properties": { "max_rounds": { "minimum": 1, "maximum": 3 } } } }
+    },
+    "review": {
+      "type": "object", "additionalProperties": false, "required": ["review"],
+      "properties": { "review": { "allOf": [{ "$ref": "#/$defs/body" }], "properties": { "max_rounds": { "minimum": 1, "maximum": 10 } } } }
+    }
+  }
+}
