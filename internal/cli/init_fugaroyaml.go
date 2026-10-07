@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"cmp"
+
 	"context"
 	"errors"
 	"fmt"
@@ -266,75 +266,134 @@ func (s *repositoryStage) anchor(ctx context.Context, env initflow.Env, planOnly
 	return nil
 }
 
-// rebuildSteps is the order that makes a repository's job images accept
-// the line.
-func rebuildSteps(repo, wf string) string {
-	return fmt.Sprintf("run fugaro init (it copies the current release base image), then fugaro image build --repo %s --workflow %s, then fugaro init --anchor, before you merge a change that adds gcp_project", repo, wf)
+// The reasons of gcpProjectProblems, one clause each, about one workflow's
+// job image ("it") or the base image its next build would start from.
+
+func reasonNoRecord() string { return "it has no build record" }
+
+func reasonRecordNoVersion() string {
+	return "its build record does not name the fugaro that submitted it"
 }
 
-// The texts of gcpProjectProblems: the repository stage's warnings and
-// fugaro init --anchor's failures alike.
+func reasonRecordVersionOld(version string) string {
+	return fmt.Sprintf("its build record says it was submitted by fugaro %s, older than %s", version, gcpProjectFieldSince)
+}
 
-func oldImageWarning(repo, wf, version string) string {
-	what := "was built by fugaro " + version
-	if version == "" {
-		what = "has no build record that names its fugaro version"
+func reasonDevCLI(version string) string {
+	return fmt.Sprintf("it was built by a development CLI (fugaro_version %s), not a release", version)
+}
+
+func reasonUnreadable(why string) string {
+	return fmt.Sprintf("its build record could not be read (%s), so its age is unknown", why)
+}
+
+func reasonNoBaseRef() string {
+	return "its build record does not say which base image it was built from (a record older than that field), so the fugaro binary in it is unknown"
+}
+
+func reasonBaseRefOld(ref, version string) string {
+	return fmt.Sprintf("it was built from the base image %s, release %s, older than %s, whose fugaro binary it holds", ref, version, gcpProjectFieldSince)
+}
+
+func reasonBaseRefDev(ref string) string {
+	return fmt.Sprintf("it was built from the base image %s, which is not a release (a development or hand-pushed image), whose fugaro binary it holds", ref)
+}
+
+func reasonConfigBaseCustom(ref, kind string) string {
+	return fmt.Sprintf("the local config's base image %s for kind %s is not a release >= %s, and a base image set in the local config is never replaced by fugaro init --base, so the next build would start from it", ref, kind, gcpProjectFieldSince)
+}
+
+func reasonConfigBaseOld(ref, kind, version string) string {
+	return fmt.Sprintf("the local config's base image %s for kind %s is release %s, older than %s, so the next build would start from it", ref, kind, version, gcpProjectFieldSince)
+}
+
+func reasonRegistryHost(kind string, err error) string {
+	return fmt.Sprintf("the registry host is unknown (%s), so the local config's base image for kind %s cannot be checked", oneLineCLI(err.Error()), kind)
+}
+
+// anchorProblemText is the one text about repo's workflow wf (base kind
+// kind, "" when none is known): its reasons, then one ordered fix: the
+// local config's base entry removed first when it is a custom image
+// (customBase), then the release base image copied, the image rebuilt and
+// the line written. lcPath is the local config's file.
+func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
+	var steps []string
+	if customBase {
+		where := "the local config"
+		if lcPath != "" {
+			where = quoteWord(lcPath)
+		}
+		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
-	return fmt.Sprintf("the job image of %s workflow %s %s, and only an image built by fugaro %s or later accepts gcp_project in fugaro.yaml: runs and the daily image check will refuse the file until the image is rebuilt; %s", repo, wf, what, gcpProjectFieldSince, rebuildSteps(repo, wf))
+	if kind != "" {
+		steps = append(steps, fmt.Sprintf("run fugaro init --base %s from outside the checkout (it copies this release's base image)", kind))
+	}
+	steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf), "fugaro init --anchor")
+	for i, s := range steps {
+		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
+	}
+	return fmt.Sprintf("the job image of %s workflow %s is not ready for gcp_project in fugaro.yaml (runs and the daily image check would refuse the file): %s. In order: %s, before you merge a change that adds gcp_project",
+		repo, wf, strings.Join(reasons, "; "), strings.Join(steps, ", "))
 }
 
-func devImageWarning(repo, wf, version string) string {
-	return fmt.Sprintf("the job image of %s workflow %s was built by a development CLI (fugaro_version %s), not a release, so whether it accepts gcp_project in fugaro.yaml is unknown; rebuild it from a release base image: %s", repo, wf, version, rebuildSteps(repo, wf))
-}
-
-func unknownImageWarning(repo, wf, why string) string {
-	return fmt.Sprintf("could not read the build record of %s workflow %s (unknown image age): %s; if its image was built before fugaro.yaml could carry gcp_project, runs and the daily image check will refuse the file, so %s", repo, wf, why, rebuildSteps(repo, wf))
-}
-
-func customBaseWarning(ref, kind, lcPath string) string {
-	return fmt.Sprintf("the base image %s for kind %s is not a release >= %s (a base image that is set in the local config is never replaced by fugaro init --base); remove base_images.%s from %s (keep a backup) and run fugaro init --base %s from outside the checkout, then build the image (fugaro image build), before you merge a change that adds gcp_project", ref, kind, gcpProjectFieldSince, kind, cmp.Or(lcPath, "the local config"), kind)
-}
-
-func oldBaseWarning(ref, kind, version string) string {
-	return fmt.Sprintf("the base image %s for kind %s is release %s, older than %s: run fugaro init --base %s (it copies this release's base image and moves base_images.%s to it), then build the image (fugaro image build), before you merge a change that adds gcp_project", ref, kind, version, gcpProjectFieldSince, kind, kind)
-}
-
-// anchorProblem is one reason the gcp_project line is not safe to merge
-// yet; remote is a cloud read that failed (exit 2 for --anchor).
+// anchorProblem is one workflow's reasons the gcp_project line is not safe
+// to merge yet, as one text; remote is a cloud read that failed (exit 2 for
+// --anchor).
 type anchorProblem struct {
 	text   string
 	remote bool
 }
 
-// recordVersionProblem judges a build record's fugaro version: a release at
-// or after gcpProjectFieldSince is fine ("").
-func recordVersionProblem(repo, wf, version string) string {
+// recordVersionReason judges a build record's fugaro version (the CLI that
+// submitted the build): a release at or after gcpProjectFieldSince is fine
+// ("").
+func recordVersionReason(version string) string {
 	v := strings.TrimPrefix(version, "v")
 	switch {
 	case v == "":
-		return oldImageWarning(repo, wf, "")
+		return reasonRecordNoVersion()
 	case !releaseRE.MatchString(v):
-		return devImageWarning(repo, wf, version)
+		return reasonDevCLI(version)
 	case imagePredates(v, gcpProjectFieldSince):
-		return oldImageWarning(repo, wf, version)
+		return reasonRecordVersionOld(version)
+	}
+	return ""
+}
+
+// baseRefReleaseRE is a release base image of any host (an unset base is
+// the release's own on ghcr.io, and --image-source names another):
+// .../fugaro-<kind>:<X.Y.Z>, with an optional digest.
+var baseRefReleaseRE = regexp.MustCompile(`/fugaro-[a-z0-9-]+:v?([0-9]+\.[0-9]+\.[0-9]+)(?:@sha256:[0-9a-f]{64})?$`)
+
+// baseRefReason judges the base image a build ran FROM, as its record says:
+// the image holds that base's fugaro binary, whatever CLI submitted it.
+func baseRefReason(ref string) string {
+	if ref == "" {
+		return reasonNoBaseRef()
+	}
+	m := baseRefReleaseRE.FindStringSubmatch(ref)
+	switch {
+	case m == nil:
+		return reasonBaseRefDev(ref)
+	case imagePredates(m[1], gcpProjectFieldSince):
+		return reasonBaseRefOld(ref, m[1])
 	}
 	return ""
 }
 
 // gcpProjectProblems are the reasons repo's fugaro.yaml may not carry
-// gcp_project yet, the one source of the repository stage's warnings and of
-// fugaro init --anchor's checks. bases are the repository's workflows, each
-// with its base kind ("" for none known). For every workflow, the build
-// record in the runs bucket must name a release at or after
-// gcpProjectFieldSince (no record, an older one or a development CLI's is a
-// problem, and so is a record that cannot be read); for every base kind, the
-// local config's base image, when one is set, must be a release image
-// fugaro init copied, at or after that release (lcPath is the local config's
-// file, for the advice).
+// gcp_project yet, one problem per workflow, the one source of the
+// repository stage's warnings and of fugaro init --anchor's checks. bases
+// are the repository's workflows, each with its base kind ("" for none
+// known). For every workflow, its build record in the runs bucket must exist
+// and be readable, name a release at or after gcpProjectFieldSince as the
+// CLI that submitted it, and name a release base image at or after it as the
+// base it was built FROM (the image holds that base's binary); and the
+// local config's base image for its kind, when one is set, must be a
+// release image fugaro init copied, at or after that release, else the next
+// build regresses. lcPath is the local config's file, for the advice. It
+// reads only the records: no other cloud call.
 func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provider, repo string, bases map[string]string) []anchorProblem {
-	var ps []anchorProblem
-	add := func(remote bool, text string) { ps = append(ps, anchorProblem{text: text, remote: remote}) }
-	wfs := slices.Sorted(maps.Keys(bases))
 	slug, serr := task.Slug(provider, repo)
 	var b *blobx.Bucket
 	var berr error
@@ -349,47 +408,52 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 			defer b.Close()
 		}
 	}
-	for _, wf := range wfs {
-		if berr != nil {
-			add(berrRemote, unknownImageWarning(repo, wf, oneLineCLI(berr.Error())))
-			continue
-		}
-		data, _, rerr := b.Read(ctx, imagecheck.RecordKey(slug, wf))
-		switch {
-		case errors.Is(rerr, blobx.ErrNotExist):
-			add(false, oldImageWarning(repo, wf, ""))
-		case rerr != nil:
-			add(true, unknownImageWarning(repo, wf, oneLineCLI(rerr.Error())))
-		default:
-			rec, perr := imagecheck.ParseRecord(data)
-			if perr != nil {
-				add(false, unknownImageWarning(repo, wf, oneLineCLI(perr.Error())))
-			} else if t := recordVersionProblem(repo, wf, rec.FugaroVersion); t != "" {
-				add(false, t)
+	host, herr := infra.RegistryHost(lc)
+	var ps []anchorProblem
+	for _, wf := range slices.Sorted(maps.Keys(bases)) {
+		var reasons []string
+		remote := false
+		add := func(r string) {
+			if r != "" {
+				reasons = append(reasons, r)
 			}
 		}
-	}
-	kinds := map[string]bool{}
-	for _, k := range bases {
-		if slices.Contains(config.Bases, k) {
-			kinds[k] = true
+		if berr != nil {
+			add(reasonUnreadable(oneLineCLI(berr.Error())))
+			remote = berrRemote
+		} else {
+			data, _, rerr := b.Read(ctx, imagecheck.RecordKey(slug, wf))
+			switch {
+			case errors.Is(rerr, blobx.ErrNotExist):
+				add(reasonNoRecord())
+			case rerr != nil:
+				add(reasonUnreadable(oneLineCLI(rerr.Error())))
+				remote = true
+			default:
+				if rec, perr := imagecheck.ParseRecord(data); perr != nil {
+					add(reasonUnreadable(oneLineCLI(perr.Error())))
+				} else {
+					add(recordVersionReason(rec.FugaroVersion))
+					add(baseRefReason(rec.BaseRef))
+				}
+			}
 		}
-	}
-	host, herr := infra.RegistryHost(lc)
-	for _, k := range slices.Sorted(maps.Keys(kinds)) {
-		ref := lc.BaseImage(k)
-		if ref == "" {
-			continue // fugaro init copies the current release
+		kind, customBase := bases[wf], false
+		if !slices.Contains(config.Bases, kind) {
+			kind = ""
 		}
-		v, managed := "", false
-		if herr == nil {
-			v, managed = managedVersion(ref, host, k)
+		if ref := lc.BaseImage(kind); kind != "" && ref != "" {
+			if herr != nil {
+				add(reasonRegistryHost(kind, herr))
+			} else if v, managed := managedVersion(ref, host, kind); !managed {
+				add(reasonConfigBaseCustom(ref, kind))
+				customBase = true
+			} else if imagePredates(v, gcpProjectFieldSince) {
+				add(reasonConfigBaseOld(ref, kind, v))
+			}
 		}
-		switch {
-		case !managed:
-			add(false, customBaseWarning(ref, k, lcPath))
-		case imagePredates(v, gcpProjectFieldSince):
-			add(false, oldBaseWarning(ref, k, v))
+		if len(reasons) > 0 {
+			ps = append(ps, anchorProblem{text: anchorProblemText(repo, wf, kind, lcPath, reasons, customBase), remote: remote})
 		}
 	}
 	return ps

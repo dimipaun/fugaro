@@ -8,6 +8,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -147,4 +148,26 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	}
 	res.State = "written"
 	return r.printResult()
+}
+
+// anchorHintText points at --anchor where a checkout lacks the line.
+const anchorHintText = "to let teammates use this installation without setup, run fugaro init --anchor in this checkout (it checks the images first)"
+
+// needsAnchorHint reports whether co, a checkout of lc's project, has no
+// gcp_project: line although lc's installation could take one (a
+// convention-named runs bucket).
+func needsAnchorHint(co *localcfg.Checkout, lc *localcfg.Config) bool {
+	return co != nil && lc != nil && lc.GCPProject != "" && co.GCPProject == "" && co.Project == lc.Name && customBucketNote(lc) == ""
+}
+
+// noteAnchor prints anchorHintText once per run when the checkout at root
+// needs it (init --repo's last line; a note, so stderr under --json).
+func (r *initRun) noteAnchor(ctx context.Context, root string, lc *localcfg.Config) {
+	if r.anchorNoted {
+		return
+	}
+	if co, err := checkoutProject(ctx, root); err == nil && needsAnchorHint(co, lc) {
+		r.anchorNoted = true
+		fmt.Fprintf(r.w, "note: %s\n", anchorHintText)
+	}
 }
