@@ -57,3 +57,12 @@ func TestPlanPrecedence(t *testing.T) {
 		t.Fatalf("solo: %v", got)
 	}
 }
+
+// TestAgentLoopReadsThePlan: the loop's rounds come from r.plan, not from
+// cfg.Agent: a plan of one review round on a config saying 3 runs once.
+func TestAgentLoopReadsThePlan(t *testing.T) {
+	r := &run{plan: []planStep{{recipe.StepReview, 1}}, cfg: &config.Config{Agent: config.Agent{ReviewRounds: 3}}}
+	if got := r.plan[0].Rounds; got != 1 {
+		t.Fatalf("rounds = %d", got)
+	}
+}
