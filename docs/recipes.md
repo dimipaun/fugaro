@@ -106,7 +106,7 @@ Order matters:
 
 1. Upgrade every CLI, every CI pin and every workflow's job image to 0.5.0 **before** you merge `agent.recipe` into `fugaro.yaml` or launch a non-default recipe. A binary older than 0.5.0 refuses `agent.recipe` as an unknown key, and an older runner rejects a task that carries a recipe. `fugaro validate` warns when `agent.recipe` is set.
 2. `fugaro run` checks the workflow's build record and refuses a recipe run (or a checkout that sets `agent.recipe`) on a job image older than 0.5.0. The fix is, in order: `fugaro init --base <kind>` from outside the checkout, `fugaro init --repo` in the checkout, `fugaro image build`. Then use the recipe. A launch of the catalog `default` carries no recipe and needs no 0.5.0 image, unless `--recipe default` must override an `agent.recipe` that could apply; a project or repository recipe named `default` is a recipe-carrying launch and does need it.
-3. Deployed Firebase rules are updated only by `fugaro init`. Until you rerun it, the dashboard shows no recipe name; the runs still work, and the run logs a warning that names `fugaro init`.
+3. Deployed Firebase rules are updated only by `fugaro init --firebase <firebase-project-id>` (its Firebase stage). Until you rerun it, the dashboard shows no recipe name; the runs still work, and the run logs a warning that names that command.
 
 ## 8. Safety
 
