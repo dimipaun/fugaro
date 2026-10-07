@@ -440,8 +440,14 @@ func readSharedFromBucket(ctx context.Context, a SharedAnchor) (*localcfg.Config
 // (a user error), anything else is a remote failure. The cause stays
 // wrapped for isUnreachable.
 func bucketErr(url, what string, err error) error {
+	return bucketErrFor(url, what, "the shared config", err)
+}
+
+// bucketErrFor is bucketErr for a read of subject (what the refusal says
+// the reader needs a launcher or operator role for).
+func bucketErrFor(url, what, subject string, err error) error {
 	if isAccessDenied(err) {
-		return userErr("no access to %s (%s: %w): reading the shared config needs a launcher or operator role in the GCP project", url, what, err)
+		return userErr("no access to %s (%s: %w): reading %s needs a launcher or operator role in the GCP project", url, what, err, subject)
 	}
 	return remote(fmt.Errorf("%s of %s: %w", what, url, err))
 }
