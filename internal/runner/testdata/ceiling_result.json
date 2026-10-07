@@ -31,6 +31,11 @@
     "url": "https://example.invalid/pr/1"
   },
   "pushed_head": "<sha>",
+  "recipe": {
+    "name": "default",
+    "sha256": "a2cf31f5587b76d59a60b590d76425d3c14bed67c67d8323c320580e9b6614f9",
+    "source": "catalog"
+  },
   "repo": "acme/app",
   "reviews": [
     {

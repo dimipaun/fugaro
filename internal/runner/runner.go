@@ -125,8 +125,9 @@ type run struct {
 	spec *task.Spec
 	cfg  *config.Config
 	wf   config.Workflow
-	// plan is the loop after implement, from the run's recipe (Task 8
-	// resolves it; until then the catalog default).
+	// plan is the loop after implement, from the recipe resolved at
+	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
+	// ends with a review step.
 	plan    []planStep
 	repo    *gitops.Repo
 	env     []string
@@ -810,9 +811,17 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if err := spec.Apply(cfg, &wf); err != nil {
 		return fmt.Errorf("applying task overrides: %w", err)
 	}
-	defText, _ := recipe.CatalogText(recipe.DefaultName)
-	def, _ := recipe.Parse(defText)
-	r.plan = planOf(def, true, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)
+	rcp, rrec, err := r.resolveRecipe(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	r.rec.Recipe = &rrec
+	derived := rrec.Name == recipe.DefaultName && rrec.Source == string(recipe.SourceCatalog)
+	plan := planOf(rcp, derived, cfg.Agent, r.d.Providers, spec.Overrides.ReviewRounds)
+	if err := checkPlan(plan); err != nil {
+		return fmt.Errorf("recipe %s: %w", rrec.Name, err)
+	}
+	r.plan = plan
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
 	dl := r.lockDeadline()

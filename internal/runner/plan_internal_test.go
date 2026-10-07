@@ -2,6 +2,7 @@ package runner
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -58,11 +59,14 @@ func TestPlanPrecedence(t *testing.T) {
 	}
 }
 
-// TestAgentLoopReadsThePlan: the loop's rounds come from r.plan, not from
-// cfg.Agent: a plan of one review round on a config saying 3 runs once.
-func TestAgentLoopReadsThePlan(t *testing.T) {
-	r := &run{plan: []planStep{{recipe.StepReview, 1}}, cfg: &config.Config{Agent: config.Agent{ReviewRounds: 3}}}
-	if got := r.plan[0].Rounds; got != 1 {
-		t.Fatalf("rounds = %d", got)
+func TestCheckPlan(t *testing.T) {
+	ok := []planStep{{recipe.StepFirstLine, 2}, {recipe.StepReview, 1}}
+	if err := checkPlan(ok); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range [][]planStep{nil, {{recipe.StepFirstLine, 2}}, {{recipe.StepReview, 1}, {recipe.StepFirstLine, 1}}, {{recipe.StepReview, 0}}} {
+		if err := checkPlan(bad); err == nil || !strings.Contains(err.Error(), "no trailing review step") {
+			t.Errorf("checkPlan(%v) = %v", bad, err)
+		}
 	}
 }

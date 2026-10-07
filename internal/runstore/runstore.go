@@ -150,6 +150,9 @@ type Record struct {
 	// Policy is the budget and model policy the run ran under, set only
 	// when a layer set something (a run with no policy writes none).
 	Policy *PolicyRecord `json:"policy,omitempty"`
+	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
+	// §8); absent in records from before 0.5.0.
+	Recipe *RecipeRecord `json:"recipe,omitempty"`
 	// Budget is the run's part in the project's shared budget, set only
 	// when the run used the budget backend (M9b).
 	Budget *BudgetRecord `json:"budget,omitempty"`
@@ -461,4 +464,12 @@ func (s *Store) RequestCancel(ctx context.Context) error {
 // CancelRequested reports whether a cancel marker exists.
 func (s *Store) CancelRequested(ctx context.Context) (bool, error) {
 	return s.bucket.Exists(ctx, s.prefix+"cancel")
+}
+
+// RecipeRecord names a run's recipe, where it came from and its exact text's
+// sha256, so a run can be traced to the text it ran.
+type RecipeRecord struct {
+	Name   string `json:"name"`
+	Source string `json:"source"` // repo | project | catalog
+	SHA256 string `json:"sha256"`
 }

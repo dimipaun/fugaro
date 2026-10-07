@@ -147,6 +147,16 @@
         "detail": { "type": "string" }
       }
     },
+    "recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "source", "sha256"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+        "source": { "enum": ["repo", "project", "catalog"] },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
     "policy": {
       "type": "object",
       "additionalProperties": false,

@@ -1,6 +1,8 @@
 package runner
 
 import (
+	"errors"
+
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
@@ -41,4 +43,13 @@ func planOf(rcp *recipe.Recipe, derived bool, a config.Agent, providers map[stri
 		}
 	}
 	return out
+}
+
+// checkPlan refuses a plan that does not end with a review step: a run
+// never skips the senior review, whatever the recipe says.
+func checkPlan(plan []planStep) error {
+	if n := len(plan); n == 0 || plan[n-1].Kind != recipe.StepReview || plan[n-1].Rounds < 1 {
+		return errors.New("the plan has no trailing review step, so the run would skip the senior review")
+	}
+	return nil
 }
