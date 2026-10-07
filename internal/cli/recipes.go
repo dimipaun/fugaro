@@ -355,7 +355,7 @@ func publishRecipe(ctx context.Context, w io.Writer, b *blobx.Bucket, key, name 
 	}
 	recipePublishRace(ctx, b, key)
 	if err == nil {
-		gen, err = b.ReplaceIf(ctx, key, data, gen, old)
+		gen, err = b.ReplaceIfType(ctx, key, data, "application/yaml", gen, old)
 	} else {
 		gen, err = b.Create(ctx, key, data, "application/yaml")
 	}

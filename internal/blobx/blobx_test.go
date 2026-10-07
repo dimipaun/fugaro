@@ -343,3 +343,26 @@ func TestStrictReadsKeepAbsentAndCap(t *testing.T) {
 		t.Fatalf("ReadMaxStrict at cap = %d, %v", len(data), err)
 	}
 }
+
+// ReplaceIfType keeps a replaced YAML object application/yaml.
+func TestReplaceIfTypeSetsContentType(t *testing.T) {
+	ctx := context.Background()
+	for name, b := range map[string]*blobx.Bucket{
+		"mem": blobx.Wrap(memblob.OpenBucket(nil)),
+		"gcs": gcpfake.NewGCS(t).Bucket(t, "runs"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			gen, err := b.Create(ctx, "r.yaml", []byte("a: 1\n"), "application/yaml")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := b.ReplaceIfType(ctx, "r.yaml", []byte("a: 2\n"), "application/yaml", gen, []byte("a: 1\n")); err != nil {
+				t.Fatal(err)
+			}
+			a, err := b.Attributes(ctx, "r.yaml")
+			if err != nil || a.ContentType != "application/yaml" {
+				t.Fatalf("content type = %v, %v", a, err)
+			}
+		})
+	}
+}
