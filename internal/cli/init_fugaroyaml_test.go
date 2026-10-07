@@ -176,7 +176,7 @@ func TestRepoStageAnchorYesWrites(t *testing.T) {
 	if got := readYAML(t, dir); got != withAnchor(yaml) {
 		t.Errorf("file:\n%s", got)
 	}
-	want := diffText(path) + "  confirmed by --yes\n" + updatedText(path) + warnedLine(oldImageWarning("acme/app", "app"))
+	want := diffText(path) + "  confirmed by --yes\n" + updatedText(path) + warnedLine(oldImageWarning("acme/app", "app", "0.3.1"))
 	if out.String() != want {
 		t.Errorf("output:\n%s\nwant:\n%s", out, want)
 	}
@@ -223,7 +223,7 @@ func TestRepoStageAnchorNonInteractiveWithoutYes(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(s.tg.root, "fugaro.yaml")
-	want := diffText(path) + addLineText(path) + warnedLine(oldImageWarning("acme/app", "app"))
+	want := diffText(path) + addLineText(path) + warnedLine(oldImageWarning("acme/app", "app", "0.3.1"))
 	if got := readYAML(t, dir); got != yaml || out.String() != want {
 		t.Errorf("file:\n%s\noutput:\n%s\nwant:\n%s", got, out, want)
 	}
@@ -333,7 +333,7 @@ func TestRepoStageAnchorAlreadySetStillWarns(t *testing.T) {
 	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if readYAML(t, dir) != yaml || out.String() != warnedLine(oldImageWarning("acme/app", "app")) {
+	if readYAML(t, dir) != yaml || out.String() != warnedLine(oldImageWarning("acme/app", "app", "0.3.1")) {
 		t.Errorf("output:\n%s", out)
 	}
 	// A current image: silent.
@@ -344,12 +344,38 @@ func TestRepoStageAnchorAlreadySetStillWarns(t *testing.T) {
 	}
 }
 
+// The stage's warning is --anchor's FAIL text: a development CLI's image and
+// a base image the local config pins to a dev tag are warned about too.
+func TestRepoStageAnchorWarnsDevImageAndCustomBase(t *testing.T) {
+	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
+	putRecord(t, "dev")
+	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := warnedLine(devImageWarning("acme/app", "app", "dev")); out.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out, want)
+	}
+	lc := anchorLC()
+	const ref = "us-east5-docker.pkg.dev/fugaro-aurora/fugaro-base/fugaro-web-node:dev-8fe2647"
+	lc.Region = "us-east5"
+	lc.BaseImages = map[string]string{"web-node": ref}
+	s, out, _ = anchorRig(t, lc, withAnchor(anchorYAML()), "")
+	s.e.path = "/home/me/.config/fugaro/projects/aurora.yaml"
+	putRecord(t, "0.4.0")
+	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if want := warnedLine(customBaseWarning(ref, "web-node", s.e.path)); out.String() != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out, want)
+	}
+}
+
 func TestRepoStageAnchorNoRecordWarnsOld(t *testing.T) {
 	s, out, _ := anchorRig(t, anchorLC(), withAnchor(anchorYAML()), "")
 	if _, err := s.Apply(t.Context(), initflow.Env{Yes: true}); err != nil {
 		t.Fatal(err)
 	}
-	if out.String() != warnedLine(oldImageWarning("acme/app", "app")) {
+	if out.String() != warnedLine(oldImageWarning("acme/app", "app", "")) {
 		t.Errorf("output:\n%s", out)
 	}
 }
@@ -364,7 +390,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.HasPrefix(got, "warning: could not read the build record of acme/app workflow app (unknown image age): ") || strings.Contains(got, "the job image of") ||
-		!strings.HasSuffix(got, "run fugaro init (it copies the current base image), then fugaro image build --repo acme/app --workflow app, then fugaro init again, before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "run fugaro init (it copies the current release base image), then fugaro image build --repo acme/app --workflow app, then fugaro init --anchor, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }
