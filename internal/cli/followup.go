@@ -40,6 +40,9 @@ type prChain struct {
 	Chosen *runstore.RecipeRecord
 }
 
+// readRunRecord reads a run's result.json; tests replace it.
+var readRunRecord = func(ctx context.Context, s *runstore.Store) (*runstore.Record, error) { return s.ReadRecord(ctx) }
+
 // resolvePR finds pull request pr of slug through the runs bucket, and
 // refuses a follow-up whose context can't be trusted. exclude is a run ID
 // to leave out (a retry, or a repeated --run-id). Every refusal is a
@@ -124,9 +127,16 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	if c.Recipe == nil {
 		// The runner chose this run's recipe (agent.recipe at the ref); a
 		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
-		// A record that can't be read means no recipe is carried, not a failure.
-		if rec, err := runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID).ReadRecord(ctx); err == nil && rec.Recipe != nil &&
-			rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name) {
+		// A run with no record yet carries nothing; any other failure to read
+		// it stops the launch, as a different loop must never run silently.
+		rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
+		switch {
+		case errors.Is(err, runstore.ErrNotFound):
+		case corruptObject(err):
+			return nil, userErr("run %s's result.json is unreadable (%v), so the recipe the runner chose for it is unknown; nothing was launched", c.Previous.Run, err)
+		case err != nil:
+			return nil, remote(fmt.Errorf("reading the record of run %s to keep its recipe: %w; nothing was launched", c.Previous.Run, err))
+		case rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name):
 			c.Chosen = rec.Recipe
 		}
 	}
@@ -398,7 +408,14 @@ func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prCha
 	} else {
 		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
 		if err != nil {
-			return nil, err
+			msg := func(cause error) error {
+				return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+			}
+			var ee *ExitError
+			if errors.As(err, &ee) {
+				return nil, &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+			}
+			return nil, msg(err)
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()

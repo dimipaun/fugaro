@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -441,6 +443,60 @@ func TestRunPRChosenRecipeRefusedOnOldImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
 	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
 	if err == nil || !strings.Contains(err.Error(), "recipe cheap-loop-senior needs a job image") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func failRecordRead(t *testing.T, err error) {
+	t.Helper()
+	old := readRunRecord
+	readRunRecord = func(context.Context, *runstore.Store) (*runstore.Record, error) { return nil, err }
+	t.Cleanup(func() { readRunRecord = old })
+}
+
+// A record that can't be read must never turn into a silent default.
+func TestRunPRChosenRecipeRecordReadFailures(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want string
+	}{
+		"transient": {errors.New("storage: connection reset"), "nothing was launched"},
+		"corrupt":   {&json.SyntaxError{}, "result.json is unreadable"},
+	} {
+		f := newCloudFixture(t)
+		seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+		failRecordRead(t, tc.err)
+		_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v", name, err)
+		}
+		if n := len(f.run.Executions()); n != 0 {
+			t.Errorf("%s: %d executions", name, n)
+		}
+		if _, err := runstore.Open(fileEnv(t, f).bucket.Bucket, appSlug, fuID).ReadFile(t.Context(), "task.json"); !errors.Is(err, runstore.ErrNotFound) {
+			t.Errorf("%s: a task.json was created: %v", name, err)
+		}
+	}
+}
+
+func TestRunPRChosenRecipeRecordNotFoundCarriesNothing(t *testing.T) {
+	f := newCloudFixture(t)
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "cheap-loop-senior", Source: "catalog", SHA256: strings.Repeat("a", 64)})
+	failRecordRead(t, runstore.ErrNotFound)
+	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSpec(t, f, fuID).Recipe; got != nil {
+		t.Fatalf("recipe = %+v", got)
+	}
+}
+
+func TestRunPRChosenRecipeNoLongerResolves(t *testing.T) {
+	f := newCloudFixture(t)
+	seedChosenRoot(t, f, &runstore.RecipeRecord{Name: "gone", Source: "project", SHA256: strings.Repeat("a", 64)})
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7", "--run-id", fuID, "x")
+	if err == nil || !strings.Contains(err.Error(), "ran (gone) cannot be used") || !strings.Contains(err.Error(), "pass --recipe NAME") ||
+		ExitCode(err) != ExitUserError {
 		t.Fatalf("err = %v", err)
 	}
 }
