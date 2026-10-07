@@ -58,7 +58,9 @@ Its own topic. `agent.review_rounds` (1 to 10, default 2): review then fix round
 
 ## 9. `agent.recipe`
 
-Its own topic. The recipe is the loop after implement: `default` is today's (a first-line review only when `agent.first_line_review` turns it on, then `agent.review_rounds` senior rounds); `cheap-loop-senior` is two first-line rounds by the coder's model, then one senior round, for a cheap provider coder with a Claude reviewer; `claude-solo` makes the coder's model also review, in a fresh session, for one round, for a team with one model. Recommend that the user leave `agent.recipe` out (the default) unless the models in topic 3 fit one of the others, and say why. A repository or project can define its own (`fugaro recipes ls` lists what exists). Setting the key needs fugaro 0.5.0 or later everywhere the repository's `fugaro.yaml` is read: every teammate's CLI, CI pins and the job images; `fugaro validate` warns about it.
+Its own topic, after 3 and 8. Say first, before suggesting anything: setting `agent.recipe` writes a key that fugaro older than 0.5.0 refuses, in every teammate's CLI, every CI pin and every workflow's job image, so the user must hear this before it goes into the file and decide whether everything is on 0.5.0 or later (`fugaro validate` warns about it).
+
+Then recommend `default`: leave `agent.recipe` out and say so. Never write `agent.recipe` without the user's explicit decision, and never guess a recipe from the repository's domain or language. Offer the others only if the user asks for them or says what they want. The recipe is the loop after implement: `default` is today's (a first-line review when `agent.first_line_review` turns it on, where `auto` turns it on for a provider coder with a non-provider reviewer, then `agent.review_rounds` senior rounds); `cheap-loop-senior` is two first-line rounds by the coder's model, then one senior round; `claude-solo` makes the coder's model also review, in a fresh session, for one round. A repository or project can define its own (`fugaro recipes ls` lists what exists).
 
 ## 10. `rebuild`
 
