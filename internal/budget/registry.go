@@ -62,7 +62,7 @@ func (s *Session) Start(ctx context.Context, entry AgentEntry) error {
 		s.mu.Unlock()
 		err = s.retryBoot(ctx, "registry", write)
 		if err == nil {
-			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init to update the rules")
+			s.log.Warn("budget: the database's rules predate recipes, so the registry entry goes without the recipe; run fugaro init --firebase <firebase-project> to update the rules")
 		}
 	}
 	if err != nil {
