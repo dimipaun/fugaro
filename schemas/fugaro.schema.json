@@ -19,6 +19,7 @@
   "properties": {
     "version": { "const": 1 },
     "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
+    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro init (written by fugaro init). Never guessed from the project name." },
     "git": {
       "type": "object",
       "additionalProperties": false,
