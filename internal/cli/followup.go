@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
@@ -34,7 +35,13 @@ type prChain struct {
 	// branch and workflow of the runs before it.
 	Ref, Workflow string
 	Recipe        *task.Recipe // the previous run's: a follow-up keeps it unless --recipe names one
+	// Chosen is the recipe the runner chose for the previous run (its record's),
+	// when that run's task named none; nil when unknown, absent or default.
+	Chosen *runstore.RecipeRecord
 }
+
+// readRunRecord reads a run's result.json; tests replace it.
+var readRunRecord = func(ctx context.Context, s *runstore.Store) (*runstore.Record, error) { return s.ReadRecord(ctx) }
 
 // resolvePR finds pull request pr of slug through the runs bucket, and
 // refuses a follow-up whose context can't be trusted. exclude is a run ID
@@ -117,6 +124,22 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 	// from before it was kept falls back to that run's ref.
 	c.Ref, c.Workflow = c.Previous.BaseBranch, prev.Workflow
 	c.Recipe = prev.Recipe
+	if c.Recipe == nil {
+		// The runner chose this run's recipe (agent.recipe at the ref); a
+		// follow-up keeps it, as the runner ignores agent.recipe on follow-ups.
+		// A run with no record yet carries nothing; any other failure to read
+		// it stops the launch, as a different loop must never run silently.
+		rec, err := readRunRecord(ctx, runstore.Open(env.bucket.Bucket, slug, c.Previous.RunID))
+		switch {
+		case errors.Is(err, runstore.ErrNotFound):
+		case corruptObject(err):
+			return nil, userErr("run %s's result.json is unreadable (%v), so the recipe the runner chose for it is unknown; nothing was launched", c.Previous.Run, err)
+		case err != nil:
+			return nil, remote(fmt.Errorf("reading the record of run %s to keep its recipe: %w; nothing was launched", c.Previous.Run, err))
+		case rec.Recipe != nil && rec.Recipe.Name != recipe.DefaultName && recipe.NameRE.MatchString(rec.Recipe.Name):
+			c.Chosen = rec.Recipe
+		}
+	}
 	recorded := c.Ref != ""
 	if !recorded {
 		c.Ref = prev.Ref
@@ -331,6 +354,11 @@ func newFollowUpSpec(ctx context.Context, env *cloudEnv, o *runOptions, repo str
 		}
 		printRecipeNote(warn, rr, true)
 		rcp = rr.taskRecipe()
+	} else if rcp == nil && c.Chosen != nil {
+		var err error
+		if rcp, err = carryChosenRecipe(ctx, env, repo, c, warn); err != nil {
+			return nil, err
+		}
 	} else if rcp != nil && rcp.YAML != "" {
 		// An inherited recipe is parsed again: a bad one fails here, not in the cloud.
 		if _, err := parseRecipeAt([]byte(rcp.YAML), rcp.Name, "the recipe of the previous run ("+rcp.Name+")"); err != nil {
@@ -365,4 +393,37 @@ func recheckFollowUp(ctx context.Context, env *cloudEnv, slug string, spec *task
 			slug, spec.RunID, spec.PreviousRun, c.Previous.Run, spec.PR, spec.PR)
 	}
 	return nil
+}
+
+// carryChosenRecipe is the recipe a follow-up keeps when the runner chose the
+// previous run's: a repository recipe by name (the runner reads it at the
+// base), any other resolved now and embedded. A note says what is kept, and
+// that the text changed since when it did.
+func carryChosenRecipe(ctx context.Context, env *cloudEnv, repo string, c *prChain, warn io.Writer) (*task.Recipe, error) {
+	ch := c.Chosen
+	var rcp *task.Recipe
+	changed := false
+	if ch.Source == string(recipe.SourceRepo) {
+		rcp = &task.Recipe{Name: ch.Name, Source: ch.Source}
+	} else {
+		rr, err := resolveRecipe(ctx, env, checkoutRoot(ctx, repo), ch.Name, time.Now(), false)
+		if err != nil {
+			msg := func(cause error) error {
+				return fmt.Errorf("the recipe run %s ran (%s) cannot be used: %w; pass --recipe NAME to choose another", pluginwire.Printable(oneLineCLI(c.Previous.Run)), ch.Name, cause)
+			}
+			var ee *ExitError
+			if errors.As(err, &ee) {
+				return nil, &ExitError{Code: ee.Code, Err: msg(ee.Err)}
+			}
+			return nil, msg(err)
+		}
+		printRecipeNote(warn, rr, true)
+		rcp = rr.taskRecipe()
+		changed = ch.SHA256 != "" && recipe.Sum(rr.Text) != ch.SHA256
+	}
+	fmt.Fprintf(warn, "note: keeping recipe %s, which the runner chose for run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(oneLineCLI(c.Previous.Run)))
+	if changed {
+		fmt.Fprintf(warn, "note: recipe %s has changed since run %s\n", pluginwire.Printable(ch.Name), pluginwire.Printable(oneLineCLI(c.Previous.Run)))
+	}
+	return rcp, nil
 }

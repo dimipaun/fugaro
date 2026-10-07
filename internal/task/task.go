@@ -56,8 +56,9 @@ type Spec struct {
 	Overrides   Overrides `json:"overrides"`
 	RequestedBy string    `json:"requested_by,omitempty"`
 	Batch       string    `json:"batch,omitempty"`
-	// Recipe is the task loop the launching CLI resolved; nil is the
-	// default recipe from the catalog.
+	// Recipe is the task loop the launching CLI resolved. Nil on a first run
+	// leaves the choice to the runner (agent.recipe at the ref, else default);
+	// nil on a follow-up is default.
 	Recipe *Recipe `json:"recipe,omitempty"`
 }
 

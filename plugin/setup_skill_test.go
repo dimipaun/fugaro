@@ -276,7 +276,7 @@ func TestSetupSkillContent(t *testing.T) {
 		},
 		"skills/setup/reference/decisions.md": {
 			"followup.allow_public", "agent.max_run_tokens", "agent.max_budget_usd", "fugaro budget prices", "never set `allow_public` without their explicit decision",
-			"own terminal", "Only the people the user names", "list only the people the user names", "recommend asking the user for a number", "`vertex` supports `observe` only", "Ask the user whether the repository is public", "never from CODEOWNERS",
+			"own terminal", "## 9. `agent.recipe`", "Only the people the user names", "list only the people the user names", "recommend asking the user for a number", "`vertex` supports `observe` only", "Ask the user whether the repository is public", "never from CODEOWNERS",
 		},
 		"skills/setup/reference/validation.md": {
 			"root-scan", "managed-settings-dir", "runs the repository's code", "Don't have the token put into your own environment", "visible to the repository's code in the build and to every command your agent runs",
@@ -355,6 +355,51 @@ func TestSetupSkillSplitsMachineSizeAndReviewRounds(t *testing.T) {
 	}
 	if strings.Contains(dec, "## 6. `review_rounds`, `resources`") {
 		t.Error("decisions.md still joins review_rounds and resources in one topic")
+	}
+}
+
+// TestSetupSkillAsksRecipe: the recipe is its own topic, after the models and
+// review rounds; the 0.5.0 warning comes before any suggestion; the user
+// decides, nothing is guessed, and default is the recommendation.
+func TestSetupSkillAsksRecipe(t *testing.T) {
+	files := setupFiles(t)
+	skill, dec := files["skills/setup/SKILL.md"], files["skills/setup/reference/decisions.md"]
+	if !regexp.MustCompile("(?m)^9\\. `agent.recipe`: its own question").MatchString(skill) {
+		t.Error("SKILL.md has no topic 9 for agent.recipe")
+	}
+	at := func(s, sub string) int { return strings.Index(s, sub) }
+	if !(at(skill, "3. `agent.models`") < at(skill, "8. `agent.review_rounds`") && at(skill, "8. `agent.review_rounds`") < at(skill, "9. `agent.recipe`")) {
+		t.Error("SKILL.md does not order topics 3, 8, 9")
+	}
+	if !(at(dec, "## 3. `agent.models`") < at(dec, "## 8. `agent.review_rounds`") && at(dec, "## 8. `agent.review_rounds`") < at(dec, "## 9. `agent.recipe`") && at(dec, "## 9. `agent.recipe`") < at(dec, "## 10. `rebuild`")) {
+		t.Error("decisions.md does not order sections 3, 8, 9, 10")
+	}
+	for name, doc := range map[string]string{"SKILL.md": skill[at(skill, "9. `agent.recipe`"):], "decisions.md": dec[at(dec, "## 9. `agent.recipe`"):]} {
+		w, r, o := at(doc, "0.5.0"), at(doc, "recommend `default`"), at(doc, "Offer")
+		if name == "decisions.md" {
+			r = at(doc, "Then recommend `default`")
+		}
+		if w < 0 || r < 0 || o < 0 || !(w < r && w < o) {
+			t.Errorf("%s: the 0.5.0 warning must come before the recommendation and the offer", name)
+		}
+		for _, want := range []string{"without ", "explicit decision", "never guess a recipe from the repository's domain or language"} {
+			if !strings.Contains(strings.ToLower(doc[:min(len(doc), 2500)]), strings.ToLower(want)) {
+				t.Errorf("%s never says %q", name, want)
+			}
+		}
+	}
+	for _, want := range []string{"`default`", "`cheap-loop-senior`", "`claude-solo`", "fugaro recipes ls", "leave `agent.recipe` out", "turns it on for a provider coder with a non-provider reviewer"} {
+		if !strings.Contains(dec, want) {
+			t.Errorf("decisions.md never says %q", want)
+		}
+	}
+	for _, gone := range []string{"for a cheap provider coder", "for a team with one model", "unless the models", "fit one of the others", "call for another"} {
+		if strings.Contains(skill, gone) || strings.Contains(dec, gone) {
+			t.Errorf("trigger wording %q is back", gone)
+		}
+	}
+	if !strings.Contains(skill, "Never ask 7 and 8 together or bundle their options") {
+		t.Error("the machine size and review rounds rule moved")
 	}
 }
 

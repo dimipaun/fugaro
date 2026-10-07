@@ -67,6 +67,8 @@ agent:
   first_line_rounds: 1                # 1 to 3
 ```
 
+The catalog recipes `cheap-loop-senior` (two first-line rounds by the coder's model, then one senior round) and `claude-solo` (the coder's model also reviews) package the common shapes; see [recipes.md](recipes.md).
+
 `fugaro validate` checks the config-side rules above against the local config (a provider that claims the model, `allow_data_to`, `agent.auth`, the gateway being on, variants, prices); it cannot see whether the key is mounted or well formed, which only the runner refuses. With a provider coder and a Claude reviewer, `first_line_review: auto` makes the coder's model review and fix its own work first (`review_first` stages, recorded with `tier: first`); the Claude `review` always runs afterwards and alone decides whether the pull request is ready. The first line is priced as the provider model, so it adds cents; it can only add cost, never replace the senior review.
 
 ## 5. What is refused, and why

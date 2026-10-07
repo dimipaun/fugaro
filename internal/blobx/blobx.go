@@ -203,6 +203,12 @@ func (b *Bucket) ReplaceIf(ctx context.Context, key string, data []byte, gen int
 	if json.Valid(data) {
 		ct = "application/json"
 	}
+	return b.ReplaceIfType(ctx, key, data, ct, gen, prev)
+}
+
+// ReplaceIfType is ReplaceIf with the new object's content type given ("" for
+// the driver's default), so a replaced YAML object stays application/yaml.
+func (b *Bucket) ReplaceIfType(ctx context.Context, key string, data []byte, ct string, gen int64, prev []byte) (int64, error) {
 	if b.client() != nil {
 		if gen == 0 {
 			return 0, fmt.Errorf("replacing %s: no generation to match", key)

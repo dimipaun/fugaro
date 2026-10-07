@@ -94,7 +94,7 @@ func TestRecipeAgentRecipeOnFirstRun(t *testing.T) {
 func TestRecipeRepoSourceMissingAtRefFails(t *testing.T) {
 	h := newHarness(t, firstLineCfg(t, 2, ""), recipeSpec(&task.Recipe{Name: "two-rounds", Source: "repo"}))
 	rec, err := h.run(t, implement("feature"))
-	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "commit and push it") {
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "commit and push it") || !strings.Contains(rec.Reason, "at its base") {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 	if len(h.agent.calls) != 0 {

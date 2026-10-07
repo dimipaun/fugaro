@@ -56,10 +56,16 @@ Its own topic, never combined with the review rounds. Evidence: the CI configura
 
 Its own topic. `agent.review_rounds` (1 to 10, default 2): review then fix rounds before the PR. Evidence is how risky or critical the repository is: money, authentication, data migrations, a public API or production data call for more rounds, a documentation or tooling repository for fewer; look at what the code does and at the tests that guard it, and say so. Recommend a number with that reason, default 2 when nothing says otherwise, and each extra round costs time and tokens. Ask only this. `timeouts`: the defaults (`total` 90m, `stage` 40m, `verify` 30m); the verify command should finish well inside `verify`.
 
-## 9. `rebuild`
+## 9. `agent.recipe`
+
+Its own topic, after 3 and 8. Say first, before suggesting anything: setting `agent.recipe` writes a key that fugaro older than 0.5.0 refuses, in every teammate's CLI, every CI pin and every workflow's job image, so the user must hear this before it goes into the file and decide whether everything is on 0.5.0 or later (`fugaro validate` warns about it).
+
+Then recommend `default`: leave `agent.recipe` out and say so. Never write `agent.recipe` without the user's explicit decision, and never guess a recipe from the repository's domain or language. Offer the others only if the user asks for them or says what they want. The recipe is the loop after implement: `default` is today's (a first-line review when `agent.first_line_review` turns it on, where `auto` turns it on for a provider coder with a non-provider reviewer, then `agent.review_rounds` senior rounds); `cheap-loop-senior` is two first-line rounds by the coder's model, then one senior round; `claude-solo` makes the coder's model also review, in a fresh session, for one round. A repository or project can define its own (`fugaro recipes ls` lists what exists).
+
+## 10. `rebuild`
 
 Almost always the defaults: leave it out and say so. Propose `rebuild.paths` only with evidence (`services-and-images.md`); `rebuild.check: off` only when the user wants a hand-rebuilt image.
 
-## 10. Workflow names and anything to keep off Fugaro
+## 11. Workflow names and anything to keep off Fugaro
 
 With several workflows, confirm the names (`fugaro run --workflow` selects one). Ask whether any task type must stay off Fugaro (money, security, production data): if so, write it in the file `agent.instructions` points to (a repository-relative path to a text file that must exist; it is appended to the agent's prompt, so it is shown to the user like any executed text and goes in the pull request) or in the team's own routing notes, never in a secret.

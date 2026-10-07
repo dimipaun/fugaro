@@ -75,8 +75,9 @@ Ask the user, with your evidence and a recommended answer for each, **one topic 
 6. `followup.trusted`, and `followup.allow_public` on a public repository. This is security-sensitive: explain the risk (a follow-up run acts on PR comments with the workflow's secrets in hand, and on a public repository anyone can comment) and never set `allow_public` without an explicit decision from the user.
 7. `resources` (machine size): its own question, from the CI configuration, the test footprint and the language defaults.
 8. `agent.review_rounds`: its own question, from how risky or critical the repository is. Never ask 7 and 8 together or bundle their options.
-9. `rebuild`: usually the defaults.
-10. Workflow names, when there are several, and anything the user wants kept off Fugaro.
+9. `agent.recipe`: its own question, after review rounds: which task loop runs after implement. Open with the 0.5.0 requirement: the key is refused by every CLI, CI pin and job image older than 0.5.0, so tell the user before it goes into the file. Then recommend `default` (leave the key out). Offer `cheap-loop-senior` or `claude-solo` only if the user asks for one or says what they want; never write `agent.recipe` without their explicit decision, and never guess a recipe from the repository's domain or language.
+10. `rebuild`: usually the defaults.
+11. Workflow names, when there are several, and anything the user wants kept off Fugaro.
 
 ## 6. Show what will execute, then get the go-ahead
 
