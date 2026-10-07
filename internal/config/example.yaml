@@ -19,6 +19,7 @@ agent:
   review_rounds: 2            # review → fix rounds before the PR is opened
   # first_line_review: auto   # auto | on | off: the coder's model reviews (and fixes) before the senior review; auto is on only with a provider coder
   # first_line_rounds: 1      # 1 to 3, apart from review_rounds
+  # recipe: default           # the task loop: default | cheap-loop-senior | claude-solo | a .fugaro/recipes/ or project recipe (fugaro 0.5.0 or later)
   max_budget_usd: 25          # per stage, passed to claude --max-budget-usd
   # models:                   # a model per stage role; a role left out uses agent.model
   #   coder: claude-opus-5-5          # implement and fix; a budget needs an explicit model ID with a price

@@ -118,6 +118,11 @@ type Agent struct {
 	// FirstLineRounds bounds the first-line review/fix cycles, apart from
 	// ReviewRounds.
 	FirstLineRounds int `yaml:"first_line_rounds"`
+	// Recipe names the task loop that follows implement
+	// (docs/design/recipes.md): a recipe in .fugaro/recipes/, the project's,
+	// or the catalog's. "" is default. fugaro run --recipe wins over it.
+	// Binaries before 0.5.0 refuse the key.
+	Recipe string `yaml:"recipe"`
 }
 
 // First-line review settings (Agent.FirstLineReview).

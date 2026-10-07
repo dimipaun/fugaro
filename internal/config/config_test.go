@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -472,4 +473,21 @@ func earlyDraftBase(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestAgentRecipe(t *testing.T) {
+	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
+		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
+	cfg, ps := Parse([]byte(fmt.Sprintf(base, "  recipe: claude-solo\n")))
+	if len(ps) > 0 || cfg.Agent.Recipe != "claude-solo" {
+		t.Fatalf("cfg = %+v, problems %v", cfg, ps)
+	}
+	cfg, ps = Parse([]byte(fmt.Sprintf(base, "")))
+	if len(ps) > 0 || cfg.Agent.Recipe != "" {
+		t.Fatalf("unset: %+v, %v", cfg, ps)
+	}
+	_, ps = Parse([]byte(fmt.Sprintf(base, "  recipe: Claude_Solo\n")))
+	if len(ps) != 1 || ps[0].Path != "agent.recipe" || !strings.Contains(ps[0].Message, "must be a recipe name") {
+		t.Fatalf("bad name: %v", ps)
+	}
 }
