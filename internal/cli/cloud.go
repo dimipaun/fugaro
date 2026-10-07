@@ -368,24 +368,34 @@ func checkoutConfig(ctx context.Context, repo string) *config.Config {
 	return cfg
 }
 
-// checkoutParse is checkoutConfig with the parse's problems: nil and no
-// problems when there is no such checkout or file, nil and the problems
-// when its fugaro.yaml doesn't parse.
-func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.Problem) {
+// checkoutRoot is the working directory's checkout root when its origin is
+// repo, and "" otherwise.
+func checkoutRoot(ctx context.Context, repo string) string {
 	origin, err := originRepo(ctx)
 	if err != nil {
-		return nil, nil
+		return ""
 	}
 	a, err1 := task.CanonicalRepo(origin)
 	b, err2 := task.CanonicalRepo(repo)
 	if err1 != nil || err2 != nil || a != b {
-		return nil, nil
+		return ""
 	}
 	out, err := gitCmd(ctx, ".", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// checkoutParse is checkoutConfig with the parse's problems: nil and no
+// problems when there is no such checkout or file, nil and the problems
+// when its fugaro.yaml doesn't parse.
+func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.Problem) {
+	root := checkoutRoot(ctx, repo)
+	if root == "" {
 		return nil, nil
 	}
-	data, err := readFugaroYAML(filepath.Join(strings.TrimSpace(string(out)), "fugaro.yaml"))
+	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
 		return nil, nil
 	}
