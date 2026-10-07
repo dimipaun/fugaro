@@ -396,7 +396,7 @@ func TestRepoStageAnchorUnreadableRecord(t *testing.T) {
 	}
 	got := out.String()
 	if !strings.Contains(got, "its build record could not be read (") || !strings.Contains(got, "so its age is unknown") ||
-		!strings.HasSuffix(got, "(2) fugaro image build --repo acme/app --workflow app, (3) fugaro init --anchor, before you merge a change that adds gcp_project\n") {
+		!strings.HasSuffix(got, "(2) fugaro init --repo in the checkout (so the daily image check job follows the new base), (3) fugaro image build --repo acme/app --workflow app, (4) fugaro init --anchor, before you merge a change that adds gcp_project\n") {
 		t.Errorf("output:\n%s", got)
 	}
 }

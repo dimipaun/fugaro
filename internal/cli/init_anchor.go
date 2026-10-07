@@ -153,11 +153,16 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 // anchorHintText points at --anchor where a checkout lacks the line.
 const anchorHintText = "to let teammates use this installation without setup, run fugaro init --anchor in this checkout (it checks the images first)"
 
-// needsAnchorHint reports whether co, a checkout of lc's project, has no
-// gcp_project: line although lc's installation could take one (a
-// convention-named runs bucket).
-func needsAnchorHint(co *localcfg.Checkout, lc *localcfg.Config) bool {
-	return co != nil && lc != nil && lc.GCPProject != "" && co.GCPProject == "" && co.Project == lc.Name && customBucketNote(lc) == ""
+// needsAnchorHint reports whether co, a checkout of a repository lc lists,
+// has no gcp_project: line although lc's installation could take one (a
+// convention-named runs bucket). A repository not onboarded yet is not
+// pointed at --anchor, which would refuse it.
+func needsAnchorHint(ctx context.Context, co *localcfg.Checkout, lc *localcfg.Config) bool {
+	if co == nil || lc == nil || lc.GCPProject == "" || co.GCPProject != "" || co.Project != lc.Name || customBucketNote(lc) != "" {
+		return false
+	}
+	oi, ok := readOrigin(ctx, co.Root)
+	return ok && repoKnown(lc, oi)
 }
 
 // noteAnchor prints anchorHintText once per run when the checkout at root
@@ -166,7 +171,7 @@ func (r *initRun) noteAnchor(ctx context.Context, root string, lc *localcfg.Conf
 	if r.anchorNoted {
 		return
 	}
-	if co, err := checkoutProject(ctx, root); err == nil && needsAnchorHint(co, lc) {
+	if co, err := checkoutProject(ctx, root); err == nil && needsAnchorHint(ctx, co, lc) {
 		r.anchorNoted = true
 		fmt.Fprintf(r.w, "note: %s\n", anchorHintText)
 	}

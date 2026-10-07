@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-
 	"context"
 	"errors"
 	"fmt"
@@ -314,7 +313,7 @@ func reasonRegistryHost(kind string, err error) string {
 // anchorProblemText is the one text about repo's workflow wf (base kind
 // kind, "" when none is known): its reasons, then one ordered fix: the
 // local config's base entry removed first when it is a custom image
-// (customBase), then the release base image copied, the image rebuilt and
+// (customBase), then the release base image copied, init --repo rerun (the daily image check job follows the base), the image rebuilt and
 // the line written. lcPath is the local config's file.
 func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
 	var steps []string
@@ -326,7 +325,8 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
 	if kind != "" {
-		steps = append(steps, fmt.Sprintf("run fugaro init --base %s from outside the checkout (it copies this release's base image)", kind))
+		steps = append(steps, fmt.Sprintf("run fugaro init --base %s from outside the checkout (it copies this release's base image)", kind),
+			"fugaro init --repo in the checkout (so the daily image check job follows the new base)")
 	}
 	steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf), "fugaro init --anchor")
 	for i, s := range steps {
@@ -360,23 +360,32 @@ func recordVersionReason(version string) string {
 	return ""
 }
 
-// baseRefReleaseRE is a release base image of any host (an unset base is
-// the release's own on ghcr.io, and --image-source names another):
-// .../fugaro-<kind>:<X.Y.Z>, with an optional digest.
-var baseRefReleaseRE = regexp.MustCompile(`/fugaro-[a-z0-9-]+:v?([0-9]+\.[0-9]+\.[0-9]+)(?:@sha256:[0-9a-f]{64})?$`)
+// baseRefReleaseRE is a release base image of one of config.Bases, on any
+// host (an unset base is the release's own on ghcr.io, and --image-source
+// names another): <host and path>/fugaro-<kind>:<X.Y.Z>, with an optional
+// digest, as the whole string.
+var baseRefReleaseRE = func() *regexp.Regexp {
+	kinds := make([]string, len(config.Bases))
+	for i, k := range config.Bases {
+		kinds[i] = regexp.QuoteMeta(k)
+	}
+	return regexp.MustCompile(`\A[^\s@]+/fugaro-(` + strings.Join(kinds, "|") + `):v?([0-9]+\.[0-9]+\.[0-9]+)(?:@sha256:[0-9a-f]{64})?\z`)
+}()
 
 // baseRefReason judges the base image a build ran FROM, as its record says:
-// the image holds that base's fugaro binary, whatever CLI submitted it.
-func baseRefReason(ref string) string {
+// the image holds that base's fugaro binary, whatever CLI submitted it. It
+// must be a release image of the workflow's base kind (when kind is known),
+// at or after gcpProjectFieldSince.
+func baseRefReason(ref, kind string) string {
 	if ref == "" {
 		return reasonNoBaseRef()
 	}
 	m := baseRefReleaseRE.FindStringSubmatch(ref)
 	switch {
-	case m == nil:
+	case m == nil || (kind != "" && m[1] != kind):
 		return reasonBaseRefDev(ref)
-	case imagePredates(m[1], gcpProjectFieldSince):
-		return reasonBaseRefOld(ref, m[1])
+	case imagePredates(m[2], gcpProjectFieldSince):
+		return reasonBaseRefOld(ref, m[2])
 	}
 	return ""
 }
@@ -418,6 +427,10 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 				reasons = append(reasons, r)
 			}
 		}
+		kind, customBase := bases[wf], false
+		if !slices.Contains(config.Bases, kind) {
+			kind = ""
+		}
 		if berr != nil {
 			add(reasonUnreadable(oneLineCLI(berr.Error())))
 			remote = berrRemote
@@ -434,13 +447,9 @@ func gcpProjectProblems(ctx context.Context, lc *localcfg.Config, lcPath, provid
 					add(reasonUnreadable(oneLineCLI(perr.Error())))
 				} else {
 					add(recordVersionReason(rec.FugaroVersion))
-					add(baseRefReason(rec.BaseRef))
+					add(baseRefReason(rec.BaseRef, kind))
 				}
 			}
-		}
-		kind, customBase := bases[wf], false
-		if !slices.Contains(config.Bases, kind) {
-			kind = ""
 		}
 		if ref := lc.BaseImage(kind); kind != "" && ref != "" {
 			if herr != nil {

@@ -151,7 +151,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) run fugaro init --base web-node from outside the checkout (it copies this release's base image), (2) fugaro image build --repo acme/app --workflow app, (3) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) run fugaro init --base web-node from outside the checkout (it copies this release's base image), (2) fugaro init --repo in the checkout (so the daily image check job follows the new base), (3) fugaro image build --repo acme/app --workflow app, (4) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -255,14 +255,14 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 	r := newAnchorModeRig(t, yaml, true)
 	const ref = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:dev-8fe2647"
 	r.appendConfig(t, "base_images:\n  go: "+ref+"\n")
-	putWorkflowRecord("app", "0.4.0")
+	putWorkflowRecordFrom("app", "0.4.0", "ghcr.io/dimipaun/fugaro-go:0.4.0")
 	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
 	if ExitCode(err) != ExitUserError {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "go", r.cfg, true, reasonConfigBaseCustom(ref, "go"))
 	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base",
-		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) run fugaro init --base go from outside the checkout", "(3) fugaro image build --repo acme/app --workflow app, (4) fugaro init --anchor"} {
+		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) run fugaro init --base go from outside the checkout", "(3) fugaro init --repo in the checkout (so the daily image check job follows the new base), (4) fugaro image build --repo acme/app --workflow app, (5) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -490,22 +490,25 @@ func TestInitAnchorUnsafeShape(t *testing.T) {
 	r.check(t, yaml)
 }
 
-// init --repo ends with one note pointing at --anchor while the checkout's
-// fugaro.yaml lacks the line of a convention-bucket installation; never
-// otherwise, and never twice.
+// init --repo ends with one note pointing at --anchor while the checkout of
+// a listed repository lacks the line of a convention-bucket installation;
+// never otherwise, and never twice.
 func TestInitRepoNotesTheAnchor(t *testing.T) {
+	listed := map[string]localcfg.Repo{"acme/app": {Provider: "github", Workflows: []string{"app"}}}
 	for _, c := range []struct {
 		name, yaml, bucket string
+		repos              map[string]localcfg.Repo
 		want               bool
 	}{
-		{"no line", anchorModeYAML(), "", true},
-		{"line present", withRigAnchor(anchorModeYAML()), "", false},
-		{"custom bucket", anchorModeYAML(), "my-own-bucket", false},
+		{"no line", anchorModeYAML(), "", listed, true},
+		{"line present", withRigAnchor(anchorModeYAML()), "", listed, false},
+		{"custom bucket", anchorModeYAML(), "my-own-bucket", listed, false},
+		{"not onboarded", anchorModeYAML(), "", nil, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			testutil.IsolateGit(t)
 			dir := repoCheckout(t, githubOrigin, c.yaml)
-			lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", RunsBucket: cmp.Or(c.bucket, "fugaro-runs-proj-1234")}
+			lc := &localcfg.Config{Name: "aurora", GCPProject: "proj-1234", RunsBucket: cmp.Or(c.bucket, "fugaro-runs-proj-1234"), Repos: c.repos}
 			var buf strings.Builder
 			r := &initRun{w: &buf}
 			r.noteAnchor(t.Context(), dir, lc)
@@ -521,18 +524,108 @@ func TestInitRepoNotesTheAnchor(t *testing.T) {
 	}
 }
 
-// doctor says the same, as information, in such a checkout.
+// doctor says the same, as information, in a listed repository's checkout.
 func TestDoctorNotesTheAnchor(t *testing.T) {
 	for _, c := range []struct {
-		yaml string
-		want bool
-	}{{"version: 1\nproject: aurora\n", true}, {"version: 1\nproject: aurora\ngcp_project: proj-1234\n", false}} {
+		yaml   string
+		listed bool
+		want   bool
+	}{
+		{"version: 1\nproject: aurora\n", true, true},
+		{"version: 1\nproject: aurora\ngcp_project: proj-1234\n", true, false},
+		{"version: 1\nproject: aurora\n", false, false},
+	} {
 		r := newDoctorRig(t)
-		t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), c.yaml))
+		if c.listed {
+			if err := os.WriteFile(r.cfgPath, []byte(r.cfg+"repos:\n  acme/app: { provider: github, workflows: [app] }\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		dir := gitCheckout(t, filepath.Join(r.dir, "app"), c.yaml)
+		testutil.Git(t, dir, "remote", "add", "origin", githubOrigin)
+		t.Chdir(dir)
 		o := doctorJSON(t)
 		ch, ok := doctorCheckByID(o.Checks, "gcp-project-line")
 		if ok != c.want || (ok && (ch.Severity != "info" || ch.Problem != anchorHintText)) {
-			t.Errorf("%q: check %+v (%v)", c.yaml, ch, ok)
+			t.Errorf("%q listed %v: check %+v (%v)", c.yaml, c.listed, ch, ok)
+		}
+	}
+}
+
+// The base a build ran FROM is a release image of the workflow's own kind,
+// on any host, at or after the field; anything else is refused.
+func TestBaseRefReason(t *testing.T) {
+	hex := strings.Repeat("a", 64)
+	for _, c := range []struct {
+		ref, kind string
+		ok        bool
+	}{
+		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0", "web-node", true},
+		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0@sha256:" + hex, "web-node", true},
+		{"localhost:5000/x/fugaro-go:0.4.0", "go", true},
+		{"ghcr.io/dimipaun/fugaro-go:0.10.0", "go", true},
+		{"ghcr.io/dimipaun/fugaro-go:v0.4.0", "go", true},
+		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-java-services:0.4.0", "java-services", true},
+		{"ghcr.io/dimipaun/fugaro-go:0.4.0", "", true}, // the workflow's kind not known
+		{"ghcr.io/dimipaun/fugaro-web-node:0.4.0", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.4.0-rc1", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.3.9", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:latest", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.4", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.4.0RC", "go", false},
+		{"ghcr.io/dimipaun/FUGARO-GO:0.4.0", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go@sha256:" + hex, "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.4.0@sha256:" + strings.Repeat("A", 64), "go", false},
+		{"ghcr.io/dimipaun/evilfugaro-go:0.4.0", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go/evil:0.4.0", "go", false},
+		{"fugaro-go:0.4.0", "go", false},
+		{"ubuntu:24.04", "go", false},
+		{"", "go", false},
+		{"ghcr.io/dimipaun/fugaro-go:0.4.0\n", "go", false},
+		{"ubuntu:22.04\n/fugaro-go:0.4.0", "go", false},
+		{"ubuntu:24.04 /fugaro-go:0.4.0", "go", false},
+		{"x/fugaro-go-evil:0.4.0", "go", false},
+		{"x/fugaro-x:0.4.0", "", false},
+		{"us-east5-docker.pkg.dev/p/fugaro-base/fugaro-go-cuda:1.2.0", "", false},
+	} {
+		if got := baseRefReason(c.ref, c.kind); (got == "") != c.ok {
+			t.Errorf("baseRefReason(%q, %q) = %q, want ok %v", c.ref, c.kind, got, c.ok)
+		}
+	}
+}
+
+// repoReady is an applied installation of aurora with a base image for
+// web-node, and a repository plan with nothing to change: init --repo of the
+// listed acme/sandbox runs to its end.
+func (r *initRig) repoReady(t *testing.T) {
+	t.Helper()
+	r.installationState(t)
+	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.4.0}\n")
+	r.setPlan(t)
+	r.script["plan"] = map[string]any{"exit": 0}
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.save(t)
+}
+
+// End to end through the init rig: init --repo in the checkout of a listed
+// repository without the line ends with the note, once, on stderr under
+// --json; never with --plan-only.
+func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
+	for _, c := range []struct {
+		args []string
+		want int
+	}{{[]string{"--yes", "--no-build", "--json"}, 1}, {[]string{"--plan-only", "--no-build"}, 0}} {
+		r := newInitRig(t)
+		r.repoReady(t)
+		dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", checkoutYAML("bitbucket", "oauth", "aurora", ""))
+		t.Chdir(dir)
+		out, errOut, err := executeStdin(t, "", append([]string{"init", "--repo"}, c.args...)...)
+		if err != nil {
+			t.Fatalf("%v: %v\n%s\n%s", c.args, err, out, errOut)
+		}
+		note := "note: " + anchorHintText + "\n"
+		if n := strings.Count(errOut+out, note); n != c.want || strings.Contains(out, note) {
+			t.Errorf("%v: %d notes\nstdout:\n%s\nstderr:\n%s", c.args, n, out, errOut)
 		}
 	}
 }
