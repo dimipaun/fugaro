@@ -1,0 +1,5 @@
+version: 1
+name: first-line
+steps:
+  - first_line: {}
+  - review: { max_rounds: 1 }

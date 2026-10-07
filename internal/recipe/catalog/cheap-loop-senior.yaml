@@ -1,0 +1,6 @@
+version: 1
+name: cheap-loop-senior
+description: Cheap first-line review/fix loop by the coder's model (2 rounds), then one senior review
+steps:
+  - first_line: { max_rounds: 2 }
+  - review: { max_rounds: 1 }

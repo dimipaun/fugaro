@@ -1,0 +1,5 @@
+version: 1
+name: checks-step
+steps:
+  - checks: { run: make lint }
+  - review: {}

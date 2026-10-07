@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
@@ -629,5 +630,33 @@ func TestRepositoryFugaroYAML(t *testing.T) {
 	}
 	if w := cfg.Workflows["go"]; cfg.Project != "fugaro" || w.Base != "go" {
 		t.Errorf("project %q, workflow go = %+v", cfg.Project, w)
+	}
+}
+
+// TestRecipeSchemaCorpus: the schema and the Go parser agree on the corpus
+// and the catalog. Files named shape-*.yaml break YAML rules the JSON model
+// cannot see (anchors, repeated keys); only the Go parser judges them.
+func TestRecipeSchemaCorpus(t *testing.T) {
+	sch := compile(t, "recipe.schema.json")
+	for _, f := range globAll(t, "../testdata/recipe/valid/*.yaml") {
+		data, _ := os.ReadFile(f)
+		if err := sch.Validate(yamlInstance(t, data)); err != nil {
+			t.Errorf("%s: schema rejects a valid recipe: %v", f, err)
+		}
+	}
+	for _, f := range globAll(t, "../testdata/recipe/invalid/*.yaml") {
+		if strings.HasPrefix(filepath.Base(f), "shape-") {
+			continue
+		}
+		data, _ := os.ReadFile(f)
+		if err := sch.Validate(yamlInstance(t, data)); err == nil {
+			t.Errorf("%s: schema accepts an invalid recipe", f)
+		}
+	}
+	for _, name := range recipe.CatalogNames() {
+		text, _ := recipe.CatalogText(name)
+		if err := sch.Validate(yamlInstance(t, text)); err != nil {
+			t.Errorf("catalog %s: %v", name, err)
+		}
 	}
 }

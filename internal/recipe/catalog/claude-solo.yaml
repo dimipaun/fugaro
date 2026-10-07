@@ -1,0 +1,7 @@
+version: 1
+name: claude-solo
+description: One model plays both parts. The coder's model reviews in a fresh session, one senior round, no first line.
+roles:
+  reviewer: coder
+steps:
+  - review: { max_rounds: 1 }
