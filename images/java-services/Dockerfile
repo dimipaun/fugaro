@@ -12,7 +12,7 @@
 #   - Redis, Node.js (the web-node pin) and firebase-tools (pinned) with every
 #     Firebase emulator the pinned release can download already in the image,
 #   - fugaro-services, which starts and stops all of these as the non-root user
-#     (see images/java-services/fugaro-services),
+#     (see images/common/fugaro-services),
 # plus git, zstd, tini, gh, Claude Code (native installer) and fugaro, as in the
 # other bases. It runs as the non-root user fugaro (uid 1000) in /work/repo.
 # Build it from the repository root with images/build-base.sh java-services.
@@ -167,7 +167,7 @@ RUN set -eu; \
     [ "$v" = "$FIREBASE_TOOLS_VERSION" ] || { echo "java-services: firebase --version reports '$v', not the pinned $FIREBASE_TOOLS_VERSION" >&2; exit 1; }; \
     rm -rf /root/.npm /root/.config /root/.cache/firebase "$FIREBASE_EMULATORS_PATH"/*.log; \
     du -sh "$FIREBASE_EMULATORS_PATH"
-COPY --chmod=0755 images/java-services/fugaro-services /usr/local/bin/fugaro-services
+COPY --chmod=0755 images/common/fugaro-services /usr/local/bin/fugaro-services
 USER fugaro
 # Claude Code (native build, pinned), downloaded directly (no curl | bash)
 # and verified against a per-arch sha256 taken from that release's own

@@ -1,6 +1,8 @@
 #!/bin/bash
-# fugaro-services start|stop|status: runs the backing services a Java test
-# suite wants, as the calling (non-root) user, in the background:
+# fugaro-services start|stop|status: runs the backing services a test suite
+# wants, installed by the project (image.apt for PostgreSQL and Redis, mise
+# for firebase-tools; docs/base-image.md), as the calling (non-root) user, in
+# the background:
 #
 #   postgres  PostgreSQL on localhost:5432. A fresh cluster in the state
 #             directory, with trust authentication and a superuser (postgres,
@@ -41,6 +43,7 @@
 #   FIREBASE_PROJECT_ID        the emulators' project (default demo-edge-test; the
 #                              demo- prefix keeps them away from real Firebase)
 #   FUGARO_POSTGRES_PORT, FUGARO_REDIS_PORT  (defaults 5432 and 6379)
+#   FUGARO_POSTGRES_LIB        where PostgreSQL majors live (default /usr/lib/postgresql)
 set -uo pipefail
 
 STATE=${FUGARO_SERVICES_DIR:-/tmp/fugaro-services}
@@ -53,6 +56,7 @@ REDIS_PORT=${FUGARO_REDIS_PORT:-6379}
 PG_DATA=$STATE/postgres
 RUN=$STATE/run
 LOGS=$STATE/log
+PG_LIB=${FUGARO_POSTGRES_LIB:-/usr/lib/postgresql}
 export NO_UPDATE_NOTIFIER=1
 
 die() { echo "fugaro-services: $*" >&2; exit 1; }
@@ -60,6 +64,15 @@ say() { echo "fugaro-services: $*"; }
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 alive() { [ -f "$RUN/$1.pid" ] && kill -0 "$(cat "$RUN/$1.pid")" 2>/dev/null; }
 forget() { rm -f "${RUN:?}/${1:?}.pid"; }
+
+# pg_bin prints the bin directory of the newest PostgreSQL major installed
+# under PG_LIB (Debian's postgresql-<major>), or fails when there is none.
+pg_bin() {
+  local d
+  d=$(ls -d "$PG_LIB"/*/bin 2>/dev/null | sort -V | tail -n 1)
+  [ -n "$d" ] && [ -x "$d/initdb" ] || return 1
+  echo "$d"
+}
 
 # Default ports of the emulators, for when no config names them.
 emulator_default_port() {
@@ -106,6 +119,9 @@ service_up() { local p; for p in $(service_port_list "$1"); do port_open "$p" ||
 
 start_postgres() {
   if port_open "$PG_PORT"; then say "postgres: port $PG_PORT already open, leaving it"; return; fi
+  local bin
+  bin=$(pg_bin) || die "postgres: not installed; add postgresql-17 to image.apt (with postgresql-17-postgis-3 and postgresql-17-pgvector if the tests use PostGIS or pgvector)"
+  PATH=$bin:$PATH
   if [ ! -f "$PG_DATA/PG_VERSION" ]; then
     rm -rf "${PG_DATA:?}"
     # trust: no password is asked, so whatever db.password says is accepted.
@@ -126,6 +142,7 @@ start_postgres() {
 
 start_redis() {
   if port_open "$REDIS_PORT"; then say "redis: port $REDIS_PORT already open, leaving it"; return; fi
+  command -v redis-server >/dev/null 2>&1 || die "redis: not installed; add redis-server to image.apt"
   mkdir -p "$STATE/redis"
   setsid nohup redis-server --port "$REDIS_PORT" --bind 127.0.0.1 --save "" --appendonly no \
     --dir "$STATE/redis" --protected-mode yes >"$LOGS/redis.log" 2>&1 </dev/null &
@@ -143,6 +160,7 @@ start_firebase() {
     # port, so leave everything alone and let the wait below judge.
     say "firebase: port of$open already open, leaving the emulators"; return
   fi
+  command -v firebase >/dev/null 2>&1 || die 'firebase: not installed; add "npm:firebase-tools" to mise.toml, with java and node'
   # firebase.json resolves its rules files (and hosting/functions sources)
   # relative to itself, and the emulators write *-debug.log into the working
   # directory. So run from a scratch project directory holding the config plus
@@ -238,7 +256,7 @@ stop_pid() { # name
 # reach of the group signal; firebase stops them when it is told to, and this
 # catches any it left behind.
 stop_emulator_jars() {
-  local jars=${FIREBASE_EMULATORS_PATH:-/opt/firebase-emulators}
+  local jars=${FIREBASE_EMULATORS_PATH:-$HOME/.cache/firebase/emulators}
   pkill -TERM -u "$(id -u)" -f "$jars/" 2>/dev/null || return 0
   sleep 1
   pkill -KILL -u "$(id -u)" -f "$jars/" 2>/dev/null || true
@@ -250,6 +268,7 @@ cmd_stop() {
   stop_emulator_jars
   stop_pid redis
   if [ -f "$PG_DATA/postmaster.pid" ]; then
+    local bin; bin=$(pg_bin) && PATH=$bin:$PATH
     pg_ctl -D "$PG_DATA" -m fast -w stop >/dev/null 2>&1 || true
   fi
   forget postgres
