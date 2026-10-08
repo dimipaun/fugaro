@@ -648,3 +648,19 @@ func TestImagesStageOnlyKinds(t *testing.T) {
 		t.Fatalf("only: kinds %s", got)
 	}
 }
+
+// only is nil (default kinds) versus empty (no base kinds), and is
+// de-duplicated and limited to known kinds.
+func TestImagesStageOnlyEmptyAndDuplicates(t *testing.T) {
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
+	e, _ := stageEngine(t, "", &initOptions{baseKinds: []string{"java-services"}})
+	s := newImagesStage(e)
+	s.only = []string{}
+	if got := s.kinds(t.Context()); len(got) != 0 {
+		t.Fatalf("empty only: kinds %v, want none", got)
+	}
+	s.only = []string{"go", "go", "gox"}
+	if got := strings.Join(s.kinds(t.Context()), ","); got != "go" {
+		t.Fatalf("duplicates and unknown: kinds %s, want go", got)
+	}
+}
