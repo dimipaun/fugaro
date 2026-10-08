@@ -5,7 +5,7 @@
   "description": "Per-repository Fugaro configuration. See docs/design/v1.md §5.1.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["version", "project", "git", "workflows"],
+  "required": ["version", "project"],
   "allOf": [
     {
       "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "github" } } } } },
@@ -14,16 +14,20 @@
     {
       "if": { "required": ["git"], "properties": { "git": { "required": ["provider"], "properties": { "provider": { "const": "bitbucket" } } } } },
       "then": { "properties": { "followup": { "properties": { "trusted": { "items": { "$ref": "#/$defs/bitbucketAccountID" } } } } } }
+    },
+    {
+      "if": { "not": { "required": ["gcp_project"] } },
+      "then": { "required": ["git", "workflows"], "properties": { "git": { "required": ["provider"] } } }
     }
   ],
   "properties": {
     "version": { "const": 1 },
     "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The Fugaro project this repository belongs to." },
     "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$", "description": "The GCP project ID of the installation. Optional; the trust anchor that lets a teammate use the installation without running fugaro init (written by fugaro init). Never guessed from the project name." },
+    "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile of the implicit workflow \"default\", for a file with no workflows: (docs/project-layer.md). Absent: the project's default_profile. Needs fugaro 0.6.0." },
     "git": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["provider"],
       "properties": {
         "provider": { "enum": ["github", "bitbucket"] },
         "base_branch": {
@@ -145,7 +149,6 @@
     "workflow": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["base", "commands"],
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
@@ -163,9 +166,14 @@
               "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
             }
           }
+        },
+        {
+          "if": { "not": { "required": ["profile"] } },
+          "then": { "required": ["base", "commands"], "properties": { "commands": { "required": ["build", "test"] } } }
         }
       ],
       "properties": {
+        "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
         "base": { "enum": ["go", "java-services", "web-node"] },
         "image": {
           "type": "object",
@@ -195,7 +203,6 @@
         "commands": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["build", "test"],
           "properties": {
             "build": { "type": "string", "minLength": 1 },
             "test": { "type": "string", "minLength": 1 },

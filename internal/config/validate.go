@@ -105,6 +105,9 @@ func Validate(c *Config) []Problem {
 	case !ProjectNameRE.MatchString(c.Project):
 		add("project", "must be a project name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
+	if c.Profile != "" && !ProjectNameRE.MatchString(c.Profile) {
+		add("profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
+	}
 	if c.GCPProject != "" && !GCPProjectRE.MatchString(c.GCPProject) {
 		add("gcp_project", "must be a GCP project ID: 6 to 30 of a-z, 0-9 and '-', starting with a letter")
 	}
@@ -143,6 +146,9 @@ func Validate(c *Config) []Problem {
 		p := "workflows." + name
 		if !WorkflowNameRE.MatchString(name) {
 			add(p, "workflow name must match %s", WorkflowNameRE)
+		}
+		if w.Profile != "" && !ProjectNameRE.MatchString(w.Profile) {
+			add(p+".profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
 		if !slices.Contains(Bases, w.Base) {
 			add(p+".base", "must be one of %s", strings.Join(Bases, ", "))

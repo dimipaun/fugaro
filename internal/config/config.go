@@ -28,8 +28,12 @@ type Config struct {
 	// GCPProject is the GCP project of the installation this repository
 	// belongs to (GCPProjectRE); optional. Never derived from Project.
 	GCPProject string `yaml:"gcp_project,omitempty"`
-	Git        Git    `yaml:"git"`
-	Agent      Agent  `yaml:"agent"`
+	// Profile names the project layer's profile of the implicit workflow
+	// (ImplicitWorkflow), for a file with no workflows:. "" is the
+	// project's default_profile. Binaries before 0.6.0 refuse the key.
+	Profile string `yaml:"profile,omitempty"`
+	Git     Git    `yaml:"git"`
+	Agent   Agent  `yaml:"agent"`
 	// Budget is the repository's cost and model policy. It can only
 	// tighten the owner's ceiling (the project config); see Policy.
 	Budget    *Budget             `yaml:"budget,omitempty"`
@@ -215,6 +219,10 @@ func (a Agent) MaxOutputFor(r Role) int64 {
 
 // Workflow is one buildable unit of the repository, such as a server or a web app.
 type Workflow struct {
+	// Profile names the project layer's profile this workflow starts from;
+	// the workflow's own keys override it field by field. "" is none.
+	// Binaries before 0.6.0 refuse the key.
+	Profile    string       `yaml:"profile,omitempty"`
 	Base       string       `yaml:"base"`
 	Image      Image        `yaml:"image"`
 	Dockerfile string       `yaml:"dockerfile"`
