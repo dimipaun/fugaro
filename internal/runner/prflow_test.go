@@ -264,9 +264,10 @@ func TestOpensDraftAfterFirstVerifiedStage(t *testing.T) {
 
 // TestNoPushWithoutVerifiedTest: an implement stage without a passing test
 // on a clean tree at HEAD pushes nothing and opens nothing; finalize opens
-// the draft as before.
+// the draft as before. With checkpoints off (an unverified boundary pushes
+// since 0.5.1).
 func TestNoPushWithoutVerifiedTest(t *testing.T) {
-	h := prHarness(t, prCfg(t, 2, ""))
+	h := prHarness(t, prCfg(t, 2, ", checkpoints: false"))
 	rec, err := h.run(t, commitOnly("feature"), probe(func(t *testing.T) {
 		if len(h.provider.State.PRs) != 0 || remoteHasBranch(t, h) {
 			t.Errorf("an unverified stage pushed or opened a PR: %+v", h.provider.State.PRs)
@@ -284,9 +285,10 @@ func TestNoPushWithoutVerifiedTest(t *testing.T) {
 }
 
 // TestFirstRoundFailsThenFixOpensDraft: a first round that fails verification
-// opens nothing; the fix stage that verifies opens the draft.
+// opens nothing; the fix stage that verifies opens the draft. With
+// checkpoints off (an unverified boundary pushes since 0.5.1).
 func TestFirstRoundFailsThenFixOpensDraft(t *testing.T) {
-	h := prHarness(t, prCfg(t, 3, ""))
+	h := prHarness(t, prCfg(t, 3, ", checkpoints: false"))
 	h.fails(t, "beta")
 	clear := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if err := os.WriteFile(h.failsFile, nil, 0o644); err != nil {
@@ -642,9 +644,11 @@ func TestHumanEditOutsideMarkersKept(t *testing.T) {
 
 // TestEarlyDraftFalseKeepsFinalizeOnly: the old flow. Nothing is pushed or
 // opened before finalize, the PR is created once with the description from
-// pr.md and no status section, and reviewers come with it.
+// pr.md and no status section, and reviewers come with it. Checkpoints are
+// off too, so no mid-run push at all; TestEarlyDraftFalseCheckpointsWithoutPR
+// covers early_draft false with checkpoints on.
 func TestEarlyDraftFalseKeepsFinalizeOnly(t *testing.T) {
-	h := prHarness(t, prCfg(t, 2, ", early_draft: false"))
+	h := prHarness(t, prCfg(t, 2, ", early_draft: false, checkpoints: false"))
 	rec, err := h.run(t, implement("feature"), probe(func(t *testing.T) {
 		if len(h.provider.State.PRs) != 0 || remoteHasBranch(t, h) {
 			t.Error("an early PR was opened with early_draft false")

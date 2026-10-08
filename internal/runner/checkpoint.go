@@ -16,10 +16,11 @@ import (
 // stage runs, the runner reads the run branch's tip every checkpointPoll,
 // locally, and pushes a new tip once it has been still for checkpointQuiet,
 // at most once per checkpointMinGap; each stage boundary pushes what is
-// left at once (Task 6). Pushes are fast-forward only, by sha, with the
-// runner's credentials and the same guards as finalize's push, plus a scan
-// for the values the run redacts. A checkpoint never fails the run, never
-// forces, never commits and never touches the working tree or the index.
+// left at once. Pushes are fast-forward only, by sha, with the runner's
+// credentials and the same guards as finalize's push, plus a scan for the
+// values the run redacts. A checkpoint never fails the run, never forces,
+// never commits and never touches the working tree or the index. The draft
+// pull request opens at the first checkpoint push, marked not verified.
 
 // checkpointTicks makes the poll's ticker; tests replace it with a channel
 // they drive (DriveCheckpoints).
@@ -54,7 +55,7 @@ type checkpointState struct {
 	sched     *checkpointSchedule
 	stopped   bool            // a permanent reason: no more checkpoints this run
 	warned    map[string]bool // warnings already logged, by kind
-	openTries int             // checkpoint pushes that tried to open the draft: unused until Task 6
+	openTries int             // checkpoint pushes that tried to open the draft
 	pushes    int             // checkpoint pushes made
 }
 
@@ -176,8 +177,7 @@ func (r *run) checkpointSince() string {
 
 // checkpointPush pushes sha, the tip just read: every check is on sha,
 // never on HEAD, which the agent may have moved since. during says it is a
-// poll's push, mid-stage, rather than a boundary's; it only shows in the
-// log until Task 6's boundary push passes false.
+// poll's push, mid-stage, rather than a boundary's.
 func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool) {
 	now := r.d.Now()
 	if !r.checkpointAhead(ctx, sha) {
@@ -211,6 +211,54 @@ func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool
 	r.ckpt.sched.pushed(now)
 	r.ckpt.pushes++
 	r.d.Log.Info("checkpoint pushed", "stage", stage, "sha", shortSHA(sha), "n", r.ckpt.pushes, "boundary", !during)
+	r.afterCheckpoint(ctx, stage, during)
+}
+
+// boundaryCheckpoint pushes what a stage left committed and unpushed, at
+// once, on the run goroutine after the stage's checkpointer stopped: the
+// agent is idle, so there is nothing to wait for, and a boundary is exempt
+// from the per-minute limit (a run has a handful of them).
+func (r *run) boundaryCheckpoint(ctx context.Context, stage string) {
+	// On the run goroutine, not its own: a panic here must not reach
+	// afterStage's recover, which logs its panic unredacted.
+	defer func() {
+		if p := recover(); p != nil {
+			r.d.Log.Error("a checkpoint panicked; carrying on", "stage", stage, "panic", r.redact(fmt.Sprint(p)))
+		}
+	}()
+	// checkpointBlocked is defence in depth for a halt, an exhausted budget
+	// and the stage's context: a halted stage or a spent run cap returns
+	// before afterStage, so today only a cancel mark (a run that goes on) or
+	// a stopped checkpointer reaches it. It is cheap and it keeps the
+	// boundary on the same rules as a poll.
+	if !r.checkpointsOn() || r.checkpointBlocked(ctx) {
+		return
+	}
+	sha, ok := r.checkpointTip(ctx)
+	if !ok || sha == r.rec.PushedHead {
+		return
+	}
+	r.checkpointPush(ctx, stage, sha, false)
+}
+
+// afterCheckpoint opens the draft at the first checkpoint push, or brings an
+// open draft's status section up to date. With early_draft false the branch
+// is all a checkpoint pushes: the PR opens at finalize. Opening the draft is
+// tried at most checkpointOpenTries times, once per checkpoint push; after
+// that the verified boundary or finalize opens it.
+func (r *run) afterCheckpoint(ctx context.Context, stage string, during bool) {
+	if !r.cfg.Git.PR.EarlyDraftOn() || r.pr.gone {
+		return
+	}
+	if r.rec.PR == nil {
+		if r.ckpt.openTries >= checkpointOpenTries {
+			return // left to the verified boundary or finalize
+		}
+		r.ckpt.openTries++
+		r.openDraftPR(ctx, stage, during)
+		return
+	}
+	r.statusUpdate(ctx, stage, during)
 }
 
 // checkpointAhead reports whether sha, the tip read, holds a commit of the
