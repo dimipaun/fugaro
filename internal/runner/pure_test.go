@@ -180,3 +180,17 @@ func TestPromptWorkflowRule(t *testing.T) {
 		t.Errorf("the rule is missing or repeated: %s", got)
 	}
 }
+
+func TestPromptCheckpointRule(t *testing.T) {
+	d := PromptData{Branch: "fugaro/x", Base: "main", StateDir: "/s"}
+	if got := SystemPrompt(d, ""); strings.Contains(got, "Commit early and often") {
+		t.Errorf("a prompt without checkpoints asks for early commits: %s", got)
+	}
+	d.Checkpoints = true
+	got := SystemPrompt(d, "")
+	for _, want := range []string{"Commit early and often", "fugaro/x within about a minute", "only pushed commits survive", "uncommitted changes are lost", "rather than amending or rebasing"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the checkpoint rule lacks %q: %s", want, got)
+		}
+	}
+}
