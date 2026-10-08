@@ -475,6 +475,29 @@ func earlyDraftBase(t *testing.T) string {
 	return string(data)
 }
 
+func TestPRCheckpointsDefaultsTrue(t *testing.T) {
+	for _, tc := range []struct {
+		pr   string
+		want bool
+	}{{"", true}, {"  pr: { checkpoints: true }\n", true}, {"  pr: { checkpoints: false, early_draft: false }\n", false},
+		{"  pr: { checkpoints: true, early_draft: false }\n", true},
+		{"  pr: { checkpoints: false, early_draft: true }\n", false},
+		{"  pr: { early_draft: false }\n", true},
+		{"  pr: { early_draft: true }\n", true},
+		{"  pr: { checkpoints: false }\n", false}} {
+		cfg, problems := Parse([]byte(strings.Replace(earlyDraftBase(t), "git:\n", "git:\n"+tc.pr, 1)))
+		if len(problems) > 0 {
+			t.Fatalf("%q: %v", tc.pr, problems)
+		}
+		if got := cfg.Git.PR.CheckpointsOn(); got != tc.want {
+			t.Errorf("%q: CheckpointsOn = %v, want %v", tc.pr, got, tc.want)
+		}
+	}
+	if !(PRSettings{}).CheckpointsOn() {
+		t.Error("the zero PRSettings must default to checkpoints on")
+	}
+}
+
 func TestAgentRecipe(t *testing.T) {
 	base := "version: 1\nproject: example\ngit: { provider: github, base_branch: main }\nagent:\n  auth: api-key\n%s" +
 		"workflows:\n  app: { base: go, commands: { build: go build ./..., test: go test ./... } }\n"
