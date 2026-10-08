@@ -24,20 +24,22 @@ import (
 
 // pluginFirstRun ends the wiring. Observed live 2026-10-07 (cause not
 // verified): after init wired the settings, opening Claude Code in the folder
-// did not make the skills available and the plugin had to be installed by
-// hand. So the text promises nothing: Claude Code is expected to install it
-// on trust, and fugaro upgrade --local (which installs it through the claude
-// CLI, or prints the slash commands without one) is given for when it did not
-// (design §4.7, docs/design/upgrade.md).
+// did not make the skills available and the plugin had to be installed by hand
+// with /plugin marketplace add and /plugin install. So the text promises
+// nothing: Claude Code is expected to install it on trust, and the manual
+// commands are given for when it did not (design §4.7). fugaro upgrade's
+// plugin step (Tasks 6-7, docs/design/upgrade.md) will replace these manual
+// commands once it exists; this build does not have it yet.
 const pluginFirstRun = "Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
-	"If the /fugaro: skills are not listed (for example the folder was already trusted), run fugaro upgrade --local in this checkout\n" +
-	"(it installs the plugin through the claude CLI), then restart the session; fugaro doctor then shows the plugin as installed.\n" +
+	"If the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and\n" +
+	"/plugin install fugaro@fugaro in Claude Code, then restart the session; fugaro doctor then shows the plugin as installed.\n" +
 	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
 
 // pluginRefresh follows a changed pin: Claude Code reports the new version but
 // shows the plugin as "not cached" and its skills disappear until the
-// marketplace is updated (verified live, V2), which fugaro upgrade --local does.
-const pluginRefresh = "Run fugaro upgrade --local to update the plugin Claude Code installed (until then the plugin shows \"not cached\" and its skills are gone).\n"
+// marketplace is updated (verified live, V2); no restart is needed. See
+// pluginFirstRun: fugaro upgrade has no plugin step in this build yet.
+const pluginRefresh = "In Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
 
 type pluginStage struct {
 	e       *initEngine

@@ -145,7 +145,7 @@ func TestNotInstalledIsInformational(t *testing.T) {
 	if r.Pin != OK || r.Install != NotInstalled || r.Worst() != SeverityInfo {
 		t.Fatalf("%+v", r)
 	}
-	for _, want := range []string{"trust", "fugaro upgrade --local", "restart"} {
+	for _, want := range []string{"trust", "/plugin marketplace add dimipaun/fugaro", "/plugin install fugaro@fugaro", "restart"} {
 		if !strings.Contains(NotInstalled.Fix(), want) {
 			t.Errorf("fix text lacks %q: %s", want, NotInstalled.Fix())
 		}

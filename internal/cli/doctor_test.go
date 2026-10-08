@@ -260,7 +260,7 @@ func TestDoctorNotInstalledIsInformational(t *testing.T) {
 	if !ok || c.OK || c.Severity != "info" {
 		t.Fatalf("plugin-install = %+v", c)
 	}
-	if !strings.Contains(c.Fix, "fugaro upgrade --local") || strings.Contains(c.Fix, "by itself") {
+	if !strings.Contains(c.Fix, "/plugin install fugaro@fugaro") || strings.Contains(c.Fix, "by itself") {
 		t.Fatalf("plugin-install fix = %q", c.Fix)
 	}
 	if !o.OK {

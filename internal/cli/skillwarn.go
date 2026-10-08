@@ -65,7 +65,7 @@ func staleLine(r pluginwire.Report) string {
 	case r.Pin == pluginwire.Newer:
 		return fmt.Sprintf("warning: the Fugaro plugin pinned in .claude/settings.json is %s, newer than this fugaro %s: upgrade fugaro (brew upgrade dimipaun/tap/fugaro)", pin, bin)
 	case r.Install == pluginwire.InstalledDiffers:
-		return fmt.Sprintf("warning: the installed Fugaro plugin is %s but .claude/settings.json pins %s: run fugaro upgrade --local", r.Version, pin)
+		return fmt.Sprintf("warning: the installed Fugaro plugin is %s but .claude/settings.json pins %s: in Claude Code run /plugin marketplace update fugaro", r.Version, pin)
 	}
 	return ""
 }

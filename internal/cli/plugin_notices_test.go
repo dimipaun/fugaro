@@ -81,7 +81,7 @@ func TestCleanSettingsStillCarryTheCaveat(t *testing.T) {
 }
 
 // Verified live (Claude Code 2.1.289): the plugin may need a manual install (observed 2026-10-07),
-// and a changed pin needs the marketplace updated (fugaro upgrade --local). The outputs say
+// and a changed pin needs /plugin marketplace update fugaro. The outputs say
 // exactly that, and never that teammates are offered or prompted.
 func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
 	releaseBuild(t, "0.3.0")
@@ -90,7 +90,7 @@ func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Run fugaro upgrade --local to update the plugin", "Claude Code installs the plugin when you open", "the folder was already trusted", "run fugaro upgrade --local in this checkout", "only trust folders you trust"} {
+	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "Claude Code installs the plugin when you open", "the folder was already trusted", "/plugin install fugaro@fugaro", "only trust folders you trust"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("update-skills lacks %q:\n%s", want, out)
 		}
@@ -100,7 +100,7 @@ func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
 			t.Errorf("update-skills says %q:\n%s", bad, out)
 		}
 	}
-	if got := pluginwire.InstalledDiffers.Fix(); !strings.Contains(got, "run fugaro upgrade --local") {
+	if got := pluginwire.InstalledDiffers.Fix(); !strings.Contains(got, "run /plugin marketplace update fugaro") {
 		t.Errorf("fix = %q", got)
 	}
 }
