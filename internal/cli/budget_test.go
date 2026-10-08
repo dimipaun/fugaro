@@ -14,6 +14,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/watch"
@@ -21,7 +22,8 @@ import (
 
 // budgetFixture is a project config whose budget backend is the RTDB fake.
 type budgetFixture struct {
-	db *gcpfake.RTDB
+	db  *gcpfake.RTDB
+	dir string // the local config's directory; its runs bucket is dir/runs
 }
 
 const (
@@ -31,8 +33,8 @@ const (
 
 func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	t.Helper()
-	f := &budgetFixture{db: gcpfake.NewRTDB(t)}
 	dir := t.TempDir()
+	f := &budgetFixture{db: gcpfake.NewRTDB(t), dir: dir}
 	path := isolateProjects(t, dir)
 	if budgetYAML == "" {
 		budgetYAML = "budget: { mode: observe, per_run_usd: 5, rtdb_url: " + f.db.URL + " }\n"
@@ -46,7 +48,28 @@ func newBudgetFixture(t *testing.T, budgetYAML string) *budgetFixture {
 	}
 	t.Setenv("FUGARO_CONFIG", path)
 	f.db.Set("fugaro/project", "aurora")
+	// The installation names its project in the runs bucket, as its
+	// Terraform does (mirrors cloudFixture.writeMarker): watch's queued-run
+	// lookup checks it before trusting the bucket.
+	f.writeMarker(t, "aurora", "proj-1234")
 	return f
+}
+
+func (f *budgetFixture) runsDir() string { return filepath.Join(f.dir, "runs") }
+
+func (f *budgetFixture) writeMarker(t *testing.T, name, gcpProject string) {
+	t.Helper()
+	data, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: name, GCPProject: gcpProject})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(f.runsDir(), filepath.FromSlash(infra.ProjectMarkerObject))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // typed makes stdin a terminal, so a confirmation can be typed.

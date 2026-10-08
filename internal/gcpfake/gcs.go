@@ -48,7 +48,9 @@ import (
 //     ("bytes */N" with no body) is treated as the final chunk.
 //   - Error bodies carry code, status and message, but no errors[].reason
 //     (real GCS answers a failed precondition with reason "conditionNotMet").
-//   - Listings are a single page: pageToken and maxResults are ignored.
+//   - Listings honour prefix, delimiter, startOffset, endOffset, maxResults
+//     and pageToken, but the page token is simply the next name to list
+//     (real GCS's is opaque); matchGlob and every other filter is ignored.
 //   - A bucket's get and getIamPolicy answer only for a bucket AddBucket
 //     or an insert made; objects can be stored in any bucket without it.
 //   - A bucket insert needs the project to have been added (AddProject),
@@ -65,6 +67,8 @@ type GCS struct {
 	projects map[string]uint64
 	// failDeletes makes the next object deletes answer 503.
 	failDeletes int
+	// listCalls counts object listing requests (one per page).
+	listCalls int
 }
 
 // bucketMeta is what a bucket's get and getIamPolicy report.
@@ -222,6 +226,28 @@ func (g *GCS) Bucket(t *testing.T, name string) *blobx.Bucket {
 	return &blobx.Bucket{Bucket: b, GCSName: name}
 }
 
+// Put stores data as bucket/name directly, without a request: for tests
+// that seed many objects at once.
+func (g *GCS) Put(bucket, name string, data []byte) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	objs := g.buckets[bucket]
+	if objs == nil {
+		objs = map[string]*object{}
+		g.buckets[bucket] = objs
+	}
+	g.gen++
+	objs[name] = &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, updated: time.Now().UTC()}
+}
+
+// ListCalls is how many object listing requests (pages) the fake has
+// answered.
+func (g *GCS) ListCalls() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.listCalls
+}
+
 // HasCustomTime reports whether the object bucket/key has its customTime set.
 func (g *GCS) HasCustomTime(bucket, key string) bool {
 	g.mu.Lock()
@@ -278,7 +304,7 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 			return
 		}
 		if rest == "o" && r.Method == http.MethodGet {
-			g.list(w, bucket, q.Get("prefix"), q.Get("delimiter"))
+			g.list(w, bucket, q)
 			return
 		}
 		name, ok := strings.CutPrefix(rest, "o/")
@@ -634,32 +660,53 @@ func (g *GCS) patch(w http.ResponseWriter, bucket, name string, body []byte) {
 	writeJSON(w, http.StatusOK, meta(bucket, name, o))
 }
 
-// list answers a single page: items directly under prefix, and the
-// delimiter-collapsed prefixes below it.
-func (g *GCS) list(w http.ResponseWriter, bucket, prefix, delim string) {
+// list answers one page of a listing: items directly under prefix, and
+// the delimiter-collapsed prefixes below it, from startOffset (inclusive)
+// to endOffset (exclusive), at most maxResults entries (items and
+// prefixes together, as GCS counts them) after pageToken.
+func (g *GCS) list(w http.ResponseWriter, bucket string, q url.Values) {
+	g.listCalls++
+	prefix, delim := q.Get("prefix"), q.Get("delimiter")
+	from, end := q.Get("startOffset"), q.Get("endOffset")
+	if t := q.Get("pageToken"); t > from {
+		from = t
+	}
+	limit := 1000
+	if m, err := strconv.Atoi(q.Get("maxResults")); err == nil && m > 0 && m < limit {
+		limit = m
+	}
 	objs := g.buckets[bucket]
 	names := make([]string, 0, len(objs))
 	for n := range objs {
-		if strings.HasPrefix(n, prefix) {
+		if strings.HasPrefix(n, prefix) && n >= from && (end == "" || n < end) {
 			names = append(names, n)
 		}
 	}
 	sort.Strings(names)
 	items := []map[string]any{}
 	prefixes := []string{}
-	seen := map[string]bool{}
-	for _, n := range names {
+	next := ""
+	for i := 0; i < len(names); i++ {
+		if len(items)+len(prefixes) == limit {
+			next = names[i]
+			break
+		}
+		n := names[i]
 		if delim != "" {
-			if i := strings.Index(n[len(prefix):], delim); i >= 0 {
-				p := n[:len(prefix)+i+len(delim)]
-				if !seen[p] {
-					seen[p] = true
-					prefixes = append(prefixes, p)
+			if j := strings.Index(n[len(prefix):], delim); j >= 0 {
+				p := n[:len(prefix)+j+len(delim)]
+				prefixes = append(prefixes, p)
+				for i+1 < len(names) && strings.HasPrefix(names[i+1], p) {
+					i++
 				}
 				continue
 			}
 		}
 		items = append(items, meta(bucket, n, objs[n]))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"kind": "storage#objects", "items": items, "prefixes": prefixes})
+	resp := map[string]any{"kind": "storage#objects", "items": items, "prefixes": prefixes}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

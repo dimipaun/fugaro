@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 )
 
@@ -25,10 +26,23 @@ func RunTime(runID string) (time.Time, error) {
 	return time.ParseInLocation("20060102-150405", runID[:15], time.UTC)
 }
 
-// dirs lists the immediate "directory" names under prefix.
-func dirs(ctx context.Context, b *blob.Bucket, prefix string) ([]string, error) {
+// dirs lists the immediate "directory" names under prefix. A non-empty
+// from asks the server to start the listing at prefix+from (on GCS, the
+// query's StartOffset), so names that sort before it cost nothing to skip;
+// on any other bucket the whole prefix is listed, and the caller filters.
+func dirs(ctx context.Context, b *blob.Bucket, prefix, from string) ([]string, error) {
 	var out []string
-	it := b.List(&blob.ListOptions{Prefix: prefix, Delimiter: "/"})
+	opts := &blob.ListOptions{Prefix: prefix, Delimiter: "/"}
+	if from != "" {
+		opts.BeforeList = func(as func(any) bool) error {
+			var q *storage.Query
+			if as(&q) {
+				q.StartOffset = prefix + from
+			}
+			return nil
+		}
+	}
+	it := b.List(opts)
 	for {
 		obj, err := it.Next(ctx)
 		if err == io.EOF {
@@ -45,18 +59,30 @@ func dirs(ctx context.Context, b *blob.Bucket, prefix string) ([]string, error) 
 
 // ListSlugs lists the repositories with runs, sorted.
 func ListSlugs(ctx context.Context, b *blob.Bucket) ([]string, error) {
-	s, err := dirs(ctx, b, "runs/")
+	s, err := dirs(ctx, b, "runs/", "")
 	slices.Sort(s)
 	return s, err
 }
 
 // ListRunIDs lists slug's run IDs minted at or after since, newest first.
 // A zero since lists all of them.
+//
+// A run ID starts with its UTC mint time (YYYYMMDD-HHMMSS, task.NewRunID),
+// so IDs sort by time and a non-zero since is a start offset: on GCS the
+// listing begins at runs/<slug>/<since's YYYYMMDD-HHMMSS>, and its cost
+// depends on the runs minted since then, never on the repository's history.
+// One offset covers a day boundary too: 20261007-235900-… sorts before
+// 20261008-000100-…. Every ID is still checked against since here (the
+// whole check on a bucket that ignores the offset).
 func ListRunIDs(ctx context.Context, b *blob.Bucket, slug string, since time.Time) ([]string, error) {
 	if !slugRE.MatchString(slug) {
 		return nil, fmt.Errorf("%q is not a repo slug", slug)
 	}
-	all, err := dirs(ctx, b, "runs/"+slug+"/")
+	from := ""
+	if !since.IsZero() {
+		from = since.UTC().Format("20060102-150405")
+	}
+	all, err := dirs(ctx, b, "runs/"+slug+"/", from)
 	if err != nil {
 		return nil, err
 	}

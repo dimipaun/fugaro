@@ -11,6 +11,7 @@ import (
 	"gocloud.dev/blob"
 	"gocloud.dev/blob/memblob"
 
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -84,5 +85,63 @@ func TestListRunIDsRejectsBadSlug(t *testing.T) {
 	}
 	if got, err := ListRunIDs(context.Background(), b, "acme", time.Time{}); err != nil || len(got) != 0 {
 		t.Errorf("ListRunIDs(acme) = %v, %v", got, err)
+	}
+}
+
+// A run ID's mint time is its UTC prefix, so since is a start offset that
+// spans midnight: the runs minted just before it are left out, those just
+// after (on either day) are listed, on GCS (server-side offset) and on a
+// bucket that ignores the offset (memblob) alike.
+func TestListRunIDsSinceAcrossMidnight(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	buckets := map[string]*blob.Bucket{"memblob": memblob.OpenBucket(nil), "gcs": g.Bucket(t, "runs").Bucket}
+	for name, b := range buckets {
+		for _, id := range []string{
+			"20261006-235900-aaaa", "20261007-235459-aaaa", // before since
+			"20261007-235500-bbbb", "20261007-235959-cccc", "20261008-000000-dddd", "20261008-001000-eeee",
+		} {
+			if err := b.WriteAll(ctx, "runs/acme-app/"+id+"/task.json", []byte("{}"), nil); err != nil {
+				t.Fatal(err)
+			}
+		}
+		since := time.Date(2026, 10, 7, 23, 55, 0, 0, time.UTC)
+		want := []string{"20261008-001000-eeee", "20261008-000000-dddd", "20261007-235959-cccc", "20261007-235500-bbbb"}
+		// any zone, earlier or later than UTC: IDs are UTC
+		for _, off := range []int{-7, 7} {
+			got, err := ListRunIDs(ctx, b, "acme-app", since.In(time.FixedZone("x", off*3600)))
+			if err != nil || !slices.Equal(got, want) {
+				t.Fatalf("%s (UTC%+d): ListRunIDs = %v, %v; want %v", name, off, got, err, want)
+			}
+		}
+	}
+}
+
+// On GCS a since listing starts at the offset server side: it costs one
+// list call however many older runs the repository has, where the full
+// listing pages through all of them.
+func TestListRunIDsSinceCostIndependentOfHistory(t *testing.T) {
+	ctx := context.Background()
+	g := gcpfake.NewGCS(t)
+	b := g.Bucket(t, "runs").Bucket
+	old := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range 5000 {
+		g.Put("runs", "runs/acme-app/"+old.Add(time.Duration(i)*time.Minute).Format("20060102-150405")+"-0000/task.json", []byte("{}"))
+	}
+	g.Put("runs", "runs/acme-app/20261007-120000-ffff/task.json", []byte("{}"))
+	before := g.ListCalls()
+	got, err := ListRunIDs(ctx, b, "acme-app", time.Date(2026, 10, 7, 11, 30, 0, 0, time.UTC))
+	if err != nil || !slices.Equal(got, []string{"20261007-120000-ffff"}) {
+		t.Fatalf("ListRunIDs = %v, %v", got, err)
+	}
+	if n := g.ListCalls() - before; n != 1 {
+		t.Fatalf("a since listing made %d list calls, want 1", n)
+	}
+	before = g.ListCalls()
+	if all, err := ListRunIDs(ctx, b, "acme-app", time.Time{}); err != nil || len(all) != 5001 {
+		t.Fatalf("full listing: %d ids, %v", len(all), err)
+	}
+	if n := g.ListCalls() - before; n < 5 {
+		t.Fatalf("the full listing made %d list calls; the fake must page like GCS", n)
 	}
 }

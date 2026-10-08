@@ -141,6 +141,22 @@ func TestFrameKilledRepo(t *testing.T) {
 	golden(t, "killed_project_100", frame(v, 100, 0))
 }
 
+func TestFrameQueued(t *testing.T) {
+	v := fixture()
+	v = MergeQueued(v, Config{}, []QueuedRun{
+		{Run: "r-eeee55", Slug: "acme__app", Workflow: "web", Recipe: "fast", RequestedBy: "a@b.c", LaunchedAt: t0.Add(-2 * time.Minute)},
+		{Run: "r-ffff66", Slug: "acme__app", LaunchedAt: t0.Add(-QueuedStuckAfter - time.Minute)},
+		{Run: "r-gggg77", Slug: "acme__new", Workflow: "web", LaunchedAt: t0.Add(-30 * time.Second)},
+	}, "", t0)
+	golden(t, "queued_100", frame(v, 100, 0))
+}
+
+func TestFrameQueuedNote(t *testing.T) {
+	v := fixture()
+	v = MergeQueued(v, Config{}, nil, "runs bucket unreachable: permission denied", t0)
+	golden(t, "queued_note_80", frame(v, 80, 0))
+}
+
 func TestFrameEmptyProject(t *testing.T) {
 	v := View{Now: t0, Day: "2026-10-03", Mode: "observe", Conn: Connection{Kind: ConnLive}}
 	golden(t, "empty_80", frame(v, 80, 0))

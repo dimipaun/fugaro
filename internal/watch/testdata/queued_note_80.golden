@@ -1,0 +1,15 @@
+fugaro watch · aurora · enforce · 2026-10-03
+live
+⚠ runs bucket unreachable: permission denied
+TOTAL  ▓▓▓▓▓▓▓▓░░ counted $41.00 of $50.00 (82%) · burn $0.12/min ⚠ FAST · spen…
+       4 runs · 0.8 run-hours
+  RUN      TITLE               STAGE    R   AGE     SPENT     FLAGS
+▸ acme/app           ▓▓▓▓▓▓▓▓░░ $30.00 of $40.00 (75%) · burn $0.09/min ⚠ FAST …
+  r-aaaa11 Fix the flaky logi… coding   r2  12m03s  $1.25     SILENT
+  r-bbbb22 Add pagination to … review   r1  12m03s  $1.25     NOTIONAL, ⚠ near
+  acme/lib           ▓▓▓▓▓▓▓▓▓▓ $11.00 of $10.00 (110%) · burn … · spent $11.00
+  ⚠ KILLED by dimi@x.io at 2026-10-03 11:55Z "runaway loop"
+  r-cccc33 Refactor the parser verify   r1  12m03s  $1.25     LOST, OVER, halte…
+  acme/docs          counted $0.00, no cap · burn $0.00/min · spent $0.00
+  r-dddd44 Typos               coding   r1  -       -
+↑↓ select · space fold · k/K kill · r/R resume · ? help · q quit
