@@ -2327,13 +2327,53 @@ func (r *initRun) planRepo(ctx context.Context, c *infra.Clients, t *tf.TF, wd *
 	return missing, nil
 }
 
+// cloudBuilder is the Cloud Build client the builds need. Tests replace
+// newCloudBuilder.
+type cloudBuilder interface {
+	Submit(ctx context.Context, s gcp.BuildSpec) (gcp.BuildResult, error)
+	Wait(ctx context.Context, id string, poll time.Duration) (gcp.BuildResult, error)
+}
+
+var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuilder, error) {
+	b, err := gcp.NewBuilder(ctx, gcpOptions(lc), lc.BuildRegion())
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// submitAndWait submits workflow name's Cloud Build from base and waits for
+// it: the one build fugaro init's first builds and fugaro image refresh run,
+// each after its caller's typed confirmation. It returns the build's ID.
+func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base string) (string, error) {
+	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
+	if err != nil {
+		return "", err
+	}
+	res, err := b.Submit(ctx, bs)
+	switch {
+	case errors.Is(err, gcp.ErrBadBuildSpec):
+		return "", userErr("%v", err)
+	case err != nil:
+		return "", remote(err)
+	}
+	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
+	done, err := b.Wait(ctx, res.ID, 0)
+	if err != nil {
+		return "", remote(err)
+	}
+	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
+	r.res.Builds = append(r.res.Builds, done.ID)
+	return done.ID, nil
+}
+
 // buildImages offers the first image build of each workflow in names, and
 // submits and waits for each one confirmed. It returns how many were built.
 func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, names []string) (int, error) {
 	if len(names) == 0 {
 		return 0, nil
 	}
-	b, err := gcp.NewBuilder(ctx, gcpOptions(lc), lc.BuildRegion())
+	b, err := newCloudBuilder(ctx, lc)
 	if err != nil {
 		return 0, remote(err)
 	}
@@ -2360,24 +2400,9 @@ func (r *initRun) buildImages(ctx context.Context, lc *localcfg.Config, cfg *con
 			r.warn(fmt.Sprintf("the first image build of %s/%s was not confirmed (the project's name was not typed), so its job waits for it: in your own terminal window, run fugaro image build --repo %s --workflow %s (it asks for the project's name too), then fugaro init --repo", spec.Name, name, spec.Name, name))
 			continue
 		}
-		bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
-		if err != nil {
+		if _, err := r.submitAndWait(ctx, b, lc, cfg, spec, name, base); err != nil {
 			return built, err
 		}
-		res, err := b.Submit(ctx, bs)
-		switch {
-		case errors.Is(err, gcp.ErrBadBuildSpec):
-			return built, userErr("%v", err)
-		case err != nil:
-			return built, remote(err)
-		}
-		fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
-		done, err := b.Wait(ctx, res.ID, 0)
-		if err != nil {
-			return built, remote(err)
-		}
-		fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
-		r.res.Builds = append(r.res.Builds, done.ID)
 		built++
 	}
 	return built, nil

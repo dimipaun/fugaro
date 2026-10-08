@@ -10,9 +10,11 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
+	gcp "github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -770,5 +772,48 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		if strings.Contains(string(img), bad) {
 			t.Errorf("image.go uses %s", bad)
 		}
+	}
+}
+
+// fakeBuilder is a Cloud Build that records the specs it is given and
+// succeeds.
+type fakeBuilder struct{ specs []gcp.BuildSpec }
+
+func (f *fakeBuilder) Submit(_ context.Context, s gcp.BuildSpec) (gcp.BuildResult, error) {
+	f.specs = append(f.specs, s)
+	return gcp.BuildResult{ID: fmt.Sprintf("b%04d", len(f.specs)), Image: s.Image + ":latest", LogURL: "https://log/" + s.Workflow}, nil
+}
+
+func (f *fakeBuilder) Wait(_ context.Context, id string, _ time.Duration) (gcp.BuildResult, error) {
+	return gcp.BuildResult{ID: id, Status: "SUCCESS", Digest: "sha256:" + strings.Repeat("d", 64)}, nil
+}
+
+func useFakeBuilder(t *testing.T) *fakeBuilder {
+	t.Helper()
+	f := &fakeBuilder{}
+	old := newCloudBuilder
+	newCloudBuilder = func(context.Context, *localcfg.Config) (cloudBuilder, error) { return f, nil }
+	t.Cleanup(func() { newCloudBuilder = old })
+	return f
+}
+
+// The first builds go through the seam and submitAndWait, after the typed
+// confirmation, from the local config's base.
+func TestFirstBuildsUseSubmitAndWait(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fakeTerminal(t)
+	e, out := stageEngine(t, initProjectName+"\n", nil)
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5",
+		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+	e.r.setProject(lc)
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"app": {Base: "web-node"}}}
+	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
+		Workflows: map[string]infra.WorkflowSpec{"app": {}}}
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"app"})
+	if err != nil || built != 1 || len(fb.specs) != 1 || fb.specs[0].Base != lc.BaseImages["web-node"] {
+		t.Fatalf("built %d, err %v, specs %+v", built, err, fb.specs)
+	}
+	if !strings.Contains(out.String(), "built acme/app/app (Cloud Build build b0001)") || len(e.r.res.Builds) != 1 {
+		t.Fatalf("output %s, builds %v", out.String(), e.r.res.Builds)
 	}
 }
