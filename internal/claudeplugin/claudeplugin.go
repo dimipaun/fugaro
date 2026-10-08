@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -25,6 +26,9 @@ import (
 var (
 	ListTimeout   = 30 * time.Second // the two lists
 	ChangeTimeout = 3 * time.Minute  // a marketplace add or update (a clone), an install, an update
+	// KillWait is how long after a timeout a call waits for output pipes
+	// that a process outside the killed group still holds open.
+	KillWait = 2 * time.Second
 )
 
 const (
@@ -97,7 +101,7 @@ func Find(lookPath func(string) (string, error)) (string, error) {
 // Runner runs claude at Bin with Dir as its working directory.
 type Runner struct {
 	Bin string    // absolute, from Find
-	Dir string    // the checkout's top: a project or local scope update applies there
+	Dir string    // absolute: the checkout's top, where a project or local scope update runs
 	Out io.Writer // what a change prints goes here, made safe
 }
 
@@ -151,19 +155,71 @@ func (r *Runner) Change(ctx context.Context, args ...string) error {
 	return err
 }
 
+// needsCheckout reports whether args acts on the checkout it runs in: only
+// a project or local scope update does. Every other call runs in a fresh
+// empty directory, so that "owner/name" given to marketplace add can never
+// match a local directory of that name in the checkout (claude might treat
+// it as a local path instead of GitHub).
+func needsCheckout(args []string) bool {
+	return slices.Equal(args, updatePlugin("project")) || slices.Equal(args, updatePlugin("local"))
+}
+
+// childEnvNames and childEnvPrefixes are the only variables claude, and the
+// git it spawns, inherit. Everything else is dropped: the user's cloud
+// credentials, API keys and fugaro tokens, and CLAUDECODE and every
+// CLAUDE_CODE_* agent-session marker. GIT_SSH_COMMAND is not forwarded: it
+// runs an arbitrary command in the user's name; git and ssh use their
+// configuration and SSH_AUTH_SOCK instead.
+var (
+	childEnvNames = []string{
+		"HOME", "PATH", "USER", "LOGNAME", "TMPDIR", "LANG", "SSH_AUTH_SOCK", "CLAUDE_CONFIG_DIR",
+		"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	}
+	childEnvPrefixes = []string{"LC_", "XDG_"}
+)
+
+// childEnv is the allowlisted part of environ, plus TERM=dumb and PWD=dir.
+func childEnv(environ []string, dir string) []string {
+	out := []string{"TERM=dumb", "PWD=" + dir}
+	for _, kv := range environ {
+		name, _, ok := strings.Cut(kv, "=")
+		if !ok {
+			continue
+		}
+		if slices.Contains(childEnvNames, name) || slices.ContainsFunc(childEnvPrefixes, func(p string) bool { return strings.HasPrefix(name, p) }) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 func (r *Runner) call(ctx context.Context, timeout time.Duration, args []string) (stdout, stderr []byte, err error) {
 	if err := Allowed(args); err != nil {
 		return nil, nil, err
 	}
+	if !filepath.IsAbs(r.Bin) {
+		return nil, nil, fmt.Errorf("claude path %s is not absolute", pluginwire.Printable(r.Bin))
+	}
+	if !filepath.IsAbs(r.Dir) {
+		return nil, nil, fmt.Errorf("claude working directory %s is not absolute", pluginwire.Printable(r.Dir))
+	}
+	dir := r.Dir
+	if !needsCheckout(args) {
+		if dir, err = os.MkdirTemp("", "fugaro-claude-"); err != nil {
+			return nil, nil, err
+		}
+		defer os.RemoveAll(dir)
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, r.Bin, args...)
-	cmd.Dir = r.Dir
-	// cmd.Stdin stays nil, the null device: a prompt reads end of file and
-	// refuses, and fugaro never answers one.
+	cmd.Dir = dir
+	cmd.Env = childEnv(os.Environ(), dir)
+	cmd.Stdin = nil // the null device, set explicitly: a prompt reads end of file and refuses, and fugaro never answers one
+	isolate(cmd)    // own process group; a timeout kills the whole group
 	var out, errOut capped
 	cmd.Stdout, cmd.Stderr = &out, &errOut
-	cmd.WaitDelay = 2 * time.Second
+	cmd.WaitDelay = KillWait
 	err = cmd.Run()
 	name := "claude " + strings.Join(args, " ")
 	switch {
@@ -176,14 +232,18 @@ func (r *Runner) call(ctx context.Context, timeout time.Duration, args []string)
 }
 
 // capped keeps the first maxOutput bytes written to it and drops the rest.
-type capped struct{ bytes.Buffer }
+// The buffer is a field, not embedded: embedding promotes Buffer.ReadFrom,
+// which io.Copy would use and so bypass Write and the cap.
+type capped struct{ buf bytes.Buffer }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if room := maxOutput - c.Len(); room > 0 {
-		c.Buffer.Write(p[:min(len(p), room)])
+	if room := maxOutput - c.buf.Len(); room > 0 {
+		c.buf.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
 }
+
+func (c *capped) Bytes() []byte { return c.buf.Bytes() }
 
 // printLines prints the non-blank lines of chunks, at most maxLines, each
 // made safe (pluginwire.Printable: no escape sequence, no bidi control, at

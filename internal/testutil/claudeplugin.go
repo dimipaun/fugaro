@@ -15,10 +15,23 @@ import (
 // fail.<key> fails with its content on stderr, plugins.<key> and
 // marketplaces.<key> replace the lists' answers, touch.<key> appends a newline
 // to the working directory's .claude/settings.json, and print.<key> is printed
-// before "ok: <args>".
+// before "ok: <args>". Marker files change every call: dumpenv writes its
+// environment to env.out, readstdin copies stdin to stdin.out (then
+// "stdin-eof"), grandchild starts a background job that writes marker after
+// 2 s and then sleeps (creating spawned once it started), holdout leaves a job in its own process group holding
+// stdout open for 6 s (also creating spawned), bigout prints 300000 bytes, listfail fails with its
+// content on stderr. cwdfiles.log has the number of files in each working
+// directory.
 const claudePluginScript = `#!/bin/sh
 d=$(dirname "$0")
 { printf '%s' "$PWD"; for a in "$@"; do printf '\t%s' "$a"; done; printf '\n'; } >> "$d/calls.log"
+ls -A "$PWD" | wc -l | tr -d ' ' >> "$d/cwdfiles.log"
+[ -f "$d/dumpenv" ] && env > "$d/env.out"
+[ -f "$d/readstdin" ] && { cat > "$d/stdin.out"; echo stdin-eof >> "$d/stdin.out"; }
+if [ -f "$d/grandchild" ]; then (sleep 2; echo done >> "$d/marker") & : > "$d/spawned"; sleep 30; fi
+if [ -f "$d/holdout" ]; then set -m; (sleep 6) & : > "$d/spawned"; exec sleep 30; fi
+if [ -f "$d/bigout" ]; then head -c 300000 /dev/zero | tr '\000' x; exit 0; fi
+if [ -f "$d/listfail" ]; then cat "$d/listfail" >&2; exit 1; fi
 case "$*" in
 "plugin marketplace list --json") cat "$d/marketplaces.json"; exit 0 ;;
 "plugin list --json") cat "$d/plugins.json"; exit 0 ;;
