@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -41,6 +43,14 @@ const (
 
 var stepStates = []stepState{stepCurrent, stepDone, stepStale, stepSkipped, stepFailed, stepNotRun}
 
+// stepNotImplemented is a placeholder step's state: the step does not exist
+// in this build, so nothing was checked or changed. It is never current and
+// never makes a checkout "nothing to do"; it does not change the exit code,
+// and the run ends with a "not checked:" line naming those steps. It is not
+// in stepStates: Tasks 6 and 7 of docs/plans/2026-10-08-upgrade.md replace
+// the placeholders with pluginStep and cloudStep and remove it.
+const stepNotImplemented stepState = "not implemented"
+
 type stepResult struct {
 	name   string // set by upgradeCheckout
 	state  stepState
@@ -62,12 +72,20 @@ type upgradeStep struct {
 	run  func(ctx context.Context, u *upgradeCtx) stepResult
 }
 
-// upgradeSteps run in this order for each checkout.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}}
+// upgradeSteps run in this order for each checkout. plugin and cloud are
+// placeholders until Tasks 6 and 7 put pluginStep and cloudStep in their
+// places.
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", notImplementedStep}, {"cloud", notImplementedStep}}
+
+// notImplementedStep stands for a step this build does not have.
+func notImplementedStep(context.Context, *upgradeCtx) stepResult {
+	return stepResult{state: stepNotImplemented, reason: "skipped in this build, nothing was checked or changed"}
+}
 
 type checkoutResult struct {
 	path  string // as given
 	root  string // the checkout's top, "" when there is none
+	dup   bool   // the same checkout as an earlier path
 	steps []stepResult
 }
 
@@ -99,6 +117,10 @@ steps, stopping that checkout at the first step that fails:
 
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
+
+This build has the pin step only: plugin and cloud print "not implemented",
+check and change nothing, and the run ends with a "not checked:" line naming
+them; they do not change the exit code.
 
 --local runs pin and plugin only. In a coding agent's session (CLAUDECODE and
 the like) the cloud step is always skipped, never attempted, with the
@@ -146,6 +168,10 @@ func runUpgrade(cmd *cobra.Command, o upgradeOptions, paths []string) error {
 	seen := map[string]string{}
 	var results []checkoutResult
 	for _, p := range paths {
+		if releaseVersion() == "" {
+			results = append(results, devCheckout(w, p))
+			continue
+		}
 		results = append(results, upgradeCheckout(ctx, cmd, o, p, agent, seen))
 	}
 	printUpgradeSummary(w, o, results)
@@ -211,6 +237,44 @@ func (o upgradeOptions) again(path string) string {
 	return strings.Join(append(args, quoteWord(path)), " ")
 }
 
+// devCheckout is decision U11: a development build skips every step of every
+// path, whatever the path is, and the run exits 0.
+func devCheckout(w io.Writer, path string) checkoutResult {
+	res := checkoutResult{path: path}
+	where := path
+	if loc, ok := pluginwire.Locate(path); ok {
+		res.root, where = loc.Root, loc.Root
+	}
+	fmt.Fprintf(w, "== %s\n", pluginwire.Printable(where))
+	for _, s := range upgradeSteps {
+		r := stepResult{name: s.name, state: stepSkipped, reason: "a development build has no release to pin, install or refresh to"}
+		res.steps = append(res.steps, r)
+		printStep(w, r)
+	}
+	return res
+}
+
+// checkoutKey identifies a checkout for "two paths in the same checkout count
+// once": the top of its git checkout (the nearest directory at or above root
+// holding .git), symlinks resolved. A subdirectory with its own .claude and
+// the top of the same repository are one checkout.
+func checkoutKey(root string) string {
+	dir, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return filepath.Clean(root)
+	}
+	for d := dir; ; {
+		if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+			return d
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			return dir
+		}
+		d = up
+	}
+}
+
 func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, path, agent string, seen map[string]string) checkoutResult {
 	w := cmd.OutOrStdout()
 	res := checkoutResult{path: path}
@@ -230,10 +294,12 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 	}
 	res.root = loc.Root
 	fmt.Fprintf(w, "== %s\n", pluginwire.Printable(loc.Root))
-	if first, dup := seen[loc.Root]; dup {
+	key := checkoutKey(loc.Root)
+	if first, dup := seen[key]; dup {
+		res.dup = true
 		return refuse(stepSkipped, "the same checkout as "+pluginwire.Printable(first))
 	}
-	seen[loc.Root] = loc.Root
+	seen[key] = loc.Root
 	if !fugaroCheckout(loc) {
 		return refuse(stepFailed, "not a Fugaro checkout: it has no fugaro.yaml and its .claude/settings.json does not wire the Fugaro plugin (set it up with fugaro init and /fugaro:setup first)")
 	}
@@ -250,7 +316,11 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 			break
 		}
 	}
-	if res.nothingToDo() {
+	if missing := res.notImplemented(); len(missing) > 0 {
+		if res.failure() == nil {
+			fmt.Fprintf(w, "not checked: %s (not implemented in this build)\n", strings.Join(missing, ", "))
+		}
+	} else if res.nothingToDo() {
 		fmt.Fprintf(w, "nothing to do: %s is current", pluginwire.Printable(loc.Root))
 		if res.anySkipped() {
 			fmt.Fprint(w, " (apart from what the skipped steps name)")
@@ -288,6 +358,17 @@ func (c checkoutResult) nothingToDo() bool {
 	return len(c.steps) > 0
 }
 
+// notImplemented names the checkout's placeholder steps.
+func (c checkoutResult) notImplemented() []string {
+	var out []string
+	for _, s := range c.steps {
+		if s.state == stepNotImplemented {
+			out = append(out, s.name)
+		}
+	}
+	return out
+}
+
 func (c checkoutResult) anySkipped() bool {
 	for _, s := range c.steps {
 		if s.state == stepSkipped {
@@ -322,17 +403,35 @@ func printUpgradeSummary(w io.Writer, o upgradeOptions, results []checkoutResult
 			fmt.Fprintf(w, "    once that is fixed, rerun: %s\n", o.again(c.root))
 		}
 	}
+	var missing []string
+	for _, s := range upgradeSteps {
+		for _, c := range results {
+			if slices.Contains(c.notImplemented(), s.name) {
+				missing = append(missing, s.name)
+				break
+			}
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(w, "not checked: %s: this build does not implement them, so this run says nothing about them and the exit code does not count them\n", strings.Join(missing, ", "))
+	}
 }
 
 // upgradeExit is the worst exit code over every checkout: a failed step's
-// own, or 1 for a stale one (only --check reports stale).
+// own, or 1 for a stale one (only --check reports stale). A step that is not
+// implemented counts for nothing: the summary's "not checked:" line names it.
 func upgradeExit(results []checkoutResult) error {
-	code, failed, stale := ExitOK, 0, 0
+	code, failed, stale, checkouts := ExitOK, 0, 0, 0
 	for _, c := range results {
+		if !c.dup {
+			checkouts++
+		}
+		if c.failure() != nil {
+			failed++
+		}
 		for _, s := range c.steps {
 			switch s.state {
 			case stepFailed:
-				failed++
 				code = max(code, s.code)
 			case stepStale:
 				stale++
@@ -342,7 +441,7 @@ func upgradeExit(results []checkoutResult) error {
 	}
 	switch {
 	case failed > 0:
-		return &ExitError{Code: code, Err: fmt.Errorf("fugaro upgrade stopped in %d of %d checkout(s): see the summary", failed, len(results))}
+		return &ExitError{Code: code, Err: fmt.Errorf("fugaro upgrade stopped in %d of %d checkout(s): see the summary", failed, checkouts)}
 	case stale > 0:
 		return &ExitError{Code: code, Err: errors.New("something is stale: fugaro upgrade without --check brings it up to date (see the summary)")}
 	}
@@ -359,15 +458,18 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 	if _, err := pluginwire.Tag(Version); err != nil {
 		return stepResult{state: stepSkipped, reason: "a development build has no release tag to pin the plugin to"}
 	}
-	if r := pluginwire.Status(settings, Version, ""); r.Pin == pluginwire.Newer {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: r.Detail + ", and fugaro upgrade never moves a pin down: run brew upgrade dimipaun/tap/fugaro, then fugaro upgrade again"}
+	// U10 for every marketplace and enablement state: Status says Newer only
+	// for an enabled dimipaun/fugaro pin, yet Plan rewrites a fork's or a
+	// disabled plugin's ref just the same.
+	if ref := pluginwire.Status(settings, Version, "").Ref; refAboveBinary(ref) {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: fmt.Sprintf("the plugin is pinned to %s, newer than this fugaro %s, and fugaro upgrade never moves a pin down: run brew upgrade dimipaun/tap/fugaro, then fugaro upgrade again",
+			strings.TrimPrefix(ref, "v"), strings.TrimPrefix(Version, "v"))}
 	}
 	ch, err := pluginwire.Plan(settings, Version, u.o.allowFork)
 	var fk *pluginwire.ForkError
 	switch {
 	case errors.As(err, &fk):
-		fmt.Fprintf(u.cmd.ErrOrStderr(), "WARNING: the %q marketplace in %s is %s, not %s. Its skills are not Fugaro's; Claude Code can install that plugin for anyone who trusts the folder. Check it is yours.\n",
-			pluginwire.Marketplace, shown, pluginwire.Printable(fk.Repo), pluginwire.Repo)
+		warnUpgradeFork(u, pluginwire.Printable(fk.Repo))
 		reason := "the marketplace is the fork " + pluginwire.Printable(fk.Repo) + ": pass --allow-fork if it is yours (only its ref moves)"
 		if u.o.check {
 			return stepResult{state: stepStale, reason: reason}
@@ -376,6 +478,9 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 	case err != nil:
 		fmt.Fprintf(u.w, "the file was not changed; fix it, or merge this in by hand:\n\n%s", pluginwire.Snippet(Version))
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
+	}
+	if ch.Foreign != "" {
+		warnUpgradeFork(u, ch.Foreign)
 	}
 	if ch.Note != "" {
 		fmt.Fprintf(u.cmd.ErrOrStderr(), "note: %s\n", multiLine(ch.Note))
@@ -391,4 +496,35 @@ func pinStep(_ context.Context, u *upgradeCtx) stepResult {
 		return stepResult{state: stepFailed, code: ExitUserError, reason: oneLine(err.Error())}
 	}
 	return stepResult{state: stepDone, reason: "pinned to " + ch.Tag + " in " + shown + ": review it with git diff and commit it like any change"}
+}
+
+// warnUpgradeFork is update-skills' warning, said whenever the checkout's
+// marketplace is a fork, whether or not --allow-fork lets its ref move.
+func warnUpgradeFork(u *upgradeCtx, repo string) {
+	fmt.Fprintf(u.cmd.ErrOrStderr(), "WARNING: the %q marketplace in %s is %s, not %s. Its skills are not Fugaro's; Claude Code can install that plugin for anyone who trusts the folder. Check it is yours.\n",
+		pluginwire.Marketplace, pluginwire.Printable(u.loc.Settings), repo, pluginwire.Repo)
+}
+
+// refAboveBinary: ref is a release tag vX.Y.Z newer than this binary's.
+func refAboveBinary(ref string) bool {
+	bin, err := pluginwire.Tag(Version)
+	if err != nil || !pluginwire.ValidTag(ref) {
+		return false
+	}
+	a, b := tagNumbers(ref), tagNumbers(bin)
+	for i := range a {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return false
+}
+
+// tagNumbers splits a tag that pluginwire.ValidTag accepts.
+func tagNumbers(tag string) [3]int {
+	var n [3]int
+	for i, p := range strings.SplitN(strings.TrimPrefix(tag, "v"), ".", 3) {
+		n[i], _ = strconv.Atoi(p)
+	}
+	return n
 }
