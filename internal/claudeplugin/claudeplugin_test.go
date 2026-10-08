@@ -313,18 +313,38 @@ func TestListFailurePrintsStderr(t *testing.T) {
 func TestCallRefusesWhatIsNotAllowed(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
 	r, _ := runner(t, f)
-	if _, _, err := r.call(t.Context(), time.Second, []string{"-p", "hello"}); err == nil || len(f.Calls(t)) != 0 {
+	_, _, err := r.call(t.Context(), 10*time.Second, []string{"-p", "hello"})
+	if err == nil || !strings.Contains(err.Error(), "is not a call fugaro makes") || len(f.Calls(t)) != 0 {
 		t.Fatalf("err %v, calls %+v", err, f.Calls(t))
 	}
 }
 
 func TestCallRefusesRelativeBinAndDir(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, "[]", "[]")
+	// A relative Bin with a slash that actually exists on disk (unlike the
+	// bare "claude" case, which exec.Command would resolve through PATH and
+	// so could accidentally pass or fail for an unrelated reason): the
+	// absolute-path check must refuse it before exec is ever attempted.
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relSlash, err := filepath.Rel(wd, f.Bin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(relSlash, string(filepath.Separator)) {
+		t.Fatalf("relative path %q has no separator", relSlash)
+	}
+	if _, err := os.Stat(relSlash); err != nil {
+		t.Fatalf("relative path %q does not exist: %v", relSlash, err)
+	}
 	for name, r := range map[string]*Runner{
-		"relative bin": {Bin: "claude", Dir: t.TempDir()},
-		"empty bin":    {Dir: t.TempDir()},
-		"relative dir": {Bin: f.Bin(), Dir: "."},
-		"empty dir":    {Bin: f.Bin()},
+		"relative bin":            {Bin: "claude", Dir: t.TempDir()},
+		"relative bin with slash": {Bin: relSlash, Dir: t.TempDir()},
+		"empty bin":               {Dir: t.TempDir()},
+		"relative dir":            {Bin: f.Bin(), Dir: "."},
+		"empty dir":               {Bin: f.Bin()},
 	} {
 		if _, _, err := r.call(t.Context(), time.Second, listMarkets); err == nil {
 			t.Errorf("%s: accepted", name)

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,12 @@ func upgradeEnv(t *testing.T, v string) {
 	}
 	t.Setenv("PATH", strings.Join([]string{t.TempDir(), "/usr/bin", "/bin"}, string(os.PathListSeparator)))
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// No test finds the developer's own claude: the plugin step looks it up
+	// through claudeLookPath, which finds nothing unless a test hands it the
+	// fake (useFakeClaude).
+	old := claudeLookPath
+	claudeLookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	t.Cleanup(func() { claudeLookPath = old })
 }
 
 func upgradeRead(t *testing.T, path string) string {
@@ -51,30 +58,37 @@ func TestUpgradeLocalPinsThenPinCurrent(t *testing.T) {
 	}
 	before := upgradeRead(t, settings)
 	out, _, err = executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "pin: current: pinned to v0.5.2") || !strings.Contains(out, "not checked: plugin") {
+	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "pin: current: pinned to v0.5.2") || !strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("rerun: %v, changed %v\n%s", err, upgradeRead(t, settings) != before, out)
 	}
 }
 
-// TestUpgradeUnimplementedStepIsNeverCurrent: the plugin step is still a
-// placeholder that checks nothing (Task 6 has not landed yet), so no mode
-// may call the checkout current as a whole; --check exits 0 for the steps
-// it verified and names the one it could not check. The checkout here has
-// no fugaro.yaml, so the cloud step (Task 7) is skipped in every mode, not
-// "not implemented" (under --local and in an agent session it is skipped
-// before anything is read, U7, so its reason is theirs).
-func TestUpgradeUnimplementedStepIsNeverCurrent(t *testing.T) {
+// TestUpgradeEveryStepIsImplemented: pin, plugin and cloud run in that order
+// and none is a placeholder, so each mode reports every step's own state:
+// here pin current, plugin skipped (no claude on PATH, or --check with no
+// install recorded), cloud skipped (no fugaro.yaml; under --local and in an
+// agent session before anything is read, U7, so with their reason). With no
+// step left unchecked the checkout is "nothing to do" and the exit is 0.
+func TestUpgradeEveryStepIsImplemented(t *testing.T) {
+	var names []string
+	for _, s := range upgradeSteps {
+		names = append(names, s.name)
+	}
+	if got := strings.Join(names, ","); got != "pin,plugin,cloud" {
+		t.Fatalf("upgradeSteps = %s", got)
+	}
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
 	for _, tc := range []struct {
-		name  string
-		agent bool
-		args  []string
+		name       string
+		agent      bool
+		args       []string
+		pluginSkip string
 	}{
-		{"check", false, []string{"--check"}},
-		{"local", false, []string{"--local"}},
-		{"yes", false, []string{"--yes"}},
-		{"agent", true, nil},
+		{"check", false, []string{"--check"}, "plugin: skipped: not installed on this machine"},
+		{"local", false, []string{"--local"}, "plugin: skipped: claude is not on PATH"},
+		{"yes", false, []string{"--yes"}, "plugin: skipped: claude is not on PATH"},
+		{"agent", true, nil, "plugin: skipped: claude is not on PATH"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.agent {
@@ -91,16 +105,16 @@ func TestUpgradeUnimplementedStepIsNeverCurrent(t *testing.T) {
 			case "agent":
 				cloud = "cloud: skipped: a coding agent's session"
 			}
-			for _, want := range []string{"pin: current", "plugin: not implemented: skipped in this build, nothing was checked or changed",
-				cloud, "not checked: plugin (not implemented in this build)",
-				"  " + root + ": pin current, plugin not implemented, cloud skipped", "not checked: plugin: this build does not implement them"} {
+			for _, want := range []string{"pin: current", tc.pluginSkip, cloud,
+				"  " + root + ": pin current, plugin skipped, cloud skipped",
+				"nothing to do: " + root + " is current (apart from what the skipped steps name)"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			for _, bad := range []string{"nothing to do", "is current", "plugin: current", "cloud: current", "plugin: skipped", "cloud: not implemented"} {
+			for _, bad := range []string{"not implemented", "not checked:", "plugin: current", "cloud: current"} {
 				if strings.Contains(out, bad) {
-					t.Errorf("output claims %q of a step that does not exist:\n%s", bad, out)
+					t.Errorf("output claims %q of a step that is skipped here:\n%s", bad, out)
 				}
 			}
 		})
@@ -117,6 +131,18 @@ func TestUpgradeCheckWritesNothing(t *testing.T) {
 	}
 	if upgradeRead(t, settings) != before || !strings.Contains(out, "pin: stale: the pin moves to v0.5.2") {
 		t.Fatalf("changed %v\n%s", upgradeRead(t, settings) != before, out)
+	}
+}
+
+// TestRefAboveBinaryComparesPatchNumerically: v0.5.10 is above 0.5.2 (patch
+// 10 > 2), which a string comparison would get backwards ("10" < "2").
+func TestRefAboveBinaryComparesPatchNumerically(t *testing.T) {
+	withVersion(t, "0.5.2")
+	if !refAboveBinary("v0.5.10") {
+		t.Error("v0.5.10 should read as above 0.5.2: the patch is compared numerically, not as a string")
+	}
+	if refAboveBinary("v0.5.1") {
+		t.Error("v0.5.1 should not read as above 0.5.2")
 	}
 }
 
@@ -155,6 +181,20 @@ func TestUpgradeNeverMovesAPinDown(t *testing.T) {
 				t.Errorf("the pin moved down:\n%s", out)
 			}
 		})
+	}
+}
+
+// TestUpgradeDevBuildNeedsNoTerminal is U11: a development build has no
+// release to pin, install or refresh to, so every step is skipped and the
+// run exits 0, even with no flags and no terminal on stdin (the refusal that
+// otherwise requires one is for the cloud step a release build would run).
+func TestUpgradeDevBuildNeedsNoTerminal(t *testing.T) {
+	upgradeEnv(t, "dev")
+	root, settings := skillCheckout(t, wiredAt("v0.5.1"))
+	before := upgradeRead(t, settings)
+	out, _, err := executeStdin(t, "", "upgrade", root)
+	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "a development build (dev)") || !strings.Contains(out, "pin: skipped: a development build") {
+		t.Fatalf("%v\n%s", err, out)
 	}
 }
 
@@ -270,7 +310,8 @@ func TestUpgradeCheckReportsAFork(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	for _, want := range []string{"pin: stale: the marketplace is the fork someone/fugaro: pass --allow-fork if it is yours (only its ref moves)",
-		"  " + root + ": pin stale, plugin not implemented, cloud skipped"} {
+		"plugin: skipped: cannot tell from Claude Code's record of installed plugins",
+		"  " + root + ": pin stale, plugin skipped, cloud skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

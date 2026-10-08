@@ -76,9 +76,9 @@ func TestUpgradeLocalNamesTheCloudCommand(t *testing.T) {
 	}
 }
 
-// TestUpgradePassesYesToTheRefresh: the cloud step runs after pin (the
-// plugin step is still the notImplementedStep placeholder, Task 6 has not
-// landed yet), and --yes reaches the refresh unchanged.
+// TestUpgradePassesYesToTheRefresh: the cloud step runs after pin and
+// plugin (skipped here: no claude on PATH), and --yes reaches the refresh
+// unchanged.
 func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 	for _, yes := range []bool{true, false} {
 		t.Run(map[bool]string{true: "yes", false: "interactive"}[yes], func(t *testing.T) {
@@ -105,8 +105,8 @@ func TestUpgradePassesYesToTheRefresh(t *testing.T) {
 			if err != nil || seen == nil || seen.yes != yes {
 				t.Fatalf("%v, options %+v\n%s", err, seen, out)
 			}
-			pin, plugin, base, cloud := strings.Index(out, "pin: done"), strings.Index(out, "plugin: not implemented"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
-			if pin < 0 || plugin < pin || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": pin done, plugin not implemented, cloud done") {
+			pin, plugin, base, cloud := strings.Index(out, "pin: done"), strings.Index(out, "plugin: skipped"), strings.Index(out, "step 2, base:"), strings.Index(out, "cloud: done")
+			if pin < 0 || plugin < pin || base < plugin || cloud < base || !strings.Contains(out, "  "+root+": pin done, plugin skipped, cloud done") {
 				t.Fatalf("order or summary wrong:\n%s", out)
 			}
 		})
@@ -141,7 +141,7 @@ func TestUpgradeOneCheckoutsCloudFailureDoesNotHideAnother(t *testing.T) {
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "stopped in 1 of 2 checkout(s)") {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if r := pluginwire.Status(otherSettings, "0.5.1", ""); r.Pin != pluginwire.OK || !strings.Contains(out, "  "+other+": pin done, plugin not implemented, cloud skipped") {
+	if r := pluginwire.Status(otherSettings, "0.5.1", ""); r.Pin != pluginwire.OK || !strings.Contains(out, "  "+other+": pin done, plugin skipped, cloud skipped") {
 		t.Fatalf("the other checkout: %+v\n%s", r, out)
 	}
 }
@@ -155,10 +155,9 @@ func TestUpgradeTeammateSkipsTheCloud(t *testing.T) {
 	}
 }
 
-// TestUpgradeRerunWhenCurrentIsNothingToDo: pin and cloud both current (the
-// plugin step is still the notImplementedStep placeholder, so the summary
-// cannot reach "nothing to do" as a whole until Task 6 lands): no settings
-// write, and a cloud plan with no base to copy and no build.
+// TestUpgradeRerunWhenCurrentIsNothingToDo: pin and cloud both current and
+// plugin skipped (no claude on PATH), so the checkout is "nothing to do": no
+// settings write, and a cloud plan with no base to copy and no build.
 func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	r, root := upgradeRig(t)
 	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
@@ -175,7 +174,8 @@ func TestUpgradeRerunWhenCurrentIsNothingToDo(t *testing.T) {
 	out, _, err := executeStdin(t, "", "upgrade", "--yes")
 	if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.1") ||
 		!strings.Contains(out, "pin: current: pinned to v0.5.1") ||
-		!strings.Contains(out, "cloud: current: no base image to copy and no image to rebuild") {
+		!strings.Contains(out, "cloud: current: no base image to copy and no image to rebuild") ||
+		!strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v\n%s", err, out)
 	}
 	if len(r.calls(t)) != 0 || len(r.ar.Requests()) != 0 {
