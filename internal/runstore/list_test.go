@@ -106,10 +106,13 @@ func TestListRunIDsSinceAcrossMidnight(t *testing.T) {
 			}
 		}
 		since := time.Date(2026, 10, 7, 23, 55, 0, 0, time.UTC)
-		got, err := ListRunIDs(ctx, b, "acme-app", since.In(time.FixedZone("x", -7*3600))) // any zone: IDs are UTC
 		want := []string{"20261008-001000-eeee", "20261008-000000-dddd", "20261007-235959-cccc", "20261007-235500-bbbb"}
-		if err != nil || !slices.Equal(got, want) {
-			t.Fatalf("%s: ListRunIDs = %v, %v; want %v", name, got, err, want)
+		// any zone, earlier or later than UTC: IDs are UTC
+		for _, off := range []int{-7, 7} {
+			got, err := ListRunIDs(ctx, b, "acme-app", since.In(time.FixedZone("x", off*3600)))
+			if err != nil || !slices.Equal(got, want) {
+				t.Fatalf("%s (UTC%+d): ListRunIDs = %v, %v; want %v", name, off, got, err, want)
+			}
 		}
 	}
 }

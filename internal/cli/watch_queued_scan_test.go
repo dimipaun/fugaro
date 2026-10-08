@@ -112,9 +112,13 @@ func TestQueuedScanHungRepoKeepsOthers(t *testing.T) {
 	sc.listIDs = func(ctx context.Context, b *blob.Bucket, slug string, since time.Time) ([]string, error) {
 		if slug == "acme-hung" {
 			hung.Store(true)
-			<-ctx.Done()
-			hung.Store(false)
-			return nil, ctx.Err()
+			defer hung.Store(false)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(3 * time.Second): // only if the deadline did not cut it off
+				return nil, errors.New("hung listing was not cut off")
+			}
 		}
 		if slug == "acme-c" {
 			deadline := time.Now().Add(time.Second) // give the hung one time to start
@@ -133,7 +137,7 @@ func TestQueuedScanHungRepoKeepsOthers(t *testing.T) {
 	if !overlapped.Load() {
 		t.Fatal("repositories were not read in parallel: acme-c waited for acme-hung")
 	}
-	if took := time.Since(start); took > 5*time.Second {
+	if took := time.Since(start); took > 2*time.Second {
 		t.Fatalf("the scan took %s: the hung repository's deadline did not hold", took)
 	}
 	if got := queuedRunIDs(rows); !slices.Equal(got, []string{"acme-a/" + id + "-aaaa", "acme-c/" + id + "-cccc"}) {
@@ -266,5 +270,103 @@ func TestQueuedSourceQuitWhileOpenBlocked(t *testing.T) {
 				t.Fatalf("%d goroutines left behind", n-base)
 			}
 		})
+	}
+}
+
+// scanWith60 is a scanner over one repository with 60 queued runs, each
+// read delayed by delay (honouring the deadline), and the number of reads
+// that completed.
+func scanWith60(t *testing.T, delay, repoTimeout time.Duration) (sc *queuedScanner, reads *atomic.Int32) {
+	t.Helper()
+	b := memblob.OpenBucket(nil)
+	ctx := context.Background()
+	put := func(key string, data []byte) {
+		if err := b.WriteAll(ctx, key, data, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	at := time.Now().Add(-time.Minute)
+	for i := range 60 {
+		putQueued(t, put, "acme-big", at.UTC().Format("20060102-150405")+fmt.Sprintf("-%04x", i), at)
+	}
+	sc = openedScanner(b)
+	sc.repoTimeout = repoTimeout
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-big"}, nil }
+	reads = new(atomic.Int32)
+	sc.readRun = func(ctx context.Context, env *cloudEnv, slug, id string, since, now time.Time) (watch.QueuedRun, bool, error) {
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return watch.QueuedRun{}, false, ctx.Err()
+		}
+		reads.Add(1)
+		return queuedFromRun(ctx, env, slug, id, since, now)
+	}
+	return sc, reads
+}
+
+// A repository with many queued runs is read with bounded concurrency:
+// 60 reads of 50ms take 3s one after the other, past the 2s deadline, yet
+// all 60 rows show, with no note.
+func TestQueuedScanReadsRunsConcurrently(t *testing.T) {
+	sc, _ := scanWith60(t, 50*time.Millisecond, 2*time.Second)
+	rows, note, err := sc.scan(context.Background())
+	if err != nil || note != "" {
+		t.Fatalf("scan: %v, note %q", err, note)
+	}
+	if len(rows) != 60 {
+		t.Fatalf("%d rows, want 60 (sequential reading would hit the deadline)", len(rows))
+	}
+}
+
+// When even the concurrent reads outlast the deadline, the rows already
+// read are kept and the note counts the runs not read.
+func TestQueuedScanDeadlineKeepsRowsReadSoFar(t *testing.T) {
+	sc, reads := scanWith60(t, 100*time.Millisecond, 350*time.Millisecond)
+	rows, note, err := sc.scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) == 0 || len(rows) >= 60 {
+		t.Fatalf("%d rows: want some, not all", len(rows))
+	}
+	if int(reads.Load()) != len(rows) {
+		t.Fatalf("%d reads finished, %d rows", reads.Load(), len(rows))
+	}
+	want := fmt.Sprintf("acme-big: %d of 60 runs not read (the runs bucket did not answer within 350ms)", 60-len(rows))
+	if !strings.Contains(note, want) || strings.Contains(note, "repositories not read") {
+		t.Fatalf("note = %q, want it to contain %q", note, want)
+	}
+}
+
+// The lookback and the mint margin: a run minted 25 minutes ago shows; one
+// minted 33 minutes ago but launched 28 minutes ago (inside the margin)
+// shows; one minted 40 minutes ago is outside the listing and does not.
+func TestQueuedScanLookbackAndMargin(t *testing.T) {
+	b := memblob.OpenBucket(nil)
+	ctx := context.Background()
+	put := func(key string, data []byte) {
+		if err := b.WriteAll(ctx, key, data, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := time.Now()
+	id := func(ago time.Duration, suffix string) string {
+		return now.Add(-ago).UTC().Format("20060102-150405") + "-" + suffix
+	}
+	recent, margin, old := id(25*time.Minute, "aaaa"), id(33*time.Minute, "bbbb"), id(40*time.Minute, "cccc")
+	putQueued(t, put, "acme-a", recent, now.Add(-25*time.Minute))
+	putQueued(t, put, "acme-a", margin, now.Add(-28*time.Minute))
+	putQueued(t, put, "acme-a", old, now.Add(-28*time.Minute))
+	sc := openedScanner(b)
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
+	rows, note, err := sc.scan(ctx)
+	if err != nil || note != "" {
+		t.Fatalf("scan: %v, note %q", err, note)
+	}
+	want := []string{"acme-a/" + recent, "acme-a/" + margin}
+	slices.Sort(want)
+	if got := queuedRunIDs(rows); !slices.Equal(got, want) {
+		t.Fatalf("rows = %v, want %v", got, want)
 	}
 }

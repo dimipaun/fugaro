@@ -77,6 +77,10 @@ const queuedRepoTimeout = 10 * time.Second
 // queuedWorkers is how many repositories a scan reads at once.
 const queuedWorkers = 8
 
+// queuedRunReaders is how many of one repository's runs are read at once,
+// inside its deadline: each run costs 3 to 5 sequential reads.
+const queuedRunReaders = 6
+
 // queuedOpenTimeout bounds how long one scan waits for the bucket to open
 // (credential discovery and the marker check). An open still running past
 // it is not restarted: the next scan waits for the same one.
@@ -205,6 +209,8 @@ type queuedScanner struct {
 	slugs   func(context.Context, *cloudEnv) ([]string, error)
 	listIDs func(context.Context, *blob.Bucket, string, time.Time) ([]string, error)
 	now     func() time.Time
+	// readRun reads one run (queuedFromRun; tests slow it down).
+	readRun func(ctx context.Context, env *cloudEnv, slug, id string, since, now time.Time) (watch.QueuedRun, bool, error)
 
 	workers                  int
 	repoTimeout, openTimeout time.Duration
@@ -232,6 +238,7 @@ func newQueuedScanner(lc *localcfg.Config, repo string) *queuedScanner {
 		},
 		listIDs: runstore.ListRunIDs,
 		now:     time.Now,
+		readRun: queuedFromRun,
 		workers: queuedWorkers, repoTimeout: queuedRepoTimeout, openTimeout: queuedOpenTimeout,
 	}
 }
@@ -313,13 +320,17 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 // repoScan is one repository's part of a scan.
 type repoScan struct {
 	rows       []watch.QueuedRun
-	unreadable int   // runs left out
+	unreadable int   // runs left out (failed reads)
 	runErr     error // the first of them's error
-	err        error // the repository could not be read: rows is nil
+	cutOff     int   // runs not read before the repository's deadline
+	total      int   // runs listed
+	err        error // the repository could not be listed: rows is nil
 }
 
 // scanRepo reads slug's queued runs under its own deadline: one listing of
-// the run IDs minted since minted, then the reads of those runs.
+// the run IDs minted since minted, then the reads of those runs, up to
+// queuedRunReaders at once. When the deadline fires mid-way the rows
+// already read are kept and the runs not read are counted in cutOff.
 func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string, minted, since, now time.Time) repoScan {
 	rctx, cancel := context.WithTimeout(ctx, s.repoTimeout)
 	defer cancel()
@@ -327,21 +338,55 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 	if err != nil {
 		return repoScan{err: err}
 	}
-	var r repoScan
-	for _, id := range ids {
-		q, ok, err := queuedFromRun(rctx, env, slug, id, since, now)
-		if rctx.Err() != nil {
-			return repoScan{err: rctx.Err()}
+	type result struct {
+		q    watch.QueuedRun
+		ok   bool
+		err  error
+		done bool // the read finished before the deadline
+	}
+	results := make([]result, len(ids))
+	next := make(chan int)
+	var wg sync.WaitGroup
+	for range min(queuedRunReaders, len(ids)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range next {
+				q, ok, err := s.readRun(rctx, env, slug, ids[i], since, now)
+				if rctx.Err() != nil {
+					continue // cut off: the result is not trusted
+				}
+				results[i] = result{q, ok, err, true}
+			}
+		}()
+	}
+feed:
+	for i := range ids {
+		select {
+		case next <- i:
+		case <-rctx.Done():
+			break feed
 		}
+	}
+	close(next)
+	wg.Wait()
+
+	r := repoScan{total: len(ids)}
+	for _, res := range results {
 		switch {
-		case err != nil:
+		case !res.done:
+			r.cutOff++
+		case res.err != nil:
 			r.unreadable++
 			if r.runErr == nil {
-				r.runErr = err
+				r.runErr = res.err
 			}
-		case ok:
-			r.rows = append(r.rows, q)
+		case res.ok:
+			r.rows = append(r.rows, res.q)
 		}
+	}
+	if ctx.Err() != nil {
+		return repoScan{err: ctx.Err()} // shutting down
 	}
 	return r
 }
@@ -393,7 +438,8 @@ feed:
 
 	var parts []string
 	unreadRepos, unreadRuns := 0, 0
-	var repoErr, runErr string
+	var repoErr, runErr, cutOff string
+	cutRepos := 0
 	for i, r := range results {
 		if r.err != nil {
 			if unreadRepos == 0 {
@@ -403,6 +449,12 @@ feed:
 			continue
 		}
 		rows = append(rows, r.rows...)
+		if r.cutOff > 0 {
+			if cutRepos == 0 {
+				cutOff = fmt.Sprintf("%s: %d of %d runs not read (%s)", slugs[i], r.cutOff, r.total, errText(context.DeadlineExceeded, s.repoTimeout))
+			}
+			cutRepos++
+		}
 		if r.unreadable > 0 && unreadRuns == 0 {
 			runErr = errText(r.runErr, s.repoTimeout)
 		}
@@ -410,6 +462,13 @@ feed:
 	}
 	if unreadRepos > 0 {
 		parts = append(parts, fmt.Sprintf("%d of %d repositories not read (%s)", unreadRepos, len(slugs), repoErr))
+	}
+	if cutRepos > 0 {
+		more := ""
+		if cutRepos > 1 {
+			more = fmt.Sprintf(" and %d more repositories", cutRepos-1)
+		}
+		parts = append(parts, "runs left unread, the rows read are shown: "+cutOff+more)
 	}
 	if unreadRuns > 0 {
 		parts = append(parts, fmt.Sprintf("%d could not be read and are not shown (%s)", unreadRuns, runErr))

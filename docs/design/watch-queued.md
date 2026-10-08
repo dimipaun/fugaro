@@ -125,6 +125,11 @@ lists each repository; the first frame never waits for it. `watch --once`
 waits for its one scan at most `queuedOnceWait` (3 seconds), then prints
 without queued rows and with a note.
 
+Within a repository the runs are read `queuedRunReaders` (6) at a time,
+all under the repository's one deadline. When the deadline fires mid-way
+the rows already read are kept and the note counts the rest ("<slug>: N of
+M runs not read"); they are never thrown away with the unread ones.
+
 A scan reads the repositories in parallel, `queuedWorkers` (8) at a time,
 each under its own `queuedRepoTimeout` (10 seconds) covering its listing
 and its reads; the marker check and the repository listing each have
@@ -149,7 +154,7 @@ lookback offset, so it returns only the run directories minted in the last
 that time). That is repos + 1 list calls per scan however long the
 history; per run minted in that window, 3 to 5 small reads (`task.json`,
 `launch.json`, `result.json`, the `cancel` marker and, with no
-`launch.json`, the claim), or 2 for a run that has a record. At the 60 s
+`launch.json`, the claim), or 3 for a run that has a record (`readRun` always reads `task.json`, `launch.json` and `result.json`). At the 60 s
 cadence one open watch over 60 repositories makes about 61 list calls a
 minute, about 88 000 a day (Class A), plus the reads of recent runs (Class
 B); 15 seconds and a full listing per repository before cost about 40
@@ -178,6 +183,15 @@ audience that can see them queued.
   stored task's) is older than the listing's offset, though its
   `launch.json` is fresh. It appears in watch as a live row once its runner
   starts; `fugaro ls` shows it pending meanwhile.
+- **A caller-chosen `--run-id` is not covered** (`v1.md`; `dogfooding.md`
+  recommends one per batch piece). The listing relies on the ID's mint time:
+  a pre-chosen or old ID is never shown queued, and a future-dated one is
+  listed on every scan until the lookback passes it.
+- **`watch --once` may often print "queued runs unavailable"** at around 60
+  repositories: its 3-second budget (`queuedOnceWait`) is often not enough
+  for the first scan, which opens the bucket, finds credentials and lists
+  every repository. Use `fugaro watch` (the TUI) or run `--once` twice for
+  the full picture.
 - **A run that dies before its runner writes `result.json`** shows queued,
   then stuck from 10 minutes, until 30 minutes after its launch; `fugaro ls`
   shows it `infra_error` (lost).
