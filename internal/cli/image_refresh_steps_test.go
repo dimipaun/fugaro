@@ -467,6 +467,7 @@ func TestRefreshCheckJobShowsTheBaseDiff(t *testing.T) {
 		"web-node: " + oldWeb + " -> " + newWeb + "\n",
 		"go: " + oldGo + " -> " + newGo + " (not selected: also moved to the local config's base)",
 		"no other field of " + infra.CheckSpecEnv + " or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back",
+		"is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)

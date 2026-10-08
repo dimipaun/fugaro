@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -71,5 +72,48 @@ func TestDocsNameImageRefresh(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestDocsRefreshStepNumbers: gcp-setup.md numbers the refresh steps as the
+// command does (1 preflight, 2 base, 3 check job, 4 builds), and the numbers
+// in its prose match the "(N)" of the command's help and its stop message.
+func TestDocsRefreshStepNumbers(t *testing.T) {
+	long := newImageRefreshCmd().Long
+	data, err := os.ReadFile("../../docs/gcp-setup.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var para string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "**Moving a repository") {
+			para = line
+		}
+	}
+	if para == "" {
+		t.Fatal("gcp-setup.md has no refresh paragraph")
+	}
+	// Prose "(N) The <name> step" against the help's "(N)" and refreshStepNames.
+	for n, name := range map[int]string{2: "base", 3: "check-job", 4: "build"} {
+		if !strings.Contains(long, fmt.Sprintf("(%d) ", n)) {
+			t.Errorf("the command's help has no (%d)", n)
+		}
+		if want := refreshStepNames[n-1]; !strings.HasPrefix(want, strings.ReplaceAll(name, "-", " ")) {
+			t.Errorf("step %d is %q in the command, the test expects %q", n, want, name)
+		}
+		if want := fmt.Sprintf("(%d) The %s step", n, name); !strings.Contains(para, want) {
+			t.Errorf("gcp-setup.md lacks %q", want)
+		}
+	}
+	for _, wrong := range []string{"(1) The", "(5) The"} {
+		if strings.Contains(para, wrong) {
+			t.Errorf("gcp-setup.md numbers a refresh step %q", wrong)
+		}
+	}
+	if want := "job update (step 3)"; !strings.Contains(para, want) {
+		t.Errorf("gcp-setup.md status line lacks %q", want)
+	}
+	if !strings.Contains(long, "(3) points the repository's daily image check job") {
+		t.Error("the help no longer numbers the check job step 3")
 	}
 }

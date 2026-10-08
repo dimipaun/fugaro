@@ -125,7 +125,7 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	}
 	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back\n", pluginwire.Printable(u.Job()),
 		pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()), infra.CheckSpecEnv, diff, infra.CheckSpecEnv)
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro init --repo from this local config plans no change to it",
+	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro init --repo from this local config is designed to plan no change to it (not yet verified against the real API: see docs/gcp-live-checklist.md Check 30)",
 		pluginwire.Printable(u.Job()), infra.CheckSpecEnv, infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
 		return err
 	}
