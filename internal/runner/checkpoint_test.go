@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -109,25 +112,270 @@ func TestCheckpointPushesCommittedWorkMidStage(t *testing.T) {
 // TestCheckpointIgnoresALocalBaseRefTheAgentMoved: the agent's own git (a
 // fetch of the base branch, or an adversarial update-ref) can move the
 // local origin/<base> tracking ref forward during the stage. Checkpoints
-// must still push committed work: they judge "ahead of base" on the base
-// commit bootstrap recorded (baseSHA), never on that ref, which a naive
-// check (gitops.CountAhead, built on "origin/"+branch-name) would read as
-// 0 commits ahead forever, silently losing checkpoints for the rest of
-// the run.
+// judge "ahead of base" and scan from the base commit bootstrap froze
+// (baseSHA), never that ref: a check on the ref would read 0 commits ahead
+// forever (silently losing checkpoints), and a scan from it would read an
+// empty range and push a secret.
 func TestCheckpointIgnoresALocalBaseRefTheAgentMoved(t *testing.T) {
+	const mounted = "mounted-moved-ref-secret-value"
+	for _, c := range []struct {
+		name   string
+		commit string // the agent's commit
+		pushed bool
+	}{
+		{"clean", "echo wip > wip.txt", true},
+		{"secret", "echo " + mounted + " > leak.txt", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+			g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+			long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				shell(t, req, c.commit+" && git add -A && git commit -qm wip")
+				head := strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+				shell(t, req, "git update-ref refs/remotes/origin/main HEAD")
+				g.settle()
+				switch {
+				case c.pushed && (pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head):
+					t.Errorf("a moved local base ref silently blocked the checkpoint")
+				case !c.pushed && remoteHasBranch(t, g.harness):
+					t.Errorf("a moved local base ref hid a secret from the checkpoint's scan")
+				}
+				shell(t, req, "git update-ref refs/remotes/origin/main HEAD~1 && git rm -q --ignore-unmatch leak.txt && git commit -qm tidy --allow-empty")
+				return implement("feature")(t, ctx, req)
+			}
+			rec, err := g.run(t, long, review("ship", 0))
+			if err != nil || rec.Outcome != runstore.OutcomeReady {
+				t.Fatalf("rec = %+v, err = %v", rec, err)
+			}
+			if stopped := strings.Contains(g.logs.String(), "no more checkpoint pushes"); stopped == c.pushed || strings.Contains(g.logs.String(), mounted) {
+				t.Fatalf("logs:\n%s", g.logs)
+			}
+		})
+	}
+}
+
+// bareCommit adds an empty commit on top of from to branch in the bare
+// repository remote, as someone else's push would, and returns it.
+func bareCommit(t *testing.T, remote, branch, from string) string {
+	t.Helper()
+	parent := testutil.Git(t, remote, "rev-parse", from+"^{commit}")
+	sha := testutil.Git(t, remote, "commit-tree", parent+"^{tree}", "-p", parent, "-m", "another commit on "+branch)
+	testutil.Git(t, remote, "update-ref", "refs/heads/"+branch, sha)
+	return sha
+}
+
+// headOf is the checkout's HEAD.
+func headOf(t *testing.T, req agent.Request) string {
+	t.Helper()
+	return strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
+}
+
+// TestCheckpointNeverPushesATipBehindTheBase: the base branch has two
+// commits and the agent resets the run branch one back. That tip is neither
+// the start nor pushed_head, but it holds nothing of the agent's: pushing
+// it would create the remote run branch at an old base commit.
+func TestCheckpointNeverPushesATipBehindTheBase(t *testing.T) {
 	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	bareCommit(t, g.remote, "main", "main")
+	reset := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		start := headOf(t, req)
+		shell(t, req, "git reset -q --hard HEAD~1")
+		g.settle()
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Errorf("a checkpoint pushed a tip behind the base: remote at %s", remoteTip(t, g.harness))
+		}
+		shell(t, req, "git reset -q --hard "+start)
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, reset, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestCheckpointFromAnotherRefWaitsForTheAgentsWork: a run launched with
+// --ref develop and base_branch main starts at develop's tip, ahead of
+// main. That start commit holds nothing of the agent's and is never
+// pushed; the agent's first commit is.
+func TestCheckpointFromAnotherRefWaitsForTheAgentsWork(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	bareCommit(t, g.remote, "develop", "main")
+	setRef(t, g.harness, task.Spec{Ref: "develop"})
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		g.settle()
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Errorf("a checkpoint pushed the start commit with no work of the agent's: remote at %s", remoteTip(t, g.harness))
+		}
 		head := commitWIP(t, req, "wip")
-		shell(t, req, "git update-ref refs/remotes/origin/main HEAD")
 		g.settle()
 		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
-			t.Errorf("a moved local base ref silently blocked the checkpoint")
+			t.Errorf("the agent's first commit was not checkpointed")
 		}
 		return implement("feature")(t, ctx, req)
 	}
 	rec, err := g.run(t, long, review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestCheckpointNeverPushesTheBaseCommit: a run launched from a ref behind
+// its base branch, whose agent moves the run branch to the base commit:
+// that tip is not the start, nor pushed, nor behind the start, but it is
+// the base itself and is never pushed.
+func TestCheckpointNeverPushesTheBaseCommit(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	testutil.Git(t, g.remote, "update-ref", "refs/heads/develop", "refs/heads/main")
+	base := bareCommit(t, g.remote, "main", "main")
+	setRef(t, g.harness, task.Spec{Ref: "develop"})
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "git reset -q --hard "+base)
+		g.settle()
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Errorf("a checkpoint pushed the base commit: remote at %s", remoteTip(t, g.harness))
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestCheckpointScansFromTheFetchedBase: the base branch moves on origin
+// right after bootstrap fetched it. Checkpoints scan from the commit
+// fetched, which the checkout has, so they still push; a base read with a
+// second ls-remote would name a commit the checkout lacks, and every scan
+// would fail for the whole run.
+func TestCheckpointScansFromTheFetchedBase(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	runner.SetFetchedBaseSeam(t, func() { bareCommit(t, g.remote, "main", "main") })
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		head := commitWIP(t, req, "wip")
+		g.settle()
+		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
+			t.Errorf("the base moving after the fetch stopped the checkpoint")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(g.logs.String(), "failed") {
+		t.Fatalf("a checkpoint failed:\n%s", g.logs)
+	}
+}
+
+// TestCheckpointScansEveryNewCommit: the scan covers every commit the push
+// would add, not only the tip: a secret in a commit under an unrelated one
+// stops checkpoints.
+func TestCheckpointScansEveryNewCommit(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	const mounted = "mounted-buried-secret-value"
+	g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo "+mounted+" > leak.txt && git add -A && git commit -qm leak")
+		commitWIP(t, req, "unrelated")
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Error("a checkpoint pushed a secret buried under a later commit")
+		}
+		shell(t, req, "git rm -q leak.txt && git commit -qm unleak")
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, leak, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(g.logs.String(), "no more checkpoint pushes") || strings.Contains(g.logs.String(), mounted) {
+		t.Fatalf("logs:\n%s", g.logs)
+	}
+}
+
+// TestStageEndWaitsForARunningCheckpoint: a stage's end stops its
+// checkpointer and waits for it: a checkpoint caught between its push and
+// saving pushed_head finishes before the next stage starts, so no push or
+// save ever runs alongside the stage loop.
+func TestStageEndWaitsForARunningCheckpoint(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once, releasing sync.Once
+	var finished atomic.Bool
+	runner.SetCheckpointPushedSeam(t, func() {
+		once.Do(func() {
+			close(entered)
+			<-release
+			finished.Store(true)
+		})
+	})
+	unblock := func() { releasing.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		g.tick()
+		g.clock.advance(runner.CheckpointQuiet)
+		go g.tick()
+		select {
+		case <-entered:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the checkpoint never pushed")
+		}
+		// The stage ends while the checkpoint is held. A correct stop waits
+		// for it; the hold ends on its own a little later.
+		time.AfterFunc(300*time.Millisecond, unblock)
+		return implement("feature")(t, ctx, req)
+	}
+	next := func(t *testing.T) {
+		if !finished.Load() {
+			t.Error("the next stage started while the last stage's checkpoint was still running")
+			unblock()
+		}
+	}
+	if _, err := g.run(t, long, probe(next, review("ship", 0))); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCheckpointWarningsAreRedacted: a failed push's error, and a refusal's
+// reason, can carry text the host or the agent chose; neither reaches the
+// log with a value the run redacts.
+func TestCheckpointWarningsAreRedacted(t *testing.T) {
+	const mounted = "mounted-warning-secret-value"
+	for _, c := range []struct{ name, say, want string }{
+		{"push failed", "token " + mounted + " is not valid here", "a checkpoint push failed"},
+		{"refused", "refusing to allow a GitHub App to create or update workflow `.github/workflows/" + mounted + ".yml` without `workflows` permission", "no more checkpoint pushes"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+			g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+			flag := filepath.Join(t.TempDir(), "refuse")
+			if err := os.WriteFile(flag, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			hook := "#!/bin/sh\ncat >/dev/null\nif [ -e " + flag + " ]; then echo '" + c.say + "' >&2; exit 1; fi\n"
+			if err := os.WriteFile(filepath.Join(g.remote, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				commitWIP(t, req, "wip")
+				g.settle()
+				if remoteHasBranch(t, g.harness) {
+					t.Error("the refused push reached the remote")
+				}
+				if err := os.Remove(flag); err != nil {
+					t.Fatal(err)
+				}
+				return implement("feature")(t, ctx, req)
+			}
+			if _, err := g.run(t, long, review("ship", 0)); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(g.logs.String(), c.want) || strings.Contains(g.logs.String(), mounted) {
+				t.Fatalf("logs:\n%s", g.logs)
+			}
+		})
 	}
 }
 

@@ -1112,3 +1112,36 @@ func TestHideURL(t *testing.T) {
 		t.Errorf("short URL wrapped the error")
 	}
 }
+
+func TestCommitOfAndIsAncestor(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	start, err := repo.CommitOf(ctx, "refs/heads/fugaro/x")
+	if head, _ := repo.HeadSHA(ctx); err != nil || start != head {
+		t.Fatalf("CommitOf = %q, %v; want %s", start, err, head)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{{start, one, true}, {one, start, false}, {start, start, true}} {
+		if got, err := repo.IsAncestor(ctx, c.a, c.b); err != nil || got != c.want {
+			t.Errorf("IsAncestor(%s, %s) = %v, %v; want %v", c.a[:7], c.b[:7], got, err, c.want)
+		}
+	}
+	for _, bad := range invalidSHAs(one) {
+		if _, err := repo.IsAncestor(ctx, bad, start); err == nil {
+			t.Errorf("IsAncestor(%q) took a non-SHA", bad)
+		}
+	}
+	for _, ref := range []string{"HEAD~1", "--output=/tmp/x", "a..b", "refs/heads/nope"} {
+		if sha, err := repo.CommitOf(ctx, ref); err == nil {
+			t.Errorf("CommitOf(%q) = %q, want an error", ref, sha)
+		}
+	}
+}

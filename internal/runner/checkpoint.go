@@ -31,6 +31,14 @@ var checkpointTicks = func(d time.Duration) (<-chan time.Time, func()) {
 // checkpointTicked, when set, is called at the end of every poll (tests).
 var checkpointTicked func()
 
+// checkpointPushedSeam, when set by a test, runs in pushCheckpoint between
+// a successful push and saving pushed_head.
+var checkpointPushedSeam func()
+
+// fetchedBaseSeam, when set by a test, runs in bootstrap right after the
+// base branch is fetched.
+var fetchedBaseSeam func()
+
 // checkpointersRunning counts the checkpoint goroutines alive, so a test
 // can see that a stage's end stopped its own.
 var checkpointersRunning atomic.Int32
@@ -46,15 +54,15 @@ type checkpointState struct {
 	sched     *checkpointSchedule
 	stopped   bool            // a permanent reason: no more checkpoints this run
 	warned    map[string]bool // warnings already logged, by kind
-	openTries int             // checkpoint pushes that tried to open the draft (Task 6)
+	openTries int             // checkpoint pushes that tried to open the draft: unused until Task 6
 	pushes    int             // checkpoint pushes made
 }
 
 // checkpointsOn reports whether this run checkpoints: a first run, with a
-// resolved base commit (bootstrap may have failed to get one), whose
-// fugaro.yaml leaves git.pr.checkpoints on.
+// resolved base and start commits (bootstrap may have failed to read them),
+// whose fugaro.yaml leaves git.pr.checkpoints on.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && r.baseSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
+	return r.follow == nil && r.baseSHA != "" && r.startSHA != "" && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and
@@ -65,7 +73,10 @@ func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop fun
 		return func() {}
 	}
 	if r.ckpt.sched == nil {
-		r.ckpt.sched = newCheckpointSchedule(r.baseSHA)
+		// The start commit, not the base's: a run started from another ref
+		// than its base branch starts ahead of the base with nothing of
+		// the agent's on it.
+		r.ckpt.sched = newCheckpointSchedule(r.startSHA)
 	}
 	ctx, cancel := context.WithCancel(stageCtx)
 	ticks, stopTicks := checkpointTicks(checkpointPoll)
@@ -152,7 +163,8 @@ func (r *run) checkpointTick(ctx context.Context, stage string) {
 
 // checkpointSince is where a checkpoint's secret scan and workflow guard
 // start: the last pushed commit, or, before the first push, the base
-// commit bootstrap resolved when it fetched the base — never a ref name
+// commit bootstrap read right after it fetched the base (as finalize's
+// guards start at the base) — never a ref name
 // such as origin/<base> that the agent's own git could repoint once it
 // controls the checkout (C6a).
 func (r *run) checkpointSince() string {
@@ -164,24 +176,12 @@ func (r *run) checkpointSince() string {
 
 // checkpointPush pushes sha, the tip just read: every check is on sha,
 // never on HEAD, which the agent may have moved since. during says it is a
-// poll's push, mid-stage, rather than a boundary's (Task 6).
+// poll's push, mid-stage, rather than a boundary's; it only shows in the
+// log until Task 6's boundary push passes false.
 func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool) {
 	now := r.d.Now()
-	// Of the tip read, not HEAD: a tip read just before the agent's first
-	// commit is the base, which is never pushed, and neither is one
-	// already pushed. Both sides are the frozen values (baseSHA, the last
-	// pushed_head), never gitops.CountAhead's "origin/"+branch-name: the
-	// agent's own git could repoint that local ref (a fetch that moves it
-	// forward, or an adversarial update-ref) to make an ahead-count read 0
-	// forever, which would silently stop checkpoints for the rest of the
-	// run with no warning logged — exactly the data loss this feature
-	// exists to prevent. due() already guarantees sha differs from both
-	// before ever calling this; the check is repeated here, cheaply and
-	// without a git call, as a safety net for any future caller that
-	// pushes without going through the schedule first (a stage boundary,
-	// Task 6).
-	if sha == r.baseSHA || sha == r.rec.PushedHead {
-		return // no commit of the run's own yet
+	if !r.checkpointAhead(ctx, sha) {
+		return // no commit of the run's own on it
 	}
 	if !r.checkpointClean(ctx, sha) {
 		if !r.ckpt.stopped {
@@ -197,7 +197,9 @@ func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool
 		r.warnCheckpoint("rewritten", "the run branch's pushed commits were rewritten; checkpoints wait until a push fast-forwards again (a verified stage end or finalize pushes the branch as it is)", "sha", shortSHA(sha))
 		return
 	case r.asRefusal(err) != nil:
-		r.stopCheckpoints("the host would refuse the push", "reason", refusalText(r.asRefusal(err)))
+		// The text names files the agent chose: redacted like every
+		// other text this file logs.
+		r.stopCheckpoints("the host would refuse the push", "reason", r.redact(refusalText(r.asRefusal(err))))
 		return
 	case ctx.Err() != nil:
 		return // the stage ended mid-push; the boundary or finalize pushes
@@ -209,6 +211,37 @@ func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool
 	r.ckpt.sched.pushed(now)
 	r.ckpt.pushes++
 	r.d.Log.Info("checkpoint pushed", "stage", stage, "sha", shortSHA(sha), "n", r.ckpt.pushes, "boundary", !during)
+}
+
+// checkpointAhead reports whether sha, the tip read, holds a commit of the
+// run's own: it is not the start commit, the base commit or the last pushed
+// one, nor behind any of them (the agent reset the branch back, say with
+// git reset --hard HEAD~1, which would otherwise create the remote branch
+// at an old base commit). It judges on the tip read and the frozen SHAs
+// only (C6a), never on a ref name such as origin/<base>: the agent's own
+// git could repoint that local ref to make every tip look behind, silently
+// stopping checkpoints for the rest of the run. A failed check warns once
+// and pushes nothing; the next poll checks again.
+func (r *run) checkpointAhead(ctx context.Context, sha string) bool {
+	if sha == r.startSHA || sha == r.baseSHA || sha == r.rec.PushedHead {
+		return false
+	}
+	for _, c := range []string{r.startSHA, r.baseSHA, r.rec.PushedHead} {
+		if c == "" {
+			continue
+		}
+		behind, err := r.repo.IsAncestor(ctx, sha, c)
+		switch {
+		case err != nil:
+			if ctx.Err() == nil {
+				r.warnCheckpoint("ahead", "checking a checkpoint against the base failed; not pushing it", "err", r.redact(err.Error()))
+			}
+			return false
+		case behind:
+			return false
+		}
+	}
+	return true
 }
 
 // checkpointClean scans the commits a checkpoint would add (checkpointSince
@@ -241,6 +274,9 @@ func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 	defer cancel()
 	if err := r.repo.PushFastForward(pctx, r.rec.Branch, sha); err != nil {
 		return err
+	}
+	if checkpointPushedSeam != nil {
+		checkpointPushedSeam()
 	}
 	r.rec.PushedHead = sha
 	r.save(ctx)

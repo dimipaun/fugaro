@@ -77,8 +77,9 @@ func (r *Repo) CheckpointTip(ctx context.Context, branch string) (string, error)
 // Errors name the remote "origin", never its URL.
 //
 // It is not given the base branch, so it would push a sha that is the
-// base itself, or behind it: the caller guards that with CountAhead on the
-// same sha before calling it (C6a).
+// base itself, or behind it: the caller guards that with IsAncestor on the
+// same sha, against the frozen start and base commits, before calling it
+// (C6a).
 func (r *Repo) PushFastForward(ctx context.Context, branch, sha string) error {
 	if err := checkRunBranch(ctx, r, branch); err != nil {
 		return err
@@ -228,6 +229,34 @@ func (r *Repo) remoteTipAt(ctx context.Context, url, ref string) (string, error)
 		}
 	}
 	return "", nil
+}
+
+// CommitOf resolves ref, a ref name the caller chose (never one the agent
+// wrote), to the full SHA of the commit it names now. A caller freezes a
+// commit with it before the agent runs, so a later check never reads a ref
+// the agent's own git could repoint.
+func (r *Repo) CommitOf(ctx context.Context, ref string) (string, error) {
+	if !plainRef(ref) {
+		return "", fmt.Errorf("refusing to resolve %q: not a plain ref name", ref)
+	}
+	sha, err := r.git(ctx, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", ref, err)
+	}
+	if !IsFullSHA(sha) {
+		return "", fmt.Errorf("resolving %s gave %q, not a full commit SHA", ref, sha)
+	}
+	return sha, nil
+}
+
+// IsAncestor reports whether commit a is an ancestor of commit b, or b
+// itself; both must be full commit SHAs. A commit the checkout does not
+// have is no ancestor; any other failure is an error, never a "no".
+func (r *Repo) IsAncestor(ctx context.Context, a, b string) (bool, error) {
+	if !IsFullSHA(a) || !IsFullSHA(b) {
+		return false, fmt.Errorf("refusing to compare %q and %q: not full commit SHAs", a, b)
+	}
+	return r.isAncestor(ctx, a, b)
 }
 
 // isAncestor reports whether a is an ancestor of b (or b itself). A commit

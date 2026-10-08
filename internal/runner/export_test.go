@@ -142,3 +142,19 @@ const (
 	CheckpointMinGap   = checkpointMinGap
 	CheckpointFallback = checkpointFallback
 )
+
+// SetCheckpointPushedSeam runs f in a checkpoint between its successful
+// push and saving pushed_head, for the rest of t.
+func SetCheckpointPushedSeam(t *testing.T, f func()) {
+	prev := checkpointPushedSeam
+	checkpointPushedSeam = f
+	t.Cleanup(func() { checkpointPushedSeam = prev })
+}
+
+// SetFetchedBaseSeam runs f in bootstrap right after the base branch is
+// fetched, for the rest of t.
+func SetFetchedBaseSeam(t *testing.T, f func()) {
+	prev := fetchedBaseSeam
+	fetchedBaseSeam = f
+	t.Cleanup(func() { fetchedBaseSeam = prev })
+}

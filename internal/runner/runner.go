@@ -203,13 +203,16 @@ type run struct {
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
-	// baseSHA is the base branch's commit as bootstrap resolved it right
-	// after fetching it, for a first run (empty for a follow-up, which
-	// never checkpoints). A checkpoint's scans and schedule use this, never
-	// a ref name such as origin/<base>: the agent controls the checkout
-	// while a stage runs and could repoint a local ref, but not this
-	// already-read value (checkpoint.go).
-	baseSHA string
+	// baseSHA is the base branch's commit as bootstrap fetched it (the
+	// local origin/<base> read right after the fetch, before the agent
+	// runs), and startSHA the run branch's first commit, read right after
+	// the checkout; both empty for a follow-up, which never checkpoints. A
+	// checkpoint's scans, schedule and "ahead" check use these, never a ref
+	// name such as origin/<base>: the agent controls the checkout while a
+	// stage runs and could repoint a local ref, but not these already-read
+	// values (checkpoint.go). They differ when the run starts from another
+	// ref than its base branch (--ref develop with base_branch main).
+	baseSHA, startSHA string
 	// ckpt is the checkpoint pushes' state (checkpoint.go).
 	ckpt checkpointState
 }
@@ -790,6 +793,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.repo = strip(repo)
 	var cfg *config.Config
+	var startErr error // reading a first run's start commit (checkpoints)
 	if r.follow != nil {
 		// The pull request's branch, with the configuration of its base.
 		if err := r.checkoutFollowUp(ctx, repo); err != nil {
@@ -805,6 +809,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
 		}
 		r.rec.Branch = branch
+		// The start commit, read at once and locally: a checkpoint never
+		// pushes a tip at or behind it (nothing of the agent's yet).
+		r.startSHA, startErr = repo.CommitOf(ctx, "refs/heads/"+branch)
 		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
@@ -845,20 +852,23 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 		}
-		// Resolved once, here, before the agent ever runs: checkpoints use
-		// this SHA rather than the local origin/<base> ref, which the
-		// agent could repoint once it controls the checkout. A failure
-		// only turns checkpoints off for this run; it does not fail
-		// bootstrap. Skipped entirely when fugaro.yaml already turns
-		// checkpoints off, so that config costs nothing: no extra network
-		// round trip, and no warning if it is ever flaky.
+		if fetchedBaseSeam != nil {
+			fetchedBaseSeam()
+		}
+		// The commit just fetched, read locally right after the fetch and
+		// before the agent ever runs: checkpoints use this SHA rather than
+		// the local origin/<base> ref, which the agent could repoint once
+		// it controls the checkout. A second ls-remote would name a newer
+		// commit, one the checkout lacks, if the base moved meanwhile, and
+		// every checkpoint's scan would fail. A failure only turns
+		// checkpoints off for this run; it does not fail bootstrap.
 		if cfg.Git.PR.CheckpointsOn() {
-			sha, rterr := repo.RemoteTip(ctx, cfg.Git.BaseBranch)
+			sha, err := repo.CommitOf(ctx, "refs/remotes/origin/"+cfg.Git.BaseBranch)
 			switch {
-			case rterr != nil:
-				r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(rterr.Error()))
-			case !gitops.IsFullSHA(sha):
-				r.d.Log.Warn("origin did not answer the base branch with a commit SHA; checkpoint pushes are off for this run")
+			case err != nil:
+				r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(err.Error()))
+			case startErr != nil:
+				r.d.Log.Warn("resolving the run branch's start commit failed; checkpoint pushes are off for this run", "err", r.redact(startErr.Error()))
 			default:
 				r.baseSHA = sha
 			}
