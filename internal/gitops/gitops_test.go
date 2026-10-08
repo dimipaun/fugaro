@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -669,6 +670,350 @@ func TestOpenOrCloneStripsFromTheStart(t *testing.T) {
 	}
 }
 
+func TestPushFastForwardPushesAndSkipsWhenCurrent(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	if err := repo.PushFastForward(ctx, "fugaro/x", one); err != nil {
+		t.Fatal(err)
+	}
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != one {
+		t.Fatalf("remote = %s, want %s", got, one)
+	}
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	for range 2 { // the second finds the remote already there and pushes nothing
+		if err := repo.PushFastForward(ctx, "fugaro/x", two); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != two {
+		t.Fatalf("remote = %s, want %s", got, two)
+	}
+	// Pushed to the URL, not the remote's name: no remote-tracking ref,
+	// so no ref lock the agent's own git could meet.
+	if got := testutil.Git(t, repo.Dir, "for-each-ref", "refs/remotes/origin/fugaro/"); got != "" {
+		t.Fatalf("the push wrote a local ref: %q", got)
+	}
+}
+
+func TestPushFastForwardRefusesRewrittenHistory(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	if err := repo.PushFastForward(ctx, "fugaro/x", one); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Git(t, repo.Dir, "commit", "--quiet", "--amend", "--allow-empty", "-m", "one, amended")
+	amended, _ := repo.HeadSHA(ctx)
+	if err := repo.PushFastForward(ctx, "fugaro/x", amended); !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("err = %v, want ErrNotFastForward", err)
+	}
+	if got := testutil.Git(t, remote, "rev-parse", "refs/heads/fugaro/x"); got != one {
+		t.Fatalf("the pushed commit was replaced: remote at %s, want %s", got, one)
+	}
+}
+
+func TestPushFastForwardRefusesNonRunBranches(t *testing.T) {
+	repo, _ := setup(t)
+	head, _ := repo.HeadSHA(ctx)
+	if err := repo.PushFastForward(ctx, "main", head); err == nil || !strings.Contains(err.Error(), "only pushes") {
+		t.Fatalf("err = %v, want the run-branch refusal", err)
+	}
+}
+
+func TestCountAheadOfACommit(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	base, _ := repo.HeadSHA(ctx)
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	// The tip a checkpoint read before the agent's commit is the base:
+	// nothing of the run's own, whatever HEAD has meanwhile.
+	if n, err := repo.CountAhead(ctx, "main", base); err != nil || n != 0 {
+		t.Fatalf("CountAhead(base) = %d, %v; want 0", n, err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	if n, err := repo.CountAhead(ctx, "main", one); err != nil || n != 1 {
+		t.Fatalf("CountAhead(one) = %d, %v; want 1", n, err)
+	}
+	for _, until := range invalidSHAs(one) {
+		if _, err := repo.CountAhead(ctx, "main", until); err == nil || !strings.Contains(err.Error(), "not a full commit SHA") {
+			t.Errorf("CountAhead(%q) err = %v, want a refusal", until, err)
+		}
+	}
+}
+
+// invalidSHAs are what a checkpoint must never take for the commit it
+// read: anything but the full lowercase SHA.
+func invalidSHAs(sha string) []string {
+	return []string{
+		"+" + sha, "HEAD", "fugaro/x", "refs/heads/fugaro/x", sha[:12], sha[:39], "-" + sha[1:], "--output=/tmp/x", "",
+		strings.ToUpper(sha), sha + " ", " " + sha[1:], sha + "\n", sha[:20] + "\n" + sha[21:], sha + "^", "@",
+	}
+}
+
+// pushOne is a run branch with one commit pushed by PushFastForward.
+func pushOne(t *testing.T) (*Repo, string, string) {
+	t.Helper()
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	if err := repo.PushFastForward(ctx, "fugaro/x", one); err != nil {
+		t.Fatal(err)
+	}
+	return repo, remote, one
+}
+
+func remoteBranch(t *testing.T, remote string) string {
+	t.Helper()
+	out, _ := exec.Command("git", "-C", remote, "rev-parse", "--verify", "--quiet", "refs/heads/fugaro/x").Output()
+	return strings.TrimSpace(string(out))
+}
+
+func setSeam(t *testing.T, f func()) {
+	t.Helper()
+	pushFFSeam = f
+	t.Cleanup(func() { pushFFSeam = nil })
+}
+
+func TestPushFastForwardRefusesAnythingButAFullSHA(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	setSeam(t, func() { t.Error("reached the push") })
+	for _, sha := range invalidSHAs(one) {
+		if err := repo.PushFastForward(ctx, "fugaro/x", sha); err == nil || !strings.Contains(err.Error(), "not a full commit SHA") {
+			t.Errorf("PushFastForward(%q) err = %v, want a refusal", sha, err)
+		}
+	}
+	if got := remoteBranch(t, remote); got != "" {
+		t.Fatalf("the branch was pushed: remote at %s", got)
+	}
+}
+
+func TestPushFastForwardRefusesAnOriginURLLikeAnOption(t *testing.T) {
+	repo, remote := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	marker := filepath.Join(t.TempDir(), "ran")
+	setSeam(t, func() { t.Error("reached the push") })
+	for _, url := range []string{
+		"--upload-pack=touch " + marker,
+		"--receive-pack=touch " + marker,
+		"-oProxyCommand=touch " + marker,
+		"--tags",
+		"-",
+		remote + "\n--tags",
+	} {
+		testutil.Git(t, repo.Dir, "config", "remote.origin.url", url)
+		if err := repo.PushFastForward(ctx, "fugaro/x", one); !errors.Is(err, errUnsafeURL) {
+			t.Errorf("url %q: err = %v, want errUnsafeURL", url, err)
+		}
+	}
+	if exists(marker) {
+		t.Fatal("a command from origin's URL ran")
+	}
+	if got := remoteBranch(t, remote); got != "" {
+		t.Fatalf("the branch was pushed: remote at %s", got)
+	}
+}
+
+func TestPushFastForwardReadsOriginURLOnce(t *testing.T) {
+	repo, remote := setup(t)
+	other := testutil.NewRemote(t, map[string]string{"README.md": "other\n"})
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	// The agent rewrites .git/config between the check and the push.
+	setSeam(t, func() { testutil.Git(t, repo.Dir, "remote", "set-url", "origin", other) })
+	if err := repo.PushFastForward(ctx, "fugaro/x", one); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteBranch(t, remote); got != one {
+		t.Fatalf("checked remote at %q, want %s", got, one)
+	}
+	if got := remoteBranch(t, other); got != "" {
+		t.Fatalf("pushed to the URL set after the check: %s", got)
+	}
+}
+
+func TestPushFastForwardFailedPushIsAnError(t *testing.T) {
+	repo, remote := setup(t)
+	rejectingRemote(t, remote, "no pushes today")
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.CommitEmpty(ctx, "one"); err != nil {
+		t.Fatal(err)
+	}
+	one, _ := repo.HeadSHA(ctx)
+	err := repo.PushFastForward(ctx, "fugaro/x", one)
+	if err == nil {
+		t.Fatal("a refused push returned nil")
+	}
+	if errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("err = %v, a refusal is not a non-fast-forward", err)
+	}
+	if strings.Contains(err.Error(), remote) || !strings.Contains(err.Error(), "origin") {
+		t.Fatalf("err = %q, want origin named, not its URL", err)
+	}
+	if got := remoteBranch(t, remote); got != "" {
+		t.Fatalf("remote at %s after a refused push", got)
+	}
+}
+
+func TestPushFastForwardPushesTheSHAItWasGiven(t *testing.T) {
+	repo, remote, one := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	read, _ := repo.HeadSHA(ctx)
+	// The agent commits again after the poll read the tip.
+	if err := repo.CommitEmpty(ctx, "three"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.PushFastForward(ctx, "fugaro/x", read); err != nil {
+		t.Fatal(err)
+	}
+	if got := remoteBranch(t, remote); got != read {
+		t.Fatalf("remote at %s, want the sha read %s (one was %s)", got, read, one)
+	}
+}
+
+func TestPushFastForwardNeverForcesWhenTheRemoteMoves(t *testing.T) {
+	repo, remote, one := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	// Someone pushes a commit the checkout never had, after the
+	// ancestry check passed and before the push.
+	var theirs string
+	setSeam(t, func() {
+		tree := testutil.Git(t, remote, "rev-parse", one+"^{tree}")
+		theirs = testutil.Git(t, remote, "commit-tree", tree, "-p", one, "-m", "theirs")
+		testutil.Git(t, remote, "update-ref", "refs/heads/fugaro/x", theirs)
+	})
+	if err := repo.PushFastForward(ctx, "fugaro/x", two); !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("err = %v, want ErrNotFastForward", err)
+	}
+	if got := remoteBranch(t, remote); got != theirs {
+		t.Fatalf("their commit was replaced: remote at %s, want %s", got, theirs)
+	}
+}
+
+func TestPushFastForwardSkipsWhenOriginIsAhead(t *testing.T) {
+	repo, remote, one := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	testutil.Git(t, repo.Dir, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x") // the agent pushed by itself
+	setSeam(t, func() { t.Error("reached the push") })
+	if err := repo.PushFastForward(ctx, "fugaro/x", one); err != nil {
+		t.Fatalf("err = %v, want nil: origin already has %s", err, one)
+	}
+	if got := remoteBranch(t, remote); got != two {
+		t.Fatalf("remote at %s, want %s", got, two)
+	}
+}
+
+func TestIsAncestorPassesACancelThrough(t *testing.T) {
+	repo, _, one := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	if ok, err := repo.isAncestor(ctx, one, two); err != nil || !ok {
+		t.Fatalf("isAncestor(one, two) = %v, %v", ok, err)
+	}
+	if ok, err := repo.isAncestor(ctx, two, one); err != nil || ok {
+		t.Fatalf("isAncestor(two, one) = %v, %v", ok, err)
+	}
+	if ok, err := repo.isAncestor(ctx, strings.Repeat("ab", 20), two); err != nil || ok {
+		t.Fatalf("isAncestor(unknown, two) = %v, %v; want false, nil", ok, err)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := repo.isAncestor(cctx, one, two); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled: err = %v, want context.Canceled", err)
+	}
+	// And so PushFastForward never calls a cancel a rewritten history.
+	if err := repo.PushFastForward(cctx, "fugaro/x", two); err == nil || errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("cancelled push: err = %v", err)
+	}
+}
+
+func TestCheckpointTipOnlyWhenSettled(t *testing.T) {
+	repo, _ := setup(t)
+	if err := repo.CheckoutNewBranch(ctx, "main", "fugaro/x"); err != nil {
+		t.Fatal(err)
+	}
+	testutil.WriteFiles(t, repo.Dir, map[string]string{"a.txt": "a\n"})
+	if _, err := repo.CommitAll(ctx, "add a"); err != nil {
+		t.Fatal(err)
+	}
+	head, _ := repo.HeadSHA(ctx)
+	if got, err := repo.CheckpointTip(ctx, "fugaro/x"); err != nil || got != head {
+		t.Fatalf("CheckpointTip = %q, %v; want %s", got, err, head)
+	}
+	if _, err := repo.CheckpointTip(ctx, "fugaro/y"); !errors.Is(err, ErrGitBusy) {
+		t.Fatalf("another branch: err = %v, want ErrGitBusy", err)
+	}
+	gitDir := filepath.Join(repo.Dir, ".git")
+	for _, name := range []string{"MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-merge", "rebase-apply"} {
+		p := filepath.Join(gitDir, name)
+		if err := os.WriteFile(p, []byte(head+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.CheckpointTip(ctx, "fugaro/x"); !errors.Is(err, ErrGitBusy) {
+			t.Errorf("%s present: err = %v, want ErrGitBusy", name, err)
+		}
+		if err := os.Remove(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.Git(t, repo.Dir, "checkout", "--quiet", "--detach")
+	if _, err := repo.CheckpointTip(ctx, "fugaro/x"); !errors.Is(err, ErrGitBusy) {
+		t.Fatalf("detached HEAD: err = %v, want ErrGitBusy", err)
+	}
+}
+
 func TestDefaultBranch(t *testing.T) {
 	ctx := context.Background()
 	testutil.IsolateGit(t)
@@ -698,5 +1043,72 @@ func TestDefaultBranch(t *testing.T) {
 	// A remote that can't be reached is an error too.
 	if _, err := open(filepath.Join(t.TempDir(), "gone.git")).DefaultBranch(ctx); err == nil {
 		t.Fatal("a missing remote gave a branch")
+	}
+}
+
+func TestPushFastForwardForeignTipTheCheckoutNeverHad(t *testing.T) {
+	repo, remote, _ := pushOne(t)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	testutil.Git(t, other, "checkout", "--quiet", "fugaro/x")
+	testutil.Git(t, other, "-c", "user.name=o", "-c", "user.email=o@x", "commit", "--quiet", "--allow-empty", "-m", "foreign")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x")
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	setSeam(t, func() { t.Error("reached the push") })
+	if err := repo.PushFastForward(ctx, "fugaro/x", two); !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("err = %v, want ErrNotFastForward", err)
+	}
+}
+
+func TestPushFastForwardRefusesTransportHelpersAndSchemes(t *testing.T) {
+	repo, remote, _ := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	marker := filepath.Join(t.TempDir(), "ran")
+	setSeam(t, func() { t.Error("reached the push") })
+	testutil.Git(t, repo.Dir, "config", "protocol.ext.allow", "always")
+	for _, url := range []string{
+		"ext::sh -c 'touch " + marker + "'",
+		"fd::17",
+		"foo+bar::addr",
+		"ftp://example.com/x.git",
+		"rsync://example.com/x.git",
+	} {
+		testutil.Git(t, repo.Dir, "config", "remote.origin.url", url)
+		if err := repo.PushFastForward(ctx, "fugaro/x", two); !errors.Is(err, errUnsafeURL) {
+			t.Errorf("url %q: err = %v, want errUnsafeURL", url, err)
+		}
+	}
+	// Even past the check, git itself does not run ext:: from the runner.
+	if _, err := repo.remoteTipAt(ctx, "ext::sh -c 'touch "+marker+"'", "refs/heads/fugaro/x"); err == nil {
+		t.Error("ls-remote accepted ext::")
+	}
+	if exists(marker) {
+		t.Fatal("a command from origin's URL ran")
+	}
+	if got := remoteBranch(t, remote); got == two {
+		t.Fatal("the branch was pushed")
+	}
+}
+
+func TestHideURL(t *testing.T) {
+	base := errors.New("fatal: unable to access 'https://user:tok@example.com/org/repo.git/': boom; also https://example.com/org/repo and example.com/org/repo")
+	got := hideURL(base, "https://user:tok@example.com/org/repo").Error()
+	for _, leak := range []string{"example.com", "tok", "org/repo"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q leaks in %q", leak, got)
+		}
+	}
+	short := errors.New("fatal: a/b is not a repository")
+	if got := hideURL(short, "a/b").Error(); got != short.Error() {
+		t.Errorf("a short URL mangled the text: %q", got)
+	}
+	if got := hideURL(short, "a/b"); got != short {
+		t.Errorf("short URL wrapped the error")
 	}
 }
