@@ -124,27 +124,31 @@ func checkoutNamesProject(ctx context.Context, root string) bool {
 }
 
 // cloudStep is fugaro image refresh for the checkout's repository, in this
-// process (runImageRefresh, decision U16). A real local-file error
-// (cloudFailed) stops the checkout in every mode, --check included: it is a
-// failure, not a skip. Otherwise the step is skipped, never attempted, with
-// --local, in a coding agent's session (U7) and where there is nothing to
-// refresh from here (cloudNotHere, U9); --check reports cloudCheck's state
-// without running the refresh.
+// process (runImageRefresh, decision U16). --check reports cloudCheck's state
+// without running the refresh. Under --local and in a coding agent's session
+// (U7) the step is skipped before anything is read, so nothing there can
+// fail it. Otherwise (a real run, or --check) a real local-file error
+// (cloudFailed) stops the checkout: a failure, not a skip; where there is
+// nothing to refresh from here (cloudNotHere, U9) the step is skipped.
 func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
-	v := cloudCheck(ctx, u.loc.Root, u.o.refresh.cloud, u.o.again(u.loc.Root))
-	if v.state == cloudFailed {
-		return stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+	verdict := func() (cloudVerdict, *stepResult) {
+		v := cloudCheck(ctx, u.loc.Root, u.o.refresh.cloud, u.o.again(u.loc.Root))
+		if v.state == cloudFailed {
+			return v, &stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+		}
+		return v, nil
 	}
 	if u.o.check {
+		v, failed := verdict()
+		if failed != nil {
+			return *failed
+		}
 		switch v.state {
 		case cloudCurrent:
 			return stepResult{state: stepCurrent, reason: v.reason}
 		case cloudStale, cloudBlocked:
 			return stepResult{state: stepStale, reason: v.reason}
 		}
-		return stepResult{state: stepSkipped, reason: v.reason}
-	}
-	if v.state == cloudNotHere {
 		return stepResult{state: stepSkipped, reason: v.reason}
 	}
 	if u.o.local {
@@ -157,6 +161,13 @@ func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
 			reason += " (" + h + ")"
 		}
 		return stepResult{state: stepSkipped, reason: reason}
+	}
+	v, failed := verdict()
+	if failed != nil {
+		return *failed
+	}
+	if v.state == cloudNotHere {
+		return stepResult{state: stepSkipped, reason: v.reason}
 	}
 	ro := u.o.refresh
 	ro.dir, ro.yes, ro.rerun = u.loc.Root, u.o.yes, u.o.again(u.loc.Root)
