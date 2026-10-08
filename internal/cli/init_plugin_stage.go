@@ -28,9 +28,10 @@ import (
 // with /plugin marketplace add and /plugin install. So the text promises
 // nothing: Claude Code is expected to install it on trust, and the manual
 // commands are given for when it did not (design §4.7). fugaro upgrade's
-// plugin step (Tasks 6-7, docs/design/upgrade.md) will replace these manual
-// commands once it exists; this build does not have it yet.
-const pluginFirstRun = "Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
+// plugin step (Task 6, docs/design/upgrade.md) runs those same commands for
+// you, so it is named first.
+const pluginFirstRun = "Run fugaro upgrade --local to install the plugin for you.\n" +
+	"Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
 	"If the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and\n" +
 	"/plugin install fugaro@fugaro in Claude Code, then restart the session; fugaro doctor then shows the plugin as installed.\n" +
 	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
@@ -38,8 +39,8 @@ const pluginFirstRun = "Once this is committed, Claude Code installs the plugin 
 // pluginRefresh follows a changed pin: Claude Code reports the new version but
 // shows the plugin as "not cached" and its skills disappear until the
 // marketplace is updated (verified live, V2); no restart is needed. See
-// pluginFirstRun: fugaro upgrade has no plugin step in this build yet.
-const pluginRefresh = "In Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
+// pluginFirstRun: fugaro upgrade's plugin step runs the manual command too.
+const pluginRefresh = "Run fugaro upgrade --local to refresh it for you. In Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
 
 type pluginStage struct {
 	e       *initEngine
