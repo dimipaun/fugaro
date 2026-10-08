@@ -46,9 +46,9 @@ func (s State) Severity() Severity {
 func (s State) Fix() string {
 	switch s {
 	case Outdated, NotWired, Unpinned:
-		return "run fugaro update-skills"
+		return "run fugaro upgrade --local"
 	case Newer:
-		return "upgrade fugaro (the pin is never moved down)"
+		return "upgrade fugaro (brew upgrade dimipaun/tap/fugaro); fugaro upgrade never moves a pin down"
 	case Foreign:
 		return "check that the marketplace repository is the one you intend; fugaro never rewrites it"
 	case InstalledDiffers:

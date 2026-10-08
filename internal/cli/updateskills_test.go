@@ -184,7 +184,7 @@ func TestUpdateSkillsJSON(t *testing.T) {
 
 func warnLine(t *testing.T, stderr string) bool {
 	t.Helper()
-	return strings.Contains(stderr, "warning: the Fugaro plugin pinned in .claude/settings.json is 0.1.0, this is 0.2.0: run fugaro update-skills")
+	return strings.Contains(stderr, "warning: the Fugaro plugin pinned in .claude/settings.json is 0.1.0, this is 0.2.0: run fugaro upgrade --local")
 }
 
 func TestWarningOncePerProcess(t *testing.T) {
