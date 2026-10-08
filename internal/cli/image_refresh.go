@@ -36,6 +36,30 @@ type refreshOptions struct {
 	// command): it confirms every step, with no terminal needed, but never
 	// in a coding agent's session.
 	yes bool
+	// dir is the checkout to refresh ("" is the working directory).
+	dir string
+	// rerun, when set, is the whole line a stop names instead of again()
+	// (fugaro upgrade's own, which already names the checkout). It is
+	// printed as it is: the caller must quote every word with quoteWord
+	// (and sanitise what it builds from), as again() does.
+	rerun string
+	// onPlan, when set, sees the plan once preflight is done, before
+	// anything changes. It is READ-ONLY and gets a copy (refreshPlan.snapshot):
+	// changing it changes nothing about the run (fugaro upgrade only needs
+	// current()). It fires BEFORE installOptions, which can still fail at
+	// step 1, so a caller must take the final state from the error runImageRefresh
+	// returns, never from the hook alone.
+	onPlan func(*refreshPlan)
+}
+
+// checkoutName is how a message names the checkout: "this checkout" when
+// the working directory is the one, the directory itself (Printable) when
+// o.dir sets another.
+func (o refreshOptions) checkoutName(root string) string {
+	if o.dir == "" {
+		return "this checkout"
+	}
+	return "the checkout " + pluginwire.Printable(root)
 }
 
 // again is the command line that reruns this refresh.
@@ -64,6 +88,22 @@ func (o refreshOptions) again() string {
 	return strings.Join(args, " ")
 }
 
+// checkoutDir is the checkout refresh reads: o.dir, or the working directory.
+func (o refreshOptions) checkoutDir() string {
+	if o.dir == "" {
+		return "."
+	}
+	return o.dir
+}
+
+// rerunLine is what a stop tells the user to rerun.
+func (o refreshOptions) rerunLine() string {
+	if o.rerun != "" {
+		return o.rerun
+	}
+	return o.again()
+}
+
 // refreshPlan is what preflight resolved, printed before anything changes.
 type refreshPlan struct {
 	root, repo, slug string
@@ -77,6 +117,27 @@ type refreshPlan struct {
 	builds           []string
 	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
 	yes              bool            // --yes: builds are confirmed without a prompt
+}
+
+// snapshot is the copy onPlan sees: every slice and map is cloned, and the
+// local config and fugaro.yaml are shallow copies (BaseImages cloned), so
+// changing it cannot change what the run writes or builds. The nested maps
+// of the config copies are shared: the hook is read-only.
+func (p *refreshPlan) snapshot() *refreshPlan {
+	c := *p
+	c.lcOld = slices.Clone(p.lcOld)
+	c.workflows, c.kinds, c.builds = slices.Clone(p.workflows), slices.Clone(p.kinds), slices.Clone(p.builds)
+	c.want, c.why, c.kept = maps.Clone(p.want), maps.Clone(p.why), maps.Clone(p.kept)
+	if p.lc != nil {
+		lc := *p.lc
+		lc.BaseImages = maps.Clone(p.lc.BaseImages)
+		c.lc = &lc
+	}
+	if p.cfg != nil {
+		cfg := *p.cfg
+		c.cfg = &cfg
+	}
+	return &c
 }
 
 // refusedAsIs marks a refusal that is printed exactly as written, without
@@ -106,14 +167,18 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 	if ver == "" {
 		return nil, &refusedAsIs{userErr("fugaro image refresh copies this release's base images, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)}
 	}
-	if _, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel"); err != nil {
+	if _, err := gitRead(ctx, o.checkoutDir(), "rev-parse", "--show-toplevel"); err != nil {
 		target := "the repository"
 		if o.repo != "" {
 			target = o.repo
 		}
-		return nil, &noCheckout{target: target, err: userErr("fugaro image refresh reads fugaro.yaml and the origin from the repository's checkout, and this directory is not in one: run it in a checkout of %s", target)}
+		dirName := "this directory"
+		if o.dir != "" {
+			dirName = "the directory " + pluginwire.Printable(o.dir)
+		}
+		return nil, &noCheckout{target: target, err: userErr("fugaro image refresh reads fugaro.yaml and the origin from the repository's checkout, and %s is not in one: run it in a checkout of %s", dirName, target)}
 	}
-	root, cfg, err := loadCheckoutConfigAt(ctx, ".")
+	root, cfg, err := loadCheckoutConfigAt(ctx, o.checkoutDir())
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +192,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 			return nil, userErr("--repo %s: %v", o.repo, err)
 		}
 		if got, err := task.CanonicalRepo(repo); err != nil || got != want {
-			return nil, userErr("--repo %s is not this checkout's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
+			return nil, userErr("--repo %s is not %s's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), o.checkoutName(root), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
 		}
 	}
 	lc, lcPath, old, err := loadRepoConfig(ctx, iopts, root)
@@ -140,7 +205,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	if oi, ok := readOrigin(ctx, root); !ok || !repoKnown(lc, oi) {
-		return nil, userErr("%s is not one of project %s's repositories in the local config, and fugaro image refresh never onboards a repository: onboard it with fugaro init in this checkout first", pluginwire.Printable(repo), lc.Name)
+		return nil, userErr("%s is not one of project %s's repositories in the local config, and fugaro image refresh never onboards a repository: onboard it with fugaro init in %s first", pluginwire.Printable(repo), lc.Name, o.checkoutName(root))
 	}
 	all := slices.Sorted(maps.Keys(cfg.Workflows))
 	wfs := all
@@ -168,7 +233,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	if len(custom) > 0 {
-		return nil, &refusedAsIs{customBaseRefusal(lc, lcPath, custom, o.again())}
+		return nil, &refusedAsIs{customBaseRefusal(lc, lcPath, custom, o.rerunLine())}
 	}
 	slug, err := task.Slug(cfg.Git.Provider, repo)
 	if err != nil {
@@ -221,6 +286,21 @@ func (p *refreshPlan) print(w io.Writer) {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}
 	fmt.Fprintln(w, "  5. then, if this checkout's fugaro.yaml lacks gcp_project: the fugaro init --anchor command to run next (fugaro image refresh never writes fugaro.yaml)")
+}
+
+// current: nothing for steps 2 and 4 to do, since every kind already records
+// the base it moves to and no workflow needs a build. Step 3 still reads the
+// check job.
+func (p *refreshPlan) current() bool {
+	if len(p.builds) > 0 {
+		return false
+	}
+	for _, k := range p.kinds {
+		if p.lc.BaseImage(k) != p.want[k] {
+			return false
+		}
+	}
+	return true
 }
 
 func newImageRefreshCmd() *cobra.Command {
@@ -291,23 +371,28 @@ func refuseRefreshHere(cmd *cobra.Command, yes bool) error {
 var refreshStepNames = []string{"preflight", "base", "check job", "builds"}
 
 // refreshStopped is decision D12: the step's own error and exit code, which
-// steps finished, and the line to rerun (every flag kept, through again).
-func refreshStopped(step int, done []string, again string, err error) error {
+// steps finished, and the line to rerun (every flag kept: o.rerunLine). A
+// rerun line from fugaro upgrade already names the checkout, so no "in this
+// checkout" follows it.
+func refreshStopped(step int, done []string, o refreshOptions, err error) error {
 	var as *refusedAsIs
 	if errors.As(err, &as) {
 		return as.err
 	}
-	where := "in this checkout"
+	where := " in " + o.checkoutName(o.dir)
 	var nc *noCheckout
-	if errors.As(err, &nc) {
-		where = "in a checkout of " + nc.target
+	switch {
+	case o.rerun != "":
+		where = ""
+	case errors.As(err, &nc):
+		where = " in a checkout of " + nc.target
 	}
 	finished := "none"
 	if len(done) > 0 {
 		finished = strings.Join(done, ", ")
 	}
-	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w; fugaro image refresh stopped at step %d (%s), steps finished: %s; once that is fixed, rerun %s %s: finished steps say No changes",
-		err, step, refreshStepNames[step-1], finished, again, where)}
+	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w; fugaro image refresh stopped at step %d (%s), steps finished: %s; once that is fixed, rerun %s%s: finished steps say No changes",
+		err, step, refreshStepNames[step-1], finished, o.rerunLine(), where)}
 }
 
 // refreshSteps are steps 2 to 4; tests replace newRefreshSteps so the
@@ -331,9 +416,9 @@ var newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSte
 
 // refreshAnchorNote is step 5 (D10): the next command when the checkout
 // lacks gcp_project; refresh never writes it.
-func refreshAnchorNote(ctx context.Context, w io.Writer, root string, lc *localcfg.Config) {
+func refreshAnchorNote(ctx context.Context, w io.Writer, root, here string, lc *localcfg.Config) {
 	if co, err := checkoutProject(ctx, root); err == nil && needsAnchorHint(ctx, co, lc) {
-		fmt.Fprintln(w, "next: run fugaro init --anchor in this checkout to add the gcp_project line to fugaro.yaml (it checks the images first; fugaro image refresh never writes fugaro.yaml)")
+		fmt.Fprintf(w, "next: run fugaro init --anchor in %s to add the gcp_project line to fugaro.yaml (it checks the images first; fugaro image refresh never writes fugaro.yaml)\n", here)
 	}
 }
 
@@ -345,19 +430,23 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
-	again := o.again()
 	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
 	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
 	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
 	r := newInitRun(cmd, iopts)
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {
-		return refreshStopped(1, nil, again, err)
+		return refreshStopped(1, nil, o, err)
+	}
+	// The hook fires before installOptions, which can still fail at step 1:
+	// a caller takes the final state from the returned error, not the hook.
+	if o.onPlan != nil {
+		o.onPlan(p.snapshot())
 	}
 	r.setProject(p.lc)
 	spec, err := installOptions(iopts, p.lc)
 	if err != nil {
-		return refreshStopped(1, nil, again, err)
+		return refreshStopped(1, nil, o, err)
 	}
 	// The same local-config path goes to the engine, where step 2 (the
 	// images stage) records the new base, and to step 3's reload, which
@@ -368,7 +457,7 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	done := []string{"preflight"}
 	fmt.Fprintln(r.w, "step 2, base:")
 	if err := s.base(ctx); err != nil {
-		return refreshStopped(2, done, again, err)
+		return refreshStopped(2, done, o, err)
 	}
 	done = append(done, "base")
 	fmt.Fprintln(r.w, "step 3, the daily image check job:")
@@ -377,17 +466,17 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 		err = s.checkJob(ctx, t)
 	}
 	if err != nil {
-		return refreshStopped(3, done, again, err)
+		return refreshStopped(3, done, o, err)
 	}
 	done = append(done, "check job")
 	fmt.Fprintln(r.w, "step 4, builds:")
 	if err := s.builds(ctx, t); err != nil {
-		return refreshStopped(4, done, again, err)
+		return refreshStopped(4, done, o, err)
 	}
 	if t.checkJobMissing {
-		fmt.Fprintln(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro init --repo in this checkout to deploy it")
+		fmt.Fprintf(r.w, "note: step 3 found that the daily image check job was not found, though this repository's spec has one; run fugaro init --repo in %s to deploy it\n", o.checkoutName(p.root))
 	}
-	refreshAnchorNote(ctx, r.w, p.root, t.lc)
+	refreshAnchorNote(ctx, r.w, p.root, o.checkoutName(p.root), t.lc)
 	fmt.Fprintf(r.w, "fugaro image refresh of %s is done\n", p.repo)
 	return nil
 }
