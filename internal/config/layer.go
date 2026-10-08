@@ -9,10 +9,14 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/recipe"
 )
 
@@ -122,9 +126,28 @@ var layerReserved = map[string]string{
 	"extends":      "profiles do not extend each other in this release",
 }
 
-// tokenRE matches values shaped like a credential. Nothing in the project
-// layer is a secret, so one is refused rather than published.
-var tokenRE = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[osu]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ATBB[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----`)
+// tokenRE matches text shaped like a credential: Anthropic, OpenRouter,
+// GitHub, Slack, Google API, Bitbucket and AWS access keys, PEM private
+// keys and a GCP service-account key file. Nothing in the project layer is
+// a secret, so one is refused rather than published, whether a value or a
+// key.
+var tokenRE = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{8,}|sk-or-[A-Za-z0-9_-]{8,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|gh[osu]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{30,}|ATBB[A-Za-z0-9]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"private_key"\s*:|"type"\s*:\s*"service_account"`)
+
+// showKey is a key of the layer as an error may print it: a credential in
+// it redacted, control and formatting characters escaped.
+func showKey(k string) string {
+	return pluginwire.Printable(tokenRE.ReplaceAllString(k, "<credential>"))
+}
+
+// badRune reports a character no project layer value holds: a control
+// character other than tab and newline, an invisible formatting (bidi)
+// character, a line or paragraph separator or invalid UTF-8.
+func badRune(r rune) bool {
+	return (unicode.IsControl(r) && r != '\t' && r != '\n') || unicode.Is(unicode.Cf, r) || r == '\u2028' || r == '\u2029' || r == utf8.RuneError
+}
+
+// badKeyRune is badRune for keys, which hold no tab or newline either.
+func badKeyRune(r rune) bool { return r == '\t' || r == '\n' || badRune(r) }
 
 // ParseProjectLayer parses and validates a project layer. Anyone holding
 // objectAdmin on the runs bucket can write it, so, like the shared config,
@@ -163,7 +186,7 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 		if msg, ok := layerReserved[k]; ok {
 			ps = append(ps, Problem{Path: k, Message: msg})
 		} else if !slices.Contains(layerTopKeys, k) {
-			ps = append(ps, Problem{Path: k, Message: "is not a project layer key (" + strings.Join(layerTopKeys, ", ") + ")"})
+			ps = append(ps, Problem{Path: showKey(k), Message: "is not a project layer key (" + strings.Join(layerTopKeys, ", ") + ")"})
 		}
 	}
 	if d, ok := tree["defaults"].(map[string]any); ok {
@@ -174,11 +197,11 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 			if p, ok := prs[name].(map[string]any); ok {
 				q := maps1(p)
 				delete(q, "description")
-				ps = append(ps, scopeProblems("profiles."+name, "workflows.*", q, InProfile)...)
+				ps = append(ps, scopeProblems("profiles."+showKey(name), "workflows.*", q, InProfile)...)
 			}
 		}
 	}
-	ps = append(ps, tokenProblems("", tree)...)
+	ps = append(ps, valueProblems("", doc.Content[0])...)
 	if len(ps) > 0 {
 		return nil, ps
 	}
@@ -186,7 +209,11 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	strict := yaml.NewDecoder(bytes.NewReader(data))
 	strict.KnownFields(true)
 	if err := strict.Decode(&l); err != nil {
-		return nil, yamlProblems(err)
+		ps := yamlProblems(err)
+		for i := range ps {
+			ps[i].Message = showKey(ps[i].Message)
+		}
+		return nil, ps
 	}
 	if ps := validateLayer(&l, a); len(ps) > 0 {
 		return nil, ps
@@ -209,7 +236,7 @@ func maps1(m map[string]any) map[string]any {
 func scopeProblems(prefix, repoPrefix string, m map[string]any, layer Scope) []Problem {
 	var ps []Problem
 	for _, k := range sortedKeys(m) {
-		path, key := prefix+"."+k, k
+		path, key := prefix+"."+showKey(k), k
 		if repoPrefix != "" {
 			key = repoPrefix + "." + k
 		}
@@ -222,6 +249,8 @@ func scopeProblems(prefix, repoPrefix string, m map[string]any, layer Scope) []P
 		case isRow:
 		case isMap && isBlock(key):
 			ps = append(ps, scopeProblems(path, key, sub, layer)...)
+		case isBlock(key):
+			ps = append(ps, Problem{Path: path, Message: "is a block of fugaro.yaml keys, so it must be a mapping of them"})
 		default:
 			ps = append(ps, Problem{Path: path, Message: "is not a fugaro.yaml key the project layer knows"})
 		}
@@ -229,34 +258,52 @@ func scopeProblems(prefix, repoPrefix string, m map[string]any, layer Scope) []P
 	return ps
 }
 
-func tokenProblems(path string, v any) []Problem {
-	switch t := v.(type) {
-	case string:
-		if tokenRE.MatchString(t) {
-			return []Problem{{Path: path, Message: "holds a value shaped like a credential; nothing in the project layer is secret, and secrets are never published"}}
+// valueProblems walks the layer's nodes and refuses every key and value
+// shaped like a credential or holding a control or formatting character,
+// and any node it does not know (fail closed). Neither the credential nor
+// the character is printed back.
+func valueProblems(path string, n *yaml.Node) []Problem {
+	join := func(k string) string {
+		if path == "" {
+			return showKey(k)
 		}
-	case map[string]any:
-		var ps []Problem
-		for _, k := range sortedKeys(t) {
-			p := k
-			if path != "" {
-				p = path + "." + k
-			}
-			ps = append(ps, tokenProblems(p, t[k])...)
-		}
-		return ps
-	case []any:
-		var ps []Problem
-		for i, e := range t {
-			ps = append(ps, tokenProblems(fmt.Sprintf("%s[%d]", path, i), e)...)
-		}
-		return ps
+		return path + "." + showKey(k)
 	}
-	return nil
+	const secret = "nothing in the project layer is secret, and secrets are never published"
+	var ps []Problem
+	switch n.Kind {
+	case yaml.ScalarNode:
+		switch {
+		case tokenRE.MatchString(n.Value):
+			ps = append(ps, Problem{Path: path, Line: n.Line, Message: "holds a value shaped like a credential; " + secret})
+		case strings.ContainsFunc(n.Value, badRune):
+			ps = append(ps, Problem{Path: path, Line: n.Line, Message: "holds a control or invisible formatting character"})
+		}
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			k, v := n.Content[i], n.Content[i+1]
+			switch {
+			case tokenRE.MatchString(k.Value):
+				ps = append(ps, Problem{Path: path, Line: k.Line, Message: "has a key shaped like a credential; " + secret})
+			case strings.ContainsFunc(k.Value, badKeyRune):
+				ps = append(ps, Problem{Path: path, Line: k.Line, Message: "has a key " + strconv.Quote(k.Value) + " holding a control or invisible formatting character"})
+			default:
+				ps = append(ps, valueProblems(join(k.Value), v)...)
+			}
+		}
+	case yaml.SequenceNode:
+		for i, e := range n.Content {
+			ps = append(ps, valueProblems(fmt.Sprintf("%s[%d]", path, i), e)...)
+		}
+	default:
+		ps = append(ps, Problem{Path: path, Line: n.Line, Message: "holds a YAML node the project layer does not know"})
+	}
+	return ps
 }
 
-// layerShape refuses anchors, aliases, explicit tags, merge keys, non-scalar
-// keys and repeated keys anywhere, as the shared config's reader does.
+// layerShape refuses anchors, aliases, explicit tags, merge keys, keys that
+// are not strings (1:, null:, true:, which would decode as other types and
+// slip past the checks of the decoded tree) and repeated keys anywhere.
 func layerShape(n *yaml.Node) *Problem {
 	if n.Kind == yaml.AliasNode || n.Anchor != "" {
 		return &Problem{Line: n.Line, Message: "uses a YAML anchor or alias, which the project layer refuses"}
@@ -273,8 +320,10 @@ func layerShape(n *yaml.Node) *Problem {
 				return &Problem{Line: k.Line, Message: "has a key that is not a plain value"}
 			case k.Value == "<<" || k.Tag == "!!merge":
 				return &Problem{Line: k.Line, Message: "uses a YAML merge key <<, which the project layer refuses"}
+			case k.Tag != "!!str":
+				return &Problem{Line: k.Line, Message: fmt.Sprintf("has the key %q, which YAML reads as %s, not a string; quote it", tokenRE.ReplaceAllString(k.Value, "<credential>"), strings.TrimPrefix(k.Tag, "!!"))}
 			case seen[k.Value]:
-				return &Problem{Line: k.Line, Message: fmt.Sprintf("repeats the key %q", k.Value)}
+				return &Problem{Line: k.Line, Message: fmt.Sprintf("repeats the key %q", tokenRE.ReplaceAllString(k.Value, "<credential>"))}
 			}
 			seen[k.Value] = true
 		}
@@ -327,15 +376,15 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	if ag.Recipe != "" && !recipe.NameRE.MatchString(ag.Recipe) {
 		add("defaults.agent.recipe", "must be a recipe name")
 	}
-	if ag.MaxBudgetUSD < 0 {
-		add("defaults.agent.max_budget_usd", "must not be negative")
+	if badUSD(ag.MaxBudgetUSD) {
+		add("defaults.agent.max_budget_usd", "must be a finite number, not negative")
 	}
 	for _, p := range validateAgentModels(Agent{Model: ag.Model, Models: ag.Models}) {
 		p.Path = "defaults." + p.Path
 		ps = append(ps, p)
 	}
 	for _, name := range sortedKeys(l.Profiles) {
-		p := "profiles." + name
+		p := "profiles." + showKey(name)
 		if !ProjectNameRE.MatchString(name) {
 			add(p, "a profile name must be 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
@@ -343,7 +392,11 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 	}
 	if l.DefaultProfile != "" {
 		if _, ok := l.Profiles[l.DefaultProfile]; !ok {
-			add("default_profile", "names %q, which is not one of profiles: (%s)", l.DefaultProfile, strings.Join(sortedKeys(l.Profiles), ", "))
+			names := sortedKeys(l.Profiles)
+			for i, n := range names {
+				names[i] = showKey(n)
+			}
+			add("default_profile", "names %q, which is not one of profiles: (%s)", l.DefaultProfile, strings.Join(names, ", "))
 		}
 	}
 	return ps
@@ -356,8 +409,8 @@ func validateProfile(p string, pr Profile) []Problem {
 	add := func(path, format string, args ...any) {
 		ps = append(ps, Problem{Path: path, Message: fmt.Sprintf(format, args...)})
 	}
-	if len(pr.Description) > maxProfileDescription || strings.ContainsAny(pr.Description, "\r\n") {
-		add(p+".description", "must be one line of at most %d characters", maxProfileDescription)
+	if utf8.RuneCountInString(pr.Description) > maxProfileDescription || strings.ContainsFunc(pr.Description, badKeyRune) {
+		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
 	if pr.Base != "" && !slices.Contains(Bases, pr.Base) {
 		add(p+".base", "must be one of %s", strings.Join(Bases, ", "))

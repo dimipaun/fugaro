@@ -1,6 +1,7 @@
 package config
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -93,5 +94,164 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 				t.Fatalf("problems %q, want one containing %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// layerProblems is the problems of text, joined, as a caller prints them.
+func layerProblems(t *testing.T, text string) string {
+	t.Helper()
+	l, ps := ParseProjectLayer([]byte(text), testAnchor)
+	if len(ps) == 0 {
+		t.Fatalf("layer accepted: %+v", l)
+	}
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.String())
+	}
+	return strings.Join(msgs, "; ")
+}
+
+const layerHead = "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+
+func TestParseProjectLayerRefusesMore(t *testing.T) {
+	prof := func(body string) string { return layerHead + "profiles:\n  p:\n" + body }
+	agent := func(body string) string { return layerHead + "defaults:\n  agent:\n" + body }
+	for _, tc := range []struct{ name, text, want string }{
+		// shape
+		{"an explicit tag", layerHead + "defaults: !!map {}\n", "explicit YAML tag"},
+		{"an explicit tag on a value", layerHead + "default_profile: !!str p\nprofiles: {p: {base: go}}\n", "explicit YAML tag"},
+		{"an anchor with no alias", layerHead + "defaults: &a\n  agent: {}\n", "anchor or alias"},
+		{"a non-scalar key", layerHead + "profiles:\n  ? [a]\n  : {base: go}\n", "not a plain value"},
+		{"an int profile name hides a credential", layerHead + "profiles: {1: {base: go}, p: {commands: {test: 'curl -H x:ghp_abcdefghijklmnopqrstuvwxyz0123 x'}}}\n", `has the key "1", which YAML reads as int`},
+		{"a null profile name", layerHead + "profiles: {null: {base: go}, ~: {base: go}}\n", "which YAML reads as null"},
+		{"a bool key", agent("    true: x\n"), "which YAML reads as bool"},
+		{"a block that is not a mapping", layerHead + "defaults: {git: null}\n", "defaults.git: is a block of fugaro.yaml keys, so it must be a mapping"},
+		// credentials
+		{"a credential in a list", layerHead + "defaults: {git: {pr: {labels: [ok, ghp_abcdefghijklmnopqrstuvwxyz0123]}}}\n", "defaults.git.pr.labels[1] (line 4): holds a value shaped like a credential"},
+		{"a PEM key", prof("    commands: { test: '-----BEGIN RSA PRIVATE KEY-----' }\n"), "shaped like a credential"},
+		{"an Anthropic key", prof("    commands: { test: 'echo sk-ant-api03-abcdefgh' }\n"), "shaped like a credential"},
+		{"an OpenRouter key", prof("    commands: { test: 'echo sk-or-v1-abcdefgh' }\n"), "shaped like a credential"},
+		{"an AWS key", prof("    commands: { test: 'echo AKIAABCDEFGHIJKLMNOP' }\n"), "shaped like a credential"},
+		{"a service-account key file", prof("    commands: { test: 'echo {\"type\": \"service_account\"} > k.json' }\n"), "shaped like a credential"},
+		{"a service-account private key", prof("    commands: { test: 'echo {\"private_key\": \"x\"}' }\n"), "shaped like a credential"},
+		// control characters
+		{"ESC in a label", layerHead + "defaults: {git: {pr: {labels: [\"a\\eb\"]}}}\n", "defaults.git.pr.labels[0] (line 4): holds a control or invisible formatting character"},
+		{"bidi in a model", agent("    model: \"a\\u202eb\"\n"), "defaults.agent.model (line 6): holds a control"},
+		// validateLayer
+		{"a version", "version: 2\nproject: acme\ngcp_project: acme-fugaro\n", "version: must be 1"},
+		{"a project name", "version: 1\nproject: Acme_1\ngcp_project: acme-fugaro\n", "project: must be a project name"},
+		{"a gcp project", "version: 1\nproject: acme\ngcp_project: X\n", "gcp_project: must be a GCP project ID"},
+		{"a provider", layerHead + "defaults: {git: {provider: gitlab-ish}}\n", "defaults.git.provider: must be one of"},
+		{"an auth", agent("    auth: token\n"), "defaults.agent.auth: must be one of"},
+		{"review rounds", agent("    review_rounds: 11\n"), "defaults.agent.review_rounds: must be between 1 and 10"},
+		{"first-line review", agent("    first_line_review: maybe\n"), "defaults.agent.first_line_review: must be one of"},
+		{"first-line rounds", agent("    first_line_rounds: 99\n"), "defaults.agent.first_line_rounds: must be between"},
+		{"a recipe", agent("    recipe: Bad_Recipe\n"), "defaults.agent.recipe: must be a recipe name"},
+		{"a negative budget", agent("    max_budget_usd: -1\n"), "defaults.agent.max_budget_usd: must be a finite number"},
+		{"a NaN budget", agent("    max_budget_usd: .nan\n"), "defaults.agent.max_budget_usd: must be a finite number"},
+		{"an infinite budget", agent("    max_budget_usd: .inf\n"), "defaults.agent.max_budget_usd: must be a finite number"},
+		{"a model", agent("    models: { coder: 'a b' }\n"), "defaults.agent.models.coder: must not contain whitespace"},
+		// validateProfile
+		{"a long description", prof("    description: " + strings.Repeat("é", 201) + "\n"), "profiles.p.description: must be one line"},
+		{"ESC in a description", prof("    description: \"a\\eb\"\n"), "holds a control"},
+		{"a tab in a description", prof("    description: \"a\\tb\"\n"), "profiles.p.description: must be one line"},
+		{"a rerun command", prof("    commands: { rerun_failed: { command: ' ', each: '{id}' } }\n"), "profiles.p.commands.rerun_failed.command: is required"},
+		{"a rerun each", prof("    commands: { rerun_failed: { command: x, each: y } }\n"), "profiles.p.commands.rerun_failed.each: must contain {id}"},
+		{"a cache key", prof("    cache: [ { paths: [a] } ]\n"), "profiles.p.cache[0].key: must list"},
+		{"cache paths", prof("    cache: [ { key: [a] } ]\n"), "profiles.p.cache[0].paths: must list"},
+		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must be at least 1"},
+		{"a memory", prof("    resources: { memory: 16GB }\n"), "profiles.p.resources.memory: must look like"},
+		{"a timeout", prof("    timeouts: { stage: -1h }\n"), "profiles.p.timeouts.stage: must be positive"},
+		{"a rebuild", prof("    rebuild: { check: weekly }\n"), "profiles.p.rebuild.check: must be daily or off"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := layerProblems(t, tc.text); !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestProjectLayerDescriptionCountsCharacters(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p: { description: "+strings.Repeat("é", 200)+" }\n")
+	if n := len(l.Profiles["p"].Description); n != 400 {
+		t.Fatalf("description is %d bytes", n)
+	}
+}
+
+// TestProjectLayerErrorsArePrintable: the writer's keys and profile names
+// come back escaped, and a credential written as a key never comes back.
+func TestProjectLayerErrorsArePrintable(t *testing.T) {
+	const tok = "ghp_abcdefghijklmnopqrstuvwxyz0123"
+	for _, tc := range []struct{ name, text, want string }{
+		{"ESC in a top-level key", layerHead + "\"x\\ey\": 1\n", `x\u001by: is not a project layer key`},
+		{"newline in a key", layerHead + "defaults: {agent: {\"a\\nb\": 1}}\n", `defaults.agent (line 4): has a key "a\nb" holding a control`},
+		{"ESC in a profile name", layerHead + "profiles: {\"p\\e[2J\": {secrets: []}}\n", `profiles.p\u001b[2J.secrets: workflows.*.secrets may only be set in: repo`},
+		{"newline in a profile name", layerHead + "profiles: {\"p\\nq\": {secrets: []}}\n", `profiles.p\u000aq.secrets: workflows.*.secrets may only`},
+		{"a credential as a key", layerHead + "profiles:\n  p:\n    commands: {" + tok + ": x}\n", "profiles.p.commands (line 6): has a key shaped like a credential"},
+		{"a credential as a profile name", layerHead + "profiles: {" + tok + ": {secrets: []}}\n", "profiles.<credential>.secrets: workflows.*.secrets may only"},
+		{"a credential as a repeated key", layerHead + "profiles: {" + tok + ": {}, " + tok + ": {}}\n", `repeats the key "<credential>"`},
+		{"a credential as a non-string key", layerHead + "profiles: {? !!str " + tok + " : {}}\n", "explicit YAML tag"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := layerProblems(t, tc.text)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+			if strings.ContainsAny(got, "\x1b\n") || strings.Contains(got, tok) {
+				t.Fatalf("problems echo raw text: %q", got)
+			}
+		})
+	}
+}
+
+func TestProfileHasExecutable(t *testing.T) {
+	for _, body := range []string{
+		"commands: { build: make }", "commands: { test: make test }",
+		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
+		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
+	} {
+		if !strings.HasPrefix(body, "{") {
+			body = "{ " + body + " }"
+		}
+		l := mustLayer(t, layerHead+"profiles:\n  p: "+body+"\n")
+		if !l.Profiles["p"].HasExecutable() {
+			t.Errorf("%s: HasExecutable() = false", body)
+		}
+	}
+	l := mustLayer(t, layerHead+"profiles:\n  p: { base: go, description: x, resources: { cpu: 2 }, commands: { reports: [r.xml] } }\n")
+	if l.Profiles["p"].HasExecutable() {
+		t.Error("a profile with no shell has HasExecutable() = true")
+	}
+}
+
+func TestProjectLayerRawAndTree(t *testing.T) {
+	l := mustLayer(t, testLayer)
+	if string(l.Raw) != testLayer {
+		t.Fatalf("Raw = %q", l.Raw)
+	}
+	prs, ok := l.tree["profiles"].(map[string]any)
+	if !ok || prs["node-web"] == nil || l.tree["default_profile"] != "java-service" {
+		t.Fatalf("tree = %v", l.tree)
+	}
+	if got := LayerCopyKey("acme-web"); got != "builds/acme-web/project-layer.yaml" {
+		t.Fatalf("LayerCopyKey = %q", got)
+	}
+}
+
+func TestFugaroYAMLBudgetIsFinite(t *testing.T) {
+	cfg, ps := Parse(readCorpus(t, "valid", "budget-policy.yaml"))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	for _, v := range []float64{-1, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		cfg.Agent.MaxBudgetUSD = v
+		var got []string
+		for _, p := range Validate(cfg) {
+			got = append(got, p.String())
+		}
+		if !strings.Contains(strings.Join(got, "; "), "agent.max_budget_usd: must be a finite number") {
+			t.Errorf("%v: problems %v", v, got)
+		}
 	}
 }
