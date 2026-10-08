@@ -169,7 +169,7 @@ func runSpend(r RunRow) string {
 func flags(r RunRow, warn string) string {
 	if r.Queued {
 		if r.Stuck {
-			return warn + " QUEUED " + durText(r.Age)
+			return fmt.Sprintf("%s not started after %d min", warn, int(r.Age/time.Minute))
 		}
 		return "QUEUED"
 	}

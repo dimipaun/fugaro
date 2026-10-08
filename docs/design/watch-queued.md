@@ -28,16 +28,20 @@ exists (`internal/cli/run.go`). Neither is ever written to RTDB. `runview.Join`
 (a claim, no `launch.json`, no execution, no record) or `StatusPending`
 (`launch.json` exists, the backend hasn't shown an execution or record yet)
 purely from these bucket objects — no backend call needed for either case.
-Both states are inherently bounded to `runstore.ClaimTTL` (10 minutes) from
-the claim's or `launch.json`'s own timestamp: past that, `Join` reclassifies
-the run as `unlaunched` (claim only) or `infra_error`/"lost" (`launch.json`
-exists). The claim and `launch.json` are never deleted by a run that starts
-(the runner's own bootstrap doesn't touch them) or by one that is cancelled
-before launch (`runstore.CancelRequested` is a separate marker) — but since
-`Join` derives status from the *set* of objects present, not from an
-explicit "queued" flag, reading the same objects `ls` reads is enough to
-tell a queued run from a started, finished or cancelled one without a new
-field or a new write.
+Both states end at `runstore.ClaimTTL` (10 minutes) from the claim's or
+`launch.json`'s own timestamp: past that, `Join` reclassifies the run as
+`unlaunched` (claim only) or `infra_error`/`ReasonLost` (`launch.json`, no
+record, no execution). That is exactly the run watch should warn about, so
+watch keeps it (§3). The claim and `launch.json` are never deleted by a run
+that starts or by one cancelled before launch; cancelling writes a separate
+`cancel` marker, which `ls`'s `readRun` only checks when there is no
+`launch.json`, so watch checks it itself for a launched run.
+
+**Run IDs are not launch times.** `fugaro run --retry` launches a stored
+run under its old ID, so filtering by the ID's mint time
+(`runstore.ListRunIDs(since)`) misses it. Watch instead lists the claim and
+`launch.json` objects themselves and goes by their modification time
+(`runstore.RecentLaunches`).
 
 **Who can read them.** `fugaro watch` authenticates to RTDB as the caller
 (ADC) and documents that it "needs only the Viewer role on the Firebase
@@ -74,27 +78,81 @@ row from the registry (`MergeQueued`); this is what makes a run that starts
 move from its queued row to its live one without a duplicate, independent
 of bucket/RTDB poll timing.
 
-**The stuck threshold.** `QueuedStuckAfter` (10 minutes) is a separate named
-constant from `runstore.ClaimTTL`, even though they currently hold the same
-value: one tunes a display warning, the other a launch's protection window.
-Because they coincide today, a row's `Stuck` flag can only turn true in the
-narrow window between the runs-bucket poll that still finds it queued and
-the next one (which will have reclassified it away); within that window the
-displayed age still advances every render. If the two constants ever
-diverge, the warning becomes the earlier, non-degenerate signal
-`QueuedStuckAfter` was meant to be.
+**Which runs are queued.** A run is a candidate when its launch claim or
+`launch.json` was written within `queuedLookback` (30 minutes), by the
+object's own modification time. It is shown queued when it has no
+`result.json` (a record means it started: running, finished, or lost after
+starting, never queued), no `cancel` marker, no corrupt object, and
+`runview.Join` (with no execution looked up) calls it:
+
+- `launching` or `pending`: a fresh queued row;
+- `unlaunched` with a claim, or `infra_error` with `ReasonLost`: runview has
+  given the launch up after `ClaimTTL`; watch shows it as a **stuck** queued
+  row (`QueuedRun.Stale`), "⚠ not started after N min".
+
+Its age, and the lookback, use the claim's or `launch.json`'s own timestamp.
+A stuck row therefore shows from 10 to 30 minutes after the launch, then
+leaves the window; `fugaro ls` still lists it (as unlaunched or lost).
+
+**The stuck threshold.** `QueuedStuckAfter` is `runstore.ClaimTTL` (10
+minutes) on purpose: the moment runview gives a launch up is the moment
+watch starts warning, and because watch keeps those runs (above) instead of
+dropping them, the warning is visible for the rest of the lookback. (The
+first version of this change dropped them, so the flag could only be seen
+between two bucket polls.)
+
+**Never blocking the screen.** Every bucket read runs off the render path.
+The live screen starts a background scan at once and every 15 seconds
+(`queuedPollInterval`); the first frame never waits for it. `watch --once`
+waits for its one scan at most `queuedOnceWait` (3 seconds), then prints
+without queued rows and with a note. A scan (marker check, listings, reads)
+is bounded by `queuedScanTimeout` (10 seconds) and reuses one bucket handle
+for the whole session. Opening the handle (credential discovery) is the
+one step outside that timeout, because the handle's credentials keep the
+context they were opened with; it too runs in the background.
+
+**Cost per scan.** Once per session: one read of the project marker. Per
+repository: the slug resolution `ls` does, then one listing of
+`runs/<slug>/` filtered server side with GCS `matchGlob`
+(`*/{launch.json,launching}`), i.e. one list call per 1000 such objects; a
+repository has at most two per launched run ever, so a repository with
+5000 runs costs about 10 list calls, and returns no object body. (On a
+non-GCS bucket, i.e. tests and `file://`, the whole prefix is listed and
+filtered locally.) Per run launched within the 30-minute lookback: 3 to 5
+small reads (`task.json`, `launch.json`, `result.json`, the `cancel` marker
+and, with no `launch.json`, the claim). Older runs cost nothing beyond the
+listing. The listing still grows with the repository's history (no listing
+by modification time exists); that is the one unbounded term, measured
+above.
+
+**When reads fail.** A run that can't be read (or holds a corrupt object)
+is left out and counted in a one-line note ("queued runs: N could not be
+read and are not shown"); the rest of the scan goes on. A scan that fails
+as a whole (bucket unreadable, timeout) sets the note "queued runs
+unavailable: …". The last good queued rows are kept through
+`queuedDropAfter` − 1 such failures in a row (the note then says they are
+from an earlier read) and dropped at the third (about 45 seconds), so rows
+from a bucket that stays unreadable are never presented as live.
+
+**Who sees them.** Only someone who can read the runs bucket: a launcher or
+an operator. A plain Firebase Viewer without bucket access never sees a
+queued row; they always get the one-line "queued runs unavailable" note,
+and everything else watch shows. The audience that can launch runs is the
+audience that can see them queued.
 
 ## 4. What changed
 
-- `internal/watch`: `QueuedRun`, `MergeQueued`, `QueuedStuckAfter`
-  (`queued.go`); `RunRow.Queued/Stuck/Workflow/RequestedBy` and
-  `View.QueuedNote`; the `queued` flags/stage render in `plain.go`,
+- `internal/watch`: `QueuedRun` (with `Stale`), `MergeQueued`,
+  `QueuedStuckAfter` (`queued.go`); `RunRow.Queued/Stuck/Workflow/RequestedBy`
+  and `View.QueuedNote`; the `queued` flags/stage render in `plain.go`,
   `render.go` (TUI) and `json.go` (`queued`, `stuck`, `workflow`,
-  `requested_by`, `queued_note`, all `omitempty`).
-- `internal/cli/watch_queued.go`: `openQueueBucket` (bucket only, no
-  backend), `queuedRuns`/`fetchQueued` (one bucket-only read reusing `ls`'s
-  own functions), `queuedSource` (polls every 15s on its own clock,
-  independent of the RTDB ticks, keeps the last good rows on a hiccup).
+  `requested_by`, `queued_note`, all `omitempty`). All task.json-derived
+  text is sanitised (`clean`).
+- `internal/runstore`: `RecentLaunches` (read only: one filtered listing).
+- `internal/cli/watch_queued.go`: `queuedScanner` (one reused bucket-only
+  handle, no backend), `queuedFromRun` (the rule above, reusing `ls`'s
+  `readRun` plus the cancel marker), `fetchQueuedOnce` (bounded wait),
+  `queuedSource` (background polling, failure rule).
 - `internal/cli/watch.go`: wires `WatchDeps.Queued` into `--once`, the
   streaming (`--plain`/`--json`) loop and the TUI (`TUIOptions.Queued`).
 

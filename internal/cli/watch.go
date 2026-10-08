@@ -191,7 +191,7 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
 
 	if o.once {
-		rows, note := fetchQueued(ctx, lc, o.repo, time.Now().Add(-queuedLookback))
+		rows, note := fetchQueuedOnce(ctx, lc, o.repo)
 		d.Queued = func() ([]watch.QueuedRun, string) { return rows, note }
 		return watchOnce(ctx, d, o)
 	}

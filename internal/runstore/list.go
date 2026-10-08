@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/storage"
 	"gocloud.dev/blob"
 )
 
@@ -65,6 +66,48 @@ func ListRunIDs(ctx context.Context, b *blob.Bucket, slug string, since time.Tim
 		if t, err := RunTime(id); err == nil && !t.Before(since) {
 			out = append(out, id)
 		}
+	}
+	slices.Sort(out)
+	slices.Reverse(out)
+	return out, nil
+}
+
+// RecentLaunches lists slug's runs whose launch claim ("launching") or
+// launch.json was written at or after since, by the object's own
+// modification time rather than the run ID's mint time (fugaro run --retry
+// launches a stored run under its old ID), newest ID first. On GCS one
+// listing filtered server side (matchGlob) returns only those two objects
+// per run, so it costs a list call per 1000 launched runs of the repository,
+// never a read; on any other bucket every object under the repository is
+// listed and filtered here.
+func RecentLaunches(ctx context.Context, b *blob.Bucket, slug string, since time.Time) ([]string, error) {
+	if !slugRE.MatchString(slug) {
+		return nil, fmt.Errorf("%q is not a repo slug", slug)
+	}
+	prefix := "runs/" + slug + "/"
+	it := b.List(&blob.ListOptions{Prefix: prefix, BeforeList: func(as func(any) bool) error {
+		var q *storage.Query
+		if as(&q) {
+			q.MatchGlob = prefix + "*/{launch.json,launching}"
+		}
+		return nil
+	}})
+	seen := map[string]bool{}
+	var out []string
+	for {
+		obj, err := it.Next(ctx)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("listing %s: %w", prefix, err)
+		}
+		id, name, ok := strings.Cut(strings.TrimPrefix(obj.Key, prefix), "/")
+		if !ok || (name != "launch.json" && name != "launching") || !runIDRE.MatchString(id) || obj.ModTime.Before(since) || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
 	}
 	slices.Sort(out)
 	slices.Reverse(out)

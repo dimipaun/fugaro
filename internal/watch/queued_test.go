@@ -1,6 +1,9 @@
 package watch
 
 import (
+	"encoding/json"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -121,5 +124,62 @@ func TestMergeQueuedNoteIsSanitisedAndKeptEvenWhenEmpty(t *testing.T) {
 		if c == 0x1b {
 			t.Fatalf("an escape reached the note: %q", got.QueuedNote)
 		}
+	}
+}
+
+// A run runview has given up on (stale claim, lost launch) is stuck however
+// young its timestamp says it is.
+func TestMergeQueuedStaleIsStuck(t *testing.T) {
+	got := MergeQueued(fixture(), Config{}, []QueuedRun{{Run: "r-stale2", Slug: "acme__app", LaunchedAt: t0.Add(-time.Minute), Stale: true}}, "", t0)
+	for _, b := range got.Repos {
+		for _, r := range b.Runs {
+			if r.Run == "r-stale2" && !r.Stuck {
+				t.Fatalf("a stale launch must be stuck: %+v", r)
+			}
+		}
+	}
+}
+
+// task.json's workflow, requested_by and recipe are written by whoever
+// launched the run: no escape sequence of theirs reaches the plain, TUI or
+// JSON output.
+func TestMergeQueuedSanitisesTaskFields(t *testing.T) {
+	for _, field := range []string{"workflow", "requested_by", "recipe"} {
+		t.Run(field, func(t *testing.T) {
+			q := QueuedRun{Run: "r-esc0001", Slug: "acme__app", Workflow: "w", RequestedBy: "a@b.c", Recipe: "r", LaunchedAt: t0.Add(-time.Minute)}
+			evil := "x\x1b]0;PWNED\x07\x1b[31my"
+			switch field {
+			case "workflow":
+				q.Workflow = evil
+			case "requested_by":
+				q.Workflow, q.RequestedBy = "", evil // the title falls back to it
+			case "recipe":
+				q.Recipe = evil
+			}
+			v := MergeQueued(fixture(), Config{}, []QueuedRun{q}, "", t0)
+			var plain strings.Builder
+			if err := RenderPlain(&plain, "aurora", v, PlainOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			doc, err := json.Marshal(BuildJSON("aurora", v))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded struct {
+				Runs []map[string]any `json:"runs"`
+			}
+			if err := json.Unmarshal(doc, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			var js strings.Builder
+			for _, r := range decoded.Runs {
+				fmt.Fprint(&js, r)
+			}
+			for name, out := range map[string]string{"plain": plain.String(), "tui": frame(v, 240, 0), "json": js.String()} {
+				if strings.Contains(out, "PWNED") || strings.ContainsAny(out, "\x1b\x07") {
+					t.Errorf("%s: %s leaked an escape sequence: %q", name, field, out)
+				}
+			}
+		})
 	}
 }

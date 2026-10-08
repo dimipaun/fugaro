@@ -8,10 +8,12 @@ import (
 )
 
 // QueuedStuckAfter is how long a queued run may go since its launch claim or
-// launch.json without a registry entry showing up before watch warns it
-// looks stuck. It happens to match runstore.ClaimTTL (past which ls itself
-// stops calling the run pending or launching), but the two are independent:
-// this one tunes a display warning, that one a launch's protection window.
+// launch.json without a registry entry showing up before watch flags it
+// "not started after N min". It is runstore.ClaimTTL on purpose: past
+// ClaimTTL, runview (and so fugaro ls) gives the launch up (a claim alone is
+// unlaunched, a launch.json with no record is lost), and watch keeps showing
+// exactly those runs, flagged Stale, as stuck queued rows within its
+// lookback (design docs/design/watch-queued.md §3).
 const QueuedStuckAfter = 10 * time.Minute
 
 // QueuedRun is a run known only from the runs bucket: a launch claim or a
@@ -28,6 +30,10 @@ type QueuedRun struct {
 	// LaunchedAt is when the run entered its claimed or launched state: the
 	// claim's or launch.json's own timestamp, else the run id's mint time.
 	LaunchedAt time.Time
+	// Stale means runview has given the launch up (a claim past
+	// runstore.ClaimTTL with no launch.json, or a launch.json past it with
+	// no record): the row is stuck whatever its age says.
+	Stale bool
 }
 
 // queuedRow is q as a RunRow, aged as of now.
@@ -42,7 +48,7 @@ func queuedRow(q QueuedRun, now time.Time) RunRow {
 		Title: dash(title), Stage: "queued", Round: "-", Verify: "-", Models: "-", Auth: "-",
 		Recipe: clean(q.Recipe), Workflow: clean(q.Workflow), RequestedBy: clean(q.RequestedBy),
 		Age: age, HasAge: true,
-		Queued: true, Stuck: age > QueuedStuckAfter,
+		Queued: true, Stuck: q.Stale || age > QueuedStuckAfter,
 		StartedAt: q.LaunchedAt.UnixMilli(),
 	}
 }

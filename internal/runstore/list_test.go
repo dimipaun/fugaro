@@ -86,3 +86,33 @@ func TestListRunIDsRejectsBadSlug(t *testing.T) {
 		t.Errorf("ListRunIDs(acme) = %v, %v", got, err)
 	}
 }
+
+// RecentLaunches goes by the claim's or launch.json's own write time, not
+// the run ID's: a --retry of an old run (old ID, fresh launch) is listed.
+func TestRecentLaunches(t *testing.T) {
+	ctx := context.Background()
+	b := memblob.OpenBucket(nil)
+	put := func(key string) {
+		if err := b.WriteAll(ctx, key, []byte("{}"), nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("runs/acme-app/20200101-000000-aaaa/task.json") // never launched
+	put("runs/acme-app/20200101-000000-bbbb/launch.json")
+	put("runs/acme-app/20260927-090000-cccc/launching")
+	put("runs/acme-app/20260927-090000-cccc/launch.json")
+	put("runs/acme-app/20260927-090000-dddd/result.json")
+	put("runs/acme-app/notes/launch.json") // not a run ID
+	put("runs/acme-web/20260927-090000-eeee/launch.json")
+
+	got, err := RecentLaunches(ctx, b, "acme-app", time.Now().Add(-time.Hour))
+	if err != nil || !slices.Equal(got, []string{"20260927-090000-cccc", "20200101-000000-bbbb"}) {
+		t.Fatalf("RecentLaunches = %v, %v", got, err)
+	}
+	if got, err := RecentLaunches(ctx, b, "acme-app", time.Now().Add(time.Hour)); err != nil || len(got) != 0 {
+		t.Fatalf("nothing is newer than the future: %v, %v", got, err)
+	}
+	if _, err := RecentLaunches(ctx, b, "../x", time.Time{}); err == nil {
+		t.Fatal("a bad slug must be refused")
+	}
+}

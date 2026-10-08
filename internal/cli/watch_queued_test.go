@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,7 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/budget"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/watch"
 )
 
 // writeRunObject writes a run object directly into the fixture's runs
@@ -310,5 +314,225 @@ func TestWatchStreamShowsQueuedRun(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), run) {
 		t.Fatalf("the streamed output never showed the queued run:\n%s", out.String())
+	}
+}
+
+// queuedJSONRun is one run of watch --json, as the queued-run tests read it.
+type queuedJSONRun struct {
+	Run         string `json:"run"`
+	Title       string `json:"title"`
+	Queued      bool   `json:"queued"`
+	Stuck       bool   `json:"stuck"`
+	Workflow    string `json:"workflow"`
+	RequestedBy string `json:"requested_by"`
+	Recipe      string `json:"recipe"`
+}
+
+// watchOnceJSON runs watch --once --json and returns its runs by id and its
+// queued note.
+func watchOnceJSON(t *testing.T) (map[string]queuedJSONRun, string, string) {
+	t.Helper()
+	out, _, err := execute(t, "watch", "--once", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Runs       []queuedJSONRun `json:"runs"`
+		QueuedNote string          `json:"queued_note"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	runs := map[string]queuedJSONRun{}
+	for _, r := range doc.Runs {
+		runs[r.Run] = r
+	}
+	return runs, doc.QueuedNote, out
+}
+
+// Past runstore.ClaimTTL runview gives a launch up (lost, or unlaunched for
+// a claim alone); watch keeps showing it, stuck, so the warning is seen
+// exactly when it applies. A run with a record has started: never queued.
+func TestWatchStaleLaunchShowsStuck(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	lost := runID(11*time.Minute, "b001")
+	f.writeTask(t, appSlug, lost, "")
+	f.writeLaunch(t, appSlug, lost, time.Now().Add(-11*time.Minute))
+	claimed := runID(12*time.Minute, "b002")
+	f.writeTask(t, appSlug, claimed, "")
+	f.writeClaim(t, appSlug, claimed, time.Now().Add(-12*time.Minute))
+	fresh := runID(time.Minute, "b003")
+	f.writeTask(t, appSlug, fresh, "")
+	f.writeLaunch(t, appSlug, fresh, time.Now().Add(-time.Minute))
+	started := runID(11*time.Minute, "b004") // lost after starting: it has a record
+	f.writeTask(t, appSlug, started, "")
+	f.writeLaunch(t, appSlug, started, time.Now().Add(-11*time.Minute))
+	f.writeResult(t, appSlug, started, "running")
+	old := runID(40*time.Minute, "b005") // past the lookback
+	f.writeTask(t, appSlug, old, "")
+	f.writeLaunch(t, appSlug, old, time.Now().Add(-40*time.Minute))
+
+	runs, note, out := watchOnceJSON(t)
+	if note != "" {
+		t.Fatalf("note = %q", note)
+	}
+	for _, id := range []string{lost, claimed} {
+		if r, ok := runs[id]; !ok || !r.Queued || !r.Stuck {
+			t.Fatalf("%s: want a stuck queued row: %s", id, out)
+		}
+	}
+	if r := runs[fresh]; !r.Queued || r.Stuck {
+		t.Fatalf("fresh: want queued, not stuck: %s", out)
+	}
+	for _, id := range []string{started, old} {
+		if _, ok := runs[id]; ok {
+			t.Fatalf("%s must not show as queued: %s", id, out)
+		}
+	}
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, "not started after 11 min") {
+		t.Fatalf("plain lacks the stuck warning:\n%s", plain)
+	}
+}
+
+// A run cancelled while pending (launch.json and the cancel marker) is not
+// queued any more.
+func TestWatchCancelledPendingRunNotQueued(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(2*time.Minute, "b011")
+	f.writeTask(t, appSlug, run, "")
+	f.writeLaunch(t, appSlug, run, time.Now().Add(-2*time.Minute))
+	f.writeRunObject(t, appSlug, run, "cancel", time.Now().UTC().Format(time.RFC3339))
+	runs, _, out := watchOnceJSON(t)
+	if _, ok := runs[run]; ok {
+		t.Fatalf("a cancelled run must not show as queued: %s", out)
+	}
+}
+
+// fugaro run --retry launches a stored run under its old ID: the launch's
+// own time, not the ID's, decides.
+func TestWatchRetriedOldRunShowsQueued(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(2*time.Hour, "b021")
+	f.writeTask(t, appSlug, run, "")
+	f.writeLaunch(t, appSlug, run, time.Now().Add(-time.Minute))
+	runs, _, out := watchOnceJSON(t)
+	if r, ok := runs[run]; !ok || !r.Queued || r.Stuck {
+		t.Fatalf("the retried run must show queued (not stuck): %s", out)
+	}
+}
+
+// One run that can't be read is left out with a note; the others still show.
+func TestWatchUnreadableRunSkippedWithNote(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	bad := runID(time.Minute, "b031")
+	f.writeTask(t, appSlug, bad, "")
+	f.writeLaunch(t, appSlug, bad, time.Now().Add(-time.Minute))
+	// task.json can't be read (and not because it is absent).
+	if err := os.Chmod(filepath.Join(f.runsDir(), "runs", appSlug, bad, "task.json"), 0); err != nil {
+		t.Fatal(err)
+	}
+	good := runID(2*time.Minute, "b032")
+	f.writeTask(t, appSlug, good, "")
+	f.writeLaunch(t, appSlug, good, time.Now().Add(-2*time.Minute))
+	runs, note, out := watchOnceJSON(t)
+	if r, ok := runs[good]; !ok || !r.Queued {
+		t.Fatalf("the readable run must still show: %s", out)
+	}
+	if _, ok := runs[bad]; ok || !strings.Contains(note, "1 could not be read") {
+		t.Fatalf("want the unreadable run left out with a note: %s", out)
+	}
+}
+
+// A runs bucket that hangs never holds --once past queuedOnceWait: it
+// prints the live rows and a note.
+func TestWatchOnceDoesNotWaitForHungBucket(t *testing.T) {
+	oldWait, oldOpen := queuedOnceWait, openQueueBucket
+	queuedOnceWait = 100 * time.Millisecond
+	openQueueBucket = func(ctx context.Context, _ *localcfg.Config) (*blobx.Bucket, error) {
+		select { // hangs until abandoned (or, should --once wait anyway, for 6s)
+		case <-ctx.Done():
+		case <-time.After(6 * time.Second):
+		}
+		return nil, errors.New("hung")
+	}
+	t.Cleanup(func() { queuedOnceWait, openQueueBucket = oldWait, oldOpen })
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	start := time.Now()
+	runs, note, out := watchOnceJSON(t)
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("watch --once waited %s for a hung bucket", time.Since(start))
+	}
+	if !strings.Contains(note, "did not answer") || len(runs) != 2 {
+		t.Fatalf("want the live rows and a note: %s", out)
+	}
+}
+
+// The live source keeps its last good rows through a failed scan or two,
+// saying so, and drops them after queuedDropAfter failures in a row.
+func TestQueuedSourceDropsRowsAfterRepeatedFailures(t *testing.T) {
+	rows := []watch.QueuedRun{{Run: "20261002-090000-abcd", Slug: appSlug}}
+	fail := errors.New("boom")
+	var next error
+	qs := &queuedSource{scan: func(context.Context) ([]watch.QueuedRun, string, error) {
+		if next != nil {
+			return nil, "", next
+		}
+		return rows, "", nil
+	}}
+	ctx := context.Background()
+	qs.refresh(ctx)
+	next = fail
+	for i := 1; i < queuedDropAfter; i++ {
+		qs.refresh(ctx)
+		if got, note := qs.Get(); len(got) != 1 || !strings.Contains(note, "earlier read") {
+			t.Fatalf("failure %d: rows %v note %q", i, got, note)
+		}
+	}
+	qs.refresh(ctx)
+	if got, note := qs.Get(); got != nil || !strings.Contains(note, "boom") {
+		t.Fatalf("after %d failures: rows %v note %q", queuedDropAfter, got, note)
+	}
+	next = nil
+	qs.refresh(ctx)
+	if got, note := qs.Get(); len(got) != 1 || note != "" {
+		t.Fatalf("after recovery: rows %v note %q", got, note)
+	}
+}
+
+// task.json is written by whoever launched the run: escape sequences in its
+// workflow and requested_by never reach the plain or JSON output (a recipe
+// name with one fails task.json's own validation; internal/watch's
+// TestMergeQueuedSanitisesTaskFields covers the recipe and the TUI).
+func TestWatchQueuedTaskFieldsSanitised(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(time.Minute, "b041")
+	f.writeTask(t, appSlug, run, `,"workflow":"w\u001b]0;PWNED\u0007X","requested_by":"a\u001b]0;PWNED\u0007b\u009b2J"`)
+	f.writeLaunch(t, appSlug, run, time.Now().Add(-time.Minute))
+	runs, _, out := watchOnceJSON(t)
+	r, ok := runs[run]
+	if !ok {
+		t.Fatalf("run missing: %s", out)
+	}
+	for _, s := range []string{r.Title, r.Workflow, r.RequestedBy} {
+		if strings.Contains(s, "PWNED") || strings.ContainsAny(s, "\x1b\x07\u009b") {
+			t.Fatalf("an escape sequence leaked into the JSON: %+v", r)
+		}
+	}
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(plain, run) || strings.Contains(plain, "PWNED") || strings.ContainsAny(plain, "\x1b\x07\u009b") {
+		t.Fatalf("plain: %q", plain)
 	}
 }
