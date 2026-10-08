@@ -6,8 +6,10 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -192,5 +194,59 @@ func TestPromptCheckpointRule(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("the checkpoint rule lacks %q: %s", want, got)
 		}
+	}
+}
+
+func TestPromptNeverWaitRule(t *testing.T) {
+	for _, d := range []PromptData{
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s"},
+		{Branch: "fugaro/x", Base: "main", StateDir: "/s", Checkpoints: true, FollowUp: []string{"- follow-up rule"}},
+	} {
+		got := SystemPrompt(d, "")
+		for _, want := range []string{"Never end your turn to wait", "ends the moment you stop", "fugaro verify test` blocks until done"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the prompt %+v lacks %q", d, want)
+			}
+		}
+	}
+}
+
+// TestSystemPromptDataCheckpointRule pins what the run really gives the
+// agent: the checkpoint rule follows the run's state.
+func TestSystemPromptDataCheckpointRule(t *testing.T) {
+	const rule = "Commit early and often"
+	off := false
+	mk := func(mod func(r *run)) string {
+		r := &run{
+			d:        Deps{StateDir: "/s"},
+			rec:      &runstore.Record{Branch: "fugaro/x"},
+			cfg:      &config.Config{},
+			baseSHA:  "b",
+			startSHA: "s",
+			spec:     &task.Spec{},
+		}
+		r.cfg.Git.BaseBranch = "main"
+		if mod != nil {
+			mod(r)
+		}
+		return SystemPrompt(r.systemPromptData(), "")
+	}
+	if got := mk(nil); !strings.Contains(got, rule) {
+		t.Errorf("a first run with checkpoints on lacks the rule: %s", got)
+	}
+	cases := map[string]func(r *run){
+		"checkpoints false": func(r *run) { r.cfg.Git.PR.Checkpoints = &off },
+		"follow-up":         func(r *run) { r.follow = &followState{} },
+		"no start sha":      func(r *run) { r.startSHA = "" },
+		"no base sha":       func(r *run) { r.baseSHA = "" },
+	}
+	for name, mod := range cases {
+		if got := mk(mod); strings.Contains(got, rule) {
+			t.Errorf("%s: the prompt has the checkpoint rule: %s", name, got)
+		}
+	}
+	// the always-on rule is there in every case
+	if got := mk(cases["follow-up"]); !strings.Contains(got, "ends the moment you stop") {
+		t.Errorf("a follow-up lacks the never-wait rule")
 	}
 }
