@@ -74,6 +74,9 @@ type imageItem struct {
 
 type imagesStage struct {
 	e *initEngine
+	// only, when set, is every base kind the stage copies (fugaro image
+	// refresh's workflows'): --base and the checkout's kinds are not added.
+	only []string
 }
 
 func newImagesStage(e *initEngine) *imagesStage { return &imagesStage{e: e} }
@@ -105,6 +108,9 @@ func (s *imagesStage) allow() []string {
 // checkout init runs in (best effort: no checkout, or no valid fugaro.yaml,
 // adds none).
 func (s *imagesStage) kinds(ctx context.Context) []string {
+	if s.only != nil {
+		return slices.Sorted(slices.Values(s.only))
+	}
 	set := map[string]bool{}
 	for _, k := range s.e.r.o.baseKinds {
 		set[k] = true
