@@ -129,7 +129,14 @@ const WorkflowDir = ".github/workflows/"
 // branch is not this run's. It is what GitHub refuses to take from an App
 // without the `workflows` permission.
 func (r *Repo) WorkflowFiles(ctx context.Context, since string) ([]string, error) {
-	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", since+"...HEAD", "--", WorkflowDir)
+	return r.WorkflowFilesIn(ctx, since, "HEAD")
+}
+
+// WorkflowFilesIn is WorkflowFiles for the commits since...until, until
+// being any commit rather than HEAD: a checkpoint checks the exact commit
+// it pushes.
+func (r *Repo) WorkflowFilesIn(ctx context.Context, since, until string) ([]string, error) {
+	out, err := r.gitRaw(ctx, "diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", since+"..."+until, "--", WorkflowDir)
 	if err != nil {
 		return nil, err
 	}
@@ -209,12 +216,18 @@ var scanChunk = 1 << 20
 // diff.external, not a textconv, which the agent could set in .git/config
 // or .gitattributes. The text is never held whole.
 func (r *Repo) ScanWork(ctx context.Context, since string, scan func(text string) bool) (WorkScan, error) {
-	return r.scanWork(ctx, since, scan, MaxScanBytes)
+	return r.scanWork(ctx, since, "HEAD", scan, MaxScanBytes)
 }
 
-func (r *Repo) scanWork(ctx context.Context, since string, scan func(text string) bool, maxBytes int64) (WorkScan, error) {
+// ScanRange is ScanWork for the commits since..until, until being any
+// commit rather than HEAD.
+func (r *Repo) ScanRange(ctx context.Context, since, until string, scan func(text string) bool) (WorkScan, error) {
+	return r.scanWork(ctx, since, until, scan, MaxScanBytes)
+}
+
+func (r *Repo) scanWork(ctx context.Context, since, until string, scan func(text string) bool, maxBytes int64) (WorkScan, error) {
 	var res WorkScan
-	rng := []string{"^" + since, "HEAD"}
+	rng := []string{"^" + since, until}
 	// A binary change shows as "-<TAB>-" in numstat.
 	nums, err := r.gitRaw(ctx, append([]string{"log", "-m", "--numstat", "--format=", "--no-show-signature", "--no-ext-diff", "--no-textconv", "--no-renames"}, rng...)...)
 	if err != nil {

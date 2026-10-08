@@ -216,7 +216,14 @@ func (r *Repo) CommitEmpty(ctx context.Context, msg string) error {
 
 // AheadOf counts commits on HEAD that origin/<base> does not have.
 func (r *Repo) AheadOf(ctx context.Context, base string) (int, error) {
-	out, err := r.git(ctx, "rev-list", "--count", "origin/"+base+"..HEAD")
+	return r.CountAhead(ctx, base, "HEAD")
+}
+
+// CountAhead counts the commits of until that origin/<base> does not have.
+// A checkpoint asks about the tip it read, never about HEAD, which the
+// agent may have moved since.
+func (r *Repo) CountAhead(ctx context.Context, base, until string) (int, error) {
+	out, err := r.git(ctx, "rev-list", "--count", "origin/"+base+".."+until)
 	if err != nil {
 		return 0, err
 	}

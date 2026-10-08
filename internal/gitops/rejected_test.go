@@ -297,7 +297,7 @@ func TestScanWorkTooLargeIsNotBinary(t *testing.T) {
 	defer func(c int) { scanChunk = c }(scanChunk)
 	scanChunk = 512
 	// Reads of 512 bytes against a cap of 1 byte: stops after the first.
-	res, err := repo.scanWork(ctx, "origin/main", func(string) bool { return false }, 1)
+	res, err := repo.scanWork(ctx, "origin/main", "HEAD", func(string) bool { return false }, 1)
 	if err != nil || !res.TooLarge || res.Unscannable {
 		t.Fatalf("scanWork = %+v, %v", res, err)
 	}
@@ -328,6 +328,34 @@ func TestHostileDiffConfigNeverRuns(t *testing.T) {
 }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+func TestScanRangeStopsAtUntil(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "clean", files: map[string]string{"a.txt": "a\n"}},
+		commitSpec{msg: "leak", files: map[string]string{"k.txt": "S3CRET-VALUE\n"}},
+	)
+	clean := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
+	if res, err := repo.ScanRange(ctx, "origin/main", clean, hasSecret); err != nil || res.Hit {
+		t.Fatalf("up to the clean commit: %+v, %v; want no hit", res, err)
+	}
+	if res, err := repo.ScanRange(ctx, "origin/main", "HEAD", hasSecret); err != nil || !res.Hit {
+		t.Fatalf("up to HEAD: %+v, %v; want a hit", res, err)
+	}
+}
+
+func TestWorkflowFilesInStopsAtUntil(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "code", files: map[string]string{"a.txt": "a\n"}},
+		commitSpec{msg: "ci", files: map[string]string{".github/workflows/ci.yml": "on: push\n"}},
+	)
+	before := testutil.Git(t, repo.Dir, "rev-parse", "HEAD~1")
+	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", before); err != nil || len(got) != 0 {
+		t.Fatalf("before the CI commit: %v, %v", got, err)
+	}
+	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", "HEAD"); err != nil || len(got) != 1 || got[0] != ".github/workflows/ci.yml" {
+		t.Fatalf("at HEAD: %v, %v", got, err)
+	}
+}
 
 func TestWorkflowFilesSinceAFollowUpStart(t *testing.T) {
 	repo := branchWith(t,
