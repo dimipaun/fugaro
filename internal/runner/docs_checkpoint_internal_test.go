@@ -39,7 +39,7 @@ func TestCheckpointDocsMatchTheCode(t *testing.T) {
 	for _, f := range []string{
 		"../../docs/git-providers.md", "../../docs/gcp-setup.md", "../../docs/design/v1.md", "../../README.md",
 		"../../plugin/skills/working/SKILL.md", "../../plugin/skills/working/reference/launch.md",
-		"../../plugin/skills/working/reference/diagnose.md",
+		"../../plugin/skills/working/reference/diagnose.md", "../config/config.go",
 	} {
 		if strings.Contains(read(f), "first verified push") {
 			t.Errorf("%s still says the draft opens at the first verified push", f)
