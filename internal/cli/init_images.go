@@ -74,6 +74,12 @@ type imageItem struct {
 
 type imagesStage struct {
 	e *initEngine
+	// only, when non-nil, is every base kind the stage copies (fugaro image
+	// refresh's workflows'): --base and the checkout's kinds are not added.
+	// Nil means the default kinds; non-nil but empty means NO base kinds.
+	// It limits base kinds only: the history image (--firebase) is unaffected.
+	// Kinds are de-duplicated and unknown ones (not in config.Bases) dropped.
+	only []string
 }
 
 func newImagesStage(e *initEngine) *imagesStage { return &imagesStage{e: e} }
@@ -105,6 +111,10 @@ func (s *imagesStage) allow() []string {
 // checkout init runs in (best effort: no checkout, or no valid fugaro.yaml,
 // adds none).
 func (s *imagesStage) kinds(ctx context.Context) []string {
+	if s.only != nil {
+		only := slices.DeleteFunc(slices.Clone(s.only), func(k string) bool { return !slices.Contains(config.Bases, k) })
+		return slices.Compact(slices.Sorted(slices.Values(only)))
+	}
 	set := map[string]bool{}
 	for _, k := range s.e.r.o.baseKinds {
 		set[k] = true

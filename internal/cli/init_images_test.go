@@ -633,3 +633,34 @@ func TestInitBaseRepublishesSharedConfig(t *testing.T) {
 		t.Errorf("published %+v, %v:\n%s", lc, err, data)
 	}
 }
+
+// fugaro image refresh copies only its workflows' kinds, even in a checkout
+// whose fugaro.yaml names others.
+func TestImagesStageOnlyKinds(t *testing.T) {
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
+	e, _ := stageEngine(t, "", &initOptions{baseKinds: []string{"java-services"}})
+	s := newImagesStage(e)
+	if got := strings.Join(s.kinds(t.Context()), ","); got != "java-services,web-node" {
+		t.Fatalf("kinds %s, want --base's and the checkout's", got)
+	}
+	s.only = []string{"go"}
+	if got := strings.Join(s.kinds(t.Context()), ","); got != "go" {
+		t.Fatalf("only: kinds %s", got)
+	}
+}
+
+// only is nil (default kinds) versus empty (no base kinds), and is
+// de-duplicated and limited to known kinds.
+func TestImagesStageOnlyEmptyAndDuplicates(t *testing.T) {
+	t.Chdir(repoCheckout(t, githubOrigin, checkoutYAML("github", "oauth", "aurora", "")))
+	e, _ := stageEngine(t, "", &initOptions{baseKinds: []string{"java-services"}})
+	s := newImagesStage(e)
+	s.only = []string{}
+	if got := s.kinds(t.Context()); len(got) != 0 {
+		t.Fatalf("empty only: kinds %v, want none", got)
+	}
+	s.only = []string{"go", "go", "gox"}
+	if got := strings.Join(s.kinds(t.Context()), ","); got != "go" {
+		t.Fatalf("duplicates and unknown: kinds %s, want go", got)
+	}
+}
