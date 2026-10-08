@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -69,6 +70,24 @@ type refreshPlan struct {
 	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
 }
 
+// refusedAsIs marks a refusal that is printed exactly as written, without
+// the stop message: the development build (D1) and the custom base (D4)
+// refusals say what to do themselves, the second ending with its own rerun.
+type refusedAsIs struct{ err error }
+
+func (e *refusedAsIs) Error() string { return e.err.Error() }
+func (e *refusedAsIs) Unwrap() error { return e.err }
+
+// noCheckout marks the refusal made outside any checkout: the stop message
+// then says to rerun in a checkout of the repository, not "this checkout".
+type noCheckout struct {
+	err    error
+	target string
+}
+
+func (e *noCheckout) Error() string { return e.err.Error() }
+func (e *noCheckout) Unwrap() error { return e.err }
+
 // refreshPreflight is step 1, read-only: the release, the checkout and its
 // origin, the local config listing the repository, the selected workflows
 // and their kinds, the custom-base stop (D4), and each workflow's verdict
@@ -76,14 +95,14 @@ type refreshPlan struct {
 func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions) (*refreshPlan, error) {
 	ver := releaseVersion()
 	if ver == "" {
-		return nil, userErr("fugaro image refresh copies this release's base images, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)
+		return nil, &refusedAsIs{userErr("fugaro image refresh copies this release's base images, and this is a development build (%s) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>", Version)}
 	}
 	if _, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel"); err != nil {
 		target := "the repository"
 		if o.repo != "" {
 			target = o.repo
 		}
-		return nil, userErr("fugaro image refresh reads fugaro.yaml and the origin from the repository's checkout, and this directory is not in one: run it in a checkout of %s", target)
+		return nil, &noCheckout{target: target, err: userErr("fugaro image refresh reads fugaro.yaml and the origin from the repository's checkout, and this directory is not in one: run it in a checkout of %s", target)}
 	}
 	root, cfg, err := loadCheckoutConfigAt(ctx, ".")
 	if err != nil {
@@ -140,7 +159,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		}
 	}
 	if len(custom) > 0 {
-		return nil, customBaseRefusal(lc, lcPath, custom, o.again())
+		return nil, &refusedAsIs{customBaseRefusal(lc, lcPath, custom, o.again())}
 	}
 	slug, err := task.Slug(cfg.Git.Provider, repo)
 	if err != nil {
@@ -203,7 +222,8 @@ func newImageRefreshCmd() *cobra.Command {
 			"(3) points the repository's daily image check job at it (its image and\n" +
 			"FUGARO_CHECK_SPEC's base images) through the Cloud Run Admin API, with no\n" +
 			"Terraform; (4) rebuilds each selected workflow whose build record says it\n" +
-			"was built from another base (billable: the project's name typed for each);\n" +
+			"was built from another base, or that has no build record or one that\n" +
+			"cannot be read (billable: the project's name typed for each);\n" +
 			"(5) names fugaro init --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is not a release image fugaro init copied (a\n" +
 			"development or hand-pushed image) stops it before anything changes: remove\n" +
@@ -246,12 +266,21 @@ var refreshStepNames = []string{"preflight", "base", "check job", "builds"}
 // refreshStopped is decision D12: the step's own error and exit code, which
 // steps finished, and the line to rerun (every flag kept, through again).
 func refreshStopped(step int, done []string, again string, err error) error {
+	var as *refusedAsIs
+	if errors.As(err, &as) {
+		return as.err
+	}
+	where := "in this checkout"
+	var nc *noCheckout
+	if errors.As(err, &nc) {
+		where = "in a checkout of " + nc.target
+	}
 	finished := "none"
 	if len(done) > 0 {
 		finished = strings.Join(done, ", ")
 	}
-	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w; fugaro image refresh stopped at step %d (%s), steps finished: %s; once that is fixed, rerun %s in this checkout: finished steps say No changes",
-		err, step, refreshStepNames[step-1], finished, again)}
+	return &ExitError{Code: ExitCode(err), Err: fmt.Errorf("%w; fugaro image refresh stopped at step %d (%s), steps finished: %s; once that is fixed, rerun %s %s: finished steps say No changes",
+		err, step, refreshStepNames[step-1], finished, again, where)}
 }
 
 // refreshSteps are steps 2 to 4; tests replace newRefreshSteps so the

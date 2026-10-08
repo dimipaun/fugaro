@@ -2344,7 +2344,7 @@ var newCloudBuilder = func(ctx context.Context, lc *localcfg.Config) (cloudBuild
 
 // submitAndWait submits workflow name's Cloud Build from base and waits for
 // it: the one build fugaro init's first builds and fugaro image refresh run,
-// each after its caller's typed confirmation. It returns the build's ID.
+// each after its caller's typed confirmation. It returns the build's ID, also when the wait fails after the submit.
 func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcfg.Config, cfg *config.Config, spec infra.RepoSpec, name, base string) (string, error) {
 	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
 	if err != nil {
@@ -2360,7 +2360,9 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	fmt.Fprintf(r.w, "Cloud Build build %s of %s submitted; log: %s\n", oneLine(res.ID), oneLine(res.Image), oneLine(res.LogURL))
 	done, err := b.Wait(ctx, res.ID, 0)
 	if err != nil {
-		return "", remote(err)
+		// The build was submitted and goes on without us: its ID comes back
+		// with the error.
+		return res.ID, remote(err)
 	}
 	fmt.Fprintf(r.w, "built %s/%s (Cloud Build build %s)\n", spec.Name, name, oneLine(done.ID))
 	r.res.Builds = append(r.res.Builds, done.ID)

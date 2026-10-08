@@ -171,6 +171,16 @@ func checkSpecDiff(u *infra.CheckJobUpdate, selected []string) (string, error) {
 	return b.String(), nil
 }
 
+// withNote adds note to err, keeping its exit code.
+func withNote(err error, note string) error {
+	code := ExitCode(err)
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		err = ee.Err
+	}
+	return &ExitError{Code: code, Err: fmt.Errorf("%w; %s", err, note)}
+}
+
 // builtSoFar adds the workflows already built to err, keeping its exit code.
 func builtSoFar(err error, built []string) error {
 	list := "none"
@@ -240,8 +250,14 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if _, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
+		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
 			notes()
+			if id != "" {
+				// Submitted, then the wait failed (Ctrl-C included): the
+				// build is not cancelled.
+				err = withNote(err, fmt.Sprintf("Cloud Build build %s of %s/%s was already submitted and KEEPS RUNNING (and billing) in Cloud Build: follow it with gcloud builds describe %s --region %s --project %s; a rerun started now may find no build record yet and offer a duplicate build, so wait for it to finish first",
+					oneLine(id), t.spec.Name, wf, quoteWord(id), quoteWord(t.lc.BuildRegion()), quoteWord(t.lc.GCPProject)))
+			}
 			return builtSoFar(err, built)
 		}
 		built = append(built, wf)

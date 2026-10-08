@@ -613,3 +613,29 @@ func TestRefreshBuildsNoTerminalSaysSo(t *testing.T) {
 		t.Fatalf("err %v, %d builds", err, len(fb.specs))
 	}
 }
+
+// M4: a build already submitted when its wait fails (Ctrl-C cancels the
+// context) is not cancelled: the stop says so, names its ID, and warns that
+// a rerun right away may offer a duplicate build.
+// Mutation (run, restore): `return res.ID, remote(err)` back to
+// `return "", remote(err)` in submitAndWait, or drop the withNote call in
+// refreshBuilds: this test fails.
+func TestRefreshBuildsWaitFailureSaysTheBuildKeepsRunning(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	fb.waitErr = context.Canceled
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	out := atTerminal(t, e, initProjectName+"\n")
+	err := e.r.refreshBuilds(t.Context(), p, tg)
+	if ExitCode(err) != ExitRemoteError || len(fb.specs) != 1 {
+		t.Fatalf("exit %d, err %v, %d builds\n%s", ExitCode(err), err, len(fb.specs), out.String())
+	}
+	for _, want := range []string{"build b0001 of acme/app/api was already submitted and KEEPS RUNNING (and billing) in Cloud Build",
+		"gcloud builds describe b0001 --region ", "may find no build record yet and offer a duplicate build", "built before this: none"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+}

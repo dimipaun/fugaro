@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,10 +12,10 @@ import (
 	"testing"
 
 	"cloud.google.com/go/storage"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
-	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"gocloud.dev/blob/gcsblob"
 	"google.golang.org/api/option"
@@ -321,18 +322,12 @@ func fakeSteps(t *testing.T, fail string, err error) *[]string {
 // before any credential, network or cloud use; there is no bypass flag.
 // Mutation (run, restore): move the refuseRefreshHere call after
 // refreshPreflight in runImageRefresh, or drop it, and this test fails (the
-// agent marker is ignored and newMirror is reached, or a different error is
-// returned from preflight's own git check).
+// agent marker is ignored and preflight's own refusal, that this directory
+// is not a checkout, is returned instead).
 func TestRefreshRefusedInAgentSession(t *testing.T) {
 	t.Setenv("CLAUDECODE", "1")
 	t.Chdir(t.TempDir()) // not even a checkout: preflight would refuse differently
 	noRecordReads(t)
-	prev := newMirror
-	newMirror = func(context.Context, *localcfg.Config, []string) (*mirror.Mirror, error) {
-		t.Fatal("an agent session reached the registry")
-		return nil, nil
-	}
-	t.Cleanup(func() { newMirror = prev })
 	fakeTerminal(t)
 	_, _, err := executeStdin(t, "", "image", "refresh", "--repo", "acme/app")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal("CLAUDECODE")) {
@@ -415,38 +410,210 @@ func TestRefreshBaseAndReloadShareTheLocalConfigPath(t *testing.T) {
 	}
 }
 
-// D12: the order is base -> reload -> check job -> builds; a failure at a
-// step stops everything after it, and the stop message names the finished
-// steps, the failed one, and the exact rerun command (every flag kept).
-// Mutation (run, restore): in runImageRefresh, call s.checkJob before
-// s.base (reordering the two step invocations), and this test fails (ran
-// becomes "check job" first, or the base step is reported as finished when
-// it did not run).
+// D12: the order is base -> reload -> check job -> builds; a failure or a
+// decline at a step stops everything after it, and the stop message names
+// the finished steps, the failed one, the exact rerun command (every flag
+// kept) and keeps the step's exit code (1 a decline, 2 a remote failure).
+// Mutations (run, restore): in runImageRefresh, call s.checkJob before
+// s.base; or change `return refreshStopped(2, ...)` to `_ = err` (a declined
+// base copy goes on to the builds); or the same for step 4 (a failed build
+// prints "is done" and exits 0): each fails a row below.
 func TestRefreshStopsSayWhatFinished(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
-	r := newAnchorModeRig(t, refreshYAML, true)
-	fakeTerminal(t)
-	ran := fakeSteps(t, "check job", remote(errors.New("updating Cloud Run job x: 503")))
-	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
-	if ExitCode(err) != ExitRemoteError {
-		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	steps := []struct {
+		fail     string
+		step     int
+		name     string
+		finished string
+		ran      string
+	}{
+		{"base", 2, "base", "preflight", "base"},
+		{"check job", 3, "check job", "preflight, base", "base,check job"},
+		{"builds", 4, "builds", "preflight, base, check job", "base,check job,builds"},
 	}
-	for _, want := range []string{"updating Cloud Run job x: 503", "stopped at step 3 (check job)", "steps finished: preflight, base",
-		"rerun fugaro image refresh --workflow app in this checkout"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error lacks %q: %v", want, err)
+	causes := []struct {
+		name string
+		err  error
+		exit int
+	}{
+		{"declined", userErr("not confirmed (the project's name was not typed); nothing was changed"), ExitUserError},
+		{"remote failure", remote(errors.New("503 from the cloud")), ExitRemoteError},
+	}
+	for _, st := range steps {
+		for _, c := range causes {
+			t.Run(st.fail+" "+c.name, func(t *testing.T) {
+				r := newAnchorModeRig(t, refreshYAML, true)
+				fakeTerminal(t)
+				ran := fakeSteps(t, st.fail, c.err)
+				out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
+				if ExitCode(err) != c.exit {
+					t.Fatalf("exit %d, want %d, err %v", ExitCode(err), c.exit, err)
+				}
+				for _, want := range []string{c.err.Error(), fmt.Sprintf("stopped at step %d (%s)", st.step, st.name), "steps finished: " + st.finished + ";",
+					"rerun fugaro image refresh --workflow app in this checkout"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("error lacks %q: %v", want, err)
+					}
+				}
+				if got := strings.Join(*ran, ","); got != st.ran {
+					t.Errorf("ran %s, want %s: a step after the stop ran, or one before it did not", got, st.ran)
+				}
+				if strings.Contains(out, "is done") || strings.Contains(out, "next: run fugaro init --anchor") {
+					t.Errorf("a stopped run ended like a finished one:\n%s", out)
+				}
+				if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
+					t.Errorf("the plan is not printed first:\n%s", out)
+				}
+				if calls := r.calls(t); len(calls) != 0 {
+					t.Errorf("fugaro image refresh ran terraform: %q", calls)
+				}
+			})
 		}
 	}
-	if strings.Join(*ran, ",") != "base,check job" {
-		t.Errorf("ran %v: the builds ran after a failed step", *ran)
+}
+
+// D1 and D4 are printed as they are: no stop message around them (the
+// custom-base refusal already ends with its own rerun line, and neither is a
+// step that finished anything). Outside a checkout the rerun line says to
+// run it in a checkout of the repository, not "this checkout".
+// Mutation (run, restore): drop the refusedAsIs wrapping of either refusal
+// in refreshPreflight, or the noCheckout one, and a row fails.
+func TestRefreshPreflightStopTexts(t *testing.T) {
+	useSelf(t)
+	fakeTerminal(t)
+	t.Run("development build", func(t *testing.T) {
+		useVersion(t, "dev")
+		newAnchorModeRig(t, refreshYAML, true)
+		_, _, err := executeStdin(t, "", "image", "refresh")
+		want := "fugaro image refresh copies this release's base images, and this is a development build (dev) with none published: use a release build, or build a base from a checkout and point at it with fugaro init --base-image KIND=<tag>"
+		if ExitCode(err) != ExitUserError || err.Error() != want {
+			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
+		}
+	})
+	t.Run("custom base", func(t *testing.T) {
+		useVersion(t, "0.5.1")
+		r := newAnchorModeRig(t, refreshYAML, true)
+		r.appendConfig(t, "base_images: {go: "+refreshHost+"/fugaro-base/fugaro-go:dev-abc}\n")
+		_, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "api")
+		_, direct := refreshPreflight(t.Context(), refreshOptions{workflows: []string{"api"}}, &initOptions{})
+		if ExitCode(err) != ExitUserError || direct == nil || err.Error() != direct.Error() {
+			t.Fatalf("exit %d, err %q, preflight's own %q", ExitCode(err), err, direct)
+		}
+		if n := strings.Count(err.Error(), "rerun fugaro image refresh"); n != 1 || strings.Contains(err.Error(), "stopped at step") ||
+			!strings.Contains(err.Error(), "then rerun fugaro image refresh --workflow api. To keep your own base image") {
+			t.Fatalf("the refusal is wrapped or doubled (%d rerun lines): %v", n, err)
+		}
+	})
+	t.Run("outside a checkout", func(t *testing.T) {
+		useVersion(t, "0.5.1")
+		newAnchorModeRig(t, refreshYAML, true)
+		t.Chdir(t.TempDir())
+		_, _, err := executeStdin(t, "", "image", "refresh", "--repo", "acme/app")
+		want := "fugaro image refresh reads fugaro.yaml and the origin from the repository's checkout, and this directory is not in one: run it in a checkout of acme/app" +
+			"; fugaro image refresh stopped at step 1 (preflight), steps finished: none; once that is fixed, rerun fugaro image refresh --repo acme/app in a checkout of acme/app: finished steps say No changes"
+		if ExitCode(err) != ExitUserError || err.Error() != want {
+			t.Fatalf("exit %d, err %q, want %q", ExitCode(err), err, want)
+		}
+	})
+}
+
+// D2, the other half of "no --yes": the options the command builds for its
+// steps carry yes, nonInteractive and asJSON all false, so r.ask (the base
+// copy's and the check job's confirmations) cannot auto-confirm and a wrong
+// or missing typed name changes nothing. The real base step and the real
+// check-job step run through runImageRefresh.
+// Mutation (run, restore): `iopts := &initOptions{yes: true, ...}` in
+// runImageRefresh: both subtests fail (the options, and a patch / a copy
+// that went through "confirmed by --yes").
+func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
+	useSelf(t)
+	checkOpts := func(t *testing.T, o *initOptions) {
+		t.Helper()
+		if o == nil {
+			t.Fatal("the steps were never built")
+		}
+		if o.yes || o.nonInteractive || o.asJSON || o.planOnly {
+			t.Errorf("the command builds options that can bypass the typed name: yes=%v nonInteractive=%v asJSON=%v planOnly=%v", o.yes, o.nonInteractive, o.asJSON, o.planOnly)
+		}
 	}
-	if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
-		t.Errorf("the plan is not printed first:\n%s", out)
+	for _, typed := range []string{"wrong\n", ""} {
+		t.Run("check job "+strings.TrimSpace(typed), func(t *testing.T) {
+			useVersion(t, "0.5.1")
+			r := newAnchorModeRig(t, refreshYAML, true)
+			fakeTerminal(t)
+			slug, label := checkJobOwner(t, "github", "acme/app")
+			oldRef, newRef := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
+			spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/app", BaseImages: map[string]string{"web-node": oldRef}})
+			r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+			r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+			var seen *initOptions
+			old := newRefreshSteps
+			newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+				seen = rr.o
+				return refreshSteps{
+					base: func(context.Context) error { return nil },
+					reload: func(context.Context) (*refreshTarget, error) {
+						lc := *p.lc
+						lc.BaseImages = map[string]string{"web-node": newRef}
+						return &refreshTarget{lc: &lc, cfg: p.cfg, kinds: []string{"web-node"},
+							spec: infra.RepoSpec{Name: "acme/app", Slug: slug, Label: label}}, nil
+					},
+					checkJob: func(ctx context.Context, tg *refreshTarget) error { return rr.refreshCheckJob(ctx, tg) },
+					builds:   func(context.Context, *refreshTarget) error { return nil },
+				}
+			}
+			t.Cleanup(func() { newRefreshSteps = old })
+			out, _, err := executeStdin(t, typed, "image", "refresh", "--workflow", "app")
+			checkOpts(t, seen)
+			if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "stopped at step 3 (check job)") {
+				t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+			}
+			if n := len(r.run.Patches()); n != 0 || strings.Contains(out, "confirmed by --yes") || strings.Contains(out, "updated the daily image check job") {
+				t.Fatalf("the check job was updated without the typed name (%d patches):\n%s", n, out)
+			}
+			if !strings.Contains(out, "Type "+initProjectName+" to apply") {
+				t.Errorf("the typed name was never asked for:\n%s", out)
+			}
+		})
 	}
-	if calls := r.calls(t); len(calls) != 0 {
-		t.Errorf("fugaro image refresh ran terraform: %q", calls)
-	}
+	t.Run("base copy", func(t *testing.T) {
+		useSelf(t)
+		r := newImagesRig(t, "1.2.3")
+		t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+		r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+		records = map[string]string{}
+		prevOpen := openRecordBucket
+		openRecordBucket = openFakeRecords
+		t.Cleanup(func() { openRecordBucket = prevOpen })
+		fakeTerminal(t)
+		var seen *initOptions
+		old := newRefreshSteps
+		newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+			seen = rr.o
+			return refreshSteps{
+				base: func(ctx context.Context) error { return rr.refreshBase(ctx, e, p.kinds) },
+				reload: func(context.Context) (*refreshTarget, error) {
+					t.Error("the run went on after a declined base copy")
+					return nil, errors.New("unreachable")
+				},
+				checkJob: func(context.Context, *refreshTarget) error { return nil },
+				builds:   func(context.Context, *refreshTarget) error { return nil },
+			}
+		}
+		t.Cleanup(func() { newRefreshSteps = old })
+		out, _, err := executeStdin(t, "wrong\n", "image", "refresh")
+		checkOpts(t, seen)
+		if ExitCode(err) != ExitUserError || err == nil || !strings.Contains(err.Error(), "stopped at step 2 (base)") {
+			t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+		}
+		if r.dst.puts != 0 || strings.Contains(out, "confirmed by --yes") {
+			t.Fatalf("the base was copied without the typed name (%d writes):\n%s", r.dst.puts, out)
+		}
+		if got := r.localConfig(t).BaseImages["go"]; got != "" {
+			t.Errorf("base_images.go was recorded: %s", got)
+		}
+	})
 }
 
 // D10: the end note names fugaro init --anchor only when the checkout
