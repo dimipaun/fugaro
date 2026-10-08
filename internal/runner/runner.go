@@ -1022,13 +1022,19 @@ func (r *run) readRepoFile(rel string) (string, error) {
 	return string(data), err
 }
 
-func (r *run) agentLoop(ctx context.Context) {
+// systemPromptData is what the implementing agent's system prompt is built
+// from: the run's own state decides each conditional rule.
+func (r *run) systemPromptData() PromptData {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub}
+		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn()}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
-	sys := SystemPrompt(pd, r.instructions)
+	return pd
+}
+
+func (r *run) agentLoop(ctx context.Context) {
+	sys := SystemPrompt(r.systemPromptData(), r.instructions)
 	req := agent.Request{Prompt: r.spec.Task, SessionID: agent.NewSessionID(), AppendSystemPrompt: sys}
 	var opts stageOpts
 	if f := r.follow; f != nil {

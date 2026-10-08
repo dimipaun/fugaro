@@ -17,6 +17,9 @@ type PromptData struct {
 	// NoWorkflows adds the rule that the run can't change GitHub workflow
 	// files (provider github): Fugaro's push of them is always refused.
 	NoWorkflows bool
+	// Checkpoints adds the rule to commit early: the runner pushes new
+	// commits while the stage runs (first runs with git.pr.checkpoints on).
+	Checkpoints bool
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -33,9 +36,13 @@ func SystemPrompt(d PromptData, instructions string) string {
 		fmt.Sprintf("- You are on branch %s; the pull request will target %s. Commit your work to this branch with clear messages and do not switch branches. You do not need to push or open the pull request: Fugaro does both. Never create, edit, convert or comment on pull requests (with `gh`, an API or any other tool) and never request reviewers: Fugaro owns the pull request, and a pull request you open can notify people before the work is verified.", d.Branch, d.Base),
 		"- Build and test only through `fugaro verify build` and `fugaro verify test`. They run this repository's configured commands and record the results. If a test failure looks flaky, run `fugaro verify test --rerun-failed`: tests that pass on the rerun are recorded as flaky.",
 		"- The pull request is marked ready for review only if your final commit has a passing `fugaro verify test` run with a clean working tree. Commit first, then verify.",
+		"- Never end your turn to wait for anything: this run is headless and ends the moment you stop, so pending background commands, notifications and test runs are lost and nothing wakes you later. Run builds and tests in the foreground (`fugaro verify test` blocks until done) and keep working until the result is in before you finish.",
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")
+	}
+	if d.Checkpoints {
+		lines = append(lines, fmt.Sprintf("- Commit early and often, after every step that works: Fugaro pushes each new commit to %s within about a minute, and if this container dies only pushed commits survive; uncommitted changes are lost. Add new commits rather than amending or rebasing commits you already made: rewritten commits are not pushed until the run ends.", d.Branch))
 	}
 	if d.FollowUp != nil {
 		lines = append(lines, d.FollowUp...)
