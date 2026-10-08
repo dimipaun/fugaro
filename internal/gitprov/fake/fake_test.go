@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -296,13 +297,14 @@ func TestFakePullRequestHeadFromRemote(t *testing.T) {
 }
 
 func TestSnapshotIsSafeDuringCalls(t *testing.T) {
+	ctx := context.Background()
 	p := &Provider{Repo: "acme/app"}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		for i := range 50 {
-			if _, err := p.EnsurePR(context.Background(), gitprov.PRSpec{Branch: fmt.Sprintf("fugaro/r%d", i), Base: "main", Title: "t", Draft: true}); err != nil {
+			if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: fmt.Sprintf("fugaro/r%d", i), Base: "main", Title: "t", Draft: true}); err != nil {
 				t.Error(err)
 				return
 			}
@@ -317,5 +319,111 @@ func TestSnapshotIsSafeDuringCalls(t *testing.T) {
 	wg.Wait()
 	if n := len(p.Snapshot().PRs); n != 50 {
 		t.Fatalf("PRs = %d, want 50", n)
+	}
+}
+
+// TestSnapshotIsSafeDuringUpdates updates an existing PR (draft toggle,
+// comment, label) while snapshots are read, which only the copies keep
+// race-free: the updates write PRs[i] in place.
+func TestSnapshotIsSafeDuringUpdates(t *testing.T) {
+	ctx := context.Background()
+	p := &Provider{Repo: "acme/app"}
+	pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/u", Base: "main", Title: "t", Draft: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rounds = 100
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range rounds {
+			draft := i%2 == 1 // the first round makes it ready
+			if _, err := p.EnsurePR(ctx, gitprov.PRSpec{Number: pr.Number, Branch: "fugaro/u", Draft: draft}); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := p.Comment(ctx, pr, fmt.Sprintf("c%d", i)); err != nil {
+				t.Error(err)
+				return
+			}
+			if !draft {
+				if err := p.ApplyReady(ctx, pr.Number, nil, []string{fmt.Sprintf("l%d", i)}); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}
+	}()
+	for range 2000 {
+		st := p.Snapshot()
+		for _, c := range st.Calls {
+			_ = c.Detail
+		}
+		for _, q := range st.PRs {
+			_, _ = q.Draft, q.Title
+			for _, c := range q.Comments {
+				_ = c
+			}
+			for _, l := range q.Labels {
+				_ = l
+			}
+			for _, ts := range q.CommentTimes {
+				_ = ts
+			}
+		}
+	}
+	wg.Wait()
+	got := p.Snapshot().PRs[0]
+	if len(got.Comments) != rounds || len(got.Labels) != rounds/2 || !got.Draft {
+		t.Fatalf("final PR: %d comments, %d labels, draft=%t", len(got.Comments), len(got.Labels), got.Draft)
+	}
+}
+
+// TestSnapshotCannotMutateProvider changes every inner field of a snapshot
+// and expects the provider's own state to stay as it was.
+func TestSnapshotCannotMutateProvider(t *testing.T) {
+	ctx := context.Background()
+	p := &Provider{Repo: "acme/app"}
+	pr, err := p.EnsurePR(ctx, gitprov.PRSpec{Branch: "fugaro/m", Base: "main", Title: "t", Labels: []string{"a"}, Reviewers: []string{"r"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Comment(ctx, pr, "hello"); err != nil {
+		t.Fatal(err)
+	}
+	p.mu.Lock()
+	p.State.PRs[0].Foreign = []gitprov.Comment{{ID: "f1", Body: "foreign"}}
+	p.mu.Unlock()
+	want := p.Snapshot()
+	// Compare against a serialised copy: a snapshot that aliased the
+	// provider would change along with it.
+	wantJSON, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(want.PRs[0].Comments) != 1 || len(want.PRs[0].CommentTimes) != 1 || len(want.PRs[0].Labels) != 1 ||
+		len(want.PRs[0].Reviewers) != 1 || len(want.PRs[0].Spec.Labels) != 1 || len(want.PRs[0].Spec.Reviewers) != 1 || len(want.Calls) == 0 {
+		t.Fatalf("setup left a field empty: %+v", want)
+	}
+
+	s := p.Snapshot()
+	q := &s.PRs[0]
+	q.Comments[0] = "X"
+	q.CommentTimes[0] = time.Unix(1, 0)
+	q.Foreign[0].Body = "X"
+	q.Reviewers[0] = "X"
+	q.Labels[0] = "X"
+	q.Spec.Labels[0] = "X"
+	q.Spec.Reviewers[0] = "X"
+	q.Draft = true
+	s.Calls[0].Op = "X"
+
+	gotJSON, err := json.Marshal(p.Snapshot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotJSON) != string(wantJSON) {
+		t.Fatalf("provider changed through a snapshot:\n got %s\nwant %s", gotJSON, wantJSON)
 	}
 }

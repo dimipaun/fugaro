@@ -164,15 +164,26 @@ func (p *Provider) save() error {
 	return os.WriteFile(p.Path, data, 0o644)
 }
 
-// Snapshot is a copy of the state taken under the provider's lock, for a
-// test that reads it while the runner may be calling the provider from
-// another goroutine (a checkpoint). The PRs and calls are copied; the
-// slices inside each PR are not, and must only be read.
+// Snapshot is a deep copy of the state taken under the provider's lock,
+// for a test that reads it while the runner may be calling the provider
+// from another goroutine (a checkpoint). Every slice of every PR and of
+// the call log is cloned, so the caller may read or modify the copy
+// without touching the provider.
 func (p *Provider) Snapshot() State {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	st := p.State // with Path set, every call has already saved and loaded it
-	st.PRs = slices.Clone(p.State.PRs)
+	st.PRs = make([]PRState, len(p.State.PRs))
+	for i, pr := range p.State.PRs {
+		pr.Spec.Labels = slices.Clone(pr.Spec.Labels)
+		pr.Spec.Reviewers = slices.Clone(pr.Spec.Reviewers)
+		pr.Comments = slices.Clone(pr.Comments)
+		pr.CommentTimes = slices.Clone(pr.CommentTimes)
+		pr.Foreign = slices.Clone(pr.Foreign)
+		pr.Reviewers = slices.Clone(pr.Reviewers)
+		pr.Labels = slices.Clone(pr.Labels)
+		st.PRs[i] = pr
+	}
 	st.Calls = slices.Clone(p.State.Calls)
 	return st
 }
