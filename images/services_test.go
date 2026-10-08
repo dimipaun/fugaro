@@ -13,11 +13,44 @@ import (
 // services installed.
 func runServices(t *testing.T, env []string, args ...string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("bash", append([]string{"common/fugaro-services"}, args...)...)
-	cmd.Env = append(os.Environ(), "FUGARO_SERVICES_DIR="+t.TempDir())
+	return runServicesRaw(t, nil, append([]string{"FUGARO_SERVICES_DIR=" + t.TempDir()}, env...), nil, args...)
+}
+
+// runServicesRaw also takes bash options and the names of inherited variables
+// to drop, so a test can run with a setting unset.
+func runServicesRaw(t *testing.T, bashOpts, env, unset []string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("bash", append(append(bashOpts, "common/fugaro-services"), args...)...)
+	for _, kv := range os.Environ() {
+		drop := false
+		for _, u := range unset {
+			drop = drop || strings.HasPrefix(kv, u+"=")
+		}
+		if !drop {
+			cmd.Env = append(cmd.Env, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, "FUGARO_SERVICES_DIR="+t.TempDir())
 	cmd.Env = append(cmd.Env, env...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// toolsPath returns a PATH directory holding links to just the named tools,
+// skipping the test when one is not on this machine.
+func toolsPath(t *testing.T, tools ...string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, tool := range tools {
+		p, err := exec.LookPath(tool)
+		if err != nil {
+			t.Skipf("%s is not on PATH", tool)
+		}
+		if err := os.Symlink(p, filepath.Join(dir, tool)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
 }
 
 func TestFugaroServicesUsageAndStatus(t *testing.T) {
@@ -81,32 +114,75 @@ func TestFugaroServicesStartReportsItsFailures(t *testing.T) {
 }
 
 // A selected service that is not installed fails start at once, naming what
-// to install (design base-image.md section 5).
+// to install (design base-image.md section 5). The services run with a PATH
+// holding only the tools the script needs before it gets there, so the result
+// does not depend on what the machine has installed; the ports are pinned to
+// ones nothing listens on (1), so a service already running here cannot make
+// start leave it alone instead.
 func TestFugaroServicesNamesTheMissingPackage(t *testing.T) {
+	path := toolsPath(t, "mkdir", "chmod", "rm", "cat", "node")
 	empty := t.TempDir()
-	out, err := runServices(t, []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_LIB=" + empty}, "start")
+	out, err := runServices(t, []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_PORT=1", "FUGARO_POSTGRES_LIB=" + empty, "PATH=" + path}, "start")
 	if err == nil || !strings.Contains(out, "postgres: not installed; add postgresql-17 to image.apt") {
 		t.Errorf("postgres missing: err=%v\n%s", err, out)
 	}
-	if _, err := exec.LookPath("firebase"); err == nil {
-		t.Skip("this machine has firebase on PATH")
+	out, err = runServices(t, []string{"FUGARO_SERVICES=redis", "FUGARO_REDIS_PORT=1", "PATH=" + path}, "start")
+	if err == nil || !strings.Contains(out, "redis: not installed; add redis-server to image.apt") {
+		t.Errorf("redis missing: err=%v\n%s", err, out)
 	}
-	out, err = runServices(t, []string{"FUGARO_SERVICES=firebase"}, "start")
+	cfg := filepath.Join(t.TempDir(), "firebase.json")
+	testutilWrite(t, cfg, `{"emulators":{"database":{"port":1}}}`)
+	out, err = runServices(t, []string{"FUGARO_SERVICES=firebase", "FUGARO_FIREBASE_EMULATORS=database", "FUGARO_FIREBASE_CONFIG=" + cfg, "PATH=" + path}, "start")
 	if err == nil || !strings.Contains(out, `firebase: not installed; add "npm:firebase-tools" to mise.toml`) {
 		t.Errorf("firebase missing: err=%v\n%s", err, out)
 	}
 }
 
-// The newest PostgreSQL major installed is the one used.
+// With FUGARO_POSTGRES_LIB unset the script looks under /usr/lib/postgresql,
+// where Debian's postgresql-<major> packages put each major.
+func TestFugaroServicesDefaultsToDebiansPostgresLibrary(t *testing.T) {
+	out, _ := runServicesRaw(t, []string{"-x"}, nil, []string{"FUGARO_POSTGRES_LIB"}, "status")
+	if !strings.Contains(out, "PG_LIB=/usr/lib/postgresql\n") {
+		t.Errorf("default library not /usr/lib/postgresql:\n%s", out)
+	}
+}
+
+// stop finds the PostgreSQL major the way start does and stops the cluster
+// with its pg_ctl, and looks for stray emulator processes under the
+// firebase-tools cache in HOME.
+func TestFugaroServicesStopUsesTheInstalledPostgresAndTheDefaultEmulatorCache(t *testing.T) {
+	state, lib, home := t.TempDir(), t.TempDir(), t.TempDir()
+	fake := t.TempDir()
+	pgArgs, pkillArgs := filepath.Join(fake, "pg_ctl.args"), filepath.Join(fake, "pkill.args")
+	testutilWrite(t, filepath.Join(lib, "17", "bin", "initdb"), "#!/bin/sh\nexit 1\n")
+	testutilWrite(t, filepath.Join(lib, "17", "bin", "pg_ctl"), "#!/bin/sh\necho \"$@\" > "+pgArgs+"\n")
+	testutilWrite(t, filepath.Join(fake, "pkill"), "#!/bin/sh\necho \"$@\" > "+pkillArgs+"\nexit 1\n")
+	testutilWrite(t, filepath.Join(state, "run", "keep"), "")
+	testutilWrite(t, filepath.Join(state, "postgres", "postmaster.pid"), "1\n")
+	env := []string{"FUGARO_SERVICES_DIR=" + state, "FUGARO_POSTGRES_LIB=" + lib, "HOME=" + home, "PATH=" + fake + ":" + os.Getenv("PATH")}
+	out, err := runServicesRaw(t, nil, env, []string{"FIREBASE_EMULATORS_PATH"}, "stop")
+	if err != nil || !strings.Contains(out, "stopped") {
+		t.Fatalf("stop: err=%v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(pgArgs); !strings.Contains(string(got), "stop") {
+		t.Errorf("pg_ctl of the installed major was not run to stop the cluster: %q", got)
+	}
+	if got, _ := os.ReadFile(pkillArgs); !strings.Contains(string(got), home+"/.cache/firebase/emulators/") {
+		t.Errorf("pkill did not look under $HOME/.cache/firebase/emulators: %q", got)
+	}
+}
+
+// The newest PostgreSQL major installed is the one used, compared as version
+// numbers (17 over 9.6, which a plain sort would get backwards).
 func TestFugaroServicesFindsTheNewestPostgres(t *testing.T) {
 	lib := t.TempDir()
 	marker := filepath.Join(t.TempDir(), "which")
-	for _, major := range []string{"16", "17"} {
+	for _, major := range []string{"9.6", "16", "17"} {
 		bin := filepath.Join(lib, major, "bin")
 		testutilWrite(t, filepath.Join(bin, "initdb"), "#!/bin/sh\necho "+major+" > "+marker+"\nexit 1\n")
 		testutilWrite(t, filepath.Join(bin, "pg_ctl"), "#!/bin/sh\nexit 1\n")
 	}
-	out, err := runServices(t, []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_LIB=" + lib, "FUGARO_SERVICES_DIR=" + t.TempDir()}, "start")
+	out, err := runServices(t, []string{"FUGARO_SERVICES=postgres", "FUGARO_POSTGRES_PORT=1", "FUGARO_POSTGRES_LIB=" + lib, "FUGARO_SERVICES_DIR=" + t.TempDir()}, "start")
 	if err == nil || !strings.Contains(out, "postgres: initdb failed") {
 		t.Fatalf("err=%v\n%s", err, out)
 	}
