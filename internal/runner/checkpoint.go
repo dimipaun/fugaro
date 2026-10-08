@@ -54,7 +54,7 @@ type checkpointState struct {
 	sched     *checkpointSchedule
 	stopped   bool            // a permanent reason: no more checkpoints this run
 	warned    map[string]bool // warnings already logged, by kind
-	openTries int             // checkpoint pushes that tried to open the draft: unused until Task 6
+	openTries int             // checkpoint pushes that tried to open the draft (bounded by checkpointOpenTries)
 	pushes    int             // checkpoint pushes made
 }
 
@@ -176,8 +176,9 @@ func (r *run) checkpointSince() string {
 
 // checkpointPush pushes sha, the tip just read: every check is on sha,
 // never on HEAD, which the agent may have moved since. during says it is a
-// poll's push, mid-stage, rather than a boundary's; it only shows in the
-// log until Task 6's boundary push passes false.
+// poll's push, mid-stage, rather than a boundary's (boundaryCheckpoint
+// passes false): it shows in the log and decides what afterCheckpoint
+// writes into the section.
 func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool) {
 	now := r.d.Now()
 	if !r.checkpointAhead(ctx, sha) {
@@ -211,6 +212,48 @@ func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool
 	r.ckpt.sched.pushed(now)
 	r.ckpt.pushes++
 	r.d.Log.Info("checkpoint pushed", "stage", stage, "sha", shortSHA(sha), "n", r.ckpt.pushes, "boundary", !during)
+	r.afterCheckpoint(ctx, stage, during)
+}
+
+// boundaryCheckpoint pushes what a stage left committed and unpushed, at
+// once, on the run goroutine after the stage's checkpointer stopped: the
+// agent is idle, so there is nothing to wait for, and a boundary is exempt
+// from the per-minute limit (a run has a handful of them). It recovers and
+// redacts its own panic, as checkpointTick does for a poll: it runs the same
+// push machinery on the run goroutine, where afterStage's own recover would
+// log an unredacted panic.
+func (r *run) boundaryCheckpoint(ctx context.Context, stage string) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.d.Log.Error("a checkpoint panicked; carrying on", "stage", stage, "panic", r.redact(fmt.Sprint(p)))
+		}
+	}()
+	if !r.checkpointsOn() || r.checkpointBlocked(ctx) {
+		return
+	}
+	sha, ok := r.checkpointTip(ctx)
+	if !ok || sha == r.rec.PushedHead {
+		return
+	}
+	r.checkpointPush(ctx, stage, sha, false)
+}
+
+// afterCheckpoint opens the draft at the first checkpoint push, or brings
+// an open draft's status section up to date. With early_draft false the
+// branch is all a checkpoint pushes: the PR opens at finalize.
+func (r *run) afterCheckpoint(ctx context.Context, stage string, during bool) {
+	if !r.cfg.Git.PR.EarlyDraftOn() || r.pr.gone {
+		return
+	}
+	if r.rec.PR == nil {
+		if r.ckpt.openTries >= checkpointOpenTries {
+			return // left to the verified boundary or finalize
+		}
+		r.ckpt.openTries++
+		r.openDraftPR(ctx, stage, during)
+		return
+	}
+	r.statusUpdate(ctx, stage, during)
 }
 
 // checkpointAhead reports whether sha, the tip read, holds a commit of the

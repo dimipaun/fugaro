@@ -131,10 +131,7 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 		return
 	}
 	if r.follow == nil {
-		if !r.cfg.Git.PR.EarlyDraftOn() {
-			return
-		}
-		if stage == "implement" || stage == "fix" {
+		if r.cfg.Git.PR.EarlyDraftOn() && (stage == "implement" || stage == "fix") {
 			if sha, ok := r.verifiedHead(ctx); ok {
 				if r.rec.PR == nil {
 					r.openDraft(ctx, sha, stage)
@@ -143,8 +140,15 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 				r.pushVerified(ctx, sha)
 			}
 		}
+		// What the stage left committed and still unpushed goes now,
+		// fast-forward only: an unverified tip (a verified one was pushed
+		// just above). It may open the draft.
+		r.boundaryCheckpoint(ctx, stage)
+		if !r.cfg.Git.PR.EarlyDraftOn() {
+			return
+		}
 	}
-	r.statusUpdate(ctx, stage)
+	r.statusUpdate(ctx, stage, false)
 }
 
 // pushBranch pushes HEAD (sha) with the run's current credentials, on a
@@ -188,17 +192,24 @@ func (r *run) pushVerified(ctx context.Context, sha string) {
 	}
 }
 
-// openDraft pushes the verified HEAD and opens the draft pull request, then
-// records its number before anything else. A failure only warns: finalize
-// opens the PR if none was recorded.
+// openDraft pushes the verified HEAD and opens the draft pull request. A
+// failure only warns: finalize opens the PR if none was recorded.
 func (r *run) openDraft(ctx context.Context, sha, stage string) {
 	if err := r.pushBranch(ctx, sha); err != nil {
 		r.d.Log.Warn("pushing for the early pull request failed; finalize opens it", "err", r.redact(err.Error()))
 		return
 	}
+	r.openDraftPR(ctx, stage, false)
+}
+
+// openDraftPR opens the draft pull request for the branch already pushed
+// and records its number before anything else. during says it is a
+// checkpoint's, mid-stage. A failure only warns: finalize opens the PR if
+// none was recorded.
+func (r *run) openDraftPR(ctx context.Context, stage string, during bool) {
 	title, desc := r.earlyPRText()
 	r.pr.lastStatus = r.d.Now()
-	section := r.redact(r.runningSection(stage))
+	section := r.redact(r.runningSection(stage, during))
 	body, trunc := gitprov.ReplaceStatusWith(desc, section, r.statusOptions())
 	r.warnTruncated(trunc)
 	// A draft carries no reviewers and no labels: they come at ready.
@@ -232,7 +243,7 @@ func (r *run) openDraft(ctx context.Context, sha, stage string) {
 		r.save(ctx)
 		r.d.Log.Warn("the host has no draft pull requests: the early PR is a normal one marked [DRAFT]", "pr", pr.Number)
 	}
-	r.d.Log.Info("early draft pull request opened", "pr", pr.Number, "url", pr.URL)
+	r.d.Log.Info("early draft pull request opened", "pr", pr.Number, "url", pr.URL, "checkpoint", during)
 }
 
 func (r *run) warnTruncated(trunc bool) {
@@ -244,8 +255,9 @@ func (r *run) warnTruncated(trunc bool) {
 
 // statusUpdate rewrites the status section at a stage boundary, at most
 // once per statusMinInterval; after statusMaxFailures failures in a row it
-// stops until finalize. A failure is a warning, never a failed run.
-func (r *run) statusUpdate(ctx context.Context, stage string) {
+// stops until finalize. A failure is a warning, never a failed run. during
+// says the update was triggered by a checkpoint, mid-stage.
+func (r *run) statusUpdate(ctx context.Context, stage string, during bool) {
 	n := r.prNumber()
 	if n == 0 || r.pr.stopped || r.pr.gone || ctx.Err() != nil {
 		return
@@ -258,7 +270,7 @@ func (r *run) statusUpdate(ctx context.Context, stage string) {
 		return
 	}
 	r.pr.lastStatus = now
-	err := r.writeStatus(ctx, n, r.redact(r.runningSection(stage)), statusCallTimeout)
+	err := r.writeStatus(ctx, n, r.redact(r.runningSection(stage, during)), statusCallTimeout)
 	switch {
 	case err == nil:
 		r.pr.fails = 0
@@ -473,21 +485,46 @@ func (r *run) updated(label string) string {
 	return label + " " + r.d.Now().UTC().Format("2006-01-02 15:04Z")
 }
 
-// runningSection is the section while the run is in progress; stage is the
-// stage that just finished.
-func (r *run) runningSection(stage string) string {
+// runningSection is the section while the run is in progress: after stage
+// ended, or (during) at a checkpoint in the middle of it. A first run's
+// pushed commit without a passing clean test is marked not verified.
+func (r *run) runningSection(stage string, during bool) string {
 	records, _ := verify.Records(r.d.StateDir)
 	head := "**Running**"
-	if r.follow != nil {
+	switch {
+	case r.follow != nil:
 		head = "**Follow-up running**"
+	case r.rec.PushedHead != "" && !pushedVerified(records, r.rec.PushedHead):
+		head = "**Running: work in progress, not verified**"
 	}
 	what := fmt.Sprintf("after stage `%s`", inlineText(stage))
-	if stage == "review" || stage == "review_first" {
+	if during {
+		what = fmt.Sprintf("checkpoint during stage `%s`", inlineText(stage))
+	} else if stage == "review" || stage == "review_first" {
 		if p := reviewsPart(r.rec.Reviews); p != "" {
 			what = p
 		}
 	}
-	return r.sectionLines(head, what, verifyPart(records), r.costPart(), r.updated("updated"))
+	return r.sectionLines(head, what, verifyPart(records), r.pushedPart(records), r.costPart(), r.updated("updated"))
+}
+
+// pushedVerified reports whether sha has a passing test on a clean tree.
+func pushedVerified(records []verify.Record, sha string) bool {
+	t := latestVerifiedTest(records, sha)
+	return t != nil && t.Passed
+}
+
+// pushedPart says which commit the run branch holds and whether it is
+// verified; "" before a first run's first push and for a follow-up.
+func (r *run) pushedPart(records []verify.Record) string {
+	sha := r.rec.PushedHead
+	if sha == "" || r.follow != nil {
+		return ""
+	}
+	if pushedVerified(records, sha) {
+		return fmt.Sprintf("branch at `%s`: verified", shortSHA(sha))
+	}
+	return fmt.Sprintf("branch at `%s`: not verified", shortSHA(sha))
 }
 
 // finalSection is the section when the run ended: outcome, reason, tests,
