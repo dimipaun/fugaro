@@ -237,6 +237,9 @@ func Render(v View, o RenderOptions) Frame {
 	if o.Repo != "" {
 		top = append(top, r.line(seg{"narrowed to repository " + o.Repo, cFaint}))
 	}
+	if v.QueuedNote != "" {
+		top = append(top, r.line(seg{r.g.warn + " " + v.QueuedNote, cWarn}))
+	}
 
 	// From here the body is greyed when the data is not live.
 	r.dim = !live
@@ -524,6 +527,10 @@ func rowFlags(run RunRow, warn string, tier int) string {
 
 func flagColour(run RunRow) string {
 	switch {
+	case run.Queued && run.Stuck:
+		return cWarn
+	case run.Queued:
+		return ""
 	case run.Health == HealthLost || run.Deadline == DeadlineOver:
 		return cBad
 	case run.Health == HealthSilent || run.Deadline == DeadlineNear || run.Halted != "":

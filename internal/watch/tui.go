@@ -42,6 +42,9 @@ type TUIOptions struct {
 	Config  Config
 	RepoKey string // --repo's wire key, "" for all
 	Repo    string // --repo as given
+	// Queued is the latest queued-run rows and degrade note, read fresh on
+	// every rebuild; nil when the project has no queued-run source.
+	Queued func() ([]QueuedRun, string)
 
 	ASCII, NoColor bool
 	// Exec runs a confirmed kill or resume (Execute against the database).
@@ -222,6 +225,10 @@ func (m *model) live() bool {
 // rebuild recomputes the view and the frame.
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
+	if m.o.Queued != nil {
+		rows, note := m.o.Queued()
+		v = MergeQueued(v, m.o.Config, rows, note, m.now)
+	}
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}

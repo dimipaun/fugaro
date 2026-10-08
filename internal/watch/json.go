@@ -68,6 +68,14 @@ type JSONRun struct {
 	Health   string   `json:"health"`   // ok, silent or lost
 	Deadline string   `json:"deadline"` // ok, near or over
 	Halted   string   `json:"halted,omitempty"`
+	// Queued marks a run known only from the runs bucket: launched (or about
+	// to be) but with no registry entry yet. Stuck means it has gone
+	// QueuedStuckAfter without one showing up. Workflow and RequestedBy are
+	// from task.json, when a queued run's; a live run leaves them "".
+	Queued      bool   `json:"queued,omitempty"`
+	Stuck       bool   `json:"stuck,omitempty"`
+	Workflow    string `json:"workflow,omitempty"`
+	RequestedBy string `json:"requested_by,omitempty"`
 }
 
 // JSONDoc is one watch --json document.
@@ -80,6 +88,9 @@ type JSONDoc struct {
 	Total      JSONTotal  `json:"total"`
 	Repos      []JSONRepo `json:"repos"`
 	Runs       []JSONRun  `json:"runs"`
+	// QueuedNote is a one-line, already-sanitised reason the runs bucket
+	// could not be read for queued rows; absent when it was (or wasn't asked).
+	QueuedNote string `json:"queued_note,omitempty"`
 }
 
 func usdPtr(b Bar) (cap, pct *float64) {
@@ -111,7 +122,7 @@ var connNames = [...]string{ConnLive: "live", ConnStale: "stale", ConnOffline: "
 func BuildJSON(project string, v View) JSONDoc {
 	d := JSONDoc{Project: project, Mode: v.Mode, Day: v.Day, Now: v.Now.UTC().Format(time.RFC3339),
 		Connection: JSONConn{State: connNames[v.Conn.Kind], Reason: v.Conn.Reason, AgeSeconds: v.Conn.Age.Seconds()},
-		Repos:      []JSONRepo{}, Runs: []JSONRun{}}
+		Repos:      []JSONRepo{}, Runs: []JSONRun{}, QueuedNote: v.QueuedNote}
 	p := v.Project
 	d.Total = JSONTotal{CountedUSD: p.Counted.USD(), SpentUSD: p.Spent.USD(), NotionalUSD: p.Notional.USD(),
 		Burn: jsonBurn(p.Burn), Kill: jsonKill(p.Kill), Runs: p.Runs, RunHours: p.RunHours}
@@ -124,8 +135,12 @@ func BuildJSON(project string, v View) JSONDoc {
 		for _, run := range r.Runs {
 			j := JSONRun{Run: run.Run, Slug: jr.Slug, Repo: r.Name, Title: run.Title, Stage: run.Stage, Round: run.Round,
 				Verify: run.Verify, Models: run.Models, Recipe: run.Recipe, Auth: run.Auth, Notional: run.Notional, Halted: run.Halted,
-				Health:   [...]string{HealthOK: "ok", HealthSilent: "silent", HealthLost: "lost"}[run.Health],
-				Deadline: [...]string{DeadlineOK: "ok", DeadlineNear: "near", DeadlineOver: "over"}[run.Deadline]}
+				Health:      [...]string{HealthOK: "ok", HealthSilent: "silent", HealthLost: "lost"}[run.Health],
+				Deadline:    [...]string{DeadlineOK: "ok", DeadlineNear: "near", DeadlineOver: "over"}[run.Deadline],
+				Queued:      run.Queued,
+				Stuck:       run.Stuck,
+				Workflow:    run.Workflow,
+				RequestedBy: run.RequestedBy}
 			if run.HasSpent {
 				s := run.Spent.USD()
 				j.SpentUSD = &s

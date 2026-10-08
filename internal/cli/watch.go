@@ -8,6 +8,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/safetext"
 	"io"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -54,6 +55,11 @@ type WatchDeps struct {
 	Repo    string // --repo as given
 	ASCII   bool
 	NoColor bool
+	// Queued is the latest queued-run rows and degrade note, read fresh on
+	// every frame; nil when the project has no runs bucket to scan (never
+	// the case for a live project, but degraded mode doesn't set it either:
+	// its own ls-based listing already shows pending and launching runs).
+	Queued func() ([]watch.QueuedRun, string)
 }
 
 // watchStdoutTTY says whether w is a terminal; tests replace it.
@@ -67,7 +73,7 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	by := watchActor(ctx, d.LC)
 	return watch.RunTUI(ctx, watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
-		RepoKey: d.RepoKey, Repo: d.Repo,
+		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued,
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
 		Exec: func(ctx context.Context, req watch.Request) watch.Outcome {
@@ -185,10 +191,15 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
 
 	if o.once {
+		rows, note := fetchQueued(ctx, lc, o.repo, time.Now().Add(-queuedLookback))
+		d.Queued = func() ([]watch.QueuedRun, string) { return rows, note }
 		return watchOnce(ctx, d, o)
 	}
 	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	qsrc := startQueuedSource(ctx, lc, o.repo)
+	defer qsrc.Wait() // never return while its goroutine might still be running
+	defer cancel()    // runs before Wait (LIFO): cancellation always precedes the wait
+	d.Queued = qsrc.Get
 	sup := watch.Start(ctx, db, watch.Options{Poll: o.poll, Interval: o.interval})
 	d.Sup = sup
 	if !o.json && !o.plain && stdinIsTerminal(d.In) && watchStdoutTTY(d.Out) {
@@ -274,7 +285,12 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 			return err
 		}
 	}
-	return d.emit(o, watch.Build(st, now, d.Config), false)
+	v := watch.Build(st, now, d.Config)
+	if d.Queued != nil {
+		rows, note := d.Queued()
+		v = watch.MergeQueued(v, d.Config, rows, note, now)
+	}
+	return d.emit(o, v, false)
 }
 
 // watchStream prints a frame or document for every change the supervisor
@@ -292,6 +308,8 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	started := time.Now()
 	var last time.Time
 	var lastConn watch.ConnKind
+	var lastQueued []watch.QueuedRun
+	var lastQueuedNote string
 	dirty := false
 	for {
 		var u watch.Update
@@ -315,6 +333,14 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 			dirty = true
 		}
 		v := watch.Build(st, u.Now, d.Config)
+		if d.Queued != nil {
+			rows, note := d.Queued()
+			if note != lastQueuedNote || !slices.Equal(rows, lastQueued) {
+				dirty = true
+				lastQueued, lastQueuedNote = rows, note
+			}
+			v = watch.MergeQueued(v, d.Config, rows, note, u.Now)
+		}
 		if !last.IsZero() && v.Conn.Kind != lastConn {
 			dirty = true
 		}

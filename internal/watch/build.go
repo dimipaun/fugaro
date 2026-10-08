@@ -115,6 +115,16 @@ type RunRow struct {
 	Deadline  Deadline
 	Halted    string // reason, "" when not halted
 	StartedAt int64  // epoch ms, for ordering
+
+	// Queued marks a run known only from the runs bucket (a launch claim or
+	// launch.json, no registry entry yet): its stage, round and spend are
+	// unknown, so only Age, Workflow, Recipe and RequestedBy carry anything.
+	// Stuck means it has gone QueuedStuckAfter since launch without a
+	// registry entry showing up.
+	Queued      bool
+	Stuck       bool
+	Workflow    string
+	RequestedBy string
 }
 
 // RepoBlock is one repository.
@@ -136,6 +146,10 @@ type View struct {
 	Conn    Connection
 	Project ProjectLine
 	Repos   []RepoBlock
+	// QueuedNote is a one-line, already-sanitised reason the runs bucket
+	// could not be read for queued rows; "" when it was, or when nobody
+	// asked (MergeQueued was never called).
+	QueuedNote string
 }
 
 func oneLine(s string) string { return safetext.Strip(s) }
@@ -282,20 +296,8 @@ func Build(s *State, now time.Time, cfg Config) View {
 		// job-written repo field is free text and never names a block.
 		// A readable name from the local config (trusted, still sanitised)
 		// wins over the decoded slug; the slug stays in Slug.
-		b.Name = clean(unkey(slug))
-		if n := clean(cfg.RepoNames[slug]); n != "" {
-			b.Name = n
-		}
-		if b.Name == "" {
-			b.Name = "-"
-		}
-		sort.SliceStable(b.Runs, func(i, j int) bool {
-			a, c := b.Runs[i], b.Runs[j]
-			if a.StartedAt != c.StartedAt {
-				return a.StartedAt < c.StartedAt
-			}
-			return a.Run < c.Run
-		})
+		b.Name = repoDisplayName(slug, cfg)
+		sortRuns(b.Runs)
 		for _, r := range b.Runs {
 			v.Project.Runs++
 			if r.HasAge {
@@ -311,19 +313,7 @@ func Build(s *State, now time.Time, cfg Config) View {
 		v.Project.Burn = Burn{} // no run is live: a decaying trailing value is no rate
 	}
 
-	sort.SliceStable(v.Repos, func(i, j int) bool {
-		a, b := v.Repos[i], v.Repos[j]
-		if a.Kill.On != b.Kill.On {
-			return a.Kill.On
-		}
-		if sa, sb := a.Spent+a.Notional, b.Spent+b.Notional; sa != sb {
-			return sa > sb
-		}
-		if a.Name != b.Name {
-			return a.Name < b.Name
-		}
-		return a.Slug < b.Slug
-	})
+	sort.SliceStable(v.Repos, func(i, j int) bool { return lessRepoBlock(v.Repos[i], v.Repos[j]) })
 	return v
 }
 
@@ -332,6 +322,48 @@ func unkey(slug string) string {
 		return u
 	}
 	return slug
+}
+
+// repoDisplayName is slug's name as a repository block shows it: the wire
+// key decoded, unless cfg.RepoNames gives it a readable one.
+func repoDisplayName(slug string, cfg Config) string {
+	name := clean(unkey(slug))
+	if n := clean(cfg.RepoNames[slug]); n != "" {
+		name = n
+	}
+	if name == "" {
+		name = "-"
+	}
+	return name
+}
+
+// lessRepoBlock orders repository blocks: killed first, then by spend, then
+// by name and slug (Build and MergeQueued share this so a queued-only
+// repository sorts in among the rest the same way).
+func lessRepoBlock(a, b RepoBlock) bool {
+	if a.Kill.On != b.Kill.On {
+		return a.Kill.On
+	}
+	if sa, sb := a.Spent+a.Notional, b.Spent+b.Notional; sa != sb {
+		return sa > sb
+	}
+	if a.Name != b.Name {
+		return a.Name < b.Name
+	}
+	return a.Slug < b.Slug
+}
+
+// sortRuns orders b's runs by when each began (StartedAt), then by id: Build
+// and MergeQueued share this so a queued run sorts in among the running ones
+// chronologically.
+func sortRuns(runs []RunRow) {
+	sort.SliceStable(runs, func(i, j int) bool {
+		a, c := runs[i], runs[j]
+		if a.StartedAt != c.StartedAt {
+			return a.StartedAt < c.StartedAt
+		}
+		return a.Run < c.Run
+	})
 }
 
 func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {

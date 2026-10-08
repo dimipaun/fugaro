@@ -34,6 +34,9 @@ func RenderPlain(w io.Writer, project string, v View, o PlainOptions) error {
 	if v.Conn.Kind != ConnLive && v.Conn.Kind != ConnPolling && v.Conn.Age > 0 {
 		fmt.Fprintf(&b, "%s the figures below are the last ones received, %s ago\n", warn, durText(v.Conn.Age))
 	}
+	if v.QueuedNote != "" {
+		fmt.Fprintf(&b, "%s %s\n", warn, v.QueuedNote)
+	}
 
 	p := v.Project
 	fmt.Fprintf(&b, "total  %s%s%s%s\n", barText(p.Bar, p.Counted), sep, spendText(p.Spent, p.Notional), burnSuffix(p.Burn, sep, warn))
@@ -164,6 +167,12 @@ func runSpend(r RunRow) string {
 }
 
 func flags(r RunRow, warn string) string {
+	if r.Queued {
+		if r.Stuck {
+			return warn + " QUEUED " + durText(r.Age)
+		}
+		return "QUEUED"
+	}
 	var f []string
 	switch r.Health {
 	case HealthSilent:
