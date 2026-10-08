@@ -61,7 +61,8 @@ func TestUpgradeLocalPinsThenPinCurrent(t *testing.T) {
 // may call the checkout current as a whole; --check exits 0 for the steps
 // it verified and names the one it could not check. The checkout here has
 // no fugaro.yaml, so the cloud step (Task 7) is skipped in every mode, not
-// "not implemented".
+// "not implemented" (under --local and in an agent session it is skipped
+// before anything is read, U7, so its reason is theirs).
 func TestUpgradeUnimplementedStepIsNeverCurrent(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
@@ -83,8 +84,15 @@ func TestUpgradeUnimplementedStepIsNeverCurrent(t *testing.T) {
 			if err != nil || upgradeRead(t, settings) != wiredAt("v0.5.2") {
 				t.Fatalf("%v\n%s", err, out)
 			}
+			cloud := "cloud: skipped: no fugaro.yaml yet, so no job image to refresh"
+			switch tc.name {
+			case "local":
+				cloud = "cloud: skipped: --local"
+			case "agent":
+				cloud = "cloud: skipped: a coding agent's session"
+			}
 			for _, want := range []string{"pin: current", "plugin: not implemented: skipped in this build, nothing was checked or changed",
-				"cloud: skipped: no fugaro.yaml yet, so no job image to refresh", "not checked: plugin (not implemented in this build)",
+				cloud, "not checked: plugin (not implemented in this build)",
 				"  " + root + ": pin current, plugin not implemented, cloud skipped", "not checked: plugin: this build does not implement them"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
