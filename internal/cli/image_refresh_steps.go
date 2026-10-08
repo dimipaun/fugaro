@@ -26,6 +26,11 @@ type refreshTarget struct {
 	cfg   *config.Config
 	spec  infra.RepoSpec
 	kinds []string // the selected kinds (the plan's), for telling the others apart in the check job's diff
+
+	// checkJobMissing is set when step 3 finds no daily image check job for
+	// a repository whose spec has one (a 404 that should not be one): the
+	// final summary repeats it, so it is not just a line that scrolled past.
+	checkJobMissing bool
 }
 
 // refreshBase is step 2: the images stage alone, for kinds (D5, D6), with
@@ -104,6 +109,7 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	case err != nil:
 		return remote(err)
 	case u == nil && t.spec.Check != nil:
+		t.checkJobMissing = true
 		fmt.Fprintf(r.w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
 		return nil
 	case u == nil:
@@ -117,10 +123,10 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  every other field of %s and of the job is unchanged\n", pluginwire.Printable(u.Job()),
+	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back\n", pluginwire.Printable(u.Job()),
 		pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()), infra.CheckSpecEnv, diff, infra.CheckSpecEnv)
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; nothing else in the job changes, and the next fugaro init --repo from this local config plans no change to it",
-		pluginwire.Printable(u.Job()), infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
+	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; no other field of %s or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back, and the next fugaro init --repo from this local config plans no change to it",
+		pluginwire.Printable(u.Job()), infra.CheckSpecEnv, infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
 		return err
 	}
 	if err := infra.ApplyCheckJob(ctx, c, u); err != nil {
@@ -163,6 +169,16 @@ func checkSpecDiff(u *infra.CheckJobUpdate, selected []string) (string, error) {
 		fmt.Fprintf(&b, "    %s: %s -> %s%s\n", pluginwire.Printable(k), pluginwire.Printable(old.BaseImages[k]), pluginwire.Printable(cur.BaseImages[k]), flag)
 	}
 	return b.String(), nil
+}
+
+// withNote adds note to err, keeping its exit code.
+func withNote(err error, note string) error {
+	code := ExitCode(err)
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		err = ee.Err
+	}
+	return &ExitError{Code: code, Err: fmt.Errorf("%w; %s", err, note)}
 }
 
 // builtSoFar adds the workflows already built to err, keeping its exit code.
@@ -234,8 +250,14 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 			notes()
 			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
-		if _, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
+		if id, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
 			notes()
+			if id != "" {
+				// Submitted, then the wait failed (Ctrl-C included): the
+				// build is not cancelled.
+				err = withNote(err, fmt.Sprintf("Cloud Build build %s of %s/%s was already submitted and KEEPS RUNNING (and billing) in Cloud Build: follow it with gcloud builds describe %s --region %s --project %s; a rerun started now may find no build record yet and offer a duplicate build, so wait for it to finish first",
+					oneLine(id), t.spec.Name, wf, quoteWord(id), quoteWord(t.lc.BuildRegion()), quoteWord(t.lc.GCPProject)))
+			}
 			return builtSoFar(err, built)
 		}
 		built = append(built, wf)
