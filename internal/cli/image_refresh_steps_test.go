@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
+	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
@@ -95,6 +96,83 @@ func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "nothing mirrored") {
 		t.Errorf("output does not explain the skip:\n%s", out.String())
+	}
+}
+
+// refreshReload re-reads the local config the base step wrote (not the
+// plan's own, now-stale copy) and computes the repository's spec from it:
+// the checkout's config is carried through, and the check job's image (the
+// first workflow's kind, sorted: api's go before app's web-node) is the
+// re-read base.
+func TestRefreshReload(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("go", "0.5.1"))
+	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.lc.BaseImages) != 0 {
+		t.Fatalf("fixture: preflight's own lc already has base_images: %v", p.lc.BaseImages)
+	}
+	// Simulate step 2 having since recorded both kinds: refreshReload must
+	// pick this up from the file, not from p.lc.
+	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+", go: "+managedRef("go", "0.5.1")+"}\n")
+
+	tg, err := refreshReload(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.lc.BaseImages) != 0 {
+		t.Errorf("refreshReload mutated the plan's own (stale) lc: %v", p.lc.BaseImages)
+	}
+	if tg.lc.BaseImages["web-node"] != managedRef("web-node", "0.5.1") || tg.lc.BaseImages["go"] != managedRef("go", "0.5.1") {
+		t.Fatalf("lc.BaseImages = %v, want both kinds the base step just recorded", tg.lc.BaseImages)
+	}
+	if tg.cfg != p.cfg {
+		t.Error("the checkout's config was not carried through")
+	}
+	if tg.spec.Name != "acme/app" || tg.spec.Slug != p.slug || tg.spec.RegistryPath == "" || tg.spec.BuildServiceAccountEmail == "" {
+		t.Fatalf("spec %+v", tg.spec)
+	}
+	if tg.spec.Check == nil || tg.spec.Check.Image != managedRef("go", "0.5.1") {
+		t.Fatalf("check image = %+v, want %s (api's kind, sorted first)", tg.spec.Check, managedRef("go", "0.5.1"))
+	}
+}
+
+// A kind the local config has no base_images entry for yet (the base step
+// has not recorded it) falls back to this release's own image for the spec
+// only, as fugaro image build does: without the fallback, infra.Repo refuses
+// a checked workflow with no base_images entry for its kind, and the file
+// itself is never written by this fallback.
+func TestRefreshReloadFillsMissingBaseFromRelease(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.5.1")+"}\n") // go is still unset
+	putWorkflowRecordFrom("app", "0.5.1", managedRef("web-node", "0.5.1"))
+	putWorkflowRecordFrom("api", "0.5.1", managedRef("go", "0.5.1"))
+	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tg, err := refreshReload(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.lc.BaseImages["go"] != "" {
+		t.Fatalf("refreshReload wrote base_images.go to the local config: %v", tg.lc.BaseImages)
+	}
+	want, err := image.BaseRef("go", "0.5.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tg.spec.Check == nil || tg.spec.Check.Image != want {
+		t.Fatalf("check image = %+v, want the release fallback %s", tg.spec.Check, want)
 	}
 }
 
