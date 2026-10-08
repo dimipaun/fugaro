@@ -72,10 +72,9 @@ type upgradeStep struct {
 	run  func(ctx context.Context, u *upgradeCtx) stepResult
 }
 
-// upgradeSteps run in this order for each checkout. plugin and cloud are
-// placeholders until Tasks 6 and 7 put pluginStep and cloudStep in their
-// places.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", notImplementedStep}, {"cloud", notImplementedStep}}
+// upgradeSteps run in this order for each checkout. cloud is a placeholder
+// until Task 7 puts cloudStep in its place.
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", notImplementedStep}}
 
 // notImplementedStep stands for a step this build does not have.
 func notImplementedStep(context.Context, *upgradeCtx) stepResult {
@@ -161,7 +160,9 @@ func runUpgrade(cmd *cobra.Command, o upgradeOptions, paths []string) error {
 		paths = []string{"."}
 	}
 	agent := agentMarker(os.Getenv)
-	if !o.check && !o.local && !o.yes && agent == "" && !stdinIsTerminal(cmd.InOrStdin()) {
+	// U11: a development build has no release to pin, install or refresh to,
+	// so every step is skipped and the run exits 0; it never needs a terminal.
+	if releaseVersion() != "" && !o.check && !o.local && !o.yes && agent == "" && !stdinIsTerminal(cmd.InOrStdin()) {
 		return userErr("fugaro upgrade's cloud step asks before each change and each billable build, so it needs a real terminal: %s; or pass --yes to confirm every step, or --local for the pin and plugin steps only", initflow.NoTerminalAdvice)
 	}
 	fmt.Fprintln(w, upgradeHeader())
