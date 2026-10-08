@@ -56,7 +56,12 @@ The M9e rule E1 ("the remote branch is always a verified state") made the push w
 
   The docs show how to skip drafts or cancel superseded runs in CI, and `git.pr.checkpoints: false` turns checkpoints off.
 
-**Limitation.** The checkpoint workflow guard reads a wider range than finalize's: it starts at the frozen base commit (or the last pushed one), finalize at `origin/<base>`. If the agent rebases onto a newer base that brought someone else's `.github/workflows` change, checkpoints stop for the whole run although the host would accept the push. It fails closed; finalize still pushes.
+## Limitations
+
+- **Hosts without draft PRs.** Where the host refuses drafts (`DraftFallback`), the PR opened at the first commit is a normal PR titled `[DRAFT] ...`. It may auto-request CODEOWNERS reviewers on unverified work. The remedy is `git.pr.early_draft: false`; checkpoint branch pushes still happen.
+- **Finalize that does not settle.** If finalize's own push fails or another early return happens, the status section is not settled: it keeps `work in progress, not verified` with a stale time. The stale-time line covers it, and `fugaro diagnose <run>` says what happened.
+- **A title read mid-write.** The checkpoint-time PR title and body read `pr.md` while the agent may be mid-write, so the title can be partial until finalize replaces it, unless someone edited the PR.
+- **Wider workflow guard.** The checkpoint workflow guard reads a wider range than finalize's: it starts at the frozen base commit (or the last pushed one), finalize at `origin/<base>`. If the agent rebases onto a newer base that brought someone else's `.github/workflows` change, checkpoints stop for the whole run although the host would accept the push. It fails closed; finalize still pushes.
 
 ## Not doing (future work)
 

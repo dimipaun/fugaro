@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -157,4 +158,145 @@ func snapOps(h *harness) []string {
 		out = append(out, fmt.Sprintf("%s#%d %s", c.Op, c.PR, c.Detail))
 	}
 	return out
+}
+
+// mountSecret makes value a mounted secret of the run.
+func mountSecret(g *ckptRig, value string) {
+	g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+value, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+}
+
+// TestBoundaryPushHoldsBackAWorkflowCommit: a workflow change committed as
+// the last act of an unverified stage, with no poll after it, is caught by
+// the boundary push alone: nothing reaches the remote, checkpoints stop, a
+// warning says so, and the checkpoint does not fail the run (finalize's own
+// refusal ends it, as it always did).
+func TestBoundaryPushHoldsBackAWorkflowCommit(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	ci := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "mkdir -p .github/workflows && echo 'on: push' > .github/workflows/ci.yml && git add -A && git commit -qm 'Add CI'")
+		return agent.Result{CostUSD: 1}, nil // no poll, no verify
+	}
+	var atReview bool
+	var stopped int
+	check := func(t *testing.T) {
+		atReview = remoteHasBranch(t, g.harness)
+		stopped = strings.Count(g.logs.String(), "no more checkpoint pushes")
+	}
+	runRefused(t, g.harness, ci, probe(check, review("ship", 0)))
+	if atReview {
+		t.Error("the boundary pushed a workflow change")
+	}
+	if stopped != 1 || !strings.Contains(g.logs.String(), "reason=") {
+		t.Fatalf("%d stop notices at the review stage, want 1:\n%s", stopped, g.logs)
+	}
+}
+
+// TestBoundaryPushHoldsBackASecret: a commit holding the mounted secret,
+// made as the last act of a stage with no poll after it, is not pushed by
+// the boundary; checkpoints stop and the value is not in the logs.
+func TestBoundaryPushHoldsBackASecret(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	const mounted = "mounted-boundary-secret-value"
+	mountSecret(g, mounted)
+	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo "+mounted+" > leak.txt && git add -A && git commit -qm leak")
+		return agent.Result{CostUSD: 1}, nil
+	}
+	var atReview bool
+	var stopped int
+	check := func(t *testing.T) {
+		atReview = remoteHasBranch(t, g.harness)
+		stopped = strings.Count(g.logs.String(), "no more checkpoint pushes")
+	}
+	if _, err := g.run(t, leak, probe(check, review("ship", 0))); err != nil {
+		t.Fatal(err)
+	}
+	if atReview {
+		t.Error("the boundary pushed a commit holding a secret")
+	}
+	if stopped != 1 || strings.Contains(g.logs.String(), mounted) {
+		t.Fatalf("%d stop notices, want 1; logs:\n%s", stopped, g.logs)
+	}
+}
+
+// TestStatusSectionIsRedacted: a secret value in the status section's text
+// (here the words "not verified", which the section carries) never reaches
+// the PR body, neither in the section the draft opens with nor in the one
+// the next checkpoint push rewrites.
+func TestStatusSectionIsRedacted(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	mountSecret(g, "not verified")
+	var first, second string
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "one")
+		g.settle()
+		first = g.provider.Snapshot().PRs[0].Body
+		commitWIP(t, req, "two")
+		g.settle()
+		second = g.provider.Snapshot().PRs[0].Body
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{"opening": first, "rewritten": second} {
+		if !strings.Contains(body, statusBegin) || !strings.Contains(body, "REDACTED") || strings.Contains(body, "not verified") {
+			t.Errorf("%s section:\n%s", name, body)
+		}
+	}
+	if first == second {
+		t.Error("the second checkpoint did not rewrite the section")
+	}
+}
+
+// TestNextCheckpointRewritesTheStatusSection: with the draft open, the next
+// checkpoint push brings the section up to the new pushed commit.
+func TestNextCheckpointRewritesTheStatusSection(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	var h1, h2, body string
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		h1 = commitWIP(t, req, "one")
+		g.settle()
+		h2 = commitWIP(t, req, "two")
+		g.settle()
+		body = g.provider.Snapshot().PRs[0].Body
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "branch at `"+h2[:7]+"`") || strings.Contains(body, h1[:7]) {
+		t.Fatalf("body after the second checkpoint (first %s, second %s):\n%s", h1[:7], h2[:7], body)
+	}
+}
+
+// TestNoBoundaryPushAfterHaltOrCancel: a commit left at the end of a stage
+// whose run is halted or cancelled is not pushed by the boundary; finalize
+// pushes as it does for any halt, and no checkpoint is logged. A halted
+// stage returns before afterStage, so the halt case pins that behaviour but
+// does not exercise checkpointBlocked; the cancel case does.
+func TestNoBoundaryPushAfterHaltOrCancel(t *testing.T) {
+	for _, c := range []string{"halt", "cancel"} {
+		t.Run(c, func(t *testing.T) {
+			b := newHandleBox(t)
+			g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+			end := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+				commitWIP(t, req, "wip")
+				if c == "halt" && !b.h.HaltNow(runCapHalt) || c == "cancel" && !b.h.MarkCancelled() {
+					t.Fatal("the halt or cancel was refused")
+				}
+				return agent.Result{CostUSD: 1}, nil
+			}
+			steps := []step{end}
+			if c == "cancel" {
+				steps = append(steps, review("ship", 0)) // a mark alone leaves the run going
+			}
+			if _, err := g.run(t, steps...); err != nil {
+				t.Log(err)
+			}
+			if strings.Contains(g.logs.String(), "checkpoint pushed") {
+				t.Fatalf("a checkpoint pushed after the %s:\n%s", c, g.logs)
+			}
+		})
+	}
 }

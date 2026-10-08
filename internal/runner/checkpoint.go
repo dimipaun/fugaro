@@ -226,6 +226,11 @@ func (r *run) boundaryCheckpoint(ctx context.Context, stage string) {
 			r.d.Log.Error("a checkpoint panicked; carrying on", "stage", stage, "panic", r.redact(fmt.Sprint(p)))
 		}
 	}()
+	// checkpointBlocked is defence in depth for a halt, an exhausted budget
+	// and the stage's context: a halted stage or a spent run cap returns
+	// before afterStage, so today only a cancel mark (a run that goes on) or
+	// a stopped checkpointer reaches it. It is cheap and it keeps the
+	// boundary on the same rules as a poll.
 	if !r.checkpointsOn() || r.checkpointBlocked(ctx) {
 		return
 	}
