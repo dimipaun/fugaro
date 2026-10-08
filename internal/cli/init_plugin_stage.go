@@ -40,7 +40,7 @@ const pluginFirstRun = "Run fugaro upgrade --local to install the plugin for you
 // shows the plugin as "not cached" and its skills disappear until the
 // marketplace is updated (verified live, V2); no restart is needed. See
 // pluginFirstRun: fugaro upgrade's plugin step runs the manual command too.
-const pluginRefresh = "Run fugaro upgrade --local to refresh it for you. In Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
+const pluginRefresh = "Run fugaro upgrade --local to refresh it for you, or in Claude Code run /plugin marketplace update fugaro (until then the plugin shows \"not cached\" and its skills are gone).\n"
 
 type pluginStage struct {
 	e       *initEngine

@@ -117,9 +117,9 @@ func marketRepo(u *upgradeCtx) (repo, why string) {
 	case r.Repo == "" || strings.EqualFold(r.Repo, pluginwire.Repo):
 		return pluginwire.Repo, ""
 	case !u.o.allowFork:
-		return "", "the checkout's marketplace is " + r.Repo + ", not " + pluginwire.Repo + ": pass --allow-fork if that fork is yours"
+		return "", "the checkout's marketplace is " + pluginwire.Printable(r.Repo) + ", not " + pluginwire.Repo + ": pass --allow-fork if that fork is yours"
 	case !claudeplugin.ValidRepo(r.Repo):
-		return "", "the checkout's marketplace " + r.Repo + " is not a GitHub owner/name fugaro passes to claude"
+		return "", "the checkout's marketplace " + pluginwire.Printable(r.Repo) + " is not a GitHub owner/name fugaro passes to claude"
 	}
 	return r.Repo, ""
 }

@@ -75,6 +75,9 @@ func TestUpgradePluginInstallsWithExactArgv(t *testing.T) {
 			t.Errorf("output lacks %q:\n%s", w, out)
 		}
 	}
+	if strings.Contains(out, "claude changed") {
+		t.Errorf("the settings note fired though claude changed nothing:\n%s", out)
+	}
 }
 
 func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
@@ -89,6 +92,9 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
 	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") || !strings.Contains(out, "not checked: cloud") || strings.Contains(out, "nothing to do") {
 		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
+	}
+	if strings.Contains(out, "claude changed") {
+		t.Errorf("the settings note fired though no change call ran:\n%s", out)
 	}
 }
 
@@ -205,5 +211,88 @@ func TestUpgradePluginVersionAfterTheCalls(t *testing.T) {
 				t.Fatalf("exit %d\n%s", ExitCode(err), out)
 			}
 		})
+	}
+}
+
+func TestUpgradePluginListsThatFailAreFailedSteps(t *testing.T) {
+	const garbage = "not json"
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T) *testutil.ClaudePluginFake
+	}{
+		{"markets", func(t *testing.T) *testutil.ClaudePluginFake {
+			return testutil.NewClaudePluginFake(t, garbage, "[]")
+		}},
+		{"installed", func(t *testing.T) *testutil.ClaudePluginFake {
+			return testutil.NewClaudePluginFake(t, ourMarket, garbage)
+		}},
+		{"relist", func(t *testing.T) *testutil.ClaudePluginFake {
+			f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+			f.On(t, "plugins", garbage, argsInstall...)
+			return f
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upgradeEnv(t, "0.5.2")
+			f := tc.setup(t)
+			useFakeClaude(t, f)
+			root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+			out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+			if ExitCode(err) != ExitUserError || !strings.Contains(out, "plugin: failed:") || !strings.Contains(out, "plugin failed") {
+				t.Fatalf("exit %d\n%s", ExitCode(err), out)
+			}
+		})
+	}
+}
+
+func TestUpgradePluginNothingAppliesAfterTheUpdate(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+	useFakeClaude(t, f) // the install call leaves the list empty
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
+	if ExitCode(err) != ExitUserError || !strings.Contains(out, "plugin: failed: after the update claude lists no install of fugaro@fugaro that applies to this checkout") {
+		t.Fatalf("exit %d\n%s", ExitCode(err), out)
+	}
+}
+
+// TestUpgradeCheckPluginNewerThanFugaro: a plugin newer than the binary is a
+// note, not stale (design: U3), so --check exits 0 and names brew upgrade.
+func TestUpgradeCheckPluginNewerThanFugaro(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	record := filepath.Join(os.Getenv("CLAUDE_CONFIG_DIR"), "plugins", "installed_plugins.json")
+	if err := os.MkdirAll(filepath.Dir(record), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(record, []byte(`{"version":2,"plugins":{"fugaro@fugaro":[{"scope":"user","version":"0.6.0"}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
+	out, _, err := executeStdin(t, "", "upgrade", "--check", root)
+	if !strings.Contains(out, "plugin: current: installed 0.6.0, newer than this fugaro 0.5.2 (brew upgrade dimipaun/tap/fugaro)") || strings.Contains(out, "plugin: stale") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// TestUpgradePluginForkRepoIsPrintable: the repo in a committed settings.json
+// goes into the summary, so an invalid one is shown escaped, never raw, and
+// is never passed to claude (marketRepo's ValidRepo check).
+func TestUpgradePluginForkRepoIsPrintable(t *testing.T) {
+	upgradeEnv(t, "0.5.2")
+	f := testutil.NewClaudePluginFake(t, ourMarket, "[]")
+	useFakeClaude(t, f)
+	evil := `{"extraKnownMarketplaces":{"fugaro":{"source":{"source":"github","repo":"ev\u001b[31mil/x","ref":"v0.5.2"}}},"enabledPlugins":{"fugaro@fugaro":true}}`
+	root, _ := skillCheckout(t, evil)
+	for _, args := range [][]string{{"upgrade", "--local", "--allow-fork", root}, {"upgrade", "--local", root}} {
+		out, _, _ := executeStdin(t, "", args...)
+		if strings.ContainsRune(out, 0x1b) {
+			t.Errorf("%q: a raw escape reached the output: %q", args, out)
+		}
+		if !strings.Contains(out, "plugin: skipped:") {
+			t.Errorf("%q: plugin step not skipped:\n%s", args, out)
+		}
+	}
+	if len(f.Calls(t)) != 0 {
+		t.Errorf("claude ran for an invalid repo: %q", f.Calls(t))
 	}
 }
