@@ -536,3 +536,37 @@ func TestAgentRecipe(t *testing.T) {
 		}
 	}
 }
+
+const profileBase = "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
+
+func TestProfileKeysDecode(t *testing.T) {
+	var c Config
+	dec := yaml.NewDecoder(strings.NewReader(strings.Replace(profileBase, "  web: {", "  web: { profile: java-service,", 1) + "profile: node-web\n"))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c.Profile != "node-web" || c.Workflows["web"].Profile != "java-service" {
+		t.Fatalf("decoded %q, %q", c.Profile, c.Workflows["web"].Profile)
+	}
+}
+
+func TestValidateProfileNames(t *testing.T) {
+	c, ps := Parse([]byte(profileBase))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	c.Profile = "Bad_Name"
+	w := c.Workflows["web"]
+	w.Profile = "also bad!"
+	c.Workflows["web"] = w
+	var paths []string
+	for _, p := range Validate(c) {
+		if strings.Contains(p.Message, "must be a profile name") {
+			paths = append(paths, p.Path)
+		}
+	}
+	if strings.Join(paths, ",") != "profile,workflows.web.profile" {
+		t.Fatalf("profile problems at %v", paths)
+	}
+}
