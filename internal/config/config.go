@@ -90,11 +90,19 @@ type PRSettings struct {
 	// EarlyDraft opens the draft pull request at the first verified push;
 	// false opens it only at finalize. Unset means true (applyDefaults).
 	EarlyDraft *bool `yaml:"early_draft"`
+	// Checkpoints pushes a first run's new commits to its branch every few
+	// minutes while a stage runs, fast-forward only, so a container that
+	// dies keeps its committed work. Unset means true (applyDefaults).
+	Checkpoints *bool `yaml:"checkpoints"`
 }
 
 // EarlyDraftOn reports whether the draft pull request opens at the first
 // verified push: true unless git.pr.early_draft is false.
 func (p PRSettings) EarlyDraftOn() bool { return p.EarlyDraft == nil || *p.EarlyDraft }
+
+// CheckpointsOn reports whether a first run pushes its new commits while a
+// stage runs: true unless git.pr.checkpoints is false.
+func (p PRSettings) CheckpointsOn() bool { return p.Checkpoints == nil || *p.Checkpoints }
 
 // Agent configures the Claude Code agent.
 type Agent struct {

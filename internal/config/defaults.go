@@ -33,6 +33,10 @@ func applyDefaults(c *Config) {
 		t := true
 		c.Git.PR.EarlyDraft = &t
 	}
+	if c.Git.PR.Checkpoints == nil {
+		t := true
+		c.Git.PR.Checkpoints = &t
+	}
 	if c.Agent.Auth == "" {
 		c.Agent.Auth = "vertex"
 	}

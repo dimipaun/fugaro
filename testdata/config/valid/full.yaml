@@ -3,7 +3,7 @@ project: aurora
 git:
   provider: github
   base_branch: main
-  pr: { labels: [fugaro], reviewers: [octocat] }
+  pr: { labels: [fugaro], reviewers: [octocat], early_draft: true, checkpoints: false }
 agent:
   auth: api-key
   model: claude-opus-5-5
