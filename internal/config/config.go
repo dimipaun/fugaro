@@ -39,6 +39,11 @@ type Config struct {
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
+
+	// Layer is the project layer Resolve resolved this config over, nil
+	// for none. It is never part of the file or of SHA256: a consumer that
+	// holds a resolved config (an image build) passes it on.
+	Layer *ProjectLayer `yaml:"-" json:"-"`
 }
 
 // Budget modes, as the project config spells them.
@@ -411,6 +416,14 @@ func (p Problem) String() string {
 // Parse decodes fugaro.yaml strictly, applies defaults and validates the result.
 // It returns either a config or the problems that prevented one.
 func Parse(data []byte) (*Config, []Problem) {
+	c, _, ps := Resolve(data, nil)
+	return c, ps
+}
+
+// decodeRepo decodes a fugaro.yaml strictly, without defaults or
+// validation: the repository layer alone, with today's line-numbered
+// errors.
+func decodeRepo(data []byte) (*Config, []Problem) {
 	var c Config
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
@@ -428,10 +441,6 @@ func Parse(data []byte) (*Config, []Problem) {
 	}
 	if _, err := GCPProjectOf(data); err != nil {
 		return nil, []Problem{problemFromYAML(err.Error())}
-	}
-	applyDefaults(&c)
-	if ps := Validate(&c); len(ps) > 0 {
-		return nil, ps
 	}
 	return &c, nil
 }
