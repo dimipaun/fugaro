@@ -326,7 +326,7 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
 	if kind != "" {
-		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window (it copies this release's %s base image, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
+		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies this release's %s base image, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
 	} else {
 		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}

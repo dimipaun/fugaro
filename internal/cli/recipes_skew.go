@@ -45,7 +45,7 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows recipes (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window (it copies %s, points the daily image check job at it and rebuilds the image)%s",
+			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies %s, points the daily image check job at it and rebuilds the image)%s",
 			subject, recipesSince, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
