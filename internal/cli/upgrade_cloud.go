@@ -13,6 +13,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
@@ -120,4 +121,61 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 func checkoutNamesProject(ctx context.Context, root string) bool {
 	co, err := checkoutProject(ctx, root)
 	return err == nil && co != nil && config.ProjectNameRE.MatchString(co.Project)
+}
+
+// cloudStep is fugaro image refresh for the checkout's repository, in this
+// process (runImageRefresh, decision U16). A real local-file error
+// (cloudFailed) stops the checkout in every mode, --check included: it is a
+// failure, not a skip. Otherwise the step is skipped, never attempted, with
+// --local, in a coding agent's session (U7) and where there is nothing to
+// refresh from here (cloudNotHere, U9); --check reports cloudCheck's state
+// without running the refresh.
+func cloudStep(ctx context.Context, u *upgradeCtx) stepResult {
+	v := cloudCheck(ctx, u.loc.Root, u.o.refresh.cloud, u.o.again(u.loc.Root))
+	if v.state == cloudFailed {
+		return stepResult{state: stepFailed, code: ExitUserError, reason: v.reason}
+	}
+	if u.o.check {
+		switch v.state {
+		case cloudCurrent:
+			return stepResult{state: stepCurrent, reason: v.reason}
+		case cloudStale, cloudBlocked:
+			return stepResult{state: stepStale, reason: v.reason}
+		}
+		return stepResult{state: stepSkipped, reason: v.reason}
+	}
+	if v.state == cloudNotHere {
+		return stepResult{state: stepSkipped, reason: v.reason}
+	}
+	if u.o.local {
+		return stepResult{state: stepSkipped, reason: "--local; for the cloud step, run in your own terminal window: " + u.o.cloudLine(u.loc.Root, false)}
+	}
+	if u.agent != "" {
+		reason := fmt.Sprintf("a coding agent's session (%s is set) never applies cloud changes, by design; in your own terminal window, not through the agent, run %s (it confirms every step itself, each billable build included), or %s to be asked at each step",
+			u.agent, u.o.cloudLine(u.loc.Root, true), u.o.cloudLine(u.loc.Root, false))
+		if h := initflow.IDEHint(u.agent); h != "" {
+			reason += " (" + h + ")"
+		}
+		return stepResult{state: stepSkipped, reason: reason}
+	}
+	ro := u.o.refresh
+	ro.dir, ro.yes, ro.rerun = u.loc.Root, u.o.yes, u.o.again(u.loc.Root)
+	var plan *refreshPlan
+	ro.onPlan = func(p *refreshPlan) { plan = p }
+	if err := runImageRefresh(u.cmd, ro); err != nil {
+		return stepResult{state: stepFailed, code: ExitCode(err), reason: oneLine(err.Error())}
+	}
+	if plan != nil && plan.current() {
+		return stepResult{state: stepCurrent, reason: "no base image to copy and no image to rebuild"}
+	}
+	return stepResult{state: stepDone, reason: "the repository is on this release's base image"}
+}
+
+// cloudLine is the command that runs the cloud step for root in the user's
+// own terminal: this run's flags without --check and --local, with or
+// without --yes.
+func (o upgradeOptions) cloudLine(root string, yes bool) string {
+	c := o
+	c.check, c.local, c.yes = false, false, yes
+	return c.again(root)
 }

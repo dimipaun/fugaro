@@ -51,16 +51,18 @@ func TestUpgradeLocalPinsThenPinCurrent(t *testing.T) {
 	}
 	before := upgradeRead(t, settings)
 	out, _, err = executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "pin: current: pinned to v0.5.2") || !strings.Contains(out, "not checked: plugin, cloud") {
+	if err != nil || upgradeRead(t, settings) != before || !strings.Contains(out, "pin: current: pinned to v0.5.2") || !strings.Contains(out, "not checked: plugin") {
 		t.Fatalf("rerun: %v, changed %v\n%s", err, upgradeRead(t, settings) != before, out)
 	}
 }
 
-// TestUpgradeUnimplementedStepsAreNeverCurrent: until Tasks 6 and 7, the
-// plugin and cloud steps are placeholders that check nothing, so no mode
-// may call the checkout current; --check exits 0 for the step it verified
-// and names the ones it could not check.
-func TestUpgradeUnimplementedStepsAreNeverCurrent(t *testing.T) {
+// TestUpgradeUnimplementedStepIsNeverCurrent: the plugin step is still a
+// placeholder that checks nothing (Task 6 has not landed yet), so no mode
+// may call the checkout current as a whole; --check exits 0 for the steps
+// it verified and names the one it could not check. The checkout here has
+// no fugaro.yaml, so the cloud step (Task 7) is skipped in every mode, not
+// "not implemented".
+func TestUpgradeUnimplementedStepIsNeverCurrent(t *testing.T) {
 	upgradeEnv(t, "0.5.2")
 	root, settings := skillCheckout(t, wiredAt("v0.5.2"))
 	for _, tc := range []struct {
@@ -82,13 +84,13 @@ func TestUpgradeUnimplementedStepsAreNeverCurrent(t *testing.T) {
 				t.Fatalf("%v\n%s", err, out)
 			}
 			for _, want := range []string{"pin: current", "plugin: not implemented: skipped in this build, nothing was checked or changed",
-				"cloud: not implemented", "not checked: plugin, cloud (not implemented in this build)",
-				"  " + root + ": pin current, plugin not implemented, cloud not implemented", "not checked: plugin, cloud: this build does not implement them"} {
+				"cloud: skipped: no fugaro.yaml yet, so no job image to refresh", "not checked: plugin (not implemented in this build)",
+				"  " + root + ": pin current, plugin not implemented, cloud skipped", "not checked: plugin: this build does not implement them"} {
 				if !strings.Contains(out, want) {
 					t.Errorf("output lacks %q:\n%s", want, out)
 				}
 			}
-			for _, bad := range []string{"nothing to do", "is current", "plugin: current", "cloud: current", "plugin: skipped", "cloud: skipped"} {
+			for _, bad := range []string{"nothing to do", "is current", "plugin: current", "cloud: current", "plugin: skipped", "cloud: not implemented"} {
 				if strings.Contains(out, bad) {
 					t.Errorf("output claims %q of a step that does not exist:\n%s", bad, out)
 				}
@@ -260,7 +262,7 @@ func TestUpgradeCheckReportsAFork(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	for _, want := range []string{"pin: stale: the marketplace is the fork someone/fugaro: pass --allow-fork if it is yours (only its ref moves)",
-		"  " + root + ": pin stale, plugin not implemented, cloud not implemented"} {
+		"  " + root + ": pin stale, plugin not implemented, cloud skipped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
