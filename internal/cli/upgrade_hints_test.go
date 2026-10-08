@@ -32,6 +32,9 @@ func TestHintsNameUpgrade(t *testing.T) {
 	if s := staleLine(pluginwire.Report{Pin: pluginwire.Newer, Ref: "v0.3.0", Binary: "0.2.0"}); !strings.Contains(s, "brew upgrade dimipaun/tap/fugaro") {
 		t.Errorf("newer: %q", s)
 	}
+	if f := pluginwire.Newer.Fix(); !strings.Contains(f, "brew upgrade dimipaun/tap/fugaro") {
+		t.Errorf("newer Fix: %q", f)
+	}
 
 	pluginOnly := map[string]string{
 		"pluginFirstRun":        pluginFirstRun,
