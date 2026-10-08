@@ -320,7 +320,7 @@ func TestSetupFixtureTablesMatchTheSkill(t *testing.T) {
 			t.Errorf("services-and-images.md lost %q, which the fixtures rely on", want)
 		}
 	}
-	if _, err := os.Stat(filepath.Join("..", "images", "java-services", "fugaro-services")); err != nil {
+	if _, err := os.Stat(filepath.Join("..", "images", "common", "fugaro-services")); err != nil {
 		t.Errorf("the java-services base has no fugaro-services: %v", err)
 	}
 	// The packages discovery.md says each base has are in the base's Dockerfile.
