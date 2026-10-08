@@ -38,8 +38,16 @@ func (o refreshOptions) again() string {
 	for _, w := range o.workflows {
 		args = append(args, "--workflow", quoteWord(w))
 	}
-	if o.cloud.project != "" {
-		args = append(args, "--project", quoteWord(o.cloud.project))
+	for _, f := range []struct{ name, v string }{
+		{"config", o.cloud.config}, {"project", o.cloud.project}, {"gcp-project", o.cloud.gcpProject},
+		{"region", o.cloud.region}, {"image-source", o.imageSource},
+	} {
+		if f.v != "" {
+			args = append(args, "--"+f.name, quoteWord(f.v))
+		}
+	}
+	for _, d := range o.expectDigests {
+		args = append(args, "--expect-digest", quoteWord(d))
 	}
 	return strings.Join(args, " ")
 }
@@ -55,6 +63,7 @@ type refreshPlan struct {
 	want             map[string]string
 	why              map[string]string
 	builds           []string
+	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
 }
 
 // refreshPreflight is step 1, read-only: the release, the checkout and its
@@ -87,7 +96,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 			return nil, userErr("--repo %s: %v", o.repo, err)
 		}
 		if got, err := task.CanonicalRepo(repo); err != nil || got != want {
-			return nil, userErr("--repo %s is not this checkout's origin (%s): run it in a checkout of %s", o.repo, repo, o.repo)
+			return nil, userErr("--repo %s is not this checkout's origin (%s): run it in a checkout of %s", pluginwire.Printable(o.repo), pluginwire.Printable(repo), pluginwire.Printable(o.repo))
 		}
 	}
 	lc, lcPath, old, err := loadRepoConfig(ctx, iopts, root)
@@ -135,10 +144,13 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}}
 	for _, k := range kinds {
 		if p.want[k], err = refreshBase(lc, k, ver); err != nil {
 			return nil, err
+		}
+		if cur := lc.BaseImage(k); cur != "" && p.want[k] == cur && newer(curVersion(cur, host, k), ver) {
+			p.kept[k] = true
 		}
 	}
 	for _, w := range wfs {
@@ -162,6 +174,10 @@ func (p *refreshPlan) print(w io.Writer) {
 	fmt.Fprintf(w, "fugaro image refresh of %s (project %s, GCP project %s), workflows %s:\n", p.repo, p.lc.Name, p.lc.GCPProject, strings.Join(p.workflows, ", "))
 	fmt.Fprintln(w, "  1. preflight: done (nothing changed)")
 	for _, k := range p.kinds {
+		if p.kept[k] {
+			fmt.Fprintf(w, "  2. base %s: %s (a newer copy than this release's, kept as it is: nothing is copied)\n", k, p.want[k])
+			continue
+		}
 		fmt.Fprintf(w, "  2. base %s: %s (copied into your registry if it lacks it, after its own confirmation)\n", k, p.want[k])
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
