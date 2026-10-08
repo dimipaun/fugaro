@@ -18,12 +18,22 @@ import (
 // has run: this release's copy in the project's registry, or a newer copy an
 // earlier, newer CLI made (never downgraded), exactly what the images stage
 // records.
+//
+// It is safe on its own: it refuses a version that is not a release (a
+// development build) and a current entry that is not a managed release copy.
 func refreshBase(lc *localcfg.Config, kind, ver string) (string, error) {
+	if !releaseRE.MatchString(ver) {
+		return "", userErr("fugaro image refresh needs a release build of fugaro: %q is not a release version", ver)
+	}
 	host, err := infra.RegistryHost(lc)
 	if err != nil {
 		return "", userErr("%v", err)
 	}
-	if cur := lc.BaseImage(kind); isManaged(cur, host, kind) && newer(curVersion(cur, host, kind), ver) {
+	cur := lc.BaseImage(kind)
+	if cur != "" && !isManaged(cur, host, kind) {
+		return "", userErr("base_images.%s is %s: not a release image fugaro init copied, and fugaro image refresh never replaces one", kind, pluginwire.Printable(cur))
+	}
+	if cur != "" && newer(curVersion(cur, host, kind), ver) {
 		return cur, nil
 	}
 	dst, err := mirror.Dest(host, lc.GCPProject, "fugaro-"+kind, ver)
@@ -84,6 +94,9 @@ func readRefreshRecord(ctx context.Context, lc *localcfg.Config, slug, wf string
 // customBaseRefusal is decision D4's stop: the kinds whose base_images entry
 // is not a release image fugaro init copied, with the one fix.
 func customBaseRefusal(lc *localcfg.Config, lcPath string, kinds []string, again string) error {
+	if len(kinds) == 0 {
+		return userErr("no custom base image to refuse: every base_images entry of %s is a release image fugaro init copied", quoteWord(lcPath))
+	}
 	var refs, keys []string
 	for _, k := range kinds {
 		refs = append(refs, fmt.Sprintf("base_images.%s is %s", k, pluginwire.Printable(lc.BaseImage(k))))

@@ -35,6 +35,7 @@ You run it in a checkout of one repository, in your own terminal. Every confirma
 
 - It applies cloud changes (a registry copy, a Cloud Run job update, billable builds), so it refuses inside a coding agent's session with `initflow.AgentRefusal`. This check comes before any credential, file or network use. The command also needs a real terminal: each billable build is a typed confirmation, and `--yes`, `--json` and `--non-interactive` are not offered.
 - It never replaces a custom base image, never writes `fugaro.yaml`, never onboards a repository and never runs Terraform.
+- A hand-pushed image in the project's own registry under a release-looking tag (for example `fugaro-go:9.9.9`, or a leading-zero tag such as `0.06.0`) counts as a release copy. This is inherited from `init`'s rule; writing there already needs registry write access, so it is not a new exposure.
 - The check-job update writes only the image and the spec's base images, from the local config the operator just updated, with the operator's own credentials. An operator who applies `init --repo` already holds the `run.jobs.update` and `actAs` permissions on the build account that this needs.
 - Tests use fakes only: `gcpfake.Run` (with jobs patch), fake registries, `file://` and `mem://` buckets, and a fake Cloud Build. No test applies anything live, and nothing touches EdgeWeb or EdgeServer. The command handles no secrets.
 
