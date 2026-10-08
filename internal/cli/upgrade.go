@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -43,14 +42,6 @@ const (
 
 var stepStates = []stepState{stepCurrent, stepDone, stepStale, stepSkipped, stepFailed, stepNotRun}
 
-// stepNotImplemented is a placeholder step's state: the step does not exist
-// in this build, so nothing was checked or changed. It is never current and
-// never makes a checkout "nothing to do"; it does not change the exit code,
-// and the run ends with a "not checked:" line naming those steps. It is not
-// in stepStates: Tasks 6 and 7 of docs/plans/2026-10-08-upgrade.md replace
-// the placeholders with pluginStep and cloudStep and remove it.
-const stepNotImplemented stepState = "not implemented"
-
 type stepResult struct {
 	name   string // set by upgradeCheckout
 	state  stepState
@@ -72,14 +63,8 @@ type upgradeStep struct {
 	run  func(ctx context.Context, u *upgradeCtx) stepResult
 }
 
-// upgradeSteps run in this order for each checkout. cloud is a placeholder
-// until Task 7 puts cloudStep in its place.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", notImplementedStep}}
-
-// notImplementedStep stands for a step this build does not have.
-func notImplementedStep(context.Context, *upgradeCtx) stepResult {
-	return stepResult{state: stepNotImplemented, reason: "skipped in this build, nothing was checked or changed"}
-}
+// upgradeSteps run in this order for each checkout.
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", pluginStep}, {"cloud", cloudStep}}
 
 type checkoutResult struct {
 	path  string // as given
@@ -117,23 +102,22 @@ steps, stopping that checkout at the first step that fails:
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
-This build has the pin and plugin steps only: cloud prints "not implemented",
-checks and changes nothing, and the run ends with a "not checked:" line
-naming it; that does not change the exit code.
-
---local runs pin and plugin only. In a coding agent's session (CLAUDECODE and
-the like) the cloud step is always skipped, never attempted, with the
-command to run in your own terminal, and the exit code is 0 when the local
-steps succeeded. --check writes nothing, runs no claude command and makes
-no cloud call: it reads the settings file, Claude Code's record of installed
-plugins and the local project config, prints what each step would do and
-exits 1 when anything is stale (build records are not read). Without --yes,
---local or --check it needs a real terminal. There is no --json.
+--local runs pin and plugin only. Under --local and in a coding agent's
+session (CLAUDECODE and the like) the cloud step is skipped before it reads
+anything, never attempted, with the command to run in your own terminal, so
+the exit code is 0 when the local steps succeeded. --check writes nothing,
+runs no claude command and makes no cloud call: it reads the settings file,
+Claude Code's record of installed plugins and the local project config,
+prints what each step would do and exits 1 when anything is stale (build
+records are not read). Without --yes, --local or --check it needs a real
+terminal. There is no --json.
 
 Exit codes: 0 every checkout finished or had nothing to do; 1 a refusal, a
-failed local step or (with --check) something stale; 2 a cloud failure. The
-summary names each checkout's steps and, for one that stopped, the line to
-rerun.`,
+failed local step, a cloud step that cannot start from the checkout's files
+(a bad fugaro.yaml or origin, an unreadable config; with --check too) or
+(with --check) something stale; otherwise a failed cloud step exits with the
+refresh's own code, 2 for a cloud call that failed. The summary names each
+checkout's steps and, for one that stopped, the line to rerun.`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error { return runUpgrade(cmd, o, args) },
 	}
@@ -317,11 +301,7 @@ func upgradeCheckout(ctx context.Context, cmd *cobra.Command, o upgradeOptions, 
 			break
 		}
 	}
-	if missing := res.notImplemented(); len(missing) > 0 {
-		if res.failure() == nil {
-			fmt.Fprintf(w, "not checked: %s (not implemented in this build)\n", strings.Join(missing, ", "))
-		}
-	} else if res.nothingToDo() {
+	if res.nothingToDo() {
 		fmt.Fprintf(w, "nothing to do: %s is current", pluginwire.Printable(loc.Root))
 		if res.anySkipped() {
 			fmt.Fprint(w, " (apart from what the skipped steps name)")
@@ -359,17 +339,6 @@ func (c checkoutResult) nothingToDo() bool {
 	return len(c.steps) > 0
 }
 
-// notImplemented names the checkout's placeholder steps.
-func (c checkoutResult) notImplemented() []string {
-	var out []string
-	for _, s := range c.steps {
-		if s.state == stepNotImplemented {
-			out = append(out, s.name)
-		}
-	}
-	return out
-}
-
 func (c checkoutResult) anySkipped() bool {
 	for _, s := range c.steps {
 		if s.state == stepSkipped {
@@ -404,23 +373,10 @@ func printUpgradeSummary(w io.Writer, o upgradeOptions, results []checkoutResult
 			fmt.Fprintf(w, "    once that is fixed, rerun: %s\n", o.again(c.root))
 		}
 	}
-	var missing []string
-	for _, s := range upgradeSteps {
-		for _, c := range results {
-			if slices.Contains(c.notImplemented(), s.name) {
-				missing = append(missing, s.name)
-				break
-			}
-		}
-	}
-	if len(missing) > 0 {
-		fmt.Fprintf(w, "not checked: %s: this build does not implement them, so this run says nothing about them and the exit code does not count them\n", strings.Join(missing, ", "))
-	}
 }
 
 // upgradeExit is the worst exit code over every checkout: a failed step's
-// own, or 1 for a stale one (only --check reports stale). A step that is not
-// implemented counts for nothing: the summary's "not checked:" line names it.
+// own, or 1 for a stale one (only --check reports stale).
 func upgradeExit(results []checkoutResult) error {
 	code, failed, stale, checkouts := ExitOK, 0, 0, 0
 	for _, c := range results {

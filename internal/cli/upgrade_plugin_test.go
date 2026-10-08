@@ -85,12 +85,9 @@ func TestUpgradePluginCurrentRunsOnlyTheLists(t *testing.T) {
 	f := testutil.NewClaudePluginFake(t, ourMarket, userInstall("0.5.2"))
 	useFakeClaude(t, f)
 	root, _ := skillCheckout(t, wiredAt("v0.5.2"))
-	// Task 7 (a parallel PR) has not landed: the cloud step is still the
-	// "not implemented" placeholder, so a checkout with pin and plugin both
-	// current is not "nothing to do" yet (TestUpgradeUnimplementedStepsAreNeverCurrent),
-	// and the run ends with a "not checked: cloud" line instead.
+	// pin and plugin current, cloud skipped by --local: nothing to do.
 	out, _, err := executeStdin(t, "", "upgrade", "--local", root)
-	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") || !strings.Contains(out, "not checked: cloud") || strings.Contains(out, "nothing to do") {
+	if err != nil || len(f.Changes(t)) != 0 || !strings.Contains(out, "plugin: current: installed 0.5.2") || !strings.Contains(out, "nothing to do: "+root) {
 		t.Fatalf("%v, changes %q\n%s", err, f.Changes(t), out)
 	}
 	if strings.Contains(out, "claude changed") {
