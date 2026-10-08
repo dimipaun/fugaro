@@ -296,6 +296,9 @@ func TestPlanCheckJobRefusesAForeignOrMisshapenJob(t *testing.T) {
 			delete(e, "value")
 			e["valueSource"] = map[string]any{"secretKeyRef": map[string]any{"secret": "s", "version": "latest"}}
 		}, "not a plain value"},
+		"spec with a value and a valueSource": {func(j map[string]any) {
+			specEntry(j)["valueSource"] = map[string]any{"secretKeyRef": map[string]any{"secret": "s", "version": "latest"}}
+		}, "not a plain value"},
 		"another repo's spec": {func(j map[string]any) { setSpecRepo(j, "acme/other") }, `checks repository "acme/other"`},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -454,5 +457,86 @@ func TestNewRunServiceKeepsTheEndpoint(t *testing.T) {
 	s, _, err = newRunService(context.Background(), []option.ClientOption{option.WithoutAuthentication(), option.WithEndpoint("http://127.0.0.1:1/")})
 	if err != nil || s.BasePath != "http://127.0.0.1:1/" {
 		t.Fatalf("%v %s", err, s.BasePath)
+	}
+}
+
+// The job's execution tokens are never sent back (one could start an
+// execution): the patch body has neither, and the stored job is otherwise
+// what it was, except the image and the spec.
+func TestApplyCheckJobDropsExecutionTokens(t *testing.T) {
+	f, rs, owner := checkJobCloud(t, func(j map[string]any) {
+		j["startExecutionToken"] = "start-tok"
+		j["runExecutionToken"] = "run-tok"
+	})
+	ctx := context.Background()
+	before := f.run.JobJSON("proj-1234", "us-east5", rs.Check.Job)
+	if before["startExecutionToken"] == nil || before["runExecutionToken"] == nil {
+		t.Fatalf("fixture: %v", before)
+	}
+	u, err := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, owner, toNew)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyCheckJob(ctx, f.c, u); err != nil {
+		t.Fatal(err)
+	}
+	p := f.run.Patches()
+	if len(p) != 1 {
+		t.Fatalf("%d patches", len(p))
+	}
+	for _, k := range []string{"startExecutionToken", "runExecutionToken"} {
+		if _, ok := p[0][k]; ok {
+			t.Errorf("the patch body carries %s", k)
+		}
+	}
+	after := f.run.JobJSON("proj-1234", "us-east5", rs.Check.Job)
+	for _, j := range []map[string]any{before, after} {
+		container(j)["image"] = "IMAGE"
+		specEntry(j)["value"] = "SPEC"
+		delete(j, "etag")
+		delete(j, "startExecutionToken")
+		delete(j, "runExecutionToken")
+	}
+	b, _ := json.Marshal(before)
+	a, _ := json.Marshal(after)
+	if string(a) != string(b) {
+		t.Fatalf("the job changed beyond its image and spec:\nbefore %s\nafter  %s", b, a)
+	}
+}
+
+type recordingTransport struct {
+	paths []string
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.paths = append(r.paths, req.Method+" "+req.URL.Path)
+	return http.DefaultTransport.RoundTrip(req)
+}
+
+// The typed Run service and the raw calls (RunHTTP) go through one
+// transport: the HTTP client given in the options, so one set of
+// credentials, quota project and proxy settings serves both.
+func TestRunServiceAndRunHTTPShareOneTransport(t *testing.T) {
+	rt := &recordingTransport{}
+	hc := &http.Client{Transport: rt}
+	f := newCloud(t)
+	c, err := NewClients(context.Background(), f.options(hc), f.endpoints())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const typed = "projects/proj-1234/locations/us-east5/jobs/typed-probe"
+	const rawJob = "raw-probe"
+	if _, err := c.Run.Projects.Locations.Jobs.Get(typed).Context(context.Background()).Do(); !notFound(err) {
+		t.Fatalf("typed get: %v", err)
+	}
+	owner := CheckJobOwner{Repo: "acme/sandbox", Label: "acme_sandbox"}
+	if u, err := PlanCheckJob(context.Background(), c, "proj-1234", "us-east5", rawJob, owner, nil); u != nil || err != nil {
+		t.Fatalf("raw get: %+v %v", u, err)
+	}
+	seen := strings.Join(rt.paths, "\n")
+	for _, want := range []string{"GET /v2/" + typed, "GET /v2/projects/proj-1234/locations/us-east5/jobs/" + rawJob} {
+		if !strings.Contains(seen, want) {
+			t.Errorf("%q did not go through the given transport; saw:\n%s", want, seen)
+		}
 	}
 }

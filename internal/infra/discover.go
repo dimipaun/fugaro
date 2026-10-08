@@ -231,7 +231,6 @@ func describeCondition(c *Condition, description string) string {
 	return s
 }
 
-// notFound reports whether err is the API's 404.
 // newRunService is run.NewService(ctx, opts...) built on an HTTP client of
 // its own making, which it returns too: the client and endpoint are the
 // ones run.NewService itself would make from opts (the same defaults, in
@@ -259,6 +258,7 @@ func newRunService(ctx context.Context, opts []option.ClientOption) (*run.Servic
 	return s, hc, nil
 }
 
+// notFound reports whether err is the API's 404.
 func notFound(err error) bool {
 	var ae *googleapi.Error
 	return errors.As(err, &ae) && ae.Code == http.StatusNotFound

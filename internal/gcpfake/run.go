@@ -513,7 +513,7 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/executions"):
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
 	case r.Method == http.MethodPatch && isJobPath(p):
-		f.patchJob(w, p, body)
+		f.patchJob(w, r, p, body)
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
 	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
@@ -599,11 +599,17 @@ func (f *Run) Patches() []map[string]any {
 // get gave; a stale one is refused (409 ABORTED), as the real API refuses a
 // conflicting update. The body replaces the whole stored job, as the real
 // API replaces the job (it has no update mask), so a field the body leaves
-// out is gone from the next jobs get.
-func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
+// out is gone from the next jobs get. A body whose name is another job's
+// and any updateMask are refused (400): the client sends the whole job under
+// its own name and never a mask.
+func (f *Run) patchJob(w http.ResponseWriter, r *http.Request, p string, body []byte) {
 	project, region, name, _ := jobPath(p)
 	if f.faults.PatchStatus != 0 {
 		writeError(w, f.faults.PatchStatus, http.StatusText(f.faults.PatchStatus), "injected failure")
+		return
+	}
+	if r.URL.Query().Has("updateMask") {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "updateMask is not accepted: jobs.patch takes the whole job")
 		return
 	}
 	j := f.jobs[name]
@@ -612,6 +618,7 @@ func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
 		return
 	}
 	var in struct {
+		Name     string `json:"name"`
 		Etag     string `json:"etag"`
 		Template struct {
 			Template struct {
@@ -628,6 +635,12 @@ func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
 	raw, err := decodeJSON(body)
 	if err != nil || json.Unmarshal(body, &in) != nil || len(in.Template.Template.Containers) == 0 {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "not a job")
+		return
+	}
+	// A name in the body is the URL's job (by project id or number).
+	if in.Name != "" && in.Name != "projects/"+project+"/locations/"+region+"/jobs/"+name &&
+		in.Name != "projects/"+f.project(project)+"/locations/"+region+"/jobs/"+name {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "the body names "+in.Name+", not the job in the URL")
 		return
 	}
 	if in.Etag != fmt.Sprintf("e%d", j.etag) {

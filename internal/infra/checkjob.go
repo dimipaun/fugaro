@@ -225,6 +225,9 @@ func PlanCheckJob(ctx context.Context, c *Clients, gcpProject, region, job strin
 	}
 	ct["image"] = newImage
 	entry["value"] = spec
+	// Sending an execution token back could start an execution: never.
+	delete(j, "startExecutionToken")
+	delete(j, "runExecutionToken")
 	if u.body, err = json.Marshal(j); err != nil {
 		return nil, err
 	}

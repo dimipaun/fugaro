@@ -6,7 +6,7 @@
 
 **Architecture:** The command lives in `internal/cli/image_refresh.go` and reuses init's pieces in one process. Preflight is read only and prints the whole plan. Step 2 is the images stage, `imagesStage` (`init_images.go`), restricted to the selected kinds through a new `only` field. Step 3 is a new direct Cloud Run job update in `internal/infra/checkjob.go`: GET the check job, rewrite its container image and the `base_images` of `FUGARO_CHECK_SPEC` with the same `CheckJobSpec` marshalling `infra.Repo` uses, then PATCH the same job object with its etag. Step 4 uses init's first-build submit-and-wait, extracted into `submitAndWait` behind a `newCloudBuilder` seam. The confirmations are the existing ones: `confirmOrdinary` for the copy, `r.confirm` for the job update, and `askTyped` for each build. Terraform is not run, and its module is unchanged (D7).
 
-**Tech Stack:** Go 1.27, cobra, `google.golang.org/api/run/v2` (`Jobs.Get`, `Jobs.Patch`, `Operations.Get`), `internal/mirror`, `internal/imagecheck`, `internal/initflow`, `internal/blobx`, the fakes `internal/gcpfake` (`Run`, registries, `Build`) and the init test rigs (`newInitRig`, `newImagesRig`, `newAnchorModeRig`).
+**Tech Stack:** Go 1.27, cobra, `google.golang.org/api/run/v2` (`Operations.Get`, and its HTTP client for the raw jobs get and patch of Task 2), `internal/mirror`, `internal/imagecheck`, `internal/initflow`, `internal/blobx`, the fakes `internal/gcpfake` (`Run`, registries, `Build`) and the init test rigs (`newInitRig`, `newImagesRig`, `newAnchorModeRig`).
 
 **Spec:** [docs/design/image-refresh.md](../design/image-refresh.md)
 
@@ -34,7 +34,7 @@
   - Generated roots, the tfvars golden and `TestGeneratedRootValidates` are unchanged.
   - An operator whose local config is older reverts the job on their next `init --repo`, image and spec together, as today.
 
-  Unverified until the post-release sandbox check (Task 12): that the live API accepts the round-tripped output-only fields, and that the provider shows no diff afterwards. Veto alternative: `ignore_changes` on both `containers[0].image` and `containers[0].env`, with `init --repo` writing the whole check-job env directly after every apply (two more tasks: the module change with its generated-root test, and a `SyncCheckJob` run by the repo engine).
+  Unverified until the post-release sandbox check (Task 12): that the live API accepts the round-tripped output-only fields, that it enforces the body etag, that the patch starts no execution, and that the provider shows no diff afterwards. Veto alternative: `ignore_changes` on both `containers[0].image` and `containers[0].env`, with `init --repo` writing the whole check-job env directly after every apply (two more tasks: the module change with its generated-root test, and a `SyncCheckJob` run by the repo engine).
 - **D8. The "current" rule for builds** (`refreshVerdict`):
   - no record: build;
   - unreadable record: rebuild, like a record that names no base;
@@ -283,13 +283,13 @@ git commit -m "gcpfake: Cloud Run jobs patch with etag"
 - Test: `internal/infra/checkjob_test.go`
 
 **Interfaces:**
-- Consumes: `Clients.Run` (`*run.Service`), `notFound(err)`, `CheckJobSpec`, `CheckSpecEnv`, `Repo`, the test fixtures `sandboxInputs`, `newCloud`, `managed`, `with`, and `gcp.LabelRepo`, `gcp.LabelRole`, `gcp.RoleCheck`.
+- Consumes: `Clients.Run` (`*run.Service`) and `Clients.RunHTTP` (the HTTP client it sends through, from `newRunService`, for the raw job calls), `notFound(err)`, `CheckJobSpec`, `CheckSpecEnv`, `Repo`, the test fixtures `sandboxInputs`, `newCloud`, `managed`, `with`, and `gcp.LabelRepo`, `gcp.LabelRole`, `gcp.RoleCheck`.
 - Produces:
   ```go
   var ErrCheckJobShape = errors.New("the check job is not as fugaro init --repo made it")
   func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImage string, err error)
   type CheckJobOwner struct{ Repo, Label string } // RepoSpec.Name, RepoSpec.Label
-  type CheckJobUpdate struct{ /* unexported: the job's raw JSON as read (etag included), image and spec changed */ }
+  type CheckJobUpdate struct{ /* unexported: job name, old and new image and spec, the PATCH body (the job's raw JSON as read, etag included, image and spec changed, execution tokens dropped), applied flag */ }
   func (u *CheckJobUpdate) Job() string // projects/<p>/locations/<r>/jobs/<name>
   func (u *CheckJobUpdate) OldImage() string
   func (u *CheckJobUpdate) NewImage() string
@@ -301,304 +301,30 @@ git commit -m "gcpfake: Cloud Run jobs patch with etag"
   var checkJobPoll = 2 * time.Second // tests set 0
   ```
 
-- [ ] **Step 1: Write the failing tests**
-
-```go
-package infra
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"strings"
-	"testing"
-
-	"github.com/dimipaun/fugaro/internal/backend/gcp"
-)
-
-const (
-	oldBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-0123abc"
-	newBase = "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.5.1"
-)
-
-// The rewrite is byte for byte what Repo renders for the new base: the next
-// init --repo from that local config plans no change to the job.
-func TestRewriteCheckSpecEqualsTerraformRendering(t *testing.T) {
-	before, err := Repo(sandboxInputs(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	in := sandboxInputs(t, "")
-	in.LC.BaseImages = map[string]string{"web-node": newBase} // the fixture's local config already sets base_images
-	after, err := Repo(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if before.Check.Image != oldBase || after.Check.Image != newBase {
-		t.Fatalf("fixture: %s, %s", before.Check.Image, after.Check.Image)
-	}
-	spec, image, err := RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, map[string]string{"web-node": newBase, "go": "ignored: the spec names no go"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if spec != after.Check.Env[CheckSpecEnv] || image != after.Check.Image {
-		t.Fatalf("rewritten:\n%s %s\nrendered:\n%s %s", spec, image, after.Check.Env[CheckSpecEnv], after.Check.Image)
-	}
-	// A kind bases lacks keeps its base.
-	if spec, image, err = RewriteCheckSpec(before.Check.Env[CheckSpecEnv], before.Check.Image, nil); err != nil ||
-		spec != before.Check.Env[CheckSpecEnv] || image != oldBase {
-		t.Fatalf("no bases: %v %s %s", err, spec, image)
-	}
-}
-
-func TestRewriteCheckSpecRefusals(t *testing.T) {
-	for name, tc := range map[string]struct{ raw, image string }{
-		"not json":              {"{", oldBase},
-		"image names no kind":   {`{"base_images":{"web-node":"` + oldBase + `"}}`, "elsewhere/img:1"},
-	} {
-		if _, _, err := RewriteCheckSpec(tc.raw, tc.image, map[string]string{"web-node": newBase}); !errors.Is(err, ErrCheckJobShape) {
-			t.Errorf("%s: %v", name, err)
-		}
-	}
-}
-
-// checkJobCloud is the fake with acme/sandbox's check job as init --repo
-// made it from oldBase, plus an env entry and labels that must survive.
-func checkJobCloud(t *testing.T) (*cloud, RepoSpec) {
-	t.Helper()
-	f := newCloud(t)
-	rs, err := Repo(sandboxInputs(t, ""))
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.run.SetJob(rs.Check.Job, with(managed, gcp.LabelRepo, rs.Label, gcp.LabelRole, gcp.RoleCheck), rs.Check.Image)
-	f.run.SetJobEnv(rs.Check.Job, map[string]string{CheckSpecEnv: rs.Check.Env[CheckSpecEnv], "FUGARO_PROJECT": "aurora"})
-	old := checkJobPoll
-	checkJobPoll = 0
-	t.Cleanup(func() { checkJobPoll = old })
-	return f, rs
-}
-
-func TestApplyCheckJobChangesOnlyImageAndSpec(t *testing.T) {
-	f, rs := checkJobCloud(t)
-	ctx := context.Background()
-	u, err := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, map[string]string{"web-node": newBase})
-	if err != nil || u == nil || !u.Changes() || u.OldImage != oldBase || u.NewImage != newBase || !strings.Contains(u.NewSpec, newBase) {
-		t.Fatalf("plan: %v %+v", err, u)
-	}
-	if len(f.run.Patches()) != 0 {
-		t.Fatal("planning wrote")
-	}
-	if err := ApplyCheckJob(ctx, f.c, u); err != nil {
-		t.Fatal(err)
-	}
-	p := f.run.Patches()
-	if len(p) != 1 {
-		t.Fatalf("%d patches", len(p))
-	}
-	data, _ := json.Marshal(p[0])
-	for _, want := range []string{`"fugaro_role":"check"`, `"FUGARO_PROJECT"`, `"aurora"`, `"memory":"512Mi"`, `"image":"` + newBase + `"`} {
-		if !strings.Contains(string(data), want) {
-			t.Errorf("the patch lacks %s: %s", want, data)
-		}
-	}
-	// Now current: nothing to do, nothing written.
-	u, err = PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, map[string]string{"web-node": newBase})
-	if err != nil || u.Changes() {
-		t.Fatalf("replan: %v %+v", err, u)
-	}
-	if err := ApplyCheckJob(ctx, f.c, u); err != nil || len(f.run.Patches()) != 1 {
-		t.Fatalf("a no-op apply wrote: %v", err)
-	}
-	// No check job at all.
-	if u, err := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", "fugarochk-none", nil); u != nil || err != nil {
-		t.Fatalf("missing job: %+v %v", u, err)
-	}
-}
-
-func TestApplyCheckJobRefusesAConcurrentChange(t *testing.T) {
-	f, rs := checkJobCloud(t)
-	ctx := context.Background()
-	u, err := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, map[string]string{"web-node": newBase})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Someone else updates the job between the read and the write.
-	other, _ := PlanCheckJob(ctx, f.c, "proj-1234", "us-east5", rs.Check.Job, map[string]string{"web-node": newBase + "-x"})
-	if err := ApplyCheckJob(ctx, f.c, other); err != nil {
-		t.Fatal(err)
-	}
-	err = ApplyCheckJob(ctx, f.c, u)
-	if err == nil || !strings.Contains(err.Error(), "changed since it was read") {
-		t.Fatalf("stale write: %v", err)
-	}
-	if len(f.run.Patches()) != 1 {
-		t.Fatal("the stale write landed")
-	}
-}
-```
+- [ ] **Step 1: Write the failing tests** in `internal/infra/checkjob_test.go`. The file is the spec; the code that follows must not be re-derived from older text. Tests (names are what the plan and the PR cite):
+  - `TestRewriteCheckSpecEqualsTerraformRendering`: the rewrite equals `Repo`'s rendering for the new base, byte for byte; a kind `bases` lacks keeps its base. `TestRewriteCheckSpecRefusals`: not JSON, image naming no kind, unknown keys, other formatting when a base moves: `ErrCheckJobShape`.
+  - Fixture: `checkJobJSON(t, rs, edit)` builds the job as the API returns it (labels, `etag`, `maxRetries: 0`, unknown fields at job and task level, a big number, a `valueSource` env entry); `checkJobCloud(t, edit)` stores it with `SetJobJSON` and returns `(*cloud, RepoSpec, CheckJobOwner)`.
+  - `TestApplyCheckJobChangesOnlyImageAndSpec`: after plan and apply the stored job equals the one read except the image, the spec value and the etag (so `maxRetries: 0` and unknown fields survive); a re-plan is no change and writes nothing; a missing job is `nil, nil`.
+  - `TestApplyCheckJobDropsExecutionTokens`: a job carrying `startExecutionToken` and `runExecutionToken` is patched without them and is otherwise unchanged.
+  - `TestPlanCheckJobIgnoresASpecsFormWhenNothingMoves`; `TestPlanCheckJobRefusesAForeignOrMisshapenJob` (labels, container count, missing, doubled, secret-sourced and value-plus-`valueSource` spec entries, another repository's spec, an empty owner); `TestPlanCheckJobReportsAFailedRead`.
+  - `TestApplyCheckJobRefusesAConcurrentChange` (stale etag: the error says it changed since it was read, and nothing lands), `TestApplyCheckJobKeepsOtherRefusalsPlain` (other errors do not carry the conflict hint), `TestApplyCheckJobWaitsForTheOperation`, `TestApplyCheckJobRefusesAForeignOrSpentPlan`.
+  - `TestNewRunServiceKeepsTheEndpoint` and `TestRunServiceAndRunHTTPShareOneTransport` (a recording `RoundTripper` given as the options' HTTP client sees both the typed and the raw calls).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `go test ./internal/infra/ -run 'TestRewriteCheckSpec|TestApplyCheckJob'`
+Run: `go test ./internal/infra/ -run 'TestRewriteCheckSpec|TestApplyCheckJob|TestPlanCheckJob|TestRunService'`
 Expected: FAIL: `undefined: RewriteCheckSpec`.
 
-- [ ] **Step 3: Write the implementation**
-
-`internal/infra/checkjob.go`:
-
-```go
-package infra
-
-import (
-	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"maps"
-	"slices"
-	"strings"
-	"time"
-
-	run "google.golang.org/api/run/v2"
-)
-
-// The daily image check job's base, set directly (design image-refresh.md,
-// "The check job and Terraform"). fugaro image refresh moves the job's
-// container image and FUGARO_CHECK_SPEC's base_images together, to exactly
-// what Repo renders from the same local config, so the next init --repo
-// plans no change. Terraform's module is unchanged: it cannot ignore one env
-// entry, and the bytes it would write are these.
-
-// ErrCheckJobShape marks a check job that is not as fugaro init --repo made
-// it: a user error whose fix is init --repo.
-var ErrCheckJobShape = errors.New("the check job is not as fugaro init --repo made it")
-
-// checkJobPoll is the wait between reads of a job update's operation; tests
-// set it to 0.
-var checkJobPoll = 2 * time.Second
-
-const checkJobPolls = 60
-
-// RewriteCheckSpec is the check job's FUGARO_CHECK_SPEC raw and image with
-// every base kind the spec names moved to bases[kind] (a kind bases lacks
-// keeps its base; a kind the spec does not name is not added). The image
-// becomes the new base of the kind whose old base it was. The spec is
-// marshalled as Repo marshals it.
-func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImage string, err error) {
-	var s CheckJobSpec
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		return "", "", fmt.Errorf("%w: its %s is not a check spec (%v); run fugaro init --repo in the checkout", ErrCheckJobShape, CheckSpecEnv, err)
-	}
-	kind := ""
-	for _, k := range slices.Sorted(maps.Keys(s.BaseImages)) {
-		if s.BaseImages[k] == image {
-			kind = k
-			break
-		}
-	}
-	if kind == "" {
-		return "", "", fmt.Errorf("%w: its image %s is none of its spec's base images (%s); run fugaro init --repo in the checkout", ErrCheckJobShape, image, strings.Join(slices.Sorted(maps.Values(s.BaseImages)), ", "))
-	}
-	for k := range s.BaseImages {
-		if b := bases[k]; b != "" {
-			s.BaseImages[k] = b
-		}
-	}
-	out, err := json.Marshal(s)
-	if err != nil {
-		return "", "", err
-	}
-	return string(out), s.BaseImages[kind], nil
-}
-
-// CheckJobUpdate is a planned direct update of a repository's daily check
-// job: its container's image and FUGARO_CHECK_SPEC, nothing else.
-type CheckJobUpdate struct {
-	Job                string
-	OldImage, NewImage string
-	OldSpec, NewSpec   string
-	job                *run.GoogleCloudRunV2Job
-}
-
-// Changes reports whether the update changes anything.
-func (u *CheckJobUpdate) Changes() bool { return u.OldImage != u.NewImage || u.OldSpec != u.NewSpec }
-
-// PlanCheckJob reads the check job and plans moving it to bases
-// (RewriteCheckSpec). It is read-only; nil, nil when there is no such job.
-func PlanCheckJob(ctx context.Context, c *Clients, gcpProject, region, job string, bases map[string]string) (*CheckJobUpdate, error) {
-	full := "projects/" + gcpProject + "/locations/" + region + "/jobs/" + job
-	j, err := c.Run.Projects.Locations.Jobs.Get(full).Context(ctx).Do()
-	switch {
-	case notFound(err):
-		return nil, nil
-	case err != nil:
-		return nil, fmt.Errorf("reading Cloud Run job %s: %w", job, err)
-	}
-	if j.Template == nil || j.Template.Template == nil || len(j.Template.Template.Containers) == 0 {
-		return nil, fmt.Errorf("%w: job %s has no container; run fugaro init --repo in the checkout", ErrCheckJobShape, job)
-	}
-	ct := j.Template.Template.Containers[0]
-	var raw *run.GoogleCloudRunV2EnvVar
-	for _, e := range ct.Env {
-		if e.Name == CheckSpecEnv {
-			raw = e
-		}
-	}
-	if raw == nil {
-		return nil, fmt.Errorf("%w: job %s has no %s; run fugaro init --repo in the checkout", ErrCheckJobShape, job, CheckSpecEnv)
-	}
-	spec, image, err := RewriteCheckSpec(raw.Value, ct.Image, bases)
-	if err != nil {
-		return nil, err
-	}
-	return &CheckJobUpdate{Job: full, OldImage: ct.Image, NewImage: image, OldSpec: raw.Value, NewSpec: spec, job: j}, nil
-}
-
-// ApplyCheckJob writes u: the job exactly as read, with only its container's
-// image and FUGARO_CHECK_SPEC changed. Cloud Run v2's jobs.patch takes the
-// whole job (it has no update mask), so the read object goes back, with the
-// read etag: a change made since is refused. It waits for the operation.
-func ApplyCheckJob(ctx context.Context, c *Clients, u *CheckJobUpdate) error {
-	if !u.Changes() {
-		return nil
-	}
-	ct := u.job.Template.Template.Containers[0]
-	ct.Image = u.NewImage
-	for _, e := range ct.Env {
-		if e.Name == CheckSpecEnv {
-			e.Value = u.NewSpec
-		}
-	}
-	op, err := c.Run.Projects.Locations.Jobs.Patch(u.Job, u.job).Context(ctx).Do()
-	if err != nil {
-		return fmt.Errorf("updating Cloud Run job %s (refused if it changed since it was read: rerun): %w", u.Job, err)
-	}
-	for i := 0; !op.Done; i++ {
-		if i == checkJobPolls {
-			return fmt.Errorf("updating Cloud Run job %s: not done after %d checks; see gcloud run jobs describe", u.Job, checkJobPolls)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(checkJobPoll):
-		}
-		if op, err = c.Run.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do(); err != nil {
-			return fmt.Errorf("updating Cloud Run job %s: %w", u.Job, err)
-		}
-	}
-	if op.Error != nil {
-		return fmt.Errorf("updating Cloud Run job %s: %s", u.Job, op.Error.Message)
-	}
-	return nil
-}
-```
-
-The stale-etag test expects the text `changed since it was read`, so the 409's error must reach the message. The wrapped `%w` keeps the API error after that text, which satisfies the test.
+- [ ] **Step 3: Write the implementation** in `internal/infra/checkjob.go`, as the file there (the Interfaces above are its signatures). What it must do, and what the tests above pin:
+  - `RewriteCheckSpec`: unmarshal the spec into `CheckJobSpec`; the image names the kind whose base it is; move every kind `bases` has; no move returns `raw`, `image` untouched whatever the form; a move needs `raw` to be exactly `json.Marshal` of `CheckJobSpec` with no unknown keys (else `ErrCheckJobShape`, telling the operator to run `init --repo`).
+  - `PlanCheckJob(ctx, c, gcpProject, region, job, owner, bases)`: refuses an empty `owner`; reads the job with a raw `GET` through `c.RunHTTP` (`runJSON`), decoded with `UseNumber` into `map[string]any` (never `run.GoogleCloudRunV2Job`: its `omitempty` drops `maxRetries: 0`, and every field the client does not model, and a patch without an update mask resets them); 404 is `nil, nil`; the job must carry `fugaro=managed`, `fugaro_role=check`, `fugaro_repo=owner.Label`, have exactly one container with an image, exactly one `FUGARO_CHECK_SPEC` that is a plain `value` (no `valueSource`, even beside a `value`) whose `repo` is `owner.Repo`, else `ErrCheckJobShape` (the message names the fix, `init --repo`). With a change it needs the read `etag`, sets the container's `image` and the entry's `value`, deletes the job-level `startExecutionToken` and `runExecutionToken` (sending one back can start an execution), and keeps the marshalled map as the PATCH body.
+  - `CheckJobUpdate` has unexported fields and the accessors `Job()`, `OldImage()`, `NewImage()`, `OldSpec()`, `NewSpec()`, `Changes()` (nil-safe).
+  - `ApplyCheckJob(ctx, c, u)`: no changes is a no-op; a plan not from `PlanCheckJob`, or already applied, is refused; the body goes by raw `PATCH` with no `updateMask`; only a 409 or 412 gets "it changed since it was read; rerun", other errors stay plain; the operation is polled (`checkJobPoll`, `checkJobPolls`) with the typed `Operations.Get`; an operation error is returned.
+  - `runJSON` sends raw calls through `c.RunHTTP` to `c.Run.BasePath`; `newRunService` (in `discover.go`) builds `c.Run` on that same HTTP client, with `run.NewService`'s own defaults, so credentials, quota project and endpoint override are shared.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `go test ./internal/infra/ -run 'TestRewriteCheckSpec|TestApplyCheckJob|TestRepoSpec'`
+Run: `go test ./internal/infra/ ./internal/gcpfake/ -count=1`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -2269,4 +1995,8 @@ git commit -m "docs: one command, fugaro image refresh, instead of the four-step
   1. `fugaro image refresh`;
   2. `fugaro init --repo --plan-only`, which must show no change to the check job.
 
-  This verifies D7's two unverified points: that the API accepts the round-tripped job, and that the provider sees no diff.
+  This verifies D7's unverified points, on the sandbox only:
+  - **The raw round-tripped body is accepted.** Cloud Run v2 takes the job as read, output-only fields included (`uid`, `generation`, `etag`, `terminalCondition` and the like), with no update mask. If it rejects them, the fix is to drop the offending output-only keys from the body in `PlanCheckJob` (as the execution tokens are), pinned by a test.
+  - **The body etag is enforced.** `Job.etag` is output-only in the proto, so the server may ignore it: the fake always enforces it, which would hide that the concurrent-change refusal does nothing live. Test it by reading the job, changing it another way (for example `gcloud run jobs update` of a label), then sending the stale body: the expected answer is 409 or 412. If the server accepts it, the refusal is not real. Fallback: say so in the confirmation text and the docs (a concurrent `init --repo` can be overwritten, and the next `init --repo` restores its own rendering), or narrow the window by re-reading the job just before the patch and refusing if its `updateTime`, `generation` or `etag` moved; do not claim a guarantee the API does not give.
+  - **No execution starts as a side effect.** After the patch, `gcloud run jobs executions list --job <check job>` shows no new execution, with the job's execution tokens dropped from the body as the code does.
+  - **The provider sees no diff** afterwards (`init --repo --plan-only` above).

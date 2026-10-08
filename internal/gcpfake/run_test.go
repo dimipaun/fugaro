@@ -253,3 +253,32 @@ func TestRunFakeJobFaults(t *testing.T) {
 		t.Fatalf("failed op: %v %v", o, image())
 	}
 }
+
+// A patch whose body names another job, or that carries an updateMask, is
+// refused and changes nothing: the client sends the whole job under its own
+// name and never a mask.
+func TestRunFakeRefusesAForeignNameAndAnUpdateMask(t *testing.T) {
+	f := NewRun(t)
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugarochk-x"
+	f.SetJobJSON("fugarochk-x", `{"name":"projects/proj-1/locations/r1/jobs/fugarochk-x","template":{"template":{"containers":[{"image":"img:1"}]}}}`)
+	_, j := jobCall(t, f, http.MethodGet, path, nil)
+	j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "img:2"
+
+	other := map[string]any{}
+	for k, v := range j {
+		other[k] = v
+	}
+	other["name"] = "projects/proj-1/locations/r1/jobs/fugarochk-other"
+	if code, _ := jobCall(t, f, http.MethodPatch, path, other); code != http.StatusBadRequest {
+		t.Fatalf("another job's name: %d", code)
+	}
+	if code, _ := jobCall(t, f, http.MethodPatch, path+"?updateMask=template", j); code != http.StatusBadRequest {
+		t.Fatalf("updateMask: %d", code)
+	}
+	if len(f.Patches()) != 0 {
+		t.Fatal("a refused patch landed")
+	}
+	if code, _ := jobCall(t, f, http.MethodPatch, path, j); code != http.StatusOK || len(f.Patches()) != 1 {
+		t.Fatalf("the job's own name: %d", code)
+	}
+}
