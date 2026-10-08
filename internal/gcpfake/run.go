@@ -18,8 +18,8 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, jobs get, list and patch, and executions get, list (including
-// across jobs/-) and cancel.
+// jobs.run, jobs get, list and patch, operations get (of a patch), and
+// executions get, list (including across jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -56,6 +56,37 @@ type Run struct {
 	seq      int
 	ops      int
 	patches  []map[string]any
+	faults   JobFaults
+	pending  map[string]*runOp // a patch's operations by name
+}
+
+// JobFaults inject failures into jobs get and patch and into a patch's
+// operation. The zero value injects none.
+type JobFaults struct {
+	// GetStatus and PatchStatus, when non-zero, make jobs get and jobs
+	// patch answer that HTTP status, changing nothing.
+	GetStatus, PatchStatus int
+	// Polls is how many operations get answer not done before the patch's
+	// operation is done; when it is non-zero the patch itself answers not
+	// done, and the job changes only when the operation is done.
+	Polls int
+	// OpError, when set, ends the patch's operation with this error, and
+	// the job is left unchanged.
+	OpError string
+}
+
+type runOp struct {
+	polls int    // operations get still to answer not done
+	err   string // the operation's error when done
+	apply func() // the patch's change, made when the operation is done without error
+}
+
+// done finishes op: its change is made unless it failed; f.mu is held.
+func (op *runOp) done() {
+	if op.err == "" && op.apply != nil {
+		op.apply()
+		op.apply = nil
+	}
 }
 
 // RunCall is one jobs.run request.
@@ -74,6 +105,10 @@ type runJob struct {
 	env         map[string]string // the container's env
 	n           int
 	etag        int
+	// raw, when set, is the whole job as jobs get returns it (etag aside):
+	// what SetJobJSON stored or a patch sent. It wins over the fields above
+	// for jobs get.
+	raw map[string]any
 }
 
 type execKey struct{ job, short string }
@@ -90,7 +125,7 @@ type runExec struct {
 // NewRun starts a Cloud Run fake that lives until the test ends.
 func NewRun(t *testing.T) *Run {
 	t.Helper()
-	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}}
+	f := &Run{jobs: map[string]*runJob{}, execs: map[execKey]*runExec{}, pending: map[string]*runOp{}}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -112,7 +147,78 @@ func (f *Run) SetJob(name string, labels map[string]string, image string) {
 		j = &runJob{cpu: "1", memory: "512Mi"}
 		f.jobs[name] = j
 	}
-	j.labels, j.image = maps.Clone(labels), image
+	j.labels, j.image, j.raw = maps.Clone(labels), image, nil
+}
+
+// SetJobJSON creates job name, or replaces it, with body as the whole job
+// jobs get returns (with the fake's etag in place of body's), every field
+// and zero value kept, those the Go client doesn't model too. A patch then
+// replaces the whole body, as Cloud Run's jobs.patch replaces the job.
+// SetJob, SetJobEnv and SetJobTimeout drop the body.
+func (f *Run) SetJobJSON(name, body string) {
+	raw, err := decodeJSON([]byte(body))
+	if err != nil {
+		f.t.Fatalf("gcpfake: SetJobJSON(%q): %v", name, err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	j := f.jobs[name]
+	if j == nil {
+		j = &runJob{cpu: "1", memory: "512Mi"}
+		f.jobs[name] = j
+	}
+	j.raw = raw
+}
+
+// JobJSON is job name as jobs get would return it in project and region.
+func (f *Run) JobJSON(project, region, name string) map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.jobs[name] == nil {
+		f.t.Fatalf("gcpfake: JobJSON(%q): no such job", name)
+	}
+	return f.jobBody(project, region, name)
+}
+
+// SetJobFaults sets the failures jobs get and patch inject.
+func (f *Run) SetJobFaults(j JobFaults) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.faults = j
+}
+
+// decodeJSON decodes a JSON object without loss: numbers stay json.Number.
+func decodeJSON(b []byte) (map[string]any, error) {
+	d := json.NewDecoder(strings.NewReader(string(b)))
+	d.UseNumber()
+	var m map[string]any
+	if err := d.Decode(&m); err != nil {
+		return nil, err
+	}
+	if d.More() {
+		return nil, fmt.Errorf("trailing data after the object")
+	}
+	return m, nil
+}
+
+// cloneJSON deep-copies a decoded JSON value.
+func cloneJSON(v any) any {
+	switch v := v.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, x := range v {
+			out[k] = cloneJSON(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, x := range v {
+			out[i] = cloneJSON(x)
+		}
+		return out
+	default:
+		return v
+	}
 }
 
 // SetJobEnv sets the env of job's container, as jobs get reports it.
@@ -123,7 +229,7 @@ func (f *Run) SetJobEnv(job string, env map[string]string) {
 	if j == nil {
 		f.t.Fatalf("gcpfake: SetJobEnv(%q): no such job", job)
 	}
-	j.env = maps.Clone(env)
+	j.env, j.raw = maps.Clone(env), nil
 }
 
 // SetJobTimeout sets the task timeout the fake reports for job in jobs.list.
@@ -134,7 +240,7 @@ func (f *Run) SetJobTimeout(job string, d time.Duration) {
 	if j == nil {
 		f.t.Fatalf("gcpfake: SetJobTimeout(%q): no such job", job)
 	}
-	j.timeout = d
+	j.timeout, j.raw = d, nil
 }
 
 // RunRequests returns every :run request the fake has answered, refused ones
@@ -410,6 +516,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.patchJob(w, p, body)
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
+	case r.Method == http.MethodGet && strings.Contains(p, "/operations/"):
+		f.getOp(w, p)
 	case r.Method == http.MethodGet:
 		id, ok := backend.ParseExecution(p)
 		if !ok {
@@ -432,14 +540,29 @@ func isJobPath(p string) bool {
 	return ok && job != "-"
 }
 
-// getJob answers jobs get with the job's labels and its template: the
-// container's image and limits, and the task timeout when set.
+// getJob answers jobs get: the stored body when there is one, else the
+// job's labels and its template (the container's image and limits, and the
+// task timeout when set).
 func (f *Run) getJob(w http.ResponseWriter, p string) {
 	project, region, name, _ := jobPath(p)
-	j := f.jobs[name]
-	if j == nil {
+	if f.faults.GetStatus != 0 {
+		writeError(w, f.faults.GetStatus, http.StatusText(f.faults.GetStatus), "injected failure")
+		return
+	}
+	if f.jobs[name] == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Resource '"+name+"' of kind 'JOB' in region '"+region+"' in project '"+project+"' does not exist.")
 		return
+	}
+	writeJSON(w, http.StatusOK, f.jobBody(project, region, name))
+}
+
+// jobBody is job name's jobs get answer; f.mu is held.
+func (f *Run) jobBody(project, region, name string) map[string]any {
+	j := f.jobs[name]
+	if j.raw != nil {
+		out := cloneJSON(j.raw).(map[string]any)
+		out["etag"] = fmt.Sprintf("e%d", j.etag)
+		return out
 	}
 	container := map[string]any{
 		"image":     j.image,
@@ -462,7 +585,7 @@ func (f *Run) getJob(w http.ResponseWriter, p string) {
 		out["labels"] = maps.Clone(j.labels)
 	}
 	out["etag"] = fmt.Sprintf("e%d", j.etag)
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 // Patches are the bodies of the jobs patch requests the fake accepted.
@@ -474,9 +597,15 @@ func (f *Run) Patches() []map[string]any {
 
 // patchJob is jobs.patch: the whole job comes back, carrying the etag jobs
 // get gave; a stale one is refused (409 ABORTED), as the real API refuses a
-// conflicting update. The fake keeps the container's image and plain env.
+// conflicting update. The body replaces the whole stored job, as the real
+// API replaces the job (it has no update mask), so a field the body leaves
+// out is gone from the next jobs get.
 func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
 	project, region, name, _ := jobPath(p)
+	if f.faults.PatchStatus != 0 {
+		writeError(w, f.faults.PatchStatus, http.StatusText(f.faults.PatchStatus), "injected failure")
+		return
+	}
 	j := f.jobs[name]
 	if j == nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+name+" not found")
@@ -496,8 +625,8 @@ func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
 			} `json:"template"`
 		} `json:"template"`
 	}
-	var raw map[string]any
-	if json.Unmarshal(body, &in) != nil || json.Unmarshal(body, &raw) != nil || len(in.Template.Template.Containers) == 0 {
+	raw, err := decodeJSON(body)
+	if err != nil || json.Unmarshal(body, &in) != nil || len(in.Template.Template.Containers) == 0 {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "not a job")
 		return
 	}
@@ -505,19 +634,52 @@ func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
 		writeError(w, http.StatusConflict, "ABORTED", "the job was modified since it was read (etag mismatch)")
 		return
 	}
-	c := in.Template.Template.Containers[0]
-	j.image = c.Image
-	j.env = map[string]string{}
-	for _, e := range c.Env {
-		j.env[e.Name] = e.Value
-	}
-	j.etag++
-	f.patches = append(f.patches, raw)
+	f.patches = append(f.patches, cloneJSON(raw).(map[string]any))
 	f.ops++
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name": fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(project), region, f.ops),
-		"done": true,
-	})
+	opName := fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(project), region, f.ops)
+	op := &runOp{polls: f.faults.Polls, err: f.faults.OpError, apply: func() {
+		c := in.Template.Template.Containers[0]
+		j.image = c.Image
+		j.env = map[string]string{}
+		for _, e := range c.Env {
+			j.env[e.Name] = e.Value
+		}
+		delete(raw, "etag")
+		j.raw = raw
+		j.etag++
+	}}
+	f.pending[opName] = op
+	if op.polls > 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"name": opName})
+		return
+	}
+	op.done()
+	writeJSON(w, http.StatusOK, opBody(opName, op))
+}
+
+// getOp is operations get of a patch's operation: not done for its polls,
+// then done, with its error if any.
+func (f *Run) getOp(w http.ResponseWriter, p string) {
+	op := f.pending[p]
+	if op == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "operation not found")
+		return
+	}
+	if op.polls > 0 {
+		op.polls--
+		writeJSON(w, http.StatusOK, map[string]any{"name": p})
+		return
+	}
+	op.done()
+	writeJSON(w, http.StatusOK, opBody(p, op))
+}
+
+func opBody(name string, op *runOp) map[string]any {
+	out := map[string]any{"name": name, "done": true}
+	if op.err != "" {
+		out["error"] = map[string]any{"code": 3, "message": op.err}
+	}
+	return out
 }
 
 func (f *Run) withType(e map[string]any) map[string]any {

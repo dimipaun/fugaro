@@ -21,10 +21,12 @@ import (
 	iam "google.golang.org/api/iam/v1"
 	logging "google.golang.org/api/logging/v2"
 	"google.golang.org/api/option"
+	"google.golang.org/api/option/internaloption"
 	run "google.golang.org/api/run/v2"
 	secretmanager "google.golang.org/api/secretmanager/v1"
 	serviceusage "google.golang.org/api/serviceusage/v1"
 	storage "google.golang.org/api/storage/v1"
+	htransport "google.golang.org/api/transport/http"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
@@ -37,11 +39,17 @@ const (
 
 // Clients are the Google API clients discovery and the readiness gates
 // read through. They only ever read, except ServiceUsage, which enables
-// Cloud Resource Manager when fugaro init is confirmed to.
+// Cloud Resource Manager when fugaro init is confirmed to, and Run and
+// RunHTTP, which update the check job when fugaro image refresh is
+// confirmed to (checkjob.go).
 type Clients struct {
-	IAM     *iam.Service
-	AR      *artifactregistry.Service
-	Run     *run.Service
+	IAM *iam.Service
+	AR  *artifactregistry.Service
+	Run *run.Service
+	// RunHTTP is the authenticated HTTP client Run sends through, to
+	// Run.BasePath: the check job's raw read-modify-write (checkjob.go)
+	// uses it, so that no field of the job passes through the Go types.
+	RunHTTP *http.Client
 	Secrets *secretmanager.Service
 	Storage *storage.Service
 	CRM     *crm.Service
@@ -134,7 +142,7 @@ func NewClients(ctx context.Context, o gcp.Options, e Endpoints) (*Clients, erro
 	if c.AR, err = artifactregistry.NewService(ctx, opts(e.ArtifactRegistry)...); err != nil {
 		return nil, fmt.Errorf("connecting to Artifact Registry: %w", err)
 	}
-	if c.Run, err = run.NewService(ctx, opts(o.Endpoints.Run)...); err != nil {
+	if c.Run, c.RunHTTP, err = newRunService(ctx, opts(o.Endpoints.Run)); err != nil {
 		return nil, fmt.Errorf("connecting to Cloud Run: %w", err)
 	}
 	if c.Secrets, err = secretmanager.NewService(ctx, opts(o.Endpoints.SecretManager)...); err != nil {
@@ -224,6 +232,33 @@ func describeCondition(c *Condition, description string) string {
 }
 
 // notFound reports whether err is the API's 404.
+// newRunService is run.NewService(ctx, opts...) built on an HTTP client of
+// its own making, which it returns too: the client and endpoint are the
+// ones run.NewService itself would make from opts (the same defaults, in
+// the same order), so a raw call through it goes with the same credentials,
+// quota project and endpoint override as the typed calls.
+func newRunService(ctx context.Context, opts []option.ClientOption) (*run.Service, *http.Client, error) {
+	all := append([]option.ClientOption{internaloption.WithDefaultScopes(
+		"https://www.googleapis.com/auth/cloud-platform",
+		"https://www.googleapis.com/auth/run",
+		"https://www.googleapis.com/auth/run.readonly",
+	)}, opts...)
+	all = append(all,
+		internaloption.WithDefaultEndpoint("https://run.googleapis.com/"),
+		internaloption.WithDefaultEndpointTemplate("https://run.UNIVERSE_DOMAIN/"),
+		internaloption.WithDefaultMTLSEndpoint("https://run.mtls.googleapis.com/"),
+		internaloption.EnableNewAuthLibrary())
+	hc, endpoint, err := htransport.NewClient(ctx, all...)
+	if err != nil {
+		return nil, nil, err
+	}
+	s, err := run.NewService(ctx, option.WithHTTPClient(hc), option.WithEndpoint(endpoint), option.WithLogger(discardLogger))
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, hc, nil
+}
+
 func notFound(err error) bool {
 	var ae *googleapi.Error
 	return errors.As(err, &ae) && ae.Code == http.StatusNotFound

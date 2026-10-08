@@ -25,7 +25,7 @@
 
   Instead, step 3 writes exactly what Terraform would render. `infra.RewriteCheckSpec` unmarshals the live spec into `infra.CheckJobSpec`, replaces `BaseImages[k]` with the local config's value for every kind the spec names, and marshals it with `json.Marshal`, the same code `infra.Repo` uses. A test pins it equal to `infra.Repo`'s rendering with the new base images (Task 2). The image becomes the new base of the kind whose old base it was (the check runs from its first workflow's kind).
 
-  The write is a read-modify-write. It reads `Jobs.Get`, changes only `Containers[0].Image` and that env entry's `Value`, and calls `Jobs.Patch` on the same object. Cloud Run v2's `jobs.patch` takes the whole job and has no update mask, so the object is round-tripped as read. The read etag goes with it, so a concurrent change is refused. The operation is polled until done.
+  The write is a read-modify-write of the job's raw JSON (decoded with `UseNumber`), not of `run.GoogleCloudRunV2Job`: the Go type drops zero values such as `maxRetries: 0` (`omitempty`) and fields the client does not model, and the server would reset them. It reads the job, changes only the one container's `image` and that env entry's `value`, and sends the rest back as read. Cloud Run v2's `jobs.patch` takes the whole job and has no update mask. The read etag goes with it, so a concurrent change is refused. The operation is polled until done. The job must carry this repository's check-job labels, have exactly one container, and its spec must name the repository. A live spec that is not exactly Repo's rendering (unknown keys, other formatting) is refused when a base must move, and is no change when none does.
 
   Consequences:
   - No state migration and no one-time `init --repo`.
@@ -288,14 +288,15 @@ git commit -m "gcpfake: Cloud Run jobs patch with etag"
   ```go
   var ErrCheckJobShape = errors.New("the check job is not as fugaro init --repo made it")
   func RewriteCheckSpec(raw, image string, bases map[string]string) (spec, newImage string, err error)
-  type CheckJobUpdate struct {
-      Job                string // projects/<p>/locations/<r>/jobs/<name>
-      OldImage, NewImage string
-      OldSpec, NewSpec   string
-      // unexported: job *run.GoogleCloudRunV2Job (as read, etag included)
-  }
+  type CheckJobOwner struct{ Repo, Label string } // RepoSpec.Name, RepoSpec.Label
+  type CheckJobUpdate struct{ /* unexported: the job's raw JSON as read (etag included), image and spec changed */ }
+  func (u *CheckJobUpdate) Job() string // projects/<p>/locations/<r>/jobs/<name>
+  func (u *CheckJobUpdate) OldImage() string
+  func (u *CheckJobUpdate) NewImage() string
+  func (u *CheckJobUpdate) OldSpec() string
+  func (u *CheckJobUpdate) NewSpec() string
   func (u *CheckJobUpdate) Changes() bool
-  func PlanCheckJob(ctx context.Context, c *Clients, gcpProject, region, job string, bases map[string]string) (*CheckJobUpdate, error) // nil, nil: no such job
+  func PlanCheckJob(ctx context.Context, c *Clients, gcpProject, region, job string, owner CheckJobOwner, bases map[string]string) (*CheckJobUpdate, error) // nil, nil: no such job
   func ApplyCheckJob(ctx context.Context, c *Clients, u *CheckJobUpdate) error
   var checkJobPoll = 2 * time.Second // tests set 0
   ```
@@ -1668,7 +1669,8 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	if err != nil {
 		return err
 	}
-	u, err := infra.PlanCheckJob(ctx, c, t.lc.GCPProject, t.lc.Region, gcp.CheckJobName(t.spec.Slug), t.lc.BaseImages)
+	u, err := infra.PlanCheckJob(ctx, c, t.lc.GCPProject, t.lc.Region, gcp.CheckJobName(t.spec.Slug),
+		infra.CheckJobOwner{Repo: t.spec.Name, Label: t.spec.Label}, t.lc.BaseImages)
 	switch {
 	case errors.Is(err, infra.ErrCheckJobShape):
 		return userErr("%v", err)
@@ -1678,11 +1680,11 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 		fmt.Fprintln(r.w, "  no daily image check job (every workflow has rebuild.check: off, or init --repo has not deployed it yet): nothing to update")
 		return nil
 	case !u.Changes():
-		fmt.Fprintf(r.w, "  No changes: the daily image check job already runs from %s\n", u.NewImage)
+		fmt.Fprintf(r.w, "  No changes: the daily image check job already runs from %s\n", u.NewImage())
 		return nil
 	}
-	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s: %s\n    -> %s\n", u.Job, u.OldImage, u.NewImage, infra.CheckSpecEnv, u.OldSpec, u.NewSpec)
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, exactly as listed above; nothing else in the job changes, and the next fugaro init --repo from this local config plans no change to it", u.Job, infra.CheckSpecEnv),
+	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s: %s\n    -> %s\n", u.Job(), u.OldImage(), u.NewImage(), infra.CheckSpecEnv, u.OldSpec(), u.NewSpec())
+	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, exactly as listed above; nothing else in the job changes, and the next fugaro init --repo from this local config plans no change to it", u.Job(), infra.CheckSpecEnv),
 		"the daily image check job was not updated"); err != nil {
 		return err
 	}
