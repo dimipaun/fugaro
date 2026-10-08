@@ -38,6 +38,10 @@ type cloudOptions struct {
 	// sharedOK lets a missing local config fall back to the shared config
 	// published to the runs bucket. Only selectProject sets it.
 	sharedOK bool
+	// originDir is the checkout whose origin may select a project config
+	// ("" is the working directory's): a command about a checkout other than
+	// the working directory's sets it.
+	originDir string
 }
 
 // addCloudFlags registers --config, --project (a Fugaro project name),

@@ -2158,7 +2158,9 @@ func loadRepoConfig(ctx context.Context, o *initOptions, dir string) (lc *localc
 	if err != nil {
 		return nil, "", nil, err
 	}
-	sel, lc, err := selectFrom(o.cloud, co, false)
+	cloud := o.cloud
+	cloud.originDir = dir // the origin that selects is the checkout's, not the working directory's
+	sel, lc, err := selectFrom(cloud, co, false)
 	if err != nil {
 		return nil, "", nil, err
 	}

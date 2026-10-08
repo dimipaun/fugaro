@@ -100,7 +100,7 @@ var sharedFetch = fetchSharedConfig
 // its fetch's).
 func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, creating bool, name string) (localcfg.Selection, *localcfg.Config, error) {
 	in := localcfg.SelectInput{
-		Config: o.config, Project: o.project, Checkout: co, Name: name, Origin: checkoutOrigin,
+		Config: o.config, Project: o.project, Checkout: co, Name: name, Origin: func() (string, string) { return checkoutOriginAt(o.originDir) },
 		EnvProject: os.Getenv("FUGARO_PROJECT"), EnvConfig: os.Getenv("FUGARO_CONFIG"),
 		Creating: creating, Getenv: os.Getenv,
 	}
@@ -128,7 +128,7 @@ func selectWith(ctx context.Context, o cloudOptions, co *localcfg.Checkout, crea
 		if errors.As(err, &ee) {
 			return sel, nil, err // a fetch's own refusal keeps its exit code
 		}
-		return sel, nil, userErr("%v", err)
+		return sel, nil, userErr("%w", err) // %w: cloudCheck tells a missing local config from a broken one
 	}
 	return sel, lc, nil
 }
@@ -301,11 +301,15 @@ func baseProjectWarning(ctx context.Context, root, base, project string) string 
 	return fmt.Sprintf("origin/%s's fugaro.yaml names project %s; runs will refuse until %s's fugaro.yaml says project: %s", base, got, base, project)
 }
 
-// checkoutOrigin is the working directory's checkout's origin host and repository
-// (owner/name), "" with none or one git config rewrites (not trusted by name).
-func checkoutOrigin() (host, repo string) {
+// checkoutOriginAt is dir's (default: the working directory's) checkout's
+// origin host and repository (owner/name), "" with none or one git config
+// rewrites (not trusted by name).
+func checkoutOriginAt(dir string) (host, repo string) {
 	ctx := context.Background()
-	root, err := gitRead(ctx, ".", "rev-parse", "--show-toplevel")
+	if dir == "" {
+		dir = "."
+	}
+	root, err := gitRead(ctx, dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return "", ""
 	}
