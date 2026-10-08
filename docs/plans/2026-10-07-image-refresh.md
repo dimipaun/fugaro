@@ -1200,17 +1200,17 @@ func TestRefreshBaseStep(t *testing.T) {
 func TestRefreshCheckJobStep(t *testing.T) {
 	r := newInitRig(t)
 	e := rigEngine(t, r, &initOptions{})
-	slug := mustSlug("bitbucket", "acme/sandbox")
+	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox") // label: gcp.RepoLabel(slug), what Task 2's owner check compares
 	oldRef, newRef := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
 	spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/sandbox", BaseImages: map[string]string{"web-node": oldRef}})
-	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{"fugaro": "managed"}, oldRef)
+	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
 	r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec), "FUGARO_PROJECT": "aurora"})
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{"web-node": newRef}
-	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug}}
+	tg := &refreshTarget{lc: lc, kinds: []string{"web-node"}, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
 	// Declined: nothing written.
 	out := atTerminal(t, e, "nope\n")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err == nil || len(r.run.Patches()) != 0 {
@@ -1768,6 +1768,11 @@ func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 
 Run: `go test ./internal/cli/ -run 'TestRefresh|TestImagesStageOnlyKinds|TestFirstBuildsUseSubmitAndWait'`
 Expected: PASS.
+
+Two requirements the Task 7 review found, each pinned by a test:
+
+- [ ] **Step 4a: `yes=false` for refresh.** `r.confirm` accepts `--yes`, so the check-job prompt (step 3) would be auto-confirmed under `initOptions{yes: true}`; a probe with that patched the job. Build the `initOptions` for refresh with `yes=false`, whatever the flags say, and test that a run started with `--yes` still asks the check-job question and patches nothing when it is declined.
+- [ ] **Step 4b: one local-config path.** Pass the SAME path to the engine (`s.e.path`, where the base step's record is written) and to `refreshReload` (`p.lcPath`, where it is read back). Test the order base -> reload -> check job -> builds, that a decline stops the run before the later steps, and D12's stop message; the test must write the base record through the engine's path and see `refreshReload` read it.
 
 - [ ] **Step 5: Commit**
 

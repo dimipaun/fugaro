@@ -2,9 +2,12 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
+	"strings"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
@@ -19,9 +22,10 @@ import (
 // the local config re-read (the base step recorded base_images), the
 // checkout's fugaro.yaml, and the repository's spec.
 type refreshTarget struct {
-	lc   *localcfg.Config
-	cfg  *config.Config
-	spec infra.RepoSpec
+	lc    *localcfg.Config
+	cfg   *config.Config
+	spec  infra.RepoSpec
+	kinds []string // the selected kinds (the plan's), for telling the others apart in the check job's diff
 }
 
 // refreshBase is step 2: the images stage alone, for kinds (D5, D6), with
@@ -78,7 +82,7 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
-	return &refreshTarget{lc: lc, cfg: p.cfg, spec: spec}, nil
+	return &refreshTarget{lc: lc, cfg: p.cfg, spec: spec, kinds: p.kinds}, nil
 }
 
 // refreshCheckJob is step 3 (D7): the check job's image and
@@ -99,16 +103,23 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 		return userErr("%v", err)
 	case err != nil:
 		return remote(err)
+	case u == nil && t.spec.Check != nil:
+		fmt.Fprintf(r.w, "  the daily image check job %s was not found, though this repository's spec has one: run fugaro init --repo in the checkout to deploy it (nothing was updated)\n", pluginwire.Printable(gcp.CheckJobName(t.spec.Slug)))
+		return nil
 	case u == nil:
-		fmt.Fprintln(r.w, "  no daily image check job (every workflow has rebuild.check: off, or init --repo has not deployed it yet): nothing to update")
+		fmt.Fprintln(r.w, "  no daily image check job (every workflow has rebuild.check: off): nothing to update")
 		return nil
 	case !u.Changes():
 		fmt.Fprintf(r.w, "  No changes: the daily image check job already runs from %s\n", pluginwire.Printable(u.NewImage()))
 		return nil
 	}
-	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s: %s\n    -> %s\n", pluginwire.Printable(u.Job()), pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()),
-		infra.CheckSpecEnv, pluginwire.Printable(u.OldSpec()), pluginwire.Printable(u.NewSpec()))
-	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, exactly as listed above; nothing else in the job changes, and the next fugaro init --repo from this local config plans no change to it",
+	diff, err := checkSpecDiff(u, t.kinds)
+	if err != nil {
+		return userErr("%v", err)
+	}
+	fmt.Fprintf(r.w, "  %s: image %s -> %s\n  %s base_images:\n%s  every other field of %s and of the job is unchanged\n", pluginwire.Printable(u.Job()),
+		pluginwire.Printable(u.OldImage()), pluginwire.Printable(u.NewImage()), infra.CheckSpecEnv, diff, infra.CheckSpecEnv)
+	if err := r.confirm(fmt.Sprintf("updates the daily image check job %s in place through the Cloud Run Admin API, as you: its image and %s's base images, as listed above; nothing else in the job changes, and the next fugaro init --repo from this local config plans no change to it",
 		pluginwire.Printable(u.Job()), infra.CheckSpecEnv), "the daily image check job was not updated"); err != nil {
 		return err
 	}
@@ -117,6 +128,54 @@ func (r *initRun) refreshCheckJob(ctx context.Context, t *refreshTarget) error {
 	}
 	fmt.Fprintln(r.w, "  updated the daily image check job")
 	return nil
+}
+
+// checkSpecDiff lists, per kind, how the update moves FUGARO_CHECK_SPEC's
+// base_images ("kind: old -> new", each ref through Printable): the whole
+// spec is never printed, because Printable cuts it and base_images is its
+// last field. A kind outside the selection that RewriteCheckSpec also moves
+// to the local config's value is listed and flagged; a kind that does not
+// move is not listed.
+func checkSpecDiff(u *infra.CheckJobUpdate, selected []string) (string, error) {
+	var old, cur infra.CheckJobSpec
+	if err := json.Unmarshal([]byte(u.OldSpec()), &old); err != nil {
+		return "", fmt.Errorf("%s: %v", infra.CheckSpecEnv, err)
+	}
+	if err := json.Unmarshal([]byte(u.NewSpec()), &cur); err != nil {
+		return "", fmt.Errorf("%s: %v", infra.CheckSpecEnv, err)
+	}
+	kinds := map[string]bool{}
+	for k := range old.BaseImages {
+		kinds[k] = true
+	}
+	for k := range cur.BaseImages {
+		kinds[k] = true
+	}
+	var b strings.Builder
+	for _, k := range slices.Sorted(maps.Keys(kinds)) {
+		if old.BaseImages[k] == cur.BaseImages[k] {
+			continue
+		}
+		flag := ""
+		if !slices.Contains(selected, k) {
+			flag = " (not selected: also moved to the local config's base)"
+		}
+		fmt.Fprintf(&b, "    %s: %s -> %s%s\n", pluginwire.Printable(k), pluginwire.Printable(old.BaseImages[k]), pluginwire.Printable(cur.BaseImages[k]), flag)
+	}
+	return b.String(), nil
+}
+
+// builtSoFar adds the workflows already built to err, keeping its exit code.
+func builtSoFar(err error, built []string) error {
+	list := "none"
+	if len(built) > 0 {
+		list = strings.Join(built, ", ")
+	}
+	var ee *ExitError
+	if errors.As(err, &ee) {
+		return &ExitError{Code: ee.Code, Err: fmt.Errorf("%w; built before this: %s", ee.Err, list)}
+	}
+	return fmt.Errorf("%w; built before this: %s", err, list)
 }
 
 // refreshBuilds is step 4 (D8, D9): each selected workflow whose image is
@@ -156,20 +215,31 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	if err != nil {
 		return remote(err)
 	}
+	notes := func() {
+		for _, wf := range unrecorded {
+			fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro init --repo in this checkout deploys it\n", wf)
+		}
+	}
+	var built []string
 	for _, wf := range todo {
 		ok, reachable, err := r.askTyped(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath))
 		if err != nil {
 			return err
 		}
-		if !reachable || !ok {
-			return userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf)
+		if !reachable {
+			notes()
+			return builtSoFar(userErr("the build of %s/%s needs a terminal where the project's name can be typed (--yes, --non-interactive, a pipe and a coding agent do not confirm a build), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+		}
+		if !ok {
+			notes()
+			return builtSoFar(userErr("the build of %s/%s was not confirmed (the project's name was not typed), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
 		if _, err := r.submitAndWait(ctx, b, t.lc, t.cfg, t.spec, wf, t.lc.BaseImage(t.cfg.Workflows[wf].Base)); err != nil {
-			return err
+			notes()
+			return builtSoFar(err, built)
 		}
+		built = append(built, wf)
 	}
-	for _, wf := range unrecorded {
-		fmt.Fprintf(r.w, "note: %s had no build record; if its job is not deployed yet, fugaro init --repo in this checkout deploys it\n", wf)
-	}
+	notes()
 	return nil
 }

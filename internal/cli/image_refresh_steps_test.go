@@ -17,6 +17,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
 // atTerminal points e's run at a fake terminal whose input is stdin, with
@@ -203,7 +204,7 @@ func TestRefreshCheckJobStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{"web-node": newRef}
-	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
 	// Declined: nothing written.
 	out := atTerminal(t, e, "nope\n")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err == nil || len(r.run.Patches()) != 0 {
@@ -251,7 +252,7 @@ func TestRefreshCheckJobRefusesForeignJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
 	atTerminal(t, e, initProjectName+"\n")
 	err = e.r.refreshCheckJob(t.Context(), tg)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not as fugaro init --repo made it") || len(r.run.Patches()) != 0 {
@@ -272,7 +273,7 @@ func TestRefreshCheckJobReadErrorIsRemote(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{"web-node": managedRef("web-node", "0.5.1")}
-	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
 	atTerminal(t, e, initProjectName+"\n")
 	err = e.r.refreshCheckJob(t.Context(), tg)
 	if ExitCode(err) != ExitRemoteError || len(r.run.Patches()) != 0 {
@@ -297,7 +298,7 @@ func TestRefreshCheckJobEscapesHostileBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	lc.BaseImages = map[string]string{"web-node": newRef}
-	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
 	out := atTerminal(t, e, initProjectName+"\n")
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
@@ -413,5 +414,202 @@ func TestRefreshBuildsConfirmationIsTyped(t *testing.T) {
 		if strings.Contains(body, bad) {
 			t.Errorf("refreshBuilds uses %s", bad)
 		}
+	}
+}
+
+// longJob sets up a check job whose spec is long (repo_url, workflows,
+// registry, service account), so that its base_images, the spec's last field,
+// lies past what Printable shows of the whole string.
+func longJob(t *testing.T, bases, local map[string]string, image string, selected []string) (*initRig, *initEngine, *refreshTarget) {
+	t.Helper()
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{})
+	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
+	spec, err := json.Marshal(infra.CheckJobSpec{Repo: "acme/sandbox", Provider: "bitbucket",
+		RepoURL:    "https://bitbucket.org/acme/" + strings.Repeat("a-very-long-repository-name-", 5) + "sandbox.git",
+		BaseBranch: "main", Workflows: []string{"alpha-workflow", "beta-workflow", "gamma-workflow"},
+		Registry:            "us-east5-docker.pkg.dev/" + strings.Repeat("proj-", 10) + "/fugaro-images",
+		BuildServiceAccount: "build-" + strings.Repeat("sa-", 20) + "@proj.iam.gserviceaccount.com",
+		MachineType:         "E2_HIGHCPU_8", BuildRegion: "us-east5", BaseImages: bases})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(spec) < 2*pluginwire.MaxPrintable {
+		t.Fatalf("fixture: spec is only %d bytes", len(spec))
+	}
+	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, image)
+	r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = local
+	return r, e, &refreshTarget{lc: lc, kinds: selected, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}}
+}
+
+// The confirmation shows the real change: the base_images diff per kind, an
+// unselected kind that also moves flagged as such, a kind that does not move
+// not listed, and a statement that the rest is unchanged. A long spec does
+// not hide the base change (Printable cuts the whole string; the spec is
+// never printed).
+func TestRefreshCheckJobShowsTheBaseDiff(t *testing.T) {
+	oldWeb, newWeb := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
+	oldGo, newGo := managedRef("go", "0.4.0"), managedRef("go", "0.5.1")
+	same := managedRef("python", "0.4.0")
+	r, e, tg := longJob(t, map[string]string{"web-node": oldWeb, "go": oldGo, "python": same},
+		map[string]string{"web-node": newWeb, "go": newGo, "python": same}, oldWeb, []string{"web-node"})
+	out := atTerminal(t, e, initProjectName+"\n")
+	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	got := out.String()
+	for _, want := range []string{
+		"web-node: " + oldWeb + " -> " + newWeb + "\n",
+		"go: " + oldGo + " -> " + newGo + " (not selected: also moved to the local config's base)",
+		"every other field of " + infra.CheckSpecEnv + " and of the job is unchanged",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "python") {
+		t.Errorf("a kind that does not move is listed:\n%s", got)
+	}
+	if strings.Contains(got, "alpha-workflow") || strings.Contains(got, `"repo_url"`) {
+		t.Errorf("the whole spec was printed:\n%s", got)
+	}
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches", len(r.run.Patches()))
+	}
+}
+
+// A failed PATCH stops the run: it returns the (remote) error and prints
+// nothing as success.
+func TestRefreshCheckJobApplyErrorStops(t *testing.T) {
+	oldWeb, newWeb := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
+	r, e, tg := longJob(t, map[string]string{"web-node": oldWeb}, map[string]string{"web-node": newWeb}, oldWeb, []string{"web-node"})
+	r.run.SetJobFaults(gcpfake.JobFaults{PatchStatus: http.StatusInternalServerError})
+	out := atTerminal(t, e, initProjectName+"\n")
+	err := e.r.refreshCheckJob(t.Context(), tg)
+	if ExitCode(err) != ExitRemoteError || strings.Contains(out.String(), "updated the daily image check job") {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out.String())
+	}
+}
+
+// A missing job (404) is a not-found message naming init --repo when the
+// repository's spec has a check job, and "nothing to update" only when it has
+// none.
+func TestRefreshCheckJobMissing(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{})
+	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{"web-node": managedRef("web-node", "0.5.1")}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label, Check: &infra.CheckSpec{}}}
+	out := atTerminal(t, e, "")
+	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "was not found") || !strings.Contains(out.String(), "fugaro init --repo") || strings.Contains(out.String(), "nothing to update") {
+		t.Errorf("with a check in the spec:\n%s", out.String())
+	}
+	tg.spec.Check = nil
+	out = atTerminal(t, e, "")
+	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil || !strings.Contains(out.String(), "nothing to update") || strings.Contains(out.String(), "was not found") {
+		t.Errorf("without a check: %v\n%s", err, out.String())
+	}
+}
+
+// failingBuilder is the fake builder whose failOn'th (1-based) submit fails.
+type failingBuilder struct {
+	*fakeBuilder
+	failOn int
+}
+
+func (f *failingBuilder) Submit(ctx context.Context, s gcp.BuildSpec) (gcp.BuildResult, error) {
+	if len(f.specs)+1 == f.failOn {
+		f.specs = append(f.specs, s)
+		return gcp.BuildResult{}, errors.New("quota")
+	}
+	return f.fakeBuilder.Submit(ctx, s)
+}
+
+func useFailingBuilder(t *testing.T, failOn int) *failingBuilder {
+	t.Helper()
+	f := &failingBuilder{fakeBuilder: &fakeBuilder{}, failOn: failOn}
+	old := newCloudBuilder
+	newCloudBuilder = func(context.Context, *localcfg.Config) (cloudBuilder, error) { return f, nil }
+	t.Cleanup(func() { newCloudBuilder = old })
+	return f
+}
+
+// A failing build stops the loop: the next workflow is never submitted, the
+// error is returned (exit 2), it names what finished (here nothing), and the
+// no-record notes are printed.
+func TestRefreshBuildsFailureStopsTheLoop(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFailingBuilder(t, 1)
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	out := atTerminal(t, e, initProjectName+"\n"+initProjectName+"\n")
+	err := e.r.refreshBuilds(t.Context(), p, tg)
+	if ExitCode(err) != ExitRemoteError || len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
+		t.Fatalf("exit %d, err %v, builds %+v", ExitCode(err), err, fb.specs)
+	}
+	if !strings.Contains(err.Error(), "quota") || !strings.Contains(err.Error(), "built before this: none") {
+		t.Errorf("error %q", err)
+	}
+	for _, wf := range []string{"api", "app"} {
+		if !strings.Contains(out.String(), "note: "+wf+" had no build record") {
+			t.Errorf("no note for %s:\n%s", wf, out.String())
+		}
+	}
+}
+
+// A failure or a decline after a finished build names it, and keeps the
+// notes.
+func TestRefreshBuildsNameWhatFinished(t *testing.T) {
+	for _, tc := range []struct {
+		name, second string
+		failOn       int
+		want         string
+	}{
+		{"failed", initProjectName + "\n", 2, "quota"},
+		{"declined", "nope\n", 0, "not confirmed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useVersion(t, "0.5.1")
+			r := newAnchorModeRig(t, refreshYAML, true)
+			useFailingBuilder(t, tc.failOn)
+			e, tg := buildTarget(t, r)
+			p := &refreshPlan{workflows: []string{"api", "app"}}
+			out := atTerminal(t, e, initProjectName+"\n"+tc.second)
+			err := e.r.refreshBuilds(t.Context(), p, tg)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "built before this: api") {
+				t.Fatalf("err %v\n%s", err, out.String())
+			}
+			if !strings.Contains(out.String(), "built acme/app/api") || !strings.Contains(out.String(), "note: app had no build record") {
+				t.Errorf("output:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// Without a terminal the refusal says a terminal is required, not that the
+// name was not typed (D2).
+func TestRefreshBuildsNoTerminalSaysSo(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTarget(t, r)
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	e.r.w = &syncBuf{}
+	err := e.r.refreshBuilds(t.Context(), p, tg)
+	if err == nil || !strings.Contains(err.Error(), "needs a terminal") || strings.Contains(err.Error(), "was not typed") || len(fb.specs) != 0 {
+		t.Fatalf("err %v, %d builds", err, len(fb.specs))
 	}
 }
