@@ -1,0 +1,58 @@
+package localcfg
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestLayerCacheRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	getenv := func(k string) string {
+		if k == "XDG_CACHE_HOME" {
+			return dir
+		}
+		return ""
+	}
+	if _, ok := LoadLayerCache(getenv, "aurora"); ok {
+		t.Fatal("a cache entry before any save")
+	}
+	at := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	e := SharedCacheEntry{GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", Generation: 7, CheckedAt: at, YAML: "version: 1\n"}
+	if err := SaveLayerCache(getenv, "aurora", e); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "fugaro", "project-layers", "aurora.json")
+	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("cache file %s: %v %v", path, fi, err)
+	}
+	got, ok := LoadLayerCache(getenv, "aurora")
+	if !ok || got != e {
+		t.Fatalf("loaded %+v, %v", got, ok)
+	}
+	if !got.UsableOffline(at.Add(6*24*time.Hour)) || got.UsableOffline(at.Add(8*24*time.Hour)) {
+		t.Fatal("the offline allowance is not 7 days")
+	}
+	if err := DropLayerCache(getenv, "aurora"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadLayerCache(getenv, "aurora"); ok {
+		t.Fatal("an entry after the drop")
+	}
+	if err := DropLayerCache(getenv, "aurora"); err != nil {
+		t.Fatalf("dropping a missing entry: %v", err)
+	}
+	if err := SaveLayerCache(getenv, "../x", e); err == nil || !strings.Contains(err.Error(), "not a project name") {
+		t.Fatalf("a bad project name: %v", err)
+	}
+	big := e
+	big.YAML = strings.Repeat("x", 64<<10+1)
+	if err := SaveLayerCache(getenv, "aurora", big); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := LoadLayerCache(getenv, "aurora"); ok {
+		t.Fatal("an oversized entry was loaded")
+	}
+}
