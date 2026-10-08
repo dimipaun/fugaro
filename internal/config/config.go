@@ -90,9 +90,12 @@ type PRSettings struct {
 	// EarlyDraft opens the draft pull request at the first verified push;
 	// false opens it only at finalize. Unset means true (applyDefaults).
 	EarlyDraft *bool `yaml:"early_draft"`
-	// Checkpoints pushes a first run's new commits to its branch every few
-	// minutes while a stage runs, fast-forward only, so a container that
-	// dies keeps its committed work. Unset means true (applyDefaults).
+	// Checkpoints pushes a first run's new commits to its branch while a
+	// stage runs, fast-forward only, so a container that dies keeps its
+	// committed work. It is commit-triggered: a push within about a minute
+	// of a commit (poll about 10 s, quiet 5 s, at most one push a minute),
+	// at once at stage boundaries, with a 3-minute retry after a failure.
+	// Independent of early_draft. Unset means true (see CheckpointsOn).
 	Checkpoints *bool `yaml:"checkpoints"`
 }
 

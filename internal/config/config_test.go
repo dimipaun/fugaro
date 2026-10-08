@@ -479,7 +479,12 @@ func TestPRCheckpointsDefaultsTrue(t *testing.T) {
 	for _, tc := range []struct {
 		pr   string
 		want bool
-	}{{"", true}, {"  pr: { checkpoints: true }\n", true}, {"  pr: { checkpoints: false, early_draft: false }\n", false}} {
+	}{{"", true}, {"  pr: { checkpoints: true }\n", true}, {"  pr: { checkpoints: false, early_draft: false }\n", false},
+		{"  pr: { checkpoints: true, early_draft: false }\n", true},
+		{"  pr: { checkpoints: false, early_draft: true }\n", false},
+		{"  pr: { early_draft: false }\n", true},
+		{"  pr: { early_draft: true }\n", true},
+		{"  pr: { checkpoints: false }\n", false}} {
 		cfg, problems := Parse([]byte(strings.Replace(earlyDraftBase(t), "git:\n", "git:\n"+tc.pr, 1)))
 		if len(problems) > 0 {
 			t.Fatalf("%q: %v", tc.pr, problems)
