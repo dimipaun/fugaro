@@ -185,7 +185,7 @@ func TestProjectLayerErrorsArePrintable(t *testing.T) {
 	const tok = "ghp_abcdefghijklmnopqrstuvwxyz0123"
 	for _, tc := range []struct{ name, text, want string }{
 		{"ESC in a top-level key", layerHead + "\"x\\ey\": 1\n", `x\u001by: is not a project layer key`},
-		{"newline in a key", layerHead + "defaults: {agent: {\"a\\nb\": 1}}\n", `defaults.agent (line 4): has a key "a\nb" holding a control`},
+		{"newline in a key", layerHead + "defaults: {agent: {\"a\\nb\": 1}}\n", `defaults.agent (line 4): has a key "a\u000ab" holding a control`},
 		{"ESC in a profile name", layerHead + "profiles: {\"p\\e[2J\": {secrets: []}}\n", `profiles.p\u001b[2J.secrets: workflows.*.secrets may only be set in: repo`},
 		{"newline in a profile name", layerHead + "profiles: {\"p\\nq\": {secrets: []}}\n", `profiles.p\u000aq.secrets: workflows.*.secrets may only`},
 		{"a credential as a key", layerHead + "profiles:\n  p:\n    commands: {" + tok + ": x}\n", "profiles.p.commands (line 6): has a key shaped like a credential"},
@@ -253,5 +253,41 @@ func TestFugaroYAMLBudgetIsFinite(t *testing.T) {
 		if !strings.Contains(strings.Join(got, "; "), "agent.max_budget_usd: must be a finite number") {
 			t.Errorf("%v: problems %v", v, got)
 		}
+	}
+}
+
+// TestProjectLayerNeverEchoesCredentialsOrLongText: an alias or a tag holding
+// a credential, a credential or bidi character in a comment or a %TAG
+// directive, and an over-long default_profile or key.
+func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
+	const tok = "ghp_abcdefghijklmnopqrstuvwxyz0123"
+	long := strings.Repeat("z", 500)
+	for _, tc := range []struct {
+		name, text, want string
+		long             bool
+	}{
+		{"an alias", layerHead + "profiles: {p: *" + tok + "}\n", "", false},
+		{"a short tag", layerHead + "profiles: {p: !" + tok + " {}}\n", "explicit YAML tag", false},
+		{"a verbatim tag", layerHead + "profiles: {p: !<tag:" + tok + "> {}}\n", "explicit YAML tag", false},
+		{"a tag on the root", "!" + tok + "\n" + layerHead, "explicit YAML tag", false},
+		{"a comment", layerHead + "# " + tok + "\n", "line 4: holds a credential-shaped string", false},
+		{"a trailing comment", layerHead + "profiles: {} # " + tok + "\n", "line 4: holds a credential-shaped string", false},
+		{"a %TAG directive", "%TAG !e! tag:" + tok + ":\n---\n" + layerHead, "holds a credential-shaped string", false},
+		{"a bidi character in a comment", layerHead + "# a‮b\n", "line 4: holds a control or invisible", false},
+		{"a long default_profile", layerHead + "profiles: {}\ndefault_profile: " + long + "\n", "names", true},
+		{"a long key", layerHead + "defaults: {agent: {\"a\\n" + long + "\": 1}}\n", "holding a control", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := layerProblems(t, tc.text)
+			if !strings.Contains(got, tc.want) {
+				t.Fatalf("problems %q, want one containing %q", got, tc.want)
+			}
+			if strings.Contains(got, tok) || strings.Contains(got, "‮") {
+				t.Fatalf("problems echo the credential: %q", got)
+			}
+			if tc.long && strings.Contains(got, long) {
+				t.Fatalf("problems echo %d characters", len(long))
+			}
+		})
 	}
 }

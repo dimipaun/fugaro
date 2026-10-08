@@ -9,7 +9,6 @@ import (
 	"io"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -165,7 +164,7 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 		if errors.Is(err, io.EOF) {
 			return nil, []Problem{{Message: "is empty"}}
 		}
-		return nil, yamlProblems(err)
+		return nil, safeProblems(err)
 	}
 	var more yaml.Node
 	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
@@ -179,7 +178,7 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	}
 	var tree map[string]any
 	if err := doc.Decode(&tree); err != nil {
-		return nil, yamlProblems(err)
+		return nil, safeProblems(err)
 	}
 	var ps []Problem
 	for _, k := range sortedKeys(tree) {
@@ -209,17 +208,43 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	strict := yaml.NewDecoder(bytes.NewReader(data))
 	strict.KnownFields(true)
 	if err := strict.Decode(&l); err != nil {
-		ps := yamlProblems(err)
-		for i := range ps {
-			ps[i].Message = showKey(ps[i].Message)
-		}
-		return nil, ps
+		return nil, safeProblems(err)
 	}
 	if ps := validateLayer(&l, a); len(ps) > 0 {
 		return nil, ps
 	}
+	if ps := rawTextProblems(data); len(ps) > 0 {
+		return nil, ps
+	}
 	l.Raw, l.SHA256, l.tree = slices.Clone(data), LayerSum(data), tree
 	return &l, nil
+}
+
+// safeProblems is yamlProblems with every message through showKey: yaml.v3
+// echoes alias and anchor names, which are the writer's text.
+func safeProblems(err error) []Problem {
+	ps := yamlProblems(err)
+	for i := range ps {
+		ps[i].Message = showKey(ps[i].Message)
+	}
+	return ps
+}
+
+// rawTextProblems scans the whole text, comments and directives included,
+// which the node walk never sees. It reports the line only, never the text.
+func rawTextProblems(data []byte) []Problem {
+	var ps []Problem
+	text := strings.TrimPrefix(string(data), "\ufeff")
+	for i, line := range strings.Split(text, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		switch {
+		case tokenRE.MatchString(line):
+			ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
+		case strings.ContainsFunc(line, badKeyRune):
+			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character (in a comment or directive)"})
+		}
+	}
+	return ps
 }
 
 func maps1(m map[string]any) map[string]any {
@@ -286,7 +311,7 @@ func valueProblems(path string, n *yaml.Node) []Problem {
 			case tokenRE.MatchString(k.Value):
 				ps = append(ps, Problem{Path: path, Line: k.Line, Message: "has a key shaped like a credential; " + secret})
 			case strings.ContainsFunc(k.Value, badKeyRune):
-				ps = append(ps, Problem{Path: path, Line: k.Line, Message: "has a key " + strconv.Quote(k.Value) + " holding a control or invisible formatting character"})
+				ps = append(ps, Problem{Path: path, Line: k.Line, Message: "has a key \"" + showKey(k.Value) + "\" holding a control or invisible formatting character"})
 			default:
 				ps = append(ps, valueProblems(join(k.Value), v)...)
 			}
@@ -309,7 +334,7 @@ func layerShape(n *yaml.Node) *Problem {
 		return &Problem{Line: n.Line, Message: "uses a YAML anchor or alias, which the project layer refuses"}
 	}
 	if n.Style&yaml.TaggedStyle != 0 {
-		return &Problem{Line: n.Line, Message: fmt.Sprintf("uses an explicit YAML tag %q, which the project layer refuses", n.Tag)}
+		return &Problem{Line: n.Line, Message: fmt.Sprintf("uses an explicit YAML tag %q, which the project layer refuses", showKey(n.Tag))}
 	}
 	if n.Kind == yaml.MappingNode {
 		seen := map[string]bool{}
@@ -396,7 +421,7 @@ func validateLayer(l *ProjectLayer, a LayerAnchor) []Problem {
 			for i, n := range names {
 				names[i] = showKey(n)
 			}
-			add("default_profile", "names %q, which is not one of profiles: (%s)", l.DefaultProfile, strings.Join(names, ", "))
+			add("default_profile", "names %q, which is not one of profiles: (%s)", showKey(l.DefaultProfile), strings.Join(names, ", "))
 		}
 	}
 	return ps
