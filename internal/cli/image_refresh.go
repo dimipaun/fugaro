@@ -23,7 +23,8 @@ import (
 
 // fugaro image refresh (design image-refresh.md): one repository onto this
 // release's base image, in five steps, each with the confirmation it has
-// today.
+// today, or, with --yes, confirmed unattended (2026-10-08 owner decision,
+// superseding design decision D2's "no --yes"; see askBuild).
 
 type refreshOptions struct {
 	cloud         cloudOptions
@@ -31,6 +32,10 @@ type refreshOptions struct {
 	workflows     []string
 	imageSource   string
 	expectDigests []string
+	// yes is --yes (2026-10-08 owner decision, superseding D2 for this
+	// command): it confirms every step, with no terminal needed, but never
+	// in a coding agent's session.
+	yes bool
 }
 
 // again is the command line that reruns this refresh.
@@ -53,6 +58,9 @@ func (o refreshOptions) again() string {
 	for _, d := range o.expectDigests {
 		args = append(args, "--expect-digest", quoteWord(d))
 	}
+	if o.yes {
+		args = append(args, "--yes")
+	}
 	return strings.Join(args, " ")
 }
 
@@ -68,6 +76,7 @@ type refreshPlan struct {
 	why              map[string]string
 	builds           []string
 	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
+	yes              bool            // --yes: builds are confirmed without a prompt
 }
 
 // refusedAsIs marks a refusal that is printed exactly as written, without
@@ -166,7 +175,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}, yes: o.yes}
 	for _, k := range kinds {
 		if p.want[k], err = refreshBase(lc, k, ver); err != nil {
 			return nil, err
@@ -203,7 +212,11 @@ func (p *refreshPlan) print(w io.Writer) {
 		fmt.Fprintf(w, "  2. base %s: %s (copied into your registry if it lacks it, after its own confirmation)\n", k, p.want[k])
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
-	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable and confirmed by typing the project's name:\n", len(p.builds), len(p.workflows))
+	how := "confirmed by typing the project's name"
+	if p.yes {
+		how = "confirmed by --yes (no prompt)"
+	}
+	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable, %s:\n", len(p.builds), len(p.workflows), how)
 	for _, wf := range p.workflows {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}
@@ -215,7 +228,8 @@ func newImageRefreshCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "refresh",
 		Short: "Move a repository onto this release's base image: copy it, point the daily image check job at it, rebuild what is stale",
-		Long: "Run it in the checkout of an onboarded repository, in your own terminal window.\n\n" +
+		Long: "Run it in the checkout of an onboarded repository, in your own terminal window\n" +
+			"(or with --yes, unattended: see below).\n\n" +
 			"It prints the whole plan first, then, each step with its own confirmation:\n" +
 			"(2) copies this release's base image of each selected workflow's kind into\n" +
 			"your registry if it lacks it and records it, as fugaro init --base does;\n" +
@@ -223,16 +237,23 @@ func newImageRefreshCmd() *cobra.Command {
 			"FUGARO_CHECK_SPEC's base images) through the Cloud Run Admin API, with no\n" +
 			"Terraform; (4) rebuilds each selected workflow whose build record says it\n" +
 			"was built from another base, or that has no build record or one that\n" +
-			"cannot be read (billable: the project's name typed for each);\n" +
+			"cannot be read (billable: the project's name typed for each, or --yes);\n" +
 			"(5) names fugaro init --anchor when fugaro.yaml lacks gcp_project.\n\n" +
 			"A base_images entry that is not a release image fugaro init copied (a\n" +
-			"development or hand-pushed image) stops it before anything changes: remove\n" +
-			"the entry from the local config, then rerun. It never writes fugaro.yaml and\n" +
-			"never onboards a repository. A coding agent's session is refused, and so is\n" +
-			"a pipe: it needs a real terminal, and there is no --yes, --json or\n" +
-			"--plan-only to get around that. A run that stops says which steps finished\n" +
-			"and what to rerun; a rerun skips what is done. Exit codes: 0 done, 1 a\n" +
-			"refusal or a confirmation not given, 2 a cloud failure.",
+			"development or hand-pushed image) stops it before anything changes, with or\n" +
+			"without --yes: remove the entry from the local config, then rerun. It never\n" +
+			"writes fugaro.yaml, never onboards a repository and never runs Terraform. A\n" +
+			"coding agent's session is refused, --yes included (there is still no --json\n" +
+			"or --plan-only to get around that). A run that stops says which steps\n" +
+			"finished and what to rerun, --yes included when it was given; a rerun skips\n" +
+			"what is done. Exit codes: 0 done, 1 a refusal or a confirmation not given,\n" +
+			"2 a cloud failure.\n\n" +
+			"Unattended use: pass --yes to run it from CI or a script, with no terminal.\n" +
+			"It confirms every step, the base copy, the check-job update and EACH\n" +
+			"billable build, with no cap on how many builds run: read the printed plan's\n" +
+			"build count first. --yes does not cover a coding agent's session (refused,\n" +
+			"same as without it) or a custom, dev or hand-pushed base image (still\n" +
+			"refused with the one-line fix); there is still no --json or --plan-only.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runImageRefresh(cmd, o) },
 	}
@@ -241,20 +262,26 @@ func newImageRefreshCmd() *cobra.Command {
 	f.StringArrayVar(&o.workflows, "workflow", nil, "a workflow to refresh (repeatable; default: every workflow in fugaro.yaml)")
 	f.StringVar(&o.imageSource, "image-source", "", "the registry and owner the release base images are copied from, as for fugaro init (default ghcr.io/dimipaun)")
 	f.StringArrayVar(&o.expectDigests, "expect-digest", nil, "pin the digest of a base image copied, KIND=sha256:<hex>, as for fugaro init (repeatable)")
+	f.BoolVar(&o.yes, "yes", false, "confirm every step without asking (the base copy, the check-job update and each billable build, with no cap on how many run), and without a terminal: for CI or a script. The plan is still printed first. Never confirmed in a coding agent's session (CLAUDECODE and the like): nothing is applied there, --yes included. Without --yes nothing changes: a real terminal and the typed confirmations are still required, as always")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
 
-// refuseRefreshHere is decision D2, run before anything else (the local
-// config, git, credentials, the network): a coding agent's session applies
-// nothing, and anything but a real terminal cannot type the confirmations
-// every step needs. There is no --yes, --json or --plan-only to bypass it.
-func refuseRefreshHere(cmd *cobra.Command) error {
-	conds := initflow.Conditions{Terminal: stdinIsTerminal(cmd.InOrStdin()), Agent: agentMarker(os.Getenv)}
-	switch {
-	case conds.Agent != "":
-		return userErr("fugaro image refresh applies cloud changes: %s", initflow.AgentRefusal(conds.Agent))
-	case !initflow.CanConfirm(initflow.Typed, conds):
+// refuseRefreshHere is decision D2, as reversed in part by the owner's
+// 2026-10-08 decision: it still runs before anything else (the local
+// config, git, credentials, the network). A coding agent's session applies
+// nothing, --yes included: that check is never bypassed. Without yes,
+// anything but a real terminal still cannot type the confirmations every
+// step needs, exactly as before; with yes, no terminal is required (it may
+// run from CI or a script). There is still no --json or --plan-only.
+func refuseRefreshHere(cmd *cobra.Command, yes bool) error {
+	if m := agentMarker(os.Getenv); m != "" {
+		return userErr("fugaro image refresh applies cloud changes: %s", initflow.AgentRefusal(m))
+	}
+	if yes {
+		return nil
+	}
+	if !stdinIsTerminal(cmd.InOrStdin()) {
 		return userErr("fugaro image refresh asks for the project's name at each step and before each billable build, so it needs a real terminal: %s", initflow.NoTerminalAdvice)
 	}
 	return nil
@@ -312,16 +339,16 @@ func refreshAnchorNote(ctx context.Context, w io.Writer, root string, lc *localc
 
 func runImageRefresh(cmd *cobra.Command, o refreshOptions) error {
 	ctx := cmd.Context()
-	if err := refuseRefreshHere(cmd); err != nil {
+	if err := refuseRefreshHere(cmd, o.yes); err != nil {
 		return err
 	}
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
 	}
 	again := o.again()
-	// yes is never set: fugaro image refresh has no --yes flag (D2), and
-	// r.confirm (step 3) and r.ask would otherwise auto-confirm under it.
-	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests}
+	// yes carries --yes to r.confirm/r.ask (steps 2 and 3) and to
+	// refreshBuilds (step 4, which keeps its own rule: see askBuild).
+	iopts := &initOptions{cloud: o.cloud, imageSource: o.imageSource, expectDigests: o.expectDigests, yes: o.yes}
 	r := newInitRun(cmd, iopts)
 	p, err := refreshPreflight(ctx, o, iopts)
 	if err != nil {

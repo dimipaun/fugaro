@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"net/http"
 	"os"
 	"strings"
@@ -29,6 +30,18 @@ func atTerminal(t *testing.T, e *initEngine, stdin string) *syncBuf {
 	e.r.w = out
 	e.r.in = bufio.NewReader(strings.NewReader(stdin))
 	e.r.cmd.SetIn(strings.NewReader(stdin))
+	return out
+}
+
+// atNoTerminal is atTerminal without faking a terminal: stdin stays a
+// strings.Reader, which stdinIsTerminal (unpatched) reports as not one, as a
+// closed pipe in CI would be. Used to prove --yes needs none (2026-10-08
+// decision).
+func atNoTerminal(e *initEngine) *syncBuf {
+	out := &syncBuf{}
+	e.r.w = out
+	e.r.in = bufio.NewReader(strings.NewReader(""))
+	e.r.cmd.SetIn(strings.NewReader(""))
 	return out
 }
 
@@ -60,6 +73,27 @@ func TestRefreshBaseStep(t *testing.T) {
 	out = atTerminal(t, e, "")
 	if err := e.r.refreshBase(t.Context(), e, []string{"go"}); err != nil || r.dst.puts != puts || !strings.Contains(out.String(), "No changes") {
 		t.Fatalf("rerun: %v, %d writes\n%s", err, r.dst.puts-puts, out.String())
+	}
+}
+
+// 2026-10-08 decision: --yes confirms the base copy without a terminal (a
+// closed stdin, as CI would give it), with its own "confirmed by --yes"
+// line; the digest is still shown first.
+func TestRefreshBaseStepYesNoTerminal(t *testing.T) {
+	r := newImagesRig(t, "1.2.3")
+	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+	e := rigEngine(t, r.initRig, &initOptions{yes: true})
+	out := atNoTerminal(e)
+	if err := e.r.refreshBase(t.Context(), e, []string{"go"}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if r.dst.tags[initProject+"/fugaro-base/fugaro-go:1.2.3"] == "" {
+		t.Fatalf("not copied: %v", r.dst.tags)
+	}
+	for _, want := range []string{"⚠ CONFIRM", "sha256:", "confirmed by --yes"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
 	}
 }
 
@@ -231,12 +265,45 @@ func TestRefreshCheckJobStep(t *testing.T) {
 	}
 }
 
+// 2026-10-08 decision: --yes confirms the check-job update without a
+// terminal, after showing the same old/new diff as a typed run, with its own
+// "confirmed by --yes" line.
+func TestRefreshCheckJobStepYesNoTerminal(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{yes: true})
+	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
+	oldRef, newRef := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
+	spec, _ := json.Marshal(infra.CheckJobSpec{Repo: "acme/sandbox", BaseImages: map[string]string{"web-node": oldRef}})
+	r.run.SetJob(gcp.CheckJobName(slug), map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRole: gcp.RoleCheck, gcp.LabelRepo: label}, oldRef)
+	r.run.SetJobEnv(gcp.CheckJobName(slug), map[string]string{infra.CheckSpecEnv: string(spec)})
+	lc, err := localcfg.Load(r.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lc.BaseImages = map[string]string{"web-node": newRef}
+	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
+	out := atNoTerminal(e)
+	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	for _, want := range []string{"image " + oldRef + " -> " + newRef, "⚠ CONFIRM", "confirmed by --yes", "updated the daily image check job"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+	if len(r.run.Patches()) != 1 {
+		t.Fatalf("%d patches", len(r.run.Patches()))
+	}
+}
+
 // PlanCheckJob's own owner check (labels, spec repo) refuses a job that is
 // not this repository's: ErrCheckJobShape surfaces as a user error, and
-// nothing is patched.
-func TestRefreshCheckJobRefusesForeignJob(t *testing.T) {
+// nothing is patched. Run with and without --yes (2026-10-08 decision): the
+// owner check runs before any confirmation, so --yes changes nothing here.
+func testRefreshCheckJobForeignJob(t *testing.T, yes bool) {
+	t.Helper()
 	r := newInitRig(t)
-	e := rigEngine(t, r, &initOptions{})
+	e := rigEngine(t, r, &initOptions{yes: yes})
 	slug, _ := checkJobOwner(t, "bitbucket", "acme/sandbox")
 	_, otherLabel := checkJobOwner(t, "bitbucket", "acme/other")
 	oldRef, newRef := managedRef("web-node", "0.4.0"), managedRef("web-node", "0.5.1")
@@ -253,11 +320,21 @@ func TestRefreshCheckJobRefusesForeignJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label}, kinds: []string{"web-node"}}
-	atTerminal(t, e, initProjectName+"\n")
+	if yes {
+		atNoTerminal(e)
+	} else {
+		atTerminal(t, e, initProjectName+"\n")
+	}
 	err = e.r.refreshCheckJob(t.Context(), tg)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "is not as fugaro init --repo made it") || len(r.run.Patches()) != 0 {
-		t.Fatalf("exit %d, err %v, %d patches", ExitCode(err), err, len(r.run.Patches()))
+		t.Fatalf("yes=%v: exit %d, err %v, %d patches", yes, ExitCode(err), err, len(r.run.Patches()))
 	}
+}
+
+func TestRefreshCheckJobRefusesForeignJob(t *testing.T) { testRefreshCheckJobForeignJob(t, false) }
+
+func TestRefreshCheckJobRefusesForeignJobEvenWithYes(t *testing.T) {
+	testRefreshCheckJobForeignJob(t, true)
 }
 
 // A failed job read (a 403, say) is a remote error: never treated as "no
@@ -312,7 +389,14 @@ func TestRefreshCheckJobEscapesHostileBytes(t *testing.T) {
 // with its two workflows, both base kinds already at 0.5.1.
 func buildTarget(t *testing.T, r *anchorModeRig) (*initEngine, *refreshTarget) {
 	t.Helper()
-	e := rigEngine(t, r.initRig, &initOptions{})
+	return buildTargetOpts(t, r, &initOptions{})
+}
+
+// buildTargetOpts is buildTarget with the caller's own options (o.yes, for
+// the --yes tests).
+func buildTargetOpts(t *testing.T, r *anchorModeRig, o *initOptions) (*initEngine, *refreshTarget) {
+	t.Helper()
+	e := rigEngine(t, r.initRig, o)
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
 		t.Fatal(err)
@@ -392,8 +476,10 @@ func TestRefreshBuildsRecordReadErrorStopsBuilds(t *testing.T) {
 	}
 }
 
-// The build confirmation is typed-only, never the run's or --yes's.
-func TestRefreshBuildsConfirmationIsTyped(t *testing.T) {
+// The build confirmation is askBuild's (the project's name typed, or --yes:
+// 2026-10-08 decision), never the run's own confirmation or a plain,
+// un-gated ask.
+func TestRefreshBuildsConfirmationIsTypedOrYes(t *testing.T) {
 	src, err := os.ReadFile("image_refresh_steps.go")
 	if err != nil {
 		t.Fatal(err)
@@ -407,13 +493,109 @@ func TestRefreshBuildsConfirmationIsTyped(t *testing.T) {
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
 		body = body[:j+1]
 	}
-	if !strings.Contains(body, "r.askTyped(") {
-		t.Error("refreshBuilds does not ask the typed confirmation")
+	if !strings.Contains(body, "r.askBuild(") {
+		t.Error("refreshBuilds does not ask through askBuild")
 	}
-	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
+	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask(", "r.askTyped("} {
 		if strings.Contains(body, bad) {
-			t.Errorf("refreshBuilds uses %s", bad)
+			t.Errorf("refreshBuilds uses %s directly (should go through askBuild)", bad)
 		}
+	}
+}
+
+// askBuild itself: without --yes it is exactly askTyped (a real terminal,
+// never auto-confirmed); with --yes it confirms without one, printing its
+// own "confirmed by --yes" line, same as the ordinary steps' r.ask.
+func TestAskBuild(t *testing.T) {
+	r := newInitRig(t)
+	e := rigEngine(t, r, &initOptions{})
+	out := atNoTerminal(e)
+	ok, reachable, err := e.r.askBuild("do the thing")
+	if err != nil || ok || reachable {
+		t.Fatalf("no --yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
+	}
+	if strings.Contains(out.String(), "confirmed by --yes") {
+		t.Errorf("confirmed without --yes:\n%s", out.String())
+	}
+
+	e = rigEngine(t, r, &initOptions{yes: true})
+	out = atNoTerminal(e)
+	ok, reachable, err = e.r.askBuild("do the thing")
+	if err != nil || !ok || !reachable {
+		t.Fatalf("--yes, no terminal: ok=%v reachable=%v err=%v", ok, reachable, err)
+	}
+	for _, want := range []string{"⚠ CONFIRM", "do the thing", "confirmed by --yes"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, out.String())
+		}
+	}
+}
+
+// Defence in depth: askBuild refuses an agent's session itself, --yes
+// included, even if the up-front refusal were bypassed (it is called
+// directly here). Mutation: drop the agent check and --yes confirms.
+func TestAskBuildRefusesAnAgentSession(t *testing.T) {
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			for _, k := range agentMarkers {
+				t.Setenv(k, "")
+			}
+			t.Setenv(marker, "1")
+			r := newInitRig(t)
+			e := rigEngine(t, r, &initOptions{yes: true})
+			out := atNoTerminal(e)
+			ok, _, err := e.r.askBuild("do the thing")
+			var ae *initflow.AgentError
+			if !errors.As(err, &ae) || ae.Marker != marker || ok {
+				t.Fatalf("ok=%v err=%v", ok, err)
+			}
+			if strings.Contains(out.String(), "confirmed by --yes") {
+				t.Errorf("confirmed in an agent session:\n%s", out.String())
+			}
+		})
+	}
+}
+
+// 2026-10-08 decision: --yes confirms every stale build with no terminal and
+// no cap on how many run (here, both workflows).
+func TestRefreshBuildsYesNoTerminalNoCap(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTargetOpts(t, r, &initOptions{yes: true})
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	// Neither has a build record: both are todo, and --yes confirms both,
+	// with no cap on the count.
+	out := atNoTerminal(e)
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 2 {
+		t.Fatalf("builds %+v, want both (no cap)", fb.specs)
+	}
+	if n := strings.Count(out.String(), "confirmed by --yes"); n != 2 {
+		t.Errorf("%d \"confirmed by --yes\" lines, want 2 (one per build):\n%s", n, out.String())
+	}
+}
+
+// 2026-10-08 decision: under --yes a failed build still stops the ones
+// after it, and names what finished, exactly as without --yes.
+func TestRefreshBuildsYesFailureStopsTheLoop(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFailingBuilder(t, 1)
+	e, tg := buildTargetOpts(t, r, &initOptions{yes: true})
+	p := &refreshPlan{workflows: []string{"api", "app"}}
+	out := atNoTerminal(e)
+	err := e.r.refreshBuilds(t.Context(), p, tg)
+	if ExitCode(err) != ExitRemoteError || len(fb.specs) != 1 || fb.specs[0].Workflow != "api" {
+		t.Fatalf("exit %d, err %v, builds %+v", ExitCode(err), err, fb.specs)
+	}
+	if !strings.Contains(err.Error(), "quota") || !strings.Contains(err.Error(), "built before this: none") {
+		t.Errorf("error %q", err)
+	}
+	if !strings.Contains(out.String(), "confirmed by --yes") {
+		t.Errorf("output lacks the --yes confirmation of the one build that started:\n%s", out.String())
 	}
 }
 
@@ -500,9 +682,12 @@ func TestRefreshCheckJobApplyErrorStops(t *testing.T) {
 // A missing job (404) is a not-found message naming init --repo when the
 // repository's spec has a check job, and "nothing to update" only when it has
 // none.
-func TestRefreshCheckJobMissing(t *testing.T) {
+// A missing job (404) is reported and the run continues, with or without
+// --yes (2026-10-08 decision): there is nothing to confirm either way.
+func testRefreshCheckJobMissing(t *testing.T, yes bool) {
+	t.Helper()
 	r := newInitRig(t)
-	e := rigEngine(t, r, &initOptions{})
+	e := rigEngine(t, r, &initOptions{yes: yes})
 	slug, label := checkJobOwner(t, "bitbucket", "acme/sandbox")
 	lc, err := localcfg.Load(r.cfg)
 	if err != nil {
@@ -510,19 +695,29 @@ func TestRefreshCheckJobMissing(t *testing.T) {
 	}
 	lc.BaseImages = map[string]string{"web-node": managedRef("web-node", "0.5.1")}
 	tg := &refreshTarget{lc: lc, spec: infra.RepoSpec{Name: "acme/sandbox", Slug: slug, Label: label, Check: &infra.CheckSpec{}}}
-	out := atTerminal(t, e, "")
+	at := func() *syncBuf {
+		if yes {
+			return atNoTerminal(e)
+		}
+		return atTerminal(t, e, "")
+	}
+	out := at()
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), "was not found") || !strings.Contains(out.String(), "fugaro init --repo") || strings.Contains(out.String(), "nothing to update") {
-		t.Errorf("with a check in the spec:\n%s", out.String())
+		t.Errorf("yes=%v, with a check in the spec:\n%s", yes, out.String())
 	}
 	tg.spec.Check = nil
-	out = atTerminal(t, e, "")
+	out = at()
 	if err := e.r.refreshCheckJob(t.Context(), tg); err != nil || !strings.Contains(out.String(), "nothing to update") || strings.Contains(out.String(), "was not found") {
-		t.Errorf("without a check: %v\n%s", err, out.String())
+		t.Errorf("yes=%v, without a check: %v\n%s", yes, err, out.String())
 	}
 }
+
+func TestRefreshCheckJobMissing(t *testing.T) { testRefreshCheckJobMissing(t, false) }
+
+func TestRefreshCheckJobMissingEvenWithYes(t *testing.T) { testRefreshCheckJobMissing(t, true) }
 
 // failingBuilder is the fake builder whose failOn'th (1-based) submit fails.
 type failingBuilder struct {

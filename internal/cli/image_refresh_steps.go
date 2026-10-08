@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -50,7 +51,7 @@ func (r *initRun) refreshBase(ctx context.Context, e *initEngine, kinds []string
 		fmt.Fprintf(r.w, "  %s\n", st.Detail)
 		return nil
 	}
-	out, err := s.Apply(ctx, initflow.Env{Interactive: true})
+	out, err := s.Apply(ctx, initflow.Env{Yes: r.o.yes, Interactive: true})
 	if err != nil {
 		return err
 	}
@@ -194,9 +195,28 @@ func builtSoFar(err error, built []string) error {
 	return fmt.Errorf("%w; built before this: %s", err, list)
 }
 
+// askBuild is step 4's confirmation of one billable build: the project's
+// name typed at a real terminal, or, with --yes, confirmed without one
+// (2026-10-08 owner decision: --yes now covers every build here, with no
+// cap, superseding D2's "no --yes" for this command only; askTyped's own
+// Typed class, used elsewhere, still never takes --yes). A coding agent's
+// session is refused here too, before the --yes shortcut, even though
+// refuseRefreshHere already refused before any step ran (defence in depth).
+func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
+	if m := agentMarker(os.Getenv); m != "" {
+		return false, false, &initflow.AgentError{Marker: m}
+	}
+	if r.o.yes {
+		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
+		fmt.Fprintln(r.w, "  confirmed by --yes")
+		return true, true, nil
+	}
+	return r.askTyped(what)
+}
+
 // refreshBuilds is step 4 (D8, D9): each selected workflow whose image is
-// not built from its current base is rebuilt, after its own typed
-// confirmation, from the base the local config now records. A declined or
+// not built from its current base is rebuilt, after its own confirmation
+// (askBuild), from the base the local config now records. A declined or
 // failed build stops the loop: the builds after it are never submitted.
 func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshTarget) error {
 	host, err := infra.RegistryHost(t.lc)
@@ -238,13 +258,13 @@ func (r *initRun) refreshBuilds(ctx context.Context, p *refreshPlan, t *refreshT
 	}
 	var built []string
 	for _, wf := range todo {
-		ok, reachable, err := r.askTyped(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath))
+		ok, reachable, err := r.askBuild(cloudBuildBanner(t.spec.Name, wf, t.lc.Build.MachineType, t.spec.BuildServiceAccountEmail, t.spec.RegistryPath))
 		if err != nil {
 			return err
 		}
 		if !reachable {
 			notes()
-			return builtSoFar(userErr("the build of %s/%s needs a terminal where the project's name can be typed (--yes, --non-interactive, a pipe and a coding agent do not confirm a build), so it and the builds after it were not submitted", t.spec.Name, wf), built)
+			return builtSoFar(userErr("the build of %s/%s needs a terminal where the project's name can be typed (pass --yes to confirm builds without one, from CI or a script; a coding agent's session never confirms one), so it and the builds after it were not submitted", t.spec.Name, wf), built)
 		}
 		if !ok {
 			notes()

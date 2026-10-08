@@ -43,7 +43,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				"Run fugaro image refresh --repo acme/app --workflow web in its checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes", "this release's web-node base image", "--recipe default"} {
+				"Run fugaro image refresh --repo acme/app --workflow web in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session", "this release's web-node base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}
