@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -12,6 +13,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
+	"google.golang.org/api/googleapi"
 )
 
 // refreshBase is the base image kind's builds start from once the base step
@@ -66,7 +68,8 @@ func refreshVerdict(rec *imagecheck.Record, want, host, kind string) (build bool
 
 // readRefreshRecord is workflow wf's build record: nil when there is none,
 // an empty record when it cannot be parsed (rebuilt like one that names no
-// base), and an error (exit 2) when the bucket cannot be read.
+// base), and an error (exit 2) when the bucket cannot be read. The operator owns the
+// project, so it reads strictly: a 403 is an error, not "no build record".
 func readRefreshRecord(ctx context.Context, lc *localcfg.Config, slug, wf string) (*imagecheck.Record, error) {
 	u := recordReadURL(lc)
 	if fakeEndpointsOnGS(lc, u) {
@@ -77,10 +80,12 @@ func readRefreshRecord(ctx context.Context, lc *localcfg.Config, slug, wf string
 		return nil, remote(fmt.Errorf("opening the build records' bucket %s: %w", u, err))
 	}
 	defer b.Close()
-	data, _, err := b.Read(ctx, imagecheck.RecordKey(slug, wf))
+	data, _, err := b.ReadStrict(ctx, imagecheck.RecordKey(slug, wf))
 	switch {
 	case errors.Is(err, blobx.ErrNotExist):
 		return nil, nil
+	case isForbiddenRead(err):
+		return nil, remote(fmt.Errorf("reading the build record of workflow %s: access denied (HTTP 403) to %s: this operator's credentials need read access to the project's runs bucket, and a denied read is not \"no build record\": %w", wf, u, err))
 	case err != nil:
 		return nil, remote(fmt.Errorf("reading the build record of workflow %s: %w", wf, err))
 	}
@@ -89,6 +94,11 @@ func readRefreshRecord(ctx context.Context, lc *localcfg.Config, slug, wf string
 		return &imagecheck.Record{}, nil
 	}
 	return rec, nil
+}
+
+func isForbiddenRead(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
 }
 
 // customBaseRefusal is decision D4's stop: the kinds whose base_images entry

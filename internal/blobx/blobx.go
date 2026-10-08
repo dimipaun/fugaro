@@ -149,9 +149,10 @@ func (b *Bucket) ReadMax(ctx context.Context, key string, limit int) ([]byte, in
 
 // ReadStrict is Read, except that an HTTP 403 is returned as an error
 // (the googleapi.Error stays reachable with errors.As), not as ErrNotExist.
-// Only the shared-config readers (internal/cli/sharedcfg.go) may use the
-// strict variants: they run as launchers or operators holding unconditional
-// objectAdmin (which includes list), for whom a 403 means no access.
+// Only the shared-config readers (internal/cli/sharedcfg.go) and fugaro image
+// refresh's record read may use the strict variants: they run as launchers or
+// operators holding unconditional objectAdmin (which includes list), for whom
+// a 403 means no access.
 func (b *Bucket) ReadStrict(ctx context.Context, key string) ([]byte, int64, error) {
 	return b.read(ctx, key, MaxReadBytes, true)
 }
