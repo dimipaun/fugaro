@@ -109,10 +109,10 @@ func skillMeta(t *testing.T, path string) (name, description string, body []byte
 	return meta.Name, meta.Description, rest
 }
 
-// TestSkillSetIsFour: the plugin carries exactly the four skills of design
-// §4.1, each named after its directory with a non-empty, bounded
-// description and a non-empty body.
-func TestSkillSetIsFour(t *testing.T) {
+// TestSkillSetIsFive: the plugin carries exactly the five skills (design
+// §4.1, and the upgrade skill of docs/design/upgrade.md), each named after
+// its directory with a non-empty, bounded description and a non-empty body.
+func TestSkillSetIsFive(t *testing.T) {
 	files, err := filepath.Glob(filepath.Join("skills", "*", "SKILL.md"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no skills: %v", err)
@@ -131,7 +131,7 @@ func TestSkillSetIsFour(t *testing.T) {
 		}
 		names[name] = true
 	}
-	want := []string{"setup", "working", "routing", "parallelism"}
+	want := []string{"setup", "working", "routing", "parallelism", "upgrade"}
 	if len(names) != len(want) {
 		t.Fatalf("skills = %v, want exactly %v", names, want)
 	}

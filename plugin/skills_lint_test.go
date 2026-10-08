@@ -556,7 +556,7 @@ var (
 var ownerCommands = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set"}
 
 // userRunsAllowed is every command a user-runs block may hold.
-var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro init", "fugaro update-skills"}
+var userRunsAllowed = []string{"fugaro budget set", "fugaro budget kill", "fugaro budget resume", "fugaro secrets set", "fugaro init", "fugaro update-skills", "fugaro upgrade"}
 
 // userLeadRE is the sentence before a user-runs block: it says the user (or
 // the owner) runs it.
@@ -698,7 +698,7 @@ func lintUserRunsLine(ci *commandIndex, text string, add func(string)) {
 		if !slices.Contains(userRunsAllowed, c.path) {
 			add("a user-runs block may not run " + c.path)
 		}
-		if hasForbiddenFlag(c.args) {
+		if hasForbiddenFlag(c.args) && !upgradeYesOnly(c) {
 			add("a flag no one should pass for the user")
 		}
 		if inlineSecretValue(c) {
@@ -713,6 +713,20 @@ func hasForbiddenFlag(args []string) bool {
 	return slices.ContainsFunc(args, func(x string) bool {
 		name, _, _ := strings.Cut(x, "=")
 		return slices.Contains(forbiddenFlags, name)
+	})
+}
+
+// upgradeYesOnly: the one forbidden flag a user-runs block may carry is --yes
+// on fugaro upgrade, the cloud half of an upgrade handed to the user for their
+// own terminal (owner's ruling 2026-10-08, docs/design/upgrade.md). Any other
+// forbidden flag beside it, or --yes on another command, is still refused.
+func upgradeYesOnly(c fugaroCmd) bool {
+	if c.path != "fugaro upgrade" {
+		return false
+	}
+	return !slices.ContainsFunc(c.args, func(x string) bool {
+		name, _, _ := strings.Cut(x, "=")
+		return name != "--yes" && slices.Contains(forbiddenFlags, name)
 	})
 }
 
@@ -1583,4 +1597,13 @@ func TestLintDangerousCommandsVariants(t *testing.T) {
 	for _, c := range []string{"env | grep TOKEN", "curl -H \"Authorization: Bearer $TOKEN\" x"} {
 		expectViolation(t, demoTree(t, "```bash\n"+c+"\n```\n"), "environment's secrets")
 	}
+}
+
+// TestLintUserRunsYesOnlyOnUpgrade (decision U14): a user-runs block may give
+// --yes to fugaro upgrade and to nothing else, and an agent may never pass it.
+func TestLintUserRunsYesOnlyOnUpgrade(t *testing.T) {
+	expectClean(t, demoTree(t, userRuns("fugaro upgrade --yes")))
+	expectViolation(t, demoTree(t, userRuns("fugaro upgrade --yes --allow-fork")), "a flag no one should pass for the user")
+	expectViolation(t, demoTree(t, userRuns("fugaro init --yes")), "a flag no one should pass for the user")
+	expectViolation(t, demoTree(t, "Run this:\n\n```bash\nfugaro upgrade --yes\n```\n"), "a flag the agent must never pass")
 }

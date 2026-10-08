@@ -2,7 +2,7 @@ package plugin_test
 
 // Docs tests (plan T7): the README's Getting started is the two steps of the
 // brief, and nothing in the repository still names a retired per-command
-// skill (the plugin has four: setup, working, routing, parallelism).
+// skill (the plugin has five: setup, working, routing, parallelism, upgrade).
 
 import (
 	"io/fs"
