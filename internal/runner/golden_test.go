@@ -58,17 +58,17 @@ func normalizeResult(t *testing.T, raw []byte) string {
 	return normalize(string(out)) + "\n"
 }
 
-// oldFlowCfg is the fixture config with git.pr.early_draft false: the
-// finalize-only pull request flow these goldens were recorded with, which
-// the key restores exactly.
+// oldFlowCfg is the fixture config with git.pr.early_draft and
+// git.pr.checkpoints both false: the finalize-only pull request flow these
+// goldens were recorded with, which the two keys together restore exactly.
 func oldFlowCfg(t *testing.T) string {
 	t.Helper()
 	return oldFlow(testutil.FixtureFiles(t)["fugaro.yaml"])
 }
 
-// oldFlow turns the early draft off in cfg.
+// oldFlow turns the early draft and checkpoint pushes off in cfg.
 func oldFlow(cfg string) string {
-	return strings.Replace(cfg, "  base_branch: main\n", "  base_branch: main\n  pr: { early_draft: false }\n", 1)
+	return strings.Replace(cfg, "  base_branch: main\n", "  base_branch: main\n  pr: { early_draft: false, checkpoints: false }\n", 1)
 }
 
 // TestNoPolicyIsM9aBehaviour is the golden for a repository that sets no
