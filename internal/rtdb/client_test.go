@@ -270,6 +270,45 @@ func TestRTDBServerTimeFromDate(t *testing.T) {
 	if got, _ := c.ServerNow(); got.Before(at.Add(24 * time.Hour)) {
 		t.Fatalf("ServerNow = %v, did not follow the Date header", got)
 	}
+	// And back: the next request's answer wins even with an earlier Date, so a
+	// skewed header does not pin the clock.
+	f.SetClock(func() time.Time { return at })
+	c.Get(ctx(t), "a", new(int))
+	if got, _ := c.ServerNow(); got.Before(at) || got.After(at.Add(2*time.Second)) {
+		t.Fatalf("ServerNow = %v, did not follow the Date header back to %v", got, at)
+	}
+}
+
+// TestRTDBLateAnswerKeepsTheNewDay replays, through the fake, the race behind
+// the flaky budget TestLeaseAcrossMidnight: a request answered before
+// midnight is delivered after the answer to a request sent past midnight. The
+// clock must stay on the new day.
+func TestRTDBLateAnswerKeepsTheNewDay(t *testing.T) {
+	f := gcpfake.NewRTDB(t)
+	c := newClient(t, f)
+	late := time.Date(2026, 10, 2, 23, 50, 0, 0, time.UTC)
+	f.SetClock(func() time.Time { return late })
+	stamped, release := f.HoldNext("held")
+	defer release()
+	done := make(chan error, 1)
+	go func() { _, err := c.Get(ctx(t), "held", new(int)); done <- err }()
+	select {
+	case <-stamped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the held request never reached the fake")
+	}
+	next := late.Add(20 * time.Minute)
+	f.SetClock(func() time.Time { return next })
+	if _, err := c.Get(ctx(t), "a", new(int)); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.ServerNow(); got.Before(next) || got.After(next.Add(2*time.Second)) {
+		t.Fatalf("ServerNow = %v after a late pre-midnight answer, want about %v", got, next)
+	}
 }
 
 func recv(t *testing.T, ch <-chan rtdb.Event) rtdb.Event {
