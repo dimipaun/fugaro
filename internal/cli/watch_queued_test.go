@@ -283,11 +283,11 @@ func TestWatchQueuedBecomesLiveAcrossSnapshots(t *testing.T) {
 }
 
 // The streaming (non-once) path also shows queued runs: it polls the
-// bucket on its own clock, sped up here so the test doesn't wait 15s.
+// bucket on its own clock, sped up here so the test doesn't wait 60s.
 func TestWatchStreamShowsQueuedRun(t *testing.T) {
-	old := queuedPollInterval
-	queuedPollInterval = 20 * time.Millisecond
-	t.Cleanup(func() { queuedPollInterval = old })
+	old := queuedNextPoll
+	queuedNextPoll = func() time.Duration { return 20 * time.Millisecond }
+	t.Cleanup(func() { queuedNextPoll = old })
 
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "streamed")
@@ -414,17 +414,20 @@ func TestWatchCancelledPendingRunNotQueued(t *testing.T) {
 	}
 }
 
-// fugaro run --retry launches a stored run under its old ID: the launch's
-// own time, not the ID's, decides.
-func TestWatchRetriedOldRunShowsQueued(t *testing.T) {
+// The documented limitation: the scan lists run IDs minted within the
+// lookback (plus queuedMintMargin), never the repository's history, so a
+// fugaro run --retry of an old stored task (old ID, fresh launch.json) is
+// not shown queued; it shows as a live row once its runner starts, and
+// fugaro ls shows it pending meanwhile.
+func TestWatchRetriedOldRunNotQueued(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
 	run := runID(2*time.Hour, "b021")
 	f.writeTask(t, appSlug, run, "")
 	f.writeLaunch(t, appSlug, run, time.Now().Add(-time.Minute))
-	runs, _, out := watchOnceJSON(t)
-	if r, ok := runs[run]; !ok || !r.Queued || r.Stuck {
-		t.Fatalf("the retried run must show queued (not stuck): %s", out)
+	runs, note, out := watchOnceJSON(t)
+	if _, ok := runs[run]; ok || note != "" {
+		t.Fatalf("an old run ID is outside the listing, so not queued (documented): %s", out)
 	}
 }
 

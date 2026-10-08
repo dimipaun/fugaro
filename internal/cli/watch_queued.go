@@ -5,9 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -25,28 +29,67 @@ import (
 // sees them; a plain Firebase Viewer always gets the one-line "queued runs
 // unavailable" note instead (gcp-setup.md "the runs bucket's Viewer
 // access"). Every bucket read happens off the render path, in the
-// background, bounded by queuedScanTimeout.
+// background, each step under its own deadline.
 
-// queuedPollInterval is how often the live screen re-scans the runs bucket
-// for queued runs: a GCS list per repository, much slower than the RTDB
-// ticks that drive the rest of the view. A var so tests can shrink it.
-var queuedPollInterval = 15 * time.Second
+// queuedPollEvery is how often the live screen re-scans the runs bucket
+// for queued runs, plus up to queuedPollJitter so that many open watches
+// do not list in step: much slower than the RTDB ticks (15 s) that drive
+// the rest of the view, since every scan costs a list call per repository.
+const (
+	queuedPollEvery  = 60 * time.Second
+	queuedPollJitter = 5 * time.Second
+)
+
+// queuedNextPoll is the wait before the next scan. A var so tests can
+// shrink it.
+var queuedNextPoll = func() time.Duration {
+	return queuedPollEvery + rand.N(queuedPollJitter)
+}
 
 // queuedOnceWait is how long watch --once waits for the first scan before
 // printing without queued rows (and with a note). A var so tests can
 // shrink it.
 var queuedOnceWait = 3 * time.Second
 
-// queuedLookback bounds which runs a scan considers: those whose launch
-// claim or launch.json was written within it (by the object's own time, so
-// a --retry of an old run ID counts). A launch older than
-// runstore.ClaimTTL that never got a record stays listed as stuck until it
-// leaves this window.
+// queuedLookback bounds how long a run shows queued: until this long after
+// its launch claim or launch.json (by their own timestamps). A launch older
+// than runstore.ClaimTTL that never got a record stays listed as stuck
+// until it leaves this window.
 const queuedLookback = 30 * time.Minute
 
-// queuedScanTimeout bounds one whole scan (marker check, listings, reads):
-// a bucket that hangs costs a note, never a frozen screen.
-const queuedScanTimeout = 10 * time.Second
+// queuedMintMargin is how much older than the lookback a run ID (its mint
+// time) may be and still be listed: the ID is minted just before the claim
+// and the launch, so the bucket listing starts at now − queuedLookback −
+// queuedMintMargin. A run launched later than that after its ID was minted
+// (fugaro run --retry of an old stored task) is not found: it shows once
+// its runner starts, and fugaro ls shows it pending meanwhile.
+const queuedMintMargin = 5 * time.Minute
+
+// queuedStepTimeout bounds each whole-project step of a scan: the project
+// marker check and the listing of repositories.
+const queuedStepTimeout = 10 * time.Second
+
+// queuedRepoTimeout bounds one repository's part of a scan (its listing
+// and the reads of its recent runs): a repository that hangs or fails is
+// left out and counted in the note; the others still show.
+const queuedRepoTimeout = 10 * time.Second
+
+// queuedWorkers is how many repositories a scan reads at once.
+const queuedWorkers = 8
+
+// queuedOpenTimeout bounds how long one scan waits for the bucket to open
+// (credential discovery and the marker check). An open still running past
+// it is not restarted: the next scan waits for the same one.
+const queuedOpenTimeout = 20 * time.Second
+
+// queuedOpenBackoffMin and queuedOpenBackoffMax bound the wait before the
+// bucket is opened again after an open failed: it doubles from the first
+// to the second with every failure in a row, so a missing grant or
+// credential costs one discovery every few minutes, not one per poll.
+const (
+	queuedOpenBackoffMin = time.Minute
+	queuedOpenBackoffMax = 5 * time.Minute
+)
 
 // queuedDropAfter is how many scans in a row may fail before the last
 // good queued rows are dropped: one or two failures keep them (a hiccup
@@ -135,97 +178,244 @@ func queuedFromRun(ctx context.Context, env *cloudEnv, slug, id string, since, n
 	}, true, nil
 }
 
-// queuedNote is err as watch's one-line degrade note.
-func queuedNote(err error) string {
+// errText is err for a note: a deadline says which one, any other error
+// is sanitised (bucket and object text is not ours).
+func errText(err error, within time.Duration) string {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedScanTimeout)
+		return fmt.Sprintf("the runs bucket did not answer within %s", within)
 	}
-	return "queued runs unavailable: " + safetext.Strip(err.Error())
+	return safetext.Strip(err.Error())
+}
+
+// queuedNote is a failed scan's err as watch's one-line degrade note.
+func queuedNote(err error) string {
+	return "queued runs unavailable: " + errText(err, queuedStepTimeout)
 }
 
 // queuedScanner reads queued runs from the runs bucket, keeping one bucket
 // handle across scans (opened, and its project marker checked, on the
-// first scan that succeeds at it).
+// first scan that succeeds at it). Its methods are called from one
+// goroutine at a time.
 type queuedScanner struct {
 	lc   *localcfg.Config
 	repo string
 	open func(context.Context, *localcfg.Config) (*blobx.Bucket, error)
-	env  *cloudEnv
+	// slugs lists the repositories to scan; listIDs a repository's run IDs
+	// minted since a time. Seams for tests.
+	slugs   func(context.Context, *cloudEnv) ([]string, error)
+	listIDs func(context.Context, *blob.Bucket, string, time.Time) ([]string, error)
+	now     func() time.Time
+
+	workers                  int
+	repoTimeout, openTimeout time.Duration
+
+	env *cloudEnv
+	// opening is the open in flight, nil when none.
+	opening chan openResult
+	// openFails counts opens failed in a row; until nextOpen no new open
+	// starts and a scan fails at once with openErr.
+	openFails int
+	nextOpen  time.Time
+	openErr   error
+}
+
+type openResult struct {
+	b   *blobx.Bucket
+	err error
 }
 
 func newQueuedScanner(lc *localcfg.Config, repo string) *queuedScanner {
-	return &queuedScanner{lc: lc, repo: repo, open: openQueueBucket}
+	return &queuedScanner{
+		lc: lc, repo: repo, open: openQueueBucket,
+		slugs: func(ctx context.Context, env *cloudEnv) ([]string, error) {
+			return lsSlugs(ctx, env, &lsOptions{repo: repo}, io.Discard)
+		},
+		listIDs: runstore.ListRunIDs,
+		now:     time.Now,
+		workers: queuedWorkers, repoTimeout: queuedRepoTimeout, openTimeout: queuedOpenTimeout,
+	}
 }
 
+// Close releases the bucket handle, never blocking: an open still in
+// flight is closed by its own goroutine once it ends.
 func (s *queuedScanner) Close() {
 	if s.env != nil {
 		s.env.Close()
 		s.env = nil
 	}
+	if ch := s.opening; ch != nil {
+		s.opening = nil
+		go func() {
+			if r := <-ch; r.b != nil {
+				_ = r.b.Close()
+			}
+		}()
+	}
+}
+
+// connect returns the bucket handle, opening it if need be. The open runs
+// on its own goroutine with ctx (the handle outlives this scan, and its
+// credentials keep the context they were found with), and this waits for
+// it at most s.openTimeout and never past ctx. A failed open is retried
+// only after a backoff (queuedOpenBackoffMin doubling to
+// queuedOpenBackoffMax); until then connect fails at once with its error.
+func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
+	if s.env != nil {
+		return s.env, nil
+	}
+	if s.opening == nil {
+		if s.openErr != nil && s.now().Before(s.nextOpen) {
+			return nil, s.openErr
+		}
+		ch := make(chan openResult, 1)
+		s.opening = ch
+		go func() {
+			b, err := s.open(ctx, s.lc)
+			if err != nil {
+				ch <- openResult{err: remote(err)}
+				return
+			}
+			cctx, cancel := context.WithTimeout(ctx, queuedStepTimeout)
+			err = checkCloudName(cctx, b, s.lc, os.Getenv, time.Now())
+			cancel()
+			if err != nil {
+				_ = b.Close()
+				ch <- openResult{err: err}
+				return
+			}
+			ch <- openResult{b: b}
+		}()
+	}
+	t := time.NewTimer(s.openTimeout)
+	defer t.Stop()
+	select {
+	case r := <-s.opening:
+		s.opening = nil
+		if r.err != nil {
+			s.openFails++
+			wait := queuedOpenBackoffMax
+			if s.openFails <= 8 {
+				wait = min(queuedOpenBackoffMin<<(s.openFails-1), queuedOpenBackoffMax)
+			}
+			s.nextOpen, s.openErr = s.now().Add(wait), r.err
+			return nil, r.err
+		}
+		s.openFails, s.openErr = 0, nil
+		s.env = &cloudEnv{lc: s.lc, bucket: r.b}
+		return s.env, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-t.C:
+		return nil, fmt.Errorf("opening the runs bucket did not finish within %s", s.openTimeout)
+	}
+}
+
+// repoScan is one repository's part of a scan.
+type repoScan struct {
+	rows       []watch.QueuedRun
+	unreadable int   // runs left out
+	runErr     error // the first of them's error
+	err        error // the repository could not be read: rows is nil
+}
+
+// scanRepo reads slug's queued runs under its own deadline: one listing of
+// the run IDs minted since minted, then the reads of those runs.
+func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string, minted, since, now time.Time) repoScan {
+	rctx, cancel := context.WithTimeout(ctx, s.repoTimeout)
+	defer cancel()
+	ids, err := s.listIDs(rctx, env.bucket.Bucket, slug, minted)
+	if err != nil {
+		return repoScan{err: err}
+	}
+	var r repoScan
+	for _, id := range ids {
+		q, ok, err := queuedFromRun(rctx, env, slug, id, since, now)
+		if rctx.Err() != nil {
+			return repoScan{err: rctx.Err()}
+		}
+		switch {
+		case err != nil:
+			r.unreadable++
+			if r.runErr == nil {
+				r.runErr = err
+			}
+		case ok:
+			r.rows = append(r.rows, q)
+		}
+	}
+	return r
 }
 
 // scan is one read of the runs bucket. err means nothing could be read
-// (rows is nil then); note, when not "", says some runs or repositories
-// could not be read and are left out of rows.
+// (rows is nil then); note, when not "", says some repositories or runs
+// could not be read and are left out of rows. Repositories are read in
+// parallel (s.workers at a time), each under its own deadline.
 func (s *queuedScanner) scan(ctx context.Context) (rows []watch.QueuedRun, note string, err error) {
-	if s.env == nil {
-		// The handle outlives this scan, so it is opened with ctx (its
-		// credentials keep the context they were found with), not with
-		// the scan's timeout.
-		b, err := s.open(ctx, s.lc)
-		if err != nil {
-			return nil, "", remote(err)
-		}
-		cctx, cancel := context.WithTimeout(ctx, queuedScanTimeout)
-		err = checkCloudName(cctx, b, s.lc, os.Getenv, time.Now())
-		cancel()
-		if err != nil {
-			_ = b.Close()
-			return nil, "", err
-		}
-		s.env = &cloudEnv{lc: s.lc, bucket: b}
-	}
-	sctx, cancel := context.WithTimeout(ctx, queuedScanTimeout)
-	defer cancel()
-	slugs, err := lsSlugs(sctx, s.env, &lsOptions{repo: s.repo}, io.Discard)
+	env, err := s.connect(ctx)
 	if err != nil {
 		return nil, "", err
 	}
-	now := time.Now().UTC()
+	lctx, cancel := context.WithTimeout(ctx, queuedStepTimeout)
+	slugs, err := s.slugs(lctx, env)
+	cancel()
+	if err != nil {
+		return nil, "", err
+	}
+	now := s.now().UTC()
 	since := now.Add(-queuedLookback)
-	skipped := 0
-	var first error
-	skip := func(err error) {
-		skipped++
-		if first == nil {
-			first = err
+	minted := since.Add(-queuedMintMargin)
+
+	results := make([]repoScan, len(slugs))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range min(s.workers, len(slugs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				results[i] = s.scanRepo(ctx, env, slugs[i], minted, since, now)
+			}
+		}()
+	}
+feed:
+	for i := range slugs {
+		select {
+		case jobs <- i:
+		case <-ctx.Done():
+			break feed
 		}
 	}
-	for _, slug := range slugs {
-		ids, err := runstore.RecentLaunches(sctx, s.env.bucket.Bucket, slug, since)
-		if sctx.Err() != nil {
-			return nil, "", sctx.Err()
-		}
-		if err != nil {
-			skip(err)
+	close(jobs)
+	wg.Wait()
+	if ctx.Err() != nil {
+		return nil, "", ctx.Err() // shutting down
+	}
+
+	var parts []string
+	unreadRepos, unreadRuns := 0, 0
+	var repoErr, runErr string
+	for i, r := range results {
+		if r.err != nil {
+			if unreadRepos == 0 {
+				repoErr = slugs[i] + ": " + errText(r.err, s.repoTimeout)
+			}
+			unreadRepos++
 			continue
 		}
-		for _, id := range ids {
-			q, ok, err := queuedFromRun(sctx, s.env, slug, id, since, now)
-			if sctx.Err() != nil {
-				return nil, "", sctx.Err()
-			}
-			if err != nil {
-				skip(err)
-				continue
-			}
-			if ok {
-				rows = append(rows, q)
-			}
+		rows = append(rows, r.rows...)
+		if r.unreadable > 0 && unreadRuns == 0 {
+			runErr = errText(r.runErr, s.repoTimeout)
 		}
+		unreadRuns += r.unreadable
 	}
-	if skipped > 0 {
-		note = fmt.Sprintf("queued runs: %d could not be read and are not shown (%s)", skipped, safetext.Strip(first.Error()))
+	if unreadRepos > 0 {
+		parts = append(parts, fmt.Sprintf("%d of %d repositories not read (%s)", unreadRepos, len(slugs), repoErr))
+	}
+	if unreadRuns > 0 {
+		parts = append(parts, fmt.Sprintf("%d could not be read and are not shown (%s)", unreadRuns, runErr))
+	}
+	if len(parts) > 0 {
+		note = "queued runs: " + strings.Join(parts, "; ")
 	}
 	return rows, note, nil
 }
@@ -273,27 +463,31 @@ type queuedSource struct {
 	failures int // scans failed in a row
 }
 
-// startQueuedSource starts scanning at once, then every queuedPollInterval
-// until ctx ends. The caller's Wait, after ctx is cancelled, blocks until
-// the goroutine has stopped (at most queuedScanTimeout, a scan in flight
-// when ctx ends returns at once).
+// startQueuedSource starts scanning at once, then every queuedNextPoll()
+// until ctx ends. The caller's Wait, after ctx is cancelled, returns
+// promptly: every step of a scan stops when ctx ends, and an open in
+// flight is left to finish on its own goroutine.
 func startQueuedSource(ctx context.Context, lc *localcfg.Config, repo string) *queuedSource {
 	sc := newQueuedScanner(lc, repo)
-	qs := &queuedSource{scan: sc.scan}
-	interval := queuedPollInterval
+	return runQueuedSource(ctx, sc.scan, sc.Close)
+}
+
+// runQueuedSource polls scan on its own goroutine until ctx ends, then
+// calls done.
+func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.QueuedRun, string, error), done func()) *queuedSource {
+	qs := &queuedSource{scan: scan}
 	qs.wg.Add(1)
 	go func() {
 		defer qs.wg.Done()
-		defer sc.Close()
-		qs.refresh(ctx)
-		t := time.NewTicker(interval)
-		defer t.Stop()
+		defer done()
 		for {
+			qs.refresh(ctx)
+			t := time.NewTimer(queuedNextPoll())
 			select {
 			case <-ctx.Done():
+				t.Stop()
 				return
 			case <-t.C:
-				qs.refresh(ctx)
 			}
 		}
 	}()
