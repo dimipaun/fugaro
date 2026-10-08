@@ -1,6 +1,7 @@
 package gcpfake
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -96,5 +97,57 @@ func TestRunFakeSetOnRunIsSynchronized(t *testing.T) {
 	resp.Body.Close()
 	if calls.Load() == 0 {
 		t.Fatal("OnRun set by SetOnRun was never called")
+	}
+}
+
+func TestRunFakePatchesAJobWithItsEtag(t *testing.T) {
+	f := NewRun(t)
+	f.SetJob("fugarochk-x", map[string]string{"fugaro": "managed"}, "img:1")
+	f.SetJobEnv("fugarochk-x", map[string]string{"A": "1", "FUGARO_CHECK_SPEC": "old"})
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugarochk-x"
+	get := func() map[string]any {
+		resp, err := http.Get(f.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var j map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&j); err != nil {
+			t.Fatal(err)
+		}
+		return j
+	}
+	patch := func(j map[string]any) int {
+		data, _ := json.Marshal(j)
+		req, _ := http.NewRequest(http.MethodPatch, f.URL+path, strings.NewReader(string(data)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	j := get()
+	etag, _ := j["etag"].(string)
+	if etag == "" {
+		t.Fatalf("no etag: %v", j)
+	}
+	c := j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	c["image"] = "img:2"
+	c["env"] = []any{map[string]any{"name": "A", "value": "1"}, map[string]any{"name": "FUGARO_CHECK_SPEC", "value": "new"}}
+	if code := patch(j); code != http.StatusOK {
+		t.Fatalf("patch: %d", code)
+	}
+	after := get()
+	ac := after["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)
+	if ac["image"] != "img:2" || after["etag"] == etag || len(f.Patches()) != 1 {
+		t.Fatalf("after: %v, patches %d", after, len(f.Patches()))
+	}
+	if env := ac["env"].([]any); env[1].(map[string]any)["value"] != "new" {
+		t.Fatalf("env %v", env)
+	}
+	// The etag read before the first patch is stale now.
+	if code := patch(j); code != http.StatusConflict {
+		t.Fatalf("stale etag: %d", code)
 	}
 }

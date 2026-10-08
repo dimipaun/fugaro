@@ -18,8 +18,8 @@ import (
 )
 
 // Run is a stateful fake of the Cloud Run Admin v2 calls Fugaro makes:
-// jobs.run, jobs get and list, and executions get, list (including across
-// jobs/-) and cancel.
+// jobs.run, jobs get, list and patch, and executions get, list (including
+// across jobs/-) and cancel.
 //
 // It stores executions by (job, short name), so it accepts a name in any
 // form: full with the project ID, full with ProjectNumber, or short when the
@@ -55,6 +55,7 @@ type Run struct {
 	execs    map[execKey]*runExec
 	seq      int
 	ops      int
+	patches  []map[string]any
 }
 
 // RunCall is one jobs.run request.
@@ -72,6 +73,7 @@ type runJob struct {
 	image       string
 	env         map[string]string // the container's env
 	n           int
+	etag        int
 }
 
 type execKey struct{ job, short string }
@@ -404,6 +406,8 @@ func (f *Run) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		f.listJobs(w, r, strings.TrimSuffix(p, "/jobs"))
 	case r.Method == http.MethodGet && strings.HasSuffix(p, "/executions"):
 		f.list(w, r, strings.TrimSuffix(p, "/executions"))
+	case r.Method == http.MethodPatch && isJobPath(p):
+		f.patchJob(w, p, body)
 	case r.Method == http.MethodGet && isJobPath(p):
 		f.getJob(w, p)
 	case r.Method == http.MethodGet:
@@ -457,7 +461,63 @@ func (f *Run) getJob(w http.ResponseWriter, p string) {
 	if len(j.labels) > 0 {
 		out["labels"] = maps.Clone(j.labels)
 	}
+	out["etag"] = fmt.Sprintf("e%d", j.etag)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// Patches are the bodies of the jobs patch requests the fake accepted.
+func (f *Run) Patches() []map[string]any {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.patches)
+}
+
+// patchJob is jobs.patch: the whole job comes back, carrying the etag jobs
+// get gave; a stale one is refused (409 ABORTED), as the real API refuses a
+// conflicting update. The fake keeps the container's image and plain env.
+func (f *Run) patchJob(w http.ResponseWriter, p string, body []byte) {
+	project, region, name, _ := jobPath(p)
+	j := f.jobs[name]
+	if j == nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "job "+name+" not found")
+		return
+	}
+	var in struct {
+		Etag     string `json:"etag"`
+		Template struct {
+			Template struct {
+				Containers []struct {
+					Image string `json:"image"`
+					Env   []struct {
+						Name  string `json:"name"`
+						Value string `json:"value"`
+					} `json:"env"`
+				} `json:"containers"`
+			} `json:"template"`
+		} `json:"template"`
+	}
+	var raw map[string]any
+	if json.Unmarshal(body, &in) != nil || json.Unmarshal(body, &raw) != nil || len(in.Template.Template.Containers) == 0 {
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "not a job")
+		return
+	}
+	if in.Etag != fmt.Sprintf("e%d", j.etag) {
+		writeError(w, http.StatusConflict, "ABORTED", "the job was modified since it was read (etag mismatch)")
+		return
+	}
+	c := in.Template.Template.Containers[0]
+	j.image = c.Image
+	j.env = map[string]string{}
+	for _, e := range c.Env {
+		j.env[e.Name] = e.Value
+	}
+	j.etag++
+	f.patches = append(f.patches, raw)
+	f.ops++
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": fmt.Sprintf("projects/%s/locations/%s/operations/%d", f.project(project), region, f.ops),
+		"done": true,
+	})
 }
 
 func (f *Run) withType(e map[string]any) map[string]any {
