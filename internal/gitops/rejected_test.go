@@ -338,7 +338,8 @@ func TestScanRangeStopsAtUntil(t *testing.T) {
 	if res, err := repo.ScanRange(ctx, "origin/main", clean, hasSecret); err != nil || res.Hit {
 		t.Fatalf("up to the clean commit: %+v, %v; want no hit", res, err)
 	}
-	if res, err := repo.ScanRange(ctx, "origin/main", "HEAD", hasSecret); err != nil || !res.Hit {
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	if res, err := repo.ScanRange(ctx, "origin/main", head, hasSecret); err != nil || !res.Hit {
 		t.Fatalf("up to HEAD: %+v, %v; want a hit", res, err)
 	}
 }
@@ -352,8 +353,68 @@ func TestWorkflowFilesInStopsAtUntil(t *testing.T) {
 	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", before); err != nil || len(got) != 0 {
 		t.Fatalf("before the CI commit: %v, %v", got, err)
 	}
-	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", "HEAD"); err != nil || len(got) != 1 || got[0] != ".github/workflows/ci.yml" {
+	head := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", head); err != nil || len(got) != 1 || got[0] != ".github/workflows/ci.yml" {
 		t.Fatalf("at HEAD: %v, %v", got, err)
+	}
+}
+
+func TestScanRangeScansEveryCommit(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "leak", files: map[string]string{"k.txt": "S3CRET-VALUE\n"}},
+		commitSpec{msg: "clean", files: map[string]string{"a.txt": "a\n"}},
+	)
+	tip := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	if res, err := repo.ScanWork(ctx, "HEAD^", hasSecret); err != nil || res.Hit {
+		t.Fatalf("the tip commit alone: %+v, %v; want it clean", res, err)
+	}
+	if res, err := repo.ScanRange(ctx, "origin/main", tip, hasSecret); err != nil || !res.Hit {
+		t.Fatalf("a secret in an earlier commit of the range: %+v, %v; want a hit", res, err)
+	}
+}
+
+func TestWorkflowFilesInSeesEveryCommit(t *testing.T) {
+	repo := branchWith(t,
+		commitSpec{msg: "ci", files: map[string]string{".github/workflows/ci.yml": "on: push\n"}},
+		commitSpec{msg: "code", files: map[string]string{"a.txt": "a\n"}},
+	)
+	tip := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	if got, err := repo.WorkflowFilesIn(ctx, "origin/main", tip); err != nil || len(got) != 1 {
+		t.Fatalf("a workflow file in an earlier commit: %v, %v", got, err)
+	}
+}
+
+func TestRangeBoundsMustBeSafe(t *testing.T) {
+	repo := branchWith(t, commitSpec{msg: "leak", files: map[string]string{"k.txt": "S3CRET-VALUE\n"}})
+	tip := testutil.Git(t, repo.Dir, "rev-parse", "HEAD")
+	out := filepath.Join(t.TempDir(), "out")
+	badUntil := []string{"HEAD", "fugaro/x", tip[:12], "+" + tip, "-" + tip[1:], "--output=" + out, "", strings.ToUpper(tip), tip + "\n", tip + " "}
+	badSince := []string{"--output=" + out, "-x", "", "origin/main..HEAD", "a b", "HEAD~1", "main^", "x:y", "/abs", "a\nb"}
+	for _, u := range badUntil {
+		if _, err := repo.ScanRange(ctx, "origin/main", u, hasSecret); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("ScanRange until %q: err = %v, want a refusal", u, err)
+		}
+		if _, err := repo.WorkflowFilesIn(ctx, "origin/main", u); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("WorkflowFilesIn until %q: err = %v, want a refusal", u, err)
+		}
+	}
+	for _, s := range badSince {
+		if _, err := repo.ScanRange(ctx, s, tip, hasSecret); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("ScanRange since %q: err = %v, want a refusal", s, err)
+		}
+		if _, err := repo.WorkflowFilesIn(ctx, s, tip); err == nil || !strings.Contains(err.Error(), "refusing") {
+			t.Errorf("WorkflowFilesIn since %q: err = %v, want a refusal", s, err)
+		}
+	}
+	if exists(out) {
+		t.Fatal("git wrote a file named by a range bound")
+	}
+	// A full SHA and a plain ref both work as since.
+	base := testutil.Git(t, repo.Dir, "rev-parse", "origin/main")
+	for _, s := range []string{"origin/main", base} {
+		if res, err := repo.ScanRange(ctx, s, tip, hasSecret); err != nil || !res.Hit {
+			t.Errorf("ScanRange since %q: %+v, %v", s, res, err)
+		}
 	}
 }
 
