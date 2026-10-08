@@ -38,7 +38,7 @@
           "properties": {
             "labels": { "type": "array", "items": { "type": "string" } },
             "reviewers": { "type": "array", "items": { "type": "string" } },
-            "early_draft": { "type": "boolean", "description": "Open the draft pull request at the first verified push (default true). False opens it only when the run finishes, for repositories whose host has no drafts. Labels and reviewers are applied only when the PR becomes ready." },
+            "early_draft": { "type": "boolean", "description": "Open the draft pull request at the first checkpoint push, marked not verified (default true; with git.pr.checkpoints false, at the first verified stage end). False opens it only when the run finishes, for repositories whose host has no drafts. Labels and reviewers are applied only when the PR becomes ready." },
             "checkpoints": { "type": "boolean", "description": "Push each commit a run makes to its branch within about a minute (after 5 s without a newer one, at most one push a minute, and at once at every stage boundary), fast-forward only, so a container that dies keeps its committed work (default true). With early_draft, the first checkpoint opens the draft pull request, marked not verified. False pushes only at verified stage ends and at the end. Every push to a branch with an open pull request runs its CI: at worst 60 pushes an hour. Fugaro 0.5.1 or later." }
           }
         }
