@@ -2,28 +2,64 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** While a first run's stage runs, the runner pushes the run branch's new commits every 3 minutes. The push is fast-forward only and uses the runner's credentials. The draft PR opens at the first such push, and its status section says the work is not verified until a passing test covers the pushed commit. A container that dies mid-stage then loses at most a few minutes of committed work instead of all of it. Readiness, reviewers and finalize do not change.
+**Goal:** Work the agent commits is saved as soon as it is committed. While a first run's stage runs, the runner pushes each new commit on the run branch:
+- after a short quiet period, so a burst of commits is one push;
+- at most once a minute while the stage runs;
+- at once at every stage boundary.
+
+The push is fast-forward only and uses the runner's credentials. The draft PR opens at the first such push, and its status section says the work is not verified until a passing test covers the pushed commit. A container that dies mid-stage then loses at most about a minute of committed work, instead of all of it. Readiness, reviewers and finalize do not change.
 
 **Architecture:**
-- **The checkpoint goroutine.** `stage()` (`internal/runner/runner.go`) starts it next to the halt watcher. It lives from the agent's start to its return, on the stage's own context, and is cancelled and joined when the agent returns.
-- **Each tick** (`checkpoint`, new file `internal/runner/checkpoint.go`) does the following:
-  - reads the run branch's tip only when the checkout is settled on it (`gitops.Repo.CheckpointTip`);
-  - skips the tip if it is already pushed;
-  - scans the new commits for values the run redacts (`gitops.Repo.ScanRange`);
-  - applies finalize's workflow guard to that exact commit (`workflowGuardAt`);
-  - pushes fast-forward only, by SHA and to origin's URL (`gitops.Repo.PushFastForward`).
-- **After a push**, `afterCheckpoint` opens the draft (`openDraftPR`, split out of `openDraft`) or rewrites its status section (`statusUpdate`). The section gains a not-verified head and a `branch at <sha>` part.
-- **Settings and prompt.** A config key `git.pr.checkpoints` (default true) turns checkpoints off. A system-prompt line tells the agent to commit early.
+- **The schedule** (`checkpointSchedule`, new file `internal/runner/checkpoint_schedule.go`). It is a pure decision driven by the run's clock (`Deps.Now`). A polled tip is pushed:
+  - once it has stayed unchanged for `checkpointQuiet` (5 s);
+  - no sooner than `checkpointMinGap` (1 min) after the last push;
+  - after a failed push, only once `checkpointFallback` (3 min) has passed.
 
-**Tech Stack:** Go 1.27. The work happens in `internal/gitops` (the git CLI), `internal/runner`, `internal/config`, `internal/gitprov/fake`, `schemas/fugaro.schema.json` and the docs. Tests use local bare remotes (`testutil.NewRemote`), remote hooks, the fake git provider (`fake.Provider`, with the `auditProvider` wrapper) and the scripted agent (`harness`, `step`).
+  A tip that never stays quiet is pushed `checkpointFallback` after the oldest unpushed one appeared.
+- **The checkpointer** (new file `internal/runner/checkpoint.go`). A goroutine that `stage()` starts next to the halt watcher, for the agent's lifetime. It polls every `checkpointPoll` (10 s). A poll reads the run branch's tip locally (`gitops.Repo.CheckpointTip`), with no network call. When the schedule says so, it checks that SHA with:
+  - `CountAhead`, the commits ahead of the base;
+  - `ScanRange`, a scan for values the run redacts;
+  - `workflowGuardAt`, finalize's workflow guard.
+
+  It then pushes fast-forward only, by SHA, to origin's URL (`PushFastForward`).
+- **Stage boundaries.** `afterStage` calls `boundaryCheckpoint`, which pushes whatever the stage left committed and unpushed, at once, on the run goroutine.
+- **After a push.** `afterCheckpoint` opens the draft (`openDraftPR`, split out of `openDraft`) or rewrites its status section.
+- **Settings and prompt.** A config key `git.pr.checkpoints` (default true) turns all of this off. A system-prompt line tells the agent to commit early.
+
+**Tech Stack:** Go 1.27. The work happens in `internal/gitops` (the git CLI), `internal/runner`, `internal/config`, `internal/gitprov/fake`, `schemas/fugaro.schema.json` and the docs. Tests use:
+- local bare remotes (`testutil.NewRemote`) and remote hooks;
+- the fake git provider (`fake.Provider`, with the `auditProvider` wrapper);
+- the scripted agent (`harness`, `step`);
+- the test clock (`testClock`) and a test-driven poll (`DriveCheckpoints`).
 
 **Spec:** [docs/design/checkpoint-pushes.md](../design/checkpoint-pushes.md)
 
-**Checked before review:** the code of Tasks 1 to 6 was applied to a scratch copy of `main` (724ab83). `go vet` is clean, and the focused tests named in Tasks 1 to 6 pass with `-race` (the checkpoint tests four times in a row, `-count=4`), alongside the existing early-draft, refused-push, halt, cancel and follow-up tests. Each checkpoint tick runs about a dozen git commands, roughly 0.5 s on a laptop, so the tests wait for finished ticks (`CountCheckpointTicks`) and for the saved `pushed_head`, never for wall-clock time. The remote ref is visible before the remote's hooks finish.
+**Checked before review:** the code of Tasks 1 to 7 was applied to a scratch copy of `main` (724ab83), and `go vet` is clean. The focused tests named in those tasks pass with `-race`. So does the full `go test -race ./internal/runner/...` (22 minutes), after the five test updates listed in Task 6, which were its only failures. The checkpoint tests are deterministic:
+- every poll is sent by the test (`DriveCheckpoints`) and has finished when the call returns;
+- time is the run's test clock;
+- nothing sleeps.
 
 ## Decisions (veto any before execution starts)
 
-- **C1. The interval is 3 minutes, a named constant, with no interval knob.** The code has `const checkpointInterval = 3 * time.Minute` and `var checkpointEvery = checkpointInterval`. Only tests change the variable, through `runner.SetCheckpointEvery`. A tick whose branch has not changed makes no network call, so a shorter interval would cost nothing while the agent is idle. A longer one loses more work. Veto alternative: `git.pr.checkpoint_minutes`, an integer from 1 to 30 (one more config task).
+- **C1. Pushes follow commits.** The user ruled that work is saved as soon as the agent commits; a fixed 3-minute timer is not enough. Four named constants in `checkpoint_schedule.go` set the schedule:
+  - `checkpointPoll` (10 s): how often the checkpointer reads the branch tip. The read is local: a few git commands, and no network call when nothing changed.
+  - `checkpointQuiet` (5 s): a new tip is pushed once it has been unchanged this long, so a burst of commits (a rebase, a fix-and-commit loop) becomes one push of the latest. A tip that never goes quiet (an agent committing every few seconds) is pushed `checkpointFallback` after the oldest unpushed tip appeared.
+  - `checkpointMinGap` (1 min): at most one push a minute while a stage runs. A commit that arrives inside the window is pushed at the first poll after the window ends.
+  - `checkpointFallback` (3 min, the old interval): the slow path. A failed push is retried this long after the failure, not at every poll. It also bounds the wait of a tip that never goes quiet.
+
+  The poll ticker also covers missed events: there are no events to miss, only states read every 10 s. None of these is configurable; `git.pr.checkpoints: false` is the only knob. Veto alternative: a `git.pr.checkpoint_min_gap` duration (one more config task).
+- **C1a. A stage boundary pushes at once and is exempt from the per-minute limit.** `afterStage` (after `implement`, `fix`, `review` and `review_first`) calls `boundaryCheckpoint` on the run goroutine, after the stage's checkpointer has stopped:
+  - The agent is idle at a boundary, so there is nothing to coalesce.
+  - The boundary is when the stage's work is complete.
+  - The next stage (usually a review) commits nothing, so without this push the last commits of `implement` would wait up to a minute into the review.
+
+  The CI cost of the exemption is bounded: a run has 2 + 2 × review rounds boundaries (6 with the default 2 rounds), and a boundary whose tip is already pushed costs nothing. Review boundaries rarely push, because reviews do not commit. The exemption covers the whole schedule: the quiet period, the minute and the failure fallback. A boundary right after a failed push still tries, since the agent is idle and it is the last chance before the next stage. A boundary push counts as the last push for the next stage's limit. Veto alternative: boundaries obey the minute too (at most one extra minute of exposure; the code drops the exemption).
+- **C1b. Not a git `post-commit` hook.** The agent owns the checkout:
+  - it can disable hooks (`core.hooksPath`, `--no-verify` for some hooks, deleting `.git/hooks`);
+  - it can commit with plumbing (`git commit-tree`, `update-ref`) that runs no hook;
+  - a hook runs inside the agent's process tree, with the agent's environment.
+
+  It would also push from inside the agent's sandbox with whatever credentials it finds there, which is what checkpoints avoid. Polling from the runner sees every commit whatever made it, and runs with the runner's own credentials and guards.
 - **C2. Checkpoints have their own opt-out, `git.pr.checkpoints: false` (default true).** Data-loss protection should be on unless someone turns it off on purpose. `git.pr.early_draft` keeps its meaning, "the PR opens early", and the two keys combine:
   - both on (the default): checkpoints push the branch and the first one opens the draft;
   - `early_draft: false`: checkpoints push the branch and the PR opens at finalize;
@@ -31,13 +67,13 @@
 
   The key sits under `git.pr` because the reason to turn it off is the PR's CI cost. An older CLI or job image refuses the key as unknown, so the docs say to set it only once everyone is on 0.5.1. Veto alternative: one key for both behaviours (`early_draft: false` also stops checkpoints). The cost is that repositories without drafts lose the protection.
 - **C3. The draft opens at the first checkpoint push, unverified.** This supersedes M9e ruling E1, "the remote branch is always a verified state". The section's head is `**Running: work in progress, not verified**` while the pushed commit has no passing clean test. The part `branch at <sha>: not verified|verified` is added after the verify part, and the stage part reads `checkpoint during stage <name>` for an update made mid-stage. The PR title stays unprefixed (M9e E5: the draft badge says it). Readiness (`Decide`), the flip to ready and `ApplyReady` are unchanged.
-- **C4. Fast-forward only, never forced, and only from a settled checkout.** `CheckpointTip` refuses with `ErrGitBusy` when HEAD is not the symbolic ref `refs/heads/fugaro/<id>` or when any of `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` or `BISECT_LOG` exists in the git directory. A tick that sees this does nothing and is silent. `PushFastForward` does the following:
+- **C4. Fast-forward only, never forced, and only from a settled checkout.** `CheckpointTip` refuses with `ErrGitBusy` when HEAD is not the symbolic ref `refs/heads/fugaro/<id>` or when any of `rebase-merge`, `rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD` or `BISECT_LOG` exists in the git directory. A poll that sees this does nothing and is silent. `PushFastForward` does the following:
   - pushes `<sha>:refs/heads/<branch>`, the SHA that was read, so the agent moving the branch mid-push changes nothing;
   - pushes to origin's URL (`git remote get-url origin`), not the remote's name, so git writes no `refs/remotes/origin/…` and takes no ref lock the agent's own `git fetch` could meet;
   - refuses with `ErrNotFastForward` when the remote tip is not an ancestor of the SHA;
   - does nothing when the remote is already there (an agent that pushed by itself).
 
-  A rewritten history (amend, rebase, reset) logs one warning per run, and ticks keep trying. The verified-boundary push and finalize keep `Push` (force-with-lease over a tip that is the run's own, `tipBelongsToRun`), so they reconcile a rewritten branch as they do today. Veto alternative: checkpoints also use `Push` (lease over the run's own tips). That keeps them going after a rewrite, but a checkpoint could then replace commits already on the remote.
+  A rewritten history (amend, rebase, reset) logs one warning per run and is retried at the fallback. The verified-boundary push and finalize keep `Push` (force-with-lease over a tip that is the run's own, `tipBelongsToRun`), so they reconcile a rewritten branch as they do today. Veto alternative: checkpoints also use `Push`. That keeps them going after a rewrite, but a checkpoint could then replace commits already on the remote.
 - **C5. Checkpoints use the same guards as finalize, plus a secret scan.**
   - `workflowGuardAt(ctx, sha)` (GitHub only, as today) and a permanent refusal classified by `asRefusal` stop checkpoints for the run. Finalize then ends the run as today: `endRefused`, which saves the work bundle.
   - `ScanRange(since, sha)` runs before each push, where since is `pushed_head`, or the work base before the first push. It uses the run's redactor (`agent.RedactFunc(r.secretList())`). A hit stops checkpoints for the run, because every later push would carry that commit.
@@ -45,17 +81,23 @@
 
   Finalize itself still pushes without scanning; that is out of scope and listed as future work.
 - **C6. Follow-ups do not checkpoint in 0.5.1.** Their branch is an open PR that may be ready and have reviewers, so an unverified checkpoint would be visible to them and could be merged. Finalize's `PushExisting(branch, startSHA)` would also refuse a branch the run itself moved mid-run, with `ErrForeignTip`. Veto alternative (later): checkpoint to a side branch `fugaro/<follow-up id>` and delete it at finalize.
-- **C6a. Every check uses the SHA the tick read, never HEAD.** The agent commits concurrently, so the tick reads the tip once and then checks that SHA throughout: the commits ahead (`CountAhead`), the secret scan (`ScanRange`), the workflow guard (`WorkflowFilesIn`) and the push. The prototype showed the failure this prevents. A tip read just before the agent's first commit is the base, and checking "ahead" on HEAD instead pushed the base itself as a checkpoint.
-- **C7. The checkpointer's lifetime.** It starts in `stage()` right before `Agent.Run` and stops right after it (and in a `defer`, so a panic cannot leave it running). Stopping cancels its context and waits for it, which aborts a push or PR call in flight. Such a push leaves at most a remote branch with no `pushed_head`, and the next boundary or finalize pushes over it (the tip is in the run's reflog). Such a PR create leaves a PR that finalize finds by branch (M9e E4). Other rules:
-  - the first tick comes one interval after the agent starts; there is no tick at stage start and no flush at stage end;
-  - a tick does nothing once a halt or a cancel is recorded, or the time budget is spent;
+- **C6a. Every check uses the SHA the poll read, never HEAD.** The agent commits concurrently, so the poll reads the tip once and then checks that SHA throughout: the commits ahead (`CountAhead`), the secret scan (`ScanRange`), the workflow guard (`WorkflowFilesIn`) and the push. The prototype showed the failure this prevents. A tip read just before the agent's first commit is the base, and checking "ahead" on HEAD instead pushed the base itself as a checkpoint.
+- **C7. The checkpointer's lifetime.** It starts in `stage()` right before `Agent.Run` and stops right after it (and in a `defer`, so a panic cannot leave it running). Stopping cancels its context and waits for it, which aborts a push or PR call in flight. Such a push leaves at most a remote branch with no `pushed_head`, and the boundary or finalize pushes over it (the tip is in the run's reflog). Such a PR create leaves a PR that finalize finds by branch (M9e E4). Other rules:
+  - a poll does nothing once a halt or a cancel is recorded, or the time budget is spent;
   - the stage context's deadline never passes `finalize_reserve`, and a cancel cancels it.
 
-  No checkpoint runs between stages or during finalize.
-- **C8. Opening the draft is tried at most twice per run (`checkpointOpenTries`), once per checkpoint push.** Each try is `ensurePR`'s 3 attempts within `earlyOpenTimeout`. After that the verified boundary (`afterStage`'s `openDraft`) or finalize opens the PR. A failed push is a warning, logged once per kind per run, and the next tick tries again.
-- **C9. The prompt line goes only where it is true:** first runs with checkpoints on. It reads: commit early and often, only pushed commits survive a dead container, uncommitted changes are lost, add new commits rather than amend or rebase.
-- **C10. Nothing new in `result.json`.** `pushed_head` is saved after every checkpoint push (as `pushBranch` does), so a crashed run's record says what reached the remote. Checkpoints are logged (`checkpoint pushed`, with the stage, the short SHA and a count).
+  The boundary push runs on the run goroutine with the stage's checkpointer already stopped, and only after a stage that succeeded (`afterStage`). A stage that failed, was halted or was cancelled goes straight to finalize, which pushes. Nothing checkpoints during finalize. `checkpointersRunning` counts live checkpointers, so a test sees each stage's stop.
+- **C8. Opening the draft is tried at most twice per run (`checkpointOpenTries`), once per checkpoint push.** Each try is `ensurePR`'s 3 attempts within `earlyOpenTimeout`. After that the verified boundary (`afterStage`'s `openDraft`) or finalize opens the PR. A failed push is a warning, logged once per kind per run.
+- **C9. The prompt line goes only where it is true:** first runs with checkpoints on. It reads: commit early and often; Fugaro pushes each new commit within about a minute; only pushed commits survive a dead container; uncommitted changes are lost; add new commits rather than amend or rebase.
+- **C10. Nothing new in `result.json`.** `pushed_head` is saved after every checkpoint push (as `pushBranch` does), so a crashed run's record says what reached the remote. Checkpoints are logged (`checkpoint pushed`, with the stage, the short SHA, a count and whether it was a boundary).
 - **C11. Release 0.5.1.** This is a patch release, shipped with `fugaro image refresh`. `docs/releases/v0.5.1.md` gets one section; it is created if image refresh's Task 12 has not created it yet. The runner reaches a repository only when its job image is rebuilt from 0.5.1.
+
+**The cost model (for the docs and the release notes).** Worst case, an agent committing without pause through a whole stage, there are 60 pushes an hour (one a minute) plus one per stage boundary. Each push costs:
+- one `ls-remote` and one push;
+- with a PR, one description read and one write;
+- with a PR, one CI run of the repository's PR workflows, and `on: push` or Bitbucket branch pipelines run even without a PR.
+
+An idle agent costs nothing beyond the local poll. A typical agent that commits after each working step pushes a few times per stage. The opt-out is `git.pr.checkpoints: false`.
 
 ## Global Constraints
 
@@ -63,28 +105,47 @@ Every task's requirements include these.
 
 From the design:
 - A checkpoint pushes only `fugaro/<run id>`, fast-forward only, by SHA, with the runner's credentials. It never commits, never reads or writes the working tree or the index, and writes nothing in the checkout's `.git`.
+- A poll is local: it makes no network call and no provider call unless the schedule says to push.
 - A checkpoint never fails, blocks or delays the run beyond the cancellation of its own in-flight call. Every error is a warning, and a panic is recovered inside the goroutine.
 - A checkpoint is never less guarded than finalize's push: the workflow guard, the host's permanent refusals, plus the secret scan.
-- Readiness, reviewers and labels at ready, finalize, follow-ups and `early_draft: false` behave as in 0.5.0, except for the documented changes: an unverified draft, and branch pushes mid-stage.
-- Not doing: uncommitted-work snapshots, follow-up checkpoints, an interval knob, a finalize secret scan.
+- Readiness, reviewers and labels at ready, finalize, follow-ups and `early_draft: false` behave as in 0.5.0, except for the documented changes: an unverified draft, and branch pushes mid-stage and at every boundary.
+- Not doing: uncommitted-work snapshots, follow-up checkpoints, configurable timings, a git hook, a finalize secret scan.
 
 Project rules:
-- No live cloud applies in tests. Use local bare remotes, remote hooks, the fake provider and the scripted agent. Never touch EdgeWeb or EdgeServer, and handle no real secrets.
-- Subagent-driven development in one git worktree for this PR group (`.worktrees/checkpoint-pushes`), with a fresh implementer per task. The token-economy rule applies: **Task 4 gets its own review** (it changes every run's stage loop), and the rest are reviewed once on the branch at the end. Dogfood runs, if any, also run from git worktrees.
+- No live cloud applies in tests. Use local bare remotes, remote hooks, the fake provider, the scripted agent and the test clock. Never touch EdgeWeb or EdgeServer, and handle no real secrets.
+- Subagent-driven development in one git worktree for this PR group (`.worktrees/checkpoint-pushes`), with a fresh implementer per task. The token-economy rule applies: **Task 5 gets its own review** (it changes every run's stage loop), and the rest are reviewed once on the branch at the end. Dogfood runs, if any, also run from git worktrees.
 - Every CI check (`test`, `terraform`, `rules`) is read before merge, each job's log and not only the summary.
-- Docs must match behaviour. Task 7's docs test pins the interval, the key and the removed "first verified push" wording, and the `rules` tests (`plugin/*_test.go`) must stay green.
+- Docs must match behaviour. Task 8's docs test pins the four timings, the cost model, the key and the removed "first verified push" wording, and the `rules` tests (`plugin/*_test.go`) must stay green.
 - Releases go through `/new-release` with `docs/releases/vX.Y.Z.md` merged first.
-- **The `internal/runner` package is slow (about 19 minutes in full).** Each task runs only the focused tests it names (`-run`), and the PR group runs **one** full `go test ./internal/runner/...` at the end (Task 8). CI runs with `-race`, so the focused runner tests run with `-race` too.
+- **The `internal/runner` package is slow (about 19 minutes in full).** Each task runs only the focused tests it names (`-run`), and the PR group runs **one** full `go test ./internal/runner/...` at the end (Task 9). CI runs with `-race`, so the focused runner tests run with `-race` too.
+- **No test waits for wall-clock time.** Checkpoint tests drive the poll (`runner.DriveCheckpoints`) and the clock (`testClock`).
 
 ## Review Focus
 
 The five failure modes most likely to hit a user, each pinned by a test:
 
-1. **Committed work is still lost when the container dies mid-stage (the incident).** Expected: a commit made in a long stage is on the remote within one interval, before the stage ends, and a failed push is retried on the next tick. Pinned by `TestCheckpointPushesCommittedWorkMidStage` and `TestCheckpointFailureNeverFailsTheRun` (Task 4).
-2. **A checkpoint publishes what finalize would not, or publishes it earlier.** Cases: a workflow file on GitHub, or a value the run redacts that a later commit removes. Expected: nothing is pushed, checkpoints stop for the run, and finalize ends the run as it does today. Pinned by `TestCheckpointSkipsWorkflowCommits` and `TestCheckpointStopsOnAKnownSecret` (Task 4).
-3. **A checkpoint fights the agent's git.** It must not overwrite a rewritten history, push a half-done rebase, or write a ref the agent's fetch could lock on. Expected: fast-forward only, with one warning, and finalize reconciles. Nothing is pushed while a rebase or merge is in progress, and no local ref is written. Pinned by `TestPushFastForwardRefusesRewrittenHistory`, `TestPushFastForwardPushesAndSkipsWhenCurrent` and `TestCheckpointTipOnlyWhenSettled` (Task 1), and `TestCheckpointNeverRewritesThePushedBranch` (Task 4).
-4. **The early draft misleads: it looks verified or ready, or notifies someone.** Expected: a draft with no reviewers or labels, whose number is saved before any other provider call, marked `not verified` until a passing clean test covers the pushed commit. It turns `verified` after one, and becomes ready only at finalize. Pinned by `TestCheckpointOpensDraftMarkedNotVerified` and `TestStatusSaysVerifiedAfterAPassingTest` (Task 5), with `auditProvider`'s every-call checks.
-5. **Checkpoints ignore an opt-out, a halt, a cancel or a follow-up.** Expected: no mid-stage push with `git.pr.checkpoints: false`, after a recorded halt or cancel, or in a follow-up. `early_draft: false` pushes the branch but opens no PR mid-run. Pinned by `TestCheckpointsOffPushesNothingMidStage`, `TestNoCheckpointAfterHalt`, `TestNoCheckpointAfterCancel` and `TestFollowUpDoesNotCheckpoint` (Task 4), and `TestEarlyDraftFalseCheckpointsWithoutPR` (Task 5).
+1. **Committed work is still lost when the container dies (the incident).** Expected:
+   - a commit is on the remote within one quiet period, or at the end of the current minute;
+   - a commit made right before a stage ends is pushed at that boundary;
+   - a failed push is retried at the fallback.
+
+   Pinned by `TestCheckpointPushesCommittedWorkMidStage` and `TestFailedPushRetriedByTheFallback` (Task 5), `TestCommitThenStageEndPushedAtTheBoundary` (Task 6), and `TestCheckpointSchedule` (Task 4).
+2. **Too many pushes (CI cost, rate limits) or pushes nobody asked for.** Expected:
+   - a burst of commits is one push of the latest;
+   - commits every 20 s are pushed at most once a minute, the latest at the window's end;
+   - an unchanged tip pushes nothing and calls nothing remote.
+
+   Pinned by `TestBurstOfCommitsIsOnePush`, `TestAtMostOnePushPerMinute` and `TestIdlePollsNeverTouchTheRemote` (Task 5), and `TestCheckpointSchedule` (Task 4).
+3. **A checkpoint publishes what finalize would not, or fights the agent's git.** Cases: a workflow file on GitHub, a value the run redacts, a rewritten history, a half-done rebase. Expected: nothing is pushed, with one warning, and finalize ends or reconciles the run as today. Pinned by:
+   - `TestCheckpointSkipsWorkflowCommits`, `TestCheckpointStopsOnAKnownSecret` and `TestCheckpointNeverRewritesThePushedBranch` (Task 5);
+   - `TestPushFastForwardRefusesRewrittenHistory`, `TestCheckpointTipOnlyWhenSettled` and `TestCountAheadOfACommit` (Task 1).
+4. **The early draft misleads: it looks verified or ready, or notifies someone.** Expected: a draft with no reviewers or labels, whose number is saved before any other provider call, marked `not verified` until a passing clean test covers the pushed commit. It turns `verified` after one, and becomes ready only at finalize. Pinned by `TestCheckpointOpensDraftMarkedNotVerified` and `TestStatusSaysVerifiedAfterAPassingTest` (Task 6), with `auditProvider`'s every-call checks.
+5. **Checkpoints outlive their stage or ignore an opt-out, a halt, a cancel or a follow-up.** Expected:
+   - exactly one checkpointer per running stage, and none after the run;
+   - no mid-stage push with `git.pr.checkpoints: false`, after a recorded halt or cancel, or in a follow-up;
+   - `early_draft: false` pushes the branch but opens no PR mid-run.
+
+   Pinned by `TestStageEndStopsTheCheckpointer`, `TestCheckpointsOffPushesNothingMidStage`, `TestNoCheckpointAfterHalt`, `TestNoCheckpointAfterCancel` and `TestFollowUpDoesNotCheckpoint` (Task 5), and `TestEarlyDraftFalseCheckpointsWithoutPR` (Task 6).
 
 ---
 
@@ -92,20 +153,21 @@ The five failure modes most likely to hit a user, each pinned by a test:
 
 | Path | Responsibility | Task |
 |---|---|---|
-| `internal/gitops/checkpoint.go` (new), `gitops_test.go` | `CheckpointTip`, `PushFastForward`, `ErrGitBusy`, `ErrNotFastForward` | 1 |
+| `internal/gitops/checkpoint.go` (new), `gitops.go`, `gitops_test.go` | `CheckpointTip`, `PushFastForward`, `CountAhead`, `ErrGitBusy`, `ErrNotFastForward` | 1 |
 | `internal/gitops/rejected.go`, `rejected_test.go` | `ScanRange`, `WorkflowFilesIn` | 1 |
 | `internal/config/config.go`, `defaults.go`, `example.yaml`, `config_test.go`, `schemas/fugaro.schema.json`, `testdata/config/valid/full.yaml` | `git.pr.checkpoints` | 2 |
 | `internal/gitprov/fake/fake.go`, `fake_test.go` | `Snapshot` for race-free reads in tests | 3 |
-| `internal/runner/checkpoint.go` (new), `runner.go`, `refused.go`, `prflow.go`, `export_test.go`, `checkpoint_test.go` (new) | the checkpointer and its guards | 4 |
-| `internal/runner/prflow.go`, `checkpoint.go`, `checkpoint_test.go` | the draft at the first checkpoint, the section | 5 |
-| `internal/runner/prompts.go`, `runner.go`, `pure_test.go` | the prompt line | 6 |
-| `docs/design/v1.md`, `docs/git-providers.md`, `docs/gcp-setup.md`, `README.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `plugin/skills/working/reference/diagnose.md`, `internal/runner/docs_checkpoint_internal_test.go` (new) | docs | 7 |
-| none | full suite, PR | 8 |
-| `docs/releases/v0.5.1.md` | release | 9 |
+| `internal/runner/checkpoint_schedule.go` (new), `checkpoint_schedule_internal_test.go` (new) | the timings and `checkpointSchedule` | 4 |
+| `internal/runner/checkpoint.go` (new), `runner.go`, `refused.go`, `prflow.go`, `export_test.go`, `checkpoint_test.go` (new) | the checkpointer, its poll and its guards | 5 |
+| `internal/runner/checkpoint.go`, `prflow.go`, `checkpoint_pr_test.go` (new), `prflow_test.go`, `golden_test.go` | the boundary push, the draft at the first checkpoint, the section | 6 |
+| `internal/runner/prompts.go`, `runner.go`, `pure_test.go` | the prompt line | 7 |
+| `docs/design/v1.md`, `docs/git-providers.md`, `docs/gcp-setup.md`, `README.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `plugin/skills/working/reference/diagnose.md`, `internal/runner/docs_checkpoint_internal_test.go` (new) | docs | 8 |
+| none | full suite, PR | 9 |
+| `docs/releases/v0.5.1.md` | release | 10 |
 
 ## PR group
 
-One PR, branch `checkpoint-pushes`, Tasks 1 to 8 in order. Task 9 runs after the merge. Tasks 1, 2 and 3 are independent of each other; Task 4 needs all three.
+One PR, branch `checkpoint-pushes`, Tasks 1 to 9 in order. Task 10 runs after the merge. Tasks 1, 2, 3 and 4 are independent of each other; Task 5 needs all four.
 
 ---
 
@@ -522,13 +584,13 @@ In `internal/config/defaults.go`, after the `EarlyDraft` default:
 In `internal/config/example.yaml`, after the `early_draft` line:
 
 ```yaml
-    # checkpoints: true       # push new commits every 3 minutes while a stage runs (fast-forward only); false: only at verified stage ends and at the end
+    # checkpoints: true       # push each new commit within about a minute, and at every stage end (fast-forward only); false: only at verified stage ends and at the end
 ```
 
 In `schemas/fugaro.schema.json`, in `git.pr.properties` after `early_draft`:
 
 ```json
-            "checkpoints": { "type": "boolean", "description": "Push a run's new commits to its branch every 3 minutes while a stage runs, fast-forward only, so a container that dies keeps its committed work (default true). With early_draft, the first checkpoint opens the draft pull request, marked not verified. False pushes only at verified stage ends and at the end. Every push to a branch with an open pull request runs its CI. Fugaro 0.5.1 or later." }
+            "checkpoints": { "type": "boolean", "description": "Push each commit a run makes to its branch within about a minute (after 5 s without a newer one, at most one push a minute, and at once at every stage boundary), fast-forward only, so a container that dies keeps its committed work (default true). With early_draft, the first checkpoint opens the draft pull request, marked not verified. False pushes only at verified stage ends and at the end. Every push to a branch with an open pull request runs its CI: at worst 60 pushes an hour. Fugaro 0.5.1 or later." }
 ```
 
 (add the comma after the `early_draft` entry.)
@@ -633,7 +695,174 @@ git commit -m "gitprov/fake: Snapshot, a locked copy of the state"
 
 ---
 
-### Task 4: The checkpointer (critical: own review)
+### Task 4: The checkpoint schedule
+
+**Files:**
+- Create: `internal/runner/checkpoint_schedule.go`
+- Test: `internal/runner/checkpoint_schedule_internal_test.go`
+
+**Interfaces:**
+- Consumes: nothing (pure).
+- Produces:
+  ```go
+  const checkpointPoll = 10 * time.Second
+  const checkpointQuiet = 5 * time.Second
+  const checkpointMinGap = time.Minute
+  const checkpointFallback = 3 * time.Minute
+  const checkpointOpenTries = 2 // used by Task 6
+  type checkpointSchedule struct { tip string; since, firstNew, lastPush, failedAt time.Time }
+  func (s *checkpointSchedule) due(now time.Time, tip, pushed string) bool
+  func (s *checkpointSchedule) pushed(now time.Time)
+  func (s *checkpointSchedule) failed(now time.Time)
+  ```
+
+- [ ] **Step 1: Write the failing test**
+
+Create `internal/runner/checkpoint_schedule_internal_test.go`:
+
+```go
+package runner
+
+import (
+	"fmt"
+	"testing"
+	"time"
+)
+
+// TestCheckpointSchedule pins when a polled tip is pushed: after a quiet
+// period, at most once a minute, the retry after a failure at the
+// fallback, and a tip that never goes quiet at the fallback.
+func TestCheckpointSchedule(t *testing.T) {
+	t0 := time.Date(2026, 10, 8, 12, 0, 0, 0, time.UTC)
+	var s checkpointSchedule
+	check := func(d time.Duration, tip, pushed string, want bool) {
+		t.Helper()
+		if got := s.due(t0.Add(d), tip, pushed); got != want {
+			t.Fatalf("due(+%v, %s, pushed %s) = %v, want %v", d, tip, pushed, got, want)
+		}
+	}
+	check(0, "a", "a", false)             // unchanged: nothing to push
+	check(0, "b", "a", false)             // new: the quiet period starts
+	check(3*time.Second, "c", "a", false) // a burst: it starts again
+	check(7*time.Second, "c", "a", false)
+	check(8*time.Second, "c", "a", true) // still for checkpointQuiet: push the latest
+	s.pushed(t0.Add(8 * time.Second))
+	check(10*time.Second, "c", "c", false)
+	check(20*time.Second, "d", "c", false)
+	check(40*time.Second, "d", "c", false) // quiet, but inside the minute
+	check(67*time.Second, "d", "c", false)
+	check(68*time.Second, "d", "c", true) // the window ended: pushed then
+	s.failed(t0.Add(68 * time.Second))
+	check(2*time.Minute, "d", "c", false) // a failed push waits for the fallback
+	check(68*time.Second+checkpointFallback, "d", "c", true)
+	end := 68*time.Second + checkpointFallback
+	s.pushed(t0.Add(end))
+	// An agent that commits every 4 s never leaves the tip quiet: the tip
+	// is pushed anyway once the oldest unpushed one is checkpointFallback old.
+	start := end + checkpointMinGap
+	for i := 0; ; i++ {
+		d := time.Duration(i) * 4 * time.Second
+		want := d >= checkpointFallback
+		check(start+d, fmt.Sprint("busy", i), "c", want)
+		if want {
+			break
+		}
+	}
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `go test ./internal/runner/ -run TestCheckpointSchedule`
+Expected: FAIL to compile: `undefined: checkpointSchedule`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `internal/runner/checkpoint_schedule.go`:
+
+```go
+package runner
+
+import "time"
+
+// The checkpoint schedule (design checkpoint-pushes.md): when a polled
+// branch tip is pushed. checkpoint.go runs it.
+
+const (
+	// checkpointPoll is how often a running stage's branch tip is read. The
+	// read is local (no network), so it costs a few git commands.
+	checkpointPoll = 10 * time.Second
+	// checkpointQuiet is how long a new tip must stay unchanged before it
+	// is pushed, so a burst of commits is one push of the latest.
+	checkpointQuiet = 5 * time.Second
+	// checkpointMinGap is the least time between two pushes while a stage
+	// runs: at most one push a minute, and a commit inside the window is
+	// pushed when it ends. Stage boundaries are exempt.
+	checkpointMinGap = time.Minute
+	// checkpointFallback is the slow path: the retry after a failed push,
+	// and the most a tip waits when the agent never stops committing long
+	// enough for checkpointQuiet.
+	checkpointFallback = 3 * time.Minute
+	// checkpointOpenTries bounds how many checkpoint pushes try to open the
+	// draft; after that the verified boundary or finalize does.
+	checkpointOpenTries = 2
+)
+
+// checkpointSchedule decides when a polled tip is pushed. Its clock is
+// the run's (Deps.Now), so tests drive it with a fake one.
+type checkpointSchedule struct {
+	tip      string    // the newest unpushed tip seen
+	since    time.Time // when tip was first seen
+	firstNew time.Time // when the oldest unpushed tip was first seen
+	lastPush time.Time // the last successful push
+	failedAt time.Time // the last failed push, zero after a success
+}
+
+// due reports whether tip, polled at now, is to be pushed; pushed is the
+// run's pushed_head.
+func (s *checkpointSchedule) due(now time.Time, tip, pushed string) bool {
+	if tip == pushed {
+		s.tip, s.since, s.firstNew = "", time.Time{}, time.Time{}
+		return false
+	}
+	if s.tip == "" {
+		s.firstNew = now
+	}
+	if tip != s.tip {
+		s.tip, s.since = tip, now
+	}
+	switch {
+	case !s.failedAt.IsZero():
+		return now.Sub(s.failedAt) >= checkpointFallback
+	case !s.lastPush.IsZero() && now.Sub(s.lastPush) < checkpointMinGap:
+		return false
+	}
+	return now.Sub(s.since) >= checkpointQuiet || now.Sub(s.firstNew) >= checkpointFallback
+}
+
+// pushed records a successful push at now; failed a failed one.
+func (s *checkpointSchedule) pushed(now time.Time) {
+	*s = checkpointSchedule{lastPush: now}
+}
+
+func (s *checkpointSchedule) failed(now time.Time) { s.failedAt = now }
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `go test ./internal/runner/ -run TestCheckpointSchedule`
+Expected: PASS (it is pure: under a second of test time once the package is built).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add internal/runner/checkpoint_schedule.go internal/runner/checkpoint_schedule_internal_test.go
+git commit -m "runner: the checkpoint schedule (quiet period, one push a minute, fallback)"
+```
+
+---
+
+### Task 5: The checkpointer (critical: own review)
 
 **Files:**
 - Create: `internal/runner/checkpoint.go`, `internal/runner/checkpoint_test.go`
@@ -644,24 +873,22 @@ git commit -m "gitprov/fake: Snapshot, a locked copy of the state"
   - from Task 1: `gitops.(*Repo).CheckpointTip`, `CountAhead`, `PushFastForward`, `ScanRange`, `WorkflowFilesIn`, `gitops.ErrGitBusy`, `gitops.ErrNotFastForward`;
   - from Task 2: `config.PRSettings.CheckpointsOn`;
   - from Task 3: `fake.(*Provider).Snapshot`;
+  - from Task 4: `checkpointSchedule`, the four timings;
   - existing: `refreshGitAuth`, `warnAuthRefresh`, `authValidity`, `asRefusal`, `refusalText`, `workBase`, `haltValue`, `isCancelled`, `budget.Exhausted`, `agent.RedactFunc`, `secretList`, `redact`, `save`, `shortSHA`, `pushTimeout`;
-  - in tests: `prHarness`, `prCfg`, `newHarness`, `followUpHarness`, `newHandleBox`, `runCapHalt`, `implement`, `implementVerified`, `review`, `shell`, `blockUntilDone`, `runRefused`, `remoteHasBranch`, `mustReady`, `followID`, `runID`, `runner.SecretEnvsVar`.
+  - in tests: `prHarness`, `prCfg`, `newClock`, `testClock`, `probe`, `followUpHarness`, `newHandleBox`, `runCapHalt`, `implement`, `implementVerified`, `review`, `shell`, `blockUntilDone`, `runRefused`, `remoteHasBranch`, `mustReady`, `followID`, `runID`, `runner.SecretEnvsVar`.
 - Produces:
   ```go
-  const checkpointInterval = 3 * time.Minute
-  var checkpointEvery = checkpointInterval
-  var checkpointTicked func() // tests only
-  const checkpointOpenTries = 2 // used by Task 5
-  type checkpointState struct {
-  	stopped   bool
-  	warned    map[string]bool
-  	openTries int
-  	pushes    int
-  }
+  var checkpointTicks = func(d time.Duration) (<-chan time.Time, func()) // the poll's ticker; tests drive it
+  var checkpointTicked func()                                              // tests only
+  var checkpointersRunning atomic.Int32
+  type checkpointState struct { sched checkpointSchedule; stopped bool; warned map[string]bool; openTries, pushes int }
   // run gains: ckpt checkpointState
   func (r *run) checkpointsOn() bool
   func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop func())
-  func (r *run) checkpoint(ctx context.Context, stage string)
+  func (r *run) checkpointBlocked(ctx context.Context) bool
+  func (r *run) checkpointTip(ctx context.Context) (string, bool)
+  func (r *run) checkpointTick(ctx context.Context, stage string)
+  func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool)
   func (r *run) checkpointClean(ctx context.Context, sha string) bool
   func (r *run) pushCheckpoint(ctx context.Context, sha string) error
   func (r *run) warnCheckpoint(key, msg string, args ...any)
@@ -669,8 +896,9 @@ git commit -m "gitprov/fake: Snapshot, a locked copy of the state"
   func (r *run) refreshForPush(ctx context.Context)
   func (r *run) workflowGuardAt(ctx context.Context, until string) *gitops.PushRejected
   // export_test.go:
-  func SetCheckpointEvery(t *testing.T, d time.Duration)
-  func CountCheckpointTicks(t *testing.T) func() int64
+  func DriveCheckpoints(t *testing.T) (tick func())
+  func CheckpointersRunning() int32
+  const CheckpointQuiet, CheckpointMinGap, CheckpointFallback
   ```
 
 - [ ] **Step 1: Write the failing tests**
@@ -678,26 +906,38 @@ git commit -m "gitprov/fake: Snapshot, a locked copy of the state"
 Add to `internal/runner/export_test.go`:
 
 ```go
-// SetCheckpointEvery makes checkpoints tick every d for the rest of t.
-func SetCheckpointEvery(t *testing.T, d time.Duration) {
-	prev := checkpointEvery
-	checkpointEvery = d
-	t.Cleanup(func() { checkpointEvery = prev })
+// DriveCheckpoints replaces the checkpoint poll's ticker for the rest of
+// t: the returned tick sends one poll to the running stage's checkpointer
+// and returns once that poll has finished. It fails t when no checkpointer
+// takes the poll within 10 seconds.
+func DriveCheckpoints(t *testing.T) (tick func()) {
+	ch := make(chan time.Time)
+	done := make(chan struct{})
+	prevTicks, prevTicked := checkpointTicks, checkpointTicked
+	checkpointTicks = func(time.Duration) (<-chan time.Time, func()) { return ch, func() {} }
+	checkpointTicked = func() { done <- struct{}{} }
+	t.Cleanup(func() { checkpointTicks, checkpointTicked = prevTicks, prevTicked })
+	return func() {
+		t.Helper()
+		select {
+		case ch <- time.Time{}:
+		case <-time.After(10 * time.Second):
+			t.Fatal("no checkpointer took the poll")
+		}
+		<-done
+	}
 }
 
-// CountCheckpointTicks counts the checkpoint ticks that finished, for the
-// rest of t: a tick runs a dozen git commands, so a test waits for ticks,
-// never for wall-clock time.
-func CountCheckpointTicks(t *testing.T) func() int64 {
-	var n atomic.Int64
-	prev := checkpointTicked
-	checkpointTicked = func() { n.Add(1) }
-	t.Cleanup(func() { checkpointTicked = prev })
-	return n.Load
-}
+// CheckpointersRunning is how many checkpoint goroutines are alive.
+func CheckpointersRunning() int32 { return checkpointersRunning.Load() }
+
+// The checkpoint schedule's durations, for tests that move a fake clock.
+const (
+	CheckpointQuiet    = checkpointQuiet
+	CheckpointMinGap   = checkpointMinGap
+	CheckpointFallback = checkpointFallback
+)
 ```
-
-(add `"sync/atomic"` to `export_test.go`'s imports.)
 
 Create `internal/runner/checkpoint_test.go`:
 
@@ -707,7 +947,6 @@ package runner_test
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -721,41 +960,36 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-const tick = 20 * time.Millisecond
+// ckptRig is a harness whose checkpointer the test drives: tick sends one
+// poll and returns when it is done, and the run's clock moves only when
+// the test moves it. Nothing in it waits for wall-clock time.
+type ckptRig struct {
+	*harness
+	clock *testClock
+	tick  func()
+	logs  *bytes.Buffer // read only after the run
+}
 
-// tickCount counts the finished checkpoint ticks of the current test
-// (ckptHarness sets it).
-var tickCount func() int64
-
-// ckptHarness is prHarness with checkpoints every tick, ticks counted, and
-// the run's log kept in logs (read only after the run).
-func ckptHarness(t *testing.T, cfg string, logs *bytes.Buffer) *harness {
+func newCkptRig(t *testing.T, cfg string) *ckptRig {
 	t.Helper()
-	runner.SetCheckpointEvery(t, tick)
-	tickCount = runner.CountCheckpointTicks(t)
-	h := prHarness(t, cfg)
+	tick := runner.DriveCheckpoints(t)
+	// The fixture's 5-minute budget is too short for a clock moved by
+	// minutes; the stages' own timeouts still count real time.
+	h := prHarness(t, strings.Replace(cfg, "total: 5m", "total: 1h", 1))
+	c := newClock()
+	h.deps.Now = c.Now
+	logs := &bytes.Buffer{}
 	h.deps.Log = slog.New(slog.NewTextHandler(logs, nil))
-	return h
+	return &ckptRig{harness: h, clock: c, tick: tick, logs: logs}
 }
 
-// afterTicks waits until n more checkpoint ticks have finished; with n >= 2
-// at least one whole tick ran after the call.
-func afterTicks(t *testing.T, n int64) {
-	t.Helper()
-	start := tickCount()
-	waitFor(t, fmt.Sprintf("%d checkpoint ticks", n), func() bool { return tickCount() >= start+n })
-}
-
-// pushedHead is the pushed_head saved in the run record: a push is over
-// (its remote hooks included) once it is saved, while the remote ref is
-// visible before the remote's hooks finish.
-func pushedHead(t *testing.T, h *harness) string {
-	t.Helper()
-	rec, err := h.store.ReadRecord(context.Background())
-	if err != nil {
-		return ""
-	}
-	return rec.PushedHead
+// settle polls, lets a quiet period and a rate window pass, and polls
+// again: a new tip is pushed by the second poll unless something holds
+// it back.
+func (g *ckptRig) settle() {
+	g.tick()
+	g.clock.advance(runner.CheckpointMinGap)
+	g.tick()
 }
 
 // remoteTip is the run branch's tip on the remote, "" when it is absent.
@@ -764,21 +998,14 @@ func remoteTip(t *testing.T, h *harness) string {
 	return strings.TrimSpace(testutil.Git(t, h.remote, "for-each-ref", "--format=%(objectname)", "refs/heads/fugaro/"+runID))
 }
 
-func localHead(t *testing.T, req agent.Request) string {
+// pushedHead is the pushed_head saved in the run record.
+func pushedHead(t *testing.T, h *harness) string {
 	t.Helper()
-	return strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
-}
-
-// waitFor polls cond until it holds, for at most 10 seconds.
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
+	rec, err := h.store.ReadRecord(context.Background())
+	if err != nil {
+		return ""
 	}
+	return rec.PushedHead
 }
 
 // countPushes makes the remote count the pushes it accepts (post-receive).
@@ -795,58 +1022,186 @@ func countPushes(t *testing.T, h *harness) func() int {
 	}
 }
 
-// commitWIP commits a file without verifying it.
+// commitWIP commits a file without verifying it and returns HEAD.
 func commitWIP(t *testing.T, req agent.Request, name string) string {
 	t.Helper()
 	shell(t, req, "echo "+name+" > "+name+".txt && git add -A && git commit -qm 'wip "+name+"'")
-	return localHead(t, req)
+	return strings.TrimSpace(testutil.Git(t, req.Dir, "rev-parse", "HEAD"))
 }
 
 // TestCheckpointPushesCommittedWorkMidStage is the incident: work
 // committed in a long stage is on the remote before the stage ends.
 func TestCheckpointPushesCommittedWorkMidStage(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", early_draft: false"), &logs)
-	var pushed string
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		head := commitWIP(t, req, "wip")
-		waitFor(t, "the checkpoint push", func() bool { return pushedHead(t, h) == head })
-		if remoteTip(t, h) != head {
-			t.Errorf("pushed_head %s is not on the remote", head)
+		g.settle()
+		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
+			t.Errorf("the committed work is not on the remote mid-stage")
 		}
-		pushed = head
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
-	if err != nil {
-		t.Fatal(err)
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || remoteTip(t, g.harness) != rec.HeadSHA {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
-	if pushed == "" || rec.Outcome != runstore.OutcomeReady || remoteTip(t, h) != rec.HeadSHA {
-		t.Fatalf("pushed mid-stage %q; rec = %+v", pushed, rec)
-	}
-	if !strings.Contains(logs.String(), "checkpoint pushed") {
-		t.Fatalf("no checkpoint logged:\n%s", logs.String())
+	if !strings.Contains(g.logs.String(), "checkpoint pushed") {
+		t.Fatalf("no checkpoint logged:\n%s", g.logs)
 	}
 }
 
-// TestCheckpointSkipsAnUnchangedBranch: a tick with nothing new pushes nothing.
-func TestCheckpointSkipsAnUnchangedBranch(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", early_draft: false"), &logs)
-	pushes := countPushes(t, h)
-	var during int
-	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		head := commitWIP(t, req, "wip")
-		waitFor(t, "the checkpoint push", func() bool { return pushedHead(t, h) == head })
-		afterTicks(t, 5)
-		during = pushes()
+// TestBurstOfCommitsIsOnePush: commits closer together than the quiet
+// period are one push, of the latest.
+func TestBurstOfCommitsIsOnePush(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	pushes := countPushes(t, g.harness)
+	burst := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		var last string
+		for _, name := range []string{"one", "two", "three"} {
+			last = commitWIP(t, req, name)
+			g.tick()
+			g.clock.advance(2 * time.Second)
+		}
+		if n := pushes(); n != 0 {
+			t.Errorf("%d pushes inside the burst", n)
+		}
+		g.clock.advance(runner.CheckpointQuiet)
+		g.tick()
+		if n := pushes(); n != 1 || pushedHead(t, g.harness) != last {
+			t.Errorf("after the burst: %d pushes, pushed %s, want 1 of %s", n, pushedHead(t, g.harness), last)
+		}
 		return implement("feature")(t, ctx, req)
 	}
-	if _, err := h.run(t, long, review("ship", 0)); err != nil {
+	if _, err := g.run(t, burst, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
-	if during != 1 {
-		t.Fatalf("%d pushes for one new commit, want 1", during)
+}
+
+// TestAtMostOnePushPerMinute: commits every 20 s are pushed at most once a
+// minute, the tip at the end of the window.
+func TestAtMostOnePushPerMinute(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	pushes := countPushes(t, g.harness)
+	steady := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "c1")
+		g.tick()
+		g.clock.advance(runner.CheckpointQuiet)
+		g.tick() // the first push, at T
+		var last string
+		for _, name := range []string{"c2", "c3"} {
+			g.clock.advance(20 * time.Second)
+			last = commitWIP(t, req, name)
+			g.tick()
+		}
+		g.clock.advance(19 * time.Second) // T+59s
+		g.tick()
+		if n := pushes(); n != 1 {
+			t.Errorf("%d pushes inside the minute, want 1", n)
+		}
+		g.clock.advance(time.Second) // T+60s: the window ended
+		g.tick()
+		if n := pushes(); n != 2 || pushedHead(t, g.harness) != last {
+			t.Errorf("at the window's end: %d pushes, pushed %s, want 2 with %s", n, pushedHead(t, g.harness), last)
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, steady, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestFailedPushRetriedByTheFallback: a refused push warns once and is
+// retried checkpointFallback later, not at every poll.
+func TestFailedPushRetriedByTheFallback(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	flag, tried := filepath.Join(t.TempDir(), "refuse"), filepath.Join(t.TempDir(), "tried")
+	if err := os.WriteFile(flag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hook := "#!/bin/sh\ncat >/dev/null\nif [ -e " + flag + " ]; then touch " + tried + "; echo 'try later' >&2; exit 1; fi\n"
+	if err := os.WriteFile(filepath.Join(g.remote, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		head := commitWIP(t, req, "wip")
+		g.tick()
+		g.clock.advance(runner.CheckpointQuiet)
+		g.tick()
+		if _, err := os.Stat(tried); err != nil || remoteHasBranch(t, g.harness) {
+			t.Fatalf("the first push was not tried, or not refused (%v)", err)
+		}
+		if err := os.Remove(flag); err != nil {
+			t.Fatal(err)
+		}
+		g.clock.advance(time.Minute)
+		g.tick()
+		if remoteHasBranch(t, g.harness) {
+			t.Error("a failed push was retried before the fallback")
+		}
+		g.clock.advance(runner.CheckpointFallback)
+		g.tick()
+		if pushedHead(t, g.harness) != head {
+			t.Error("the fallback did not retry the push")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if n := strings.Count(g.logs.String(), "a checkpoint push failed"); n != 1 {
+		t.Fatalf("%d push warnings, want 1:\n%s", n, g.logs)
+	}
+}
+
+// TestIdlePollsNeverTouchTheRemote: once the tip is pushed, polls read
+// only the checkout: with the remote gone, nothing fails and the provider
+// is not called.
+func TestIdlePollsNeverTouchTheRemote(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	pushes := countPushes(t, g.harness)
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		g.settle()
+		calls := len(g.provider.Snapshot().Calls)
+		away := g.remote + ".away"
+		if err := os.Rename(g.remote, away); err != nil {
+			t.Fatal(err)
+		}
+		for range 5 {
+			g.clock.advance(30 * time.Second)
+			g.tick()
+		}
+		if err := os.Rename(away, g.remote); err != nil {
+			t.Fatal(err)
+		}
+		if n := len(g.provider.Snapshot().Calls); n != calls || pushes() != 1 {
+			t.Errorf("idle polls: provider calls %d -> %d, pushes %d", calls, n, pushes())
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(g.logs.String(), "level=WARN") {
+		t.Fatalf("an idle poll warned:\n%s", g.logs)
+	}
+}
+
+// TestStageEndStopsTheCheckpointer: each stage has exactly one
+// checkpointer, and none outlives the run.
+func TestStageEndStopsTheCheckpointer(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	one := func(t *testing.T) {
+		if n := runner.CheckpointersRunning(); n != 1 {
+			t.Errorf("%d checkpointers running in a stage, want 1", n)
+		}
+	}
+	if _, err := g.run(t, probe(one, implement("feature")), probe(one, review("ship", 0))); err != nil {
+		t.Fatal(err)
+	}
+	if n := runner.CheckpointersRunning(); n != 0 {
+		t.Fatalf("%d checkpointers outlived the run", n)
 	}
 }
 
@@ -854,150 +1209,103 @@ func TestCheckpointSkipsAnUnchangedBranch(t *testing.T) {
 // pushed commit, checkpoints refuse (one warning) and finalize pushes the
 // final branch as it always did.
 func TestCheckpointNeverRewritesThePushedBranch(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", early_draft: false"), &logs)
-	var first, during string
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		first = commitWIP(t, req, "wip")
-		waitFor(t, "the checkpoint push", func() bool { return pushedHead(t, h) == first })
+		first := commitWIP(t, req, "wip")
+		g.settle()
 		shell(t, req, "git commit -q --amend -m 'wip, amended'")
-		afterTicks(t, 3)
-		during = remoteTip(t, h)
+		g.settle()
+		g.settle()
+		if got := remoteTip(t, g.harness); got != first {
+			t.Errorf("a checkpoint replaced the pushed commit: remote at %s, want %s", got, first)
+		}
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
-	if err != nil {
-		t.Fatal(err)
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || remoteTip(t, g.harness) != rec.HeadSHA {
+		t.Fatalf("finalize did not push the final branch: rec = %+v, err = %v", rec, err)
 	}
-	if during != first {
-		t.Fatalf("a checkpoint replaced the pushed commit: remote at %s, want %s", during, first)
-	}
-	if remoteTip(t, h) != rec.HeadSHA || rec.Outcome != runstore.OutcomeReady {
-		t.Fatalf("finalize did not push the final branch: remote %s, rec %+v", remoteTip(t, h), rec)
-	}
-	if n := strings.Count(logs.String(), "were rewritten"); n != 1 {
-		t.Fatalf("%d rewrite warnings, want 1:\n%s", n, logs.String())
+	if n := strings.Count(g.logs.String(), "were rewritten"); n != 1 {
+		t.Fatalf("%d rewrite warnings, want 1:\n%s", n, g.logs)
 	}
 }
 
 // TestCheckpointSkipsWorkflowCommits: on GitHub a commit that changes a
 // workflow file is never pushed by a checkpoint; finalize refuses as today.
 func TestCheckpointSkipsWorkflowCommits(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	ci := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "mkdir -p .github/workflows && echo 'on: push' > .github/workflows/ci.yml && git add -A && git commit -qm 'Add CI'")
-		afterTicks(t, 3)
-		if remoteHasBranch(t, h) {
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
 			t.Error("a checkpoint pushed a workflow change")
 		}
 		return implementVerified(t, ctx, req)
 	}
-	runRefused(t, h, ci, review("ship", 0))
-	if n := strings.Count(logs.String(), "no more checkpoint pushes"); n != 1 {
-		t.Fatalf("%d stop notices, want 1:\n%s", n, logs.String())
+	runRefused(t, g.harness, ci, review("ship", 0))
+	if n := strings.Count(g.logs.String(), "no more checkpoint pushes"); n != 1 {
+		t.Fatalf("%d stop notices, want 1:\n%s", n, g.logs)
 	}
 }
 
 // TestCheckpointStopsOnAKnownSecret: a commit holding a value the run
-// redacts is never pushed mid-run, and neither is anything after it, even
-// once a later commit removes the value.
+// redacts is never pushed mid-run, nor anything after it, even once a
+// later commit removes the value.
 func TestCheckpointStopsOnAKnownSecret(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	const mounted = "mounted-checkpoint-secret-value"
-	h.deps.Env = append(h.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+	g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
 	leak := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		shell(t, req, "echo "+mounted+" > leak.txt && git add -A && git commit -qm leak")
-		afterTicks(t, 3)
+		g.settle()
 		shell(t, req, "git rm -q leak.txt && git commit -qm unleak")
-		afterTicks(t, 3)
-		if remoteHasBranch(t, h) {
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
 			t.Error("a checkpoint pushed commits holding a secret value")
 		}
 		return implement("feature")(t, ctx, req)
 	}
-	if _, err := h.run(t, leak, review("ship", 0)); err != nil {
+	if _, err := g.run(t, leak, review("ship", 0)); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(logs.String(), "no more checkpoint pushes") || strings.Contains(logs.String(), mounted) {
-		t.Fatalf("logs:\n%s", logs.String())
+	if !strings.Contains(g.logs.String(), "no more checkpoint pushes") || strings.Contains(g.logs.String(), mounted) {
+		t.Fatalf("logs:\n%s", g.logs)
 	}
 }
 
-// TestCheckpointFailureNeverFailsTheRun: a refused push warns once, the
-// next tick retries, and the run ends as usual.
-func TestCheckpointFailureNeverFailsTheRun(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", early_draft: false"), &logs)
-	flag := filepath.Join(t.TempDir(), "refuse")
-	if err := os.WriteFile(flag, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	tried := filepath.Join(t.TempDir(), "tried")
-	hook := "#!/bin/sh\ncat >/dev/null\nif [ -e " + flag + " ]; then touch " + tried + "; echo 'try later' >&2; exit 1; fi\n"
-	if err := os.WriteFile(filepath.Join(h.remote, "hooks", "pre-receive"), []byte(hook), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		head := commitWIP(t, req, "wip")
-		waitFor(t, "a refused checkpoint push", func() bool { _, err := os.Stat(tried); return err == nil })
-		afterTicks(t, 3) // more refused tries: still one warning
-		if remoteHasBranch(t, h) {
-			t.Error("the refusing remote took a push")
-		}
-		if err := os.Remove(flag); err != nil {
-			t.Fatal(err)
-		}
-		waitFor(t, "the retried checkpoint", func() bool { return pushedHead(t, h) == head })
-		return implement("feature")(t, ctx, req)
-	}
-	rec, err := h.run(t, long, review("ship", 0))
-	if err != nil || rec.Outcome != runstore.OutcomeReady {
-		t.Fatalf("rec = %+v, err = %v", rec, err)
-	}
-	if n := strings.Count(logs.String(), "a checkpoint push failed"); n != 1 {
-		t.Fatalf("%d push warnings, want 1:\n%s", n, logs.String())
-	}
-}
-
-// TestCheckpointsOffPushesNothingMidStage: git.pr.checkpoints false keeps
-// 0.5.0's pushes.
+// TestCheckpointsOffPushesNothingMidStage: git.pr.checkpoints false runs
+// no checkpointer at all.
 func TestCheckpointsOffPushesNothingMidStage(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", checkpoints: false"), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ", checkpoints: false"))
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		commitWIP(t, req, "wip")
-		time.Sleep(50 * tick) // no checkpointer runs, so there is no tick to wait for
-		if remoteHasBranch(t, h) || tickCount() != 0 {
-			t.Errorf("a checkpoint ran with checkpoints false (%d ticks)", tickCount())
+		if n := runner.CheckpointersRunning(); n != 0 {
+			t.Errorf("%d checkpointers with checkpoints false", n)
 		}
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
+	rec, err := g.run(t, long, review("ship", 0))
 	if err != nil || rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
 
-// TestNoCheckpointAfterHalt: once a halt is recorded, the stage's last
-// seconds push nothing; finalize pushes as it does for any halt.
+// TestNoCheckpointAfterHalt: once a halt is recorded, nothing is pushed
+// mid-stage; finalize pushes as it does for any halt.
 func TestNoCheckpointAfterHalt(t *testing.T) {
-	var logs bytes.Buffer
 	b := newHandleBox(t)
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	halted := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if !b.h.HaltNow(runCapHalt) {
 			t.Fatal("HaltNow was refused")
 		}
 		commitWIP(t, req, "wip")
-		afterTicks(t, 3)
-		if remoteHasBranch(t, h) {
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
 			t.Error("a checkpoint pushed after the halt")
 		}
 		return agent.Result{CostUSD: 1}, nil
 	}
-	rec, err := h.run(t, halted)
+	rec, err := g.run(t, halted)
 	if err != nil || rec.Status != runstore.StatusHalted {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
@@ -1006,46 +1314,42 @@ func TestNoCheckpointAfterHalt(t *testing.T) {
 // TestNoCheckpointAfterCancel: once a cancel is recorded, nothing is
 // pushed mid-stage; finalize leaves the cancelled draft as today.
 func TestNoCheckpointAfterCancel(t *testing.T) {
-	var logs bytes.Buffer
 	b := newHandleBox(t)
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	cancelled := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		if !b.h.MarkCancelled() {
 			t.Fatal("MarkCancelled was refused")
 		}
 		commitWIP(t, req, "wip")
-		afterTicks(t, 3)
-		if remoteHasBranch(t, h) {
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
 			t.Error("a checkpoint pushed after the cancel")
 		}
-		if err := h.store.RequestCancel(context.Background()); err != nil {
+		if err := g.store.RequestCancel(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 		return blockUntilDone(t, ctx, req)
 	}
-	rec, err := h.run(t, cancelled)
+	rec, err := g.run(t, cancelled)
 	if err != nil || rec.Status != runstore.StatusCancelled {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
 
-// TestFollowUpDoesNotCheckpoint: a follow-up pushes only at finalize, as
-// in 0.5.0 (decision C6).
+// TestFollowUpDoesNotCheckpoint: a follow-up runs no checkpointer and
+// pushes only at finalize, as in 0.5.0 (decision C6).
 func TestFollowUpDoesNotCheckpoint(t *testing.T) {
-	runner.SetCheckpointEvery(t, tick)
-	tickCount = runner.CountCheckpointTicks(t)
+	runner.DriveCheckpoints(t) // the first run's polls are never sent
 	h := followUpHarness(t, "", nil, implement("feature"), review("ship", 0))
 	start := remoteTip(t, h.harness)
 	h.followUp(t, followID, runID, "")
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		commitWIP(t, req, "more")
-		before := tickCount()
-		time.Sleep(50 * tick) // no checkpointer runs in a follow-up, so there is no tick to wait for
-		if tickCount() != before {
-			t.Errorf("a follow-up stage ran checkpoint ticks")
+		if n := runner.CheckpointersRunning(); n != 0 {
+			t.Errorf("%d checkpointers in a follow-up", n)
 		}
+		commitWIP(t, req, "more")
 		if got := remoteTip(t, h.harness); got != start {
-			t.Errorf("a follow-up checkpointed: remote moved from %s to %s", start, got)
+			t.Errorf("the follow-up's branch moved mid-stage: %s -> %s", start, got)
 		}
 		return implement("again")(t, ctx, req)
 	}
@@ -1056,8 +1360,8 @@ func TestFollowUpDoesNotCheckpoint(t *testing.T) {
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestNoCheckpointAfter|TestFollowUpDoesNotCheckpoint'`
-Expected: FAIL to compile: `undefined: checkpointEvery` (in `export_test.go`).
+Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestBurstOfCommitsIsOnePush|TestAtMostOnePushPerMinute|TestFailedPushRetriedByTheFallback|TestIdlePollsNeverTouchTheRemote|TestStageEndStopsTheCheckpointer|TestNoCheckpointAfter|TestFollowUpDoesNotCheckpoint'`
+Expected: FAIL to compile: `undefined: checkpointTicks` (in `export_test.go`).
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1071,6 +1375,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/agent"
@@ -1078,30 +1383,33 @@ import (
 )
 
 // Checkpoint pushes (design checkpoint-pushes.md). While a first run's
-// stage runs, the runner pushes the run branch's new commits every
-// checkpointInterval: fast-forward only, by sha, with the runner's
+// stage runs, the runner reads the run branch's tip every checkpointPoll,
+// locally, and pushes a new tip once it has been still for checkpointQuiet,
+// at most once per checkpointMinGap; each stage boundary pushes what is
+// left at once. Pushes are fast-forward only, by sha, with the runner's
 // credentials and the same guards as finalize's push, plus a scan for the
 // values the run redacts. A checkpoint never fails the run, never forces,
 // never commits and never touches the working tree or the index.
 
-// checkpointInterval is how often a running stage's new commits are pushed.
-const checkpointInterval = 3 * time.Minute
+// checkpointTicks makes the poll's ticker; tests replace it with a channel
+// they drive (DriveCheckpoints).
+var checkpointTicks = func(d time.Duration) (<-chan time.Time, func()) {
+	t := time.NewTicker(d)
+	return t.C, t.Stop
+}
 
-// checkpointEvery is checkpointInterval; a variable so a test can shorten it.
-var checkpointEvery = checkpointInterval
-
-// checkpointTicked, when set, is called at the end of every tick: tests
-// wait for ticks rather than for time (CountCheckpointTicks).
+// checkpointTicked, when set, is called at the end of every poll (tests).
 var checkpointTicked func()
 
-// checkpointOpenTries bounds how many checkpoint pushes try to open the
-// draft (decision C8); after that the verified boundary or finalize does.
-const checkpointOpenTries = 2
+// checkpointersRunning counts the checkpoint goroutines alive, so a test
+// can see that a stage's end stopped its own.
+var checkpointersRunning atomic.Int32
 
 // checkpointState is the run's checkpoint bookkeeping. During a stage only
 // the checkpoint goroutine touches it (and the run record); the run
-// goroutine reads it only after startCheckpoints' stop has returned.
+// goroutine uses it only after startCheckpoints' stop has returned.
 type checkpointState struct {
+	sched     checkpointSchedule
 	stopped   bool            // a permanent reason: no more checkpoints this run
 	warned    map[string]bool // warnings already logged, by kind
 	openTries int             // checkpoint pushes that tried to open the draft
@@ -1111,7 +1419,7 @@ type checkpointState struct {
 // checkpointsOn reports whether this run checkpoints: a first run whose
 // fugaro.yaml leaves git.pr.checkpoints on.
 func (r *run) checkpointsOn() bool {
-	return r.follow == nil && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn() && checkpointEvery > 0
+	return r.follow == nil && r.cfg != nil && r.cfg.Git.PR.CheckpointsOn()
 }
 
 // startCheckpoints starts the stage's checkpoint goroutine on stageCtx and
@@ -1122,17 +1430,19 @@ func (r *run) startCheckpoints(stageCtx context.Context, stage string) (stop fun
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(stageCtx)
+	ticks, stopTicks := checkpointTicks(checkpointPoll)
 	done := make(chan struct{})
+	checkpointersRunning.Add(1)
 	go func() {
 		defer close(done)
-		t := time.NewTicker(checkpointEvery)
-		defer t.Stop()
+		defer checkpointersRunning.Add(-1)
+		defer stopTicks()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
-				r.checkpoint(ctx, stage)
+			case <-ticks:
+				r.checkpointTick(ctx, stage)
 			}
 		}
 	}()
@@ -1151,17 +1461,37 @@ func (r *run) warnCheckpoint(key, msg string, args ...any) {
 	r.d.Log.Warn(msg, args...)
 }
 
-// stopCheckpoints ends checkpoints for the run, for a reason no later tick
+// stopCheckpoints ends checkpoints for the run, for a reason no later poll
 // can change; finalize then pushes, or refuses, as it always did.
 func (r *run) stopCheckpoints(reason string, args ...any) {
 	r.ckpt.stopped = true
 	r.d.Log.Warn("no more checkpoint pushes this run: "+reason+"; finalize pushes as usual", args...)
 }
 
-// checkpoint is one tick: push the run branch's tip if it is new, settled
-// and safe. Every failure is a warning; a panic is recovered here, as a
-// goroutine's panic would end the process.
-func (r *run) checkpoint(ctx context.Context, stage string) {
+// checkpointBlocked reports whether no checkpoint may run now.
+func (r *run) checkpointBlocked(ctx context.Context) bool {
+	return ctx.Err() != nil || r.ckpt.stopped || r.pr.gone || r.haltValue() != nil || r.isCancelled() || r.budget.Exhausted()
+}
+
+// checkpointTip reads the run branch's tip, locally; false when the
+// checkout is busy (the next poll looks again) or the read failed.
+func (r *run) checkpointTip(ctx context.Context) (string, bool) {
+	sha, err := r.repo.CheckpointTip(ctx, r.rec.Branch)
+	switch {
+	case errors.Is(err, gitops.ErrGitBusy):
+		return "", false
+	case err != nil:
+		r.warnCheckpoint("tip", "reading the run branch for a checkpoint failed", "err", r.redact(err.Error()))
+		return "", false
+	}
+	return sha, true
+}
+
+// checkpointTick is one poll: read the tip locally and push it when the
+// schedule says so. A poll whose tip is unchanged makes no network call.
+// Every failure is a warning; a panic is recovered here, as a goroutine's
+// panic would end the process.
+func (r *run) checkpointTick(ctx context.Context, stage string) {
 	if checkpointTicked != nil {
 		defer checkpointTicked()
 	}
@@ -1170,51 +1500,59 @@ func (r *run) checkpoint(ctx context.Context, stage string) {
 			r.d.Log.Error("a checkpoint panicked; carrying on", "stage", stage, "panic", fmt.Sprint(p))
 		}
 	}()
-	if ctx.Err() != nil || r.ckpt.stopped || r.pr.gone || r.haltValue() != nil || r.isCancelled() || r.budget.Exhausted() {
+	if r.checkpointBlocked(ctx) {
 		return
 	}
-	sha, err := r.repo.CheckpointTip(ctx, r.rec.Branch)
-	switch {
-	case errors.Is(err, gitops.ErrGitBusy):
-		return // the agent is mid-operation or off the branch; the next tick looks again
-	case err != nil:
-		r.warnCheckpoint("tip", "reading the run branch for a checkpoint failed", "err", r.redact(err.Error()))
+	sha, ok := r.checkpointTip(ctx)
+	if !ok || !r.ckpt.sched.due(r.d.Now(), sha, r.rec.PushedHead) {
 		return
-	case sha == r.rec.PushedHead:
-		return // nothing new: no network call
 	}
-	// Of the tip read, not HEAD: the agent may have committed since, and the
-	// tip read then is the base, which is never pushed.
+	r.checkpointPush(ctx, stage, sha, true)
+}
+
+// checkpointPush pushes sha, the tip just read: every check is on sha,
+// never on HEAD, which the agent may have moved since. during says it is a
+// poll's push, mid-stage, rather than a boundary's.
+func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool) {
+	now := r.d.Now()
+	// Of the tip read, not HEAD: a tip read just before the agent's first
+	// commit is the base, which is never pushed.
 	if ahead, err := r.repo.CountAhead(ctx, r.cfg.Git.BaseBranch, sha); err != nil || ahead == 0 {
 		return // no commit of the run's own yet
 	}
 	if !r.checkpointClean(ctx, sha) {
+		if !r.ckpt.stopped {
+			r.ckpt.sched.failed(now)
+		}
 		return
 	}
-	err = r.pushCheckpoint(ctx, sha)
+	err := r.pushCheckpoint(ctx, sha)
 	switch {
 	case err == nil:
 	case errors.Is(err, gitops.ErrNotFastForward):
+		r.ckpt.sched.failed(now)
 		r.warnCheckpoint("rewritten", "the run branch's pushed commits were rewritten; checkpoints wait until a push fast-forwards again (a verified stage end or finalize pushes the branch as it is)", "sha", shortSHA(sha))
 		return
 	case r.asRefusal(err) != nil:
 		r.stopCheckpoints("the host would refuse the push", "reason", refusalText(r.asRefusal(err)))
 		return
 	case ctx.Err() != nil:
-		return // the stage ended mid-push; the next boundary or finalize pushes
+		return // the stage ended mid-push; the boundary or finalize pushes
 	default:
-		r.warnCheckpoint("push", "a checkpoint push failed; the next one tries again", "err", r.redact(err.Error()))
+		r.ckpt.sched.failed(now)
+		r.warnCheckpoint("push", "a checkpoint push failed; it is retried in a few minutes", "err", r.redact(err.Error()))
 		return
 	}
+	r.ckpt.sched.pushed(now)
 	r.ckpt.pushes++
-	r.d.Log.Info("checkpoint pushed", "stage", stage, "sha", shortSHA(sha), "n", r.ckpt.pushes)
+	r.d.Log.Info("checkpoint pushed", "stage", stage, "sha", shortSHA(sha), "n", r.ckpt.pushes, "boundary", !during)
 }
 
 // checkpointClean scans the commits a checkpoint would add (after the last
 // push, or after the work base before the first) for a value the run
 // redacts. A hit stops checkpoints for the run: every later push would
 // carry that commit. A binary or very large range is pushed, as finalize
-// would push it (decision C5).
+// would push it.
 func (r *run) checkpointClean(ctx context.Context, sha string) bool {
 	since := r.rec.PushedHead
 	if since == "" {
@@ -1252,7 +1590,7 @@ func (r *run) pushCheckpoint(ctx context.Context, sha string) error {
 }
 ```
 
-In `internal/runner/prflow.go`, replace the first five lines of `pushBranch`'s body (the `actx` refresh) with `r.refreshForPush(ctx)` and add:
+In `internal/runner/prflow.go`, replace the first six lines of `pushBranch`'s body (the `actx` refresh and its warning) with `r.refreshForPush(ctx)` and add:
 
 ```go
 // refreshForPush refreshes the git credentials for a mid-run push, on a
@@ -1267,7 +1605,7 @@ func (r *run) refreshForPush(ctx context.Context) {
 }
 ```
 
-In `internal/runner/refused.go`, rename the body of `workflowGuard` into a new function and keep `workflowGuard` as a wrapper:
+In `internal/runner/refused.go`, move the body of `workflowGuard` into a new function and keep `workflowGuard` as a wrapper (its doc comment stays):
 
 ```go
 func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
@@ -1291,8 +1629,6 @@ func (r *run) workflowGuardAt(ctx context.Context, until string) *gitops.PushRej
 	return &gitops.PushRejected{Kind: gitops.RejectWorkflows, Files: files}
 }
 ```
-
-(The doc comment above `workflowGuard` stays where it is.)
 
 In `internal/runner/runner.go`:
 - in the `run` struct, after `pr prFlow`, add:
@@ -1323,37 +1659,40 @@ with
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestNoCheckpointAfter|TestFollowUpDoesNotCheckpoint|TestRefused|TestOpensDraftAfterFirstVerifiedStage|TestNoPushWithoutVerifiedTest|TestEarlyDraftFalseKeepsFinalizeOnly|TestHaltAfterPushLeavesDraftWithComment|TestCancelFinalizesDraftWithNote'`
-Expected: PASS. The existing tests in the list pin that the default 3-minute interval leaves today's flows unchanged.
+Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestBurstOfCommitsIsOnePush|TestAtMostOnePushPerMinute|TestFailedPushRetriedByTheFallback|TestIdlePollsNeverTouchTheRemote|TestStageEndStopsTheCheckpointer|TestNoCheckpointAfter|TestFollowUpDoesNotCheckpoint|TestRefused|TestOpensDraftAfterFirstVerifiedStage|TestEarlyDraftFalseKeepsFinalizeOnly|TestHaltAfterPushLeavesDraftWithComment|TestCancelFinalizesDraftWithNote'`
+Expected: PASS (about 40 s). The existing tests in the list pin that a stage whose poll never fires leaves today's flows unchanged.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add internal/runner/checkpoint.go internal/runner/checkpoint_test.go internal/runner/runner.go internal/runner/refused.go internal/runner/prflow.go internal/runner/export_test.go
-git commit -m "runner: checkpoint pushes while a stage runs, fast-forward only"
+git commit -m "runner: the checkpointer polls the branch tip and pushes new commits, fast-forward only"
 ```
 
 - [ ] **Step 6: Own review** (token-economy rule: this task changes every run's stage loop). The reviewer checks four things:
   - nothing but the checkpoint goroutine writes `r.rec`, `r.pr`, `r.ckpt`, `r.env` or `r.auth` between `startCheckpoints` and its `stop`;
-  - every path in `checkpoint` returns without failing the run;
-  - `stop` runs before any later write in `stage()`;
-  - the `-race` focused run above is clean.
+  - a poll whose tip is unchanged runs only local git;
+  - every path in `checkpointTick` and `checkpointPush` returns without failing the run;
+  - `stop` runs before any later write in `stage()`.
+
+  The `-race` focused run above must be clean.
 
 ---
 
-### Task 5: The draft opens at the first checkpoint, marked not verified
+### Task 6: The boundary push and the draft at the first checkpoint
 
 **Files:**
-- Modify: `internal/runner/prflow.go`, `internal/runner/checkpoint.go`
-- Test: `internal/runner/checkpoint_test.go`
+- Modify: `internal/runner/prflow.go`, `internal/runner/checkpoint.go`, `internal/runner/prflow_test.go`, `internal/runner/golden_test.go`
+- Test: `internal/runner/checkpoint_pr_test.go` (new)
 
 **Interfaces:**
 - Consumes:
-  - from Task 4: `checkpointState.openTries`, `checkpointOpenTries`, `checkpoint`, `ckptHarness`, `commitWIP`, `waitFor`, `afterTicks`, `pushedHead`, `tickCount`, `remoteTip`, `localHead`;
-  - existing: `latestVerifiedTest`, `ensurePR`, `earlyPRText`, `noteStatusWritten`, `newClock`, `afterStep`, `probe`, `storedPR`, `onlyPR`, `ops`, `count`, `verifyTest`.
+  - from Task 5: `checkpointPush`, `checkpointTip`, `checkpointBlocked`, `checkpointsOn`, `ckptRig`, `newCkptRig`, `commitWIP`, `pushedHead`, `countPushes`;
+  - existing: `latestVerifiedTest`, `ensurePR`, `earlyPRText`, `noteStatusWritten`, `afterStep`, `probe`, `storedPR`, `onlyPR`, `ops`, `count`, `verifyTest`, `envValue`, `statusBegin`.
 - Produces:
   ```go
-  func (r *run) afterCheckpoint(ctx context.Context, stage string)
+  func (r *run) boundaryCheckpoint(ctx context.Context, stage string)
+  func (r *run) afterCheckpoint(ctx context.Context, stage string, during bool)
   func (r *run) openDraftPR(ctx context.Context, stage string, during bool) // openDraft's PR half
   func (r *run) statusUpdate(ctx context.Context, stage string, during bool)    // was (ctx, stage)
   func (r *run) runningSection(stage string, during bool) string                // was (stage)
@@ -1363,30 +1702,70 @@ git commit -m "runner: checkpoint pushes while a stage runs, fast-forward only"
 
 - [ ] **Step 1: Write the failing tests**
 
-Append to `internal/runner/checkpoint_test.go`:
+Create `internal/runner/checkpoint_pr_test.go`:
 
 ```go
+package runner_test
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/dimipaun/fugaro/internal/agent"
+	"github.com/dimipaun/fugaro/internal/runstore"
+)
+
+// TestCommitThenStageEndPushedAtTheBoundary: a commit made just before the
+// stage ends is pushed at the boundary, at once, even inside the minute.
+func TestCommitThenStageEndPushedAtTheBoundary(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	pushes := countPushes(t, g.harness)
+	var last string
+	work := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "one")
+		g.settle() // pushed: the minute's window starts now
+		last = commitWIP(t, req, "two")
+		return agent.Result{CostUSD: 1}, nil // the stage ends without another poll
+	}
+	var atReview string
+	var n int
+	rec, err := g.run(t, work, probe(func(t *testing.T) { atReview, n = pushedHead(t, g.harness), pushes() }, review("ship", 0)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atReview != last || n != 2 {
+		t.Fatalf("at the review stage: pushed %s after %d pushes, want %s after 2", atReview, n, last)
+	}
+	if rec.Outcome != runstore.OutcomeDraft || rec.PushedHead != rec.HeadSHA {
+		t.Fatalf("rec = %+v", rec)
+	}
+}
+
 // TestCheckpointOpensDraftMarkedNotVerified: the first checkpoint opens the
 // draft, with no reviewers, its number saved, and a section that says the
 // work is not verified; finalize makes it ready as before.
 func TestCheckpointOpensDraftMarkedNotVerified(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	var body string
 	var draft bool
 	var reviewers []string
 	var saved *runstore.PRRef
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		head := commitWIP(t, req, "wip")
-		waitFor(t, "the draft at the first checkpoint", func() bool {
-			return len(h.provider.Snapshot().PRs) == 1 && pushedHead(t, h) == head
-		})
-		pr := h.provider.Snapshot().PRs[0]
-		body, draft, reviewers = pr.Body, pr.Draft, pr.Reviewers
-		saved = storedPR(t, h)
+		commitWIP(t, req, "wip")
+		g.settle()
+		prs := g.provider.Snapshot().PRs
+		if len(prs) != 1 {
+			t.Fatalf("PRs after the first checkpoint: %d", len(prs))
+		}
+		body, draft, reviewers = prs[0].Body, prs[0].Draft, prs[0].Reviewers
+		saved = storedPR(t, g.harness)
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
+	rec, err := g.run(t, long, review("ship", 0))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1401,11 +1780,11 @@ func TestCheckpointOpensDraftMarkedNotVerified(t *testing.T) {
 	if rec.Outcome != runstore.OutcomeReady {
 		t.Fatalf("rec = %+v", rec)
 	}
-	pr := onlyPR(t, h.provider)
+	pr := onlyPR(t, g.provider)
 	if pr.Draft || !strings.Contains(pr.Body, "**Ready for review**") || strings.Contains(pr.Body, "not verified") {
 		t.Fatalf("final PR = %+v", pr)
 	}
-	if calls := ops(h); calls[0] != "EnsurePR#0 draft=true" || count(calls, "EnsurePR", "") != 2 {
+	if calls := ops(g.harness); calls[0] != "EnsurePR#0 draft=true" || count(calls, "EnsurePR", "") != 2 {
 		t.Fatalf("calls = %q", calls)
 	}
 }
@@ -1413,14 +1792,11 @@ func TestCheckpointOpensDraftMarkedNotVerified(t *testing.T) {
 // TestStatusSaysVerifiedAfterAPassingTest: once the pushed commit has a
 // passing clean test, the next status write says verified.
 func TestStatusSaysVerifiedAfterAPassingTest(t *testing.T) {
-	var logs bytes.Buffer
-	c := newClock()
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
-	h.deps.Now = c.Now
+	g := newCkptRig(t, prCfg(t, 2, ""))
 	var head string
 	work := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		head = commitWIP(t, req, "wip")
-		waitFor(t, "the draft", func() bool { return len(h.provider.Snapshot().PRs) == 1 })
+		g.settle()
 		verifyTest(t, ctx, req)
 		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
 		if err := os.WriteFile(pr, []byte("# Add wip\n\nAdds wip.txt."), 0o644); err != nil {
@@ -1429,7 +1805,7 @@ func TestStatusSaysVerifiedAfterAPassingTest(t *testing.T) {
 		return agent.Result{CostUSD: 1}, nil
 	}
 	var body string
-	if _, err := h.run(t, afterStep(c, work), probe(func(t *testing.T) { body = h.provider.Snapshot().PRs[0].Body }, review("ship", 0))); err != nil {
+	if _, err := g.run(t, afterStep(g.clock, work), probe(func(t *testing.T) { body = g.provider.Snapshot().PRs[0].Body }, review("ship", 0))); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(body, "**Running** ·") || !strings.Contains(body, fmt.Sprintf("branch at `%s`: verified", head[:7])) || strings.Contains(body, "not verified") {
@@ -1440,47 +1816,44 @@ func TestStatusSaysVerifiedAfterAPassingTest(t *testing.T) {
 // TestEarlyDraftFalseCheckpointsWithoutPR: early_draft false still pushes
 // the branch mid-stage, and the PR opens only at finalize.
 func TestEarlyDraftFalseCheckpointsWithoutPR(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ", early_draft: false"), &logs)
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
 		head := commitWIP(t, req, "wip")
-		waitFor(t, "the checkpoint push", func() bool { return pushedHead(t, h) == head })
-		afterTicks(t, 3)
-		if n := len(h.provider.Snapshot().PRs); n != 0 {
-			t.Errorf("%d PRs opened mid-run with early_draft false", n)
+		g.settle()
+		if pushedHead(t, g.harness) != head || len(g.provider.Snapshot().PRs) != 0 {
+			t.Errorf("want the branch pushed and no PR mid-run")
 		}
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
-	if err != nil || rec.Outcome != runstore.OutcomeReady || onlyPR(t, h.provider).Draft {
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || onlyPR(t, g.provider).Draft {
 		t.Fatalf("rec = %+v, err = %v", rec, err)
 	}
 }
 
-// TestCheckpointOpenTriedTwice: a draft that fails to open is retried on
-// the next checkpoint push only, twice in all; the verified boundary opens
-// it after that.
+// TestCheckpointOpenTriedTwice: a draft that fails to open is retried by
+// the next checkpoint push only, twice in all; the verified boundary
+// opens it after that.
 func TestCheckpointOpenTriedTwice(t *testing.T) {
-	var logs bytes.Buffer
-	h := ckptHarness(t, prCfg(t, 2, ""), &logs)
-	h.provider.FailEnsure = 6 // two tries of ensurePR's three attempts
-	ensures := func() int { return count(snapOps(h), "EnsurePR", "") }
+	g := newCkptRig(t, prCfg(t, 2, ""))
+	g.provider.FailEnsure = 6 // two tries of ensurePR's three attempts
+	ensures := func() int { return count(snapOps(g.harness), "EnsurePR", "") }
 	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
-		commitWIP(t, req, "one")
-		waitFor(t, "the first open's attempts", func() bool { return ensures() == 3 })
-		commitWIP(t, req, "two")
-		waitFor(t, "the second open's attempts", func() bool { return ensures() == 6 })
-		head := commitWIP(t, req, "three")
-		waitFor(t, "the third checkpoint", func() bool { return pushedHead(t, h) == head })
-		afterTicks(t, 3)
-		if n := ensures(); n != 6 {
-			t.Errorf("%d EnsurePR calls, want 6: a third try was made", n)
+		for i, name := range []string{"one", "two", "three"} {
+			head := commitWIP(t, req, name)
+			g.settle()
+			if pushedHead(t, g.harness) != head {
+				t.Fatalf("commit %s was not pushed", name)
+			}
+			if want := 3 * min(i+1, 2); ensures() != want {
+				t.Fatalf("after push %d: %d EnsurePR calls, want %d", i+1, ensures(), want)
+			}
 		}
 		return implement("feature")(t, ctx, req)
 	}
-	rec, err := h.run(t, long, review("ship", 0))
-	if err != nil || rec.Outcome != runstore.OutcomeReady || len(h.provider.State.PRs) != 1 {
-		t.Fatalf("rec = %+v, err = %v, PRs = %+v", rec, err, h.provider.State.PRs)
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady || len(g.provider.State.PRs) != 1 {
+		t.Fatalf("rec = %+v, err = %v, PRs = %+v", rec, err, g.provider.State.PRs)
 	}
 }
 
@@ -1494,13 +1867,23 @@ func snapOps(h *harness) []string {
 }
 ```
 
+Five existing tests pin 0.5.0's pushes. The full runner suite on the prototype showed exactly these five failing once boundary pushes exist; nothing else did. The 0.5.0 rules now hold only with checkpoints off, so these tests turn them off, and their names stay true:
+- In `internal/runner/prflow_test.go`:
+  - `TestNoPushWithoutVerifiedTest` (an unverified boundary pushes nothing): `prHarness(t, prCfg(t, 2, ""))` becomes `prHarness(t, prCfg(t, 2, ", checkpoints: false"))`, and its doc comment gains `With checkpoints off (an unverified boundary pushes since 0.5.1).`
+  - `TestFirstRoundFailsThenFixOpensDraft`: `prHarness(t, prCfg(t, 3, ""))` becomes `prHarness(t, prCfg(t, 3, ", checkpoints: false"))`, with the same sentence.
+  - `TestEarlyDraftFalseKeepsFinalizeOnly` ("nothing is pushed before finalize"): `prCfg(t, 2, ", early_draft: false")` becomes `prCfg(t, 2, ", early_draft: false, checkpoints: false")`. The new `TestEarlyDraftFalseCheckpointsWithoutPR` covers `early_draft: false` with checkpoints on.
+- In `internal/runner/golden_test.go`, `oldFlow` writes `pr: { early_draft: false, checkpoints: false }` instead of `pr: { early_draft: false }`. Its comment, and `oldFlowCfg`'s, say that the two keys restore the finalize-only flow the goldens were recorded with. This fixes `TestTokenRefreshedBetweenStages` and `TestTokenValidityCappedBelowTokenLife` (`provider_test.go`). They count `GitAuth` calls, and a boundary push refreshes the token once more. The goldens are unchanged.
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test -race ./internal/runner/ -run 'TestCheckpointOpensDraftMarkedNotVerified|TestStatusSaysVerifiedAfterAPassingTest|TestEarlyDraftFalseCheckpointsWithoutPR|TestCheckpointOpenTriedTwice'`
-Expected: FAIL. Three tests time out, because nothing opens a PR at a checkpoint yet:
-- `TestCheckpointOpensDraftMarkedNotVerified`: `timed out waiting for the draft at the first checkpoint`;
-- `TestStatusSaysVerifiedAfterAPassingTest`: `timed out waiting for the draft`;
-- `TestCheckpointOpenTriedTwice`: `timed out waiting for the first open's attempts`. `TestEarlyDraftFalseCheckpointsWithoutPR` already passes: it pins that Task 5 keeps `early_draft: false` PR-less.
+Run: `go test -race ./internal/runner/ -run 'TestCommitThenStageEndPushedAtTheBoundary|TestCheckpointOpensDraftMarkedNotVerified|TestStatusSaysVerifiedAfterAPassingTest|TestEarlyDraftFalseCheckpointsWithoutPR|TestCheckpointOpenTriedTwice'`
+Expected: FAIL. Each failure shows a missing behaviour:
+- `TestCommitThenStageEndPushedAtTheBoundary`: `at the review stage: pushed <sha one> after 1 pushes` (no boundary push);
+- `TestCheckpointOpensDraftMarkedNotVerified`: `PRs after the first checkpoint: 0`;
+- `TestStatusSaysVerifiedAfterAPassingTest`: an index-out-of-range panic in its probe (no PR);
+- `TestCheckpointOpenTriedTwice`: `after push 1: 0 EnsurePR calls, want 3`.
+
+`TestEarlyDraftFalseCheckpointsWithoutPR` already passes: it pins that this task keeps `early_draft: false` PR-less.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1616,50 +1999,90 @@ func (r *run) pushedPart(records []verify.Record) string {
 }
 ```
 
-In `internal/runner/checkpoint.go`, end `checkpoint` (after the `checkpoint pushed` log line) with `r.afterCheckpoint(ctx, stage)` and add:
+Still in `prflow.go`, `afterStage`'s first-run branch becomes (the boundary push goes after the verified push, before the early return of `early_draft: false`):
 
 ```go
+	if r.follow == nil {
+		if r.cfg.Git.PR.EarlyDraftOn() && (stage == "implement" || stage == "fix") {
+			if sha, ok := r.verifiedHead(ctx); ok {
+				if r.rec.PR == nil {
+					r.openDraft(ctx, sha, stage)
+					return
+				}
+				r.pushVerified(ctx, sha)
+			}
+		}
+		// What the stage left committed and still unpushed goes now,
+		// fast-forward only: an unverified tip (a verified one was pushed
+		// just above). It may open the draft.
+		r.boundaryCheckpoint(ctx, stage)
+		if !r.cfg.Git.PR.EarlyDraftOn() {
+			return
+		}
+	}
+	r.statusUpdate(ctx, stage, false)
+```
+
+In `internal/runner/checkpoint.go`, end `checkpointPush` (after the `checkpoint pushed` log line) with `r.afterCheckpoint(ctx, stage, during)`, and add:
+
+```go
+// boundaryCheckpoint pushes what a stage left committed and unpushed, at
+// once, on the run goroutine after the stage's checkpointer stopped: the
+// agent is idle, so there is nothing to wait for, and a boundary is exempt
+// from the per-minute limit (a run has a handful of them).
+func (r *run) boundaryCheckpoint(ctx context.Context, stage string) {
+	if !r.checkpointsOn() || r.checkpointBlocked(ctx) {
+		return
+	}
+	sha, ok := r.checkpointTip(ctx)
+	if !ok || sha == r.rec.PushedHead {
+		return
+	}
+	r.checkpointPush(ctx, stage, sha, false)
+}
+
+
 // afterCheckpoint opens the draft at the first checkpoint push, or brings
 // an open draft's status section up to date. With early_draft false the
 // branch is all a checkpoint pushes: the PR opens at finalize.
-func (r *run) afterCheckpoint(ctx context.Context, stage string) {
+func (r *run) afterCheckpoint(ctx context.Context, stage string, during bool) {
 	if !r.cfg.Git.PR.EarlyDraftOn() || r.pr.gone {
 		return
 	}
 	if r.rec.PR == nil {
 		if r.ckpt.openTries >= checkpointOpenTries {
-			return // left to the verified boundary or finalize (decision C8)
+			return // left to the verified boundary or finalize
 		}
 		r.ckpt.openTries++
-		r.openDraftPR(ctx, stage, true)
+		r.openDraftPR(ctx, stage, during)
 		return
 	}
-	r.statusUpdate(ctx, stage, true)
+	r.statusUpdate(ctx, stage, during)
 }
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestStatusSays|TestEarlyDraft|TestNoCheckpointAfter|TestFollowUpDoesNotCheckpoint|TestOpensDraftAfterFirstVerifiedStage|TestNoPushWithoutVerifiedTest|TestFirstRoundFailsThenFixOpensDraft|TestStatus|TestCoalesces|TestThreeFailuresStopUpdates|TestHumanEditOutsideMarkersKept|TestDraftFallbackNotReadyLooking|TestFollowUp'`
+Run: `go test -race ./internal/runner/ -run 'TestCheckpoint|TestCommitThenStageEnd|TestStatusSays|TestEarlyDraft|TestBurst|TestAtMostOne|TestFailedPushRetried|TestIdlePolls|TestStageEndStops|TestNoCheckpointAfter|TestFollowUp|TestOpensDraftAfterFirstVerifiedStage|TestNoPushWithoutVerifiedTest|TestFirstRoundFailsThenFixOpensDraft|TestStatus|TestCoalesces|TestThreeFailuresStopUpdates|TestHumanEditOutsideMarkersKept|TestDraftFallbackNotReadyLooking|TestRefused|TestTokenRefreshedBetweenStages|TestTokenValidityCappedBelowTokenLife|TestNoPolicyIsM9aBehaviour'`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/runner/prflow.go internal/runner/checkpoint.go internal/runner/checkpoint_test.go
-git commit -m "runner: the draft opens at the first checkpoint, marked not verified"
+git add internal/runner/prflow.go internal/runner/checkpoint.go internal/runner/checkpoint_pr_test.go internal/runner/prflow_test.go internal/runner/golden_test.go
+git commit -m "runner: push at every stage boundary; the draft opens at the first checkpoint, marked not verified"
 ```
 
 ---
 
-### Task 6: The agent is told to commit early
+### Task 7: The agent is told to commit early
 
 **Files:**
 - Modify: `internal/runner/prompts.go`, `internal/runner/runner.go` (`agentLoop`)
 - Test: `internal/runner/pure_test.go`
 
 **Interfaces:**
-- Consumes: `PromptData`, `SystemPrompt`, `checkpointInterval`, `checkpointsOn`.
+- Consumes: `PromptData`, `SystemPrompt`, `checkpointsOn`.
 - Produces:
   ```go
   // PromptData gains:
@@ -1678,7 +2101,7 @@ func TestPromptCheckpointRule(t *testing.T) {
 	}
 	d.Checkpoints = true
 	got := SystemPrompt(d, "")
-	for _, want := range []string{"Commit early and often", "fugaro/x every 3 minutes", "only pushed commits survive", "uncommitted changes are lost", "rather than amending or rebasing"} {
+	for _, want := range []string{"Commit early and often", "fugaro/x within about a minute", "only pushed commits survive", "uncommitted changes are lost", "rather than amending or rebasing"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the checkpoint rule lacks %q: %s", want, got)
 		}
@@ -1693,7 +2116,7 @@ Expected: FAIL to compile: `unknown field Checkpoints in struct literal`.
 
 - [ ] **Step 3: Write the implementation**
 
-In `internal/runner/prompts.go`, add `"time"` to the imports, add to `PromptData`:
+In `internal/runner/prompts.go`, add to `PromptData`:
 
 ```go
 	// Checkpoints adds the rule to commit early: the runner pushes new
@@ -1705,7 +2128,7 @@ and in `SystemPrompt`, after the `NoWorkflows` block:
 
 ```go
 	if d.Checkpoints {
-		lines = append(lines, fmt.Sprintf("- Commit early and often, after every step that works: Fugaro pushes your new commits to %s every %d minutes, and if this container dies only pushed commits survive; uncommitted changes are lost. Add new commits rather than amending or rebasing commits you already made: rewritten commits are not pushed until the run ends.", d.Branch, int(checkpointInterval/time.Minute)))
+		lines = append(lines, fmt.Sprintf("- Commit early and often, after every step that works: Fugaro pushes each new commit to %s within about a minute, and if this container dies only pushed commits survive; uncommitted changes are lost. Add new commits rather than amending or rebasing commits you already made: rewritten commits are not pushed until the run ends.", d.Branch))
 	}
 ```
 
@@ -1725,14 +2148,14 @@ git commit -m "runner: the agent is told only pushed commits survive"
 
 ---
 
-### Task 7: Docs, pinned by a test
+### Task 8: Docs, pinned by a test
 
 **Files:**
 - Create: `internal/runner/docs_checkpoint_internal_test.go`
 - Modify: `docs/git-providers.md`, `docs/design/v1.md`, `docs/gcp-setup.md`, `README.md`, `plugin/skills/working/SKILL.md`, `plugin/skills/working/reference/launch.md`, `plugin/skills/working/reference/diagnose.md`
 
 **Interfaces:**
-- Consumes: `checkpointInterval`.
+- Consumes: `checkpointPoll`, `checkpointQuiet`, `checkpointMinGap`, `checkpointFallback`.
 - Produces: `TestCheckpointDocsMatchTheCode`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1750,8 +2173,9 @@ import (
 	"time"
 )
 
-// TestCheckpointDocsMatchTheCode: the docs state the interval the code uses,
-// name the opt-out, and no longer say the draft waits for a verified push.
+// TestCheckpointDocsMatchTheCode: the docs state the timings the code uses
+// and the cost model, name the opt-out, and no longer say the draft waits
+// for a verified push.
 func TestCheckpointDocsMatchTheCode(t *testing.T) {
 	read := func(p string) string {
 		t.Helper()
@@ -1761,10 +2185,16 @@ func TestCheckpointDocsMatchTheCode(t *testing.T) {
 		}
 		return string(data)
 	}
+	if checkpointMinGap != time.Minute {
+		t.Fatal("the docs say at most one push a minute (60 an hour); update them with checkpointMinGap")
+	}
 	gp := read("../../docs/git-providers.md")
 	for _, want := range []string{
 		"## Checkpoint pushes (`git.pr.checkpoints`)",
-		fmt.Sprintf("every %d minutes", int(checkpointInterval/time.Minute)),
+		fmt.Sprintf("every %d seconds", int(checkpointPoll/time.Second)),
+		fmt.Sprintf("unchanged for %d seconds", int(checkpointQuiet/time.Second)),
+		fmt.Sprintf("%d minutes", int(checkpointFallback/time.Minute)),
+		"at most one push a minute", "60 pushes an hour", "every stage boundary", "post-commit hook",
 		"fast-forward", "git.pr.checkpoints: false", "not verified", "resources.memory",
 	} {
 		if !strings.Contains(gp, want) {
@@ -1789,25 +2219,25 @@ func TestCheckpointDocsMatchTheCode(t *testing.T) {
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `go test ./internal/runner/ -run TestCheckpointDocsMatchTheCode`
-Expected: FAIL: `docs/git-providers.md never says "## Checkpoint pushes (`git.pr.checkpoints`)"`, and `… still says the draft opens at the first verified push` for each listed file.
+Expected: FAIL: `docs/git-providers.md never says "## Checkpoint pushes (`git.pr.checkpoints`)"` (and the other strings), and `… still says the draft opens at the first verified push` for each listed file.
 
 - [ ] **Step 3: Write the docs**
 
 `docs/git-providers.md`:
 - In "Early draft PRs", replace the first paragraph (line 78) with:
 
-  > A run opens a **draft** pull request at its first checkpoint push (see "Checkpoint pushes" below: its first new commits, within a few minutes of the agent committing), not when it finishes. It keeps a **Fugaro status** section in the description current: the stage, the verify state, the commit the branch holds and whether it is verified, the model cost and the update time. Until a passing test on a clean tree covers the pushed commit, the section says `Running: work in progress, not verified`. The PR is marked ready at the end only when it is (design §4.2a). With `git.pr.checkpoints: false` the draft opens at the first verified stage end, as in 0.5.0.
+  > A run opens a **draft** pull request at its first checkpoint push (see "Checkpoint pushes" below: its first commit, within about a minute), not when it finishes. It keeps a **Fugaro status** section in the description current: the stage, the verify state, the commit the branch holds and whether it is verified, the model cost and the update time. Until a passing test on a clean tree covers the pushed commit, the section says `Running: work in progress, not verified`. The PR is marked ready at the end only when it is (design §4.2a). With `git.pr.checkpoints: false` the draft opens at the first verified stage end, as in 0.5.0.
 
 - Insert a new section before `## Pushing and draft pull requests`:
 
   ```markdown
   ## Checkpoint pushes (`git.pr.checkpoints`)
 
-  While a run's stage runs, Fugaro pushes the run branch's new commits every 3 minutes, so a container that dies (out of memory, out of disk, a killed execution) keeps all the work the agent had committed. The push is a **fast-forward only**: it never forces and never replaces a commit already on the branch. It uses the runner's credentials, never commits for the agent, and never touches uncommitted files: uncommitted work is still lost with the container, so the agent is told to commit early. A checkpoint is guarded like the final push: on GitHub, commits that change `.github/workflows/` are not pushed, and commits holding a value the run redacts (a secret it knows) stop checkpoints for the run. A push that fails is retried at the next checkpoint and never fails the run. If the agent rewrites commits already pushed (amend, rebase), checkpoints pause until a push fast-forwards again; the end of a verified stage and the final push put the branch right as before. Follow-up runs (`fugaro run --pr N`) do not checkpoint: their pull request may already be ready.
+  Fugaro saves the agent's work as soon as it is committed, so a container that dies (out of memory, out of disk, a killed execution) keeps all of it. While a run's stage runs, the runner reads the run branch every 10 seconds, locally (no network call). When a new commit has stayed unchanged for 5 seconds (so a burst of commits is one push of the latest), it pushes the branch, at most one push a minute: a commit inside that minute is pushed when it ends. At every stage boundary (the end of an implement, fix or review stage) it pushes what is left at once. A push that fails is retried 3 minutes later, and a branch that never stays still for 5 seconds is pushed after 3 minutes anyway. The runner does this itself rather than through a git post-commit hook, which the agent could disable or bypass and which would run with the agent's environment instead of the runner's credentials. The push is a **fast-forward only**: it never forces and never replaces a commit already on the branch. It uses the runner's credentials, never commits for the agent, and never touches uncommitted files: uncommitted work is still lost with the container, so the agent is told to commit early. A checkpoint is guarded like the final push: on GitHub, commits that change `.github/workflows/` are not pushed, and commits holding a value the run redacts (a secret it knows) stop checkpoints for the run. A push that fails never fails the run. If the agent rewrites commits already pushed (amend, rebase), checkpoints pause until a push fast-forwards again; the end of a verified stage and the final push put the branch right as before. Follow-up runs (`fugaro run --pr N`) do not checkpoint: their pull request may already be ready.
 
   With `git.pr.early_draft` on (the default), the first checkpoint opens the draft PR, marked not verified. It becomes ready only at the end, by the same rule as before. With `early_draft: false`, checkpoints push the branch and the PR still opens only at the end.
 
-  **CI cost.** Every checkpoint push to a branch with an open pull request runs the repository's PR CI, and `on: push` workflows (or Bitbucket branch pipelines) run on any push. During a long stage that can be one CI run every 3 minutes while the agent commits. To keep that down, skip drafts in CI (on GitHub, `if: github.event.pull_request.draft == false` on the expensive jobs) and cancel superseded runs (`concurrency: { group: ${{ github.ref }}, cancel-in-progress: true }`), or turn checkpoints off with `git.pr.checkpoints: false`: the branch is then pushed only at a verified stage end and at the end, as in 0.5.0. The key needs Fugaro 0.5.1 everywhere (older CLIs and job images refuse it as unknown); the default needs no key.
+  **CI cost.** Every checkpoint push to a branch with an open pull request runs the repository's PR CI, and `on: push` workflows (or Bitbucket branch pipelines) run on any push. The worst case, an agent committing without pause, is 60 pushes an hour (one a minute) plus one per stage boundary; an agent that commits after each working step pushes a few times per stage, and an idle one never. To keep that down, skip drafts in CI (on GitHub, `if: github.event.pull_request.draft == false` on the expensive jobs) and cancel superseded runs (`concurrency: { group: ${{ github.ref }}, cancel-in-progress: true }`), or turn checkpoints off with `git.pr.checkpoints: false`: the branch is then pushed only at a verified stage end and at the end, as in 0.5.0. The key needs Fugaro 0.5.1 everywhere (older CLIs and job images refuse it as unknown); the default needs no key.
 
   **When a container dies anyway.** On Cloud Run the container's disk is memory: `node_modules`, build output and caches count against `workflows.<name>.resources.memory`. A run killed by a signal (signal 7 or 9) during repeated installs or builds usually needs a larger `resources.memory` (or fewer repeated installs), not a code change. Its draft PR holds the work up to the last checkpoint; continue it with `fugaro run --pr N`.
   ```
@@ -1819,19 +2249,19 @@ Expected: FAIL: `docs/git-providers.md never says "## Checkpoint pushes (`git.pr
 
 - The **When.** bullet (line 277), replace with:
 
-  > - **When.** While a first run's stage runs, a checkpoint every 3 minutes pushes the branch's new commits, fast-forward only (saving `pushed_head`). The first such push, with no PR recorded, opens a **draft** PR with no reviewers and no labels, its section headed `Running: work in progress, not verified` until a passing `test` with `clean_tree` covers the pushed commit. At the end of an implement or fix stage that succeeded, a verified HEAD is pushed as before (and opens the draft if no checkpoint did). A run with no commits opens nothing until finalize; a halt before the branch exists opens no PR (D9). The open is bounded (60 s) and tried at most twice by checkpoints; if it fails, the verified boundary or finalize opens the PR.
+  > - **When.** While a first run's stage runs, the runner polls the branch tip every 10 s (locally) and pushes a new commit once it has been still for 5 s, at most once a minute, and at once at every stage boundary, fast-forward only (saving `pushed_head`). The first such push, with no PR recorded, opens a **draft** PR with no reviewers and no labels, its section headed `Running: work in progress, not verified` until a passing `test` with `clean_tree` covers the pushed commit. At the end of an implement or fix stage that succeeded, a verified HEAD is pushed as before (and opens the draft if no checkpoint did). A run with no commits opens nothing until finalize; a halt before the branch exists opens no PR (D9). The open is bounded (60 s) and tried at most twice by checkpoints; if it fails, the verified boundary or finalize opens the PR.
 
-`docs/gcp-setup.md` line 57: replace `The draft appears at the first verified push and shows the run's progress;` with `The draft appears at the run's first checkpoint push (within a few minutes of its first commit), marked not verified, and shows the run's progress ([git-providers.md](git-providers.md#checkpoint-pushes-gitprcheckpoints));`.
+`docs/gcp-setup.md` line 57: replace `The draft appears at the first verified push and shows the run's progress;` with `The draft appears at the run's first checkpoint push (within about a minute of its first commit), marked not verified, and shows the run's progress ([git-providers.md](git-providers.md#checkpoint-pushes-gitprcheckpoints));`.
 
-`README.md` line 57: replace `a draft at the first verified push, marked ready only when the run passes.` with `new commits are pushed every few minutes while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes.`
+`README.md` line 57: replace `a draft at the first verified push, marked ready only when the run passes.` with `each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes.`
 
-`plugin/skills/working/SKILL.md` line 51: replace `A draft appears early, at the first verified push, with a status section in its description that the run keeps updating.` with `A draft appears early, at the run's first checkpoint push (its first commits, within minutes), with a status section in its description that the run keeps updating and that says "not verified" until a passing test covers the pushed commit.`
+`plugin/skills/working/SKILL.md` line 51: replace `A draft appears early, at the first verified push, with a status section in its description that the run keeps updating.` with `A draft appears early, at the run's first checkpoint push (its first commit, within about a minute), with a status section in its description that the run keeps updating and that says "not verified" until a passing test covers the pushed commit.`
 
-`plugin/skills/working/reference/launch.md` line 6: replace `A draft pull request appears early, at the run's first verified push, and shows the run's progress in its description;` with `A draft pull request appears early, at the run's first checkpoint push (new commits are pushed every few minutes), marked not verified, and shows the run's progress in its description;`.
+`plugin/skills/working/reference/launch.md` line 6: replace `A draft pull request appears early, at the run's first verified push, and shows the run's progress in its description;` with `A draft pull request appears early, at the run's first checkpoint push (each commit is pushed within about a minute), marked not verified, and shows the run's progress in its description;`.
 
 `plugin/skills/working/reference/diagnose.md`:
-- line 41: replace `at the run's first verified push, while the run is still going,` with `at the run's first checkpoint push (new commits are pushed every few minutes, unverified), while the run is still going,`;
-- line 43: replace `The work up to the last verified push is on the branch;` with `The work the agent committed up to the last checkpoint (a few minutes before it died) is on the branch, unverified, and uncommitted work is lost;`.
+- line 41: replace `at the run's first verified push, while the run is still going,` with `at the run's first checkpoint push (each commit is pushed within about a minute, unverified), while the run is still going,`;
+- line 43: replace `The work up to the last verified push is on the branch;` with `The work the agent committed up to the last checkpoint (about a minute before it died) is on the branch, unverified, and uncommitted work is lost;`.
 
 Do not change the skill files' version headers: `/new-release` bumps them.
 
@@ -1849,27 +2279,27 @@ git commit -m "docs: checkpoint pushes, the unverified early draft, CI cost and 
 
 ---
 
-### Task 8: The full suite and the PR
+### Task 9: The full suite and the PR
 
 - [ ] **Step 1:** Run `gofmt -l . && go vet ./... && go test -race ./internal/gitops/ ./internal/config/ ./schemas/ ./internal/gitprov/... ./plugin/`. Expected: no gofmt output, and PASS.
 - [ ] **Step 2:** Run the **one** full runner suite for this PR group: `go test -race -timeout 40m ./internal/runner/...` (about 19 minutes). Expected: PASS. A failure in an existing test that reads `h.provider.State` during a step means the read needs `h.provider.Snapshot()`; fix it in the test, not by slowing checkpoints.
 - [ ] **Step 3:** Run `go test ./...` for the rest (`internal/cli` takes about 6 minutes). Expected: PASS.
-- [ ] **Step 4:** Push the branch and open the PR. The body lists decisions C1 to C11, one line each, and names the M9e ruling E1 that is superseded.
+- [ ] **Step 4:** Push the branch and open the PR. The body lists decisions C1 to C11 (with C1a, C1b and C6a), one line each, and names the M9e ruling E1 that is superseded.
 - [ ] **Step 5:** Read every CI check (`test`, `terraform`, `rules`), each job's log and not only the summary, before asking for the merge.
 
 ---
 
-### Task 9: Release 0.5.1 (after the merge)
+### Task 10: Release 0.5.1 (after the merge)
 
 - [ ] **Step 1:** Through a PR to `main`, add to `docs/releases/v0.5.1.md`. Create the file if `fugaro image refresh`'s Task 12 has not created it yet, and keep its entries if it has:
 
 ```markdown
-- **Checkpoint pushes.** While a stage runs, a run now pushes its new commits every 3 minutes (fast-forward only, never forced), so a container that dies mid-stage keeps the work the agent committed. The draft pull request opens at the first such push, marked "not verified" until a passing test covers the pushed commit; readiness and reviewers are unchanged. Every push to a branch with an open pull request runs its CI: see `docs/git-providers.md` for skipping drafts in CI, or set `git.pr.checkpoints: false` (needs 0.5.1 everywhere). Rebuild the job images (`fugaro image refresh`) for runs to get it.
+- **Checkpoint pushes.** A run now pushes each commit the agent makes within about a minute (after 5 seconds without a newer one, at most one push a minute, and at once at every stage boundary; fast-forward only, never forced), so a container that dies mid-stage keeps the work the agent committed. The draft pull request opens at the first such push, marked "not verified" until a passing test covers the pushed commit; readiness and reviewers are unchanged. Every push to a branch with an open pull request runs its CI (worst case 60 an hour): see `docs/git-providers.md` for skipping drafts in CI, or set `git.pr.checkpoints: false` (needs 0.5.1 everywhere). Rebuild the job images (`fugaro image refresh`) for runs to get it.
 ```
 
 - [ ] **Step 2:** `/new-release 0.5.1`.
 - [ ] **Step 3, the user's live check on the Bitbucket sandbox only** (`edgeappinc/fugarosandbox`; never EdgeWeb or EdgeServer), with the user's go-ahead and task text, after `fugaro image refresh` there:
-  1. A run whose task takes longer than 3 minutes. The branch appears on the host before the first stage ends, and the draft's section says `not verified`, then `verified`.
+  1. A run whose task takes several minutes. The branch appears on the host within about a minute of the agent's first commit, before the first stage ends, and the draft's section says `not verified`, then `verified`.
   2. `fugaro cancel --now` on a second such run after its first checkpoint. The branch holds the committed work, and `fugaro diagnose` shows the stale draft.
 
   This also confirms that Bitbucket accepts a push to the origin URL by SHA (C4).
