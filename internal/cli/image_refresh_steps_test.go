@@ -466,7 +466,7 @@ func TestRefreshCheckJobShowsTheBaseDiff(t *testing.T) {
 	for _, want := range []string{
 		"web-node: " + oldWeb + " -> " + newWeb + "\n",
 		"go: " + oldGo + " -> " + newGo + " (not selected: also moved to the local config's base)",
-		"every other field of " + infra.CheckSpecEnv + " and of the job is unchanged",
+		"no other field of " + infra.CheckSpecEnv + " or the job changes; its execution tokens (startExecutionToken, runExecutionToken) are not sent back",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output lacks %q:\n%s", want, got)

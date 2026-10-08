@@ -12,6 +12,9 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/initflow"
+	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/mirror"
 	"github.com/dimipaun/fugaro/internal/testutil"
 	"gocloud.dev/blob/gcsblob"
 	"google.golang.org/api/option"
@@ -283,5 +286,231 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	if !strings.Contains(got, "base web-node: "+managedRef("web-node", "0.6.0")+" (a newer copy than this release's, kept") ||
 		!strings.Contains(got, "base go: "+managedRef("go", "0.5.1")+" (copied into your registry if it lacks it") {
 		t.Errorf("plan:\n%s", got)
+	}
+}
+
+// fakeSteps replaces steps 2 to 4; fail names the step that fails, with
+// err. It records the steps that ran, in order (requirement: order is base
+// -> reload -> check job -> builds; a failure stops everything after it).
+func fakeSteps(t *testing.T, fail string, err error) *[]string {
+	t.Helper()
+	ran := &[]string{}
+	old := newRefreshSteps
+	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		step := func(name string) error {
+			*ran = append(*ran, name)
+			if name == fail {
+				return err
+			}
+			return nil
+		}
+		return refreshSteps{
+			base: func(context.Context) error { return step("base") },
+			reload: func(context.Context) (*refreshTarget, error) {
+				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
+			},
+			checkJob: func(context.Context, *refreshTarget) error { return step("check job") },
+			builds:   func(context.Context, *refreshTarget) error { return step("builds") },
+		}
+	}
+	t.Cleanup(func() { newRefreshSteps = old })
+	return ran
+}
+
+// D2: a coding agent's session is refused before refreshPreflight runs, and
+// before any credential, network or cloud use; there is no bypass flag.
+// Mutation (run, restore): move the refuseRefreshHere call after
+// refreshPreflight in runImageRefresh, or drop it, and this test fails (the
+// agent marker is ignored and newMirror is reached, or a different error is
+// returned from preflight's own git check).
+func TestRefreshRefusedInAgentSession(t *testing.T) {
+	t.Setenv("CLAUDECODE", "1")
+	t.Chdir(t.TempDir()) // not even a checkout: preflight would refuse differently
+	noRecordReads(t)
+	prev := newMirror
+	newMirror = func(context.Context, *localcfg.Config, []string) (*mirror.Mirror, error) {
+		t.Fatal("an agent session reached the registry")
+		return nil, nil
+	}
+	t.Cleanup(func() { newMirror = prev })
+	fakeTerminal(t)
+	_, _, err := executeStdin(t, "", "image", "refresh", "--repo", "acme/app")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal("CLAUDECODE")) {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// D2: anything but a real terminal is refused before refreshPreflight, with
+// no --yes, --json or --non-interactive to get past it (the command defines
+// none of them).
+func TestRefreshNeedsATerminal(t *testing.T) {
+	t.Chdir(t.TempDir())
+	noRecordReads(t)
+	_, _, err := executeStdin(t, "", "image", "refresh")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), initflow.NoTerminalAdvice) {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
+// D2: fugaro image refresh defines no --yes, so r.confirm (step 3) and
+// r.ask can never be auto-confirmed under it; cobra refuses the flag before
+// RunE is even reached. Mutation (run, restore): add
+// f.BoolVar(&o.yes, "yes", false, "...") to newImageRefreshCmd, and this
+// test fails (the flag is accepted).
+func TestRefreshHasNoYesFlag(t *testing.T) {
+	if f := newImageRefreshCmd().Flags().Lookup("yes"); f != nil {
+		t.Fatalf("fugaro image refresh defines --yes, which would bypass D2's typed confirmations: %+v", f)
+	}
+	_, _, err := executeStdin(t, "", "image", "refresh", "--yes")
+	if err == nil || !strings.Contains(err.Error(), "unknown flag: --yes") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+// Requirement: the engine's local-config path (where step 2, the images
+// stage, records the new base) is the SAME path refreshReload reads in step
+// 3. Real base and reload run here (only step 3 and 4 are stubbed), through
+// runImageRefresh's own wiring. Mutation (run, restore): change
+// runImageRefresh's initEngine literal from path: p.lcPath to a different
+// path (or refreshReload to load a different one), and this test fails
+// (reload does not see the base step's write).
+func TestRefreshBaseAndReloadShareTheLocalConfigPath(t *testing.T) {
+	useSelf(t)
+	r := newImagesRig(t, "1.2.3")
+	t.Chdir(repoCheckout(t, githubOrigin, refreshYAML))
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [app], github_app_id: \"12345\" }\n")
+	records = map[string]string{}
+	prevOpen := openRecordBucket
+	openRecordBucket = openFakeRecords
+	t.Cleanup(func() { openRecordBucket = prevOpen })
+	fakeTerminal(t)
+
+	var reloaded *refreshTarget
+	old := newRefreshSteps
+	newRefreshSteps = func(rr *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		return refreshSteps{
+			base: func(ctx context.Context) error { return rr.refreshBase(ctx, e, p.kinds) },
+			reload: func(ctx context.Context) (*refreshTarget, error) {
+				tg, err := refreshReload(ctx, p)
+				reloaded = tg
+				return tg, err
+			},
+			checkJob: func(context.Context, *refreshTarget) error { return nil },
+			builds:   func(context.Context, *refreshTarget) error { return nil },
+		}
+	}
+	t.Cleanup(func() { newRefreshSteps = old })
+
+	out, _, err := executeStdin(t, initProjectName+"\n", "image", "refresh")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	wantGo := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-go:1.2.3"
+	wantWeb := "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"
+	if reloaded == nil || reloaded.lc.BaseImages["go"] != wantGo || reloaded.lc.BaseImages["web-node"] != wantWeb {
+		t.Fatalf("refreshReload did not see the base step's write through the same local-config path: %+v", reloaded)
+	}
+	if calls := r.calls(t); len(calls) != 0 {
+		t.Errorf("fugaro image refresh ran terraform: %q", calls)
+	}
+}
+
+// D12: the order is base -> reload -> check job -> builds; a failure at a
+// step stops everything after it, and the stop message names the finished
+// steps, the failed one, and the exact rerun command (every flag kept).
+// Mutation (run, restore): in runImageRefresh, call s.checkJob before
+// s.base (reordering the two step invocations), and this test fails (ran
+// becomes "check job" first, or the base step is reported as finished when
+// it did not run).
+func TestRefreshStopsSayWhatFinished(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	ran := fakeSteps(t, "check job", remote(errors.New("updating Cloud Run job x: 503")))
+	out, _, err := executeStdin(t, "", "image", "refresh", "--workflow", "app")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	for _, want := range []string{"updating Cloud Run job x: 503", "stopped at step 3 (check job)", "steps finished: preflight, base",
+		"rerun fugaro image refresh --workflow app in this checkout"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error lacks %q: %v", want, err)
+		}
+	}
+	if strings.Join(*ran, ",") != "base,check job" {
+		t.Errorf("ran %v: the builds ran after a failed step", *ran)
+	}
+	if !strings.Contains(out, "4. builds:") || strings.Index(out, "fugaro image refresh of acme/app") > strings.Index(out, "step 2, base:") {
+		t.Errorf("the plan is not printed first:\n%s", out)
+	}
+	if calls := r.calls(t); len(calls) != 0 {
+		t.Errorf("fugaro image refresh ran terraform: %q", calls)
+	}
+}
+
+// D10: the end note names fugaro init --anchor only when the checkout
+// lacks gcp_project:, and fugaro.yaml is never written either way (item 7:
+// no Terraform, no live cloud, through the whole command).
+func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	for _, tc := range []struct {
+		yaml string
+		note bool
+	}{{refreshYAML, true}, {withRigAnchor(refreshYAML), false}} {
+		r := newAnchorModeRig(t, tc.yaml, true)
+		fakeTerminal(t)
+		ran := fakeSteps(t, "", nil)
+		out, _, err := executeStdin(t, "", "image", "refresh")
+		if err != nil {
+			t.Fatalf("%v\n%s", err, out)
+		}
+		if strings.Join(*ran, ",") != "base,check job,builds" || !strings.Contains(out, "fugaro image refresh of acme/app is done") {
+			t.Fatalf("ran %v\n%s", *ran, out)
+		}
+		if got := strings.Contains(out, "next: run fugaro init --anchor in this checkout"); got != tc.note {
+			t.Errorf("anchor note %v, want %v:\n%s", got, tc.note, out)
+		}
+		r.check(t, tc.yaml) // fugaro.yaml is never written; no terraform, no Artifact Registry call
+	}
+}
+
+// Requirement: when step 3 finds the daily image check job missing for a
+// repository whose spec has one, that fact is repeated in the final
+// summary so it is not just a line that scrolled past steps 3 and 4.
+// Mutation (run, restore): remove the t.checkJobMissing block in
+// runImageRefresh after the builds step, and this test fails (the note
+// appears only once instead of twice).
+func TestRefreshFinalSummaryRepeatsMissingCheckJob(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	newAnchorModeRig(t, refreshYAML, true)
+	fakeTerminal(t)
+	old := newRefreshSteps
+	newRefreshSteps = func(r *initRun, e *initEngine, p *refreshPlan) refreshSteps {
+		return refreshSteps{
+			base: func(context.Context) error { return nil },
+			reload: func(context.Context) (*refreshTarget, error) {
+				return &refreshTarget{lc: p.lc, cfg: p.cfg}, nil
+			},
+			checkJob: func(_ context.Context, t *refreshTarget) error {
+				fmt.Fprintln(r.w, "  the daily image check job was not found, though this repository's spec has one: run fugaro init --repo in the checkout to deploy it (nothing was updated)")
+				t.checkJobMissing = true
+				return nil
+			},
+			builds: func(context.Context, *refreshTarget) error { return nil },
+		}
+	}
+	t.Cleanup(func() { newRefreshSteps = old })
+	out, _, err := executeStdin(t, "", "image", "refresh")
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	if n := strings.Count(out, "was not found"); n < 2 {
+		t.Fatalf("the missing check job is mentioned %d time(s), want at least twice (step 3, and the final summary):\n%s", n, out)
+	}
+	if i, j := strings.Index(out, "is done"), strings.LastIndex(out, "was not found"); i < 0 || j < 0 || j > i {
+		t.Errorf("the repeated note does not come before the done line:\n%s", out)
 	}
 }
