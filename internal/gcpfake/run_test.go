@@ -151,3 +151,134 @@ func TestRunFakePatchesAJobWithItsEtag(t *testing.T) {
 		t.Fatalf("stale etag: %d", code)
 	}
 }
+
+// jobCall sends method on the job at path with body (nil for none) and
+// decodes the answer with numbers kept as their text.
+func jobCall(t *testing.T, f *Run, method, path string, body map[string]any) (int, map[string]any) {
+	t.Helper()
+	rd := strings.NewReader("")
+	if body != nil {
+		data, _ := json.Marshal(body)
+		rd = strings.NewReader(string(data))
+	}
+	req, _ := http.NewRequest(method, f.URL+path, rd)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	d := json.NewDecoder(resp.Body)
+	d.UseNumber()
+	var out map[string]any
+	if err := d.Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, out
+}
+
+// A job set as JSON comes back whole, fields the Go client does not model
+// and zero values included, and a patch replaces the whole body.
+func TestRunFakeKeepsAndReplacesTheWholeJobBody(t *testing.T) {
+	f := NewRun(t)
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugarochk-x"
+	f.SetJobJSON("fugarochk-x", `{"name":"projects/proj-1/locations/r1/jobs/fugarochk-x","labels":{"fugaro":"managed"},
+		"futureField":{"n":12345678901234567890,"off":false},
+		"template":{"taskCount":1,"template":{"maxRetries":0,"timeout":"900s","containers":[{"image":"img:1","env":[{"name":"A","value":"1"}]}]}}}`)
+	code, j := jobCall(t, f, http.MethodGet, path, nil)
+	if code != http.StatusOK || j["etag"] != "e0" {
+		t.Fatalf("get: %d %v", code, j)
+	}
+	task := j["template"].(map[string]any)["template"].(map[string]any)
+	if task["maxRetries"] != json.Number("0") || j["futureField"].(map[string]any)["n"] != json.Number("12345678901234567890") {
+		t.Fatalf("a field was lost: %v", j)
+	}
+	// The patch leaves futureField and maxRetries out: they are gone.
+	delete(j, "futureField")
+	delete(task, "maxRetries")
+	task["containers"].([]any)[0].(map[string]any)["image"] = "img:2"
+	if code, _ := jobCall(t, f, http.MethodPatch, path, j); code != http.StatusOK {
+		t.Fatalf("patch: %d", code)
+	}
+	_, after := jobCall(t, f, http.MethodGet, path, nil)
+	at := after["template"].(map[string]any)["template"].(map[string]any)
+	if _, ok := after["futureField"]; ok || at["maxRetries"] != nil || after["etag"] != "e1" ||
+		at["containers"].([]any)[0].(map[string]any)["image"] != "img:2" {
+		t.Fatalf("after: %v", after)
+	}
+	if got := f.JobJSON("proj-1", "r1", "fugarochk-x"); got["etag"] != "e1" || got["futureField"] != nil {
+		t.Fatalf("JobJSON: %v", got)
+	}
+}
+
+// Injected faults: a get or patch status, an operation that needs polls
+// (the job changes only when it is done) and one that fails (it never does).
+func TestRunFakeJobFaults(t *testing.T) {
+	f := NewRun(t)
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugarochk-x"
+	f.SetJobJSON("fugarochk-x", `{"template":{"template":{"containers":[{"image":"img:1"}]}}}`)
+	f.SetJobFaults(JobFaults{GetStatus: http.StatusForbidden})
+	if code, _ := jobCall(t, f, http.MethodGet, path, nil); code != http.StatusForbidden {
+		t.Fatalf("get: %d", code)
+	}
+	f.SetJobFaults(JobFaults{})
+	_, j := jobCall(t, f, http.MethodGet, path, nil)
+	f.SetJobFaults(JobFaults{PatchStatus: http.StatusBadRequest})
+	if code, _ := jobCall(t, f, http.MethodPatch, path, j); code != http.StatusBadRequest || len(f.Patches()) != 0 {
+		t.Fatalf("patch: %d", code)
+	}
+
+	f.SetJobFaults(JobFaults{Polls: 2})
+	j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "img:2"
+	_, op := jobCall(t, f, http.MethodPatch, path, j)
+	if op["done"] != nil {
+		t.Fatalf("patch op: %v", op)
+	}
+	image := func() any {
+		return f.JobJSON("proj-1", "r1", "fugarochk-x")["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"]
+	}
+	opPath := "/v2/" + op["name"].(string)
+	for i := range 2 {
+		if _, o := jobCall(t, f, http.MethodGet, opPath, nil); o["done"] != nil || image() != "img:1" {
+			t.Fatalf("poll %d: %v %v", i, o, image())
+		}
+	}
+	if _, o := jobCall(t, f, http.MethodGet, opPath, nil); o["done"] != true || image() != "img:2" {
+		t.Fatalf("last poll: %v %v", o, image())
+	}
+
+	f.SetJobFaults(JobFaults{OpError: "boom"})
+	_, j = jobCall(t, f, http.MethodGet, path, nil)
+	j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "img:3"
+	if _, o := jobCall(t, f, http.MethodPatch, path, j); o["done"] != true || o["error"].(map[string]any)["message"] != "boom" || image() != "img:2" {
+		t.Fatalf("failed op: %v %v", o, image())
+	}
+}
+
+// A patch whose body names another job, or that carries an updateMask, is
+// refused and changes nothing: the client sends the whole job under its own
+// name and never a mask.
+func TestRunFakeRefusesAForeignNameAndAnUpdateMask(t *testing.T) {
+	f := NewRun(t)
+	const path = "/v2/projects/proj-1/locations/r1/jobs/fugarochk-x"
+	f.SetJobJSON("fugarochk-x", `{"name":"projects/proj-1/locations/r1/jobs/fugarochk-x","template":{"template":{"containers":[{"image":"img:1"}]}}}`)
+	_, j := jobCall(t, f, http.MethodGet, path, nil)
+	j["template"].(map[string]any)["template"].(map[string]any)["containers"].([]any)[0].(map[string]any)["image"] = "img:2"
+
+	other := map[string]any{}
+	for k, v := range j {
+		other[k] = v
+	}
+	other["name"] = "projects/proj-1/locations/r1/jobs/fugarochk-other"
+	if code, _ := jobCall(t, f, http.MethodPatch, path, other); code != http.StatusBadRequest {
+		t.Fatalf("another job's name: %d", code)
+	}
+	if code, _ := jobCall(t, f, http.MethodPatch, path+"?updateMask=template", j); code != http.StatusBadRequest {
+		t.Fatalf("updateMask: %d", code)
+	}
+	if len(f.Patches()) != 0 {
+		t.Fatal("a refused patch landed")
+	}
+	if code, _ := jobCall(t, f, http.MethodPatch, path, j); code != http.StatusOK || len(f.Patches()) != 1 {
+		t.Fatalf("the job's own name: %d", code)
+	}
+}
