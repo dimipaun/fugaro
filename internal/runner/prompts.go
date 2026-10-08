@@ -17,6 +17,9 @@ type PromptData struct {
 	// NoWorkflows adds the rule that the run can't change GitHub workflow
 	// files (provider github): Fugaro's push of them is always refused.
 	NoWorkflows bool
+	// Checkpoints adds the rule to commit early: the runner pushes new
+	// commits while the stage runs (first runs with git.pr.checkpoints on).
+	Checkpoints bool
 }
 
 // SystemPrompt is appended to Claude Code's system prompt for implement and fix stages.
@@ -36,6 +39,9 @@ func SystemPrompt(d PromptData, instructions string) string {
 	}
 	if d.NoWorkflows {
 		lines = append(lines, "- Never create, edit or delete files under .github/workflows/: GitHub refuses Fugaro's push of workflow changes, so the whole run could not be delivered. If the task needs one, describe the change in "+explain+" instead.")
+	}
+	if d.Checkpoints {
+		lines = append(lines, fmt.Sprintf("- Commit early and often, after every step that works: Fugaro pushes each new commit to %s within about a minute, and if this container dies only pushed commits survive; uncommitted changes are lost. Add new commits rather than amending or rebasing commits you already made: rewritten commits are not pushed until the run ends.", d.Branch))
 	}
 	if d.FollowUp != nil {
 		lines = append(lines, d.FollowUp...)

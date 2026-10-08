@@ -1024,7 +1024,7 @@ func (r *run) readRepoFile(rel string) (string, error) {
 
 func (r *run) agentLoop(ctx context.Context) {
 	pd := PromptData{Branch: r.rec.Branch, Base: r.cfg.Git.BaseBranch, StateDir: r.d.StateDir,
-		NoWorkflows: r.providerKind == gitprov.KindGitHub}
+		NoWorkflows: r.providerKind == gitprov.KindGitHub, Checkpoints: r.checkpointsOn()}
 	if r.follow != nil {
 		pd.FollowUp = followup.SystemPromptLines(r.promptData())
 	}
