@@ -47,8 +47,9 @@ var stepStates = []stepState{stepCurrent, stepDone, stepStale, stepSkipped, step
 // in this build, so nothing was checked or changed. It is never current and
 // never makes a checkout "nothing to do"; it does not change the exit code,
 // and the run ends with a "not checked:" line naming those steps. It is not
-// in stepStates: Tasks 6 and 7 of docs/plans/2026-10-08-upgrade.md replace
-// the placeholders with pluginStep and cloudStep and remove it.
+// in stepStates: Task 6 of docs/plans/2026-10-08-upgrade.md replaces the
+// plugin placeholder with pluginStep and removes it (cloud's was replaced by
+// cloudStep in Task 7).
 const stepNotImplemented stepState = "not implemented"
 
 type stepResult struct {
@@ -72,10 +73,9 @@ type upgradeStep struct {
 	run  func(ctx context.Context, u *upgradeCtx) stepResult
 }
 
-// upgradeSteps run in this order for each checkout. plugin and cloud are
-// placeholders until Tasks 6 and 7 put pluginStep and cloudStep in their
-// places.
-var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", notImplementedStep}, {"cloud", notImplementedStep}}
+// upgradeSteps run in this order for each checkout. plugin is a placeholder
+// until Task 6 puts pluginStep in its place.
+var upgradeSteps = []upgradeStep{{"pin", pinStep}, {"plugin", notImplementedStep}, {"cloud", cloudStep}}
 
 // notImplementedStep stands for a step this build does not have.
 func notImplementedStep(context.Context, *upgradeCtx) stepResult {
@@ -118,9 +118,10 @@ steps, stopping that checkout at the first step that fails:
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
-This build has the pin step only: plugin and cloud print "not implemented",
-check and change nothing, and the run ends with a "not checked:" line naming
-them; they do not change the exit code.
+This build has the pin and cloud steps; the plugin step is still a
+placeholder: it prints "not implemented", checks and changes nothing, and
+the run ends with a "not checked:" line naming it; it does not change the
+exit code.
 
 --local runs pin and plugin only. In a coding agent's session (CLAUDECODE and
 the like) the cloud step is always skipped, never attempted, with the
