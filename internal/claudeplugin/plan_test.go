@@ -86,9 +86,69 @@ func TestCompare(t *testing.T) {
 	}{
 		{"0.5.2", "0.5.2", 0, true}, {"v0.5.1", "0.5.2", -1, true}, {"0.10.0", "0.9.9", 1, true},
 		{"0.5", "0.5.0", 0, false}, {"01.0.0", "1.0.0", 0, false}, {"dev", "0.5.2", 0, false}, {"", "0.5.2", 0, false},
+		{"-1.0.0", "0.5.2", 0, false}, {"0.5.2", "0.-1.0", 0, false}, {"1.2.3.4", "0.5.2", 0, false},
 	} {
 		if c, ok := Compare(tc.a, tc.b); c != tc.c || ok != tc.ok {
 			t.Errorf("Compare(%q, %q) = %d %v, want %d %v", tc.a, tc.b, c, ok, tc.c, tc.ok)
 		}
+	}
+}
+
+func TestDecideOtherSourceSameRepoString(t *testing.T) {
+	// A non-github source whose repo string equals ours is still not ours.
+	for _, src := range []string{"git", "directory", ""} {
+		_, err := Decide(Input{Root: t.TempDir(), Want: "0.5.2", Repo: "dimipaun/fugaro", Markets: []Market{{Name: "fugaro", Source: src, Repo: "dimipaun/fugaro"}}})
+		var om *OtherMarketError
+		if !errors.As(err, &om) {
+			t.Errorf("source %q: err = %v, want OtherMarketError", src, err)
+		}
+	}
+}
+
+// Pins one update per scope; the stale dedupe in Decide is behaviourally
+// equivalent to omitting it (the scopes loop already emits once per scope).
+func TestDecideOneUpdatePerStaleScope(t *testing.T) {
+	root := t.TempDir()
+	ours := []Market{{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}}
+	user := Install{ID: "fugaro@fugaro", Version: "0.5.1", Scope: "user"}
+	p, err := Decide(Input{Root: root, Want: "0.5.2", Repo: "dimipaun/fugaro", Markets: ours, Installed: []Install{user, user}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"plugin", "marketplace", "update", "fugaro"}, {"plugin", "update", "fugaro@fugaro", "--scope", "user"}}
+	if !slices.EqualFunc(p.Calls, want, slices.Equal[[]string]) {
+		t.Fatalf("calls %q, want %q", p.Calls, want)
+	}
+}
+
+func TestDecideInstallNewerThanWant(t *testing.T) {
+	// Documented behaviour: any install whose version differs from Want is
+	// stale, newer included, so an older fugaro updates the plugin to its own
+	// release rather than leaving a newer one alone.
+	root := t.TempDir()
+	ours := []Market{{Name: "fugaro", Source: "github", Repo: "dimipaun/fugaro"}}
+	p, err := Decide(Input{Root: root, Want: "0.5.2", Repo: "dimipaun/fugaro", Markets: ours, Installed: []Install{{ID: "fugaro@fugaro", Version: "0.6.0", Scope: "user"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]string{{"plugin", "marketplace", "update", "fugaro"}, {"plugin", "update", "fugaro@fugaro", "--scope", "user"}}
+	if !slices.EqualFunc(p.Calls, want, slices.Equal[[]string]) || p.Before != "0.6.0" {
+		t.Fatalf("calls %q before %q, want %q 0.6.0", p.Calls, p.Before, want)
+	}
+}
+
+func TestApplyingExcludesManagedAtRoot(t *testing.T) {
+	root := t.TempDir()
+	got := Applying(root, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "managed", ProjectPath: root}})
+	if len(got) != 0 {
+		t.Fatalf("a managed install applied: %+v", got)
+	}
+}
+
+func TestApplyingNonexistentProjectPath(t *testing.T) {
+	root := t.TempDir()
+	got := Applying(root, []Install{{ID: "fugaro@fugaro", Version: "0.4.0", Scope: "project", ProjectPath: root + "/does/not/exist"}})
+	if len(got) != 0 {
+		t.Fatalf("a nonexistent project path matched the checkout: %+v", got)
 	}
 }
