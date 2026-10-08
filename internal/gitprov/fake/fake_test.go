@@ -3,9 +3,11 @@ package fake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,5 +292,30 @@ func TestFakePullRequestHeadFromRemote(t *testing.T) {
 	}
 	if _, err := p.PullRequest(ctx, 2); err == nil {
 		t.Fatal("PullRequest of a missing PR")
+	}
+}
+
+func TestSnapshotIsSafeDuringCalls(t *testing.T) {
+	p := &Provider{Repo: "acme/app"}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := range 50 {
+			if _, err := p.EnsurePR(context.Background(), gitprov.PRSpec{Branch: fmt.Sprintf("fugaro/r%d", i), Base: "main", Title: "t", Draft: true}); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for range 50 {
+		st := p.Snapshot()
+		for _, pr := range st.PRs {
+			_ = pr.Title
+		}
+	}
+	wg.Wait()
+	if n := len(p.Snapshot().PRs); n != 50 {
+		t.Fatalf("PRs = %d, want 50", n)
 	}
 }

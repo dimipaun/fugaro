@@ -164,6 +164,19 @@ func (p *Provider) save() error {
 	return os.WriteFile(p.Path, data, 0o644)
 }
 
+// Snapshot is a copy of the state taken under the provider's lock, for a
+// test that reads it while the runner may be calling the provider from
+// another goroutine (a checkpoint). The PRs and calls are copied; the
+// slices inside each PR are not, and must only be read.
+func (p *Provider) Snapshot() State {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	st := p.State // with Path set, every call has already saved and loaded it
+	st.PRs = slices.Clone(p.State.PRs)
+	st.Calls = slices.Clone(p.State.Calls)
+	return st
+}
+
 // EnsurePR implements gitprov.Provider.
 func (p *Provider) EnsurePR(_ context.Context, spec gitprov.PRSpec) (gitprov.PR, error) {
 	p.mu.Lock()
