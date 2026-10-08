@@ -116,6 +116,41 @@ func TestReservedKeysEachSaySo(t *testing.T) {
 	}
 }
 
+// TestProblemPathEscapesUntrustedKeys: a recipe is untrusted input (it comes
+// from the runs bucket), and Problem.Path echoes the offending key back so
+// the author can find it. An ESC or newline in that key must never reach a
+// terminal unescaped: a hostile key could otherwise plant ANSI sequences or
+// forge extra output lines. This covers the three places recipe.go builds a
+// Path from a raw yaml.Node key: a bad top-level key, a bad key under roles,
+// and a bad step-kind key (the "value" of the steps list).
+func TestProblemPathEscapesUntrustedKeys(t *testing.T) {
+	const badKey = "bad\x1bkey\nend"
+	escaped := func(path string) bool {
+		return !strings.ContainsRune(path, 0x1b) && !strings.Contains(path, "\n") &&
+			strings.Contains(path, `\u001b`) && strings.Contains(path, `\u000a`)
+	}
+	for _, tc := range []struct {
+		name, text, wantPrefix string
+	}{
+		{"top-level key", "version: 1\nname: a\n\"bad\\x1bkey\\nend\": 1\nsteps:\n  - review: {}\n", ""},
+		{"roles key", "version: 1\nname: a\nroles: { \"bad\\x1bkey\\nend\": coder }\nsteps:\n  - review: {}\n", "roles."},
+		{"step-kind key", "version: 1\nname: a\nsteps:\n  - \"bad\\x1bkey\\nend\": {}\n  - review: {}\n", "steps[0]."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(tc.text))
+			for _, p := range ps {
+				if strings.HasPrefix(p.Path, tc.wantPrefix) && strings.Contains(p.Path, "bad") {
+					if !escaped(p.Path) {
+						t.Fatalf("Path %q leaks the raw ESC/newline from %q", p.Path, badKey)
+					}
+					return
+				}
+			}
+			t.Fatalf("no problem path echoing the bad key: %v", ps)
+		})
+	}
+}
+
 func TestParseShapeRefusals(t *testing.T) {
 	for name, tc := range map[string]struct{ text, want string }{
 		"anchor":    {"version: 1\nname: a\nsteps:\n  - review: &r { max_rounds: 2 }\n", "anchor or alias"},

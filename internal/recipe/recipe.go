@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"gopkg.in/yaml.v3"
 )
 
@@ -190,11 +191,13 @@ func (p *parser) add(path string, line int, format string, args ...any) {
 	p.ps = append(p.ps, Problem{Path: path, Line: line, Message: fmt.Sprintf(format, args...)})
 }
 
-// key reports an unexpected key k under prefix ("" for the top level).
+// key reports an unexpected key k under prefix ("" for the top level). k.Value
+// comes from an untrusted recipe, so it is made terminal-safe before it joins
+// Problem.Path (same rule pluginwire applies to untrusted repository text).
 func (p *parser) key(prefix string, k *yaml.Node) {
-	path := k.Value
+	path := pluginwire.Printable(k.Value)
 	if prefix != "" {
-		path = prefix + "." + k.Value
+		path = prefix + "." + path
 	}
 	if msg, ok := reserved[k.Value]; ok {
 		p.add(path, k.Line, "%s", msg)
@@ -280,7 +283,7 @@ func (p *parser) roles(v *yaml.Node) bool {
 	alias := false
 	for i := 0; i+1 < len(v.Content); i += 2 {
 		k, val := v.Content[i], v.Content[i+1]
-		path := "roles." + k.Value
+		path := "roles." + pluginwire.Printable(k.Value)
 		switch {
 		case k.Value != "reviewer":
 			p.add(path, k.Line, "only the reviewer role can be mapped in recipe version 1 (reviewer: coder)")
@@ -312,7 +315,7 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
-		kpath := path + "." + k.Value
+		kpath := path + "." + pluginwire.Printable(k.Value)
 		var kind StepKind
 		switch k.Value {
 		case string(StepFirstLine):
