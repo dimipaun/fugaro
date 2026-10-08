@@ -151,7 +151,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -262,7 +262,7 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 	}
 	want := wantFail("app", "go", r.cfg, true, reasonConfigBaseCustom(ref, "go"))
 	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
-		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies this release's go base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
+		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies this release's go base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}

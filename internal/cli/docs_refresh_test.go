@@ -60,9 +60,18 @@ func TestDocsNameImageRefresh(t *testing.T) {
 				name, _, _ = strings.Cut(name, "=")
 				switch name {
 				case "":
-				case "yes", "json", "plan-only":
+				case "json", "plan-only":
 					if cmd.Flags().Lookup(name) != nil {
 						t.Errorf("%s: the docs say fugaro image refresh has no --%s, but it does", path, name)
+					}
+				case "yes":
+					// 2026-10-08 decision: --yes exists (it is the one way
+					// to run this command unattended), so the docs are
+					// right to name it; the inverse check (json,
+					// plan-only) is what catches a flag that does not
+					// exist.
+					if cmd.Flags().Lookup(name) == nil {
+						t.Errorf("%s: the docs say fugaro image refresh has --%s, but it doesn't", path, name)
 					}
 				case "anchor", "base", "base-image":
 				default:
