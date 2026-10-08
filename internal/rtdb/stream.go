@@ -118,6 +118,7 @@ func (c *Client) streamOnce(parent context.Context, path string, send func(Event
 		out.stop = !send(Event{Type: "error", Err: err})
 		return out
 	}
+	sent := time.Now()
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if parent.Err() != nil {
@@ -128,7 +129,7 @@ func (c *Client) streamOnce(parent context.Context, path string, send func(Event
 		return out
 	}
 	defer resp.Body.Close()
-	c.observe(resp)
+	c.observe(resp, sent)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		out.stop = !send(Event{Type: "error", Err: statusErr("STREAM", path, resp.StatusCode, b, secret)})

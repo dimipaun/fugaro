@@ -34,6 +34,13 @@ type RTDB struct {
 	streams  map[*rtdbStream]struct{}
 	rules    []byte
 	rulePuts int
+	holds    []*rtdbHold
+}
+
+type rtdbHold struct {
+	path    string
+	stamped chan struct{}
+	release chan struct{}
 }
 
 type rtdbStream struct {
@@ -100,6 +107,19 @@ func (f *RTDB) Deny(path string) {
 		return
 	}
 	f.deny = append(f.deny, strings.Join(split(path), "/"))
+}
+
+// HoldNext makes the next request to path stamp its Date header and then
+// wait, unanswered, until release is called (or the request is cancelled):
+// a response delayed in flight, so a test can deliver it after the answers
+// to requests sent later. stamped is closed once the Date is fixed.
+func (f *RTDB) HoldNext(path string) (stamped <-chan struct{}, release func()) {
+	h := &rtdbHold{path: strings.Join(split(path), "/"), stamped: make(chan struct{}), release: make(chan struct{})}
+	f.mu.Lock()
+	f.holds = append(f.holds, h)
+	f.mu.Unlock()
+	var once sync.Once
+	return h.stamped, func() { once.Do(func() { close(h.release) }) }
 }
 
 // SetClock sets the time the fake answers in its Date header.
@@ -208,7 +228,23 @@ func (f *RTDB) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	f.creds = append(f.creds, cred)
 	w.Header().Set("Date", f.clock().UTC().Format(http.TimeFormat))
+	var hold *rtdbHold
+	for i, h := range f.holds {
+		if h.path == strings.Join(path, "/") {
+			hold = h
+			f.holds = append(f.holds[:i], f.holds[i+1:]...)
+			break
+		}
+	}
 	f.mu.Unlock()
+	if hold != nil {
+		close(hold.stamped)
+		select {
+		case <-hold.release:
+		case <-r.Context().Done():
+			return
+		}
+	}
 
 	switch r.Method {
 	case http.MethodGet:

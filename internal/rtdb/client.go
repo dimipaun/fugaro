@@ -14,7 +14,12 @@
 // empty, dotted or otherwise unescaped segments before sending. A database
 // Date header has one-second resolution, so ServerNow can lag the true day by
 // a moment near midnight: a lease refused as not_today is a retry with the
-// fresh day, not a refusal.
+// fresh day, not a refusal. Requests run concurrently and their responses can
+// arrive in any order, so the clock follows the response to the most recently
+// SENT request, not the last one to arrive and not the largest Date: a late
+// answer to an older request never moves the clock back across midnight, and
+// a skewed Date is replaced by the next request's answer instead of pinning
+// the clock.
 //
 // Errors wrap one of three sentinels, so a caller can tell a refusal from a
 // stale write from an outage: ErrPermission (401, 403: a rule denied the
@@ -117,7 +122,11 @@ type Client struct {
 	clock   atomic.Pointer[serverClock]
 }
 
-type serverClock struct{ server, local time.Time }
+// serverClock is one reading of the server's clock: server is the response's
+// Date, local the local time it arrived and sent the local time its request
+// went out (both carry the monotonic reading, so wall-clock steps on this
+// machine do not matter).
+type serverClock struct{ server, local, sent time.Time }
 
 // New returns a client of the database at baseURL (e.g.
 // "https://aurora-fp-default-rtdb.firebaseio.com").
@@ -142,9 +151,13 @@ func New(baseURL string, auth Auth, opts ...Option) (*Client, error) {
 	return c, nil
 }
 
-// ServerNow is the database server's current time, from the Date header of
-// the latest response advanced by the local clock since. ok is false before
-// any response. Resolution is one second.
+// ServerNow is the database server's current time: the Date header of the
+// response to the most recently sent request (see observe), advanced by the
+// local monotonic time elapsed since that response arrived. The server stamped
+// the Date somewhere between send and arrival and truncated it to the second,
+// so projecting from the arrival errs only behind the server, by at most the
+// return trip plus one second, never ahead of it. ok is false before any
+// response.
 func (c *Client) ServerNow() (time.Time, bool) {
 	sc := c.clock.Load()
 	if sc == nil {
@@ -339,12 +352,13 @@ func (c *Client) do(parent context.Context, method, path string, q url.Values, b
 	if err != nil {
 		return result{}, err
 	}
+	sent := time.Now()
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return result{}, c.transportErr(parent, method, path, secret, err)
 	}
 	defer resp.Body.Close()
-	c.observe(resp)
+	c.observe(resp, sent)
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
 	if err != nil {
 		return result{}, c.transportErr(parent, method, path, secret, err)
@@ -414,13 +428,15 @@ func scrub(s, secret string) string {
 	return strings.ReplaceAll(s, secret, "[redacted]")
 }
 
-// observe records the server's clock from a response, but never lets it run
-// backward. Several requests are often in flight at once (readConfig alone
-// fires seven GETs, alongside the heartbeat and kill-poll loops on their own
-// goroutines) and their responses can be processed out of order; a response
-// to a request sent before the clock crossed a boundary, but observed after
-// a later response already advanced it, must not roll the clock back.
-func (c *Client) observe(resp *http.Response) {
+// observe records the server's clock from the response to a request sent at
+// sent (local time taken just before the request went out). Responses to
+// concurrent requests can be processed in any order, so a reading replaces
+// the stored one only if its request was sent no earlier than the stored
+// reading's: a late answer to an older request is dropped, whatever its Date,
+// and an answer to a newer request wins, whatever its Date, so a genuine
+// correction backwards (or recovery from one skewed Date) takes effect with
+// the next request. Equal send times: the reading observed last wins.
+func (c *Client) observe(resp *http.Response, sent time.Time) {
 	d := resp.Header.Get("Date")
 	if d == "" {
 		return
@@ -429,11 +445,11 @@ func (c *Client) observe(resp *http.Response) {
 	if err != nil {
 		return
 	}
-	next := &serverClock{server: t, local: time.Now()}
+	next := &serverClock{server: t, local: time.Now(), sent: sent}
 	for {
 		old := c.clock.Load()
-		if old != nil && next.server.Before(old.server.Add(next.local.Sub(old.local))) {
-			return // a stale response, delivered late
+		if old != nil && sent.Before(old.sent) {
+			return // the answer to an older request, delivered late
 		}
 		if c.clock.CompareAndSwap(old, next) {
 			return
