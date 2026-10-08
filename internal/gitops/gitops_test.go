@@ -1045,3 +1045,70 @@ func TestDefaultBranch(t *testing.T) {
 		t.Fatal("a missing remote gave a branch")
 	}
 }
+
+func TestPushFastForwardForeignTipTheCheckoutNeverHad(t *testing.T) {
+	repo, remote, _ := pushOne(t)
+	other := filepath.Join(t.TempDir(), "other")
+	testutil.Git(t, filepath.Dir(other), "clone", "--quiet", remote, other)
+	testutil.Git(t, other, "checkout", "--quiet", "fugaro/x")
+	testutil.Git(t, other, "-c", "user.name=o", "-c", "user.email=o@x", "commit", "--quiet", "--allow-empty", "-m", "foreign")
+	testutil.Git(t, other, "push", "--quiet", "origin", "HEAD:refs/heads/fugaro/x")
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	setSeam(t, func() { t.Error("reached the push") })
+	if err := repo.PushFastForward(ctx, "fugaro/x", two); !errors.Is(err, ErrNotFastForward) {
+		t.Fatalf("err = %v, want ErrNotFastForward", err)
+	}
+}
+
+func TestPushFastForwardRefusesTransportHelpersAndSchemes(t *testing.T) {
+	repo, remote, _ := pushOne(t)
+	if err := repo.CommitEmpty(ctx, "two"); err != nil {
+		t.Fatal(err)
+	}
+	two, _ := repo.HeadSHA(ctx)
+	marker := filepath.Join(t.TempDir(), "ran")
+	setSeam(t, func() { t.Error("reached the push") })
+	testutil.Git(t, repo.Dir, "config", "protocol.ext.allow", "always")
+	for _, url := range []string{
+		"ext::sh -c 'touch " + marker + "'",
+		"fd::17",
+		"foo+bar::addr",
+		"ftp://example.com/x.git",
+		"rsync://example.com/x.git",
+	} {
+		testutil.Git(t, repo.Dir, "config", "remote.origin.url", url)
+		if err := repo.PushFastForward(ctx, "fugaro/x", two); !errors.Is(err, errUnsafeURL) {
+			t.Errorf("url %q: err = %v, want errUnsafeURL", url, err)
+		}
+	}
+	// Even past the check, git itself does not run ext:: from the runner.
+	if _, err := repo.remoteTipAt(ctx, "ext::sh -c 'touch "+marker+"'", "refs/heads/fugaro/x"); err == nil {
+		t.Error("ls-remote accepted ext::")
+	}
+	if exists(marker) {
+		t.Fatal("a command from origin's URL ran")
+	}
+	if got := remoteBranch(t, remote); got == two {
+		t.Fatal("the branch was pushed")
+	}
+}
+
+func TestHideURL(t *testing.T) {
+	base := errors.New("fatal: unable to access 'https://user:tok@example.com/org/repo.git/': boom; also https://example.com/org/repo and example.com/org/repo")
+	got := hideURL(base, "https://user:tok@example.com/org/repo").Error()
+	for _, leak := range []string{"example.com", "tok", "org/repo"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q leaks in %q", leak, got)
+		}
+	}
+	short := errors.New("fatal: a/b is not a repository")
+	if got := hideURL(short, "a/b").Error(); got != short.Error() {
+		t.Errorf("a short URL mangled the text: %q", got)
+	}
+	if got := hideURL(short, "a/b"); got != short {
+		t.Errorf("short URL wrapped the error")
+	}
+}

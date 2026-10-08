@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -53,14 +54,25 @@ func (r *Repo) CheckpointTip(ctx context.Context, branch string) (string, error)
 // ErrNotFastForward. Like Push, it only pushes fugaro/<run-id> branches.
 //
 // The agent controls .git/config while this runs, so:
+//
 //   - sha must be a full lowercase commit SHA, the one the caller read: not
 //     HEAD, a ref name, an abbreviation or anything with a "+", so it can
 //     neither move under the push nor turn the refspec into a forced one;
+//
 //   - origin's URL is read once and used for both the check and the push,
 //     after "--", and a URL that looks like an option or holds a newline or
 //     NUL is refused before git runs with it;
+//
 //   - it pushes to that URL rather than the remote's name, so git writes no
 //     remote-tracking ref in the checkout.
+//
+//   - the URL may not be a "<transport>::<address>" helper form (ext::
+//     runs a command) nor a scheme other than https, http, ssh, git or file
+//     (scp-like and local paths are fine), and both git calls run with
+//     protocol.ext.allow=never, the same as the init's git calls.
+//
+// url.*.insteadOf rewrites and core.sshCommand stay at the agent's trust
+// level, as the push always was; they are not defended here.
 //
 // Errors name the remote "origin", never its URL.
 //
@@ -110,7 +122,7 @@ func (r *Repo) PushFastForward(ctx context.Context, branch, sha string) error {
 	}
 	// No --force of any kind, and sha is plain hex, so no "+" either: the
 	// remote itself refuses a non-fast-forward.
-	_, err = r.git(ctx, "push", "--quiet", "--", url, sha+":"+ref)
+	_, err = r.git(ctx, "-c", "protocol.ext.allow=never", "push", "--quiet", "--", url, sha+":"+ref)
 	if err == nil {
 		return nil
 	}
@@ -177,12 +189,33 @@ func checkPushURL(url string) error {
 	if url == "" || strings.HasPrefix(url, "-") || strings.ContainsAny(url, "\n\r\x00") {
 		return fmt.Errorf("refusing to push: %w", errUnsafeURL)
 	}
+	if i := strings.Index(url, "::"); i > 0 && transportName(url[:i]) {
+		return fmt.Errorf("refusing to push: %w: a transport helper", errUnsafeURL)
+	}
+	if scheme, _, ok := strings.Cut(url, "://"); ok && !strings.ContainsAny(scheme, "/@") {
+		switch strings.ToLower(scheme) {
+		case "https", "http", "ssh", "git", "file":
+		default:
+			return fmt.Errorf("refusing to push: %w: scheme %q", errUnsafeURL, scheme)
+		}
+	}
 	return nil
+}
+
+// transportName reports whether s is what git reads before "::" as a
+// remote helper's name.
+func transportName(s string) bool {
+	for _, c := range s {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '+' || c == '.' || c == '-') {
+			return false
+		}
+	}
+	return s != ""
 }
 
 // remoteTipAt is remoteTip against url rather than the remote's name.
 func (r *Repo) remoteTipAt(ctx context.Context, url, ref string) (string, error) {
-	out, err := r.git(ctx, "ls-remote", "--", url, ref)
+	out, err := r.git(ctx, "-c", "protocol.ext.allow=never", "ls-remote", "--", url, ref)
 	if err != nil {
 		return "", err
 	}
@@ -210,10 +243,15 @@ func (r *Repo) isAncestor(ctx context.Context, a, b string) (bool, error) {
 	case exitCode(err) == 1:
 		return false, nil
 	}
-	// git fails (128) on a commit it does not have: no ancestor. Anything
-	// else is an error.
-	if _, cerr := r.git(ctx, "cat-file", "-e", "--end-of-options", a+"^{commit}"); cerr != nil && ctx.Err() == nil && exitCode(cerr) > 0 {
-		return false, nil
+	// git fails (128) on a commit it does not have, on either side (origin's
+	// tip may be one nobody fetched): no ancestor. Anything else is an error.
+	for _, c := range []string{a, b} {
+		if _, cerr := r.git(ctx, "cat-file", "-e", "--end-of-options", c+"^{commit}"); cerr != nil {
+			if ctx.Err() == nil && exitCode(cerr) > 0 {
+				return false, nil
+			}
+			return false, cerr
+		}
 	}
 	return false, err
 }
@@ -242,11 +280,44 @@ type urlHidden struct {
 	url string
 }
 
-func (e *urlHidden) Error() string { return strings.ReplaceAll(e.err.Error(), e.url, "origin") }
+func (e *urlHidden) Error() string {
+	msg := e.err.Error()
+	for _, v := range urlVariants(e.url) {
+		msg = strings.ReplaceAll(msg, v, "origin")
+	}
+	return msg
+}
 func (e *urlHidden) Unwrap() error { return e.err }
 
+// minHiddenURL is the shortest URL text replaced in an error: a shorter one
+// would mangle unrelated words.
+const minHiddenURL = 8
+
+// urlVariants are the spellings of url git may print, longest first: as
+// given, with ".git" added or stripped, and with the credentials removed.
+func urlVariants(url string) []string {
+	bases := []string{url}
+	if scheme, rest, ok := strings.Cut(url, "://"); ok {
+		if at := strings.LastIndex(rest, "@"); at >= 0 && !strings.Contains(rest[:at], "/") {
+			bases = append(bases, scheme+"://"+rest[at+1:], rest[at+1:])
+		}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, b := range bases {
+		for _, v := range []string{b, strings.TrimSuffix(b, ".git"), strings.TrimSuffix(b, ".git") + ".git"} {
+			if len(v) >= minHiddenURL && !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return len(out[i]) > len(out[j]) })
+	return out
+}
+
 func hideURL(err error, url string) error {
-	if err == nil || url == "" {
+	if err == nil || len(urlVariants(url)) == 0 {
 		return err
 	}
 	return &urlHidden{err: err, url: url}
