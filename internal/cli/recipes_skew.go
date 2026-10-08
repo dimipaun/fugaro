@@ -39,13 +39,14 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
-	if kind == "" {
-		kind = "<kind>"
+	base := "this release's base image"
+	if kind != "" {
+		base = "this release's " + kind + " base image"
 	}
 	refuse := func(why string) error {
 		return userErr("%s needs a job image whose runner knows recipes (fugaro %s or later), but the job image of %s workflow %s %s. "+
-			"In order: (1) fugaro init --base %s from outside the checkout, (2) fugaro init --repo in the checkout, (3) fugaro image build --repo %s --workflow %s%s",
-			subject, recipesSince, spec.Repo, spec.Workflow, why, kind, spec.Repo, spec.Workflow, alt)
+			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window (it copies %s, points the daily image check job at it and rebuilds the image)%s",
+			subject, recipesSince, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {

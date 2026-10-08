@@ -43,7 +43,7 @@ func TestCheckRecipeImage(t *testing.T) {
 		}
 		if tc.wantErr != "" && err != nil {
 			for _, want := range []string{"recipe mine needs a job image whose runner knows recipes (fugaro 0.5.0 or later)",
-				"fugaro init --base web-node", "fugaro image build --repo acme/app --workflow web", "--recipe default"} {
+				"Run fugaro image refresh --repo acme/app --workflow web in its checkout, in your own terminal window", "this release's web-node base image", "--recipe default"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("%q: %v lacks %q", tc.baseRef, err, want)
 				}
@@ -55,7 +55,7 @@ func TestCheckRecipeImage(t *testing.T) {
 	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.4.1")
 	err := checkRecipeImage(context.Background(), env, appSlug, spec, "", &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
-		!strings.Contains(err.Error(), "fugaro init --base <kind>") {
+		!strings.Contains(err.Error(), "it copies this release's base image, points") {
 		t.Fatalf("agent.recipe: %v", err)
 	}
 }

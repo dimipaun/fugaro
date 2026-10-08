@@ -151,7 +151,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) run fugaro init --base web-node from outside the checkout (it copies this release's base image), (2) fugaro init --repo in the checkout (so the daily image check job follows the new base), (3) fugaro image build --repo acme/app --workflow app, (4) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -228,7 +228,7 @@ func TestInitAnchorRecordWithoutBaseRefFails(t *testing.T) {
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonNoBaseRef()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "does not say which base image it was built from") || !strings.Contains(out, "fugaro image build --repo acme/app --workflow app") {
+	if !strings.Contains(out, "does not say which base image it was built from") || !strings.Contains(out, "fugaro image refresh --repo acme/app --workflow app") {
 		t.Errorf("output:\n%s", out)
 	}
 	r.check(t, r.yaml)
@@ -261,8 +261,8 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "go", r.cfg, true, reasonConfigBaseCustom(ref, "go"))
-	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base",
-		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) run fugaro init --base go from outside the checkout", "(3) fugaro init --repo in the checkout (so the daily image check job follows the new base), (4) fugaro image build --repo acme/app --workflow app, (5) fugaro init --anchor"} {
+	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
+		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (it copies this release's go base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}

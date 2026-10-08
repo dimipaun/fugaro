@@ -299,7 +299,7 @@ func reasonBaseRefDev(ref string) string {
 }
 
 func reasonConfigBaseCustom(ref, kind string) string {
-	return fmt.Sprintf("the local config's base image %s for kind %s is not a release >= %s, and a base image set in the local config is never replaced by fugaro init --base, so the next build would start from it", ref, kind, gcpProjectFieldSince)
+	return fmt.Sprintf("the local config's base image %s for kind %s is not a release >= %s, and a base image set in the local config is never replaced by fugaro init --base or fugaro image refresh, so the next build would start from it", ref, kind, gcpProjectFieldSince)
 }
 
 func reasonConfigBaseOld(ref, kind, version string) string {
@@ -313,8 +313,9 @@ func reasonRegistryHost(kind string, err error) string {
 // anchorProblemText is the one text about repo's workflow wf (base kind
 // kind, "" when none is known): its reasons, then one ordered fix: the
 // local config's base entry removed first when it is a custom image
-// (customBase), then the release base image copied, init --repo rerun (the daily image check job follows the base), the image rebuilt and
-// the line written. lcPath is the local config's file.
+// (customBase), then fugaro image refresh (or fugaro image build when the
+// kind is unknown, since refresh needs one), then --anchor. lcPath is the
+// local config's file.
 func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBase bool) string {
 	var steps []string
 	if customBase {
@@ -325,10 +326,11 @@ func anchorProblemText(repo, wf, kind, lcPath string, reasons []string, customBa
 		steps = append(steps, fmt.Sprintf("remove base_images.%s from %s (keep a backup)", kind, where))
 	}
 	if kind != "" {
-		steps = append(steps, fmt.Sprintf("run fugaro init --base %s from outside the checkout (it copies this release's base image)", kind),
-			"fugaro init --repo in the checkout (so the daily image check job follows the new base)")
+		steps = append(steps, fmt.Sprintf("fugaro image refresh --repo %s --workflow %s in the checkout, in your own terminal window (it copies this release's %s base image, points the daily image check job at it and rebuilds the image)", repo, wf, kind))
+	} else {
+		steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf))
 	}
-	steps = append(steps, fmt.Sprintf("fugaro image build --repo %s --workflow %s", repo, wf), "fugaro init --anchor")
+	steps = append(steps, "fugaro init --anchor")
 	for i, s := range steps {
 		steps[i] = fmt.Sprintf("(%d) %s", i+1, s)
 	}
