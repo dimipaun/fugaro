@@ -53,6 +53,30 @@ func (r *run) workflowGuard(ctx context.Context) *gitops.PushRejected {
 	return &gitops.PushRejected{Kind: gitops.RejectWorkflows, Files: files}
 }
 
+// workflowGuardAt is workflowGuard for the exact commit a checkpoint is
+// about to push, over the exact range it is about to add (since..until,
+// since being checkpointSince and until the sha just read): the same
+// GitHub-only guard, never weaker than workflowGuard's. It is kept apart
+// from workflowGuard, rather than sharing one body, because
+// gitops.WorkflowFilesIn (unlike the plain WorkflowFiles finalize and
+// pushBranch still use) requires until to be a full commit SHA, never
+// "HEAD": a checkpoint always has one on hand (the tip it polled), so it
+// passes it directly instead of letting git resolve a moving ref.
+func (r *run) workflowGuardAt(ctx context.Context, since, until string) *gitops.PushRejected {
+	if r.providerKind != gitprov.KindGitHub {
+		return nil
+	}
+	files, err := r.repo.WorkflowFilesIn(ctx, since, until)
+	if err != nil {
+		r.d.Log.Warn("checking the commits for workflow files failed; pushing anyway", "err", r.redact(err.Error()))
+		return nil
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return &gitops.PushRejected{Kind: gitops.RejectWorkflows, Files: files}
+}
+
 // asRefusal returns the permanent refusal err reports, only for the github
 // provider: the classification reads GitHub's messages, and another host's
 // failure keeps its plain error.

@@ -56,6 +56,8 @@ The M9e rule E1 ("the remote branch is always a verified state") made the push w
 
   The docs show how to skip drafts or cancel superseded runs in CI, and `git.pr.checkpoints: false` turns checkpoints off.
 
+**Limitation.** The checkpoint workflow guard reads a wider range than finalize's: it starts at the frozen base commit (or the last pushed one), finalize at `origin/<base>`. If the agent rebases onto a newer base that brought someone else's `.github/workflows` change, checkpoints stop for the whole run although the host would accept the push. It fails closed; finalize still pushes.
+
 ## Not doing (future work)
 
 - Snapshots of uncommitted work to a hidden ref (`refs/fugaro/wip/<run id>`).

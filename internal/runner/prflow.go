@@ -151,12 +151,7 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 // bound of its own. A failure is the caller's to warn about; finalize
 // pushes again.
 func (r *run) pushBranch(ctx context.Context, sha string) error {
-	actx, cancelAuth := context.WithTimeout(ctx, authRefreshTimeout)
-	err := r.refreshGitAuth(actx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid)))
-	cancelAuth()
-	if err != nil {
-		r.warnAuthRefresh(err)
-	}
+	r.refreshForPush(ctx)
 	if rej := r.workflowGuard(ctx); rej != nil {
 		return rej // no network call for a push GitHub is sure to refuse
 	}
@@ -169,6 +164,17 @@ func (r *run) pushBranch(ctx context.Context, sha string) error {
 	r.rec.PushedHead = sha
 	r.save(ctx)
 	return nil
+}
+
+// refreshForPush refreshes the git credentials for a mid-run push, on a
+// bound of its own; a failure warns once and keeps the current ones.
+func (r *run) refreshForPush(ctx context.Context) {
+	actx, cancel := context.WithTimeout(ctx, authRefreshTimeout)
+	err := r.refreshGitAuth(actx, authValidity(max(r.wf.Timeouts.FinalizeReserve.Duration, bootstrapAuthMinValid)))
+	cancel()
+	if err != nil {
+		r.warnAuthRefresh(err)
+	}
 }
 
 // pushVerified pushes a later verified tip, so the remote branch is always

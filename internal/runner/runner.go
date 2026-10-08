@@ -203,6 +203,18 @@ type run struct {
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
+	// baseSHA is the base branch's commit as bootstrap fetched it (the
+	// local origin/<base> read right after the fetch, before the agent
+	// runs), and startSHA the run branch's first commit, read right after
+	// the checkout; both empty for a follow-up, which never checkpoints. A
+	// checkpoint's scans, schedule and "ahead" check use these, never a ref
+	// name such as origin/<base>: the agent controls the checkout while a
+	// stage runs and could repoint a local ref, but not these already-read
+	// values (checkpoint.go). They differ when the run starts from another
+	// ref than its base branch (--ref develop with base_branch main).
+	baseSHA, startSHA string
+	// ckpt is the checkpoint pushes' state (checkpoint.go).
+	ckpt checkpointState
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -781,6 +793,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 	}
 	r.repo = strip(repo)
 	var cfg *config.Config
+	var startErr error // reading a first run's start commit (checkpoints)
 	if r.follow != nil {
 		// The pull request's branch, with the configuration of its base.
 		if err := r.checkoutFollowUp(ctx, repo); err != nil {
@@ -796,6 +809,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 			return fmt.Errorf("checking out %s: %w", spec.Ref, err)
 		}
 		r.rec.Branch = branch
+		// The start commit, read at once and locally: a checkpoint never
+		// pushes a tip at or behind it (nothing of the agent's yet).
+		r.startSHA, startErr = repo.CommitOf(ctx, "refs/heads/"+branch)
 		data, err := os.ReadFile(filepath.Join(r.d.WorkDir, "fugaro.yaml"))
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
@@ -835,6 +851,27 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// base, and read its configuration from it, above.
 		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
+		}
+		if fetchedBaseSeam != nil {
+			fetchedBaseSeam()
+		}
+		// The commit just fetched, read locally right after the fetch and
+		// before the agent ever runs: checkpoints use this SHA rather than
+		// the local origin/<base> ref, which the agent could repoint once
+		// it controls the checkout. A second ls-remote would name a newer
+		// commit, one the checkout lacks, if the base moved meanwhile, and
+		// every checkpoint's scan would fail. A failure only turns
+		// checkpoints off for this run; it does not fail bootstrap.
+		if cfg.Git.PR.CheckpointsOn() {
+			sha, err := repo.CommitOf(ctx, "refs/remotes/origin/"+cfg.Git.BaseBranch)
+			switch {
+			case err != nil:
+				r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(err.Error()))
+			case startErr != nil:
+				r.d.Log.Warn("resolving the run branch's start commit failed; checkpoint pushes are off for this run", "err", r.redact(startErr.Error()))
+			default:
+				r.baseSHA = sha
+			}
 		}
 	}
 	if err := r.checkProject(ctx, cfg); err != nil {
@@ -1273,7 +1310,12 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
 		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
 	}
+	// Checkpoints run only while the agent does: stopped (and waited for)
+	// the moment it returns, and by the defer if it panics.
+	stopCheckpoints := r.startCheckpoints(stageCtx, name)
+	defer stopCheckpoints()
 	res, err := r.d.Agent.Run(stageCtx, req)
+	stopCheckpoints()
 	stopWatch()
 	// An oauth run has no gateway: its stage's own cost figure is its
 	// notional spend, reported whatever became of the stage.

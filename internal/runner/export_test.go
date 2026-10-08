@@ -110,3 +110,51 @@ func SetEarlyOpenTimeout(t *testing.T, d time.Duration) {
 	earlyOpenTimeout = d
 	t.Cleanup(func() { earlyOpenTimeout = prev })
 }
+
+// DriveCheckpoints replaces the checkpoint poll's ticker for the rest of
+// t: the returned tick sends one poll to the running stage's checkpointer
+// and returns once that poll has finished. It fails t when no checkpointer
+// takes the poll within 10 seconds.
+func DriveCheckpoints(t *testing.T) (tick func()) {
+	ch := make(chan time.Time)
+	done := make(chan struct{})
+	prevTicks, prevTicked := checkpointTicks, checkpointTicked
+	checkpointTicks = func(time.Duration) (<-chan time.Time, func()) { return ch, func() {} }
+	checkpointTicked = func() { done <- struct{}{} }
+	t.Cleanup(func() { checkpointTicks, checkpointTicked = prevTicks, prevTicked })
+	return func() {
+		t.Helper()
+		select {
+		case ch <- time.Time{}:
+		case <-time.After(10 * time.Second):
+			t.Fatal("no checkpointer took the poll")
+		}
+		<-done
+	}
+}
+
+// CheckpointersRunning is how many checkpoint goroutines are alive.
+func CheckpointersRunning() int32 { return checkpointersRunning.Load() }
+
+// The checkpoint schedule's durations, for tests that move a fake clock.
+const (
+	CheckpointQuiet    = checkpointQuiet
+	CheckpointMinGap   = checkpointMinGap
+	CheckpointFallback = checkpointFallback
+)
+
+// SetCheckpointPushedSeam runs f in a checkpoint between its successful
+// push and saving pushed_head, for the rest of t.
+func SetCheckpointPushedSeam(t *testing.T, f func()) {
+	prev := checkpointPushedSeam
+	checkpointPushedSeam = f
+	t.Cleanup(func() { checkpointPushedSeam = prev })
+}
+
+// SetFetchedBaseSeam runs f in bootstrap right after the base branch is
+// fetched, for the rest of t.
+func SetFetchedBaseSeam(t *testing.T, f func()) {
+	prev := fetchedBaseSeam
+	fetchedBaseSeam = f
+	t.Cleanup(func() { fetchedBaseSeam = prev })
+}
