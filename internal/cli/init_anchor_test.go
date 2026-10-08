@@ -151,7 +151,7 @@ func TestInitAnchorOldRecordFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "web-node", r.cfg, false, reasonRecordVersionOld("0.3.1"))
-	for _, s := range []string{"fugaro 0.3.1", "In order: (1) run fugaro init --base web-node from outside the checkout (it copies this release's base image), (2) fugaro init --repo in the checkout (so the daily image check job follows the new base), (3) fugaro image build --repo acme/app --workflow app, (4) fugaro init --anchor"} {
+	for _, s := range []string{"fugaro 0.3.1", "In order: (1) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies this release's web-node base image, points the daily image check job at it and rebuilds the image), (2) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -228,7 +228,7 @@ func TestInitAnchorRecordWithoutBaseRefFails(t *testing.T) {
 	if ExitCode(err) != ExitUserError || out != wantFail("app", "web-node", r.cfg, false, reasonNoBaseRef()) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
-	if !strings.Contains(out, "does not say which base image it was built from") || !strings.Contains(out, "fugaro image build --repo acme/app --workflow app") {
+	if !strings.Contains(out, "does not say which base image it was built from") || !strings.Contains(out, "fugaro image refresh --repo acme/app --workflow app") {
 		t.Errorf("output:\n%s", out)
 	}
 	r.check(t, r.yaml)
@@ -261,8 +261,8 @@ func TestInitAnchorCustomBaseFails(t *testing.T) {
 		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
 	}
 	want := wantFail("app", "go", r.cfg, true, reasonConfigBaseCustom(ref, "go"))
-	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base",
-		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) run fugaro init --base go from outside the checkout", "(3) fugaro init --repo in the checkout (so the daily image check job follows the new base), (4) fugaro image build --repo acme/app --workflow app, (5) fugaro init --anchor"} {
+	for _, s := range []string{"the local config's base image " + ref + " for kind go is not a release >= 0.4.0", "is never replaced by fugaro init --base or fugaro image refresh",
+		"(1) remove base_images.go from " + quoteWord(r.cfg) + " (keep a backup), (2) fugaro image refresh --repo acme/app --workflow app in the checkout, in your own terminal window (interactive: needs a real terminal, cannot run in CI, has no --yes; it copies this release's go base image, points the daily image check job at it and rebuilds the image), (3) fugaro init --anchor"} {
 		if !strings.Contains(want, s) {
 			t.Errorf("message lacks %q: %s", s, want)
 		}
@@ -626,6 +626,30 @@ func TestInitRepoEndToEndNotesTheAnchor(t *testing.T) {
 		note := "note: " + anchorHintText + "\n"
 		if n := strings.Count(errOut+out, note); n != c.want || strings.Contains(out, note) {
 			t.Errorf("%v: %d notes\nstdout:\n%s\nstderr:\n%s", c.args, n, out, errOut)
+		}
+	}
+}
+
+// With no base kind known, fugaro image refresh cannot be named (it needs a
+// kind), so the fix is fugaro image build for the workflow, then --anchor.
+func TestAnchorProblemTextKindUnknownNamesImageBuild(t *testing.T) {
+	got := anchorProblemText("acme/app", "app", "", "", []string{"x"}, false)
+	want := "In order: (1) fugaro image build --repo acme/app --workflow app, (2) fugaro init --anchor, before you merge"
+	if !strings.Contains(got, want) || strings.Contains(got, "image refresh") {
+		t.Errorf("%s\nwant it to contain %q and no image refresh", got, want)
+	}
+}
+
+// The --anchor help names fugaro image refresh as the fix, not the old
+// multi-step sequence.
+func TestInitHelpAnchorFixIsImageRefresh(t *testing.T) {
+	long := strings.Join(strings.Fields(newInitCmd().Long), " ")
+	if !strings.Contains(long, "fugaro image refresh --repo <owner/name> --workflow <name> in the checkout") {
+		t.Errorf("init help does not name fugaro image refresh: %q", long)
+	}
+	for _, old := range []string{"fugaro init --base <kind> from outside the checkout", "fugaro init --repo in the checkout", "fugaro image build --repo"} {
+		if strings.Contains(long, old) {
+			t.Errorf("init help still lists the old step %q", old)
 		}
 	}
 }

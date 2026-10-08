@@ -170,11 +170,11 @@ or development CLI, or an older, development or hand-pushed base fails. It
 also checks that each base image the local config sets for those workflows is
 a release image init copied, at or after that release, since the next build
 starts from it (a development or hand-pushed one is never replaced by fugaro
-init --base: remove its base_images entry first). The fix it names is: that
-removal when needed, fugaro init --base <kind> from outside the checkout,
-fugaro init --repo in the checkout (so the daily image check job follows the
-new base), fugaro image build --repo <owner/name> --workflow <name>, then
-fugaro init --anchor. The image checks trust the build records (written by
+init --base or fugaro image refresh: remove its base_images entry first). The
+fix it names is: that removal when needed, fugaro image refresh --repo
+<owner/name> --workflow <name> in the checkout (it copies the base image,
+points the daily image check job at it and rebuilds the image), then fugaro
+init --anchor. The image checks trust the build records (written by
 the builds, unsigned: the same trust as the shared config), and a hand-pushed
 image under a release-looking tag passes them. Then the diff; --yes writes, a terminal asks, and otherwise it
 prints the line and writes nothing. Exit codes: 0 written or already present
