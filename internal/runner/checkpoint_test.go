@@ -221,6 +221,56 @@ func TestCheckpointFromAnotherRefWaitsForTheAgentsWork(t *testing.T) {
 	}
 }
 
+// TestCheckpointNeverPushesATipBehindTheStart: --ref develop, develop is
+// main plus D1 and D2 (the start is D2); the agent resets one back to D1.
+// D1 is not the start, not the base and not behind the base, so only the
+// behind-the-start check keeps it off the remote, where it would create the
+// run branch at a commit with nothing of the agent's on it.
+func TestCheckpointNeverPushesATipBehindTheStart(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	bareCommit(t, g.remote, "develop", "main")
+	bareCommit(t, g.remote, "develop", "develop")
+	setRef(t, g.harness, task.Spec{Ref: "develop"})
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "git reset -q --hard HEAD~1")
+		g.settle()
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Errorf("a checkpoint pushed a tip behind the start: remote at %s", remoteTip(t, g.harness))
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
+// TestCheckpointNeverPushesATipBehindTheBaseAlone: --ref develop is behind
+// main, and main is develop plus B1 and B2; the agent resets to B1. B1 is
+// not the start, not the base and not behind the start, so only the
+// behind-the-base check keeps it off the remote.
+func TestCheckpointNeverPushesATipBehindTheBaseAlone(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	testutil.Git(t, g.remote, "update-ref", "refs/heads/develop", "refs/heads/main")
+	b1 := bareCommit(t, g.remote, "main", "main")
+	bareCommit(t, g.remote, "main", "main")
+	setRef(t, g.harness, task.Spec{Ref: "develop"})
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "git reset -q --hard "+b1)
+		g.settle()
+		g.settle()
+		if remoteHasBranch(t, g.harness) {
+			t.Errorf("a checkpoint pushed a tip behind the base: remote at %s", remoteTip(t, g.harness))
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
 // TestCheckpointNeverPushesTheBaseCommit: a run launched from a ref behind
 // its base branch, whose agent moves the run branch to the base commit:
 // that tip is not the start, nor pushed, nor behind the start, but it is
@@ -376,6 +426,26 @@ func TestCheckpointWarningsAreRedacted(t *testing.T) {
 				t.Fatalf("logs:\n%s", g.logs)
 			}
 		})
+	}
+}
+
+// TestCheckpointPanicIsRedacted: a panic is recovered and logged, and its
+// message never carries a value the run redacts.
+func TestCheckpointPanicIsRedacted(t *testing.T) {
+	const mounted = "mounted-panic-secret-value"
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	g.deps.Env = append(g.deps.Env, "RENAMED_TOKEN="+mounted, runner.SecretEnvsVar+"=RENAMED_TOKEN")
+	runner.SetCheckpointPushedSeam(t, func() { panic("boom " + mounted) })
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		commitWIP(t, req, "wip")
+		g.settle()
+		return implement("feature")(t, ctx, req)
+	}
+	if _, err := g.run(t, long, review("ship", 0)); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(g.logs.String(), "a checkpoint panicked") || strings.Contains(g.logs.String(), mounted) {
+		t.Fatalf("logs:\n%s", g.logs)
 	}
 }
 
