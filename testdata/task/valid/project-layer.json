@@ -1,0 +1,1 @@
+{ "version": 1, "run_id": "20261008-100000-abcd", "repo": "acme/app", "ref": "main", "task": "Do it", "project_layer": { "sha256": "edc48455071fab6211dd72dc473e941d10a1659cb12ab47a7123f858bf592d96", "generation": 7, "yaml": "version: 1\nproject: aurora\ngcp_project: proj-1234\n" } }
