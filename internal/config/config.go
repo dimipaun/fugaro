@@ -87,8 +87,9 @@ type Git struct {
 type PRSettings struct {
 	Labels    []string `yaml:"labels"`
 	Reviewers []string `yaml:"reviewers"`
-	// EarlyDraft opens the draft pull request at the first verified push;
-	// false opens it only at finalize. Unset means true (applyDefaults).
+	// EarlyDraft opens the draft pull request at the first checkpoint push
+	// (or, with checkpoints off, the first verified stage end); false opens
+	// it only at finalize. Unset means true (applyDefaults).
 	EarlyDraft *bool `yaml:"early_draft"`
 	// Checkpoints pushes a first run's new commits to its branch while a
 	// stage runs, fast-forward only, so a container that dies keeps its
@@ -100,7 +101,8 @@ type PRSettings struct {
 }
 
 // EarlyDraftOn reports whether the draft pull request opens at the first
-// verified push: true unless git.pr.early_draft is false.
+// checkpoint push (or, with checkpoints off, the first verified stage end)
+// rather than at finalize: true unless git.pr.early_draft is false.
 func (p PRSettings) EarlyDraftOn() bool { return p.EarlyDraft == nil || *p.EarlyDraft }
 
 // CheckpointsOn reports whether a first run pushes its new commits while a

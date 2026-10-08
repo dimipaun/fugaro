@@ -54,7 +54,7 @@ fugaro CLI ---- run ------------->    one execution per task, then gone
 1. **Start** from the image of the repository's workflow (a named build-and-test setup in its `fugaro.yaml`): a base (`web-node`, `go` or `java-services`) plus its checkout and dependencies, rebuilt by Cloud Build when a daily check finds it stale.
 2. **Sync** to the exact target commit and restore the dependency caches.
 3. **Loop:** Claude Code implements, writes tests, runs the build and tests through a recording wrapper, reviews and fixes, for as many review rounds as configured.
-4. **Push and open the pull request**: a draft at the first verified push, marked ready only when the run passes. Reviewers are requested only then.
+4. **Push and open the pull request**: each commit is pushed within about a minute while the agent works, a draft opens at the first push (marked not verified), and it is marked ready only when the run passes. Reviewers are requested only then. Set `git.pr.checkpoints` only once everyone is on 0.5.1, and refresh older job images with `fugaro image refresh`; on a host without draft PRs set `git.pr.early_draft: false` ([details](docs/git-providers.md#checkpoint-pushes-gitprcheckpoints)).
 5. **Write caches back and exit.** The run record and the PR remain; the container does not.
 
 The engine is generic: everything specific to a repository lives in its `fugaro.yaml`. The design is [docs/design/v1.md](docs/design/v1.md).

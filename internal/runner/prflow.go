@@ -16,7 +16,8 @@ import (
 )
 
 // The early draft pull request (design §4.2a). The draft opens at the first
-// verified push, its status section follows the run, and finalize settles
+// checkpoint push (not verified until a verify record passes; with
+// git.pr.checkpoints off, at the first verified stage end), its status section follows the run, and finalize settles
 // it by the number saved in the run record. Reviewers and labels are
 // applied only after the flip to ready (ApplyReady). Nothing here may fail
 // the run: a status update that fails warns, and finalize still guarantees

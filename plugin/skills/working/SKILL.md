@@ -48,7 +48,7 @@ The remote agent cannot see this conversation, your files or the user's machine.
 
 ## Read the result
 
-- **Draft or ready.** A run ends with a passing test run and a senior review verdict of `ship` for a ready pull request, and with a draft otherwise. A draft appears early, at the first verified push, with a status section in its description that the run keeps updating. Reviewers are requested only when it becomes ready.
+- **Draft or ready.** A run ends with a passing test run and a senior review verdict of `ship` for a ready pull request, and with a draft otherwise. A draft appears early, at the run's first checkpoint push (its first commit, within about a minute), with a status section in its description that the run keeps updating and that says "not verified" until a passing test covers the pushed commit. Reviewers are requested only when it becomes ready.
 - **A failed or halted run is not always a bad one.** Its draft pull request holds the work: look at its CI before deciding.
 - **Two review tiers.** A run may have a first-line review by a cheaper coder model before the senior review. Only the senior review decides readiness.
 - **Cost.** `fugaro diagnose` shows it, and its JSON has `row.cost.route_by`, which splits the spend by route (a provider model's route, for example), and `row.cost.reported_usd`, what a provider claimed, kept beside the priced figure and never replacing it. Subscription (`oauth`) spend is notional, never billed.

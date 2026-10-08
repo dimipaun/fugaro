@@ -3,7 +3,7 @@
 
 # Launch a Fugaro run
 
-You are launching `fugaro run`: a cloud worker that checks out a repository, does one task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it isn't sure. A draft pull request appears early, at the run's first verified push, and shows the run's progress in its description; the repository's configured reviewers are requested only when the pull request becomes ready, not while it is a draft.
+You are launching `fugaro run`: a cloud worker that checks out a repository, does one task with a coding agent, runs the repository's build and tests, has the result reviewed and opens a pull request. It always ends with a pull request, a draft one when it isn't sure. A draft pull request appears early, at the run's first checkpoint push (each commit is pushed within about a minute), marked not verified, and shows the run's progress in its description; the repository's configured reviewers are requested only when the pull request becomes ready, not while it is a draft.
 
 You are done when the launch printed `launched` (or `already-launched`) and you have told the user the run, the branch and how to follow it. You don't wait for the run to end.
 
