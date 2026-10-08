@@ -414,11 +414,29 @@ func scrub(s, secret string) string {
 	return strings.ReplaceAll(s, secret, "[redacted]")
 }
 
-// observe records the server's clock from a response.
+// observe records the server's clock from a response, but never lets it run
+// backward. Several requests are often in flight at once (readConfig alone
+// fires seven GETs, alongside the heartbeat and kill-poll loops on their own
+// goroutines) and their responses can be processed out of order; a response
+// to a request sent before the clock crossed a boundary, but observed after
+// a later response already advanced it, must not roll the clock back.
 func (c *Client) observe(resp *http.Response) {
-	if d := resp.Header.Get("Date"); d != "" {
-		if t, err := http.ParseTime(d); err == nil {
-			c.clock.Store(&serverClock{server: t, local: time.Now()})
+	d := resp.Header.Get("Date")
+	if d == "" {
+		return
+	}
+	t, err := http.ParseTime(d)
+	if err != nil {
+		return
+	}
+	next := &serverClock{server: t, local: time.Now()}
+	for {
+		old := c.clock.Load()
+		if old != nil && next.server.Before(old.server.Add(next.local.Sub(old.local))) {
+			return // a stale response, delivered late
+		}
+		if c.clock.CompareAndSwap(old, next) {
+			return
 		}
 	}
 }
