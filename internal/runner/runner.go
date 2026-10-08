@@ -848,15 +848,20 @@ func (r *run) bootstrap(ctx context.Context) error {
 		// Resolved once, here, before the agent ever runs: checkpoints use
 		// this SHA rather than the local origin/<base> ref, which the
 		// agent could repoint once it controls the checkout. A failure
-		// only turns checkpoints off for this run; it does not fail bootstrap.
-		sha, rterr := repo.RemoteTip(ctx, cfg.Git.BaseBranch)
-		switch {
-		case rterr != nil:
-			r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(rterr.Error()))
-		case !gitops.IsFullSHA(sha):
-			r.d.Log.Warn("origin did not answer the base branch with a commit SHA; checkpoint pushes are off for this run")
-		default:
-			r.baseSHA = sha
+		// only turns checkpoints off for this run; it does not fail
+		// bootstrap. Skipped entirely when fugaro.yaml already turns
+		// checkpoints off, so that config costs nothing: no extra network
+		// round trip, and no warning if it is ever flaky.
+		if cfg.Git.PR.CheckpointsOn() {
+			sha, rterr := repo.RemoteTip(ctx, cfg.Git.BaseBranch)
+			switch {
+			case rterr != nil:
+				r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(rterr.Error()))
+			case !gitops.IsFullSHA(sha):
+				r.d.Log.Warn("origin did not answer the base branch with a commit SHA; checkpoint pushes are off for this run")
+			default:
+				r.baseSHA = sha
+			}
 		}
 	}
 	if err := r.checkProject(ctx, cfg); err != nil {

@@ -168,8 +168,19 @@ func (r *run) checkpointSince() string {
 func (r *run) checkpointPush(ctx context.Context, stage, sha string, during bool) {
 	now := r.d.Now()
 	// Of the tip read, not HEAD: a tip read just before the agent's first
-	// commit is the base, which is never pushed.
-	if ahead, err := r.repo.CountAhead(ctx, r.cfg.Git.BaseBranch, sha); err != nil || ahead == 0 {
+	// commit is the base, which is never pushed, and neither is one
+	// already pushed. Both sides are the frozen values (baseSHA, the last
+	// pushed_head), never gitops.CountAhead's "origin/"+branch-name: the
+	// agent's own git could repoint that local ref (a fetch that moves it
+	// forward, or an adversarial update-ref) to make an ahead-count read 0
+	// forever, which would silently stop checkpoints for the rest of the
+	// run with no warning logged — exactly the data loss this feature
+	// exists to prevent. due() already guarantees sha differs from both
+	// before ever calling this; the check is repeated here, cheaply and
+	// without a git call, as a safety net for any future caller that
+	// pushes without going through the schedule first (a stage boundary,
+	// Task 6).
+	if sha == r.baseSHA || sha == r.rec.PushedHead {
 		return // no commit of the run's own yet
 	}
 	if !r.checkpointClean(ctx, sha) {

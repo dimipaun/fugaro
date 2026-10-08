@@ -106,6 +106,31 @@ func TestCheckpointPushesCommittedWorkMidStage(t *testing.T) {
 	}
 }
 
+// TestCheckpointIgnoresALocalBaseRefTheAgentMoved: the agent's own git (a
+// fetch of the base branch, or an adversarial update-ref) can move the
+// local origin/<base> tracking ref forward during the stage. Checkpoints
+// must still push committed work: they judge "ahead of base" on the base
+// commit bootstrap recorded (baseSHA), never on that ref, which a naive
+// check (gitops.CountAhead, built on "origin/"+branch-name) would read as
+// 0 commits ahead forever, silently losing checkpoints for the rest of
+// the run.
+func TestCheckpointIgnoresALocalBaseRefTheAgentMoved(t *testing.T) {
+	g := newCkptRig(t, prCfg(t, 2, ", early_draft: false"))
+	long := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		head := commitWIP(t, req, "wip")
+		shell(t, req, "git update-ref refs/remotes/origin/main HEAD")
+		g.settle()
+		if pushedHead(t, g.harness) != head || remoteTip(t, g.harness) != head {
+			t.Errorf("a moved local base ref silently blocked the checkpoint")
+		}
+		return implement("feature")(t, ctx, req)
+	}
+	rec, err := g.run(t, long, review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
 // TestBurstOfCommitsIsOnePush: commits closer together than the quiet
 // period are one push, of the latest.
 func TestBurstOfCommitsIsOnePush(t *testing.T) {
