@@ -117,9 +117,9 @@ steps, stopping that checkout at the first step that fails:
 It never upgrades fugaro itself: brew upgrade dimipaun/tap/fugaro && fugaro
 upgrade is the whole sequence.
 
-This build has the pin step only: plugin and cloud print "not implemented",
-check and change nothing, and the run ends with a "not checked:" line naming
-them; they do not change the exit code.
+This build has the pin and plugin steps only: cloud prints "not implemented",
+checks and changes nothing, and the run ends with a "not checked:" line
+naming it; that does not change the exit code.
 
 --local runs pin and plugin only. In a coding agent's session (CLAUDECODE and
 the like) the cloud step is always skipped, never attempted, with the
