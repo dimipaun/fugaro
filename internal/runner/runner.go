@@ -203,6 +203,15 @@ type run struct {
 	follow *followState
 	// pr is the early draft pull request's state (prflow.go).
 	pr prFlow
+	// baseSHA is the base branch's commit as bootstrap resolved it right
+	// after fetching it, for a first run (empty for a follow-up, which
+	// never checkpoints). A checkpoint's scans and schedule use this, never
+	// a ref name such as origin/<base>: the agent controls the checkout
+	// while a stage runs and could repoint a local ref, but not this
+	// already-read value (checkpoint.go).
+	baseSHA string
+	// ckpt is the checkpoint pushes' state (checkpoint.go).
+	ckpt checkpointState
 }
 
 // Git credential lifetimes (design §6.2). A stage must not outlive its
@@ -836,6 +845,19 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err := repo.FetchBase(ctx, cfg.Git.BaseBranch); err != nil {
 			return fmt.Errorf("fetching base %s: %w", cfg.Git.BaseBranch, err)
 		}
+		// Resolved once, here, before the agent ever runs: checkpoints use
+		// this SHA rather than the local origin/<base> ref, which the
+		// agent could repoint once it controls the checkout. A failure
+		// only turns checkpoints off for this run; it does not fail bootstrap.
+		sha, rterr := repo.RemoteTip(ctx, cfg.Git.BaseBranch)
+		switch {
+		case rterr != nil:
+			r.d.Log.Warn("resolving the base commit failed; checkpoint pushes are off for this run", "err", r.redact(rterr.Error()))
+		case !gitops.IsFullSHA(sha):
+			r.d.Log.Warn("origin did not answer the base branch with a commit SHA; checkpoint pushes are off for this run")
+		default:
+			r.baseSHA = sha
+		}
 	}
 	if err := r.checkProject(ctx, cfg); err != nil {
 		return err
@@ -1273,7 +1295,12 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 		go func() { defer watching.Done(); r.watchHalt(stageCtx, done) }()
 		stopWatch = sync.OnceFunc(func() { close(done); watching.Wait() })
 	}
+	// Checkpoints run only while the agent does: stopped (and waited for)
+	// the moment it returns, and by the defer if it panics.
+	stopCheckpoints := r.startCheckpoints(stageCtx, name)
+	defer stopCheckpoints()
 	res, err := r.d.Agent.Run(stageCtx, req)
+	stopCheckpoints()
 	stopWatch()
 	// An oauth run has no gateway: its stage's own cost figure is its
 	// notional spend, reported whatever became of the stage.
