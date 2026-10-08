@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -751,20 +752,33 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(b)
-	i := strings.Index(src, "func (r *initRun) buildImages(")
-	if i < 0 {
-		t.Fatal("buildImages not found")
+	funcBody := func(sig string) string {
+		i := strings.Index(src, sig)
+		if i < 0 {
+			t.Fatalf("%s not found", sig)
+		}
+		body := src[i:]
+		if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+			body = body[:j+1]
+		}
+		return body
 	}
-	body := src[i:]
-	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
-		body = body[:j+1]
-	}
+	body := funcBody("func (r *initRun) buildImages(")
 	if !strings.Contains(body, "r.askTyped(") {
 		t.Error("buildImages no longer asks the typed confirmation")
+	}
+	if a, s := strings.Index(body, "r.askTyped("), strings.Index(body, "r.submitAndWait("); a < 0 || s < 0 || a > s {
+		t.Errorf("buildImages must ask the typed confirmation (at %d) before r.submitAndWait( (at %d)", a, s)
 	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers", "r.confirm(", "r.ask("} {
 		if strings.Contains(body, bad) {
 			t.Errorf("buildImages uses %s", bad)
+		}
+	}
+	sw := funcBody("func (r *initRun) submitAndWait(")
+	for _, bad := range []string{"r.confirm(", "runCovers", "askTyped"} {
+		if strings.Contains(sw, bad) {
+			t.Errorf("submitAndWait uses %s", bad)
 		}
 	}
 	img, _ := os.ReadFile("image.go")
@@ -777,14 +791,24 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 
 // fakeBuilder is a Cloud Build that records the specs it is given and
 // succeeds.
-type fakeBuilder struct{ specs []gcp.BuildSpec }
+type fakeBuilder struct {
+	specs     []gcp.BuildSpec
+	submitErr error // Submit returns it, after recording the spec
+	waitErr   error // Wait returns it
+}
 
 func (f *fakeBuilder) Submit(_ context.Context, s gcp.BuildSpec) (gcp.BuildResult, error) {
 	f.specs = append(f.specs, s)
+	if f.submitErr != nil {
+		return gcp.BuildResult{}, f.submitErr
+	}
 	return gcp.BuildResult{ID: fmt.Sprintf("b%04d", len(f.specs)), Image: s.Image + ":latest", LogURL: "https://log/" + s.Workflow}, nil
 }
 
 func (f *fakeBuilder) Wait(_ context.Context, id string, _ time.Duration) (gcp.BuildResult, error) {
+	if f.waitErr != nil {
+		return gcp.BuildResult{}, f.waitErr
+	}
 	return gcp.BuildResult{ID: id, Status: "SUCCESS", Digest: "sha256:" + strings.Repeat("d", 64)}, nil
 }
 
@@ -815,5 +839,94 @@ func TestFirstBuildsUseSubmitAndWait(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "built acme/app/app (Cloud Build build b0001)") || len(e.r.res.Builds) != 1 {
 		t.Fatalf("output %s, builds %v", out.String(), e.r.res.Builds)
+	}
+}
+
+// twoWorkflowBuild is a project with two workflows to build, the typed
+// confirmation for each on stdin.
+func twoWorkflowBuild(t *testing.T) (*initEngine, *syncBuf, *localcfg.Config, *config.Config, infra.RepoSpec) {
+	t.Helper()
+	fakeTerminal(t)
+	e, out := stageEngine(t, initProjectName+"\n"+initProjectName+"\n", nil)
+	lc := &localcfg.Config{Name: initProjectName, GCPProject: initProject, Region: "us-east5", RunsBucket: "proj-runs",
+		Bucket: "gs://other-read", Build: localcfg.Build{MachineType: "E2_HIGHCPU_32"},
+		BaseImages: map[string]string{"web-node": "us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:1.2.3"}}
+	e.r.setProject(lc)
+	cfg := &config.Config{Workflows: map[string]config.Workflow{"a": {Base: "web-node"}, "b": {Base: "web-node"}}}
+	spec := infra.RepoSpec{Name: "acme/app", Slug: "acme-app", BuildServiceAccountEmail: "b@x.iam", RegistryPath: "r",
+		Workflows: map[string]infra.WorkflowSpec{"a": {}, "b": {}}}
+	return e, out, lc, cfg, spec
+}
+
+func exitCode(t *testing.T, err error) int {
+	t.Helper()
+	var ee *ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("not an ExitError: %v", err)
+	}
+	return ee.Code
+}
+
+// A bad build spec is the user's to fix, and the loop stops at the first
+// workflow: the second is never submitted.
+func TestSubmitAndWaitBadSpecIsUserErrorAndStopsLoop(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fb.submitErr = fmt.Errorf("wrapped: %w", gcp.ErrBadBuildSpec)
+	e, _, lc, cfg, spec := twoWorkflowBuild(t)
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"a", "b"})
+	if err == nil || exitCode(t, err) != ExitUserError {
+		t.Fatalf("err = %v, want a user error", err)
+	}
+	if built != 0 || len(fb.specs) != 1 || len(e.r.res.Builds) != 0 {
+		t.Fatalf("built %d, specs %d, builds %v", built, len(fb.specs), e.r.res.Builds)
+	}
+}
+
+// Any other Submit error is remote, and also stops the loop.
+func TestSubmitAndWaitSubmitErrorIsRemoteAndStopsLoop(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fb.submitErr = errors.New("boom")
+	e, _, lc, cfg, spec := twoWorkflowBuild(t)
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"a", "b"})
+	if err == nil || exitCode(t, err) != ExitRemoteError {
+		t.Fatalf("err = %v, want a remote error", err)
+	}
+	if built != 0 || len(fb.specs) != 1 {
+		t.Fatalf("built %d, specs %d", built, len(fb.specs))
+	}
+}
+
+// A failed Wait counts nothing and records no build.
+func TestSubmitAndWaitWaitErrorIsRemoteAndRecordsNothing(t *testing.T) {
+	fb := useFakeBuilder(t)
+	fb.waitErr = errors.New("build failed")
+	e, out, lc, cfg, spec := twoWorkflowBuild(t)
+	built, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"a", "b"})
+	if err == nil || exitCode(t, err) != ExitRemoteError {
+		t.Fatalf("err = %v, want a remote error", err)
+	}
+	if built != 0 || len(e.r.res.Builds) != 0 || len(fb.specs) != 1 || strings.Contains(out.String(), "built acme/app") {
+		t.Fatalf("built %d, builds %v, specs %d, out %s", built, e.r.res.Builds, len(fb.specs), out.String())
+	}
+}
+
+// The spec given to Submit carries the machine type, the record bucket and
+// the base.
+func TestSubmitAndWaitSpecCarriesMachineBucketBase(t *testing.T) {
+	fb := useFakeBuilder(t)
+	e, _, lc, cfg, spec := twoWorkflowBuild(t)
+	if _, err := e.r.buildImages(t.Context(), lc, cfg, spec, []string{"a"}); err != nil || len(fb.specs) != 1 {
+		t.Fatalf("err %v, specs %d", err, len(fb.specs))
+	}
+	got := fb.specs[0]
+	want, err := cloudBuildSpec(spec, cfg, "a", lc.BaseImages["web-node"], "E2_HIGHCPU_32", "gs://proj-runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MachineType != "E2_HIGHCPU_32" || got.Bucket != "gs://proj-runs" || got.Base != lc.BaseImages["web-node"] {
+		t.Fatalf("machine %q, bucket %q, base %q", got.MachineType, got.Bucket, got.Base)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("spec = %+v, want %+v", got, want)
 	}
 }
