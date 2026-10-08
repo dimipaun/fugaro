@@ -316,6 +316,28 @@ func TestRefreshPlanSaysKeptForANewerCopy(t *testing.T) {
 	}
 }
 
+// The plan's build line names how the builds are confirmed: typed, or
+// --yes with no prompt.
+func TestRefreshPlanBuildConfirmationWording(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, refreshYAML, true)
+	r.appendConfig(t, "base_images: {web-node: "+managedRef("web-node", "0.6.0")+"}\n")
+	for _, yes := range []bool{false, true} {
+		p, err := refreshPreflight(t.Context(), refreshOptions{yes: yes}, &initOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out bytes.Buffer
+		p.print(&out)
+		typed := strings.Contains(out.String(), "confirmed by typing the project's name")
+		viaYes := strings.Contains(out.String(), "confirmed by --yes (no prompt)")
+		if typed == yes || viaYes != yes {
+			t.Errorf("yes=%v plan:\n%s", yes, out.String())
+		}
+	}
+}
+
 // fakeSteps replaces steps 2 to 4; fail names the step that fails, with
 // err. It records the steps that ran, in order (requirement: order is base
 // -> reload -> check job -> builds; a failure stops everything after it).
@@ -353,20 +375,25 @@ func fakeSteps(t *testing.T, fail string, err error) *[]string {
 // is not a checkout, is returned instead).
 func TestRefreshRefusedInAgentSession(t *testing.T) {
 	for _, yes := range []bool{false, true} {
-		t.Run(fmt.Sprintf("yes=%v", yes), func(t *testing.T) {
-			t.Setenv("CLAUDECODE", "1")
-			t.Chdir(t.TempDir()) // not even a checkout: preflight would refuse differently
-			noRecordReads(t)
-			fakeTerminal(t)
-			args := []string{"image", "refresh", "--repo", "acme/app"}
-			if yes {
-				args = append(args, "--yes")
-			}
-			_, _, err := executeStdin(t, "", args...)
-			if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal("CLAUDECODE")) {
-				t.Fatalf("exit %d, err %v", ExitCode(err), err)
-			}
-		})
+		for _, marker := range agentMarkers {
+			t.Run(fmt.Sprintf("yes=%v/%s", yes, marker), func(t *testing.T) {
+				for _, k := range agentMarkers {
+					t.Setenv(k, "")
+				}
+				t.Setenv(marker, "1")
+				t.Chdir(t.TempDir()) // not even a checkout: preflight would refuse differently
+				noRecordReads(t)
+				fakeTerminal(t)
+				args := []string{"image", "refresh", "--repo", "acme/app"}
+				if yes {
+					args = append(args, "--yes")
+				}
+				_, _, err := executeStdin(t, "", args...)
+				if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "fugaro image refresh applies cloud changes: "+initflow.AgentRefusal(marker)) {
+					t.Fatalf("exit %d, err %v", ExitCode(err), err)
+				}
+			})
+		}
 	}
 }
 
@@ -589,7 +616,7 @@ func TestRefreshPreflightStopTexts(t *testing.T) {
 	})
 }
 
-// D2, the other half of "no --yes": the options the command builds for its
+// The options the command builds for its
 // steps carry yes, nonInteractive and asJSON all false, so r.ask (the base
 // copy's and the check job's confirmations) cannot auto-confirm and a wrong
 // or missing typed name changes nothing. The real base step and the real

@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+// checkStaleYesClaims fails on a line naming fugaro image refresh that
+// still says --yes does not exist (it does since 2026-10-08).
+func checkStaleYesClaims(t *testing.T, path, line string) {
+	t.Helper()
+	if !strings.Contains(line, "fugaro image refresh") {
+		return
+	}
+	for _, stale := range []string{"no --yes", "has no --yes", "cannot be scripted", "cannot run in CI"} {
+		if strings.Contains(line, stale) {
+			t.Errorf("%s: a line naming fugaro image refresh says %q: %s", path, stale, line)
+		}
+	}
+}
+
+// The design doc is scanned for the same stale claims (not for flags: it
+// legitimately names the old init sequence and the flags refresh lacks).
+func TestDesignDocNoStaleYesClaims(t *testing.T) {
+	data, err := os.ReadFile("../../docs/design/image-refresh.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		checkStaleYesClaims(t, "docs/design/image-refresh.md", line)
+	}
+}
+
 // TestDocsNameImageRefresh: the operator docs give the one command, not the
 // four-step sequence, and every flag they give it is real.
 func TestDocsNameImageRefresh(t *testing.T) {
@@ -40,6 +66,7 @@ func TestDocsNameImageRefresh(t *testing.T) {
 			if !strings.Contains(line, "fugaro image refresh") {
 				continue
 			}
+			checkStaleYesClaims(t, path, line)
 			// Every --flag token of the paragraph (gcp-setup.md) or sentence about the command: a flag of
 			// another command the paragraph names, or one the command
 			// deliberately lacks, is listed; any other must exist on it.

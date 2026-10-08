@@ -76,6 +76,7 @@ type refreshPlan struct {
 	why              map[string]string
 	builds           []string
 	kept             map[string]bool // kinds whose newer managed copy is kept, not copied
+	yes              bool            // --yes: builds are confirmed without a prompt
 }
 
 // refusedAsIs marks a refusal that is printed exactly as written, without
@@ -174,7 +175,7 @@ func refreshPreflight(ctx context.Context, o refreshOptions, iopts *initOptions)
 		return nil, userErr("%v", err)
 	}
 	p := &refreshPlan{root: root, repo: repo, slug: slug, lc: lc, lcPath: lcPath, lcOld: old, cfg: cfg,
-		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}}
+		workflows: wfs, kinds: kinds, want: map[string]string{}, why: map[string]string{}, kept: map[string]bool{}, yes: o.yes}
 	for _, k := range kinds {
 		if p.want[k], err = refreshBase(lc, k, ver); err != nil {
 			return nil, err
@@ -211,7 +212,11 @@ func (p *refreshPlan) print(w io.Writer) {
 		fmt.Fprintf(w, "  2. base %s: %s (copied into your registry if it lacks it, after its own confirmation)\n", k, p.want[k])
 	}
 	fmt.Fprintln(w, "  3. the daily image check job: its image and FUGARO_CHECK_SPEC's base images follow the local config's, through the Cloud Run Admin API after its own confirmation (no Terraform; No changes when current)")
-	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable and confirmed by typing the project's name:\n", len(p.builds), len(p.workflows))
+	how := "confirmed by typing the project's name"
+	if p.yes {
+		how = "confirmed by --yes (no prompt)"
+	}
+	fmt.Fprintf(w, "  4. builds: %d of %d workflow(s), each billable, %s:\n", len(p.builds), len(p.workflows), how)
 	for _, wf := range p.workflows {
 		fmt.Fprintf(w, "     %s: %s\n", wf, p.why[wf])
 	}

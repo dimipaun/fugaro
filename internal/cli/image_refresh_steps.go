@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 
@@ -199,9 +200,12 @@ func builtSoFar(err error, built []string) error {
 // (2026-10-08 owner decision: --yes now covers every build here, with no
 // cap, superseding D2's "no --yes" for this command only; askTyped's own
 // Typed class, used elsewhere, still never takes --yes). A coding agent's
-// session never reaches this: refuseRefreshHere already refused before any
-// step ran.
+// session is refused here too, before the --yes shortcut, even though
+// refuseRefreshHere already refused before any step ran (defence in depth).
 func (r *initRun) askBuild(what string) (confirmed, reachable bool, err error) {
+	if m := agentMarker(os.Getenv); m != "" {
+		return false, false, &initflow.AgentError{Marker: m}
+	}
 	if r.o.yes {
 		fmt.Fprintf(r.w, "⚠ CONFIRM (project %s, GCP project %s): %s\n", r.projectName, r.gcpProject, what)
 		fmt.Fprintln(r.w, "  confirmed by --yes")

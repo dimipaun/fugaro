@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/dimipaun/fugaro/internal/initflow"
 	"net/http"
 	"os"
 	"strings"
@@ -527,6 +528,31 @@ func TestAskBuild(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output lacks %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// Defence in depth: askBuild refuses an agent's session itself, --yes
+// included, even if the up-front refusal were bypassed (it is called
+// directly here). Mutation: drop the agent check and --yes confirms.
+func TestAskBuildRefusesAnAgentSession(t *testing.T) {
+	for _, marker := range agentMarkers {
+		t.Run(marker, func(t *testing.T) {
+			for _, k := range agentMarkers {
+				t.Setenv(k, "")
+			}
+			t.Setenv(marker, "1")
+			r := newInitRig(t)
+			e := rigEngine(t, r, &initOptions{yes: true})
+			out := atNoTerminal(e)
+			ok, _, err := e.r.askBuild("do the thing")
+			var ae *initflow.AgentError
+			if !errors.As(err, &ae) || ae.Marker != marker || ok {
+				t.Fatalf("ok=%v err=%v", ok, err)
+			}
+			if strings.Contains(out.String(), "confirmed by --yes") {
+				t.Errorf("confirmed in an agent session:\n%s", out.String())
+			}
+		})
 	}
 }
 
