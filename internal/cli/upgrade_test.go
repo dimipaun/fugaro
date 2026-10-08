@@ -119,6 +119,18 @@ func TestUpgradeCheckWritesNothing(t *testing.T) {
 	}
 }
 
+// TestRefAboveBinaryComparesPatchNumerically: v0.5.10 is above 0.5.2 (patch
+// 10 > 2), which a string comparison would get backwards ("10" < "2").
+func TestRefAboveBinaryComparesPatchNumerically(t *testing.T) {
+	withVersion(t, "0.5.2")
+	if !refAboveBinary("v0.5.10") {
+		t.Error("v0.5.10 should read as above 0.5.2: the patch is compared numerically, not as a string")
+	}
+	if refAboveBinary("v0.5.1") {
+		t.Error("v0.5.1 should not read as above 0.5.2")
+	}
+}
+
 // TestUpgradeNeverMovesAPinDown: U10 for every marketplace and enablement
 // state, not only the one pluginwire.Status calls newer.
 func TestUpgradeNeverMovesAPinDown(t *testing.T) {
