@@ -216,6 +216,47 @@ func TestResolveWithoutLayerIsParse(t *testing.T) {
 	}
 }
 
+// TestResolveWorkflowProfileAllDigits: an unquoted all-digit profile name
+// (such as 12345) decodes as a YAML int in the plain tree, but is a valid
+// profile name (ProjectNameRE); Resolve must read it through the
+// strict-typed Config.Workflows[name].Profile, not an untyped assertion
+// on the tree, so an unknown one is reported rather than silently treated
+// as no profile (which would surface as unrelated "commands.test is
+// required" errors instead).
+func TestResolveWorkflowProfileAllDigits(t *testing.T) {
+	l := mustLayer(t, testLayer)
+	_, _, ps := Resolve([]byte(minimalRepo+"workflows:\n  api:\n    profile: 12345\n"), l)
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.String())
+	}
+	want := `workflows.api.profile: names profile "12345", which project acme's layer does not have (its profiles: java-service, node-web)`
+	if got := strings.Join(msgs, "; "); !strings.Contains(got, want) {
+		t.Fatalf("problems %q, want %q", got, want)
+	}
+}
+
+// TestResolveEmptyWorkflowsBlockFallsBackToProfile: an explicit
+// `workflows: {}` must be treated the same as omitting workflows: or
+// writing `workflows:` with no value, taking the implicit workflow from
+// profile: or the project's default_profile, not merged as a (valid but
+// empty) workflows: map that only later fails Validate's generic
+// "must define at least one workflow", losing the project-layer hint.
+func TestResolveEmptyWorkflowsBlockFallsBackToProfile(t *testing.T) {
+	l := mustLayer(t, testLayer)
+	c, res, ps := Resolve([]byte(minimalRepo+"workflows: {}\n"), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	w, ok := c.Workflows[ImplicitWorkflow]
+	if !ok || len(c.Workflows) != 1 || w.Profile != "java-service" {
+		t.Fatalf("workflows = %v", c.Workflows)
+	}
+	if got := res.SourceOf("workflows.default.profile"); got != SourceProject {
+		t.Fatalf("source = %q, want %q", got, SourceProject)
+	}
+}
+
 func TestResolveIsDeterministic(t *testing.T) {
 	l := mustLayer(t, testLayer)
 	first, _, _ := Resolve([]byte(minimalRepo), l)

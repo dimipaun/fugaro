@@ -187,7 +187,8 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 		return q, true
 	}
 	out, profileOf := map[string]any{}, map[string]string{}
-	if raw, has := tree["workflows"]; !has || raw == nil {
+	wm, _ := tree["workflows"].(map[string]any)
+	if len(wm) == 0 {
 		name, from := repo.Profile, SourceRepo
 		if name == "" {
 			name, from = l.DefaultProfile, SourceProject
@@ -211,12 +212,11 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 		return nil, nil, []Problem{{Path: "profile", Message: "applies only to a fugaro.yaml with no workflows:; name each workflow's profile with workflows.<name>.profile"}}
 	}
 	var ps []Problem
-	wm, _ := tree["workflows"].(map[string]any)
 	for _, name := range sortedKeys(wm) {
 		rw, _ := wm[name].(map[string]any)
 		path := "workflows." + name
 		w := map[string]any{}
-		if pname, _ := rw["profile"].(string); pname != "" {
+		if pname := repo.Workflows[name].Profile; pname != "" {
 			p, ok := profileTree(pname)
 			if !ok {
 				ps = append(ps, Problem{Path: path + ".profile", Message: fmt.Sprintf("names profile %q, which project %s's layer does not have (its profiles: %s)", pname, l.Project, names)})
