@@ -26,6 +26,7 @@ const logsLookback = time.Minute
 type logsOptions struct {
 	cloud          cloudOptions
 	follow, asJSON bool
+	url            bool
 }
 
 // logLine is one entry as logs --json prints it.
@@ -53,6 +54,7 @@ func newLogsCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.BoolVarP(&o.follow, "follow", "f", false, "keep printing new entries until the execution ends")
 	f.BoolVar(&o.asJSON, "json", false, "print one JSON object per entry")
+	f.BoolVar(&o.url, "url", false, "print the execution's Cloud console link instead of the logs")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -68,6 +70,16 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 	if err != nil {
 		return err
 	}
+	if o.url {
+		if o.follow || o.asJSON {
+			return userErr("--url prints only the link: it doesn't go with --follow or --json")
+		}
+		if l.LogURL == "" {
+			return userErr("no console link was recorded for this run's execution")
+		}
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), oneLine(l.LogURL))
+		return err
+	}
 	red := agent.RedactFunc(cliSecrets(os.Getenv)) // forms built once per command
 	out := cmd.OutOrStdout()
 	n := 0
@@ -79,18 +91,24 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 		return remote(fmt.Errorf("reading the logs: %w", err))
 	}
 	if err == nil && n == 0 {
-		emptyViewHint(cmd.ErrOrStderr(), env)
+		emptyViewHint(cmd.ErrOrStderr(), env, l.LogURL)
 	}
 	return nil
 }
 
 // emptyViewHint says, when a read through the Fugaro log view found
 // nothing, that a run from before log isolation logged only to _Default,
-// which the view doesn't cover.
-func emptyViewHint(w io.Writer, env *cloudEnv) {
-	if env.lc.LogView != "" {
-		fmt.Fprintln(w, "note: no log entries in the Fugaro log view. A run from before log isolation logged only to the project's _Default bucket, which fugaro logs and diagnose no longer read; the Cloud Run console's page for its execution shows them.")
+// which the view doesn't cover. url, when known, is the execution's Cloud
+// console link, named so the hint points somewhere that still has the logs.
+func emptyViewHint(w io.Writer, env *cloudEnv, url string) {
+	if env.lc.LogView == "" {
+		return
 	}
+	msg := "note: no log entries in the Fugaro log view. A run from before log isolation logged only to the project's _Default bucket, which fugaro logs and diagnose no longer read; the Cloud Run console's page for its execution shows them."
+	if url != "" {
+		msg += " The Cloud console's page for this execution: " + oneLine(url)
+	}
+	fmt.Fprintln(w, msg)
 }
 
 // logQuery reads l's execution from shortly before its launch.
