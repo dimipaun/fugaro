@@ -16,22 +16,19 @@ func TestStale(t *testing.T) {
 	unwritten := &runstore.Record{} // no status yet: a record that just has no Status set, not a known terminal one
 	done := &runstore.Record{Status: runstore.StatusFailed}
 	cases := []struct {
-		name         string
-		rec          *runstore.Record
-		execTerminal bool
-		want         bool
+		name string
+		rec  *runstore.Record
+		want bool
 	}{
-		{"no record, no backend proof: busy", nil, false, false},
-		{"running record, no backend proof: busy", running, false, false},
-		{"record with no status yet, no backend proof: busy", unwritten, false, false},
-		{"terminal record: stale", done, false, true},
-		{"no record but backend confirms the execution ended: stale", nil, true, true},
-		{"running record but backend confirms the execution ended: stale", running, true, true},
+		{"no record: busy", nil, false},
+		{"running record: busy", running, false},
+		{"record with no status yet: busy", unwritten, false},
+		{"terminal record: stale", done, true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := Stale(c.rec, c.execTerminal); got != c.want {
-				t.Errorf("Stale(%+v, %v) = %v, want %v", c.rec, c.execTerminal, got, c.want)
+			if got := Stale(c.rec); got != c.want {
+				t.Errorf("Stale(%+v) = %v, want %v", c.rec, got, c.want)
 			}
 		})
 	}

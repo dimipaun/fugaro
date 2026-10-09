@@ -235,9 +235,13 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 // A lock that still looks live by its expiry is taken over anyway (no
 // write here: the CLI only decides whether to launch, and only the runner
 // writes locks/, §4.1) when lock.Stale says its holder's run has ended:
-// its own run record reached a terminal status, or, the same signal ls and
-// diagnose use to call a run failed when its container was killed, the
-// backend confirms its execution did. warn gets a note when that happens.
+// its own run record reached a terminal status. This calls the exact same
+// function the runner's own lock.Acquire uses (lockcache.go's
+// staleHolder), on purpose: the CLI has no stronger proof to offer that
+// the runner could also act on (it has no Cloud Run Admin credential, so
+// it can never confirm a holder's execution through the backend either),
+// and a launch the runner's own lock.Acquire would then refuse as busy is
+// worse than refusing it here. warn gets a note when the takeover happens.
 func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time, warn io.Writer) error {
 	key := lock.Key(slug, branch)
 	data, _, err := env.bucket.Read(ctx, key)
@@ -264,27 +268,11 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 	if corruptObject(err) {
 		rec = nil
 	}
-	if lock.Stale(rec, holderExecutionOver(ctx, env, h.Execution)) {
+	if lock.Stale(rec) {
 		fmt.Fprintf(warn, "note: run %s's branch lock looked live but its run has ended; taking the branch over\n", oneLine(h.RunID))
 		return nil
 	}
 	return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
-}
-
-// holderExecutionOver reports whether the backend confirms a lock
-// holder's execution has ended: a positive proof of termination,
-// independent of whatever its own result.json says (a killed container
-// may never finalize it). It is the same signal runview.Join and cancel
-// use (backend.Execution.State.Terminal()) to call a run failed or
-// already finished. An execution the backend doesn't recognize, or any
-// read error, is not treated as proof: result.json is all there is to go
-// on then.
-func holderExecutionOver(ctx context.Context, env *cloudEnv, execution string) bool {
-	if execution == "" {
-		return false
-	}
-	e, err := env.be.Execution(ctx, execution)
-	return err == nil && e.State.Terminal()
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a

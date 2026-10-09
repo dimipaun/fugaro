@@ -44,20 +44,23 @@ func (e *BusyError) Error() string {
 // take its lock over at once instead of waiting for it to expire. rec is
 // the holder's own run record (runs/<slug>/<run-id>/result.json), read the
 // same way the CLI and the runner already do (runstore.Store.ReadRecord);
-// nil when it could not be read at all. execTerminal is true only when the
-// caller has independently confirmed, through the backend, that the
-// holder's execution has ended: the same backend.Execution.State.Terminal()
-// signal ls and diagnose use to call a run failed when its container was
-// killed before it could write a final record. The CLI can ask the
-// backend this way; the runner cannot (it holds no Cloud Run Admin
-// credential, only the bucket) and always passes false.
+// nil when it could not be read at all.
+//
+// This is deliberately the only signal: the runner, which is the only
+// place a lock is ever taken over (the CLI only reads locks/ to decide
+// whether to launch, never writes it, §4.1), has no Cloud Run Admin
+// credential and so can never confirm a holder's execution through the
+// backend, only through its own record. A decision that used a stronger
+// signal (such as the backend's execution state, which ls and diagnose do
+// use to call a run failed after a kill that never finalized it) would let
+// the CLI launch a run whose own lock.Acquire then finds the same lock
+// still live and not stale by this test, and fails it outright: a launch
+// that was never going to succeed. So the CLI's checkBranchLock calls this
+// exact function too, never a more lenient one, and the two always agree.
 //
 // Fails closed: an unreadable or missing record, or one whose status is
 // still "running", is never stale on its own.
-func Stale(rec *runstore.Record, execTerminal bool) bool {
-	if execTerminal {
-		return true
-	}
+func Stale(rec *runstore.Record) bool {
 	if rec == nil {
 		return false
 	}

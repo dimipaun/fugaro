@@ -506,6 +506,41 @@ func TestCancelAlreadyFinishedWithoutLiveLock(t *testing.T) {
 	}
 }
 
+// A corrupt (or oversized) result.json in the e.State.Terminal() branch
+// must not turn "already finished" into a hard failure: the exact run this
+// feature is about (one whose container died mid-write) is the one most
+// likely to leave a truncated result.json behind.
+func TestCancelAlreadyFinishedToleratesCorruptRecord(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	// The container died mid-write of its final record, right as the
+	// backend settled on Succeeded: ownerLaunch's own read (which must
+	// still succeed, or cancel would refuse the run outright, a separate
+	// and pre-existing behavior this test doesn't touch) sees it fine, and
+	// only the fresh read in the e.State.Terminal() branch meets the
+	// corruption.
+	env.be = onFirstExecutionRead(env.be, func() {
+		putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/result.json", []byte("{not json"))
+	})
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.Status != cancelAlreadyFinished || res.LockHeld {
+		t.Fatalf("cancel = %+v (parse err %v) (%s)", res, jerr, out.String())
+	}
+}
+
 // The other already-finished path: the backend has forgotten the
 // execution entirely (ErrNotFound), but result.json is already final. It
 // too notes a live lock rather than leaving "nothing to cancel" unexplained.

@@ -102,9 +102,7 @@ func TestBranchBusyIsInfraError(t *testing.T) {
 // TestTakesOverLockOfAnEndedHolder: a branch lock held by another run,
 // still live by its own expiry, is taken over at once (not refused as
 // branch busy) when that other run's own result.json has already reached
-// a terminal status: the runner has no Cloud Run Admin credential to ask
-// the backend about another execution, so this is the only signal it can
-// use (lock.Stale with execTerminal false).
+// a terminal status (lock.Stale, the only signal a takeover ever uses).
 func TestTakesOverLockOfAnEndedHolder(t *testing.T) {
 	h := newHarness(t, "", nil)
 	b := withBucket(h)

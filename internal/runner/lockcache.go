@@ -69,19 +69,17 @@ func (r *run) lockDeadline() time.Time {
 }
 
 // staleHolder reports whether a live-looking branch lock's holder has
-// provably ended, from the runner's own bucket reads alone: it holds no
-// Cloud Run Admin credential to ask the backend about another execution
-// (unlike the CLI's checkBranchLock), so it goes only by the holder's own
-// run record reaching a terminal status (lock.Stale with execTerminal
-// false). A record this run can't read, or one still "running" (the
-// common case of a killed container that never finalized), leaves the
-// lock live: it is taken over once it expires, as before.
+// provably ended, from the holder's own run record (lock.Stale): the only
+// signal a lock takeover, which happens only here, ever uses. A record
+// this run can't read, or one still "running" (the common case of a
+// killed container that never finalized), leaves the lock live: it is
+// taken over once it expires, as before.
 func (r *run) staleHolder(ctx context.Context, h lock.Holder) bool {
 	rec, err := runstore.Open(r.d.Bucket.Bucket, r.d.Store.Slug(), h.RunID).ReadRecord(ctx)
 	if err != nil {
 		return false
 	}
-	stale := lock.Stale(rec, false)
+	stale := lock.Stale(rec)
 	if stale {
 		r.d.Log.Info("branch lock taken over: holder's run has ended", "branch", r.rec.Branch, "holder_run_id", h.RunID, "holder_status", rec.Status)
 	}

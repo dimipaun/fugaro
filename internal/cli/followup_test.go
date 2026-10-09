@@ -215,11 +215,15 @@ func TestRunPRTakesOverLockOfATerminalHolder(t *testing.T) {
 	}
 }
 
-// The same live-by-expiry lock, but the holder's execution is what proves
-// it over: its own record still says "running" (never finalized), the
-// same situation ls and diagnose call infra_error once the backend
-// confirms the execution ended.
-func TestRunPRTakesOverLockViaBackendTerminalExecution(t *testing.T) {
+// A live lock whose holder's own record still says "running" is refused
+// even when the backend separately confirms the holder's execution ended:
+// the runner's own lock.Acquire, the only place a lock is ever taken over,
+// has no Cloud Run Admin credential and would refuse the very same lock as
+// busy (it goes only by the record). Launching here would be a container
+// run burned on a guaranteed infra_error "branch busy", contradicting
+// whatever the CLI told the user; checkBranchLock must not use a signal
+// the runner itself can't act on.
+func TestRunPRRefusesLockEvenWhenOnlyBackendConfirmsTermination(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
 	holder := runIDAt(0, "000100", "bbbb")
@@ -229,12 +233,13 @@ func TestRunPRTakesOverLockViaBackendTerminalExecution(t *testing.T) {
 		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)})
 	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
-	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
-	if err != nil {
-		t.Fatalf("a lock whose holder's execution the backend calls failed: %v (%s)", err, errOut)
+	n := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
+		t.Fatalf("err = %v", err)
 	}
-	if !strings.Contains(errOut, holder) {
-		t.Fatalf("stderr = %q, want a note naming %s", errOut, holder)
+	if len(f.run.Executions()) != n {
+		t.Fatal("a follow-up launched even though only the backend called its holder over")
 	}
 }
 

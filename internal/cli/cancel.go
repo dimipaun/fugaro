@@ -169,9 +169,13 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		return remote(err)
 	case e.State.Terminal():
 		rec, rerr := absent(s.ReadRecord(ctx))
-		if rerr != nil {
+		if rerr != nil && !corruptObject(rerr) {
 			return remote(rerr)
 		}
+		// A corrupt or oversized result.json can't say which branch to
+		// check either: fail closed, as if there were no record, same as
+		// checkBranchLock. The run (likely killed mid-write, the exact
+		// case this is about) is still reported as already finished.
 		branch := ""
 		if rec != nil {
 			branch = rec.Branch
