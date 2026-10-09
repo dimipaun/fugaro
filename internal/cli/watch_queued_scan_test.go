@@ -75,7 +75,7 @@ func TestQueuedScanListCallsIndependentOfHistory(t *testing.T) {
 
 	sc := openedScanner(g.Bucket(t, "runs").Bucket)
 	before := g.ListCalls()
-	rows, note, err := sc.scan(context.Background())
+	rows, _, note, err := sc.scan(context.Background())
 	if err != nil || note != "" {
 		t.Fatalf("scan: %v, note %q", err, note)
 	}
@@ -130,7 +130,7 @@ func TestQueuedScanHungRepoKeepsOthers(t *testing.T) {
 		return runstore.ListRunIDs(ctx, b, slug, since)
 	}
 	start := time.Now()
-	rows, note, err := sc.scan(ctx)
+	rows, _, note, err := sc.scan(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestQueuedScanRepoErrorKeepsPartialResults(t *testing.T) {
 		}
 		return runstore.ListRunIDs(ctx, b, slug, since)
 	}
-	rows, note, err := sc.scan(ctx)
+	rows, _, note, err := sc.scan(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestQueuedScanOpenBackoff(t *testing.T) {
 	var at []int
 	for poll := range 21 { // one poll a minute for 20 minutes
 		before := opens.Load()
-		_, _, err := sc.scan(context.Background())
+		_, _, _, err := sc.scan(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "no credentials") {
 			t.Fatalf("poll %d: err = %v", poll, err)
 		}
@@ -293,14 +293,14 @@ func scanWith60(t *testing.T, delay, repoTimeout time.Duration) (sc *queuedScann
 	sc.repoTimeout = repoTimeout
 	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-big"}, nil }
 	reads = new(atomic.Int32)
-	sc.readRun = func(ctx context.Context, env *cloudEnv, slug, id string, since, now time.Time) (watch.QueuedRun, bool, error) {
+	sc.readRun = func(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, now time.Time) (scanResult, error) {
 		select {
 		case <-time.After(delay):
 		case <-ctx.Done():
-			return watch.QueuedRun{}, false, ctx.Err()
+			return scanResult{}, ctx.Err()
 		}
 		reads.Add(1)
-		return queuedFromRun(ctx, env, slug, id, since, now)
+		return scanRun(ctx, env, slug, id, w, now)
 	}
 	return sc, reads
 }
@@ -310,7 +310,7 @@ func scanWith60(t *testing.T, delay, repoTimeout time.Duration) (sc *queuedScann
 // all 60 rows show, with no note.
 func TestQueuedScanReadsRunsConcurrently(t *testing.T) {
 	sc, _ := scanWith60(t, 50*time.Millisecond, 2*time.Second)
-	rows, note, err := sc.scan(context.Background())
+	rows, _, note, err := sc.scan(context.Background())
 	if err != nil || note != "" {
 		t.Fatalf("scan: %v, note %q", err, note)
 	}
@@ -323,7 +323,7 @@ func TestQueuedScanReadsRunsConcurrently(t *testing.T) {
 // read are kept and the note counts the runs not read.
 func TestQueuedScanDeadlineKeepsRowsReadSoFar(t *testing.T) {
 	sc, reads := scanWith60(t, 100*time.Millisecond, 350*time.Millisecond)
-	rows, note, err := sc.scan(context.Background())
+	rows, _, note, err := sc.scan(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,7 +360,7 @@ func TestQueuedScanLookbackAndMargin(t *testing.T) {
 	putQueued(t, put, "acme-a", old, now.Add(-28*time.Minute))
 	sc := openedScanner(b)
 	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
-	rows, note, err := sc.scan(ctx)
+	rows, _, note, err := sc.scan(ctx)
 	if err != nil || note != "" {
 		t.Fatalf("scan: %v, note %q", err, note)
 	}
@@ -368,5 +368,45 @@ func TestQueuedScanLookbackAndMargin(t *testing.T) {
 	slices.Sort(want)
 	if got := queuedRunIDs(rows); !slices.Equal(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
+	}
+}
+
+// A run whose result.json exists, minted an hour ago (well past the queued
+// margin, but inside the scanner's wider finished lookback), comes back in
+// the scan's finished list with its PR URL and outcome, and never in its
+// queued list.
+func TestScannerReturnsFinishedRuns(t *testing.T) {
+	ctx := context.Background()
+	f := newCloudFixture(t)
+	id := time.Now().UTC().Add(-time.Hour).Format("20060102-150405") + "-aaaa"
+	seedRun(t, f, id, "", "someone@example.com", false)
+	finishedAt := time.Now().Add(-45 * time.Minute)
+	writeRecord(t, f, id, &runstore.Record{
+		Version: 1, RunID: id, Repo: "acme/app", Status: runstore.StatusSucceeded, Outcome: runstore.OutcomeReady,
+		PR:         &runstore.PRRef{Number: 7, URL: "https://github.com/acme/app/pull/7"},
+		StartedAt:  time.Now().Add(-time.Hour),
+		FinishedAt: &finishedAt,
+	})
+
+	b, err := blob.OpenBucket(ctx, f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	sc := openedScanner(b)
+	queued, finished, note, err := sc.scan(ctx)
+	if err != nil || note != "" {
+		t.Fatalf("scan: %v, note %q", err, note)
+	}
+	if len(queued) != 0 {
+		t.Fatalf("a finished run must not also show queued: %v", queued)
+	}
+	if len(finished) != 1 {
+		t.Fatalf("finished = %+v, want 1 row", finished)
+	}
+	got := finished[0]
+	if got.Run != id || got.Status != "succeeded" || got.Outcome != "ready" ||
+		got.PRURL != "https://github.com/acme/app/pull/7" || got.PRNumber != 7 {
+		t.Fatalf("finished[0] = %+v", got)
 	}
 }

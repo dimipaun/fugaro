@@ -42,9 +42,11 @@ type TUIOptions struct {
 	Config  Config
 	RepoKey string // --repo's wire key, "" for all
 	Repo    string // --repo as given
-	// Queued is the latest queued-run rows and degrade note, read fresh on
-	// every rebuild; nil when the project has no queued-run source.
-	Queued func() ([]QueuedRun, string)
+	// Queued is the latest queued-run and finished-run rows and degrade
+	// note, read fresh on every rebuild; nil when the project has no
+	// queued-run source. The screen does not yet show the finished rows
+	// (plan generic-tool Task 5/6 wire them in).
+	Queued func() ([]QueuedRun, []FinishedRun, string)
 
 	ASCII, NoColor bool
 	// Exec runs a confirmed kill or resume (Execute against the database).
@@ -226,7 +228,7 @@ func (m *model) live() bool {
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
 	if m.o.Queued != nil {
-		rows, note := m.o.Queued()
+		rows, _, note := m.o.Queued() // finished rows: not shown yet (plan generic-tool Task 5/6)
 		v = MergeQueued(v, m.o.Config, rows, note, m.now)
 	}
 	if m.o.RepoKey != "" {

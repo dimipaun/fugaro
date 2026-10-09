@@ -125,6 +125,17 @@ type RunRow struct {
 	Stuck       bool
 	Workflow    string
 	RequestedBy string
+
+	// Finished marks a row built from the runs bucket's result.json, not
+	// RTDB: the run's registry entry is already gone (design generic-tool
+	// §10.1). Outcome is the record's outcome (ready, draft or none);
+	// Failed is set when Stage's status is not "succeeded"; PRURL and
+	// PRNumber, when the run opened one.
+	Finished bool
+	Outcome  string
+	Failed   bool
+	PRURL    string
+	PRNumber int
 }
 
 // RepoBlock is one repository.
@@ -136,6 +147,9 @@ type RepoBlock struct {
 	Burn                     Burn
 	Kill                     KillState
 	Runs                     []RunRow
+	// Finished are rows from the runs bucket, not RTDB (MergeFinished):
+	// runs whose registry entry is already gone. Newest first.
+	Finished []RunRow
 }
 
 // View is the typed snapshot a renderer draws.
