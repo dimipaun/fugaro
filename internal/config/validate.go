@@ -311,7 +311,7 @@ func checkDockerfile(p, root string, w Workflow) []Problem {
 		return []Problem{{Path: p + ".dockerfile", Message: w.Dockerfile + " cannot be read: it must be a regular file of at most 1 MiB, not a link"}}
 	}
 	var ps []Problem
-	for _, msg := range LintDockerfile(data, w.Base) {
+	for _, msg := range LintDockerfile(data, w.BaseKind()) {
 		ps = append(ps, Problem{Path: p + ".dockerfile", Message: w.Dockerfile + " " + msg})
 	}
 	return ps
