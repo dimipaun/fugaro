@@ -65,7 +65,7 @@ func TestTakeoverDeletesAMatchingLock(t *testing.T) {
 			if _, err := b.Create(ctx, key, mustJSON(t, holder), "application/json"); err != nil {
 				t.Fatal(err)
 			}
-			if err := Takeover(ctx, b, key, holder); err != nil {
+			if _, err := Takeover(ctx, b, key, holder); err != nil {
 				t.Fatalf("Takeover = %v", err)
 			}
 			if ok, _ := b.Exists(ctx, key); ok {
@@ -80,7 +80,7 @@ func TestTakeoverIsFineWhenLockAlreadyGone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			key := Key("acme-app", "fugaro/gone")
-			if err := Takeover(ctx, b, key, Holder{RunID: "x", Execution: "e1"}); err != nil {
+			if _, err := Takeover(ctx, b, key, Holder{RunID: "x", Execution: "e1"}); err != nil {
 				t.Fatalf("Takeover of an absent lock = %v", err)
 			}
 		})
@@ -109,7 +109,7 @@ func TestTakeoverRefusesAChangedHolder(t *testing.T) {
 					if _, err := b.Create(ctx, key, mustJSON(t, c.actual), "application/json"); err != nil {
 						t.Fatal(err)
 					}
-					if err := Takeover(ctx, b, key, c.checked); !errors.Is(err, ErrHolderChanged) {
+					if _, err := Takeover(ctx, b, key, c.checked); !errors.Is(err, ErrHolderChanged) {
 						t.Fatalf("Takeover of a changed holder = %v, want ErrHolderChanged", err)
 					}
 					data, _, err := b.Read(ctx, key)
@@ -155,7 +155,7 @@ func TestTakeoverLosesRaceWhenLockChangesUnderneath(t *testing.T) {
 				}
 			}
 			t.Cleanup(func() { beforeTakeoverDelete = nil })
-			if err := Takeover(ctx, b, key, checked); !errors.Is(err, ErrHolderChanged) {
+			if _, err := Takeover(ctx, b, key, checked); !errors.Is(err, ErrHolderChanged) {
 				t.Fatalf("Takeover across the race = %v, want ErrHolderChanged", err)
 			}
 			data, _, err := b.Read(ctx, key)
@@ -180,13 +180,20 @@ func TestTakeoverSurfacesAForbiddenDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	g.ForbidObjectDeletes(1)
-	err := Takeover(ctx, b, key, holder)
+	_, wantGen, err := b.Read(ctx, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gen, err := Takeover(ctx, b, key, holder)
 	var ae *googleapi.Error
 	if !errors.As(err, &ae) || ae.Code != http.StatusForbidden {
 		t.Fatalf("Takeover under a forbidden delete = %v, want a 403", err)
 	}
 	if errors.Is(err, ErrHolderChanged) {
 		t.Fatal("a 403 must not be reported as a changed holder")
+	}
+	if gen != wantGen {
+		t.Fatalf("Takeover's verified generation = %d, want %d (the lock's own, read once, never re-read after the 403)", gen, wantGen)
 	}
 	if ok, _ := b.Exists(ctx, key); !ok {
 		t.Fatal("a forbidden delete must not remove the lock")
@@ -260,6 +267,53 @@ func TestMarkReleasingFailureLeavesReleaseWorking(t *testing.T) {
 			data, _, err := b.Read(ctx, key)
 			if err != nil || string(data) != string(mustJSON(t, other)) {
 				t.Fatalf("Release touched the other holder's lock: %v, %s", err, data)
+			}
+		})
+	}
+}
+
+// TestMarkReleasingNeverExtendsAnAlreadyExpiredLock: a run that overran
+// its own deadline (or hit clock skew) calls MarkReleasing with a now
+// already at or past the lock's own recorded ExpiresAt. Rewriting then
+// would move the expiry later, not earlier — the one thing a marker meant
+// only to shorten a lock's life must never do, since the lock may
+// already be a follow-up's to take over. MarkReleasing must leave it
+// exactly as it was and report success (there is nothing left to do: an
+// expired lock is already Acquire's to take).
+func TestMarkReleasingNeverExtendsAnAlreadyExpiredLock(t *testing.T) {
+	for name, b := range buckets(t) {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			key := Key("acme-app", "fugaro/already-expired")
+			expiresAt := t0.Add(time.Hour)
+			h := Holder{RunID: "20260927-100000-aaaa", ExpiresAt: expiresAt}
+			l, err := Acquire(ctx, b, key, h, t0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _, err := b.Read(ctx, key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// now is already at the lock's own expiry: marking must be a
+			// no-op, not a rewrite to an even later ExpiresAt.
+			if err := l.MarkReleasing(ctx, expiresAt); err != nil {
+				t.Fatalf("MarkReleasing at the lock's own expiry = %v, want nil (a no-op)", err)
+			}
+			after, _, err := b.Read(ctx, key)
+			if err != nil || string(after) != string(before) {
+				t.Fatalf("MarkReleasing rewrote an already-expired lock: before %s, after %s", before, after)
+			}
+			// now well past the expiry: same, a no-op.
+			if err := l.MarkReleasing(ctx, expiresAt.Add(time.Hour)); err != nil {
+				t.Fatalf("MarkReleasing well past the lock's own expiry = %v, want nil", err)
+			}
+			after2, _, err := b.Read(ctx, key)
+			if err != nil || string(after2) != string(before) {
+				t.Fatalf("MarkReleasing rewrote an already-expired lock: before %s, after %s", before, after2)
+			}
+			if err := l.Release(ctx); err != nil {
+				t.Fatalf("Release after a no-op MarkReleasing = %v", err)
 			}
 		})
 	}

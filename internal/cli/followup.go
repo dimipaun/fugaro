@@ -265,14 +265,15 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 	if !lock.Stale(h, executionTerminal(ctx, env, h.Execution)) {
 		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
 	}
-	switch err := lock.Takeover(ctx, env.bucket, key, h); {
+	gen, err := lock.Takeover(ctx, env.bucket, key, h)
+	switch {
 	case err == nil:
 		fmt.Fprintf(warn, "note: run %s's execution has ended (confirmed by the backend); cleared its branch lock\n", oneLine(h.RunID))
 		return nil
 	case errors.Is(err, lock.ErrHolderChanged):
 		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
 	case isAccessDenied(err):
-		return userErr("%s", lockClearMessage(ctx, env, key, h.RunID))
+		return userErr("%s", lockClearMessage(env, key, gen, h.RunID))
 	default:
 		return remote(err)
 	}
@@ -298,15 +299,18 @@ func executionTerminal(ctx context.Context, env *cloudEnv, execution string) boo
 // holder is confirmed over but deleting its lock was refused for lack of
 // access: under the 0.7.0 bucket hardening (design bucket-iam.md §3, §10)
 // locks/ is no longer launcher-writable, so only an operator, or the
-// sweeper, can clear it. The command names the object's current
-// generation, read fresh here (best effort: a read failure just leaves it
-// off), so running it by hand can't remove a different lock a later run
-// has since written there.
-func lockClearMessage(ctx context.Context, env *cloudEnv, key, runID string) string {
+// sweeper, can clear it. gen must be the generation lock.Takeover itself
+// verified matched the confirmed-stale holder (its return value, even on
+// a failure): it is never read fresh here, because a second read, after
+// Takeover already failed, could see a different run's lock by then — a
+// launcher who ran the printed command against its current generation
+// could delete a live run's lock. gen zero (nothing was verified, or the
+// driver doesn't carry one) omits the generation from the object name.
+func lockClearMessage(env *cloudEnv, key string, gen int64, runID string) string {
 	object := key
 	if name := env.lc.RunsBucketName(); name != "" {
 		object = "gs://" + name + "/" + key
-		if _, gen, err := env.bucket.Read(ctx, key); err == nil && gen != 0 {
+		if gen != 0 {
 			object = fmt.Sprintf("%s#%d", object, gen)
 		}
 	}

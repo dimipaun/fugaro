@@ -17,8 +17,10 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/task"
 )
 
 func cancelled(t *testing.T, f *cloudFixture, id string) bool {
@@ -149,6 +151,39 @@ func TestCancelNotLaunchedAndFinished(t *testing.T) {
 	_ = json.Unmarshal([]byte(out), &res)
 	if err != nil || res.Status != "already-finished" || cancelled(t, f, "20260927-100000-bbbb") {
 		t.Fatalf("finished: %+v, %v", res, err)
+	}
+}
+
+// A hard cancel (--now) puts the run's own execution into Cancelled
+// itself, the one case cancel causes rather than merely observes: once
+// that succeeds, cancel clears the branch lock right away (the same
+// clearStaleLock as every other confirmed-terminal path), since a
+// hard-cancelled container does not get to write a final record or mark
+// its own lock releasing either.
+func TestCancelNowClearsALiveLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, Branch: "fugaro/" + id})
+	key := lock.Key(appSlug, "fugaro/"+id)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+	out, errOut, err := execute(t, "cancel", "--now", "--json", id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out), &res); jerr != nil || res.Status != cancelCancelled || !res.Hard || res.LockHeld {
+		t.Fatalf("cancel --now --json = %+v (parse err %v) (%s)", res, jerr, out)
+	}
+	if !strings.Contains(errOut, "cleared") {
+		t.Fatalf("stderr = %q, want a note that the lock was cleared", errOut)
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("the lock survives a hard cancel")
 	}
 }
 
@@ -339,6 +374,45 @@ func TestCancelReportsARunThatEndedUnfinalized(t *testing.T) {
 	}
 }
 
+// ended(), reached from the poll loop once the execution is confirmed
+// terminal (not merely forgotten), clears the run's own live lock: the
+// exact container-killed-mid-stage case (OOM, SIGBUS, a node loss) that
+// would otherwise leave a follow-up waiting the lock's own expiry out.
+func TestCancelClearsTheLockWhenEndedUnfinalizedAndExecutionIsTerminal(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, Branch: "fugaro/" + id})
+	key := lock.Key(appSlug, "fugaro/"+id)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	env.be = onFirstExecutionRead(env.be, func() { f.run.SetState(exec, backend.StateFailed) })
+	var out, errOut strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var res cancelResult
+	if json.Unmarshal([]byte(out.String()), &res) != nil || res.Status != cancelUnfinalized || res.LockHeld {
+		t.Fatalf("cancel = %s, want ended-unfinalized with the lock cleared", out.String())
+	}
+	if !strings.Contains(errOut.String(), "cleared") {
+		t.Fatalf("stderr = %q, want a note that the lock was cleared", errOut.String())
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("the lock survives a terminal execution's confirmed takeover")
+	}
+}
+
 // forgetBackend forgets every execution after its first few reads.
 type forgetBackend struct {
 	backend.Backend
@@ -379,6 +453,46 @@ func TestCancelToleratesAnExecutionForgottenMidPoll(t *testing.T) {
 	}
 	if f.run.State(exec) != backend.StateRunning {
 		t.Fatalf("state %s: cancel acted on a forgotten execution", f.run.State(exec))
+	}
+}
+
+// SECURITY: an execution the backend has merely forgotten (ErrNotFound)
+// is not positive proof it is terminal — only that the backend has lost
+// track of it, which can be a transient listing gap — so clearStaleLock,
+// reached here through ended() during the poll loop, must never delete
+// the run's own still-live lock on that alone (lock.Stale's gate). If
+// that gate were ever removed, this scenario is exactly where it would
+// matter: the lock is genuinely this run's own and would otherwise match
+// lock.Takeover's holder check and be deleted.
+func TestCancelKeepsALiveLockWhenExecutionIsOnlyForgotten(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateRunning)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, Branch: "fugaro/" + id})
+	key := lock.Key(appSlug, "fugaro/"+id)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 1} // entry read ok, every poll forgets it
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Minute, floorSet: true, finalizeWait: time.Second, poll: 10 * time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatalf("cancel = %v (exit %d)", err, ExitCode(err))
+	}
+	var res cancelResult
+	if json.Unmarshal([]byte(out.String()), &res) != nil || res.Status != cancelUnfinalized || !res.LockHeld {
+		t.Fatalf("cancel = %s, want ended-unfinalized with the lock still held", out.String())
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("a forgotten execution (not positive proof of terminal) must not clear the lock")
 	}
 }
 
@@ -523,6 +637,53 @@ func TestCancelAlreadyFinishedCannotClearAMismatchedLock(t *testing.T) {
 	}
 }
 
+// Under the 0.7.0 bucket hardening a launcher's delete of locks/ answers
+// 403: cancel must report LockHeld and print the clear operator message
+// on stderr (the gcloud command), never crash and never silently claim
+// the lock is gone.
+func TestCancelForbiddenDeleteReportsLockHeldAndTheOperatorCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	g := gcpfake.NewGCS(t)
+	env := envOn(t, f, g.Bucket(t, "runs"))
+	defer env.Close()
+	const id = "20260927-100000-abcd"
+	ctx := context.Background()
+	s := runstore.Open(env.bucket.Bucket, appSlug, id)
+	if err := s.CreateTask(ctx, &task.Spec{Version: 1, RunID: id, Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	if err := s.WriteLaunch(ctx, &runstore.Launch{Version: 1, RunID: id, Execution: exec, LaunchedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	if err := s.WriteRecord(ctx, rec); err != nil {
+		t.Fatal(err)
+	}
+	key := lock.Key(appSlug, rec.Branch)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	if _, err := env.bucket.Create(ctx, key, data, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	g.ForbidObjectDeletes(1)
+	var out, errOut strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(ctx, env, o, id, &out, &errOut); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.Status != cancelAlreadyFinished || !res.LockHeld {
+		t.Fatalf("cancel = %+v (parse err %v) (%s)", res, jerr, out.String())
+	}
+	if !strings.Contains(errOut.String(), "an operator must clear it") || !strings.Contains(errOut.String(), "gcloud storage rm") {
+		t.Fatalf("stderr = %q, want the operator command", errOut.String())
+	}
+	if ok, _ := env.bucket.Exists(ctx, key); !ok {
+		t.Fatal("a forbidden delete must not be reported as if the lock were gone")
+	}
+}
+
 // The same already-finished run, but with no live lock: the plain message
 // is unchanged.
 func TestCancelAlreadyFinishedWithoutLiveLock(t *testing.T) {
@@ -561,6 +722,47 @@ func TestCancelAlreadyFinishedToleratesCorruptRecord(t *testing.T) {
 	// corruption.
 	env.be = onFirstExecutionRead(env.be, func() {
 		putBuildObject(t, f, "runs/"+appSlug+"/"+id+"/result.json", []byte("{not json"))
+	})
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatalf("cancel = %v", err)
+	}
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out.String()), &res); jerr != nil || res.Status != cancelAlreadyFinished || res.LockHeld {
+		t.Fatalf("cancel = %+v (parse err %v) (%s)", res, jerr, out.String())
+	}
+}
+
+// Ruling E: a transient (non-corrupt: a genuine I/O failure, not bad
+// JSON) read error of result.json in the e.State.Terminal() branch must
+// not fail cancel either — the same tolerance
+// TestCancelAlreadyFinishedToleratesCorruptRecord proves for a corrupt
+// one, proven here for corruptObject's other branch.
+func TestCancelAlreadyFinishedToleratesATransientRecordReadError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores file permissions")
+	}
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	writeRecord(t, f, id, prRecord(id, exec, 7, 1))
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), "runs", appSlug, id, "result.json")
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	// ownerLaunch's own read must still succeed (a separate, pre-existing
+	// behavior this test doesn't touch), so the permission is dropped only
+	// once cancel reaches the e.State.Terminal() branch's own fresh read.
+	env.be = onFirstExecutionRead(env.be, func() {
+		if err := os.Chmod(path, 0); err != nil {
+			t.Fatal(err)
+		}
 	})
 	var out strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
@@ -616,5 +818,37 @@ func TestCancelHaltedRunAlreadyFinished(t *testing.T) {
 	_ = json.Unmarshal([]byte(out), &res)
 	if err != nil || res.Status != "already-finished" || cancelled(t, f, id) {
 		t.Fatalf("cancel = %+v, %v (%s)", res, err, out)
+	}
+}
+
+// TestLockLiveChecksRunIDAndExpiry: lockLive must say "not held" both when
+// the lock names a different run (it is not this run's to report) and
+// when it has already expired (the runner's own Acquire is free to take
+// it, so it is no longer meaningfully "held" either).
+func TestLockLiveChecksRunIDAndExpiry(t *testing.T) {
+	f := newCloudFixture(t)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	const slug, branch, id = "acme-app", "fugaro/run-a", "run-a"
+	key := lock.Key(slug, branch)
+	write := func(h lock.Holder) {
+		data, _ := json.Marshal(h)
+		putBuildObject(t, f, key, data)
+	}
+	write(lock.Holder{RunID: "run-b", ExpiresAt: time.Now().Add(time.Hour)})
+	if lockLive(context.Background(), env, slug, branch, id, time.Now()) {
+		t.Fatal("lockLive reported a lock naming a different run as this run's own")
+	}
+	write(lock.Holder{RunID: id, ExpiresAt: time.Now().Add(-time.Minute)})
+	if lockLive(context.Background(), env, slug, branch, id, time.Now()) {
+		t.Fatal("lockLive reported an expired lock as still held")
+	}
+	write(lock.Holder{RunID: id, ExpiresAt: time.Now().Add(time.Hour)})
+	if !lockLive(context.Background(), env, slug, branch, id, time.Now()) {
+		t.Fatal("lockLive did not report a live lock naming this run")
 	}
 }

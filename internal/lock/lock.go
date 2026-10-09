@@ -79,6 +79,20 @@ var ErrHolderChanged = errors.New("the lock's holder changed since it was checke
 // read and its conditional delete.
 var beforeTakeoverDelete func()
 
+// SetBeforeTakeoverDelete sets the hook Takeover runs, once, between its
+// fresh read and its conditional delete, and returns a restore func to
+// put the previous hook back. Not for production use: it exists only so
+// tests outside this package (internal/cli's checkBranchLock and cancel
+// tests) can simulate a lock changing in that exact gap — the same race
+// TestTakeoverLosesRaceWhenLockChangesUnderneath exercises from within
+// it. A caller within this package sets beforeTakeoverDelete directly
+// instead.
+func SetBeforeTakeoverDelete(f func()) (restore func()) {
+	prev := beforeTakeoverDelete
+	beforeTakeoverDelete = f
+	return func() { beforeTakeoverDelete = prev }
+}
+
 // Takeover clears a lock whose holder's termination the caller has already
 // confirmed through the backend (Stale): the one way a launcher may free a
 // branch before its lock expires. It re-reads the lock immediately before
@@ -87,29 +101,34 @@ var beforeTakeoverDelete func()
 // otherwise, so a lock that changed in between (another takeover, a
 // refresh, a new run) is never deleted out from under its new state. The
 // generation matched is the one this fresh read returns, never an earlier
-// one. A lock already gone is success: the branch is free either way. Any
+// one, and gen is always that verified generation (0 when there was none
+// to verify: the lock was already gone, or didn't match), so a caller that
+// must later name the object by hand (a forbidden delete) never has to
+// read it again — a second read could see a different run's lock by then.
+// A lock already gone is success: the branch is free either way. Any
 // other failure, a storage 403 under the 0.7.0 bucket hardening included
-// (locks/ is not launcher-writable there), is returned as itself.
-func Takeover(ctx context.Context, b *blobx.Bucket, key string, holder Holder) error {
+// (locks/ is not launcher-writable there), is returned as itself, with
+// the verified generation still set.
+func Takeover(ctx context.Context, b *blobx.Bucket, key string, holder Holder) (gen int64, err error) {
 	data, gen, err := b.Read(ctx, key)
 	if errors.Is(err, blobx.ErrNotExist) {
-		return nil
+		return 0, nil
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var cur Holder
 	if json.Unmarshal(data, &cur) != nil || cur.RunID != holder.RunID || !backend.SameExecution(cur.Execution, holder.Execution) {
-		return ErrHolderChanged
+		return 0, ErrHolderChanged
 	}
 	if beforeTakeoverDelete != nil {
 		beforeTakeoverDelete()
 	}
 	err = b.DeleteIf(ctx, key, gen, data)
 	if errors.Is(err, blobx.ErrConflict) {
-		return ErrHolderChanged
+		return gen, ErrHolderChanged
 	}
-	return err
+	return gen, err
 }
 
 // beforeTakeover, when set by a test, runs between reading an expired or
@@ -221,18 +240,26 @@ func winner(ctx context.Context, b *blobx.Bucket, key string) Holder {
 
 // MarkReleasing rewrites l's lock, generation-matched, to ExpiresAt now:
 // its holder is about to call Release, and this is its self-release
-// marker. It exists so a container killed between this call and Release's
-// delete (mid-writeback: an OOM, cancel --hard, a node loss) leaves a lock
-// that Acquire already treats as expired, needing no new field an older
-// runner's Acquire might not understand — ExpiresAt is the one field every
-// version has always read. l's local generation and body are updated on
-// success, so a Release right after still matches. A failure (the lock
-// changed, or any I/O error) is returned as itself; the caller logs it and
-// carries on to Release, which is unaffected by it either way.
+// marker. It exists so a container killed in the short gap between this
+// call and Release's delete leaves a lock that Acquire already treats as
+// expired, needing no new field an older runner's Acquire might not
+// understand — ExpiresAt is the one field every version has always read.
+// It can only ever shorten the lock's life, never extend it: when now is
+// already at or past the lock's own ExpiresAt (the run overran its own
+// deadline, or clock skew), rewriting would move the expiry later, not
+// earlier, so MarkReleasing does nothing and reports success — the lock
+// was already expired, and is Acquire's to take over regardless. l's
+// local generation and body are updated on success, so a Release right
+// after still matches. A failure (the lock changed, or any I/O error) is
+// returned as itself; the caller logs it and carries on to Release, which
+// is unaffected by it either way.
 func (l *Lock) MarkReleasing(ctx context.Context, now time.Time) error {
 	var h Holder
 	if err := json.Unmarshal(l.body, &h); err != nil {
 		return fmt.Errorf("marking lock %s as releasing: %w", l.key, err)
+	}
+	if !now.Before(h.ExpiresAt) {
+		return nil
 	}
 	h.ExpiresAt = now
 	body, err := json.Marshal(h)

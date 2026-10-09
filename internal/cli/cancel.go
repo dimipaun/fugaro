@@ -380,10 +380,15 @@ func lockLive(ctx context.Context, env *cloudEnv, slug, branch, id string, now t
 // note, when non-empty, is the one stderr line cancel prints about it —
 // cleared, or, under the 0.7.0 bucket hardening (locks/ is no longer
 // launcher-writable), the message naming the gcloud command an operator
-// or the sweeper runs instead. A result.json that can't say the branch
-// (unreadable, corrupt or oversized) never fails cancel: held is false,
-// since nothing proves a lock is there either, the same fail-closed
-// choice checkBranchLock makes; any other read failure does the same.
+// or the sweeper runs instead. When the backend's answer falls short of
+// that proof (an ErrNotFound/"forgotten" execution is not positive proof
+// it is terminal, only that the backend has lost track of it), held
+// reports the lock's own, actual state (lockLive) rather than guessing it
+// is clear: cancel is never the one that forges that signal. A
+// result.json that can't say the branch (unreadable, corrupt or
+// oversized) never fails cancel: held is false, since nothing proves a
+// lock is there either, the same fail-closed choice checkBranchLock
+// makes; any other read failure does the same.
 func clearStaleLock(ctx context.Context, env *cloudEnv, s *runstore.Store, slug, id, execution string) (held bool, note string) {
 	rec, err := absent(s.ReadRecord(ctx))
 	if err != nil && !corruptObject(err) {
@@ -398,14 +403,19 @@ func clearStaleLock(ctx context.Context, env *cloudEnv, s *runstore.Store, slug,
 	}
 	holder := lock.Holder{RunID: id, Execution: execution}
 	if !lock.Stale(holder, executionTerminal(ctx, env, execution)) {
-		return false, ""
+		// Not confirmed stale (the backend's answer here is weaker than
+		// what put cancel on this path in the first place — ErrNotFound,
+		// say, which is not positive proof): report the lock truthfully,
+		// whatever it is, rather than claiming "not held" on no evidence.
+		return lockLive(ctx, env, slug, branch, id, time.Now()), ""
 	}
 	key := lock.Key(slug, branch)
-	switch err := lock.Takeover(ctx, env.bucket, key, holder); {
+	gen, err := lock.Takeover(ctx, env.bucket, key, holder)
+	switch {
 	case err == nil:
 		return false, fmt.Sprintf("note: run %s's branch lock has been cleared: its execution ended\n", oneLine(id))
 	case isAccessDenied(err):
-		return true, lockClearMessage(ctx, env, key, id) + "\n"
+		return true, lockClearMessage(env, key, gen, id) + "\n"
 	default:
 		// ErrHolderChanged, or any other failure: best effort, and cancel
 		// never fails for it. Report whatever is actually there now.
