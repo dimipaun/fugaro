@@ -268,11 +268,26 @@ func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
 // grant on the runs bucket (docs/design/bucket-iam.md H5).
 const LauncherBucketConditionTitle = "fugaro-launchers-runs"
 
+// bucketNameRE is the charset LauncherBucketCondition accepts: narrower than
+// GCS's own bucket name rules, but every bucket Fugaro creates or accepts
+// already fits it (tfvars.go's "fugaro-runs-" prefix check does not enforce
+// the rest, so this is the one place that does).
+var bucketNameRE = regexp.MustCompile(`^[a-z0-9._-]+$`)
+
 // LauncherBucketCondition limits the launchers' objectUser grant on bucket
 // to runs/, every repository's (H2). Every launcher carries this exact
 // string and LauncherBucketConditionTitle, with no description, so IAM keeps
 // them in one conditional binding. The installation module, the install
 // guard and doctor all compare against it: this is its one definition.
+//
+// bucket is embedded in the CEL expression unescaped, so it must already be
+// a plain bucket name: a byte outside [a-z0-9._-] (a quote, in particular)
+// could otherwise break out of the string literal and widen the condition.
+// LauncherBucketCondition panics rather than return a condition that looks
+// plausible but is not the one every comparison expects byte for byte.
 func LauncherBucketCondition(bucket string) string {
+	if !bucketNameRE.MatchString(bucket) {
+		panic(fmt.Sprintf("gcp.LauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
+	}
 	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
 }

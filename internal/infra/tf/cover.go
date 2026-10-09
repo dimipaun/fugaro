@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 // allowedTypes are the resource types our embedded modules declare
@@ -87,8 +89,8 @@ var grantRules = map[string]map[string]who{
 	},
 	"google_storage_bucket_iam_member": {
 		"roles/storage.objectAdmin":  toPeople,
-		"roles/storage.objectUser":   toAccounts,
-		"roles/storage.objectViewer": toAccounts,
+		"roles/storage.objectUser":   toPeople | toAccounts, // people only under the launchers' condition (bucketCondition)
+		"roles/storage.objectViewer": toPeople | toAccounts,
 	},
 	"google_artifact_registry_repository_iam_member": {
 		customKey + "fugaroTagMover":    toAccounts,
@@ -239,7 +241,11 @@ func (c Cover) NotCovered(p *Plan, imports []ImportKey) []string {
 		case c.attributes(rc, creates) != "":
 			add(rc, c.attributes(rc, creates))
 		case strings.HasSuffix(t, "_iam_member"):
-			if why := c.checkGrant(rc.Type, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"]); why != "" {
+			why := c.checkGrant(rc.Type, rc.Change, creates[modulePrefix(rc)+"|google_service_account"], creates[modulePrefix(rc)+"|google_project_iam_custom_role"])
+			if why == "" && t == "google_storage_bucket_iam_member" {
+				why = c.bucketCondition(rc.Change)
+			}
+			if why != "" {
 				add(rc, why)
 			}
 		}
@@ -407,6 +413,61 @@ func (c Cover) checkGrant(typ string, ch Change, createsSA, createsRole bool) st
 	}
 	if w&kind == 0 {
 		return fmt.Sprintf("grants the role %q to a kind of principal the installation's modules do not grant it to", role)
+	}
+	return ""
+}
+
+// accountClause is one clause of a job or build account's bucket condition,
+// as gcp.BucketCondition writes it.
+var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_/buckets/([a-z0-9][a-z0-9._-]*)/objects/(runs|cache|locks|builds)/([a-z0-9][a-z0-9_-]*)/"\)$`)
+
+// bucketCondition says why a bucket grant's condition is not the modules'
+// (docs/design/bucket-iam.md H6), "" when it is: objectAdmin and objectViewer
+// carry none; a person's objectUser carries exactly the launchers' condition
+// on one of this run's buckets; an account's objectUser carries clauses of
+// gcp.BucketCondition's shape, each on one of this run's buckets. The modules
+// never set a description, and a condition known only after apply is not
+// covered.
+func (c Cover) bucketCondition(ch Change) string {
+	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") {
+		return "a bucket grant whose condition is not known"
+	}
+	conds := objects(ch.After["condition"])
+	if len(conds) > 1 {
+		return "a bucket grant with more than one condition"
+	}
+	var title, expr string
+	if len(conds) == 1 {
+		if str(conds[0]["description"]) != "" {
+			return "a bucket grant whose condition has a description, which the modules never set"
+		}
+		title, expr = str(conds[0]["title"]), str(conds[0]["expression"])
+	}
+	role := str(ch.After["role"])
+	person := !unknown(ch, "member") && slices.Contains(c.Listed, str(ch.After["member"]))
+	switch {
+	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
+		if len(conds) != 0 {
+			return "grants " + role + " on the bucket under a condition, which the modules never do"
+		}
+	case role == "roles/storage.objectUser" && person:
+		bucket := str(ch.After["bucket"])
+		for _, b := range c.Buckets {
+			if (bucket == "" || bucket == b) && title == gcp.LauncherBucketConditionTitle && expr == gcp.LauncherBucketCondition(b) {
+				return ""
+			}
+		}
+		return "grants objectUser on the bucket to a person under a condition that is not the launchers' runs/ condition"
+	case role == "roles/storage.objectUser":
+		if len(conds) == 0 {
+			return "grants objectUser on the bucket to an account with no condition"
+		}
+		for _, clause := range strings.Split(expr, " || ") {
+			m := accountClause.FindStringSubmatch(clause)
+			if m == nil || !slices.Contains(c.Buckets, m[1]) {
+				return "grants objectUser on the bucket to an account under a condition that is not a Fugaro prefix condition of this run's bucket"
+			}
+		}
 	}
 	return ""
 }
