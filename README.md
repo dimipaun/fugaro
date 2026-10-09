@@ -133,7 +133,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 ## Roadmap
 
 - [x] Runner, git providers (GitHub, Bitbucket Cloud), base images (`web-node`, `go`, `java-services`), the Cloud Run backend and CLI
-- [x] `fugaro init` and `/fugaro:setup`, the four plugin skills, teammates with no setup
+- [x] `fugaro init` and `/fugaro:setup`, the five plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums
 - [ ] Signed base images, verified before `fugaro init` copies them

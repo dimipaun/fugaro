@@ -17,6 +17,7 @@ func TestUpgradeSkill(t *testing.T) {
 		"A coding agent's session cannot apply cloud changes, by design",
 		"Never edit `.claude/settings.json`", "brew upgrade dimipaun/tap/fugaro", "restart",
 		"Exit 1 means something is stale", "never pass `--allow-fork`",
+		"Nothing in this skill's frontmatter can limit which commands it runs: the three-command rule above is an instruction, not a permission, and the user's own Claude Code permission settings are what bound it.",
 	} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("SKILL.md never says %q", want)
