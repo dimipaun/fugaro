@@ -174,11 +174,14 @@
         {
           "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
           "then": {
-            "not": { "required": ["dockerfile"] },
             "properties": {
+              "dockerfile": { "const": "" },
               "image": {
-                "not": { "anyOf": [{ "required": ["apt"] }, { "required": ["setup"] }] },
-                "properties": { "skip_build_scripts": { "const": false } }
+                "properties": {
+                  "apt": { "maxItems": 0 },
+                  "setup": { "maxItems": 0 },
+                  "skip_build_scripts": { "const": false }
+                }
               }
             }
           }

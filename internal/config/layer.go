@@ -102,6 +102,9 @@ type Profile struct {
 	Resources   Resources    `yaml:"resources"`
 	Timeouts    Timeouts     `yaml:"timeouts"`
 	Rebuild     Rebuild      `yaml:"rebuild"`
+	// Checkout is workflows.*.checkout's value through this profile; "" sets
+	// none (a workflow or the Fugaro default decides).
+	Checkout string `yaml:"checkout,omitempty"`
 }
 
 // HasExecutable reports whether the profile sets a key that runs as shell
@@ -452,6 +455,9 @@ func validateProfile(p string, pr Profile) []Problem {
 		add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
+	if pr.Checkout != "" {
+		ps = append(ps, validateCheckout(p, Workflow{Base: pr.Base, Image: pr.Image, Checkout: pr.Checkout})...)
+	}
 	if rf := pr.Commands.RerunFailed; rf != nil {
 		if strings.TrimSpace(rf.Command) == "" {
 			add(p+".commands.rerun_failed.command", "is required")

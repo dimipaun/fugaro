@@ -134,6 +134,21 @@ func TestCheckoutCloneAlone(t *testing.T) {
 	}
 }
 
+// TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
+// build key's value, not its mere presence: an empty image.apt or
+// image.setup, or an empty dockerfile:, means nothing to refuse (schema
+// corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
+// same boundary against fugaro.schema.json).
+func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], skip_build_scripts: false }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
 // TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
 func TestCheckoutInvalidValue(t *testing.T) {
 	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))

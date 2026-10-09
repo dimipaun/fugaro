@@ -61,6 +61,18 @@ func TestParseProjectLayer(t *testing.T) {
 	}
 }
 
+// TestProfileCheckout pins that a profile may set checkout: (scope
+// InProfile|InRepo, design generic-tool.md §2, G3): it decodes onto
+// Profile.Checkout rather than failing the strict decode as an unknown
+// field.
+func TestProfileCheckout(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"profiles:\n  p:\n    base: go\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	if l.Profiles["p"].Checkout != CheckoutClone {
+		t.Fatalf("Profiles[p].Checkout = %q, want %q", l.Profiles["p"].Checkout, CheckoutClone)
+	}
+}
+
 func TestParseProjectLayerRefuses(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	for _, tc := range []struct{ name, text, want string }{
@@ -86,6 +98,8 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"an unknown default profile", head + "profiles:\n  p: { base: go }\ndefault_profile: q\n", `default_profile: names "q"`},
 		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
+		{"a bad checkout", head + "profiles:\n  p: { checkout: sometimes }\n", "profiles.p.checkout: must be baked or clone"},
+		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
 		// A null profile would otherwise decode as a valid empty Profile
 		// (even as default_profile) with no scope check ever run on it,
