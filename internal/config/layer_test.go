@@ -144,6 +144,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		// control characters
 		{"ESC in a label", layerHead + "defaults: {git: {pr: {labels: [\"a\\eb\"]}}}\n", "defaults.git.pr.labels[0] (line 4): holds a control or invisible formatting character"},
 		{"bidi in a model", agent("    model: \"a\\u202eb\"\n"), "defaults.agent.model (line 6): holds a control"},
+		{"a tab in a comment", layerHead + "profiles: {}\n# a\tb\n", "line 5: holds a control or invisible formatting character (in a comment or directive)"},
 		// validateLayer
 		{"a version", "version: 2\nproject: acme\ngcp_project: acme-fugaro\n", "version: must be 1"},
 		{"a project name", "version: 1\nproject: Acme_1\ngcp_project: acme-fugaro\n", "project: must be a project name"},
@@ -183,6 +184,18 @@ func TestProjectLayerDescriptionCountsCharacters(t *testing.T) {
 	l := mustLayer(t, layerHead+"profiles:\n  p: { description: "+strings.Repeat("é", 200)+" }\n")
 	if n := len(l.Profiles["p"].Description); n != 400 {
 		t.Fatalf("description is %d bytes", n)
+	}
+}
+
+// TestProjectLayerAllowsTabInABlockScalarValue: a tab is not a control or
+// invisible formatting character a value refuses (badRune), so one inside a
+// block scalar's text must not be refused by the raw-text scan either, even
+// though that scan also catches a tab in a comment (see
+// TestParseProjectLayerRefusesMore's "a tab in a comment").
+func TestProjectLayerAllowsTabInABlockScalarValue(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\tb\n      test: x\n")
+	if l.Profiles["p"].Commands.Build != "a\tb\n" {
+		t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
 	}
 }
 

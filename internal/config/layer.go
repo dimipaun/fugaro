@@ -241,18 +241,62 @@ func safeProblems(err error) []Problem {
 	return ps
 }
 
+// commentStart returns the index of the '#' that starts line's comment, or
+// -1 for none: a '#' at the start of the line or after whitespace, outside
+// single or double quotes. A quote left open at line's end (a multi-line
+// flow scalar) is not tracked across lines, so a '#' inside one is rarely,
+// not never, missed as a comment.
+func commentStart(line string) int {
+	var inSingle, inDouble bool
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case inSingle:
+			inSingle = c != '\''
+		case inDouble:
+			if c == '\\' {
+				i++
+			} else {
+				inDouble = c != '"'
+			}
+		case c == '\'':
+			inSingle = true
+		case c == '"':
+			inDouble = true
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return i
+		}
+	}
+	return -1
+}
+
 // rawTextProblems scans the whole text, comments and directives included,
-// which the node walk never sees. It reports the line only, never the text.
+// which the node walk never sees (valueProblems already ran over every key
+// and value the node walk does see). A directive (a line starting at
+// column 0 with %, YAML's own rule) and a line's comment, if any, get the
+// key rule, which holds no tab either; the rest of the line gets the value
+// rule, so a tab inside, say, a block scalar's value is not refused here
+// even though values allow it. It reports the line only, never the text.
 func rawTextProblems(data []byte) []Problem {
 	var ps []Problem
 	text := strings.TrimPrefix(string(data), "\ufeff")
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		switch {
-		case tokenRE.MatchString(line):
+		if tokenRE.MatchString(line) {
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
-		case strings.ContainsFunc(line, badKeyRune):
+			continue
+		}
+		strict, loose := "", line
+		switch c := commentStart(line); {
+		case strings.HasPrefix(line, "%"):
+			strict, loose = line, ""
+		case c >= 0:
+			strict, loose = line[c:], line[:c]
+		}
+		switch {
+		case strings.ContainsFunc(strict, badKeyRune):
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character (in a comment or directive)"})
+		case strings.ContainsFunc(loose, badRune):
+			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
 		}
 	}
 	return ps
