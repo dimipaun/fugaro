@@ -198,6 +198,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	if o.retry == "" && !reused {
+		if err := embedProjectLayer(ctx, env, spec, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
@@ -218,6 +223,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 		}
 		if needsRecipeImage(spec, agentRecipe) {
 			if err := checkRecipeImage(ctx, env, slug, spec, kind, cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
+		if spec.ProjectLayer != nil {
+			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
 				return err
 			}
 		}
