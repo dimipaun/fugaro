@@ -97,11 +97,26 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	case o.NoBucket:
 		return foundLayer{}, nil
 	}
+	// offline is forced, not the user's own --offline, when a lenient
+	// command has no project config selected: it still only ever reads the
+	// cache, but the messages below must say so differently (o.Offline
+	// alone, never this local offline, decides whether to say "--offline:").
+	offline := o.Offline
 	if lc == nil && o.Lenient {
-		o.Offline = true
+		offline = true
 	}
 	bucketName := "fugaro-runs-" + gcp
 	bucketURL := "gs://" + bucketName
+	// A selected project config whose own name differs from the
+	// repository's project: never substitutes its bucket_url here: the
+	// bucket a layer is read from is always the GCP project's default
+	// name, keyed by gcp_project alone, regardless of which project is
+	// locally selected. What actually refuses a repository and a layer
+	// whose project fields disagree is the anchor check inside
+	// config.ParseProjectLayer (which parse, above, runs with an anchor
+	// built from this repository's own project: and gcp_project:) and,
+	// for every other caller of config.Resolve (such as the runner,
+	// against a different ref), config.Resolve's own anchorProblems.
 	if lc != nil && lc.Name == project && lc.GCPProject == gcp {
 		if lc.RunsBucketName() != bucketName {
 			return foundLayer{Note: fmt.Sprintf("the project layer needs the default runs bucket name %s (this installation's is %q), so none applies", bucketName, lc.RunsBucketName())}, nil
@@ -110,20 +125,47 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	}
 	where := "gs://" + bucketName + "/" + config.LayerKey
 	cached, ok := localcfg.LoadLayerCache(getenv, project)
-	ours := ok && cached.GCPProject == gcp && cached.Bucket == bucketName && cached.UsableOffline(now)
+	matches := ok && cached.GCPProject == gcp && cached.Bucket == bucketName
+	ours := matches && cached.UsableOffline(now)
+	// fromCache parses a cached copy. Unlike the published object, this is
+	// never "ask an operator to publish a valid one": the bucket may be
+	// perfectly fine, it is this machine's local cache file that failed to
+	// parse (hand-edited, or left over from an incompatible version), so
+	// it is deleted and the caller is told to rerun, which reads the
+	// bucket's own copy fresh.
 	fromCache := func(note string) (foundLayer, error) {
-		l, err := parse([]byte(cached.YAML), "the cached copy of "+where)
-		if err != nil {
+		l, ps := config.ParseProjectLayer([]byte(cached.YAML), anchor)
+		if len(ps) > 0 {
 			_ = localcfg.DropLayerCache(getenv, project)
-			return foundLayer{}, err
+			return foundLayer{}, userErr("the local cache of %s's project layer is invalid, so it was deleted: %s; rerun to read the bucket's copy", project, pluginwire.Printable(layerProblemsText(ps)))
 		}
 		return foundLayer{Layer: l, Where: where, Generation: cached.Generation, CheckedAt: cached.CheckedAt, Note: note}, nil
 	}
-	if o.Offline {
-		if ours {
-			return fromCache(fmt.Sprintf("--offline: using the cached project layer of %s, %s old", project, ageDays(now.Sub(cached.CheckedAt))))
+	if offline {
+		prefix := ""
+		if o.Offline {
+			prefix = "--offline: "
 		}
-		return foundLayer{Unknown: true, Note: fmt.Sprintf("no project config is selected and no project layer of %s is cached, so the project layer was not checked", project)}, nil
+		if ours {
+			return fromCache(prefix + fmt.Sprintf("using the cached project layer of %s, %s old", project, ageDays(now.Sub(cached.CheckedAt))))
+		}
+		// Each sentence says its own true reason: a config selected but
+		// --offline passed names no project (never "no project config is
+		// selected"); a cache that exists for this installation but is
+		// over the 7-day offline limit (decision L13) is not "not cached".
+		var reason string
+		switch {
+		case matches:
+			reason = fmt.Sprintf("the cached project layer of %s is %s old, over the 7-day offline limit", project, ageDays(now.Sub(cached.CheckedAt)))
+		default:
+			reason = fmt.Sprintf("no project layer of %s is cached", project)
+		}
+		if !o.Offline {
+			reason = "no project config is selected and " + reason
+		} else {
+			reason = prefix + reason
+		}
+		return foundLayer{Unknown: true, Note: reason + ", so it was not checked"}, nil
 	}
 	unread := func(err error) (foundLayer, error) {
 		if o.Lenient {
@@ -137,11 +179,18 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	unreachableNote := fmt.Sprintf("using the cached project layer of %s, %s old: %s is unreachable", project, ageDays(now.Sub(cached.CheckedAt)), bucketURL)
 	b, err := layerBucketOpener(ctx, bucketURL)
 	if err != nil {
-		err = remote(err)
+		// isUnreachable is checked on the raw error, exactly as the read
+		// failure below does: only when the bucket cannot be reached at
+		// all does the cache stand in (decision L13), a open failure is no
+		// different from a read failure here. Anything else (including a
+		// 403 opening the bucket, or credentials Open could not find)
+		// goes through bucketErrFor, which both names what was being done
+		// ("the project layer of %s") and reports access denied as
+		// "no access", not a generic remote failure.
 		if isUnreachable(err) && ours {
 			return fromCache(unreachableNote)
 		}
-		return unread(err)
+		return unread(bucketErrFor(bucketURL, "opening the bucket", "the project layer of "+project, err))
 	}
 	defer b.Close()
 	text, gen, err := layerRead(ctx, b)
@@ -151,6 +200,10 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		_ = localcfg.DropLayerCache(getenv, project)
 		return foundLayer{}, nil
 	case errors.Is(err, blobx.ErrTooLarge):
+		// Always an error, in both strict and lenient mode (unlike
+		// unread's other failures): an object too large to read is
+		// present and published, never "no layer", and never silently
+		// swallowed by a lenient command.
 		return foundLayer{}, userErr("%s is over the %d KiB limit; ask an operator to publish it again (fugaro config publish)", where, config.LayerMaxBytes>>10)
 	case isUnreachable(err) && ours:
 		return fromCache(unreachableNote)
