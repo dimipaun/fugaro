@@ -2,6 +2,8 @@
 
 Status: design for review (2026-10-08). The owner ruled that this ships in release **0.7.0**, together with the base image consolidation ([base-image.md](base-image.md), [plans/2026-10-08-base-image.md](../plans/2026-10-08-base-image.md)). It is the "follow-up hardening" that layered config's decision L7, option A, names ([layered-config.md](layered-config.md) §11). Every choice below is a decision the owner can veto (H1 to H14, §12). The plan is [plans/2026-10-08-bucket-iam.md](../plans/2026-10-08-bucket-iam.md).
 
+**Ruling (2026-10-08).** Decisions H1 to H14 are **all taken as recommended**. No veto alternative in §12 is chosen.
+
 ## 1. Problem
 
 The runs bucket `fugaro-runs-<gcp_project>` holds two kinds of data:

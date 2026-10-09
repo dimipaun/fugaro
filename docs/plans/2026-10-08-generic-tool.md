@@ -60,7 +60,7 @@ The spec's section 1, the Docker-capable backend, is **release 0.8.0** (ruling R
 
 ## Decisions (veto any before execution starts)
 
-The design's G1 to G27 are the decisions, each with its veto alternative in the design's §14. The plan adds:
+The design's G1 to G27 are the decisions, each with its veto alternative in the design's §14. **The owner ruled on 2026-10-08: "merge #214 with the recommendations"** (design R3), so every one of G1 to G27 is built as recommended; no veto alternative below is implemented. The design's R4, the same day, additionally moved the cost preview (G20, design §1.1) to release 0.8.0, which this plan reflects by moving Tasks 22 and 23 (cost preview) out of the 0.7.0 groups and into the 0.8.0 section, renumbered 24 and 25 (see "Release 0.8.0" below). The plan adds:
 
 - **P1. One branch per group.** Each group's tasks run as separate dogfood runs from git worktrees where the group's lanes allow. No run needs Docker or a cloud. Live checks are the owner's.
 - **P2. Token economy (memory: subagent token economy).** Tasks 3, 11, 12 and 16 get their own review: they touch the database rules, run commands the runner did not run before, post to PRs, and change what a job runs. The rest are reviewed once per group, on the branch.
@@ -89,7 +89,7 @@ Project rules:
 - No live cloud in any test. Never touch EdgeWeb or EdgeServer. Handle no real secret. Live checks are user-run on the sandbox `belong` only.
 - Every CI check (`test`, `rules`, `terraform`, `images`, `docker-tests`) is read before merge: each job's log, not only the summary.
 - Docs must match behaviour. These stay green: `TestRecipesGuideMatchesTheCLI`, `TestReadmeNamesNoRetiredSkill`, the plugin lint (`plugin/skills_lint_test.go`, which checks every command and flag a skill names against `cli.NewRootCmd()`) and `TestSetupSkillAsksRecipe`.
-- Releases go through `/new-release` with `docs/releases/v0.7.0.md` merged first. The base-image plan's Task 22 owns that file and the release itself; Task 25 here only adds sections.
+- Releases go through `/new-release` with `docs/releases/v0.7.0.md` merged first. The base-image plan's Task 22 owns that file and the release itself; Task 23 here only adds sections.
 
 ## Review Focus
 
@@ -144,10 +144,10 @@ The failure modes most likely to hurt a user, each pinned by a test:
 | `plugin/skills/routing/SKILL.md`, `plugin/skills/working/reference/launch.md`, `plugin/routing_skill_test.go` (new) | recipe-aware routing | 19 | upgrade Task 9 (skill set of five) |
 | `docs/multi-model.md`, `docs/backends.md`, `docs/gcp-live-checklist.md` (Check 33) | direct providers, control-plane seam | 20 | none |
 | `SECURITY.md`, `internal/cli/docs_security_test.go` (new) | trust model | 21 | bucket-IAM plan (its tasks update one row) |
-| `internal/runstore/runstore.go` (`StageTiming`), `internal/runner/runner.go` | per-stage cost | 22 | none |
-| `internal/cli/budget_preview.go` (new), `budget.go` | `budget preview` | 23 | none |
-| none | full suites, PRs | 24 | none |
-| `docs/releases/v0.7.0.md` | sections and operator steps | 25 | **base-image Task 22** creates the file |
+| none | full suites, PRs | 22 | none |
+| `docs/releases/v0.7.0.md` | sections and operator steps | 23 | **base-image Task 22** creates the file |
+| `internal/runstore/runstore.go` (`StageTiming`), `internal/runner/runner.go` | per-stage cost | 24 | **release 0.8.0** (owner ruling R4, 2026-10-08) |
+| `internal/cli/budget_preview.go` (new), `budget.go` | `budget preview` | 25 | **release 0.8.0** (owner ruling R4, 2026-10-08) |
 
 ## PR groups
 
@@ -170,8 +170,8 @@ Groups and their lanes (a lane is a sequence; separate lanes are independent dog
   - Task 17 can run in parallel with Task 16.
   - Task 18 runs after base-image Task 16.
 - **Group E, branch `gt-docs`: Tasks 19 and 20.** Task 19 after Group C merges (it names the catalog). Task 20 at any time.
-- **Group F, branch `gt-cost` (optional): Tasks 22 and 23.** Last. Drop the group if 0.7.0's date presses.
-- **Task 24** closes each group. **Task 25** runs once every included group has merged, before base-image Task 22's release.
+- **Group F, cost preview, is release 0.8.0** (owner ruling R4, 2026-10-08), not a 0.7.0 group. Branch `gt-cost`, starting after 0.7.0 ships; see "Release 0.8.0" below, where it runs as Tasks 24 and 25, alongside the Docker backend.
+- **Task 22** closes each group. **Task 23** runs once every included group has merged, before base-image Task 22's release.
 
 The release freeze (base-image plan) starts at base-image Group 2's merge and ends with 0.7.0. Every group here merges inside it.
 
@@ -862,7 +862,7 @@ Text sweep: every hint string in `internal/` that says `fugaro ls` becomes `fuga
 Run: `go test -race -count=1 -run 'TestRuns|TestLs|TestSingular|TestRoot|TestDocs|TestRecipesGuide' ./internal/cli/ && go test -count=1 ./plugin/`
 Expected: `ok`.
 
-- [ ] **Step 5: Full suite for the group (Task 24), then commit** `git commit -m "generic tool task 7: fugaro runs ls replaces fugaro ls, with a 0.7.0 tombstone and singular aliases"`
+- [ ] **Step 5: Full suite for the group (Task 22), then commit** `git commit -m "generic tool task 7: fugaro runs ls replaces fugaro ls, with a 0.7.0 tombstone and singular aliases"`
 
 ---
 ## Group C: recipes (branch `gt-recipes`)
@@ -1734,7 +1734,7 @@ Resolution: before the catalog lookup, if `recipe.Renamed[name]` is set, return 
 Run: `go test -race -count=1 ./internal/recipe/ && go test -race -count=1 -run 'TestRecipe|TestRenamed|TestRun' ./internal/cli/ && go test -count=1 ./plugin/`
 Expected: `ok`.
 
-- [ ] **Step 5: Full suite for Group C (Task 24), then commit** `git commit -m "generic tool task 14: the starter recipe catalog, recipes ls --verbose and the 0.7.0 recipe gate"`
+- [ ] **Step 5: Full suite for Group C (Task 22), then commit** `git commit -m "generic tool task 14: the starter recipe catalog, recipes ls --verbose and the 0.7.0 recipe gate"`
 
 ---
 
@@ -1890,7 +1890,7 @@ The skill topic: what clone gives (no image build, no daily check, start-up pays
 
 - [ ] **Step 4: Run the tests**: `go test -count=1 ./plugin/`. Expected: `ok`.
 
-- [ ] **Step 5: Full suite for Group D (Task 24), commit** `git commit -m "generic tool task 18: live check 32 and the setup skill offers checkout: clone"`
+- [ ] **Step 5: Full suite for Group D (Task 22), commit** `git commit -m "generic tool task 18: live check 32 and the setup skill offers checkout: clone"`
 
 ---
 ## Group E: skills and docs (branch `gt-docs`; Task 21 may go first, as Group S)
@@ -2105,9 +2105,61 @@ Before committing, the implementer re-reads each claim against the code at that 
 
 ---
 
-## Group F: cost preview (branch `gt-cost`, optional, last)
+## Task 22: Each group's full suite and its PR
 
-### Task 22: Cost per stage in `result.json` (G20)
+Run once at the end of each group (A, S, B, C, D, E), in that group's worktree.
+
+- [ ] **Step 1:** `go build ./... && go vet ./... && go vet -tags live ./... && test -z "$(gofmt -l .)" && go test ./... 2>&1 | tail -40`, in the foreground (about 30 minutes). Expected: PASS.
+- [ ] **Step 2:** For Groups B and C, `grep -rnE 'fugaro ls\b|cheap-loop-senior|claude-solo' --include='*.go' --include='*.md' --include='*.yaml' . | grep -v -e docs/plans -e docs/releases -e docs/design`. Expected: only the tombstone, the `Renamed` map and their tests.
+- [ ] **Step 3:** Open the PR, titled `generic tool: <group> (tasks N-M)`. The body lists:
+  - the decisions it implements;
+  - what no run could verify (the live checks);
+  - for Group A, the RTDB rules change and "rerun `fugaro init --firebase` after upgrading";
+  - for Group D, Check 32 and the possible grant handed to the IAM plan.
+
+  Read every CI job's log: `test`, `rules`, `terraform` and, when images changed, `images` and `docker-tests`.
+
+## Task 23: Fold into the 0.7.0 release notes
+
+**Depends on:** every included group merged, base-image Task 22's `docs/releases/v0.7.0.md` existing (create the file with the same header if this runs first, and base-image Task 22 merges into it).
+
+**Files:** `docs/releases/v0.7.0.md`.
+
+- [ ] **Step 1:** Add to the Highlights, after the base-image paragraphs:
+
+```markdown
+**Recipes for every kind of task.** The catalog is now `solo`, `standard`, `premium`, `review-only`, `pick`, `test-and-fix` and `lint-fix` (plus `default`, unchanged). Recipes describe when to use them (`use_when`), and the `/fugaro:routing` skill picks one per task and summarises batches. New: a senior rejection can go back to the cheap loop (`bounce: first_line`), check steps run your tests or linter before any model does (`commands.lint`, `commands.fix`), `review-only` comments on any pull request without pushing (fork PRs need `review.allow_forks`), and `fugaro run --attempts N` plus `pick` give best-of-N. `cheap-loop-senior` and `claude-solo` were renamed to `standard` and `solo`. See docs/recipes.md.
+
+**The dashboard is a to-do list.** `fugaro watch` now shows finished runs (successes for 6 hours or the last 15, failures until you press `x`), lists the pull requests ready for your review, and expands a run (space) to its stage, last action, verify result, PR and cost. `--all` and `a` show everything.
+
+**`fugaro runs ls` replaces `fugaro ls`**, which now only says so. `fugaro logs RUN --url` prints the console link.
+
+**`checkout: clone`** runs a workflow on the base image with no per-repository build: the run clones and installs its mise tools at start. For repositories with no system packages.
+
+**SECURITY.md** now states the trust model and its known limits.
+```
+
+Add to the operator steps, after the base-image upgrade order:
+- `fugaro init --firebase <id>` once per installation. It deploys the dashboard rules for the run's last action and token count. Until then runs work, and the run log names the command.
+- Replace `fugaro ls` with `fugaro runs ls` in scripts.
+- Replace `agent.recipe: cheap-loop-senior` or `claude-solo` before upgrading. A 0.7.0 CLI refuses the old names with the new one.
+
+**Not in these notes:** the Docker-capable backend and the cost preview (both 0.8.0, rulings R2 and R4).
+
+- [ ] **Step 2:** `go test -count=1 -run 'TestRelease' ./...` (the release-notes checks, if any), and read the rendered file.
+- [ ] **Step 3: Commit** `git commit -m "generic tool task 23: the 0.7.0 release notes"`. The release itself is base-image Task 22's `/new-release 0.7.0`.
+
+---
+
+## Release 0.8.0: the Docker-capable backend and the cost preview (owner rulings R2 and R4; not part of 0.7.0)
+
+Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
+
+## Group F: cost preview (branch `gt-cost`)
+
+Moved here from 0.7.0 by owner ruling R4 (2026-10-08, design §1.1): the design and the tasks are unchanged from the recommendation (R3), only the release is. It can start right away, independently of Check 31 and Tasks 26 to 28 below.
+
+### Task 24: Cost per stage in `result.json` (G20)
 
 **Files:** `internal/runstore/runstore.go` (`StageTiming.ModelUSD float64 json:"model_usd,omitempty"`, `Model string json:"model,omitempty"`), `internal/runner/runner.go` (the stage's end), tests.
 
@@ -2119,11 +2171,11 @@ Before committing, the implementer re-reads each claim against the code at that 
 
 - [ ] **Step 4: Run the tests**: `go test -race -count=1 -run 'TestStageTiming|TestCost|TestBudget' ./internal/runner/ && go test -race -count=1 ./internal/runstore/`. Expected: `ok`.
 
-- [ ] **Step 5: Commit** `git commit -m "generic tool task 22: result.json records each stage's model cost"`
+- [ ] **Step 5: Commit** `git commit -m "generic tool task 24: result.json records each stage's model cost"`
 
-### Task 23: `fugaro budget preview` (G20)
+### Task 25: `fugaro budget preview` (G20)
 
-**Depends on:** Task 8 (`StageBound`). Task 22 provides the history line only.
+**Depends on:** Task 8 (`StageBound`). Task 24 provides the history line only.
 
 **Files:** `internal/cli/budget_preview.go` (new), `budget.go` (subcommand), `budget_preview_test.go`.
 
@@ -2167,61 +2219,9 @@ Plus:
 
 - [ ] **Step 4: Run the tests**: `go test -race -count=1 -run 'TestBudget' ./internal/cli/`. Expected: `ok`.
 
-- [ ] **Step 5: Commit** `git commit -m "generic tool task 23: fugaro budget preview, a rough worst case against the caps"`
+- [ ] **Step 5: Commit** `git commit -m "generic tool task 25: fugaro budget preview, a rough worst case against the caps"`
 
 ---
-
-## Task 24: Each group's full suite and its PR
-
-Run once at the end of each group (A, S, B, C, D, E, F), in that group's worktree.
-
-- [ ] **Step 1:** `go build ./... && go vet ./... && go vet -tags live ./... && test -z "$(gofmt -l .)" && go test ./... 2>&1 | tail -40`, in the foreground (about 30 minutes). Expected: PASS.
-- [ ] **Step 2:** For Groups B and C, `grep -rnE 'fugaro ls\b|cheap-loop-senior|claude-solo' --include='*.go' --include='*.md' --include='*.yaml' . | grep -v -e docs/plans -e docs/releases -e docs/design`. Expected: only the tombstone, the `Renamed` map and their tests.
-- [ ] **Step 3:** Open the PR, titled `generic tool: <group> (tasks N-M)`. The body lists:
-  - the decisions it implements;
-  - what no run could verify (the live checks);
-  - for Group A, the RTDB rules change and "rerun `fugaro init --firebase` after upgrading";
-  - for Group D, Check 32 and the possible grant handed to the IAM plan.
-
-  Read every CI job's log: `test`, `rules`, `terraform` and, when images changed, `images` and `docker-tests`.
-
-## Task 25: Fold into the 0.7.0 release notes
-
-**Depends on:** every included group merged, base-image Task 22's `docs/releases/v0.7.0.md` existing (create the file with the same header if this runs first, and base-image Task 22 merges into it).
-
-**Files:** `docs/releases/v0.7.0.md`.
-
-- [ ] **Step 1:** Add to the Highlights, after the base-image paragraphs:
-
-```markdown
-**Recipes for every kind of task.** The catalog is now `solo`, `standard`, `premium`, `review-only`, `pick`, `test-and-fix` and `lint-fix` (plus `default`, unchanged). Recipes describe when to use them (`use_when`), and the `/fugaro:routing` skill picks one per task and summarises batches. New: a senior rejection can go back to the cheap loop (`bounce: first_line`), check steps run your tests or linter before any model does (`commands.lint`, `commands.fix`), `review-only` comments on any pull request without pushing (fork PRs need `review.allow_forks`), and `fugaro run --attempts N` plus `pick` give best-of-N. `cheap-loop-senior` and `claude-solo` were renamed to `standard` and `solo`. See docs/recipes.md.
-
-**The dashboard is a to-do list.** `fugaro watch` now shows finished runs (successes for 6 hours or the last 15, failures until you press `x`), lists the pull requests ready for your review, and expands a run (space) to its stage, last action, verify result, PR and cost. `--all` and `a` show everything.
-
-**`fugaro runs ls` replaces `fugaro ls`**, which now only says so. `fugaro logs RUN --url` prints the console link.
-
-**`checkout: clone`** runs a workflow on the base image with no per-repository build: the run clones and installs its mise tools at start. For repositories with no system packages.
-
-**SECURITY.md** now states the trust model and its known limits.
-```
-
-Add to the operator steps, after the base-image upgrade order:
-- `fugaro init --firebase <id>` once per installation. It deploys the dashboard rules for the run's last action and token count. Until then runs work, and the run log names the command.
-- Replace `fugaro ls` with `fugaro runs ls` in scripts.
-- Replace `agent.recipe: cheap-loop-senior` or `claude-solo` before upgrading. A 0.7.0 CLI refuses the old names with the new one.
-
-If Group F shipped, also add: `fugaro budget preview`, a rough worst case for a batch.
-
-**Not in these notes:** the Docker-capable backend (0.8.0, ruling R2).
-
-- [ ] **Step 2:** `go test -count=1 -run 'TestRelease' ./...` (the release-notes checks, if any), and read the rendered file.
-- [ ] **Step 3: Commit** `git commit -m "generic tool task 25: the 0.7.0 release notes"`. The release itself is base-image Task 22's `/new-release 0.7.0`.
-
----
-
-## Release 0.8.0: the Docker-capable backend (owner ruling R2; not part of 0.7.0)
-
-Starts right after 0.7.0 is released. **No task below is in any 0.7.0 group or in the 0.7.0 release notes.**
 
 ### Task 26: Check 31 and its probe (the measurement, G1, G2)
 
@@ -2271,6 +2271,7 @@ Checked against the design ([design/generic-tool.md](../design/generic-tool.md))
 |---|---|
 | §0 what is shipped | Global Constraints, the tasks' "today" notes |
 | §1 Docker backend (0.8.0) | Tasks 26 to 28, outside every 0.7.0 group |
+| §1.1 cost preview (0.8.0, moved from spec §8 by R4) | Tasks 24, 25, outside every 0.7.0 group |
 | §2 checkout | Tasks 15 to 18 |
 | §3.1 format extensions and safety | Task 8 (parser), 10 (bounce, roles), 11 (gate), 12 (review mode), 13 (attempts) |
 | §3.2 self-description | Tasks 8 (`use_when`), 14 (`ls --verbose`) |
@@ -2281,13 +2282,12 @@ Checked against the design ([design/generic-tool.md](../design/generic-tool.md))
 | §5 naming | Task 7 (and 29 in 0.8.0) |
 | §6 model routing | Task 20 |
 | §7 logs | Task 1 |
-| §8 cost preview | Tasks 22, 23 (optional group) |
 | §9 SECURITY.md | Task 21 |
 | §10.1 review-ready | Tasks 4, 6 |
 | §10.2 detail | Tasks 2, 3, 5 |
 | §10.3 filtering | Task 6 |
 | §11 control plane | Task 20 |
-| §12 order and release | PR groups, Task 25 |
+| §12 order and release | PR groups, Task 23 |
 
 **Type consistency:** these names are used the same way everywhere:
 - `recipe.StepCheck`, `recipe.CheckCommand`, `Step.Bounce`, `Step.Autofix`, `Recipe.UseWhen`, `Recipe.CoderIsReviewer`, `Recipe.Mode`, `recipe.ModeReview`, `recipe.Renamed`, `recipe.StageBound`, `recipe.UsesV07`;
