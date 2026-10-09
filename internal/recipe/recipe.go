@@ -262,8 +262,12 @@ func (p *parser) str(path string, v *yaml.Node) (string, bool) {
 	return v.Value, true
 }
 
+// bool accepts only the literal YAML scalars true and false. YAML 1.1 also
+// resolves True, TRUE, False and FALSE to tag !!bool, but a recipe is
+// untrusted input that Parse refuses rather than repairs, so those spellings
+// are refused rather than silently reinterpreted.
 func (p *parser) bool(path string, v *yaml.Node) (bool, bool) {
-	if v.Kind != yaml.ScalarNode || v.Tag != "!!bool" {
+	if v.Kind != yaml.ScalarNode || v.Tag != "!!bool" || (v.Value != "true" && v.Value != "false") {
 		p.add(path, v.Line, "must be true or false")
 		return false, false
 	}
@@ -302,7 +306,7 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 		case "use_when":
 			if s, ok := p.str("use_when", v); ok {
 				if len(s) > MaxUseWhen {
-					p.add("use_when", 0, "must be at most %d bytes", MaxUseWhen)
+					p.add("use_when", v.Line, "must be at most %d bytes", MaxUseWhen)
 				}
 				r.UseWhen = s
 			}
@@ -434,7 +438,7 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 					bp := kpath + ".bounce"
 					if bs, ok := p.str(bp, bv); ok {
 						if bs != "first_line" {
-							p.add(bp, 0, "bounce can only be first_line")
+							p.add(bp, bv.Line, "bounce can only be first_line")
 						} else {
 							s.Bounce = true
 						}
@@ -471,7 +475,7 @@ func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
 				case CheckBuild, CheckTest, CheckLint:
 					s.Command = CheckCommand(cs)
 				default:
-					p.add(cp, 0, "must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)")
+					p.add(cp, bv.Line, "must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)")
 				}
 			}
 		case "autofix":
@@ -501,6 +505,9 @@ func (p *parser) order(r *Recipe, src []int) {
 		switch s.Kind {
 		case StepCheck:
 			checks++
+			if checks > 1 {
+				p.add(path, 0, "check may appear at most once")
+			}
 			if sawOther {
 				p.add(path, 0, "check steps must come first")
 			}

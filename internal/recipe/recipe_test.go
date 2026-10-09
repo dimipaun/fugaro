@@ -175,13 +175,47 @@ func TestCheckCommandIsAnEnum(t *testing.T) {
 	for _, bad := range []string{"make test", "rm -rf /", "fix", "Test", ""} {
 		src := "version: 1\nname: x\nsteps:\n  - check: { command: \"" + bad + "\" }\n  - review: {}\n"
 		_, ps := Parse([]byte(src))
-		if !strings.Contains(ProblemsText(ps), "steps[0].check.command: must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)") {
+		want := "must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)"
+		if !strings.Contains(ProblemsText(ps), want) {
 			t.Errorf("command %q: %s", bad, ProblemsText(ps))
+		}
+		if ok := func() bool {
+			for _, p := range ps {
+				if p.Path == "steps[0].check.command" && p.Line > 0 {
+					return true
+				}
+			}
+			return false
+		}(); !ok {
+			t.Errorf("command %q: no steps[0].check.command problem with a line number: %v", bad, ps)
 		}
 	}
 	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: test, autofix: true }\n  - review: {}\n"))
 	if !strings.Contains(ProblemsText(ps), "autofix is only for command: lint") {
 		t.Errorf("autofix on test: %s", ProblemsText(ps))
+	}
+}
+
+// TestCheckAutofixIsStrictlyBoolean: YAML 1.1 also resolves True, TRUE, False
+// and FALSE to tag !!bool, but a recipe is untrusted input that Parse refuses
+// rather than repairs, so only the literal true/false are accepted; anything
+// else is refused, never silently reinterpreted as false.
+func TestCheckAutofixIsStrictlyBoolean(t *testing.T) {
+	for _, bad := range []string{"True", "TRUE", "False", "FALSE", "yes", "1"} {
+		src := "version: 1\nname: x\nsteps:\n  - check: { command: lint, autofix: " + bad + " }\n  - review: {}\n"
+		_, ps := Parse([]byte(src))
+		if !strings.Contains(ProblemsText(ps), "must be true or false") {
+			t.Errorf("autofix: %q: %s", bad, ProblemsText(ps))
+		}
+	}
+}
+
+// TestCheckStepsAtMostOne: the Go parser and schemas/recipe.schema.json's
+// steps oneOf must agree that at most one check step is allowed.
+func TestCheckStepsAtMostOne(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: test }\n  - check: { command: lint }\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "check may appear at most once") {
+		t.Fatal(ProblemsText(ps))
 	}
 }
 
@@ -207,6 +241,38 @@ func TestBounceNeedsFirstLine(t *testing.T) {
 	if !strings.Contains(ProblemsText(ps), "bounce can only be first_line") {
 		t.Fatal(ProblemsText(ps))
 	}
+	for _, p := range ps {
+		if p.Path == "steps[1].review.bounce" {
+			if p.Line == 0 {
+				t.Fatalf("bounce problem has no line number: %+v", p)
+			}
+			return
+		}
+	}
+	t.Fatalf("no steps[1].review.bounce problem: %v", ps)
+}
+
+// TestNewMessagesCarryLineNumbers: use_when, review.bounce and check.command
+// point at the offending value's line, the same as their sibling checks
+// (description, max_rounds).
+func TestNewMessagesCarryLineNumbers(t *testing.T) {
+	for _, tc := range []struct{ name, text, path string }{
+		{"use_when", "version: 1\nname: x\nuse_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n", "use_when"},
+		{"check.command", "version: 1\nname: x\nsteps:\n  - check: { command: bogus }\n  - review: {}\n", "steps[0].check.command"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(tc.text))
+			for _, p := range ps {
+				if p.Path == tc.path {
+					if p.Line == 0 {
+						t.Fatalf("%s problem has no line number: %+v", tc.name, p)
+					}
+					return
+				}
+			}
+			t.Fatalf("no %s problem: %v", tc.path, ps)
+		})
+	}
 }
 
 func TestOrderWithChecksAndModes(t *testing.T) {
@@ -215,7 +281,7 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"mode: review\nsteps:\n  - first_line: {}\n  - review: {}\n":                 "mode: review allows exactly one review step and nothing else",
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
 		"mode: plan\nsteps:\n  - review: {}\n":                                       "mode must be implement or review",
-		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "use_when: must be at most 300 bytes",
+		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {
 		_, ps := Parse([]byte("version: 1\nname: x\n" + src))
 		if !strings.Contains(ProblemsText(ps), want) {

@@ -16,6 +16,7 @@ var invalidWhy = map[string]string{
 	"bounce-no-first-line.yaml": "bounce: first_line needs a first_line step before the review",
 	"check-command-bad.yaml":    "must be build, test or lint",
 	"check-not-first.yaml":      "check steps must come first",
+	"check-twice.yaml":          "check may appear at most once",
 	"checks-step.yaml":          "the step type is check, not checks",
 	"description-201.yaml":      "at most 200 bytes",
 	"extends.yaml":              "extends is reserved",
@@ -32,7 +33,7 @@ var invalidWhy = map[string]string{
 	"rounds-0.yaml":             "between 1 and 10",
 	"rounds-11.yaml":            "between 1 and 10",
 	"shape-anchor.yaml":         "anchor or alias",
-	"use-when-long.yaml":        "use_when: must be at most 300 bytes",
+	"use-when-long.yaml":        "must be at most 300 bytes",
 }
 
 func TestCorpus(t *testing.T) {
