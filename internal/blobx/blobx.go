@@ -37,6 +37,11 @@ var (
 	ErrConflict = errors.New("the object changed")
 	// ErrExists means Create found the object already there.
 	ErrExists = errors.New("object already exists")
+	// ErrForbidden means GCS refused a write or delete for lack of
+	// permission (HTTP 403). gocloud reports a 403 as NotFound, so without
+	// it a refused write would read as a missing object
+	// (docs/design/bucket-iam.md §2.3).
+	ErrForbidden = errors.New("permission denied")
 	// ErrNotExist means Read found no object.
 	ErrNotExist = errors.New("object does not exist")
 	// ErrTooLarge means Read found an object larger than MaxReadBytes.
@@ -117,6 +122,9 @@ func (b *Bucket) write(ctx context.Context, key string, data []byte, contentType
 				return 0, ErrExists
 			}
 			return 0, ErrConflict
+		}
+		if isForbidden(err) {
+			return 0, fmt.Errorf("%w: %w", ErrForbidden, err)
 		}
 		return 0, err
 	}
@@ -242,6 +250,8 @@ func (b *Bucket) DeleteIf(ctx context.Context, key string, gen int64, prev []byt
 			return nil
 		case errors.As(err, &ae) && ae.Code == http.StatusPreconditionFailed:
 			return ErrConflict
+		case errors.As(err, &ae) && ae.Code == http.StatusForbidden:
+			return fmt.Errorf("%w: %w", ErrForbidden, err)
 		}
 		return err
 	}
@@ -278,6 +288,8 @@ func (b *Bucket) DeleteExisting(ctx context.Context, key string, gen int64, prev
 			return ErrNotExist
 		case errors.As(err, &ae) && ae.Code == http.StatusPreconditionFailed:
 			return ErrConflict
+		case errors.As(err, &ae) && ae.Code == http.StatusForbidden:
+			return fmt.Errorf("%w: %w", ErrForbidden, err)
 		}
 		return err
 	}
@@ -295,6 +307,13 @@ func (b *Bucket) DeleteExisting(ctx context.Context, key string, gen int64, prev
 		return err
 	}
 	return nil
+}
+
+// Put writes key whatever is there (last writer wins). A 403 is
+// ErrForbidden, as for the conditional writes.
+func (b *Bucket) Put(ctx context.Context, key string, data []byte, contentType string) error {
+	_, err := b.write(ctx, key, data, contentType, false, nil)
+	return err
 }
 
 // Touch sets the object's GCS custom time, which the bucket's lifecycle

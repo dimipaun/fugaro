@@ -366,3 +366,35 @@ func TestReplaceIfTypeSetsContentType(t *testing.T) {
 		})
 	}
 }
+
+// gocloud reports a GCS 403 as NotFound; every write and delete returns
+// ErrForbidden for it instead, so a refused write never reads as "absent".
+func TestWriteForbiddenIsClassified(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	fake.Put("runs", "fugaro/x.yaml", []byte("a: 1\n"))
+	fake.DenyWrites("runs", "fugaro/")
+	b := fake.Bucket(t, "runs")
+	_, gen, err := b.Read(ctx, "fugaro/x.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{
+		"create":          func() error { _, err := b.Create(ctx, "fugaro/y.yaml", []byte("b"), "text/plain"); return err }(),
+		"replace":         func() error { _, err := b.ReplaceIf(ctx, "fugaro/x.yaml", []byte("{}"), gen, nil); return err }(),
+		"put":             b.Put(ctx, "fugaro/x.yaml", []byte("c"), "text/plain"),
+		"delete":          b.DeleteIf(ctx, "fugaro/x.yaml", gen, nil),
+		"delete existing": b.DeleteExisting(ctx, "fugaro/x.yaml", gen, nil),
+	} {
+		if !errors.Is(err, blobx.ErrForbidden) {
+			t.Errorf("%s: err = %v, want ErrForbidden", name, err)
+		}
+		if errors.Is(err, blobx.ErrNotExist) || errors.Is(err, blobx.ErrConflict) {
+			t.Errorf("%s: a 403 read as %v", name, err)
+		}
+	}
+	// Outside the denied prefix, writes work.
+	if err := b.Put(ctx, "runs/s/r/task.json", []byte("{}"), "application/json"); err != nil {
+		t.Fatal(err)
+	}
+}
