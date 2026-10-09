@@ -63,6 +63,30 @@ func TestFindLayerCacheOnlyWhenUnreachable(t *testing.T) {
 	}
 }
 
+// TestFindLayerCacheOnlyWhenBucketCannotBeOpened is
+// TestFindLayerCacheOnlyWhenUnreachable's unreachable case, but for a
+// bucket that fails to open at all (no route, refused connection): the
+// cache stands in exactly as when it opens but the read fails (decision
+// L13 does not distinguish the two).
+func TestFindLayerCacheOnlyWhenBucketCannotBeOpened(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		return nil, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow.Add(3*24*time.Hour))
+	if err != nil || got.Layer == nil || !strings.Contains(got.Note, "using the cached project layer of aurora, 3 days old") {
+		t.Fatalf("unreachable to open: %+v, %v", got, err)
+	}
+}
+
 // Review Focus 4.
 func TestFindLayerRefusesAnInvalidObject(t *testing.T) {
 	f := newCloudFixture(t)

@@ -59,6 +59,9 @@ var layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error
 	return b.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
 }
 
+// layerBucketOpener opens the runs bucket; tests replace it.
+var layerBucketOpener = blobx.Open
+
 // findLayer is the project layer that applies to the fugaro.yaml data
 // (docs/design/layered-config.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
@@ -128,9 +131,17 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		}
 		return foundLayer{}, err
 	}
-	b, err := blobx.Open(ctx, bucketURL)
+	// unreachableNote is the cache-fallback note (decision L13), shared by
+	// a bucket that fails to open at all and one that opens but whose read
+	// fails: either way the bucket "cannot be reached".
+	unreachableNote := fmt.Sprintf("using the cached project layer of %s, %s old: %s is unreachable", project, ageDays(now.Sub(cached.CheckedAt)), bucketURL)
+	b, err := layerBucketOpener(ctx, bucketURL)
 	if err != nil {
-		return unread(remote(err))
+		err = remote(err)
+		if isUnreachable(err) && ours {
+			return fromCache(unreachableNote)
+		}
+		return unread(err)
 	}
 	defer b.Close()
 	text, gen, err := layerRead(ctx, b)
@@ -142,7 +153,7 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	case errors.Is(err, blobx.ErrTooLarge):
 		return foundLayer{}, userErr("%s is over the %d KiB limit; ask an operator to publish it again (fugaro config publish)", where, config.LayerMaxBytes>>10)
 	case isUnreachable(err) && ours:
-		return fromCache(fmt.Sprintf("using the cached project layer of %s, %s old: %s is unreachable", project, ageDays(now.Sub(cached.CheckedAt)), bucketURL))
+		return fromCache(unreachableNote)
 	default:
 		return unread(bucketErrFor(bucketURL, "reading "+config.LayerKey, "the project layer of "+project, err))
 	}
