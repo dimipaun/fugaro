@@ -135,6 +135,31 @@ func TestParseVerbatimTagNeverEchoesValue(t *testing.T) {
 	}
 }
 
+// TestParseVerbatimTagWithFakeIntoNeverEchoesValue: a verbatim tag can
+// itself decode to text containing "` into " (the exact text yamlValueRE
+// looks for to find where the real value ends), so a lazy value group
+// would stop at that first, fake occurrence inside the tag and leave the
+// real value, after it, unstripped. yamlValueRE's value group must be
+// greedy, matching through to the last "` into " in the message, which is
+// always the real one (the type name after it is ours, never the
+// writer's).
+func TestParseVerbatimTagWithFakeIntoNeverEchoesValue(t *testing.T) {
+	const secret = "topsecretvalue1234567"
+	yaml := strings.Replace(minimalYAML, "version: 1", "version: !<tag:x%20%60y%60%20into%20z> "+secret, 1)
+	_, ps := Parse([]byte(yaml))
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.Message)
+	}
+	got := strings.Join(msgs, "; ")
+	if !strings.Contains(got, "cannot unmarshal tag:x into int") {
+		t.Fatalf("problems %q, want one containing %q", got, "cannot unmarshal tag:x into int")
+	}
+	if strings.Contains(got, secret[:7]) {
+		t.Fatalf("problems echo the value: %q", got)
+	}
+}
+
 func TestSelectWorkflow(t *testing.T) {
 	cfg, _ := Parse([]byte(minimalYAML))
 	if name, _, err := cfg.SelectWorkflow(""); err != nil || name != "server" {

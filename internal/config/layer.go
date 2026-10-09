@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -246,8 +247,9 @@ func safeProblems(err error) []Problem {
 // in either order: the YAML spec allows both "|-2" and "|2-"), right after
 // the ':' or '-' that introduces it: the header line that opens a literal
 // or folded scalar's body. Applied to a line with any trailing comment
-// already stripped.
-var blockHeaderRE = regexp.MustCompile(`(^|[:-])\s*[|>](?:[+-][1-9]?|[1-9][+-]?)?\s*$`)
+// already stripped. The digit, wherever it falls, lands in one of the two
+// capture groups (whichever alternative matched); the other is "".
+var blockHeaderRE = regexp.MustCompile(`(?:^|[:-])\s*[|>](?:[+-]([1-9])?|([1-9])[+-]?)?\s*$`)
 
 // commentStart returns the index of the '#' that starts line's comment, or
 // -1 for none: a '#' at the start of the line or after whitespace, outside
@@ -281,40 +283,65 @@ func commentStart(line string) int {
 // never a tab).
 func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
 
+// block scalar body-tracking states for rawTextProblems.
+const (
+	bodyNone     = iota // not inside a block scalar's body
+	bodyAwaiting        // inside one, but its content indent isn't known yet
+	bodyKnown           // inside one, content indent known
+)
+
 // rawTextProblems scans the whole text, comments and directives included,
 // which the node walk never sees (valueProblems already ran over every key
 // and value the node walk does see). A directive (a line starting at
 // column 0 with %, YAML's own rule) and a line's comment, if any, get the
 // key rule, which holds no tab either; the rest of the line gets the value
-// rule. A block scalar's body (opened by a line matching blockHeaderRE,
-// closed by a non-blank line indented no more than that header) is never
-// split at '#': a literal or folded scalar reads its body as plain text,
-// a '#' in it starts no comment, so the whole line gets the value rule.
-// It reports the line only, never the text.
+// rule. A block scalar's body (opened by a line matching blockHeaderRE) is
+// never split at '#': a literal or folded scalar reads its body as plain
+// text, a '#' in it starts no comment. But YAML's own rule for where that
+// body actually is is "at or past the indentation of its first non-blank
+// line (or the header's own explicit digit, header indent + N)", not
+// merely "more indented than the header": a line indented more than the
+// header but less than the body's real content indent is a real,
+// standalone comment, not body text, the same as yaml.v3 itself reads it.
+// Getting the content indent wrong by using the header's indent alone (an
+// earlier version of this function did) wrongly widens the body and skips
+// tokenRE and badKeyRune on a line that is, in fact, a comment: a
+// credential or a tab there would go unrefused. A body line still runs
+// tokenRE and badRune (never badKeyRune: a tab is fine in a value), so a
+// credential or any other control/bidi character in one is still caught,
+// just without the "(in a comment or directive)" wording, since it is not
+// one. It reports the line only, never the text.
 func rawTextProblems(data []byte) []Problem {
 	var ps []Problem
 	text := strings.TrimPrefix(string(data), "\ufeff")
-	// bodyIndent is the header line's own indent while inside its body, else
-	// -1. YAML's own rule for where a block scalar ends is "the first
-	// non-blank line indented no more than its header", so a line indented
-	// more than the header, even well past the scalar's actual (shallower)
-	// content indentation, is still inside the body: a '#' there is real
-	// content, not a comment, the same as YAML itself would read it. Getting
-	// this wrong only ever relaxes the tab rule for that line (the value
-	// rule, badRune, still refuses every other control or bidi character
-	// rawTextProblems looks for) and never misses a real standalone comment,
-	// since one of those sits at or before the enclosing key's indent, which
-	// always closes the body first.
-	bodyIndent := -1
+	state := bodyNone
+	headerIndent, contentIndent := 0, 0
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		if bodyIndent >= 0 && (strings.TrimSpace(line) == "" || indentOf(line) > bodyIndent) {
-			if strings.ContainsFunc(line, badRune) {
-				ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+		blank := strings.TrimSpace(line) == ""
+		if state == bodyAwaiting && !blank {
+			if ind := indentOf(line); ind > headerIndent {
+				state, contentIndent = bodyKnown, ind
+			} else {
+				state = bodyNone // the header's scalar is empty
 			}
-			continue
 		}
-		bodyIndent = -1
+		if state == bodyKnown {
+			if blank {
+				continue
+			}
+			if indentOf(line) < contentIndent {
+				state = bodyNone // dedented out of the body
+			} else {
+				switch {
+				case tokenRE.MatchString(line):
+					ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
+				case strings.ContainsFunc(line, badRune):
+					ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+				}
+				continue
+			}
+		}
 		if tokenRE.MatchString(line) {
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
 			continue
@@ -332,8 +359,14 @@ func rawTextProblems(data []byte) []Problem {
 		case strings.ContainsFunc(loose, badRune):
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
 		}
-		if blockHeaderRE.MatchString(loose) {
-			bodyIndent = indentOf(line)
+		if m := blockHeaderRE.FindStringSubmatch(loose); m != nil {
+			headerIndent = indentOf(line)
+			if digit := m[1] + m[2]; digit != "" {
+				n, _ := strconv.Atoi(digit)
+				state, contentIndent = bodyKnown, headerIndent+n
+			} else {
+				state = bodyAwaiting
+			}
 		}
 	}
 	return ps

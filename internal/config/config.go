@@ -467,8 +467,15 @@ func yamlProblems(err error) []Problem {
 // or bidi character showKey alone would catch), which is why the tag group
 // is .+? (any character, lazily), not \S+: a fugaro.yaml may be somebody
 // else's, so an error names the key and the type wanted, never what was
-// there, whatever the tag looks like.
-var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal .+?) `.*?` into ")
+// there, whatever the tag looks like. The value group is greedy (.*, not
+// .*?): a tag can also decode to text that itself contains "` into " (say,
+// !<tag:x%20%60y%60%20into%20z>, decoding to "tag:x `y` into z"), and a
+// lazy value group would stop at that first, fake "` into " inside the
+// tag, leaving the real value past it unstripped. Greedy instead matches
+// through to the last "` into " in the message, which is always the real
+// one: the type name after it is ours, never the writer's, so it never
+// itself contains that text.
+var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal .+?) `.*` into ")
 
 func problemFromYAML(msg string) Problem {
 	msg = yamlValueRE.ReplaceAllString(msg, "$1 into ")
