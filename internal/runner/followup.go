@@ -193,6 +193,7 @@ func (r *run) checkPullRequest(ctx context.Context) error {
 	r.rec.PR = &runstore.PRRef{Number: n, URL: pr.URL}
 	r.rec.FollowUp = &runstore.FollowUp{PR: n, PreviousRun: r.spec.PreviousRun, StartSHA: r.follow.startSHA}
 	r.save(ctx)
+	r.noteRegistryPRURL(pr.URL)
 	return nil
 }
 

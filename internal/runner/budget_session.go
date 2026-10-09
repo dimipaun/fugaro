@@ -295,6 +295,14 @@ func (r *run) noteRegistry(fn func(*budget.AgentEntry)) {
 	}
 }
 
+// noteRegistryPRURL shows the pull request's URL in the registry: for a
+// first run, once notePR records its number; for a follow-up, once
+// checkPullRequest confirms it (a follow-up's PR is known from bootstrap on,
+// not just from a later stage boundary).
+func (r *run) noteRegistryPRURL(url string) {
+	r.noteRegistry(func(e *budget.AgentEntry) { e.PRURL = url })
+}
+
 // verifySummaryRunes bounds the registry's verify summary; the rules clip
 // the whole entry at 200 bytes, well under which this still leaves room for
 // the rest of a multi-byte-rune summary.

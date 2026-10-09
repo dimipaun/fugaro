@@ -10,7 +10,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/dimipaun/fugaro/internal/budget"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/verify"
@@ -68,8 +67,7 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	}
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
-	url := r.rec.PR.URL
-	r.noteRegistry(func(e *budget.AgentEntry) { e.PRURL = url })
+	r.noteRegistryPRURL(r.rec.PR.URL)
 }
 
 // noteStatusWritten records when the status section was last written, in
