@@ -91,3 +91,44 @@ func TestCoverBucketConditionUnknown(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+// A configured runs bucket is not charset-checked everywhere it is read
+// (localcfg only validates runs_bucket, not a bucket_url, so a name like
+// "MyBucket" reaches Cover.Buckets verbatim): NotCovered must still refuse
+// the grant, not panic, even though gcp.LauncherBucketCondition itself
+// panics on such a name.
+func TestCoverBucketConditionBadConfiguredBucketNeverPanics(t *testing.T) {
+	const badBucket = "MyBucket"
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{badBucket}, Listed: []string{cbPerson}}
+	p := &Plan{ResourceChanges: []ResourceChange{{
+		Address: `module.installation.google_storage_bucket_iam_member.x["k"]`,
+		Type:    "google_storage_bucket_iam_member",
+		Change: Change{Actions: []string{"create"}, After: map[string]any{
+			"bucket": badBucket, "member": cbPerson, "role": "roles/storage.objectUser",
+			"condition": []any{cond(gcp.LauncherBucketConditionTitle, `resource.name.startsWith("projects/_/buckets/`+badBucket+`/objects/runs/")`)},
+		}, AfterUnknown: map[string]any{"condition": []any{map[string]any{}}}},
+	}}}
+	if got := c.NotCovered(p, nil); len(got) != 1 || !strings.Contains(got[0], "condition") {
+		t.Fatalf("got %v, want one problem naming condition (no panic)", got)
+	}
+}
+
+// An account's bucket condition may name any of this run's buckets in
+// general, but every clause of one grant must match that grant's own
+// "bucket" attribute: a job account's clause naming a different (but still
+// listed) bucket than the grant's own must not be covered.
+func TestCoverBucketConditionAccountClauseMatchesItsOwnBucket(t *testing.T) {
+	const otherBucket = "fugaro-runs-other"
+	c := Cover{Projects: []string{"proj-1234"}, Buckets: []string{cbBucket, otherBucket}, Listed: []string{cbPerson}}
+	p := &Plan{ResourceChanges: []ResourceChange{{
+		Address: `module.installation.google_storage_bucket_iam_member.x["k"]`,
+		Type:    "google_storage_bucket_iam_member",
+		Change: Change{Actions: []string{"create"}, After: map[string]any{
+			"bucket": cbBucket, "member": cbJobSA, "role": "roles/storage.objectUser",
+			"condition": []any{cond("t", gcp.BucketCondition(otherBucket, []string{"runs"}, "s"))},
+		}, AfterUnknown: map[string]any{"condition": []any{map[string]any{}}}},
+	}}}
+	if got := c.NotCovered(p, nil); len(got) != 1 || !strings.Contains(got[0], "condition") {
+		t.Fatalf("got %v, want one problem naming condition: a clause on another of this run's buckets than the grant's own", got)
+	}
+}

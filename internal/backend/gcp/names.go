@@ -274,6 +274,14 @@ const LauncherBucketConditionTitle = "fugaro-launchers-runs"
 // the rest, so this is the one place that does).
 var bucketNameRE = regexp.MustCompile(`^[a-z0-9._-]+$`)
 
+// ValidBucketName reports whether bucket is the charset
+// LauncherBucketCondition accepts. A caller that did not itself validate a
+// configured bucket name (a local config's bucket_url, for instance, which
+// localcfg only charset-checks when runs_bucket, not bucket_url, is set)
+// should check this before calling LauncherBucketCondition with it, since
+// that function panics rather than widen on a bad one.
+func ValidBucketName(bucket string) bool { return bucketNameRE.MatchString(bucket) }
+
 // LauncherBucketCondition limits the launchers' objectUser grant on bucket
 // to runs/, every repository's (H2). Every launcher carries this exact
 // string and LauncherBucketConditionTitle, with no description, so IAM keeps

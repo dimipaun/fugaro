@@ -445,14 +445,21 @@ func (c Cover) bucketCondition(ch Change) string {
 	}
 	role := str(ch.After["role"])
 	person := !unknown(ch, "member") && slices.Contains(c.Listed, str(ch.After["member"]))
+	bucket := str(ch.After["bucket"])
 	switch {
 	case role == "roles/storage.objectAdmin" || role == "roles/storage.objectViewer":
 		if len(conds) != 0 {
 			return "grants " + role + " on the bucket under a condition, which the modules never do"
 		}
 	case role == "roles/storage.objectUser" && person:
-		bucket := str(ch.After["bucket"])
 		for _, b := range c.Buckets {
+			// A configured bucket name is not charset-checked everywhere it is
+			// read (localcfg only validates runs_bucket, not a bucket_url): skip
+			// one gcp.LauncherBucketCondition would panic on, rather than crash
+			// the plan review over a config problem this function does not own.
+			if !gcp.ValidBucketName(b) {
+				continue
+			}
 			if (bucket == "" || bucket == b) && title == gcp.LauncherBucketConditionTitle && expr == gcp.LauncherBucketCondition(b) {
 				return ""
 			}
@@ -464,7 +471,7 @@ func (c Cover) bucketCondition(ch Change) string {
 		}
 		for _, clause := range strings.Split(expr, " || ") {
 			m := accountClause.FindStringSubmatch(clause)
-			if m == nil || !slices.Contains(c.Buckets, m[1]) {
+			if m == nil || !slices.Contains(c.Buckets, m[1]) || (bucket != "" && bucket != m[1]) {
 				return "grants objectUser on the bucket to an account under a condition that is not a Fugaro prefix condition of this run's bucket"
 			}
 		}
