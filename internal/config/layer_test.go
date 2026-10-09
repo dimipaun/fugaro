@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const testLayer = `version: 1
@@ -231,12 +233,20 @@ func TestProjectLayerRawAndTree(t *testing.T) {
 		t.Fatalf("Raw = %q", l.Raw)
 	}
 	prs, ok := l.tree["profiles"].(map[string]any)
-	if !ok || prs["node-web"] == nil || l.tree["default_profile"] != "java-service" {
+	if !ok || prs["node-web"] == nil || nodeValue(l.tree["default_profile"]) != "java-service" {
 		t.Fatalf("tree = %v", l.tree)
 	}
 	if got := LayerCopyKey("acme-web"); got != "builds/acme-web/project-layer.yaml" {
 		t.Fatalf("LayerCopyKey = %q", got)
 	}
+}
+
+// nodeValue is a tree leaf's text ("" for anything else).
+func nodeValue(v any) string {
+	if n, ok := v.(*yaml.Node); ok {
+		return n.Value
+	}
+	return ""
 }
 
 func TestFugaroYAMLBudgetIsFinite(t *testing.T) {

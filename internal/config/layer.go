@@ -56,7 +56,7 @@ type ProjectLayer struct {
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
-	// tree is the text as plain maps, which Resolve merges.
+	// tree is the text as Resolve merges it (nodeTree).
 	tree map[string]any
 }
 
@@ -176,9 +176,11 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	if p := layerShape(doc.Content[0]); p != nil {
 		return nil, []Problem{*p}
 	}
-	var tree map[string]any
-	if err := doc.Decode(&tree); err != nil {
-		return nil, safeProblems(err)
+	// layerShape refused anchors, tags and keys other than strings, so the
+	// tree is the text, node for node.
+	tree, ps0 := docTree(&doc)
+	if len(ps0) > 0 {
+		return nil, ps0
 	}
 	var ps []Problem
 	for _, k := range sortedKeys(tree) {

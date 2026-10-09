@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -37,10 +38,14 @@ type Resolution struct {
 	ConfigSHA256 string
 }
 
+// listIndexRE is a list index in a path (cache[0].key).
+var listIndexRE = regexp.MustCompile(`\[\d+\]`)
+
 // SourceOf is the source of path: its own, else its nearest listed
-// ancestor's, else SourceDefault.
+// ancestor's, else SourceDefault. A list is one key, so list indexes are
+// ignored: cache[0].key is cache's.
 func (r *Resolution) SourceOf(path string) string {
-	for p := path; p != ""; {
+	for p := listIndexRE.ReplaceAllString(path, ""); p != ""; {
 		if s, ok := r.Sources[p]; ok {
 			return s
 		}
@@ -69,15 +74,24 @@ func (c *Config) SHA256() string {
 // the repository's value, else its workflow's profile's, else the project
 // layer's defaults', else Fugaro's default. Maps merge key by key; a
 // scalar or a list is replaced whole; null is "not set here". A nil l is
-// Parse as before 0.6.0, except that naming a profile is an error.
+// Parse as before 0.6.0, except that naming a profile, or a key YAML reads
+// as other than a string (1:, true:, null:), is an error.
+//
+// The merge works on YAML nodes, never on decoded values: a value reaches
+// the resolved config as the text and tag it was written with, so 1.10 stays
+// "1.10" and 010 stays "010", exactly as Parse reads them.
 func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	repo, ps := decodeRepo(data)
 	if len(ps) > 0 {
 		return nil, nil, ps
 	}
-	var tree map[string]any
-	if err := yaml.Unmarshal(data, &tree); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, nil, yamlProblems(err)
+	}
+	tree, ps := docTree(&doc)
+	if len(ps) > 0 {
+		return nil, nil, ps
 	}
 	if l == nil {
 		if ps := layerlessProblems(repo); len(ps) > 0 {
@@ -116,7 +130,13 @@ func Resolve(data []byte, l *ProjectLayer) (*Config, *Resolution, []Problem) {
 	dec := yaml.NewDecoder(bytes.NewReader(out))
 	dec.KnownFields(true)
 	if err := dec.Decode(&c); err != nil {
-		return nil, nil, yamlProblems(err)
+		// Both layers decoded on their own, so this is not expected; the
+		// merged text's line numbers are no line of either file.
+		ps := yamlProblems(err)
+		for i := range ps {
+			ps[i].Line, ps[i].Message = 0, "resolving: "+ps[i].Message
+		}
+		return nil, nil, ps
 	}
 	c.Layer = l
 	applyDefaults(&c)
@@ -140,7 +160,7 @@ func layerlessProblems(c *Config) []Problem {
 	}
 	for _, name := range sortedKeys(c.Workflows) {
 		if p := c.Workflows[name].Profile; p != "" {
-			ps = append(ps, Problem{Path: "workflows." + name + ".profile", Message: fmt.Sprintf("names profile %q, but %s", p, why), Code: CodeNeedsLayer})
+			ps = append(ps, Problem{Path: "workflows." + showKey(name) + ".profile", Message: fmt.Sprintf("names profile %q, but %s", p, why), Code: CodeNeedsLayer})
 		}
 	}
 	return ps
@@ -154,7 +174,7 @@ func noLayerHint(c *Config, ps []Problem) []Problem {
 	}
 	for i, p := range ps {
 		if p.Path == "workflows" {
-			ps[i].Message += fmt.Sprintf("; a fugaro.yaml without workflows takes one from project %s's layer, and none was found (fugaro config layer)", c.Project)
+			ps[i].Message += fmt.Sprintf("; a fugaro.yaml without workflows takes one from project %s's layer, and none was found (fugaro config layer)", showKey(c.Project))
 			ps[i].Code = CodeNeedsLayer
 		}
 	}
@@ -182,7 +202,7 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 		if !ok {
 			return nil, false
 		}
-		q := deepCopy(p).(map[string]any)
+		q := maps1(p) // overlay copies the maps it writes into
 		delete(q, "description")
 		return q, true
 	}
@@ -215,16 +235,18 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 	for _, name := range sortedKeys(wm) {
 		rw, _ := wm[name].(map[string]any)
 		path := "workflows." + name
+		shown := "workflows." + showKey(name)
 		w := map[string]any{}
 		if pname := repo.Workflows[name].Profile; pname != "" {
 			p, ok := profileTree(pname)
 			if !ok {
-				ps = append(ps, Problem{Path: path + ".profile", Message: fmt.Sprintf("names profile %q, which project %s's layer does not have (its profiles: %s)", pname, l.Project, names)})
+				ps = append(ps, Problem{Path: shown + ".profile", Message: fmt.Sprintf("names profile %q, which project %s's layer does not have (its profiles: %s)", pname, l.Project, names)})
 				continue
 			}
 			// The inline escape hatch: a repository Dockerfile replaces the
-			// profile's generated-image settings.
-			if rw["dockerfile"] != nil {
+			// profile's generated-image settings. dockerfile: "" names no
+			// Dockerfile, so it leaves them.
+			if repo.Workflows[name].Dockerfile != "" {
 				delete(p, "image")
 			}
 			overlay(w, p, path, SourceProfile(pname), src)
@@ -250,27 +272,18 @@ func overlay(dst, src map[string]any, path string, source string, sources map[st
 			p = path + "." + k
 		}
 		if sm, ok := v.(map[string]any); ok {
+			// Both layers decode into the same typed Config, so a key is a
+			// map in both or a map in neither.
 			dm, ok := dst[k].(map[string]any)
 			if !ok {
-				forget(sources, p)
 				dm = map[string]any{}
 				dst[k] = dm
 			}
 			overlay(dm, sm, p, source, sources)
 			continue
 		}
-		forget(sources, p)
-		dst[k] = deepCopy(v)
+		dst[k] = v // a leaf is a node, which nothing changes
 		sources[p] = source
-	}
-}
-
-// forget drops the sources of path and everything under it.
-func forget(sources map[string]string, path string) {
-	for k := range sources {
-		if k == path || strings.HasPrefix(k, path+".") {
-			delete(sources, k)
-		}
 	}
 }
 
@@ -291,22 +304,104 @@ func markLeaves(v any, path, source string, sources map[string]string) {
 	}
 }
 
-func deepCopy(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, e := range t {
-			out[k] = deepCopy(e)
-		}
-		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, e := range t {
-			out[i] = deepCopy(e)
-		}
-		return out
+// docTree is a YAML document as Resolve merges it (nodeTree).
+func docTree(doc *yaml.Node) (map[string]any, []Problem) {
+	if len(doc.Content) == 0 {
+		return map[string]any{}, nil
 	}
-	return v
+	t, p := nodeTree("", doc.Content[0])
+	if p != nil {
+		return nil, []Problem{*p}
+	}
+	m, _ := t.(map[string]any)
+	return m, nil
+}
+
+// nodeTree is n as Resolve merges it: a mapping as a map[string]any, with
+// aliases and merge keys expanded; null as nil; any other value as a copy
+// of its own *yaml.Node, so marshalling writes back the text and tag it was
+// written with. A key YAML reads as other than a string is refused: it
+// would name a different key once marshalled back.
+func nodeTree(path string, n *yaml.Node) (any, *Problem) {
+	n = deref(n)
+	switch {
+	case n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null":
+		return nil, nil
+	case n.Kind != yaml.MappingNode:
+		return plainNode(n), nil
+	}
+	m := map[string]any{}
+	var merges []*yaml.Node
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k, v := deref(n.Content[i]), n.Content[i+1]
+		if k.Kind == yaml.ScalarNode && k.ShortTag() == "!!merge" {
+			merges = append(merges, deref(v))
+			continue
+		}
+		if k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str" {
+			at := path
+			if at == "" {
+				at = "the top level"
+			}
+			return nil, &Problem{Line: k.Line, Message: fmt.Sprintf("has, under %s, the key %q, which YAML reads as %s, not a string; quote it", at, showKey(k.Value), strings.TrimPrefix(k.ShortTag(), "!!"))}
+		}
+		p := showKey(k.Value)
+		if path != "" {
+			p = path + "." + p
+		}
+		t, prob := nodeTree(p, v)
+		if prob != nil {
+			return nil, prob
+		}
+		m[k.Value] = t
+	}
+	// A merged key never replaces one the mapping sets itself, and the
+	// first of a list of merged mappings wins.
+	for _, mv := range merges {
+		from := []*yaml.Node{mv}
+		if mv.Kind == yaml.SequenceNode {
+			from = mv.Content
+		}
+		for _, f := range from {
+			t, prob := nodeTree(path, f)
+			if prob != nil {
+				return nil, prob
+			}
+			sm, ok := t.(map[string]any)
+			if !ok {
+				return nil, &Problem{Line: f.Line, Message: "merges (<<) a value that is not a mapping"}
+			}
+			for k, v := range sm {
+				if _, set := m[k]; !set {
+					m[k] = v
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+// deref follows an alias to the node it names.
+func deref(n *yaml.Node) *yaml.Node {
+	for n.Kind == yaml.AliasNode && n.Alias != nil {
+		n = n.Alias
+	}
+	return n
+}
+
+// plainNode is a copy of n with its aliases expanded and its anchors and
+// comments dropped, so it marshals on its own.
+func plainNode(n *yaml.Node) *yaml.Node {
+	n = deref(n)
+	c := *n
+	c.Anchor, c.HeadComment, c.LineComment, c.FootComment = "", "", "", ""
+	if n.Content != nil {
+		c.Content = make([]*yaml.Node, len(n.Content))
+		for i, e := range n.Content {
+			c.Content[i] = plainNode(e)
+		}
+	}
+	return &c
 }
 
 // annotate says, on each problem of a resolved config, which layer set the

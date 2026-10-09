@@ -169,12 +169,13 @@ func TestResolveTable(t *testing.T) {
 }
 
 func TestResolveProblemsNameTheLayer(t *testing.T) {
-	l := mustLayer(t, testLayer)
+	l := mustLayer(t, strings.Replace(testLayer, "default_profile:", "  bare:\n    base: go\ndefault_profile:", 1))
 	for _, tc := range []struct{ name, repo, want string }{
-		{"an unknown profile", minimalRepo + "profile: nope\n", `profile: names profile "nope", which project acme's layer does not have (its profiles: java-service, node-web)`},
+		{"an unknown profile", minimalRepo + "profile: nope\n", `profile: names profile "nope", which project acme's layer does not have (its profiles: bare, java-service, node-web)`},
 		{"profile: beside workflows:", minimalRepo + "profile: node-web\nworkflows:\n  web: { base: go, commands: { build: a, test: b } }\n", "applies only to a fugaro.yaml with no workflows:"},
-		{"a missing command names the profile", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    commands: { test: '' }\n", "workflows.api.commands.test: is required"},
-		{"a value the profile set", minimalRepo + "workflows:\n  api:\n    profile: java-service\n    timeouts: { stage: 3h }\n", "workflows.api.timeouts.stage: must not exceed timeouts.total"},
+		{"a value the repository set says nothing more", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    commands: { test: '' }\n", "workflows.api.commands.test: is required; "},
+		{"a value the profile set names the profile", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    base: go\n", "workflows.api.image.node: only applies to base web-node (set by profile node-web)"},
+		{"a value neither set names the profile", minimalRepo + "workflows:\n  api:\n    profile: bare\n", "workflows.api.commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"another project's layer", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `the project layer given is project "acme"'s`},
 		{"an unanchored file", "version: 1\nproject: acme\n", "the project layer applies only to a fugaro.yaml whose gcp_project: names it"},
 	} {
@@ -184,7 +185,7 @@ func TestResolveProblemsNameTheLayer(t *testing.T) {
 			for _, p := range ps {
 				msgs = append(msgs, p.String())
 			}
-			if got := strings.Join(msgs, "; "); !strings.Contains(got, tc.want) {
+			if got := strings.Join(msgs, "; ") + "; "; !strings.Contains(got, tc.want) {
 				t.Fatalf("problems %q, want %q", got, tc.want)
 			}
 		})
@@ -211,8 +212,194 @@ func TestResolveWithoutLayerIsParse(t *testing.T) {
 		t.Fatalf("a profile with no layer: %v", ps)
 	}
 	_, _, ps = Resolve([]byte(minimalRepo+"git: { provider: github }\n"), nil)
-	if len(ps) == 0 || !strings.Contains(ps[len(ps)-1].Message, "takes one from project acme's layer") {
+	if len(ps) == 0 || !strings.Contains(ps[len(ps)-1].Message, "takes one from project acme's layer") || ps[len(ps)-1].Code != CodeNeedsLayer {
 		t.Fatalf("an anchored file with no workflows: %v", ps)
+	}
+	// Without a layer every key the file sets is the repository's.
+	_, res, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  api: { base: go, commands: { build: a, test: b } }\n"), nil)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	for path, want := range map[string]string{"git.provider": SourceRepo, "workflows.api.commands.test": SourceRepo, "git.base_branch": SourceDefault} {
+		if got := res.SourceOf(path); got != want {
+			t.Errorf("SourceOf(%s) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// anchored is a corpus file anchored to GCP project acme-fugaro, and a
+// project layer for it that sets nothing.
+func anchored(t *testing.T, data []byte) ([]byte, *ProjectLayer) {
+	t.Helper()
+	project, err := ProjectOf(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := GCPProjectOf(data); g == "" {
+		data = append([]byte("gcp_project: acme-fugaro\n"), data...)
+	}
+	g, _ := GCPProjectOf(data)
+	l, ps := ParseProjectLayer([]byte("version: 1\nproject: "+project+"\ngcp_project: "+g+"\n"), LayerAnchor{Project: project, GCPProject: g})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	return data, l
+}
+
+// TestResolveOverAnEmptyLayerIsParse is the merge's property: a layer that
+// sets nothing changes nothing, so every valid file resolves to the config
+// Parse reads, byte for byte.
+func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "config", "valid", "*.yaml"))
+	if err != nil || len(files) == 0 {
+		t.Fatal("no corpus")
+	}
+	cases := map[string][]byte{
+		"literals": []byte(literalsRepo),
+		"anchors and merge keys": []byte(minimalRepo + "git: { provider: github }\nworkflows:\n" +
+			"  api: &w\n    base: go\n    commands: &c { build: make, test: make test }\n    timeouts: { total: 1h }\n" +
+			"  web:\n    <<: *w\n    commands: { <<: *c, test: make check }\n" +
+			"  cli: *w\n"),
+	}
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cases[filepath.Base(f)] = data
+	}
+	for name, data := range cases {
+		data, l := anchored(t, data)
+		want, ps := Parse(data)
+		if len(ps) > 0 {
+			t.Fatalf("%s: Parse: %v", name, ps)
+		}
+		c, res, ps := Resolve(data, l)
+		if len(ps) > 0 {
+			t.Errorf("%s: %v", name, ps)
+			continue
+		}
+		if res.ConfigSHA256 != want.SHA256() {
+			t.Errorf("%s: resolves to %+v, Parse reads %+v", name, *c, *want)
+		}
+	}
+}
+
+// literalsRepo holds values YAML would read as numbers, a date or a bool.
+const literalsRepo = minimalRepo + `git:
+  provider: github
+  base_branch: 1.10
+  pr: { labels: [1.10, 1e3, 0x10, yes] }
+agent:
+  model: 0x10
+workflows:
+  api:
+    base: go
+    commands: { build: 1e3, test: 010 }
+`
+
+// TestResolveKeepsLiterals: a value reaches the resolved config as it was
+// written, from either layer, never decoded and printed again.
+func TestResolveKeepsLiterals(t *testing.T) {
+	l := mustLayer(t, strings.Replace(strings.Replace(testLayer, "labels: [fugaro]", "labels: [1.10, 0x10]", 1),
+		"build: npm run build, test: npm test", "build: 1e3, test: 010", 1))
+	c, _, ps := Resolve([]byte(literalsRepo), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	api := c.Workflows["api"]
+	if c.Git.BaseBranch != "1.10" || c.Agent.Model != "0x10" || strings.Join(c.Git.PR.Labels, ",") != "1.10,1e3,0x10,yes" ||
+		api.Commands.Build != "1e3" || api.Commands.Test != "010" {
+		t.Fatalf("repository values changed: %q %q %q %+v", c.Git.BaseBranch, c.Agent.Model, c.Git.PR.Labels, api.Commands)
+	}
+	c, _, ps = Resolve([]byte(minimalRepo+"git:\n  base_branch: 2026-10-08\nprofile: node-web\n"), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	w := c.Workflows[ImplicitWorkflow]
+	if c.Git.BaseBranch != "2026-10-08" || strings.Join(c.Git.PR.Labels, ",") != "1.10,0x10" || w.Commands.Build != "1e3" || w.Commands.Test != "010" {
+		t.Fatalf("layer values changed: %q %q %+v", c.Git.BaseBranch, c.Git.PR.Labels, w.Commands)
+	}
+}
+
+// TestResolveRefusesKeysThatAreNotStrings: a workflow key YAML reads as a
+// number, a bool or null would decode as another type and lose its
+// workflow, so it is refused, with or without a layer.
+func TestResolveRefusesKeysThatAreNotStrings(t *testing.T) {
+	wf := "    base: go\n    commands: { build: make, test: make test }\n"
+	for _, tc := range []struct{ name, repo, want string }{
+		{"int", minimalRepo + "workflows:\n  1:\n" + wf, `line 5: has, under workflows, the key "1", which YAML reads as int, not a string; quote it`},
+		{"bool", minimalRepo + "workflows:\n  true:\n" + wf, `line 5: has, under workflows, the key "true", which YAML reads as bool, not a string; quote it`},
+		{"null", minimalRepo + "workflows:\n  ~:\n" + wf, `line 5: has, under workflows, the key "~", which YAML reads as null, not a string; quote it`},
+		{"mixed", minimalRepo + "workflows:\n  api:\n" + wf + "  2:\n" + wf, `line 8: has, under workflows, the key "2", which YAML reads as int, not a string; quote it`},
+	} {
+		for _, l := range []*ProjectLayer{nil, mustLayer(t, testLayer)} {
+			t.Run(tc.name, func(t *testing.T) {
+				_, _, ps := Resolve([]byte(tc.repo), l)
+				if len(ps) != 1 || !strings.HasPrefix(ps[0].String(), tc.want) {
+					t.Fatalf("layer %v: problems %v, want %q", l != nil, ps, tc.want)
+				}
+			})
+		}
+	}
+}
+
+// TestResolveEscapesNames: a project or workflow name in a problem is
+// printed with its control and formatting characters escaped.
+func TestResolveEscapesNames(t *testing.T) {
+	l := mustLayer(t, testLayer)
+	for _, tc := range []struct {
+		name, repo string
+		l          *ProjectLayer
+	}{
+		{"no layer hint", "version: 1\nproject: \"ac\\e[31mme\\u202e\"\ngcp_project: acme-fugaro\n", nil},
+		{"profile with no layer", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: x\n", nil},
+		{"unknown profile", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: nope\n", l},
+		{"workflow name", minimalRepo + "git: { provider: github }\nworkflows:\n  \"a\\e[2Jb\\u202e\": { base: go, commands: { build: a, test: b } }\n", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, ps := Resolve([]byte(tc.repo), tc.l)
+			if len(ps) == 0 {
+				t.Fatal("no problems")
+			}
+			for _, p := range ps {
+				if s := p.String(); strings.ContainsAny(s, "\x1b\u202e") {
+					t.Fatalf("problem %q prints a control or formatting character", s)
+				}
+			}
+		})
+	}
+}
+
+func TestResolveSourceOfListsAndAncestors(t *testing.T) {
+	l := mustLayer(t, testLayer)
+	_, res, ps := Resolve([]byte(minimalRepo+"workflows:\n  api:\n    profile: java-service\n    cache: [{ key: [a], paths: [b] }]\n"), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	for path, want := range map[string]string{
+		"git.pr.labels[0]":              SourceProject,
+		"workflows.api.cache[0].key[0]": SourceRepo,
+		"workflows.api.image.apt[0]":    SourceProfile("java-service"),
+		"workflows.api.commands.test.x": SourceProfile("java-service"),
+		"workflows.api.cache":           SourceRepo,
+		"workflows.api.timeouts.stage":  SourceDefault,
+	} {
+		if got := res.SourceOf(path); got != want {
+			t.Errorf("SourceOf(%s) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestResolveEmptyDockerfileKeepsTheProfileImage: dockerfile: "" names no
+// Dockerfile, so it does not drop the profile's image: block.
+func TestResolveEmptyDockerfileKeepsTheProfileImage(t *testing.T) {
+	c, res, ps := Resolve([]byte(minimalRepo+"workflows:\n  api:\n    profile: java-service\n    dockerfile: \"\"\n"), mustLayer(t, testLayer))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if got := strings.Join(c.Workflows["api"].Image.Apt, ","); got != "graphviz" || res.SourceOf("workflows.api.image.apt") != SourceProfile("java-service") {
+		t.Fatalf("image.apt = %q from %s", got, res.SourceOf("workflows.api.image.apt"))
 	}
 }
 
