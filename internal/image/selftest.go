@@ -2,6 +2,7 @@ package image
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"fmt"
 	"io"
@@ -46,6 +47,13 @@ type SelftestSpec struct {
 	// (SpecForCloud) checks the image's structure only, since the build
 	// would run repository code, and it runs without the network.
 	SkipVerify bool `json:"skip_verify,omitempty"`
+	// Tools runs the presence checks of images/base/tools.tsv: "critical"
+	// (a derived image's smoke), "all" (the base's CI smoke) or "" (none).
+	Tools string `json:"tools,omitempty"`
+	// ToolsOnly runs the presence checks alone (Tools, default "all"), for
+	// the base image itself, which has no checkout. Every other field is
+	// ignored.
+	ToolsOnly bool `json:"tools_only,omitempty"`
 }
 
 // SpecForCloud is the selftest the Cloud Build smoke step runs in the
@@ -142,6 +150,14 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 	}
 
 	uid := os.Geteuid()
+	if spec.ToolsOnly {
+		checkTools(ctx, cmp.Or(spec.Tools, "all"), add)
+		r.Passed = len(r.Checks) > 0
+		for _, c := range r.Checks {
+			r.Passed = r.Passed && c.OK
+		}
+		return r
+	}
 	if spec.RootChecks {
 		if uid != 0 {
 			add("root-scan", false, "the filesystem scans must run as root (uid 0), not uid %d, or unreadable directories could hide files", uid)
@@ -177,6 +193,9 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		add("claude", false, "claude --version: %v: %s", err, out)
 	} else {
 		add("claude", true, "%s", out)
+	}
+	if spec.Tools != "" {
+		checkTools(ctx, spec.Tools, add)
 	}
 	if spec.Base == "web-node" {
 		if out, err := output(ctx, "node", "-v"); err != nil {
