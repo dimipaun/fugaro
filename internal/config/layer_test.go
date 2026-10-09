@@ -146,6 +146,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"bidi in a model", agent("    model: \"a\\u202eb\"\n"), "defaults.agent.model (line 6): holds a control"},
 		{"a tab in a comment", layerHead + "profiles: {}\n# a\tb\n", "line 5: holds a control or invisible formatting character (in a comment or directive)"},
 		{"a tab in a comment after a block scalar", layerHead + "profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\n      test: x\n# z\ty\n", "line 11: holds a control or invisible formatting character (in a comment or directive)"},
+		{"a tab in a %TAG directive", "%TAG !e!\ttag:x,2002:\n---\n" + layerHead + "profiles: {}\n", "line 1: holds a control or invisible formatting character (in a comment or directive)"},
 		// validateLayer
 		{"a version", "version: 2\nproject: acme\ngcp_project: acme-fugaro\n", "version: must be 1"},
 		{"a project name", "version: 1\nproject: Acme_1\ngcp_project: acme-fugaro\n", "project: must be a project name"},
@@ -197,6 +198,34 @@ func TestProjectLayerDescriptionCountsCharacters(t *testing.T) {
 func TestProjectLayerAllowsTabInABlockScalarValue(t *testing.T) {
 	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\tb\n        # c\td\n      test: x\n")
 	if want := "a\tb\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerAllowsTabInAFoldedBlockScalar is
+// TestProjectLayerAllowsTabInABlockScalarValue for a folded scalar (> and
+// >-, not just | and |+/-): blockHeaderRE must recognize > the same as |.
+// The body's second line starts with '#', so a blockHeaderRE that missed >
+// would show up here: the line would be read as a comment (the key rule,
+// no tab) instead of a value (badRune, tab allowed).
+func TestProjectLayerAllowsTabInAFoldedBlockScalar(t *testing.T) {
+	for _, indicator := range []string{">", ">-"} {
+		t.Run(indicator, func(t *testing.T) {
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
+				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
+			}
+		})
+	}
+}
+
+// TestProjectLayerAllowsTabInAQuotedHash: commentStart tracks single and
+// double quotes within a line, so a '#' inside a quoted value never starts
+// a comment there either, and the tab beside it gets the value rule, not
+// the stricter key/comment rule.
+func TestProjectLayerAllowsTabInAQuotedHash(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: \"a #b\tc\", test: x }\n")
+	if want := "a #b\tc"; l.Profiles["p"].Commands.Build != want {
 		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
 	}
 }

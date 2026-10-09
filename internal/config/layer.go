@@ -293,7 +293,18 @@ func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, "
 func rawTextProblems(data []byte) []Problem {
 	var ps []Problem
 	text := strings.TrimPrefix(string(data), "\ufeff")
-	bodyIndent := -1 // the header line's indent while inside its body, else -1
+	// bodyIndent is the header line's own indent while inside its body, else
+	// -1. YAML's own rule for where a block scalar ends is "the first
+	// non-blank line indented no more than its header", so a line indented
+	// more than the header, even well past the scalar's actual (shallower)
+	// content indentation, is still inside the body: a '#' there is real
+	// content, not a comment, the same as YAML itself would read it. Getting
+	// this wrong only ever relaxes the tab rule for that line (the value
+	// rule, badRune, still refuses every other control or bidi character
+	// rawTextProblems looks for) and never misses a real standalone comment,
+	// since one of those sits at or before the enclosing key's indent, which
+	// always closes the body first.
+	bodyIndent := -1
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
 		if bodyIndent >= 0 && (strings.TrimSpace(line) == "" || indentOf(line) > bodyIndent) {
