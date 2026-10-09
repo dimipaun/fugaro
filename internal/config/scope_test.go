@@ -26,6 +26,17 @@ func TestScopeOf(t *testing.T) {
 	}
 }
 
+// TestReviewAllowForksIsRepoScopeOnly (generic-tool Task 9, G12):
+// review.allow_forks is read from the base branch, like followup.trusted,
+// so a project layer or a profile may not set it, and a task flag can't
+// override it.
+func TestReviewAllowForksIsRepoScopeOnly(t *testing.T) {
+	row, ok := ScopeOf("review.allow_forks")
+	if !ok || row.In != InRepo {
+		t.Fatalf("ScopeOf(review.allow_forks) = %+v, %v, want repo scope only", row, ok)
+	}
+}
+
 // TestScopeTableMatchesDocs pins, row by row, the layer set of every key in
 // config.Scopes against the table of docs/design/layered-config.md §5 (the
 // plan's Task 1). A key whose scope changes, or a key added without a row
@@ -75,6 +86,8 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,
 		"workflows.*.commands.test":             InProfile | InRepo,
+		"workflows.*.commands.lint":             InProfile | InRepo,
+		"workflows.*.commands.fix":              InProfile | InRepo,
 		"workflows.*.commands.rerun_failed":     InProfile | InRepo,
 		"workflows.*.commands.reports":          InProfile | InRepo,
 		"workflows.*.cache":                     InProfile | InRepo,
@@ -93,6 +106,8 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
+
+		"review.allow_forks": InRepo,
 	}
 
 	seen := make(map[string]bool, len(Scopes))

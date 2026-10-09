@@ -33,6 +33,7 @@ const (
 	whySecrets   = "secrets belong to one repository's Secret Manager entries"
 	whyFollowup  = "it decides whose comments steer a run with the repository's credentials"
 	whyRepoShape = "it is the repository's own"
+	whyForks     = "review mode would run a fork's code next to the job's secrets; only the repository opts in"
 )
 
 // Scopes is every fugaro.yaml key and the layers it may be set in. A key
@@ -78,6 +79,8 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.lint", In: InProfile | InRepo},
+	{Key: "workflows.*.commands.fix", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.rerun_failed", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.reports", In: InProfile | InRepo},
 	{Key: "workflows.*.cache", In: InProfile | InRepo},
@@ -95,6 +98,7 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.rebuild.paths", In: InProfile | InRepo},
 	{Key: "followup.trusted", In: InRepo, Why: whyFollowup},
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
+	{Key: "review.allow_forks", In: InRepo, Why: whyForks},
 }
 
 // ExecutableKeys are the profile keys whose values run as shell, in the
