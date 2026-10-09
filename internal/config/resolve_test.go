@@ -285,7 +285,9 @@ func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
 	}
 }
 
-// literalsRepo holds values YAML would read as numbers, a date or a bool.
+// literalsRepo holds values YAML would read as numbers, a date or a bool,
+// and folded, literal and tagged scalars whose decoded value depends on
+// chomping, a more-indented line or an explicit tag, not just its text.
 const literalsRepo = minimalRepo + `git:
   provider: github
   base_branch: 1.10
@@ -296,13 +298,48 @@ workflows:
   api:
     base: go
     commands: { build: 1e3, test: 010 }
+  lit1:
+    base: go
+    commands:
+      build: >
+        folded  text
+          more
+      test: >
+        a
+         b
+        c
+  lit2:
+    base: go
+    commands:
+      build: >+
+        a
+
+      test: >-
+        a
+
+  lit3:
+    base: go
+    commands:
+      build: |+
+        a
+
+      test: !!binary |
+        SGVsbG8=
 `
 
 // TestResolveKeepsLiterals: a value reaches the resolved config as it was
 // written, from either layer, never decoded and printed again.
 func TestResolveKeepsLiterals(t *testing.T) {
-	l := mustLayer(t, strings.Replace(strings.Replace(testLayer, "labels: [fugaro]", "labels: [1.10, 0x10]", 1),
-		"build: npm run build, test: npm test", "build: 1e3, test: 010", 1))
+	// want is Parse's own decode of literalsRepo: the oracle the merge must
+	// match, since Parse never goes through the node merge at all.
+	want, ps := Parse([]byte(literalsRepo))
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	l := mustLayer(t, strings.Replace(strings.Replace(strings.Replace(testLayer, "labels: [fugaro]", "labels: [1.10, 0x10]", 1),
+		"build: npm run build, test: npm test", "build: 1e3, test: 010", 1),
+		"default_profile:", "  lit:\n    base: go\n    commands:\n      build: >\n        folded  text\n          more\n"+
+			"      test: |+\n        a\n\ndefault_profile:", 1))
 	c, _, ps := Resolve([]byte(literalsRepo), l)
 	if len(ps) > 0 {
 		t.Fatal(ps)
@@ -312,6 +349,15 @@ func TestResolveKeepsLiterals(t *testing.T) {
 		api.Commands.Build != "1e3" || api.Commands.Test != "010" {
 		t.Fatalf("repository values changed: %q %q %q %+v", c.Git.BaseBranch, c.Agent.Model, c.Git.PR.Labels, api.Commands)
 	}
+	// Folded, literal, chomping, a more-indented line and an explicit tag
+	// (lit1-lit3 in literalsRepo) must reach the resolved config exactly as
+	// Parse, which never merges nodes, reads them.
+	for _, name := range []string{"lit1", "lit2", "lit3"} {
+		got, w := c.Workflows[name].Commands, want.Workflows[name].Commands
+		if got.Build != w.Build || got.Test != w.Test {
+			t.Errorf("%s: commands = %+v, want %+v (Parse)", name, got, w)
+		}
+	}
 	c, _, ps = Resolve([]byte(minimalRepo+"git:\n  base_branch: 2026-10-08\nprofile: node-web\n"), l)
 	if len(ps) > 0 {
 		t.Fatal(ps)
@@ -319,6 +365,17 @@ func TestResolveKeepsLiterals(t *testing.T) {
 	w := c.Workflows[ImplicitWorkflow]
 	if c.Git.BaseBranch != "2026-10-08" || strings.Join(c.Git.PR.Labels, ",") != "1.10,0x10" || w.Commands.Build != "1e3" || w.Commands.Test != "010" {
 		t.Fatalf("layer values changed: %q %q %+v", c.Git.BaseBranch, c.Git.PR.Labels, w.Commands)
+	}
+	// The layer side: a profile's own folded and literal scalars must reach
+	// the resolved config exactly as the layer's own strict decode read
+	// them (l.Profiles, which never merges nodes either).
+	c, _, ps = Resolve([]byte(minimalRepo+"profile: lit\n"), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	got, wantLit := c.Workflows[ImplicitWorkflow].Commands, l.Profiles["lit"].Commands
+	if got.Build != wantLit.Build || got.Test != wantLit.Test {
+		t.Fatalf("layer profile commands = %+v, want %+v (the layer's own decode)", got, wantLit)
 	}
 }
 
@@ -356,6 +413,9 @@ func TestResolveEscapesNames(t *testing.T) {
 		{"profile with no layer", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: x\n", nil},
 		{"unknown profile", minimalRepo + "workflows:\n  \"a\\e[2Jb\\u202e\":\n    profile: nope\n", l},
 		{"workflow name", minimalRepo + "git: { provider: github }\nworkflows:\n  \"a\\e[2Jb\\u202e\": { base: go, commands: { build: a, test: b } }\n", nil},
+		// yaml.v3 percent-decodes a verbatim tag, so a key's own tag (not
+		// just its value) can carry control or formatting characters.
+		{"a key's tag", minimalRepo + "workflows:\n  !<tag:x,2000:%1B%5B2J%E2%80%AE> api:\n    base: go\n    commands: { build: a, test: b }\n", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, _, ps := Resolve([]byte(tc.repo), tc.l)

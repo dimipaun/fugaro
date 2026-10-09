@@ -194,6 +194,9 @@ func TestProjectLayerErrorsArePrintable(t *testing.T) {
 		{"a credential as a profile name", layerHead + "profiles: {" + tok + ": {secrets: []}}\n", "profiles.<credential>.secrets: workflows.*.secrets may only"},
 		{"a credential as a repeated key", layerHead + "profiles: {" + tok + ": {}, " + tok + ": {}}\n", `repeats the key "<credential>"`},
 		{"a credential as a non-string key", layerHead + "profiles: {? !!str " + tok + " : {}}\n", "explicit YAML tag"},
+		// yaml.v3 percent-decodes a verbatim tag, so a key's own tag (not
+		// just its value) can carry control or formatting characters.
+		{"a key's tag", layerHead + "profiles:\n  !<tag:x,2000:%1B%5B2J%E2%80%AE> api: {}\n", `has the key "api", which YAML reads as tag:x,2000:`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := layerProblems(t, tc.text)

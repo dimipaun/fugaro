@@ -343,7 +343,7 @@ func nodeTree(path string, n *yaml.Node) (any, *Problem) {
 			if at == "" {
 				at = "the top level"
 			}
-			return nil, &Problem{Line: k.Line, Message: fmt.Sprintf("has, under %s, the key %q, which YAML reads as %s, not a string; quote it", at, showKey(k.Value), strings.TrimPrefix(k.ShortTag(), "!!"))}
+			return nil, &Problem{Line: k.Line, Message: fmt.Sprintf("has, under %s, the key %q, which YAML reads as %s, not a string; quote it", at, showKey(k.Value), showKey(strings.TrimPrefix(k.ShortTag(), "!!")))}
 		}
 		p := showKey(k.Value)
 		if path != "" {
@@ -390,11 +390,23 @@ func deref(n *yaml.Node) *yaml.Node {
 }
 
 // plainNode is a copy of n with its aliases expanded and its anchors and
-// comments dropped, so it marshals on its own.
+// comments dropped, so it marshals on its own. A folded or literal scalar's
+// Value already holds the decoded string (Parse's), so re-emitting it in
+// block style re-folds or re-indents that text as if it were still source,
+// which can decode to a different string (the chomping indicator and any
+// more-indented line are not recoverable from the decoded value alone);
+// double-quoting re-emits Value byte for byte, so it replaces both. The tag
+// stays explicit (e.g. !!binary) so the value still decodes the same way.
 func plainNode(n *yaml.Node) *yaml.Node {
 	n = deref(n)
 	c := *n
 	c.Anchor, c.HeadComment, c.LineComment, c.FootComment = "", "", "", ""
+	if c.Kind == yaml.ScalarNode && c.Style&(yaml.FoldedStyle|yaml.LiteralStyle) != 0 {
+		c.Style = yaml.DoubleQuotedStyle
+		if n.Style&yaml.TaggedStyle != 0 {
+			c.Style |= yaml.TaggedStyle
+		}
+	}
 	if n.Content != nil {
 		c.Content = make([]*yaml.Node, len(n.Content))
 		for i, e := range n.Content {

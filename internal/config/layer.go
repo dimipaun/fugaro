@@ -348,7 +348,7 @@ func layerShape(n *yaml.Node) *Problem {
 			case k.Value == "<<" || k.Tag == "!!merge":
 				return &Problem{Line: k.Line, Message: "uses a YAML merge key <<, which the project layer refuses"}
 			case k.Tag != "!!str":
-				return &Problem{Line: k.Line, Message: fmt.Sprintf("has the key %q, which YAML reads as %s, not a string; quote it", tokenRE.ReplaceAllString(k.Value, "<credential>"), strings.TrimPrefix(k.Tag, "!!"))}
+				return &Problem{Line: k.Line, Message: fmt.Sprintf("has the key %q, which YAML reads as %s, not a string; quote it", tokenRE.ReplaceAllString(k.Value, "<credential>"), showKey(strings.TrimPrefix(k.Tag, "!!")))}
 			case seen[k.Value]:
 				return &Problem{Line: k.Line, Message: fmt.Sprintf("repeats the key %q", tokenRE.ReplaceAllString(k.Value, "<credential>"))}
 			}
