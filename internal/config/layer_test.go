@@ -221,6 +221,23 @@ func TestProjectLayerAllowsTabInAFoldedBlockScalar(t *testing.T) {
 	}
 }
 
+// TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder: the
+// YAML spec allows a block scalar header's chomping indicator and explicit
+// indentation digit in either order ("|-2" and "|2-" are the same scalar,
+// clip chomping dropped, body indented 2 past the key); blockHeaderRE must
+// recognize both, or the digit-first form's body (with its '#'-led, tab-
+// holding line) is misread as a comment.
+func TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder(t *testing.T) {
+	for _, indicator := range []string{"|-2", "|2-"} {
+		t.Run(indicator, func(t *testing.T) {
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
+				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
+			}
+		})
+	}
+}
+
 // TestProjectLayerAllowsTabInAQuotedHash: commentStart tracks single and
 // double quotes within a line, so a '#' inside a quoted value never starts
 // a comment there either, and the tab beside it gets the value rule, not

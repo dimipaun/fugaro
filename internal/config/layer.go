@@ -242,11 +242,12 @@ func safeProblems(err error) []Problem {
 }
 
 // blockHeaderRE matches a line ending in a block scalar indicator (| or >,
-// with an optional chomping +/- and an optional explicit indentation
-// digit), right after the ':' or '-' that introduces it: the header line
-// that opens a literal or folded scalar's body. Applied to a line with any
-// trailing comment already stripped.
-var blockHeaderRE = regexp.MustCompile(`(^|[:-])\s*[|>][+-]?[1-9]?\s*$`)
+// with an optional chomping +/- and an optional explicit indentation digit,
+// in either order: the YAML spec allows both "|-2" and "|2-"), right after
+// the ':' or '-' that introduces it: the header line that opens a literal
+// or folded scalar's body. Applied to a line with any trailing comment
+// already stripped.
+var blockHeaderRE = regexp.MustCompile(`(^|[:-])\s*[|>](?:[+-][1-9]?|[1-9][+-]?)?\s*$`)
 
 // commentStart returns the index of the '#' that starts line's comment, or
 // -1 for none: a '#' at the start of the line or after whitespace, outside
