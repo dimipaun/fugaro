@@ -72,14 +72,54 @@ resource "google_project_iam_member" "operator_build_submitter" {
   member  = each.value
 }
 
-# The runs bucket holds transcripts and caches, so only launchers and
-# operators read it, at the bucket level.
+# The runs bucket (design bucket-iam.md §3). Operators read and write all of
+# it: fugaro/ (the project layer, the shared config, recipes, the marker),
+# builds/, cache/, locks/ and runs/.
 resource "google_storage_bucket_iam_member" "runs" {
-  for_each = toset(concat(var.launchers, var.operators))
+  for_each = toset(var.operators)
 
   bucket = google_storage_bucket.runs.name
   role   = "roles/storage.objectAdmin"
   member = each.value
+}
+
+locals {
+  # A launcher who is also an operator needs nothing more (H4).
+  launchers_only = setsubtract(toset(var.launchers), toset(var.operators))
+}
+
+# Launchers read the whole bucket. Listing runs/ needs storage.objects.list,
+# which a condition on an object's name can't grant, so this one has none.
+resource "google_storage_bucket_iam_member" "runs_reader" {
+  for_each = local.launchers_only
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectViewer"
+  member = each.value
+}
+
+# Launchers write runs/ only. objectUser, not objectCreator: the launch
+# claim's takeover overwrites and its release deletes. The condition is the
+# input byte for byte, the same for every launcher, so IAM keeps them in one
+# binding; no description, like the job accounts' conditions.
+resource "google_storage_bucket_iam_member" "runs_launcher" {
+  for_each = local.launchers_only
+
+  bucket = google_storage_bucket.runs.name
+  role   = "roles/storage.objectUser"
+  member = each.value
+
+  condition {
+    title      = var.launcher_bucket_condition.title
+    expression = var.launcher_bucket_condition.expression
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.launcher_bucket_condition.title == "fugaro-launchers-runs" && var.launcher_bucket_condition.expression == "resource.name.startsWith(\"projects/_/buckets/${var.runs_bucket}/objects/runs/\")"
+      error_message = "launcher_bucket_condition must be runs/ of the runs bucket, titled fugaro-launchers-runs (gcp.LauncherBucketCondition)."
+    }
+  }
 }
 
 # The state bucket isn't managed here (fugaro init creates it before any
