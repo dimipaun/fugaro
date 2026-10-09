@@ -151,8 +151,8 @@ func Validate(c *Config) []Problem {
 		if w.Profile != "" && !ProjectNameRE.MatchString(w.Profile) {
 			add(p+".profile", "must be a profile name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 		}
-		if !slices.Contains(Bases, w.Base) {
-			add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
+		if w.Base != "" && !slices.Contains(Bases, w.Base) {
+			add(p+".base", "must be one of %s, or left out for the Fugaro base", strings.Join(Bases[1:], ", "))
 		}
 		ps = append(ps, validateImage(p, w)...)
 		if strings.TrimSpace(w.Commands.Build) == "" {
@@ -336,13 +336,16 @@ func Check(c *Config, root string) []Problem {
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
 		p := "workflows." + showKey(name)
-		if w.Dockerfile != "" {
+		switch {
+		case w.Dockerfile != "":
 			ps = append(ps, checkDockerfile(p, root, w)...)
-		} else if w.Base == "web-node" {
+		case w.BaseKind() == "web-node":
 			// The generated image's warm-up needs a package manager it can name.
 			if _, err := DetectNodePM(root); err != nil {
 				ps = append(ps, Problem{Path: p, Message: err.Error()})
 			}
+		case w.BaseKind() == BaseKind:
+			ps = append(ps, checkBaseWorkflow(p, root, w)...)
 		}
 		for _, cmd := range []struct{ path, value string }{
 			{p + ".commands.build", w.Commands.Build},
@@ -352,6 +355,45 @@ func Check(c *Config, root string) []Problem {
 			if len(fields) > 0 && strings.HasPrefix(fields[0], "./") {
 				mustExist(cmd.path, fields[0])
 			}
+		}
+	}
+	return ps
+}
+
+// checkBaseWorkflow is Check for a generated image on the Fugaro base: one
+// source of tools, and a package manager for image.skip_build_scripts.
+func checkBaseWorkflow(p, root string, w Workflow) []Problem {
+	var ps []Problem
+	files, err := MiseConfigFiles(root)
+	switch {
+	case err != nil:
+		ps = append(ps, Problem{Path: p, Message: "reading the repository's mise config: " + err.Error()})
+	case len(files) > 0 && len(w.Image.Tools) > 0:
+		ps = append(ps, Problem{Path: p + ".image.tools", Message: "the repository has its own mise config (" + strings.Join(files, ", ") +
+			"): keep one; the repository's file, which developers use too, is the usual choice"})
+	}
+	pm, err := DetectNodePM(root)
+	switch {
+	case err != nil:
+		ps = append(ps, Problem{Path: p, Message: err.Error()})
+	case pm == nil && w.Image.SkipBuildScripts:
+		ps = append(ps, Problem{Path: p + ".image.skip_build_scripts", Message: "applies only when the repository has a package.json and a lockfile (the Node warm-up)"})
+	}
+	return ps
+}
+
+// CheckWarnings are what Check finds that doesn't make the config wrong, for
+// fugaro validate to print as warnings: a generated image on the Fugaro base
+// with no mise config and no image.tools installs no language runtime.
+func CheckWarnings(c *Config, root string) []Problem {
+	var ps []Problem
+	for _, name := range sortedKeys(c.Workflows) {
+		w := c.Workflows[name]
+		if w.BaseKind() != BaseKind || w.Dockerfile != "" || len(w.Image.Tools) > 0 {
+			continue
+		}
+		if files, err := MiseConfigFiles(root); err == nil && len(files) == 0 {
+			ps = append(ps, Problem{Path: "workflows." + name, Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
 		}
 	}
 	return ps

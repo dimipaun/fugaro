@@ -10,7 +10,15 @@ import (
 var (
 	nodeVersionRE = regexp.MustCompile(`^[0-9]+(\.[0-9]+\.[0-9]+)?$`)
 	aptPackageRE  = regexp.MustCompile(`^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$`)
+	miseToolRE    = regexp.MustCompile(`^[a-z0-9][a-z0-9._/:@-]*$`)
+	miseVersionRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+~:-]*$`)
 )
+
+// ValidMiseTool reports whether name and version may be written into a mise
+// config: nothing outside these characters ever reaches a Dockerfile.
+func ValidMiseTool(name, version string) bool {
+	return miseToolRE.MatchString(name) && miseVersionRE.MatchString(version)
+}
 
 // validateImage checks a workflow's image and dockerfile settings (design
 // §5.1). p is the workflow's problem path, such as "workflows.web". Each
@@ -37,8 +45,20 @@ func validateImage(p string, w Workflow) []Problem {
 	if img.JDK != "" {
 		add(p+".image.jdk", "is not supported: the java-services base ships a pinned JDK (25), and no base installs another")
 	}
-	if img.SkipBuildScripts && w.Base != "web-node" {
-		add(p+".image.skip_build_scripts", "only applies to base web-node")
+	if len(img.Tools) > 0 && w.BaseKind() != BaseKind {
+		add(p+".image.tools", "applies to the Fugaro base only: remove base: %s (%s)", w.Base, MigrationDoc)
+	}
+	for _, name := range sortedKeys(img.Tools) {
+		tp := p + ".image.tools." + name
+		switch v := img.Tools[name]; {
+		case !miseToolRE.MatchString(name):
+			add(tp, "must be a mise tool name such as node, python or npm:firebase-tools")
+		case !miseVersionRE.MatchString(v):
+			add(tp, "must be a version such as 24.19.0, 3.12 or temurin-25")
+		}
+	}
+	if img.SkipBuildScripts && w.BaseKind() != "web-node" && w.BaseKind() != BaseKind {
+		add(p+".image.skip_build_scripts", "only applies to base web-node or the Fugaro base")
 	}
 	for i, pkg := range img.Apt {
 		if !aptPackageRE.MatchString(pkg) {
