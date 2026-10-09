@@ -1,6 +1,7 @@
 {
   "base_branch": "main",
   "branch": "fugaro/20260926-221530-abcd",
+  "config_sha256": "5084fadac9ed211b5d0a838fca530e8b28d074685c9deb5e53c504391b217c9b",
   "cost": {
     "compute_estimated": false,
     "compute_usd": 0,

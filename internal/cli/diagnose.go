@@ -215,7 +215,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		// whole job is the logs, still fails with exit 2.
 		fmt.Fprintf(warn, "warning: reading the logs: %s\n", oneLine(red(err.Error())))
 	} else if seen == 0 {
-		emptyViewHint(warn, env)
+		emptyViewHint(warn, env, l.LogURL)
 	}
 	for i := max(0, seen-diagnoseLogLines); i < seen; i++ {
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])

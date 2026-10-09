@@ -816,7 +816,7 @@ func (r *run) bootstrap(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("reading fugaro.yaml at %s: %w", spec.Ref, err)
 		}
-		if cfg, err = parseConfig(data); err != nil {
+		if cfg, err = r.resolveConfig(data); err != nil {
 			return err
 		}
 	}
@@ -1001,17 +1001,49 @@ func (r *run) haltedErr() error {
 	return nil
 }
 
-// parseConfig parses fugaro.yaml, joining every problem into one error.
-func parseConfig(data []byte) (*config.Config, error) {
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		msgs := make([]string, len(problems))
-		for i, p := range problems {
-			msgs[i] = p.String()
+// resolveConfig resolves fugaro.yaml (data) over the task's project layer
+// (docs/design/layered-config.md §8) and records which layer and which
+// resolved config the run uses. The layer applies only to a file whose
+// project: and gcp_project: are the layer's; a launch from outside a
+// checkout may carry one for a file that is not, and the record says the
+// layer was not applied. An invalid layer fails bootstrap, as an invalid
+// fugaro.yaml does.
+func (r *run) resolveConfig(data []byte) (*config.Config, error) {
+	var layer *config.ProjectLayer
+	if pl := r.spec.ProjectLayer; pl != nil {
+		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: r.d.Project})
+		if len(ps) > 0 {
+			// Recorded before returning: an invalid layer still names the
+			// run's layer for ls and diagnose (design §8, task 17), even
+			// though it never resolved anything.
+			r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation}
+			return nil, fmt.Errorf("the task's project layer (sha256 %s) is invalid: %s", pl.SHA256, problemsText(ps))
 		}
-		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", strings.Join(msgs, "; "))
+		project, _ := config.ProjectOf(data)
+		gcp, _ := config.GCPProjectOf(data)
+		applied := project == l.Project && gcp == l.GCPProject
+		r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation, Applied: applied}
+		if applied {
+			layer = l
+		} else {
+			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", l.Project, "layer_gcp_project", l.GCPProject)
+		}
 	}
+	cfg, res, problems := config.Resolve(data, layer)
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(problems))
+	}
+	r.rec.ConfigSHA256 = res.ConfigSHA256
 	return cfg, nil
+}
+
+// problemsText is problems as one line, "; "-separated.
+func problemsText(ps []config.Problem) string {
+	msgs := make([]string, len(ps))
+	for i, p := range ps {
+		msgs[i] = p.String()
+	}
+	return strings.Join(msgs, "; ")
 }
 
 func (r *run) readRepoFile(rel string) (string, error) {

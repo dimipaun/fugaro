@@ -153,6 +153,13 @@ type Record struct {
 	// Recipe is the recipe the run's loop came from (docs/design/recipes.md
 	// §8); absent in records from before 0.5.0.
 	Recipe *RecipeRecord `json:"recipe,omitempty"`
+	// ProjectLayer is the project layer the run's task carried
+	// (docs/design/layered-config.md §8); absent when it carried none, and
+	// in records from before 0.6.0.
+	ProjectLayer *ProjectLayerRecord `json:"project_layer,omitempty"`
+	// ConfigSHA256 is the sha256 of the resolved fugaro.yaml, before the
+	// per-task overrides (config.Config.SHA256); absent before 0.6.0.
+	ConfigSHA256 string `json:"config_sha256,omitempty"`
 	// Budget is the run's part in the project's shared budget, set only
 	// when the run used the budget backend (M9b).
 	Budget *BudgetRecord `json:"budget,omitempty"`
@@ -472,4 +479,14 @@ type RecipeRecord struct {
 	Name   string `json:"name"`
 	Source string `json:"source"` // repo | project | catalog
 	SHA256 string `json:"sha256"`
+}
+
+// ProjectLayerRecord traces a run to the exact project layer it was given.
+type ProjectLayerRecord struct {
+	SHA256     string `json:"sha256"`
+	Generation int64  `json:"generation,omitempty"`
+	// Applied is false when fugaro.yaml at the ref did not name the layer's
+	// project and gcp_project (a launch from outside a checkout), so the
+	// run resolved without it.
+	Applied bool `json:"applied"`
 }

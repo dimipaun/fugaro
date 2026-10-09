@@ -263,3 +263,16 @@ func BucketCondition(bucket string, prefixes []string, slug string) string {
 // BucketConditionTitle is the title of the bucket condition of the account
 // saID, as the bootstrap set it.
 func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
+
+// LauncherBucketConditionTitle is the title of the launchers' objectUser
+// grant on the runs bucket (docs/design/bucket-iam.md H5).
+const LauncherBucketConditionTitle = "fugaro-launchers-runs"
+
+// LauncherBucketCondition limits the launchers' objectUser grant on bucket
+// to runs/, every repository's (H2). Every launcher carries this exact
+// string and LauncherBucketConditionTitle, with no description, so IAM keeps
+// them in one conditional binding. The installation module, the install
+// guard and doctor all compare against it: this is its one definition.
+func LauncherBucketCondition(bucket string) string {
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+}

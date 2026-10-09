@@ -683,6 +683,31 @@ func TestResultSchemaRecipe(t *testing.T) {
 	}
 }
 
+func TestResultSchemaProjectLayer(t *testing.T) {
+	sch := compile(t, "result.schema.json")
+	at := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		pl  *runstore.ProjectLayerRecord
+		sum string
+		ok  bool
+	}{
+		{&runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}, strings.Repeat("b", 64), true},
+		{nil, strings.Repeat("b", 64), true},
+		{&runstore.ProjectLayerRecord{SHA256: "short", Applied: true}, "", false},
+		{nil, "short", false},
+	} {
+		data, err := json.Marshal(runstore.Record{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/app",
+			Status: runstore.StatusRunning, Stage: "implement", StartedAt: at, ProjectLayer: tc.pl, ConfigSHA256: tc.sum})
+		if err != nil {
+			t.Fatal(err)
+		}
+		inst, _ := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+		if err := sch.Validate(inst); (err == nil) != tc.ok {
+			t.Errorf("%+v %q: err = %v, want ok %v", tc.pl, tc.sum, err, tc.ok)
+		}
+	}
+}
+
 func TestFugaroSchemaProfileKeys(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for text, valid := range map[string]bool{

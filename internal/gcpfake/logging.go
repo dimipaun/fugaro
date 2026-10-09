@@ -32,10 +32,13 @@ type Logging struct {
 	// requests must read; any other resourceNames fails the test. Unset,
 	// the fake accepts a single projects/<p>.
 	Resource string
-	mu       sync.Mutex
-	entries  map[logExec][]LogEntry
-	nextID   int
-	buckets  map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
+	// FailReads makes every entries.list request fail with HTTP 500,
+	// to prove a caller reads no log (fugaro logs --url).
+	FailReads bool
+	mu        sync.Mutex
+	entries   map[logExec][]LogEntry
+	nextID    int
+	buckets   map[string]logBucket // projects/<p>/locations/<l>/buckets/<id>
 }
 
 type logBucket struct{ state, description string }
@@ -164,6 +167,10 @@ func (l *Logging) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 	}
 	if r.Method != http.MethodPost || r.URL.Path != "/v2/entries:list" {
 		l.unhandled(w, r)
+		return
+	}
+	if l.FailReads {
+		writeError(w, http.StatusInternalServerError, "INTERNAL", "gcpfake: FailReads is set")
 		return
 	}
 	var req struct {
