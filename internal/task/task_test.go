@@ -210,6 +210,60 @@ func TestApply(t *testing.T) {
 	}
 }
 
+func TestProjectLayerField(t *testing.T) {
+	text := "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	ok := Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/app", Ref: "main", Task: "x",
+		ProjectLayer: &ProjectLayer{SHA256: config.LayerSum([]byte(text)), Generation: 7, YAML: text}}
+	data, err := ok.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse(data)
+	if err != nil || got.ProjectLayer == nil || *got.ProjectLayer != *ok.ProjectLayer {
+		t.Fatalf("round trip = %+v, %v", got, err)
+	}
+	over := text + strings.Repeat("#", config.LayerMaxBytes+1-len(text)) // LayerMaxBytes+1 bytes, correct sha
+	atCap := text + strings.Repeat("#", config.LayerMaxBytes-len(text))
+	capped := ok
+	capped.ProjectLayer = &ProjectLayer{SHA256: config.LayerSum([]byte(atCap)), YAML: atCap}
+	if err := capped.Validate(); err != nil {
+		t.Errorf("a layer of exactly LayerMaxBytes: %v", err)
+	}
+	for _, tc := range []struct {
+		pl   ProjectLayer
+		want string
+	}{
+		{ProjectLayer{SHA256: strings.Repeat("0", 64), YAML: text}, "project_layer.sha256 does not match"},
+		{ProjectLayer{SHA256: config.LayerSum(nil)}, "project_layer.yaml must hold the project layer"},
+		{ProjectLayer{SHA256: config.LayerSum([]byte(text)), YAML: text, Generation: -1}, "project_layer.generation"},
+		{ProjectLayer{SHA256: config.LayerSum([]byte(over)), YAML: over}, "project_layer.yaml must hold the project layer"},
+	} {
+		bad := ok
+		bad.ProjectLayer = &tc.pl
+		if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%+v: err = %v, want %q", tc.pl, err, tc.want)
+		}
+	}
+}
+
+// A spec without a layer must marshal exactly as before 0.6.0, so a runner
+// that refuses unknown fields still accepts it.
+func TestProjectLayerOmittedWhenAbsent(t *testing.T) {
+	s := Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/app", Ref: "main", Task: "x"}
+	data, err := s.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "project_layer") {
+		t.Errorf("no layer, yet the task has project_layer: %s", data)
+	}
+	s.ProjectLayer = &ProjectLayer{SHA256: "x", YAML: "y"}
+	data, _ = s.Marshal()
+	if !strings.Contains(string(data), `"project_layer"`) || strings.Contains(string(data), "generation") {
+		t.Errorf("generation 0 must be omitted, layer present: %s", data)
+	}
+}
+
 func TestMarshalRoundTrip(t *testing.T) {
 	data, _ := os.ReadFile("../../testdata/task/valid/new.json")
 	s, err := Parse(data)
