@@ -109,7 +109,7 @@
         "resources": {
           "type": "object",
           "additionalProperties": false,
-          "properties": { "cpu": { "type": "integer", "minimum": 1 }, "memory": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" } }
+          "properties": { "cpu": { "type": "integer", "minimum": 0 }, "memory": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" } }
         },
         "timeouts": {
           "type": "object",
