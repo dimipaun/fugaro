@@ -241,6 +241,13 @@ func safeProblems(err error) []Problem {
 	return ps
 }
 
+// blockHeaderRE matches a line ending in a block scalar indicator (| or >,
+// with an optional chomping +/- and an optional explicit indentation
+// digit), right after the ':' or '-' that introduces it: the header line
+// that opens a literal or folded scalar's body. Applied to a line with any
+// trailing comment already stripped.
+var blockHeaderRE = regexp.MustCompile(`(^|[:-])\s*[|>][+-]?[1-9]?\s*$`)
+
 // commentStart returns the index of the '#' that starts line's comment, or
 // -1 for none: a '#' at the start of the line or after whitespace, outside
 // single or double quotes. A quote left open at line's end (a multi-line
@@ -269,18 +276,33 @@ func commentStart(line string) int {
 	return -1
 }
 
+// indentOf is the count of leading spaces of line (YAML indentation is
+// never a tab).
+func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+
 // rawTextProblems scans the whole text, comments and directives included,
 // which the node walk never sees (valueProblems already ran over every key
 // and value the node walk does see). A directive (a line starting at
 // column 0 with %, YAML's own rule) and a line's comment, if any, get the
 // key rule, which holds no tab either; the rest of the line gets the value
-// rule, so a tab inside, say, a block scalar's value is not refused here
-// even though values allow it. It reports the line only, never the text.
+// rule. A block scalar's body (opened by a line matching blockHeaderRE,
+// closed by a non-blank line indented no more than that header) is never
+// split at '#': a literal or folded scalar reads its body as plain text,
+// a '#' in it starts no comment, so the whole line gets the value rule.
+// It reports the line only, never the text.
 func rawTextProblems(data []byte) []Problem {
 	var ps []Problem
 	text := strings.TrimPrefix(string(data), "\ufeff")
+	bodyIndent := -1 // the header line's indent while inside its body, else -1
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
+		if bodyIndent >= 0 && (strings.TrimSpace(line) == "" || indentOf(line) > bodyIndent) {
+			if strings.ContainsFunc(line, badRune) {
+				ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+			}
+			continue
+		}
+		bodyIndent = -1
 		if tokenRE.MatchString(line) {
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
 			continue
@@ -297,6 +319,9 @@ func rawTextProblems(data []byte) []Problem {
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character (in a comment or directive)"})
 		case strings.ContainsFunc(loose, badRune):
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+		}
+		if blockHeaderRE.MatchString(loose) {
+			bodyIndent = indentOf(line)
 		}
 	}
 	return ps
