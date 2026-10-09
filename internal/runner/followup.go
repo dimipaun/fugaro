@@ -102,7 +102,7 @@ func (r *run) readBaseConfig(ctx context.Context) (*config.Config, error) {
 			return nil, err
 		}
 	}
-	cfg, err := parseConfig(data)
+	cfg, err := r.resolveConfig(data)
 	if err != nil {
 		return nil, err
 	}
