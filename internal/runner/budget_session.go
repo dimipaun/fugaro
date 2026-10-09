@@ -18,6 +18,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/verify"
 )
 
 // The job environment variables that point the runner at the project's
@@ -274,19 +275,48 @@ func (r *run) registryEntry() budget.AgentEntry {
 
 // beginBudgetStage shows the stage in the registry.
 func (r *run) beginBudgetStage(name string, n int, deadline time.Time) {
-	r.mu.Lock()
-	sess := r.sess
-	r.mu.Unlock()
-	if sess == nil {
-		return
-	}
 	now := r.d.Now().UnixMilli()
-	sess.Update(func(e *budget.AgentEntry) {
+	r.noteRegistry(func(e *budget.AgentEntry) {
 		e.Stage, e.StageStartedAt, e.StageDeadline = name, now, deadline.UnixMilli()
 		if name == "review" || name == "review_first" {
 			e.Round = n
 		}
 	})
+}
+
+// noteRegistry changes the run's registry entry when a session exists; the
+// next heartbeat sends it.
+func (r *run) noteRegistry(fn func(*budget.AgentEntry)) {
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess != nil {
+		sess.Update(fn)
+	}
+}
+
+// verifySummaryRunes bounds the registry's verify summary; the rules clip
+// the whole entry at 200 bytes, well under which this still leaves room for
+// the rest of a multi-byte-rune summary.
+const verifySummaryRunes = 120
+
+// noteVerify reads the latest verify record and shows its one-line summary
+// in the registry, redacted and clipped to verifySummaryRunes. A failed
+// read only warns: the registry simply keeps its last known verify line.
+func (r *run) noteVerify() {
+	records, err := verify.Records(r.d.StateDir)
+	if err != nil {
+		r.d.Log.Warn("reading verify records for the registry failed", "err", r.redact(err.Error()))
+		return
+	}
+	if len(records) == 0 {
+		return
+	}
+	summary := r.redact(records[len(records)-1].Summary())
+	if runes := []rune(summary); len(runes) > verifySummaryRunes {
+		summary = string(runes[:verifySummaryRunes])
+	}
+	r.noteRegistry(func(e *budget.AgentEntry) { e.Verify = summary })
 }
 
 // reportNotional hands an oauth stage's own cost figure to the backend:

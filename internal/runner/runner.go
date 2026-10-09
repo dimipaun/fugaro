@@ -1528,6 +1528,7 @@ func (r *run) finalize(ctx context.Context) error {
 	records = r.redactRecords(records)
 	r.rec.HeadSHA, r.rec.Verify = sha, records
 	r.uploadVerifyRecords(ctx, records)
+	r.noteVerify()
 
 	ready, reason := Decide(records, sha, seniorReview(r.rec.Reviews))
 	if committed && reason == ReasonNoVerifiedTest {
