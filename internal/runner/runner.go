@@ -1013,6 +1013,10 @@ func (r *run) resolveConfig(data []byte) (*config.Config, error) {
 	if pl := r.spec.ProjectLayer; pl != nil {
 		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: r.d.Project})
 		if len(ps) > 0 {
+			// Recorded before returning: an invalid layer still names the
+			// run's layer for ls and diagnose (design §8, task 17), even
+			// though it never resolved anything.
+			r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation}
 			return nil, fmt.Errorf("the task's project layer (sha256 %s) is invalid: %s", pl.SHA256, problemsText(ps))
 		}
 		project, _ := config.ProjectOf(data)
