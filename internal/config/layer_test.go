@@ -2,6 +2,8 @@ package config
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -351,5 +353,28 @@ func TestProjectLayerNeverEchoesCredentialsOrLongText(t *testing.T) {
 				t.Fatalf("problems echo %d characters", len(long))
 			}
 		})
+	}
+}
+
+func TestProjectLayerCorpus(t *testing.T) {
+	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	for _, kind := range []string{"valid", "invalid"} {
+		files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "project-layer", kind, "*.yaml"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("no %s project layer corpus", kind)
+		}
+		for _, f := range files {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			l, ps := ParseProjectLayer(data, a)
+			switch {
+			case kind == "valid" && len(ps) > 0:
+				t.Errorf("%s: unexpected problems %v", f, ps)
+			case kind == "invalid" && l != nil:
+				t.Errorf("%s: parsed without problems, want invalid", f)
+			}
+		}
 	}
 }

@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+git: { base_branch: develop }
+workflows:
+  api: { profile: java-service }
+  tool: { base: go, commands: { build: make, test: make test } }
