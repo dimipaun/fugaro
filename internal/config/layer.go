@@ -56,7 +56,7 @@ type ProjectLayer struct {
 	// Raw is the exact text, SHA256 its hex sha256.
 	Raw    []byte `yaml:"-"`
 	SHA256 string `yaml:"-"`
-	// tree is the text as plain maps, which Resolve merges.
+	// tree is the text as Resolve merges it (nodeTree).
 	tree map[string]any
 }
 
@@ -176,9 +176,11 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	if p := layerShape(doc.Content[0]); p != nil {
 		return nil, []Problem{*p}
 	}
-	var tree map[string]any
-	if err := doc.Decode(&tree); err != nil {
-		return nil, safeProblems(err)
+	// layerShape refused anchors, tags and keys other than strings, so the
+	// tree is the text, node for node.
+	tree, ps0 := docTree(&doc)
+	if len(ps0) > 0 {
+		return nil, ps0
 	}
 	var ps []Problem
 	for _, k := range sortedKeys(tree) {
@@ -193,6 +195,15 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	}
 	if prs, ok := tree["profiles"].(map[string]any); ok {
 		for _, name := range sortedKeys(prs) {
+			// A null profile (profiles: {name:}) would decode as a valid
+			// empty Profile, usable as default_profile, with no scope
+			// check ever run on it; Resolve's own tree has no such profile
+			// (null, not a mapping), so it would then refuse to find a
+			// profile ParseProjectLayer just accepted. Fail closed instead.
+			if prs[name] == nil {
+				ps = append(ps, Problem{Path: "profiles." + showKey(name), Message: "must be a mapping of profile keys, not null"})
+				continue
+			}
 			if p, ok := prs[name].(map[string]any); ok {
 				q := maps1(p)
 				delete(q, "description")
@@ -346,7 +357,7 @@ func layerShape(n *yaml.Node) *Problem {
 			case k.Value == "<<" || k.Tag == "!!merge":
 				return &Problem{Line: k.Line, Message: "uses a YAML merge key <<, which the project layer refuses"}
 			case k.Tag != "!!str":
-				return &Problem{Line: k.Line, Message: fmt.Sprintf("has the key %q, which YAML reads as %s, not a string; quote it", tokenRE.ReplaceAllString(k.Value, "<credential>"), strings.TrimPrefix(k.Tag, "!!"))}
+				return &Problem{Line: k.Line, Message: fmt.Sprintf("has the key %q, which YAML reads as %s, not a string; quote it", tokenRE.ReplaceAllString(k.Value, "<credential>"), showKey(strings.TrimPrefix(k.Tag, "!!")))}
 			case seen[k.Value]:
 				return &Problem{Line: k.Line, Message: fmt.Sprintf("repeats the key %q", tokenRE.ReplaceAllString(k.Value, "<credential>"))}
 			}

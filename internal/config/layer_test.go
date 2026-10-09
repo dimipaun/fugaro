@@ -4,6 +4,8 @@ import (
 	"math"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const testLayer = `version: 1
@@ -83,6 +85,11 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
+		// A null profile would otherwise decode as a valid empty Profile
+		// (even as default_profile) with no scope check ever run on it,
+		// while Resolve's own tree has no such profile at all.
+		{"a null profile", head + "profiles:\n  p:\n", "profiles.p: must be a mapping of profile keys, not null"},
+		{"a null default profile", head + "profiles:\n  p:\ndefault_profile: p\n", "profiles.p: must be a mapping of profile keys, not null"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ps := ParseProjectLayer([]byte(tc.text), testAnchor)
@@ -192,6 +199,9 @@ func TestProjectLayerErrorsArePrintable(t *testing.T) {
 		{"a credential as a profile name", layerHead + "profiles: {" + tok + ": {secrets: []}}\n", "profiles.<credential>.secrets: workflows.*.secrets may only"},
 		{"a credential as a repeated key", layerHead + "profiles: {" + tok + ": {}, " + tok + ": {}}\n", `repeats the key "<credential>"`},
 		{"a credential as a non-string key", layerHead + "profiles: {? !!str " + tok + " : {}}\n", "explicit YAML tag"},
+		// yaml.v3 percent-decodes a verbatim tag, so a key's own tag (not
+		// just its value) can carry control or formatting characters.
+		{"a key's tag", layerHead + "profiles:\n  !<tag:x,2000:%1B%5B2J%E2%80%AE> api: {}\n", `has the key "api", which YAML reads as tag:x,2000:`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := layerProblems(t, tc.text)
@@ -231,12 +241,20 @@ func TestProjectLayerRawAndTree(t *testing.T) {
 		t.Fatalf("Raw = %q", l.Raw)
 	}
 	prs, ok := l.tree["profiles"].(map[string]any)
-	if !ok || prs["node-web"] == nil || l.tree["default_profile"] != "java-service" {
+	if !ok || prs["node-web"] == nil || nodeValue(l.tree["default_profile"]) != "java-service" {
 		t.Fatalf("tree = %v", l.tree)
 	}
 	if got := LayerCopyKey("acme-web"); got != "builds/acme-web/project-layer.yaml" {
 		t.Fatalf("LayerCopyKey = %q", got)
 	}
+}
+
+// nodeValue is a tree leaf's text ("" for anything else).
+func nodeValue(v any) string {
+	if n, ok := v.(*yaml.Node); ok {
+		return n.Value
+	}
+	return ""
 }
 
 func TestFugaroYAMLBudgetIsFinite(t *testing.T) {

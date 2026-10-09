@@ -144,7 +144,7 @@ func Validate(c *Config) []Problem {
 	}
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
-		p := "workflows." + name
+		p := "workflows." + showKey(name)
 		if !WorkflowNameRE.MatchString(name) {
 			add(p, "workflow name must match %s", WorkflowNameRE)
 		}
@@ -335,7 +335,7 @@ func Check(c *Config, root string) []Problem {
 	}
 	for _, name := range sortedKeys(c.Workflows) {
 		w := c.Workflows[name]
-		p := "workflows." + name
+		p := "workflows." + showKey(name)
 		if w.Dockerfile != "" {
 			ps = append(ps, checkDockerfile(p, root, w)...)
 		} else if w.Base == "web-node" {
