@@ -389,6 +389,16 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 
 // runnerChooses reports whether the runner, not this CLI, decides spec's
 // recipe: a first run with no recipe in its task and no checkout here.
+//
+// checkoutConfig (Task 10) now resolves the repository's project layer,
+// lenient (validate.go's layerOptions{Lenient: true}): an unreadable bucket
+// or no project selected leaves it nil for a minimal (layer-only) file just
+// as "no checkout" does, so this CLI would wrongly say the runner chooses
+// though a checkout is right here. Task 11 (PR #230) makes `fugaro run`
+// strict instead, embedding the layer it read itself; until that lands, do
+// not release a CLI with this fix without it, or a flaky bucket read turns
+// a real checkout invisible here for no reason the runner itself would ever
+// hit (it reads fugaro.yaml at the ref directly, not through this seam).
 func runnerChooses(ctx context.Context, spec *task.Spec) bool {
 	return spec.Recipe == nil && !spec.IsFollowUp() && checkoutConfig(ctx, spec.Repo) == nil
 }

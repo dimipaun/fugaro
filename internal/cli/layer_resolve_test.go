@@ -90,6 +90,71 @@ func TestFindLayerCacheOnlyWhenBucketCannotBeOpened(t *testing.T) {
 	}
 }
 
+// Production risk: findLayer must not hang when the bucket client retries
+// a flaky or offline network forever; layerBucketTimeout bounds both the
+// open and the read, and a timeout is isUnreachable's own
+// context.DeadlineExceeded case, so it falls back to the cache exactly as
+// a dial failure or a 5xx would.
+//
+// Mutation (run, restore): drop the `context.WithTimeout` wrap around the
+// layerRead call in findLayer (pass ctx straight through), and this test
+// hangs until the outer test timeout kills the whole run, instead of
+// returning within layerBucketTimeout.
+func TestFindLayerTimesOutAndFallsBackToTheCache(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	oldTimeout := layerBucketTimeout
+	layerBucketTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		<-ctx.Done() // a client stuck retrying a dead connection
+		return nil, 0, ctx.Err()
+	}
+	start := time.Now()
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow.Add(time.Hour))
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("findLayer took %s; layerBucketTimeout did not bound the read", d)
+	}
+	if err != nil || got.Layer == nil || !strings.Contains(got.Note, "unreachable") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// Without a usable cache, a lenient caller gets "not checked" instead of
+// hanging (and a strict one a clear error, TestFindLayerOpenFailureGoesThroughBucketErrFor
+// already covers every other open failure's shape the same way a timeout
+// takes).
+func TestFindLayerTimesOutLenientWithoutACache(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	oldTimeout := layerBucketTimeout
+	layerBucketTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	start := time.Now()
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{Lenient: true}, layerNow)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("findLayer took %s; layerBucketTimeout did not bound the open", d)
+	}
+	if err != nil || !got.Unknown || got.Layer != nil || !strings.Contains(got.Note, "not checked") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
 // Review Focus 4.
 func TestFindLayerRefusesAnInvalidObject(t *testing.T) {
 	f := newCloudFixture(t)
@@ -305,6 +370,39 @@ func TestFindLayerLenientWithConfigUnreadableBucketDoesNotFail(t *testing.T) {
 	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{Lenient: true}, layerNow)
 	if err != nil || !got.Unknown || got.Layer != nil {
 		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// findLayer must never open a gs:// bucket this installation's own
+// endpoints say is a fake (sharedcfg.go's own bucket reads already refuse
+// this the same way): skipGSOnFakeEndpoints is off for every other test in
+// this package (main_test.go), since they reach buckets through seams
+// while carrying fake endpoints, so this test turns it back on, as the
+// tests of the skip itself in sharedcfg_test.go and init_fugaroyaml_test.go
+// do, to exercise the guard rather than the seam.
+//
+// Mutation (run, restore): delete the `if lc != nil &&
+// fakeEndpointsOnGS(lc, bucketURL)` block from findLayer, and this test
+// fails: layerBucketOpener is never overridden here, so it would call the
+// real blobx.Open with a gs:// URL (main_test.go's TestMain would panic
+// the whole run, which is the point: this guard is what keeps that panic
+// from ever firing for a config like this one).
+func TestFindLayerSkipsAFakeEndpointGSBucket(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := *fileEnv(t, f).lc
+	lc.Bucket = "" // as a real installation's config would be: BucketURL() falls back to gs://<runs_bucket>
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+
+	lenient, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{Lenient: true}, layerNow)
+	if err != nil || !lenient.Unknown || lenient.Layer != nil || !strings.Contains(lenient.Note, "fake") {
+		t.Fatalf("lenient: got %+v, %v", lenient, err)
+	}
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow); err == nil || !strings.Contains(err.Error(), "fake") {
+		t.Fatalf("strict: %v", err)
 	}
 }
 

@@ -68,6 +68,15 @@ var layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error
 // layerBucketOpener opens the runs bucket; tests replace it.
 var layerBucketOpener = blobx.Open
 
+// layerBucketTimeout bounds opening the runs bucket and reading the layer
+// from it: many lenient commands (validate, doctor, init, secrets, cancel,
+// budget, run through checkoutConfig) now read this bucket on an ordinary
+// run, and a flaky or offline network must not make them hang in a client
+// retry loop instead of falling back to the cache (decision L13) or, in a
+// strict command, failing with a clear error. A package var so a test can
+// shorten it.
+var layerBucketTimeout = 15 * time.Second
+
 // findLayer is the project layer that applies to the fugaro.yaml data
 // (docs/design/layered-config.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
@@ -183,7 +192,24 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	// a bucket that fails to open at all and one that opens but whose read
 	// fails: either way the bucket "cannot be reached".
 	unreachableNote := fmt.Sprintf("using the cached project layer of %s, %s old: %s is unreachable", project, ageDays(now.Sub(cached.CheckedAt)), bucketURL)
-	b, err := layerBucketOpener(ctx, bucketURL)
+	if lc != nil && fakeEndpointsOnGS(lc, bucketURL) {
+		// This installation's endpoints are fakes (a test, or a developer
+		// pointed everything else at an emulator or no_auth): the gs://
+		// bucket above is not the one they stand for, so it is never
+		// opened for real (the same guard publishSharedWarn and
+		// readRefreshRecord apply to their own bucket reads). Treated
+		// exactly like a bucket that cannot be reached at all (decision
+		// L13): the cache stands in when it is fresh enough, else unread
+		// below leaves the layer unknown for a lenient caller and refuses
+		// a strict one.
+		if ours {
+			return fromCache(unreachableNote)
+		}
+		return unread(fmt.Errorf("the project layer's bucket (%s) is a fake endpoint in this installation, so it is not read for real", bucketURL))
+	}
+	octx, cancel := context.WithTimeout(ctx, layerBucketTimeout)
+	b, err := layerBucketOpener(octx, bucketURL)
+	cancel()
 	if err != nil {
 		// isUnreachable is checked on the raw error, exactly as the read
 		// failure below does: only when the bucket cannot be reached at
@@ -199,7 +225,9 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		return unread(bucketErrFor(bucketURL, "opening the bucket", "the project layer of "+project, err))
 	}
 	defer b.Close()
-	text, gen, err := layerRead(ctx, b)
+	rctx, rcancel := context.WithTimeout(ctx, layerBucketTimeout)
+	text, gen, err := layerRead(rctx, b)
+	rcancel()
 	switch {
 	case err == nil:
 	case errors.Is(err, blobx.ErrNotExist):

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -391,6 +392,40 @@ func checkoutRoot(ctx context.Context, repo string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// checkoutParseCacheKey is the context key withCheckoutParseCache installs.
+type checkoutParseCacheKey struct{}
+
+// checkoutParseResult is what checkoutParse returns, cached whole: a nil
+// cfg with no problems means "no such checkout or file", which is worth
+// remembering too (a repeat of the same failed git/file lookup).
+type checkoutParseResult struct {
+	cfg      *config.Config
+	problems []config.Problem
+}
+
+// checkoutParseCache memoizes checkoutParse by checkout root for one
+// command invocation: run.go's launch path calls it (through
+// checkoutConfig) up to three times for the same spec.Repo, launch_budget.go
+// once more, and secrets.go a fourth time when its own first read came back
+// nil — each one, uncached, re-reads fugaro.yaml from disk and resolves the
+// project layer again (a bucket read, Task 10). The one thing besides root
+// that could vary call to call is layerOptions, but every path through
+// checkoutParse hands parseCheckoutFugaroYAML the same fixed
+// layerOptions{Lenient: true}, so root alone is key enough here.
+type checkoutParseCache struct {
+	mu      sync.Mutex
+	entries map[string]checkoutParseResult
+}
+
+// withCheckoutParseCache installs an empty checkoutParseCache, root.go's
+// PersistentPreRun does this once per command so every checkoutParse call
+// within the same invocation shares it; a context without one (a direct
+// unit test of checkoutParse, or any call before the command tree installs
+// it) makes checkoutParse work exactly as before, uncached.
+func withCheckoutParseCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, checkoutParseCacheKey{}, &checkoutParseCache{entries: map[string]checkoutParseResult{}})
+}
+
 // checkoutParse is checkoutConfig with the parse's problems: nil and no
 // problems when there is no such checkout or file, nil and the problems
 // when its fugaro.yaml doesn't parse.
@@ -399,11 +434,26 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if root == "" {
 		return nil, nil
 	}
-	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
-	if err != nil {
-		return nil, nil
+	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
+	if cache != nil {
+		cache.mu.Lock()
+		r, ok := cache.entries[root]
+		cache.mu.Unlock()
+		if ok {
+			return r.cfg, r.problems
+		}
 	}
-	return parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
+	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	var result checkoutParseResult
+	if err == nil {
+		result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
+	}
+	if cache != nil {
+		cache.mu.Lock()
+		cache.entries[root] = result
+		cache.mu.Unlock()
+	}
+	return result.cfg, result.problems
 }
 
 // refuseHTTP2Debug refuses to talk to Google while GODEBUG holds
