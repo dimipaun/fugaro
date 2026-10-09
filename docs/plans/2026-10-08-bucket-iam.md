@@ -39,7 +39,7 @@ The code below is written against `main` at 65a6a24. It has **not** been compile
 
 ## Decisions (veto any before execution starts)
 
-These are the design's H1 to H14 (§12), restated as the plan executes them.
+These are the design's H1 to H14 (§12), restated as the plan executes them. **Ruling (2026-10-08): all of H1 to H14 are taken as recommended; no veto alternative below is implemented.**
 
 - **H1. IAM Conditions on the existing bucket.** Veto alternative: managed folders, or a separate config bucket (a different plan).
 - **H2. Launchers write all of `runs/`.** Veto alternative: leaf names only. Task 1's expression and Task 3's exact-match check change; the rest stands.

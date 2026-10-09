@@ -4,8 +4,10 @@ Status: design for review (2026-10-08), from the owner's "Generic-Tool Hardening
 
 - **R1.** Everything in the spec except section 1 is **added to release 0.7.0**, the hard-cut base-image consolidation release ([base-image.md](base-image.md), [plans/2026-10-08-base-image.md](../plans/2026-10-08-base-image.md)). The spec's header says "following 0.7.0"; the ruling overrides it.
 - **R2.** Section 1, the Docker-capable execution backend, is **release 0.8.0**. It stays measure-first. Its design and its measurement are here so the work can start right after 0.7.0, but it is not part of any 0.7.0 task group or of the 0.7.0 release notes.
+- **R3.** Decisions G1 to G27 are **all taken as recommended**: the owner's instruction on merging this design and its plan (PR #214) was "merge #214 with the recommendations". No veto alternative in §14 is chosen.
+- **R4 (2026-10-08, after R1 to R3).** Section 8's cost preview (G20) also moves to **release 0.8.0**, alongside section 1; it is placed as §1.1 below. Its design and its tasks stay exactly as recommended (R3), only the release changes: it is no longer a 0.7.0 task group or part of the 0.7.0 release notes, and it can start right after 0.7.0 ships.
 
-Plan: [plans/2026-10-08-generic-tool.md](../plans/2026-10-08-generic-tool.md). Decisions G1 to G27 below each carry a recommendation and the alternative the owner can choose instead.
+Plan: [plans/2026-10-08-generic-tool.md](../plans/2026-10-08-generic-tool.md). Decisions G1 to G27 below each carry a recommendation and the alternative the owner can choose instead; R3 records that every recommendation was taken.
 
 Related designs, not duplicated here:
 - [base-image.md](base-image.md): one base, mise, `fugaro-services`, no sudo (0.7.0).
@@ -70,6 +72,28 @@ Read from the code at `origin/main` 65a6a24. Each claim names its file.
 - The decision between gen-2 and a VM depends on Check 31, which needs the 0.7.0 base.
 
 **Mitigation that ships in 0.7.0 anyway:** the base-image work already makes "services without Docker" a supported path. The 0.7.0 docs task here adds one routing-skill line: a task that needs Docker or Testcontainers stays local (already in the `routing` skill), unless the repository's tests can use `fugaro-services`.
+
+## 1.1 Cost preview (release 0.8.0; moved from spec section 8, ruling R4)
+
+A ceiling, not a forecast (G20). `fugaro budget preview --recipe R --runs N [--repo R]` prints:
+
+- **The ceiling:**
+  ```
+  N × min(per-run cap, stages_max(R) × agent.max_budget_usd)
+  ```
+  - The per-run cap is `FUGARO_MAX_RUN_USD` or the database's per-run cap, whichever is lower.
+  - `stages_max(R)` is the recipe's stage bound from §3.1, with the repository's knobs.
+  - `agent.max_budget_usd` is Claude Code's own per-stage cap.
+  - It is labelled "rough worst case". With no per-stage cap and no per-run cap, it says "unbounded: set budget.per_run_usd".
+- **Against the headroom:** today's remaining daily cap, global and repository, read as `fugaro budget show` reads it. It prints one verdict line: `fits`, `may exceed the repository's daily cap`, or `exceeds`.
+- **A typical figure, when history exists:**
+  - the mean cost per stage kind and model over the repository's last 30 days of `result.json`;
+  - this needs the runner to record cost per stage: `StageTiming` gains `model_usd` and `model`, from the gateway's `StageReport` (or the oauth result event's `total_cost_usd`);
+  - with fewer than 5 runs, the line is omitted.
+
+It is read-only and needs no new IAM: launchers can already read the bucket and the budget. If the per-stage record proves awkward, ship the ceiling alone: it needs no history.
+
+**Why 0.8.0 (R4):** nothing here is blocked technically — unlike section 1 it needs no live check and no hardware. It moved because §12's original "0.7.0, last and optional" framing invited dropping it under date pressure, and the owner instead ruled it a clean, deliberate 0.8.0 item: built once, right after 0.7.0, alongside the Docker backend measurement, rather than a group that might be cut and never revisited.
 
 ## 2. Repository provisioning: baked or clone
 
@@ -224,26 +248,6 @@ What is missing is the documentation and one check: `docs/multi-model.md` gains 
 
 Small, and independent of everything else.
 
-## 8. Cost preview (nice-to-have, planned last, optional)
-
-A ceiling, not a forecast (G20). `fugaro budget preview --recipe R --runs N [--repo R]` prints:
-
-- **The ceiling:**
-  ```
-  N × min(per-run cap, stages_max(R) × agent.max_budget_usd)
-  ```
-  - The per-run cap is `FUGARO_MAX_RUN_USD` or the database's per-run cap, whichever is lower.
-  - `stages_max(R)` is the recipe's stage bound from §3.1, with the repository's knobs.
-  - `agent.max_budget_usd` is Claude Code's own per-stage cap.
-  - It is labelled "rough worst case". With no per-stage cap and no per-run cap, it says "unbounded: set budget.per_run_usd".
-- **Against the headroom:** today's remaining daily cap, global and repository, read as `fugaro budget show` reads it. It prints one verdict line: `fits`, `may exceed the repository's daily cap`, or `exceeds`.
-- **A typical figure, when history exists:**
-  - the mean cost per stage kind and model over the repository's last 30 days of `result.json`;
-  - this needs the runner to record cost per stage: `StageTiming` gains `model_usd` and `model`, from the gateway's `StageReport` (or the oauth result event's `total_cost_usd`);
-  - with fewer than 5 runs, the line is omitted.
-
-It is read-only and needs no new IAM: launchers can already read the bucket and the budget. If the per-stage record proves awkward, ship the ceiling alone: it needs no history.
-
 ## 9. SECURITY.md
 
 **Recommendation (G21):** keep the existing file (reporting, supported versions, scope) and add a section "Trust model and known limits" of about 100 lines, written for an adopter. The full text is drafted as the deliverable of plan Task 21. It is grounded in what the code does:
@@ -305,7 +309,7 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 
 ## 12. Release, order and coordination
 
-**In 0.7.0 (R1):** sections 2 to 10, and 11's doc. Section 8 is the last, optional group.
+**In 0.7.0 (R1):** sections 2 to 7, 9 and 10, and 11's doc. Section 1.1 (cost preview, originally spec section 8) is **release 0.8.0** (R4), alongside section 1: it is not a 0.7.0 group.
 
 **Order against the other 0.7.0 work** (G27):
 - **Layered config Phase 1 (0.6.0) merges first.** Its scope table (`internal/config/scope.go`) and project layer (`layer.go`) must list the new keys `workflows.<n>.checkout`, `commands.lint`, `commands.fix` and `review.allow_forks`. Its Task 17 edits `ls.go`, so it must land before the rename.
@@ -314,16 +318,15 @@ The defaults are flags, not config keys. Veto alternative: local-config keys `wa
 - **`bucket-iam.md`** owns every IAM change. Nothing here grants a role. `checkout: clone`'s image pull may need one (unverified, Check 32): if it does, that grant is handed to the IAM plan, not added here.
 - **Release notes:** the plan's last task adds sections to `docs/releases/v0.7.0.md`, which base-image Task 22 creates. It also adds the operator steps: rerun `fugaro init` for the new RTDB keys, `fugaro ls` is gone, and the old recipe names are gone.
 
-**Sizing.** 23 implementation tasks in 0.7.0, plus one full-suite task per group and the release-notes task (plan Tasks 1 to 25):
+**Sizing.** 21 implementation tasks in 0.7.0, plus one full-suite task per group and the release-notes task (plan Tasks 1 to 23):
 - Group A, visibility: 6 tasks.
 - Group S, SECURITY.md: 1.
 - Group B, naming: 1.
 - Group C, recipes: 7.
 - Group D, provisioning: 4.
 - Group E, docs and skills: 2.
-- Group F, cost preview: 2 (optional).
 
-Plus four tasks for 0.8.0 (plan Tasks 26 to 29): the measurement, two blocked phases and the tombstone's removal. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
+Plus six tasks for 0.8.0 (plan Tasks 24 to 29): the cost preview (Group F, moved from 0.7.0 by R4), the measurement, two blocked phases and the tombstone's removal. Recipes are the largest risk: four of the runner changes sit in `agentLoop`, which every run executes.
 
 ## 13. Verified and unverified
 
@@ -359,7 +362,7 @@ Plus four tasks for 0.8.0 (plan Tasks 26 to 29): the measurement, two blocked ph
 | G17 | CLI naming | Plural nouns plus singular aliases; `fugaro runs ls`; `ls` tombstone in 0.7.0; run verbs stay top-level | `job ls`; a working `ls` alias; all run verbs under `runs` |
 | G18 | Model routing | No knob; document direct providers; Claude stays direct | Allow Claude via OpenRouter |
 | G19 | Logs | `logs --url`, link in the empty hint | Nothing (already exists) |
-| G20 | Cost preview | `fugaro budget preview`: cap-based ceiling plus optional history from per-stage cost | Drop it (low priority) |
+| G20 | Cost preview (§1.1) | `fugaro budget preview`: cap-based ceiling plus optional history from per-stage cost; taken as recommended (R3), released in 0.8.0 (R4) | Drop it (low priority) |
 | G21 | SECURITY.md | Add "Trust model and known limits" to the existing file | A separate `docs/security.md` |
 | G22 | Review-ready source | Runs bucket (`result.json`) through the queued scanner | RTDB `/outcomes` with a rules change |
 | G23 | Watch ordering and selection | Per-row cursor by (slug, run), blocks by name, space on run toggles detail | Keep spend order |
