@@ -238,16 +238,27 @@ func branchNote(ctx context.Context, path string) string {
 		"which this validation can't see; this file can only tighten it", cur, def, def)
 }
 
+// validateLayer is validate's project layer summary: which layer the file
+// resolved against.
+type validateLayer struct {
+	Where      string `json:"where"`
+	Generation int64  `json:"generation,omitempty"`
+	SHA256     string `json:"sha256"`
+}
+
 // validateOutput is the JSON shape of `fugaro validate --json`.
 type validateOutput struct {
 	Valid    bool             `json:"valid"`
 	Problems []config.Problem `json:"problems"`
 	// Warnings are not problems: they never make the file invalid.
-	Warnings []config.Problem `json:"warnings"`
+	Warnings     []config.Problem `json:"warnings"`
+	ProjectLayer *validateLayer   `json:"project_layer,omitempty"`
 }
 
 func newValidateCmd() *cobra.Command {
 	var asJSON bool
+	var layerFile string
+	var offline bool
 	cmd := &cobra.Command{
 		Use:   "validate [path]",
 		Short: "Check a fugaro.yaml against the schema and the repository",
@@ -261,7 +272,12 @@ func newValidateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			cfg, problems := config.Parse(data)
+			rf, err := resolveFugaroYAML(cmd.Context(), data, selectedProjectConfig(cmd.Context()), layerOptions{File: layerFile, Offline: offline, Lenient: true})
+			if err != nil {
+				return err
+			}
+			cfg, problems := rf.Cfg, rf.Problems
+			layer, layerWarnings := validateLayerLines(rf)
 			var warnings []config.Problem
 			if cfg != nil {
 				problems = append(config.Check(cfg, filepath.Dir(path)), computeProblems(cfg)...)
@@ -290,11 +306,12 @@ func newValidateCmd() *cobra.Command {
 					}
 				}
 			}
+			warnings = append(layerWarnings, warnings...)
 			out := cmd.OutOrStdout()
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
-				if err := enc.Encode(validateOutput{Valid: len(problems) == 0, Problems: append([]config.Problem{}, problems...), Warnings: append([]config.Problem{}, warnings...)}); err != nil {
+				if err := enc.Encode(validateOutput{Valid: len(problems) == 0, Problems: append([]config.Problem{}, problems...), Warnings: append([]config.Problem{}, warnings...), ProjectLayer: layer}); err != nil {
 					return err
 				}
 			} else {
@@ -315,5 +332,45 @@ func newValidateCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().StringVar(&layerFile, "project-layer", "", "resolve against this project layer file instead of the published one (also checks the file; for CI without bucket access, and before fugaro config publish)")
+	cmd.Flags().BoolVar(&offline, "offline", false, "never read the runs bucket: resolve against the cached project layer, if any")
 	return cmd
+}
+
+// validateLayerLines are validate's project layer summary and warning
+// lines: which layer the file resolved against, why none or the cache was
+// used, and that profiles need layeredSince everywhere.
+func validateLayerLines(rf resolvedFile) (*validateLayer, []config.Problem) {
+	var layer *validateLayer
+	var warnings []config.Problem
+	if l := rf.Layer.Layer; l != nil {
+		layer = &validateLayer{Where: rf.Layer.Where, Generation: rf.Layer.Generation, SHA256: l.SHA256}
+		warnings = append(warnings, config.Problem{Path: "project layer", Message: fmt.Sprintf("uses the project layer %s (generation %d, sha256 %s); fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))})
+	}
+	if rf.Layer.Note != "" {
+		warnings = append(warnings, config.Problem{Path: "project layer", Message: rf.Layer.Note})
+	}
+	if rf.Cfg != nil && usesProfiles(rf.Cfg) {
+		warnings = append(warnings, config.Problem{Path: "profile", Message: "profiles need fugaro " + layeredSince + ": every teammate's CLI, every CI pin and every job image must be on it before this file is merged (older ones refuse it)"})
+	}
+	return layer, warnings
+}
+
+// usesProfiles reports whether a resolved config took any workflow from a
+// profile: what binaries before layeredSince refuse.
+func usesProfiles(c *config.Config) bool {
+	for _, w := range c.Workflows {
+		if w.Profile != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// shortSHA is the first 12 characters of a sum, or all of a shorter one.
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
 }

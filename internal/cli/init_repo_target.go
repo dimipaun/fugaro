@@ -224,7 +224,8 @@ func defaultBranchRef(ctx context.Context, root string) string {
 }
 
 // resolveRepoTarget finds the checkout (the working directory's) and its
-// default branch's fugaro.yaml, with no cloud call. It returns the target
+// default branch's fugaro.yaml, with no cloud call besides reading the
+// project layer (docs/design/layered-config.md). It returns the target
 // when the stage applies, else the status that says why (skipped, or
 // needs-you when the user has something to fix); project "" does not check
 // the file's project.
@@ -254,7 +255,7 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	if err != nil {
 		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
 	}
-	cfg, problems := config.Parse(data)
+	cfg, problems := parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 	if cfg == nil {
 		why := "unreadable"
 		if len(problems) > 0 {

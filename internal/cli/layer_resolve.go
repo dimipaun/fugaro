@@ -16,6 +16,12 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
+// layeredSince is the first release that understands task.ProjectLayer and
+// profiles: the version gate for a launch or build that carries one
+// (design §8). Defined here because validate needs it before the launch
+// path that owns the gate does; that path moves this definition to itself.
+const layeredSince = "0.6.0"
+
 // layerOptions say where findLayer takes the project layer from.
 type layerOptions struct {
 	File    string // --project-layer: read this file, not the bucket

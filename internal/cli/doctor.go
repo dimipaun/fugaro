@@ -272,7 +272,7 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
-		if c, fy := fugaroYAMLCheck(co.Root); c != nil {
+		if c, fy := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
 			o.Checks = append(o.Checks, *c)
 			o.FugaroYAML = fy
 		}
@@ -348,9 +348,9 @@ func doctorAPIOptsQuota(lc *localcfg.Config, endpoint string, withQuota bool) []
 	return opts
 }
 
-// fugaroYAMLCheck reads root/fugaro.yaml and checks it (config.Parse and
-// config.Check, as fugaro validate does), nil when there is no such file.
-func fugaroYAMLCheck(root string) (*doctorCheck, *doctorFugaroYAML) {
+// fugaroYAMLCheck reads root/fugaro.yaml and checks it (parseCheckoutFugaroYAML
+// and config.Check, as fugaro validate does), nil when there is no such file.
+func fugaroYAMLCheck(ctx context.Context, root string, lc *localcfg.Config) (*doctorCheck, *doctorFugaroYAML) {
 	path := filepath.Join(root, "fugaro.yaml")
 	data, err := readFugaroYAML(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -362,7 +362,7 @@ func fugaroYAMLCheck(root string) (*doctorCheck, *doctorFugaroYAML) {
 		return &doctorCheck{ID: "fugaro-yaml", OK: false, Problem: oneLineCLI(err.Error()),
 			Fix: "replace it with a regular fugaro.yaml of the repository's own"}, &doctorFugaroYAML{Path: path, Problems: []config.Problem{{Message: "not read"}}}
 	}
-	cfg, problems := config.Parse(data)
+	cfg, problems := parseCheckoutFugaroYAML(ctx, data, lc)
 	if cfg != nil {
 		problems = append(problems, config.Check(cfg, root)...)
 	}

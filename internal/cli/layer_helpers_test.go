@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // testProjectLayer is aurora's project layer in the cloud fixture: profile
@@ -42,3 +43,17 @@ func layerWithDefaults(extra string) string {
 
 // isolateCache gives the test a cache directory of its own.
 func isolateCache(t *testing.T) { t.Setenv("XDG_CACHE_HOME", t.TempDir()) }
+
+// layerCheckout makes the working directory a git checkout holding yaml as
+// fugaro.yaml, and returns its root. f is unused today (no test here needs
+// a build record or an origin remote); it is kept so a later test that
+// does can add one without changing every call site.
+func layerCheckout(t *testing.T, f *cloudFixture, yaml string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	t.Chdir(dir)
+	return dir
+}

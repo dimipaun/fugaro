@@ -545,6 +545,13 @@ func loadCheckoutConfig(ctx context.Context) (root string, cfg *config.Config, e
 // loadCheckoutConfigAt is loadCheckoutConfig for the checkout holding dir
 // (empty: the current directory).
 func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *config.Config, err error) {
+	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
+	return root, rf.Cfg, err
+}
+
+// loadCheckoutResolved is loadCheckoutConfigAt resolved over the project
+// layer o finds, with the layer (image build passes it to Cloud Build).
+func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, o layerOptions) (root string, rf resolvedFile, err error) {
 	args := []string{"rev-parse", "--show-toplevel"}
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
@@ -552,25 +559,31 @@ func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *co
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		if dir != "" {
-			return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
 		}
-		return "", nil, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
+		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
 	root = strings.TrimSpace(string(out))
 	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
-		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
+		return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
 	}
-	cfg, problems := config.Parse(data)
-	if cfg != nil {
-		problems = append(config.Check(cfg, root), computeProblems(cfg)...)
+	if lc == nil {
+		lc = selectedProjectConfig(ctx)
+	}
+	if rf, err = resolveFugaroYAML(ctx, data, lc, o); err != nil {
+		return "", rf, err
+	}
+	problems := rf.Problems
+	if rf.Cfg != nil {
+		problems = append(config.Check(rf.Cfg, root), computeProblems(rf.Cfg)...)
 	}
 	if len(problems) > 0 {
 		msgs := make([]string, len(problems))
 		for i, p := range problems {
 			msgs[i] = p.String()
 		}
-		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
+		return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
 	}
-	return root, cfg, nil
+	return root, rf, nil
 }

@@ -298,7 +298,7 @@ func defaultBranchConfig(ctx context.Context, root string) *config.Config {
 	if err != nil {
 		return nil
 	}
-	cfg, _ := config.Parse(data)
+	cfg, _ := parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 	return cfg
 }
 

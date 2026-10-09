@@ -403,7 +403,7 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if err != nil {
 		return nil, nil
 	}
-	return config.Parse(data)
+	return parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
 }
 
 // refuseHTTP2Debug refuses to talk to Google while GODEBUG holds
