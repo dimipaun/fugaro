@@ -168,7 +168,11 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 			}
 			return emit(cancelResult{Run: ref, Status: cancelLaunching, Marker: true})
 		}
-		return emit(cancelResult{Run: ref, Status: cancelUnfinalized})
+		held, note := clearStaleLock(ctx, env, s, slug, id, l.Execution)
+		if note != "" {
+			fmt.Fprint(errOut, note)
+		}
+		return emit(cancelResult{Run: ref, Status: cancelUnfinalized, LockHeld: held})
 	case err != nil:
 		return remote(err)
 	case e.State.Terminal():

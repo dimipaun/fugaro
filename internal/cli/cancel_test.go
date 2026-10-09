@@ -852,3 +852,43 @@ func TestLockLiveChecksRunIDAndExpiry(t *testing.T) {
 		t.Fatal("lockLive did not report a live lock naming this run")
 	}
 }
+
+// The entry-time ErrNotFound fallback (the record exists, isn't
+// finalized, and the run isn't a fresh launch either, so none of the
+// earlier cases in that switch apply) must also report whether its
+// branch lock is still live, exactly like ended()'s own cancelUnfinalized
+// return does during the poll loop — not silently default to false.
+func TestCancelUnfinalizedForgottenExecutionReportsLiveLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	writeRecord(t, f, id, &runstore.Record{Version: 1, RunID: id, Execution: exec,
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, Branch: "fugaro/" + id,
+		StartedAt: time.Now().Add(-time.Hour)})
+	key := lock.Key(appSlug, "fugaro/"+id)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 0}
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var res cancelResult
+	if err := json.Unmarshal([]byte(out.String()), &res); err != nil || res.Status != cancelUnfinalized || !res.LockHeld {
+		t.Fatalf("cancel = %+v, %v (%s)", res, err, out.String())
+	}
+	// A merely-forgotten execution is not positive proof of termination
+	// (lock.Stale's gate inside clearStaleLock refuses it), so the lock
+	// itself must survive too.
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("the lock did not survive: clearStaleLock cleared it on a merely-forgotten execution")
+	}
+}
