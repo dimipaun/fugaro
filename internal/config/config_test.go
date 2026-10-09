@@ -111,6 +111,30 @@ func hasProblem(ps []Problem, path, msg string, line int) bool {
 	return false
 }
 
+// TestParseVerbatimTagNeverEchoesValue: yamlValueRE strips the backtick-quoted
+// value after a type error's tag, whatever the tag's own text looks like.
+// yaml.v3 percent-decodes a verbatim tag, so that text can hold a space (not
+// just a control or bidi character showKey alone would escape); a regex that
+// only matched \S+ for the tag would then fail to match at all, leaving the
+// value (truncated to 7 characters by yaml.v3, but still a leak) in the
+// message.
+func TestParseVerbatimTagNeverEchoesValue(t *testing.T) {
+	const secret = "topsecretvalue1234567"
+	yaml := strings.Replace(minimalYAML, "version: 1", "version: !<tag:x%20y> "+secret, 1)
+	_, ps := Parse([]byte(yaml))
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.Message)
+	}
+	got := strings.Join(msgs, "; ")
+	if !strings.Contains(got, "cannot unmarshal tag:x y into int") {
+		t.Fatalf("problems %q, want one containing %q", got, "cannot unmarshal tag:x y into int")
+	}
+	if strings.Contains(got, secret[:7]) {
+		t.Fatalf("problems echo the value: %q", got)
+	}
+}
+
 func TestSelectWorkflow(t *testing.T) {
 	cfg, _ := Parse([]byte(minimalYAML))
 	if name, _, err := cfg.SelectWorkflow(""); err != nil || name != "server" {

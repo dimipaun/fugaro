@@ -462,10 +462,13 @@ func yamlProblems(err error) []Problem {
 // yamlValueRE is the quoted value yaml.v3 puts in a type error ("cannot
 // unmarshal !!str `abc...` into config.Agent"). The tag before it is not
 // always !!word: an explicit tag (!<tag:x,...>) stands in its own text, a
-// fugaro.yaml's own, so it is stripped the same way. A fugaro.yaml may be
-// somebody else's, so an error names the key and the type wanted, never
-// what was there.
-var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal \\S+) `.*?` into ")
+// fugaro.yaml's own, so it is stripped the same way. yaml.v3 percent-decodes
+// a verbatim tag, so that text can itself hold a space (not just a control
+// or bidi character showKey alone would catch), which is why the tag group
+// is .+? (any character, lazily), not \S+: a fugaro.yaml may be somebody
+// else's, so an error names the key and the type wanted, never what was
+// there, whatever the tag looks like.
+var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal .+?) `.*?` into ")
 
 func problemFromYAML(msg string) Problem {
 	msg = yamlValueRE.ReplaceAllString(msg, "$1 into ")
