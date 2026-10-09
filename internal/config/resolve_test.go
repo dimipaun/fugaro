@@ -176,6 +176,7 @@ func TestResolveProblemsNameTheLayer(t *testing.T) {
 		{"a value the repository set says nothing more", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    commands: { test: '' }\n", "workflows.api.commands.test: is required; "},
 		{"a value the profile set names the profile", minimalRepo + "workflows:\n  api:\n    profile: node-web\n    base: go\n", "workflows.api.image.node: only applies to base web-node (set by profile node-web)"},
 		{"a value neither set names the profile", minimalRepo + "workflows:\n  api:\n    profile: bare\n", "workflows.api.commands.build: is required (set neither by the repository nor by profile bare)"},
+		{"a value the profile set names the profile for a bidi workflow name", minimalRepo + "workflows:\n  \"a\\u202eb\":\n    profile: bare\n", "commands.build: is required (set neither by the repository nor by profile bare)"},
 		{"another project's layer", "version: 1\nproject: other\ngcp_project: acme-fugaro\n", `the project layer given is project "acme"'s`},
 		{"an unanchored file", "version: 1\nproject: acme\n", "the project layer applies only to a fugaro.yaml whose gcp_project: names it"},
 	} {

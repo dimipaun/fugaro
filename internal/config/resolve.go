@@ -234,13 +234,16 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 	var ps []Problem
 	for _, name := range sortedKeys(wm) {
 		rw, _ := wm[name].(map[string]any)
-		path := "workflows." + name
-		shown := "workflows." + showKey(name)
+		// path matches Validate's own Problem.Path (validate.go uses
+		// showKey(name) too), so annotate's lookups into src and profileOf
+		// by path still find a workflow name with a control or bidi
+		// character in it.
+		path := "workflows." + showKey(name)
 		w := map[string]any{}
 		if pname := repo.Workflows[name].Profile; pname != "" {
 			p, ok := profileTree(pname)
 			if !ok {
-				ps = append(ps, Problem{Path: shown + ".profile", Message: fmt.Sprintf("names profile %q, which project %s's layer does not have (its profiles: %s)", pname, l.Project, names)})
+				ps = append(ps, Problem{Path: path + ".profile", Message: fmt.Sprintf("names profile %q, which project %s's layer does not have (its profiles: %s)", pname, l.Project, names)})
 				continue
 			}
 			// The inline escape hatch: a repository Dockerfile replaces the
@@ -250,7 +253,7 @@ func resolveWorkflows(tree map[string]any, repo *Config, l *ProjectLayer, src ma
 				delete(p, "image")
 			}
 			overlay(w, p, path, SourceProfile(pname), src)
-			profileOf[name] = pname
+			profileOf[showKey(name)] = pname
 		}
 		overlay(w, rw, path, SourceRepo, src)
 		out[name] = w

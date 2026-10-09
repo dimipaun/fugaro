@@ -195,6 +195,15 @@ func ParseProjectLayer(data []byte, a LayerAnchor) (*ProjectLayer, []Problem) {
 	}
 	if prs, ok := tree["profiles"].(map[string]any); ok {
 		for _, name := range sortedKeys(prs) {
+			// A null profile (profiles: {name:}) would decode as a valid
+			// empty Profile, usable as default_profile, with no scope
+			// check ever run on it; Resolve's own tree has no such profile
+			// (null, not a mapping), so it would then refuse to find a
+			// profile ParseProjectLayer just accepted. Fail closed instead.
+			if prs[name] == nil {
+				ps = append(ps, Problem{Path: "profiles." + showKey(name), Message: "must be a mapping of profile keys, not null"})
+				continue
+			}
 			if p, ok := prs[name].(map[string]any); ok {
 				q := maps1(p)
 				delete(q, "description")
