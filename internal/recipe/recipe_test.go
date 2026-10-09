@@ -120,9 +120,10 @@ func TestReservedKeysEachSaySo(t *testing.T) {
 // from the runs bucket), and Problem.Path echoes the offending key back so
 // the author can find it. An ESC or newline in that key must never reach a
 // terminal unescaped: a hostile key could otherwise plant ANSI sequences or
-// forge extra output lines. This covers the three places recipe.go builds a
+// forge extra output lines. This covers the four places recipe.go builds a
 // Path from a raw yaml.Node key: a bad top-level key, a bad key under roles,
-// and a bad step-kind key (the "value" of the steps list).
+// a bad step-kind key (the "value" of the steps list) and a bad option key
+// inside a step.
 func TestProblemPathEscapesUntrustedKeys(t *testing.T) {
 	const badKey = "bad\x1bkey\nend"
 	escaped := func(path string) bool {
@@ -135,6 +136,7 @@ func TestProblemPathEscapesUntrustedKeys(t *testing.T) {
 		{"top-level key", "version: 1\nname: a\n\"bad\\x1bkey\\nend\": 1\nsteps:\n  - review: {}\n", ""},
 		{"roles key", "version: 1\nname: a\nroles: { \"bad\\x1bkey\\nend\": coder }\nsteps:\n  - review: {}\n", "roles."},
 		{"step-kind key", "version: 1\nname: a\nsteps:\n  - \"bad\\x1bkey\\nend\": {}\n  - review: {}\n", "steps[0]."},
+		{"step-option key", "version: 1\nname: a\nsteps:\n  - review: {\"bad\\x1bkey\\nend\": 1}\n", "steps[0].review."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ps := Parse([]byte(tc.text))
