@@ -155,6 +155,7 @@ func Validate(c *Config) []Problem {
 			add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
 		}
 		ps = append(ps, validateImage(p, w)...)
+		ps = append(ps, validateCheckout(p, w)...)
 		if strings.TrimSpace(w.Commands.Build) == "" {
 			add(p+".commands.build", "is required")
 		}

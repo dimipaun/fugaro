@@ -237,7 +237,18 @@ type Workflow struct {
 	Resources  Resources    `yaml:"resources"`
 	Timeouts   Timeouts     `yaml:"timeouts"`
 	Rebuild    Rebuild      `yaml:"rebuild"`
+	// Checkout is baked (the derived image holds a clone the runner moves
+	// to the task's ref) or clone (the job runs the installation's base
+	// image, and the runner makes a blobless clone at start); "" defaults
+	// to baked (design generic-tool.md §2, G3, G5).
+	Checkout string `yaml:"checkout,omitempty"`
 }
+
+// Checkout values of a workflow (design generic-tool.md §2, G3).
+const (
+	CheckoutBaked = "baked"
+	CheckoutClone = "clone"
+)
 
 // Rebuild says when the daily image check rebuilds the workflow's image
 // (design §7.2). A change to image:, dockerfile: (or the file it names), base
