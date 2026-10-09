@@ -211,6 +211,7 @@ In the commands below, `T` is short for
 | 28 | The shared installation config: an operator publishes `fugaro/config.yaml` to the runs bucket, a teammate with no local config reads it (`doctor`, `ls`), the `gcp_project:` line of `fugaro.yaml`, a local config winning, the offline cache, and a tampered object refused | See "Check 28" below; **you** run it at your own terminal: step 1 is the only write to the installation you name, every other write goes to a SCRATCH installation, never `belong` or `fugaro-dev`. | No cost beyond a few bucket reads and writes. **USER-RUN, NOT RUN.** |
 | 29 | Adopting an existing Firebase root: `terraform state rm` of the four singletons in the SANDBOX's Firebase root, `init --firebase` imports them (`Plan: 4 to import`), a rerun shows `No changes`; then the squat (an extra permission on the minter role) and a foreign minter on the signer are refused | See "Check 29" below; **you** run it at your own terminal, on the **sandbox's Firebase project only**, never a real installation's. | No cost beyond the sandbox's own backend. **USER-RUN, NOT RUN.** |
 | 30 | `fugaro image refresh`'s direct check-job update against the real Cloud Run Admin API: the read-back output-only fields round-trip through `jobs.patch`, the job's etag is enforced against a concurrent change, the patch starts no execution, and a later `init --repo` plans no change (design/image-refresh.md, "The check job and Terraform") | See "Check 30" below; **you** run it at your own terminal, on the **sandbox's check job only**, never EdgeWeb or EdgeServer. | No cost beyond the sandbox's own Cloud Run job and, if needed, a second base image copy. **USER-RUN, NOT RUN.** |
+| 31 | `fugaro upgrade` with the real `claude` CLI: the marketplace add or update, the install or update at the right scope, the settings file untouched by `claude`, a rerun that changes nothing, and the cloud step skipped in a Claude Code session | See "Check 31" below; **you** run it, on the sandbox checkout only. | USER-RUN, NOT RUN |
 
 For check 13, `TestLiveSandboxRun` checks the following:
 
@@ -912,6 +913,21 @@ Expect the four addresses under `module.firebase.`.
 **FACT lines to record:** the `fugaro version`; the job's image and `FUGARO_CHECK_SPEC.base_images` before and after; whether `jobs.patch` accepted the round-tripped output-only fields or rejected any of them; whether `init --repo` showed `No changes` afterwards; the exact refusal text of the concurrent-change check.
 
 **Restore.** If step 2 moved the sandbox's check job to an image you do not want to keep it on, rerun `fugaro image refresh` (or `fugaro init --repo`) to move it back.
+
+## Check 31: fugaro upgrade with the real claude CLI (sandbox checkout only, run by you; USER-RUN, NOT RUN)
+
+**No step below has been run.** The tests drive a fake `claude`; this is the first time the real one sees the calls. Use the sandbox repository's checkout (a git worktree), never EdgeWeb's or EdgeServer's.
+
+1. Record `fugaro version`, `claude --version`, `claude plugin marketplace list --json` and `claude plugin list --json` (the `fugaro` entries), and `git -C <checkout> diff --stat`.
+2. In your own terminal (not Claude Code), run `fugaro upgrade --check <checkout>`: expect `pin:`, `plugin:` and `cloud:` lines, exit 1 if anything is stale, and no change to the four records of step 1.
+3. Run `fugaro upgrade --local <checkout>`: expect the `using claude at` line with an absolute path, each `running:` line, `plugin: done: installed <version>`, and `git diff` showing only the pin. Check `claude plugin list --json` again: the version applies at the scope the plan said.
+4. **FACT:** whether any `claude plugin` call changed `.claude/settings.json` (the step says `claude changed`); whether `claude plugin update --scope project` (run only if a project-scope install exists) rewrote it.
+5. Run step 3 again: expect `nothing to do`, and only the two lists in what `claude` was asked (no `running:` line).
+6. In a Claude Code session in the checkout, ask the agent to run `fugaro upgrade` (no flags): expect `cloud: skipped: a coding agent's session` with the two commands, exit 0, and nothing in Cloud Build or the check job's revisions.
+
+**Paste back:** each step's result, and the exact text of every unexpected message (no token, no key).
+
+**Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
 
 ## Not covered by these tests (manual)
 
