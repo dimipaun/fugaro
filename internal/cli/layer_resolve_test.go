@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -403,5 +404,132 @@ func TestResolveRefusesALayerOfAnotherProject(t *testing.T) {
 	_, _, ps = config.Resolve([]byte("version: 1\nproject: other\ngcp_project: proj-1234\n"), layer)
 	if len(ps) == 0 || !strings.Contains(ps[0].Message, "aurora") {
 		t.Fatalf("Resolve did not refuse a mismatched project: %v", ps)
+	}
+}
+
+// o.Data (Cloud Build, the check job: a layer already read and checked)
+// never touches the bucket, succeeds on a valid layer and fails, naming
+// Where, on an invalid one.
+func TestFindLayerFromData(t *testing.T) {
+	opens := 0
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) { opens++; return open(ctx, url) }
+
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil, layerOptions{Data: []byte(testProjectLayer), Where: "the pinned copy"}, layerNow)
+	if err != nil || got.Layer == nil || got.Where != "the pinned copy" || opens != 0 {
+		t.Fatalf("got %+v, %v, %d opens", got, err, opens)
+	}
+
+	_, err = findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil,
+		layerOptions{Data: []byte(layerWithDefaults("  followup: { trusted: ['1'] }\n")), Where: "the pinned copy"}, layerNow)
+	if err == nil || !strings.Contains(err.Error(), "the pinned copy is invalid") {
+		t.Fatalf("err = %v", err)
+	}
+	if opens != 0 {
+		t.Fatalf("%d opens", opens)
+	}
+}
+
+// o.File (--project-layer FILE) never touches the bucket, succeeds on a
+// valid file, fails naming the path on an invalid one, and surfaces
+// readLayerFile's own errors (here, a missing file) as a user error.
+func TestFindLayerFromFile(t *testing.T) {
+	opens := 0
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) { opens++; return open(ctx, url) }
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "layer.yaml")
+	if err := os.WriteFile(path, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil, layerOptions{File: path}, layerNow)
+	if err != nil || got.Layer == nil || got.Where != path {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+
+	if err := os.WriteFile(path, []byte(layerWithDefaults("  followup: { trusted: ['1'] }\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil, layerOptions{File: path}, layerNow)
+	if err == nil || !strings.Contains(err.Error(), path+" is invalid") {
+		t.Fatalf("invalid file: err = %v", err)
+	}
+
+	missing := filepath.Join(dir, "missing.yaml")
+	_, err = findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil, layerOptions{File: missing}, layerNow)
+	if err == nil || ExitCode(err) != ExitUserError {
+		t.Fatalf("missing file: err = %v", err)
+	}
+	if opens != 0 {
+		t.Fatalf("%d opens", opens)
+	}
+}
+
+// o.NoBucket (the daily check job, whose account cannot read fugaro/)
+// without Data means none applies, and the bucket is never opened.
+func TestFindLayerNoBucketIsNone(t *testing.T) {
+	opens := 0
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) { opens++; return open(ctx, url) }
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), nil, layerOptions{NoBucket: true}, layerNow)
+	if err != nil || got.Layer != nil || got.Unknown || opens != 0 {
+		t.Fatalf("got %+v, %v, %d opens", got, err, opens)
+	}
+}
+
+// readLayerFile's own error paths: a missing file, a non-regular file
+// (here, a directory) and one over the size limit; a regular file within
+// the limit is read whole.
+func TestReadLayerFile(t *testing.T) {
+	dir := t.TempDir()
+
+	if _, err := readLayerFile(filepath.Join(dir, "missing.yaml")); err == nil {
+		t.Fatal("a missing file was read")
+	}
+
+	sub := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLayerFile(sub); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Fatalf("a directory was read: %v", err)
+	}
+
+	big := filepath.Join(dir, "big.yaml")
+	if err := os.WriteFile(big, make([]byte, config.LayerMaxBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readLayerFile(big); err == nil || !strings.Contains(err.Error(), "over the") {
+		t.Fatalf("an oversized file was read: %v", err)
+	}
+
+	ok := filepath.Join(dir, "ok.yaml")
+	if err := os.WriteFile(ok, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readLayerFile(ok)
+	if err != nil || string(data) != testProjectLayer {
+		t.Fatalf("got %q, %v", data, err)
+	}
+}
+
+// parseCheckoutFugaroYAML converts a findLayer/resolveFugaroYAML error
+// (here, an invalid published object, which is always an error, even in
+// the lenient mode parseCheckoutFugaroYAML always uses) into a single
+// Problem naming "project layer", with a nil Cfg.
+func TestParseCheckoutFugaroYAMLConvertsAnErrorToAProblem(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, layerWithDefaults("  followup: { trusted: ['1'] }\n"))
+	cfg, ps := parseCheckoutFugaroYAML(context.Background(), []byte(minimalAnchored), fileEnv(t, f).lc)
+	if cfg != nil {
+		t.Fatalf("cfg = %+v, want nil", cfg)
+	}
+	if len(ps) != 1 || ps[0].Path != "project layer" || !strings.Contains(ps[0].Message, "is invalid") {
+		t.Fatalf("ps = %+v", ps)
 	}
 }

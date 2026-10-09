@@ -4,9 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/config"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // testProjectLayer is aurora's project layer in the cloud fixture: profile
@@ -44,17 +42,3 @@ func layerWithDefaults(extra string) string {
 
 // isolateCache gives the test a cache directory of its own.
 func isolateCache(t *testing.T) { t.Setenv("XDG_CACHE_HOME", t.TempDir()) }
-
-// layerCheckout makes the current directory a checkout of acme/other whose
-// fugaro.yaml is repoYAML, with what web-node's checks look for.
-func layerCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
-	t.Helper()
-	testutil.IsolateGit(t)
-	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), config.ImplicitWorkflow), "2", "4Gi")
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n", "package-lock.json": "{}\n"})
-	t.Chdir(dir)
-	return dir
-}
