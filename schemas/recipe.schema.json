@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/recipe.schema.json",
   "title": "Fugaro recipe",
-  "description": ".fugaro/recipes/<name>.yaml, or fugaro/recipes/<name>.yaml in the runs bucket. See docs/design/recipes.md. At most 16 KiB; anchors, aliases, tags, repeated keys and extra documents are refused.",
+  "description": ".fugaro/recipes/<name>.yaml, or fugaro/recipes/<name>.yaml in the runs bucket. See docs/recipes.md. At most 16 KiB; anchors, aliases, tags, repeated keys and extra documents are refused.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "name", "steps"],
@@ -10,31 +10,65 @@
     "version": { "const": 1 },
     "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "Must equal the file name (repository) or the object name (project)." },
     "description": { "type": "string", "maxLength": 200 },
+    "use_when": { "type": "string", "maxLength": 300, "description": "The routing skill's self-description." },
+    "mode": { "enum": ["implement", "review"] },
     "roles": {
       "type": "object",
       "additionalProperties": false,
-      "properties": { "reviewer": { "const": "coder", "description": "The reviewer role runs on the coder's model and output limit." } }
+      "not": { "required": ["reviewer", "coder"] },
+      "properties": {
+        "reviewer": { "const": "coder", "description": "The reviewer role runs on the coder's model and output limit." },
+        "coder": { "const": "reviewer", "description": "The coder role runs on the reviewer's (strong) model." }
+      }
     },
     "steps": {
       "oneOf": [
-        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/review" }], "items": false, "minItems": 1 },
-        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/review" }], "items": false, "minItems": 2 }
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 1 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/reviewNoBounce" }], "items": false, "minItems": 2 },
+        { "type": "array", "prefixItems": [{ "$ref": "#/$defs/check" }, { "$ref": "#/$defs/firstLine" }, { "$ref": "#/$defs/reviewBounce" }], "items": false, "minItems": 3 }
       ]
     }
   },
+  "if": {
+    "properties": { "mode": { "const": "review" } },
+    "required": ["mode"]
+  },
+  "then": {
+    "properties": {
+      "steps": { "type": "array", "prefixItems": [{ "$ref": "#/$defs/reviewModeReview" }], "items": false, "minItems": 1, "maxItems": 1 }
+    }
+  },
   "$defs": {
-    "body": {
-      "type": ["object", "null"],
-      "additionalProperties": false,
-      "properties": { "max_rounds": { "type": "integer" } }
-    },
     "firstLine": {
       "type": "object", "additionalProperties": false, "required": ["first_line"],
-      "properties": { "first_line": { "allOf": [{ "$ref": "#/$defs/body" }], "properties": { "max_rounds": { "minimum": 1, "maximum": 3 } } } }
+      "properties": { "first_line": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 3 } } } }
     },
-    "review": {
+    "reviewNoBounce": {
       "type": "object", "additionalProperties": false, "required": ["review"],
-      "properties": { "review": { "allOf": [{ "$ref": "#/$defs/body" }], "properties": { "max_rounds": { "minimum": 1, "maximum": 10 } } } }
+      "properties": { "review": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 } } } }
+    },
+    "reviewBounce": {
+      "type": "object", "additionalProperties": false, "required": ["review"],
+      "properties": { "review": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "type": "integer", "minimum": 1, "maximum": 10 }, "bounce": { "const": "first_line" } } } }
+    },
+    "reviewModeReview": {
+      "type": "object", "additionalProperties": false, "required": ["review"],
+      "properties": { "review": { "type": ["object", "null"], "additionalProperties": false, "properties": { "max_rounds": { "const": 1 } } } }
+    },
+    "check": {
+      "type": "object", "additionalProperties": false, "required": ["check"],
+      "properties": {
+        "check": {
+          "type": "object", "additionalProperties": false, "required": ["command"],
+          "properties": {
+            "command": { "enum": ["build", "test", "lint"] },
+            "autofix": { "type": "boolean" }
+          },
+          "if": { "properties": { "command": { "const": "lint" } } },
+          "else": { "properties": { "autofix": { "const": false } } }
+        }
+      }
     }
   }
 }
