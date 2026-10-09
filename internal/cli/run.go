@@ -558,8 +558,8 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	if err != nil {
 		return remote(err)
 	}
-	a, err1 := have.Marshal()
-	b, err2 := spec.Marshal()
+	a, err1 := repeatTaskBytes(have)
+	b, err2 := repeatTaskBytes(spec)
 	if err := errors.Join(err1, err2); err != nil {
 		return err
 	}
@@ -567,6 +567,22 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 		return userErr("run ID %s already holds a different task", spec.RunID)
 	}
 	return nil
+}
+
+// repeatTaskBytes is spec.Marshal with the project layer's generation
+// cleared first, so a repeated --run-id is judged on the task's actual
+// content (sha256, yaml) alone. embedProjectLayer re-reads the bucket on
+// every call (decision L13, no fresh window), and an object rewritten with
+// unchanged bytes still gets a new generation; without this, two identical
+// repeats of the same run ID would spuriously look like "a different task".
+func repeatTaskBytes(spec *task.Spec) ([]byte, error) {
+	clone := *spec
+	if spec.ProjectLayer != nil {
+		pl := *spec.ProjectLayer
+		pl.Generation = 0
+		clone.ProjectLayer = &pl
+	}
+	return clone.Marshal()
 }
 
 func printLaunch(w io.Writer, res launchResult, asJSON bool) error {

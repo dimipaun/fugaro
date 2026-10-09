@@ -1,9 +1,11 @@
 package cli
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
@@ -72,6 +74,37 @@ func TestRunWithoutALayerEmbedsNothing(t *testing.T) {
 	}
 	if pl := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261008-100000-abcd").ProjectLayer; pl != nil {
 		t.Fatalf("task project_layer = %+v", pl)
+	}
+}
+
+// A repeated --run-id must stay idempotent even though embedProjectLayer
+// re-reads the bucket on every call (decision L13, no fresh window): an
+// object rewritten with the same bytes gets a new generation, which must
+// not make the repeat look like "a different task" (code review finding).
+func TestRunRepeatedRunIDToleratesLayerGenerationChange(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	var calls int64
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		data, _, err := read(ctx, b)
+		calls++
+		return data, calls, err // same bytes, a new generation on every read
+	}
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatalf("repeated --run-id after the layer's generation changed: %v", err)
+	}
+	if !strings.Contains(out, "already launched") {
+		t.Fatalf("stdout = %q", out)
 	}
 }
 
