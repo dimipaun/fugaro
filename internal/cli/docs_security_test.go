@@ -31,6 +31,10 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"followup.trusted",
 		"docs/design/v1.md",
 		"docs/design/bucket-iam.md",
+		"Budget mode defaults to off.",
+		"Vertex has no dollar cap, in any mode.",
+		"roles/storage.objectAdmin",
+		"it can read the token from the runner's `/proc`",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
