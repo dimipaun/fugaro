@@ -105,6 +105,8 @@ The CLI exits 1 and says why. Don't work around a refusal. Tell the user what it
 | `has updated PR #N since; start a new follow-up` | Another run updated the PR after this one was stored. Launch again with a new run ID. |
 | anything else | Show the user the message, and `fugaro diagnose <run>` of any run it names, and stop. |
 
+A `branch busy` holder whose run has actually ended (a crash or a kill that never released its lock) doesn't need any of this: the CLI notices on its own and launches, with a one-line note on stderr instead of the refusal. You only see `branch busy` for a run that is still genuinely live, or too recently ended for the CLI to tell.
+
 **When you don't know whether the launch went through** (the command timed out, the connection dropped, or it exited 2): run the same command again, with the same run ID. It reports `already-launched` if the first attempt got through, and launches otherwise. If it says the launch is still in flight, wait a few minutes and repeat it: after ten minutes an abandoned launch claim is taken over. `fugaro run --retry <run>` launches the stored run the same way.
 
 ## 7. When the run ends without updating the PR

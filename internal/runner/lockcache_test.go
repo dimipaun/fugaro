@@ -99,6 +99,65 @@ func TestBranchBusyIsInfraError(t *testing.T) {
 	}
 }
 
+// TestTakesOverLockOfAnEndedHolder: a branch lock held by another run,
+// still live by its own expiry, is taken over at once (not refused as
+// branch busy) when that other run's own result.json has already reached
+// a terminal status: the runner has no Cloud Run Admin credential to ask
+// the backend about another execution, so this is the only signal it can
+// use (lock.Stale with execTerminal false).
+func TestTakesOverLockOfAnEndedHolder(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	key := lock.Key("acme-app", "fugaro/"+runID)
+	const holder = "20260101-000000-ffff"
+	holderRec := &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Status: runstore.StatusFailed,
+		Stage: "implement", Outcome: runstore.OutcomeDraft, StartedAt: time.Now().Add(-2 * time.Hour)}
+	if err := runstore.Open(h.bucket, "acme-app", holder).WriteRecord(context.Background(), holderRec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(logs.String(), "branch lock taken over") || !strings.Contains(logs.String(), holder) {
+		t.Fatalf("no note of the takeover in the log:\n%s", logs.String())
+	}
+	if ok, _ := b.Exists(context.Background(), key); ok {
+		t.Fatal("the lock survives the run")
+	}
+}
+
+// TestDoesNotTakeOverLockOfARunningHolder: the same live lock, but the
+// holder's own record still says "running" (no backend to ask otherwise):
+// the run refuses branch busy, exactly as for a lock the runner can't
+// prove is over.
+func TestDoesNotTakeOverLockOfARunningHolder(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	key := lock.Key("acme-app", "fugaro/"+runID)
+	const holder = "20260101-000000-ffff"
+	holderRec := &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Status: runstore.StatusRunning,
+		Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)}
+	if err := runstore.Open(h.bucket, "acme-app", holder).WriteRecord(context.Background(), holderRec); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.run(t) // no agent steps may run
+	if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "branch busy") {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if ok, _ := b.Exists(context.Background(), key); !ok {
+		t.Fatal("a refused run took over the lock of a still-running holder")
+	}
+}
+
 const (
 	exec1 = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-aaaaa"
 	exec2 = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-app/executions/fugaro-acme-app-app-bbbbb"

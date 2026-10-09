@@ -110,7 +110,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		return nil, userErr("no run on PR #%d has pushed to %s, so there is nothing to follow up; start a new run instead", pr, c.Branch)
 	}
 	c.Previous = runs[i]
-	if err := checkBranchLock(ctx, env, slug, c.Branch, now); err != nil {
+	if err := checkBranchLock(ctx, env, slug, c.Branch, now, warn); err != nil {
 		return nil, err
 	}
 	prev, err := readTask(ctx, env, slug, c.Previous.RunID)
@@ -227,11 +227,18 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	return nil
 }
 
-// checkBranchLock refuses a branch whose lock is live. An absent, expired or
-// unparsable lock, or one naming no run, is fine: the runner takes it over
-// (lock.Acquire). One too large to read is refused: the runner can't take
-// it over.
-func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time) error {
+// checkBranchLock refuses a branch whose lock is live and whose holder is
+// not provably over. An absent, expired or unparsable lock, or one naming
+// no run, is fine: the runner takes it over (lock.Acquire). One too large
+// to read is refused: the runner can't take it over either.
+//
+// A lock that still looks live by its expiry is taken over anyway (no
+// write here: the CLI only decides whether to launch, and only the runner
+// writes locks/, §4.1) when lock.Stale says its holder's run has ended:
+// its own run record reached a terminal status, or, the same signal ls and
+// diagnose use to call a run failed when its container was killed, the
+// backend confirms its execution did. warn gets a note when that happens.
+func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time, warn io.Writer) error {
 	key := lock.Key(slug, branch)
 	data, _, err := env.bucket.Read(ctx, key)
 	switch {
@@ -248,7 +255,36 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 	if json.Unmarshal(data, &h) != nil || h.RunID == "" || !now.Before(h.ExpiresAt) {
 		return nil
 	}
+	rec, err := absent(runstore.Open(env.bucket.Bucket, slug, h.RunID).ReadRecord(ctx))
+	if err != nil && !corruptObject(err) {
+		return remote(err)
+	}
+	// A corrupt record can't prove anything either way: fail closed, as if
+	// it could not be read at all.
+	if corruptObject(err) {
+		rec = nil
+	}
+	if lock.Stale(rec, holderExecutionOver(ctx, env, h.Execution)) {
+		fmt.Fprintf(warn, "note: run %s's branch lock looked live but its run has ended; taking the branch over\n", oneLine(h.RunID))
+		return nil
+	}
 	return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+}
+
+// holderExecutionOver reports whether the backend confirms a lock
+// holder's execution has ended: a positive proof of termination,
+// independent of whatever its own result.json says (a killed container
+// may never finalize it). It is the same signal runview.Join and cancel
+// use (backend.Execution.State.Terminal()) to call a run failed or
+// already finished. An execution the backend doesn't recognize, or any
+// read error, is not treated as proof: result.json is all there is to go
+// on then.
+func holderExecutionOver(ctx context.Context, env *cloudEnv, execution string) bool {
+	if execution == "" {
+		return false
+	}
+	e, err := env.be.Execution(ctx, execution)
+	return err == nil && e.State.Terminal()
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a

@@ -17,6 +17,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
 // Holder is what the lock object records. Execution is the canonical
@@ -37,6 +38,53 @@ func (e *BusyError) Error() string {
 		return "branch busy: another runner holds its lock"
 	}
 	return fmt.Sprintf("branch busy: run %s holds its lock until %s", e.Holder.RunID, e.Holder.ExpiresAt.Format(time.RFC3339))
+}
+
+// Stale reports whether a lock's holder is provably over, so Acquire may
+// take its lock over at once instead of waiting for it to expire. rec is
+// the holder's own run record (runs/<slug>/<run-id>/result.json), read the
+// same way the CLI and the runner already do (runstore.Store.ReadRecord);
+// nil when it could not be read at all. execTerminal is true only when the
+// caller has independently confirmed, through the backend, that the
+// holder's execution has ended: the same backend.Execution.State.Terminal()
+// signal ls and diagnose use to call a run failed when its container was
+// killed before it could write a final record. The CLI can ask the
+// backend this way; the runner cannot (it holds no Cloud Run Admin
+// credential, only the bucket) and always passes false.
+//
+// Fails closed: an unreadable or missing record, or one whose status is
+// still "running", is never stale on its own.
+func Stale(rec *runstore.Record, execTerminal bool) bool {
+	if execTerminal {
+		return true
+	}
+	if rec == nil {
+		return false
+	}
+	switch rec.Status {
+	case runstore.StatusSucceeded, runstore.StatusFailed, runstore.StatusInfraError, runstore.StatusCancelled, runstore.StatusHalted:
+		return true
+	default:
+		// "running", or a record with no status yet (not written, or
+		// unrecognized): fail closed.
+		return false
+	}
+}
+
+// Option configures Acquire.
+type Option func(*acquireOptions)
+
+type acquireOptions struct {
+	stale func(Holder) bool
+}
+
+// WithStale makes Acquire take over a lock that still looks live (its
+// ExpiresAt is in the future) immediately, when stale reports that its
+// holder is provably over (see Stale), instead of waiting for it to
+// expire. stale is never called for h's own lock, which is refreshed
+// rather than taken over.
+func WithStale(stale func(Holder) bool) Option {
+	return func(o *acquireOptions) { o.stale = stale }
 }
 
 // beforeTakeover, when set by a test, runs between reading an expired or
@@ -65,7 +113,11 @@ func Key(slug, branch string) string {
 // now or that cannot be parsed. A lock already held by h's run and
 // execution (compared with backend.SameExecution, so a run without an
 // execution never matches) is h's own and is returned as acquired.
-func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now time.Time) (*Lock, error) {
+func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now time.Time, opts ...Option) (*Lock, error) {
+	var o acquireOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
 	body, err := json.Marshal(h)
 	if err != nil {
 		return nil, err
@@ -111,7 +163,7 @@ func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now tim
 			}
 			return &Lock{b: b, key: key, gen: newGen, body: body}, nil
 		}
-		if parsed && cur.RunID != "" && now.Before(cur.ExpiresAt) {
+		if parsed && cur.RunID != "" && now.Before(cur.ExpiresAt) && (o.stale == nil || !o.stale(cur)) {
 			return nil, &BusyError{Holder: cur}
 		}
 		if beforeTakeover != nil {

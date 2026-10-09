@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 )
@@ -48,6 +49,11 @@ type cancelResult struct {
 	Marker  bool   `json:"marker"`       // the cancel marker was written
 	Hard    bool   `json:"hard"`         // the execution was cancelled through the backend
 	PR      string `json:"pr,omitempty"` // the run's PR URL, when result.json names one
+	// LockHeld is set only with Status cancelAlreadyFinished: the run's
+	// branch lock is still live, naming this run. cancel never writes
+	// locks/ (only the runner does, §4.1), so it says the lock frees
+	// itself, rather than leaving "nothing to cancel" unexplained.
+	LockHeld bool `json:"lock_held,omitempty"`
 }
 
 func newCancelCmd() *cobra.Command {
@@ -149,7 +155,7 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		case rerr != nil:
 			return remote(rerr)
 		case hasFinalized(rec):
-			return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished})
+			return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished, LockHeld: lockLive(ctx, env, slug, rec.Branch, id, time.Now())})
 		case rec == nil && !runview.Lost(l, runTime(id), time.Now()):
 			// Launched moments ago: the backend may not list it yet. The
 			// marker makes its runner stop at bootstrap.
@@ -162,7 +168,15 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	case err != nil:
 		return remote(err)
 	case e.State.Terminal():
-		return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished})
+		rec, rerr := absent(s.ReadRecord(ctx))
+		if rerr != nil {
+			return remote(rerr)
+		}
+		branch := ""
+		if rec != nil {
+			branch = rec.Branch
+		}
+		return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished, LockHeld: lockLive(ctx, env, slug, branch, id, time.Now())})
 	}
 
 	marker := true
@@ -322,6 +336,23 @@ func hasFinalized(rec *runstore.Record) bool {
 	return rec != nil && (rec.Status != runstore.StatusRunning || rec.Stage == "writeback")
 }
 
+// lockLive reports whether run id's branch lock is still live and still
+// names it, by the lock's own expiry: cancel never writes locks/ (only the
+// runner does, §4.1), so an operator who sees this on an already-finished
+// run knows it frees itself when the next run on the branch takes it
+// over, rather than wondering why "nothing to cancel" left a lock behind.
+func lockLive(ctx context.Context, env *cloudEnv, slug, branch, id string, now time.Time) bool {
+	if branch == "" {
+		return false
+	}
+	data, _, err := env.bucket.Read(ctx, lock.Key(slug, branch))
+	if err != nil {
+		return false
+	}
+	var h lock.Holder
+	return json.Unmarshal(data, &h) == nil && h.RunID == id && now.Before(h.ExpiresAt)
+}
+
 // ended is the result for an execution that has ended or that the backend
 // forgot: finalized when result.json (re-read, since the runner writes it
 // just before exiting) shows it, else ended-unfinalized, never finalized
@@ -357,7 +388,11 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
 	switch r.Status {
 	case cancelAlreadyFinished:
-		msg = fmt.Sprintf("%s has already finished; nothing to cancel", r.Run)
+		if r.LockHeld {
+			msg = fmt.Sprintf("%s has already finished; nothing to cancel, but its branch lock is still held, and it is released by the next run on that branch", r.Run)
+		} else {
+			msg = fmt.Sprintf("%s has already finished; nothing to cancel", r.Run)
+		}
 	case cancelNotLaunched:
 		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", r.Run)
 	case cancelLaunching:

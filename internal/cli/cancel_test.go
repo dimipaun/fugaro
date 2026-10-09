@@ -16,6 +16,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 )
 
@@ -460,6 +461,77 @@ func TestCancelFollowUp(t *testing.T) {
 	}
 	if cancelled(t, f, root) {
 		t.Fatal("cancelling the follow-up marked the run that opened the PR")
+	}
+}
+
+// An already-finished run whose branch lock is still live, naming it,
+// can't be cleared by cancel (only the runner writes locks/): the result
+// says so, so --json callers and the human message both learn the lock
+// frees itself on the next run, instead of "nothing to cancel" leaving it
+// unexplained.
+func TestCancelAlreadyFinishedWithLiveLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	writeRecord(t, f, id, rec)
+	data, _ := json.Marshal(lock.Holder{RunID: id, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, rec.Branch), data)
+
+	out, _, err := execute(t, "cancel", "--json", id)
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out), &res); err != nil || jerr != nil || res.Status != cancelAlreadyFinished || !res.LockHeld {
+		t.Fatalf("cancel --json = %+v (parse err %v), %v (%s)", res, jerr, err, out)
+	}
+
+	textOut, _, err := execute(t, "cancel", id)
+	if err != nil || !strings.Contains(textOut, "branch lock is still held") || !strings.Contains(textOut, "next run") {
+		t.Fatalf("cancel = %q, %v", textOut, err)
+	}
+}
+
+// The same already-finished run, but with no live lock: the plain message
+// is unchanged.
+func TestCancelAlreadyFinishedWithoutLiveLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	writeRecord(t, f, id, rec)
+	out, _, err := execute(t, "cancel", id)
+	if err != nil || !strings.Contains(out, "nothing to cancel") || strings.Contains(out, "branch lock") {
+		t.Fatalf("cancel = %q, %v", out, err)
+	}
+}
+
+// The other already-finished path: the backend has forgotten the
+// execution entirely (ErrNotFound), but result.json is already final. It
+// too notes a live lock rather than leaving "nothing to cancel" unexplained.
+func TestCancelAlreadyFinishedForgottenExecutionNotesLiveLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	rec := prRecord(id, exec, 7, 1) // Status failed, stage writeback: hasFinalized
+	writeRecord(t, f, id, rec)
+	data, _ := json.Marshal(lock.Holder{RunID: id, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, rec.Branch), data)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	env.be = forgetBackend{Backend: env.be, reads: new(atomic.Int32), after: 0}
+	var out strings.Builder
+	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
+	if err := cancelRun(context.Background(), env, o, id, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var res cancelResult
+	if err := json.Unmarshal([]byte(out.String()), &res); err != nil || res.Status != cancelAlreadyFinished || !res.LockHeld {
+		t.Fatalf("cancel = %+v, %v (%s)", res, err, out.String())
 	}
 }
 

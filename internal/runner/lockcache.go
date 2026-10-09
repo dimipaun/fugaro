@@ -68,12 +68,32 @@ func (r *run) lockDeadline() time.Time {
 	return r.rec.StartedAt.Add(r.wf.Timeouts.Total.Duration + taskTimeoutSlack + lockSlack)
 }
 
+// staleHolder reports whether a live-looking branch lock's holder has
+// provably ended, from the runner's own bucket reads alone: it holds no
+// Cloud Run Admin credential to ask the backend about another execution
+// (unlike the CLI's checkBranchLock), so it goes only by the holder's own
+// run record reaching a terminal status (lock.Stale with execTerminal
+// false). A record this run can't read, or one still "running" (the
+// common case of a killed container that never finalized), leaves the
+// lock live: it is taken over once it expires, as before.
+func (r *run) staleHolder(ctx context.Context, h lock.Holder) bool {
+	rec, err := runstore.Open(r.d.Bucket.Bucket, r.d.Store.Slug(), h.RunID).ReadRecord(ctx)
+	if err != nil {
+		return false
+	}
+	stale := lock.Stale(rec, false)
+	if stale {
+		r.d.Log.Info("branch lock taken over: holder's run has ended", "branch", r.rec.Branch, "holder_run_id", h.RunID, "holder_status", rec.Status)
+	}
+	return stale
+}
+
 func (r *run) acquireLock(ctx context.Context) error {
 	if r.d.Bucket == nil {
 		return nil
 	}
 	h := lock.Holder{RunID: r.spec.RunID, Execution: r.d.Execution, ExpiresAt: r.lockDeadline()}
-	l, err := lock.Acquire(ctx, r.d.Bucket, lock.Key(r.d.Store.Slug(), r.rec.Branch), h, r.d.Now())
+	l, err := lock.Acquire(ctx, r.d.Bucket, lock.Key(r.d.Store.Slug(), r.rec.Branch), h, r.d.Now(), lock.WithStale(func(held lock.Holder) bool { return r.staleHolder(ctx, held) }))
 	var busy *lock.BusyError
 	if errors.As(err, &busy) && busy.Holder.RunID == r.spec.RunID && r.d.Execution != "" && !backend.SameExecution(busy.Holder.Execution, r.d.Execution) {
 		r.disownRecord(ctx, busy.Holder)

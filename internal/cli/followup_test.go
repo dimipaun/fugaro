@@ -11,6 +11,8 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
@@ -191,6 +193,63 @@ func TestRunPRRefusesLiveLock(t *testing.T) {
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7"); err != nil {
 		t.Fatalf("expired lock: %v", err)
 	}
+}
+
+// A lock that still looks live by its expiry is taken over anyway when its
+// holder's own run record already reached a terminal status: the runner
+// died (or was killed) after writing it, but never released the lock.
+func TestRunPRTakesOverLockOfATerminalHolder(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	writeRecord(t, f, holder, &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusFailed, Stage: "implement", Outcome: runstore.OutcomeDraft, StartedAt: time.Now().Add(-2 * time.Hour)})
+	data, _ := json.Marshal(lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if err != nil {
+		t.Fatalf("a lock whose holder's record is terminal: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, holder) || !strings.Contains(errOut, "ended") {
+		t.Fatalf("stderr = %q, want a note naming %s", errOut, holder)
+	}
+}
+
+// The same live-by-expiry lock, but the holder's execution is what proves
+// it over: its own record still says "running" (never finalized), the
+// same situation ls and diagnose call infra_error once the backend
+// confirms the execution ended.
+func TestRunPRTakesOverLockViaBackendTerminalExecution(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	writeRecord(t, f, holder, &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Workflow: "web", Execution: exec,
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)})
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if err != nil {
+		t.Fatalf("a lock whose holder's execution the backend calls failed: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, holder) {
+		t.Fatalf("stderr = %q, want a note naming %s", errOut, holder)
+	}
+}
+
+// A live lock whose holder's own record still says "running", and whose
+// execution the backend does not call terminal (here it isn't known at
+// all), is still refused: neither signal proves the holder is over.
+func TestRunPRRefusesLockOfAStillRunningHolder(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	writeRecord(t, f, holder, &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Workflow: "web",
+		Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)})
+	data, _ := json.Marshal(lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
 }
 
 func TestRunPRUnreadableLockIsFine(t *testing.T) {
