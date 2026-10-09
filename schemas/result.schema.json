@@ -157,6 +157,17 @@
         "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
       }
     },
+    "project_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "applied"],
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "applied": { "type": "boolean" }
+      }
+    },
+    "config_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "policy": {
       "type": "object",
       "additionalProperties": false,
