@@ -83,6 +83,11 @@ func TestParseProblems(t *testing.T) {
 		{"cpu", minimalYAML + "    resources: { cpu: -1 }\n", "workflows.server.resources.cpu", "must be at least 1", 0},
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
+		// A verbatim tag's own text stands in for !!str in yaml.v3's type
+		// error, so a fugaro.yaml can put anything a YAML tag allows,
+		// including an escape sequence or a bidi override character, into
+		// that text; the message must escape it rather than print it raw.
+		{"tagged value with control and bidi characters", strings.Replace(minimalYAML, "version: 1", "version: !<tag:x,%1B%5B2J%E2%80%AE> 1", 1), "", `cannot unmarshal tag:x,\u001b[2J\u202e`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
