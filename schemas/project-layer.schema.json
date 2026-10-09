@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/dimipaun/fugaro/main/schemas/project-layer.schema.json",
+  "title": "fugaro/project-layer.yaml",
+  "description": "A Fugaro project's layer: project-wide defaults and workflow profiles for every repository whose fugaro.yaml names the project and its gcp_project. See docs/project-layer.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project", "gcp_project"],
+  "properties": {
+    "version": { "const": 1 },
+    "project": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+    "gcp_project": { "type": "string", "pattern": "^[a-z][a-z0-9-]{4,28}[a-z0-9]$" },
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": { "enum": ["github", "bitbucket"] },
+            "pr": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "labels": { "type": "array", "items": { "type": "string" } },
+                "early_draft": { "type": "boolean" },
+                "checkpoints": { "type": "boolean" }
+              }
+            }
+          }
+        },
+        "agent": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "auth": { "enum": ["vertex", "api-key", "oauth"] },
+            "model": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+            "models": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "coder": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+                "reviewer": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" },
+                "background": { "type": "string", "maxLength": 100, "pattern": "^\\S*$" }
+              }
+            },
+            "review_rounds": { "type": "integer", "minimum": 1, "maximum": 10 },
+            "max_budget_usd": { "type": "number", "minimum": 0 },
+            "first_line_review": { "enum": ["auto", "on", "off"] },
+            "first_line_rounds": { "type": "integer", "minimum": 1, "maximum": 3 },
+            "recipe": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
+          }
+        }
+      }
+    },
+    "profiles": {
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" },
+      "additionalProperties": { "$ref": "#/$defs/profile" }
+    },
+    "default_profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$" }
+  },
+  "$defs": {
+    "duration": { "type": "string", "minLength": 2, "pattern": "^([0-9]+d)?([0-9]+h)?([0-9]+m)?([0-9]+s)?$" },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
+        "base": { "enum": ["go", "java-services", "web-node"] },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
+            "skip_build_scripts": { "type": "boolean" },
+            "apt": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" } },
+            "setup": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$", "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" } } }
+          }
+        },
+        "commands": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "build": { "type": "string", "minLength": 1 },
+            "test": { "type": "string", "minLength": 1 },
+            "rerun_failed": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["command", "each"],
+              "properties": { "command": { "type": "string", "minLength": 1 }, "each": { "type": "string", "pattern": "\\{id\\}" } }
+            },
+            "reports": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "cache": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["key", "paths"],
+            "properties": {
+              "key": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+              "paths": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "cpu": { "type": "integer", "minimum": 0 }, "memory": { "type": "string", "pattern": "^[1-9][0-9]*(Mi|Gi)$" } }
+        },
+        "timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "total": { "$ref": "#/$defs/duration" },
+            "stage": { "$ref": "#/$defs/duration" },
+            "verify": { "$ref": "#/$defs/duration" },
+            "finalize_reserve": { "$ref": "#/$defs/duration" }
+          }
+        },
+        "rebuild": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "check": { "enum": ["daily", "off"] },
+            "max_age": { "$ref": "#/$defs/duration" },
+            "lockfiles": { "type": "boolean" },
+            "base": { "type": "boolean" },
+            "paths": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+          }
+        }
+      }
+    }
+  }
+}

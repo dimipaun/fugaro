@@ -1,0 +1,36 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+defaults:
+  git:
+    provider: github
+    pr: { labels: [fugaro], early_draft: true, checkpoints: true }
+  agent:
+    auth: api-key
+    model: claude-sonnet-5-5
+    models: { coder: claude-sonnet-5-5, reviewer: claude-opus-5-5 }
+    review_rounds: 2
+    max_budget_usd: 25
+    first_line_review: auto
+    first_line_rounds: 1
+    recipe: cheap-loop-senior
+profiles:
+  java-service:
+    description: Gradle service with Postgres
+    base: java-services
+    image: { apt: [graphviz], setup: ["./scripts/warm.sh"] }
+    commands:
+      build: ./gradlew assemble
+      test: ./gradlew test
+      rerun_failed: { command: ./gradlew test, each: "--tests {id}" }
+      reports: ["**/build/test-results/**/*.xml"]
+    cache:
+      - { key: [gradle/libs.versions.toml], paths: [~/.gradle/caches] }
+    resources: { cpu: 4, memory: 16Gi }
+    timeouts: { total: 2h, stage: 50m, verify: 30m, finalize_reserve: 5m }
+    rebuild: { check: daily, max_age: 14d, lockfiles: true, base: true, paths: [build.gradle.kts] }
+  node-web:
+    base: web-node
+    image: { node: "22", skip_build_scripts: true }
+    commands: { build: npm run build, test: npm test }
+default_profile: java-service

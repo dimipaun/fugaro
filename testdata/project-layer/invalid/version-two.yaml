@@ -1,0 +1,3 @@
+version: 2
+project: aurora
+gcp_project: proj-1234

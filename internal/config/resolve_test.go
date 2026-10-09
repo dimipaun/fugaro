@@ -524,3 +524,33 @@ func btoa(b bool) string {
 	}
 	return "false"
 }
+
+func TestLayeredCorpus(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "valid", "full.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	l, ps := ParseProjectLayer(data, LayerAnchor{Project: "aurora", GCPProject: "proj-1234"})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	for _, kind := range []string{"valid", "invalid"} {
+		files, err := filepath.Glob(filepath.Join("..", "..", "testdata", "config", "layered", kind, "*.yaml"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("no layered %s corpus", kind)
+		}
+		for _, f := range files {
+			repo, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, _, ps := Resolve(repo, l)
+			switch {
+			case kind == "valid" && len(ps) > 0:
+				t.Errorf("%s: unexpected problems %v", f, ps)
+			case kind == "invalid" && c != nil:
+				t.Errorf("%s: resolved without problems, want invalid", f)
+			}
+		}
+	}
+}
