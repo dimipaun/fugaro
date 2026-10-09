@@ -27,9 +27,17 @@ const (
 	// MaxDescription is the longest description, counted in bytes (not
 	// characters), so a multi-byte description has fewer characters.
 	MaxDescription = 200
-	DefaultName    = "default"
-	RepoDir        = ".fugaro/recipes"
-	ObjectPrefix   = "fugaro/recipes/"
+	// MaxUseWhen is the longest use_when text, counted in bytes.
+	MaxUseWhen   = 300
+	DefaultName  = "default"
+	RepoDir      = ".fugaro/recipes"
+	ObjectPrefix = "fugaro/recipes/"
+)
+
+// ModeImplement and ModeReview are the two values of Recipe.Mode.
+const (
+	ModeImplement = "implement"
+	ModeReview    = "review"
 )
 
 // NameRE is a recipe name: the shape of a project name.
@@ -41,6 +49,16 @@ type StepKind string
 const (
 	StepFirstLine StepKind = "first_line"
 	StepReview    StepKind = "review"
+	StepCheck     StepKind = "check"
+)
+
+// CheckCommand is the commands.* key a check step runs.
+type CheckCommand string
+
+const (
+	CheckBuild CheckCommand = "build"
+	CheckTest  CheckCommand = "test"
+	CheckLint  CheckCommand = "lint"
 )
 
 // Source is the layer a recipe was found in.
@@ -56,6 +74,14 @@ const (
 type Step struct {
 	Kind      StepKind
 	MaxRounds int
+	// Bounce is review: {bounce: first_line}: a senior rejection runs the
+	// cheap loop again instead of ending the run.
+	Bounce bool
+	// Command is a check step's commands.* key.
+	Command CheckCommand
+	// Autofix is a check step's autofix: true (lint only): commands.fix runs
+	// before commands.lint.
+	Autofix bool
 }
 
 // Recipe is a parsed, valid recipe.
@@ -63,10 +89,20 @@ type Recipe struct {
 	Version     int
 	Name        string
 	Description string
+	// UseWhen is the routing skill's self-description, at most MaxUseWhen
+	// bytes.
+	UseWhen string
 	// ReviewerIsCoder is roles: {reviewer: coder}.
 	ReviewerIsCoder bool
-	Steps           []Step
+	// CoderIsReviewer is roles: {coder: reviewer}.
+	CoderIsReviewer bool
+	// Mode is ModeImplement or ModeReview, never "".
+	Mode  string
+	Steps []Step
 }
+
+// Renamed are catalog names removed in 0.7.0 and what replaced them.
+var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
 
 // Problem is one reason a recipe is invalid.
 type Problem struct {
@@ -112,7 +148,6 @@ const modelMsg = "a recipe never names a model; models come from agent.models in
 
 // reserved are the keys version 1 refuses with a message of their own.
 var reserved = map[string]string{
-	"checks":    "check steps are reserved for a later recipe version; version 1 refuses them",
 	"goto":      "goto is reserved for a later recipe version; version 1 refuses it",
 	"on_reject": "on_reject is reserved for a later recipe version; version 1 refuses it",
 	"extends":   "extends is reserved for a later recipe version; version 1 refuses it (copy the recipe instead)",
@@ -227,6 +262,14 @@ func (p *parser) str(path string, v *yaml.Node) (string, bool) {
 	return v.Value, true
 }
 
+func (p *parser) bool(path string, v *yaml.Node) (bool, bool) {
+	if v.Kind != yaml.ScalarNode || v.Tag != "!!bool" {
+		p.add(path, v.Line, "must be true or false")
+		return false, false
+	}
+	return v.Value == "true", true
+}
+
 func (p *parser) top(m *yaml.Node) *Recipe {
 	r := &Recipe{}
 	seen := map[string]bool{}
@@ -256,8 +299,19 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 				}
 				r.Description = s
 			}
+		case "use_when":
+			if s, ok := p.str("use_when", v); ok {
+				if len(s) > MaxUseWhen {
+					p.add("use_when", 0, "must be at most %d bytes", MaxUseWhen)
+				}
+				r.UseWhen = s
+			}
+		case "mode":
+			if s, ok := p.str("mode", v); ok {
+				r.Mode = s
+			}
 		case "roles":
-			r.ReviewerIsCoder = p.roles(v)
+			r.ReviewerIsCoder, r.CoderIsReviewer = p.roles(v)
 		case "steps":
 			r.Steps, srcIdx = p.steps(v)
 		default:
@@ -269,35 +323,50 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			p.add(req, 0, "is required")
 		}
 	}
+	switch r.Mode {
+	case "":
+		r.Mode = ModeImplement
+	case ModeImplement, ModeReview:
+	default:
+		p.add("mode", 0, "mode must be implement or review")
+	}
 	if seen["steps"] {
-		p.order(r.Steps, srcIdx)
+		p.order(r, srcIdx)
 	}
 	return r
 }
 
-func (p *parser) roles(v *yaml.Node) bool {
+// roles returns (reviewerIsCoder, coderIsReviewer): which of the two
+// exclusive role mappings the recipe set.
+func (p *parser) roles(v *yaml.Node) (revIsCoder, coderIsRev bool) {
 	if v.Kind != yaml.MappingNode {
 		p.add("roles", v.Line, "must be a mapping such as {reviewer: coder}")
-		return false
+		return false, false
 	}
-	alias := false
+	want := map[string]string{"reviewer": "coder", "coder": "reviewer"}
 	for i := 0; i+1 < len(v.Content); i += 2 {
 		k, val := v.Content[i], v.Content[i+1]
 		path := "roles." + pluginwire.Printable(k.Value)
+		w := want[k.Value]
 		switch {
-		case k.Value != "reviewer":
-			p.add(path, k.Line, "only the reviewer role can be mapped in recipe version 1 (reviewer: coder)")
-		case val.Kind == yaml.ScalarNode && val.Value == "coder":
-			alias = true
-		case val.Kind == yaml.ScalarNode && (val.Value == "reviewer" || val.Value == "background"):
-			p.add(path, val.Line, "can only be coder in recipe version 1")
-		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value != "":
-			p.add(path, val.Line, "can only be coder: %s", modelMsg)
+		case w == "":
+			p.add(path, k.Line, "only the reviewer and coder roles can be mapped (reviewer: coder, or coder: reviewer)")
+		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value == w:
+			if k.Value == "reviewer" {
+				revIsCoder = true
+			} else {
+				coderIsRev = true
+			}
+		case val.Kind == yaml.ScalarNode && val.Tag == "!!str" && val.Value != "" && val.Value != "coder" && val.Value != "reviewer" && val.Value != "background":
+			p.add(path, val.Line, "can only be %s: %s", w, modelMsg)
 		default:
-			p.add(path, val.Line, "must be a string; the only allowed value is coder")
+			p.add(path, val.Line, "must be %s", w)
 		}
 	}
-	return alias
+	if revIsCoder && coderIsRev {
+		p.add("roles", v.Line, "roles: coder: reviewer and reviewer: coder exclude each other")
+	}
+	return revIsCoder, coderIsRev
 }
 
 // steps returns the valid steps and each one's position in the source list.
@@ -311,7 +380,7 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 	for i, item := range v.Content {
 		path := fmt.Sprintf("steps[%d]", i)
 		if item.Kind != yaml.MappingNode || len(item.Content) != 2 {
-			p.add(path, item.Line, "must be one step: first_line: {...} or review: {...}")
+			p.add(path, item.Line, "must be one step: first_line: {...}, check: {...} or review: {...}")
 			continue
 		}
 		k, body := item.Content[0], item.Content[1]
@@ -322,15 +391,26 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 			kind = StepFirstLine
 		case string(StepReview):
 			kind = StepReview
+		case string(StepCheck):
+			kind = StepCheck
+		case "checks":
+			p.add(kpath, k.Line, "the step type is check, not checks")
+			continue
 		default:
 			if msg, ok := reserved[k.Value]; ok {
 				p.add(kpath, k.Line, "%s", msg)
 			} else {
-				p.add(kpath, k.Line, "is not a step type (version 1 has first_line and review)")
+				p.add(kpath, k.Line, "is not a step type (version 1 has first_line, check and review)")
 			}
 			continue
 		}
 		s := Step{Kind: kind}
+		if kind == StepCheck {
+			p.checkBody(kpath, body, &s)
+			out = append(out, s)
+			idx = append(idx, i)
+			continue
+		}
 		limit := MaxReviewRounds
 		if kind == StepFirstLine {
 			limit = MaxFirstLineRounds
@@ -340,17 +420,27 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 		case body.Kind == yaml.MappingNode:
 			for j := 0; j+1 < len(body.Content); j += 2 {
 				bk, bv := body.Content[j], body.Content[j+1]
-				if bk.Value != "max_rounds" {
-					p.key(kpath, bk)
-					continue
-				}
-				bp := kpath + ".max_rounds"
-				if n, ok := p.int(bp, bv); ok {
-					if n < 1 || n > limit {
-						p.add(bp, bv.Line, "must be between 1 and %d", limit)
-					} else {
-						s.MaxRounds = n
+				switch {
+				case bk.Value == "max_rounds":
+					bp := kpath + ".max_rounds"
+					if n, ok := p.int(bp, bv); ok {
+						if n < 1 || n > limit {
+							p.add(bp, bv.Line, "must be between 1 and %d", limit)
+						} else {
+							s.MaxRounds = n
+						}
 					}
+				case kind == StepReview && bk.Value == "bounce":
+					bp := kpath + ".bounce"
+					if bs, ok := p.str(bp, bv); ok {
+						if bs != "first_line" {
+							p.add(bp, 0, "bounce can only be first_line")
+						} else {
+							s.Bounce = true
+						}
+					}
+				default:
+					p.key(kpath, bk)
 				}
 			}
 		default:
@@ -362,14 +452,61 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 	return out, idx
 }
 
+// checkBody parses a check step's body: command (required: build, test or
+// lint) and autofix (bool, lint only).
+func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
+	if body.Kind != yaml.MappingNode {
+		p.add(kpath, body.Line, "must be a mapping such as {command: test}")
+		return
+	}
+	seenCommand := false
+	for j := 0; j+1 < len(body.Content); j += 2 {
+		bk, bv := body.Content[j], body.Content[j+1]
+		switch bk.Value {
+		case "command":
+			seenCommand = true
+			cp := kpath + ".command"
+			if cs, ok := p.str(cp, bv); ok {
+				switch CheckCommand(cs) {
+				case CheckBuild, CheckTest, CheckLint:
+					s.Command = CheckCommand(cs)
+				default:
+					p.add(cp, 0, "must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)")
+				}
+			}
+		case "autofix":
+			if b, ok := p.bool(kpath+".autofix", bv); ok {
+				s.Autofix = b
+			}
+		default:
+			p.key(kpath, bk)
+		}
+	}
+	if !seenCommand {
+		p.add(kpath+".command", 0, "is required")
+	}
+	if s.Autofix && s.Command != CheckLint {
+		p.add(kpath+".autofix", 0, "autofix is only for command: lint")
+	}
+}
+
 // order checks the sequence of the valid steps; src[i] is steps[i]'s position
 // in the source list, so messages point at the line the author wrote.
-func (p *parser) order(steps []Step, src []int) {
-	firsts, reviews := 0, 0
+func (p *parser) order(r *Recipe, src []int) {
+	steps := r.Steps
+	checks, firsts, reviews := 0, 0, 0
+	sawOther, firstSeen := false, false
 	for i, s := range steps {
 		path := fmt.Sprintf("steps[%d]", src[i])
 		switch s.Kind {
+		case StepCheck:
+			checks++
+			if sawOther {
+				p.add(path, 0, "check steps must come first")
+			}
 		case StepFirstLine:
+			sawOther = true
+			firstSeen = true
 			firsts++
 			if firsts > 1 {
 				p.add(path, 0, "first_line may appear at most once")
@@ -378,9 +515,13 @@ func (p *parser) order(steps []Step, src []int) {
 				p.add(path, 0, "first_line must come before review")
 			}
 		case StepReview:
+			sawOther = true
 			reviews++
 			if reviews > 1 {
 				p.add(path, 0, "review must appear exactly once")
+			}
+			if s.Bounce && !firstSeen {
+				p.add(path, 0, "bounce: first_line needs a first_line step before the review")
 			}
 		}
 	}
@@ -389,5 +530,12 @@ func (p *parser) order(steps []Step, src []int) {
 		p.add("steps", 0, "must end with a review step: readiness needs the senior review's ship verdict")
 	case steps[len(steps)-1].Kind != StepReview:
 		p.add("steps", 0, "review must be the last step")
+	}
+	if r.Mode == ModeReview {
+		if checks > 0 || firsts > 0 || reviews != 1 {
+			p.add("steps", 0, "mode: review allows exactly one review step and nothing else")
+		} else if steps[len(steps)-1].MaxRounds > 1 {
+			p.add("steps", 0, "mode: review reviews once: max_rounds must be 1")
+		}
 	}
 }

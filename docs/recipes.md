@@ -91,7 +91,7 @@ A published project recipe is cached on each machine for 24 hours (up to 7 days 
 
 A recipe that uses a reserved key is refused with a message that says so:
 
-- `checks`: check steps are reserved for a later recipe version. The runner runs no checks; the coder calls `fugaro verify`.
+- `checks` as a step name: the step type is `check`, not `checks`.
 - `goto` and `on_reject`: no jumps or bounces between steps.
 - `extends`: copy the recipe instead.
 - `on_pass` and `on_fail`: outcome rules are not configurable.
