@@ -35,6 +35,7 @@ func TestSecurityMdStatesTheModelAndItsLimits(t *testing.T) {
 		"Vertex has no dollar cap, in any mode.",
 		"roles/storage.objectAdmin",
 		"it can read the token from the runner's `/proc`",
+		"With budget off there is no managed file and no routing check at all",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("SECURITY.md never says %q", want)
