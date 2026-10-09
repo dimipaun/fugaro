@@ -429,10 +429,24 @@ var accountClause = regexp.MustCompile(`^resource\.name\.startsWith\("projects/_
 // never set a description, and a condition known only after apply is not
 // covered.
 func (c Cover) bucketCondition(ch Change) string {
-	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") {
+	if unknown(ch, "condition") || unknownAt(ch.AfterUnknown, "condition", 0, "title") || unknownAt(ch.AfterUnknown, "condition", 0, "expression") || unknownAt(ch.AfterUnknown, "condition", 0, "description") {
 		return "a bucket grant whose condition is not known"
 	}
-	conds := objects(ch.After["condition"])
+	condRaw := ch.After["condition"]
+	switch v := condRaw.(type) {
+	case nil, map[string]any:
+	case []any:
+		// objects() silently drops a list entry that is not itself a condition
+		// block: without this check, a condition such as ["true"] would read as
+		// zero conditions (objects() returns none of it), covering a grant that
+		// is not in fact unconditioned.
+		if len(objects(v)) != len(v) {
+			return "a bucket grant whose condition list holds something that is not a condition block"
+		}
+	default:
+		return "a bucket grant whose condition is not a condition block or a list of them"
+	}
+	conds := objects(condRaw)
 	if len(conds) > 1 {
 		return "a bucket grant with more than one condition"
 	}
