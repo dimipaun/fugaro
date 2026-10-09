@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -259,20 +260,56 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 	if json.Unmarshal(data, &h) != nil || h.RunID == "" || !now.Before(h.ExpiresAt) {
 		return nil
 	}
-	rec, err := absent(runstore.Open(env.bucket.Bucket, slug, h.RunID).ReadRecord(ctx))
-	if err != nil && !corruptObject(err) {
+	if !lock.Stale(h, executionTerminal(ctx, env, h.Execution)) {
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	switch err := lock.Takeover(ctx, env.bucket, key, h); {
+	case err == nil:
+		fmt.Fprintf(warn, "note: run %s's execution has ended (confirmed by the backend); cleared its branch lock\n", oneLine(h.RunID))
+		return nil
+	case errors.Is(err, lock.ErrHolderChanged):
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	case isAccessDenied(err):
+		return userErr("%s", lockClearMessage(ctx, env, key, h.RunID))
+	default:
 		return remote(err)
 	}
-	// A corrupt record can't prove anything either way: fail closed, as if
-	// it could not be read at all.
-	if corruptObject(err) {
-		rec = nil
+}
+
+// executionTerminal reports whether the backend confirms execution has
+// ended: the same backend.Execution.State.Terminal() signal runview.Join
+// uses to call a run infra_error after a kill that never finalized it
+// (ls, diagnose). It double-checks the execution the backend answered
+// about is, by backend.SameExecution, the one asked for: defense in depth
+// before lock.Takeover deletes anything on this word. Anything else —
+// empty, not found, a read error, not yet terminal — is not treated as
+// proof.
+func executionTerminal(ctx context.Context, env *cloudEnv, execution string) bool {
+	if execution == "" {
+		return false
 	}
-	if lock.Stale(rec) {
-		fmt.Fprintf(warn, "note: run %s's branch lock looked live but its run has ended; taking the branch over\n", oneLine(h.RunID))
-		return nil
+	e, err := env.be.Execution(ctx, execution)
+	return err == nil && backend.SameExecution(e.Name, execution) && e.State.Terminal()
+}
+
+// lockClearMessage is what checkBranchLock and cancel print when a lock's
+// holder is confirmed over but deleting its lock was refused for lack of
+// access: under the 0.7.0 bucket hardening (design bucket-iam.md §3, §10)
+// locks/ is no longer launcher-writable, so only an operator, or the
+// sweeper, can clear it. The command names the object's current
+// generation, read fresh here (best effort: a read failure just leaves it
+// off), so running it by hand can't remove a different lock a later run
+// has since written there.
+func lockClearMessage(ctx context.Context, env *cloudEnv, key, runID string) string {
+	object := key
+	if name := env.lc.RunsBucketName(); name != "" {
+		object = "gs://" + name + "/" + key
+		if _, gen, err := env.bucket.Read(ctx, key); err == nil && gen != 0 {
+			object = fmt.Sprintf("%s#%d", object, gen)
+		}
 	}
-	return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	return fmt.Sprintf("the lock of run %s is held by an execution that ended; an operator must clear it (or the sweeper does): gcloud storage rm %s",
+		oneLine(runID), object)
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a

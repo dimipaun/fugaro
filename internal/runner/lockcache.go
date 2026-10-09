@@ -68,30 +68,12 @@ func (r *run) lockDeadline() time.Time {
 	return r.rec.StartedAt.Add(r.wf.Timeouts.Total.Duration + taskTimeoutSlack + lockSlack)
 }
 
-// staleHolder reports whether a live-looking branch lock's holder has
-// provably ended, from the holder's own run record (lock.Stale): the only
-// signal a lock takeover, which happens only here, ever uses. A record
-// this run can't read, or one still "running" (the common case of a
-// killed container that never finalized), leaves the lock live: it is
-// taken over once it expires, as before.
-func (r *run) staleHolder(ctx context.Context, h lock.Holder) bool {
-	rec, err := runstore.Open(r.d.Bucket.Bucket, r.d.Store.Slug(), h.RunID).ReadRecord(ctx)
-	if err != nil {
-		return false
-	}
-	stale := lock.Stale(rec)
-	if stale {
-		r.d.Log.Info("branch lock taken over: holder's run has ended", "branch", r.rec.Branch, "holder_run_id", h.RunID, "holder_status", rec.Status)
-	}
-	return stale
-}
-
 func (r *run) acquireLock(ctx context.Context) error {
 	if r.d.Bucket == nil {
 		return nil
 	}
 	h := lock.Holder{RunID: r.spec.RunID, Execution: r.d.Execution, ExpiresAt: r.lockDeadline()}
-	l, err := lock.Acquire(ctx, r.d.Bucket, lock.Key(r.d.Store.Slug(), r.rec.Branch), h, r.d.Now(), lock.WithStale(func(held lock.Holder) bool { return r.staleHolder(ctx, held) }))
+	l, err := lock.Acquire(ctx, r.d.Bucket, lock.Key(r.d.Store.Slug(), r.rec.Branch), h, r.d.Now())
 	var busy *lock.BusyError
 	if errors.As(err, &busy) && busy.Holder.RunID == r.spec.RunID && r.d.Execution != "" && !backend.SameExecution(busy.Holder.Execution, r.d.Execution) {
 		r.disownRecord(ctx, busy.Holder)
@@ -137,10 +119,18 @@ func (r *run) disownRecord(ctx context.Context, owner lock.Holder) {
 const releaseDeferredTimeout = 15 * time.Second
 
 // releaseLock releases the branch lock, if held, within ctx: callers pass
-// a context that is already detached from cancellation and bounded.
+// a context that is already detached from cancellation and bounded. It
+// first marks the lock releasing (MarkReleasing): a container killed
+// between that and the delete below (an OOM, cancel --hard, a node loss)
+// leaves a lock that already reads as expired, so a follow-up needs no
+// wait for it. A failure to mark is logged and never stops the delete,
+// and never fails the run.
 func (r *run) releaseLock(ctx context.Context) {
 	if r.lock == nil {
 		return
+	}
+	if err := markLockReleasing(r.lock, ctx, r.d.Now()); err != nil {
+		r.d.Log.Warn("marking the branch lock as releasing failed; it still releases or expires", "err", r.redact(err.Error()))
 	}
 	if err := releaseBranchLock(r.lock, ctx); err != nil {
 		r.d.Log.Warn("releasing the branch lock failed; it expires on its own", "err", r.redact(err.Error()))
@@ -371,4 +361,5 @@ var (
 	createRecord      = (*runstore.Store).CreateRecord
 	writeRecord       = (*runstore.Store).WriteRecord
 	releaseBranchLock = (*lock.Lock).Release
+	markLockReleasing = (*lock.Lock).MarkReleasing
 )

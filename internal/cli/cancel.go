@@ -49,10 +49,14 @@ type cancelResult struct {
 	Marker  bool   `json:"marker"`       // the cancel marker was written
 	Hard    bool   `json:"hard"`         // the execution was cancelled through the backend
 	PR      string `json:"pr,omitempty"` // the run's PR URL, when result.json names one
-	// LockHeld is set only with Status cancelAlreadyFinished: the run's
-	// branch lock is still live, naming this run. cancel never writes
-	// locks/ (only the runner does, §4.1), so it says the lock frees
-	// itself, rather than leaving "nothing to cancel" unexplained.
+	// LockHeld is set with Status cancelAlreadyFinished, cancelUnfinalized
+	// or cancelCancelled: the run's own branch lock is still live, naming
+	// it, after cancel's own attempt to clear it (clearStaleLock) — which
+	// needs the backend's own confirmation the execution ended, so it can
+	// fail (the execution isn't confirmed terminal after all, the lock
+	// changed underneath, or, under the 0.7.0 bucket hardening, access to
+	// locks/ is refused: a stderr note names the gcloud command then).
+	// False means cleared, already gone, or nothing proves one is there.
 	LockHeld bool `json:"lock_held,omitempty"`
 }
 
@@ -168,19 +172,11 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 	case err != nil:
 		return remote(err)
 	case e.State.Terminal():
-		rec, rerr := absent(s.ReadRecord(ctx))
-		if rerr != nil && !corruptObject(rerr) {
-			return remote(rerr)
+		held, note := clearStaleLock(ctx, env, s, slug, id, l.Execution)
+		if note != "" {
+			fmt.Fprint(errOut, note)
 		}
-		// A corrupt or oversized result.json can't say which branch to
-		// check either: fail closed, as if there were no record, same as
-		// checkBranchLock. The run (likely killed mid-write, the exact
-		// case this is about) is still reported as already finished.
-		branch := ""
-		if rec != nil {
-			branch = rec.Branch
-		}
-		return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished, LockHeld: lockLive(ctx, env, slug, branch, id, time.Now())})
+		return emit(cancelResult{Run: ref, Status: cancelAlreadyFinished, LockHeld: held})
 	}
 
 	marker := true
@@ -224,7 +220,11 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 			return remote(err)
 		}
 		if gone || e.State.Terminal() {
-			return emit(ended(ctx, s, ref, marker))
+			res, note := ended(ctx, env, s, slug, id, l.Execution, ref, marker)
+			if note != "" {
+				fmt.Fprint(errOut, note)
+			}
+			return emit(res)
 		}
 		finalizing := rec != nil && rec.Stage == "finalize"
 		limit := grace
@@ -248,11 +248,24 @@ func cancelRun(ctx context.Context, env *cloudEnv, o *cancelOptions, arg string,
 		// Cloud Run refuses to cancel an execution that has just ended
 		// (FAILED_PRECONDITION); that is the runner finishing, not a failure.
 		if e, eerr := env.be.Execution(ctx, l.Execution); errors.Is(eerr, backend.ErrNotFound) || (eerr == nil && e.State.Terminal()) {
-			return emit(ended(ctx, s, ref, marker))
+			res, note := ended(ctx, env, s, slug, id, l.Execution, ref, marker)
+			if note != "" {
+				fmt.Fprint(errOut, note)
+			}
+			return emit(res)
 		}
 		return remote(err)
 	}
-	return emit(cancelResult{Run: ref, Status: cancelCancelled, Marker: marker, Hard: true})
+	// The execution is now terminal (Cancelled): the one case cancel
+	// itself puts a run's own execution into, so it clears the branch
+	// lock right away rather than leaving a follow-up to wait it out
+	// (the hard-cancelled container does not get to write a final record
+	// either, so the lock takeover only the backend's word can justify).
+	held, note := clearStaleLock(ctx, env, s, slug, id, l.Execution)
+	if note != "" {
+		fmt.Fprint(errOut, note)
+	}
+	return emit(cancelResult{Run: ref, Status: cancelCancelled, Marker: marker, Hard: true, LockHeld: held})
 }
 
 // awaitLaunch polls up to claimWait for the launch of a run whose claim is
@@ -341,10 +354,11 @@ func hasFinalized(rec *runstore.Record) bool {
 }
 
 // lockLive reports whether run id's branch lock is still live and still
-// names it, by the lock's own expiry: cancel never writes locks/ (only the
-// runner does, §4.1), so an operator who sees this on an already-finished
-// run knows it frees itself when the next run on the branch takes it
-// over, rather than wondering why "nothing to cancel" left a lock behind.
+// names it, by the lock's own expiry: cancel does not write locks/ itself
+// except through clearStaleLock's proven takeover, so an operator who
+// sees this knows the lock frees itself when the next run on the branch
+// takes it over (once it expires), or a follow-up clears it the same way
+// cancel just tried to.
 func lockLive(ctx context.Context, env *cloudEnv, slug, branch, id string, now time.Time) bool {
 	if branch == "" {
 		return false
@@ -357,16 +371,63 @@ func lockLive(ctx context.Context, env *cloudEnv, slug, branch, id string, now t
 	return json.Unmarshal(data, &h) == nil && h.RunID == id && now.Before(h.ExpiresAt)
 }
 
+// clearStaleLock tries to clear run id's branch lock once cancel
+// independently confirms, through the backend (executionTerminal, the
+// same proof checkBranchLock requires before it ever takes one over),
+// that execution has ended: the one way a launcher may act on a lock it
+// does not own (lock.Stale, lock.Takeover). held reports whether a live
+// lock naming this run is still there afterward (cancelResult.LockHeld);
+// note, when non-empty, is the one stderr line cancel prints about it —
+// cleared, or, under the 0.7.0 bucket hardening (locks/ is no longer
+// launcher-writable), the message naming the gcloud command an operator
+// or the sweeper runs instead. A result.json that can't say the branch
+// (unreadable, corrupt or oversized) never fails cancel: held is false,
+// since nothing proves a lock is there either, the same fail-closed
+// choice checkBranchLock makes; any other read failure does the same.
+func clearStaleLock(ctx context.Context, env *cloudEnv, s *runstore.Store, slug, id, execution string) (held bool, note string) {
+	rec, err := absent(s.ReadRecord(ctx))
+	if err != nil && !corruptObject(err) {
+		return false, ""
+	}
+	branch := ""
+	if err == nil && rec != nil {
+		branch = rec.Branch
+	}
+	if branch == "" {
+		return false, ""
+	}
+	holder := lock.Holder{RunID: id, Execution: execution}
+	if !lock.Stale(holder, executionTerminal(ctx, env, execution)) {
+		return false, ""
+	}
+	key := lock.Key(slug, branch)
+	switch err := lock.Takeover(ctx, env.bucket, key, holder); {
+	case err == nil:
+		return false, fmt.Sprintf("note: run %s's branch lock has been cleared: its execution ended\n", oneLine(id))
+	case isAccessDenied(err):
+		return true, lockClearMessage(ctx, env, key, id) + "\n"
+	default:
+		// ErrHolderChanged, or any other failure: best effort, and cancel
+		// never fails for it. Report whatever is actually there now.
+		return lockLive(ctx, env, slug, branch, id, time.Now()), ""
+	}
+}
+
 // ended is the result for an execution that has ended or that the backend
 // forgot: finalized when result.json (re-read, since the runner writes it
 // just before exiting) shows it, else ended-unfinalized, never finalized
-// (the PartialError conservative direction).
-func ended(ctx context.Context, s *runstore.Store, ref string, marker bool) cancelResult {
+// (the PartialError conservative direction). When unfinalized it also
+// tries clearStaleLock: the record never reaching a final status is
+// exactly the container-killed-mid-stage case (OOM, SIGBUS, cancel --hard,
+// a node loss) a follow-up would otherwise wait the lock's own expiry out
+// for. note is cancel's one stderr line about the lock, when non-empty.
+func ended(ctx context.Context, env *cloudEnv, s *runstore.Store, slug, id, execution, ref string, marker bool) (cancelResult, string) {
 	rec, err := absent(s.ReadRecord(ctx))
 	if err == nil && hasFinalized(rec) {
-		return finalized(ref, marker, rec)
+		return finalized(ref, marker, rec), ""
 	}
-	return cancelResult{Run: ref, Status: cancelUnfinalized, Marker: marker}
+	held, note := clearStaleLock(ctx, env, s, slug, id, execution)
+	return cancelResult{Run: ref, Status: cancelUnfinalized, Marker: marker, LockHeld: held}, note
 }
 
 // finalized is a finalized result, with rec's PR when it names one.
@@ -390,13 +451,17 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 	}
 	var msg string
 	r.Run, r.PR = oneLine(r.Run), oneLine(r.PR)
+	// lockNote, appended where LockHeld may be set, is true whichever of
+	// clearStaleLock's outcomes set it: cleared (a separate stderr line
+	// already said so) or not (one of them will, in time) are both cases
+	// where the lock frees itself, by takeover or by its own expiry.
+	lockNote := ""
+	if r.LockHeld {
+		lockNote = ", but its branch lock is still held; it frees itself (a follow-up's takeover, or its own expiry)"
+	}
 	switch r.Status {
 	case cancelAlreadyFinished:
-		if r.LockHeld {
-			msg = fmt.Sprintf("%s has already finished; nothing to cancel, but its branch lock is still held, and it is released by the next run on that branch", r.Run)
-		} else {
-			msg = fmt.Sprintf("%s has already finished; nothing to cancel", r.Run)
-		}
+		msg = fmt.Sprintf("%s has already finished; nothing to cancel%s", r.Run, lockNote)
 	case cancelNotLaunched:
 		msg = fmt.Sprintf("%s was never launched; marked it cancelled, so fugaro run --retry refuses it", r.Run)
 	case cancelLaunching:
@@ -408,13 +473,13 @@ func printCancel(w io.Writer, r cancelResult, o *cancelOptions) error {
 			msg = fmt.Sprintf("finalized; check fugaro diagnose %s for its PR", r.Run)
 		}
 	case cancelUnfinalized:
-		msg = fmt.Sprintf("the run ended without finalizing; check fugaro diagnose %s", r.Run)
+		msg = fmt.Sprintf("the run ended without finalizing; check fugaro diagnose %s%s", r.Run, lockNote)
 	default:
 		lead := "grace period over; cancelled the execution."
 		if o.now {
 			lead = "cancelled the execution."
 		}
-		msg = fmt.Sprintf("%s The run may not have a draft PR; check fugaro diagnose %s", lead, r.Run)
+		msg = fmt.Sprintf("%s The run may not have a draft PR; check fugaro diagnose %s%s", lead, r.Run, lockNote)
 	}
 	_, err := fmt.Fprintln(w, msg)
 	return err

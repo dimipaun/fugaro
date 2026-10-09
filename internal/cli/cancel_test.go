@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -464,19 +465,50 @@ func TestCancelFollowUp(t *testing.T) {
 	}
 }
 
-// An already-finished run whose branch lock is still live, naming it,
-// can't be cleared by cancel (only the runner writes locks/): the result
-// says so, so --json callers and the human message both learn the lock
-// frees itself on the next run, instead of "nothing to cancel" leaving it
-// unexplained.
-func TestCancelAlreadyFinishedWithLiveLock(t *testing.T) {
+// An already-finished run whose branch lock is still live and still names
+// it (the realistic case: its own lock, never released because the
+// container died before writeback's delete) is actively cleared: cancel
+// has, at this very point, confirmed the execution terminal through the
+// backend (the one signal lock.Stale accepts), so it deletes the lock
+// (lock.Takeover) rather than merely reporting it stuck.
+func TestCancelAlreadyFinishedClearsItsOwnLiveLock(t *testing.T) {
 	f := newCloudFixture(t)
 	const id = "20260927-100000-abcd"
 	exec := seedRun(t, f, id, "", "", true)
 	f.run.SetState(exec, backend.StateSucceeded)
 	rec := prRecord(id, exec, 7, 1)
 	writeRecord(t, f, id, rec)
-	data, _ := json.Marshal(lock.Holder{RunID: id, ExpiresAt: time.Now().Add(time.Hour)})
+	key := lock.Key(appSlug, rec.Branch)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+
+	out, errOut, err := execute(t, "cancel", "--json", id)
+	var res cancelResult
+	if jerr := json.Unmarshal([]byte(out), &res); err != nil || jerr != nil || res.Status != cancelAlreadyFinished || res.LockHeld {
+		t.Fatalf("cancel --json = %+v (parse err %v), %v (%s)", res, jerr, err, out)
+	}
+	if !strings.Contains(errOut, "cleared") || !strings.Contains(errOut, id) {
+		t.Fatalf("stderr = %q, want a note that the lock was cleared", errOut)
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("the lock survives a cleared takeover")
+	}
+}
+
+// The same already-finished run, but its lock names a different
+// execution (defense in depth: lock.Takeover re-checks immediately before
+// deleting, so a lock that changed — or never was this run's in the
+// first place — is left alone, reported LockHeld, not force-cleared on
+// cancel's word about a different execution).
+func TestCancelAlreadyFinishedCannotClearAMismatchedLock(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	exec := seedRun(t, f, id, "", "", true)
+	f.run.SetState(exec, backend.StateSucceeded)
+	rec := prRecord(id, exec, 7, 1)
+	writeRecord(t, f, id, rec)
+	data, _ := json.Marshal(lock.Holder{RunID: id, Execution: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-other", ExpiresAt: time.Now().Add(time.Hour)})
 	putBuildObject(t, f, lock.Key(appSlug, rec.Branch), data)
 
 	out, _, err := execute(t, "cancel", "--json", id)
@@ -486,7 +518,7 @@ func TestCancelAlreadyFinishedWithLiveLock(t *testing.T) {
 	}
 
 	textOut, _, err := execute(t, "cancel", id)
-	if err != nil || !strings.Contains(textOut, "branch lock is still held") || !strings.Contains(textOut, "next run") {
+	if err != nil || !strings.Contains(textOut, "branch lock is still held") {
 		t.Fatalf("cancel = %q, %v", textOut, err)
 	}
 }

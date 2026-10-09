@@ -67,6 +67,10 @@ type GCS struct {
 	projects map[string]uint64
 	// failDeletes makes the next object deletes answer 503.
 	failDeletes int
+	// forbidDeletes makes the next object deletes answer 403, as a bucket
+	// whose condition no longer grants delete under this prefix would
+	// (the 0.7.0 bucket hardening's locks/ for a launcher).
+	forbidDeletes int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
 }
@@ -136,6 +140,15 @@ func (g *GCS) FailObjectDeletes(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failDeletes = n
+}
+
+// ForbidObjectDeletes makes the next n object deletes answer 403,
+// deleting nothing: a caller whose IAM condition no longer grants delete
+// under this prefix.
+func (g *GCS) ForbidObjectDeletes(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.forbidDeletes = n
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -619,6 +632,11 @@ func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string
 	if g.failDeletes > 0 {
 		g.failDeletes--
 		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "try again")
+		return
+	}
+	if g.forbidDeletes > 0 {
+		g.forbidDeletes--
+		writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
 		return
 	}
 	cond, err := ifGenerationMatch(r)
