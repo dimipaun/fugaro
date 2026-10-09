@@ -60,6 +60,9 @@ func newLogsCmd() *cobra.Command {
 }
 
 func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
+	if o.url && (o.follow || o.asJSON) {
+		return userErr("--url prints only the link: it doesn't go with --follow or --json")
+	}
 	ctx := cmd.Context()
 	env, err := openCloud(ctx, o.cloud)
 	if err != nil {
@@ -71,9 +74,6 @@ func runLogs(cmd *cobra.Command, o *logsOptions, ref string) error {
 		return err
 	}
 	if o.url {
-		if o.follow || o.asJSON {
-			return userErr("--url prints only the link: it doesn't go with --follow or --json")
-		}
 		if l.LogURL == "" {
 			return userErr("no console link was recorded for this run's execution")
 		}

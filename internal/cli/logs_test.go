@@ -133,3 +133,34 @@ func TestLogsURL(t *testing.T) {
 		t.Fatalf("empty hint without the link: %q, %v", stderr, err)
 	}
 }
+
+// TestLogsURLConflictIsCheckedFirst: --url with --follow or --json is a pure
+// usage error that needs no cloud connection or bucket read to detect, so it
+// is checked before openCloud. A run ID that was never seeded proves it:
+// were the check to run after locateLaunched (which would fail first on an
+// unknown run), the error here would name the unknown run instead.
+func TestLogsURLConflictIsCheckedFirst(t *testing.T) {
+	newCloudFixture(t)
+	for _, args := range [][]string{
+		{"logs", "--url", "--follow", "20260927-100000-ffff"},
+		{"logs", "--url", "--json", "20260927-100000-ffff"},
+	} {
+		_, _, err := execute(t, args...)
+		if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "--url prints only the link") {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+}
+
+// TestLogsURLWithNoRecordedLink: an ordinary launch (seedRun, unlike
+// TestLogsURL, writes no LogURL) refuses --url with a clear message instead
+// of printing an empty line.
+func TestLogsURLWithNoRecordedLink(t *testing.T) {
+	f := newCloudFixture(t)
+	const id = "20260927-100000-abcd"
+	seedRun(t, f, id, "", "someone@example.com", true)
+	out, _, err := execute(t, "logs", "--url", id)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "no console link was recorded") {
+		t.Fatalf("logs --url with no recorded link: out=%q err=%v", out, err)
+	}
+}
