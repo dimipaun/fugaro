@@ -29,7 +29,7 @@ Compute is not the only thing a backend needs. The `Backend` interface above is 
 - **Event streams:** `fugaro watch`'s live updates and the kill switches react to a value changing, not to polling (`internal/rtdb`, `internal/watch`).
 - **A document store for history:** run records, spend history and reporting live in a queryable store across runs (`internal/firestore`).
 
-**Firebase stays GCP-bound regardless of compute backend** (see above): a second compute backend (AWS, Azure) still talks to the same Firebase project for budget, dashboard and history. The seam is not abstracted, and will not be before a second control plane is actually needed: `internal/budget`, `internal/rtdb`, `internal/firestore` and `internal/watch` import the Firebase SDKs directly. This section is documentation only; no interface exists here yet.
+**Firebase stays GCP-bound regardless of compute backend** (see above): a second compute backend (AWS, Azure) still talks to the same Firebase project for budget, dashboard and history. The seam is not abstracted, and will not be before a second control plane is actually needed: `internal/budget`, `internal/rtdb`, `internal/firestore` and `internal/watch` depend on Firebase's REST APIs directly. Neither `internal/rtdb` nor `internal/firestore` uses a Firebase SDK — both are small, hand-rolled REST clients (the Realtime Database Admin SDK cannot authenticate as a single run's own ID token, and the Firestore SDK is more than the handful of calls Fugaro needs), but the dependency on Firebase's own HTTP APIs, and on their specific behaviour (ETags, if-match, multi-path PATCH, Server-Sent-Event streams), is just as direct. This section is documentation only; no interface exists here yet.
 
 ## Live checks
 
