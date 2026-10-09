@@ -2,6 +2,8 @@ package runner_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,5 +70,43 @@ func TestRegistryVerifySummaryRedacted(t *testing.T) {
 	}
 	if strings.Contains(sawVerify, secret) {
 		t.Fatalf("a secret reached the registry's verify field: %q", sawVerify)
+	}
+}
+
+// TestRegistryVerifyShowsTheLatestRecord: a stage can run verify more than
+// once (the agent may rerun its own tests); the registry must show the
+// latest record, not get stuck on an earlier one.
+func TestRegistryVerifyShowsTheLatestRecord(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "")
+	b.fails(t, "beta")
+	work := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		shell(t, req, "echo feature > feature.txt && git add -A && git commit -qm 'Add feature'")
+		verifyTest(t, ctx, req) // record #1: beta fails
+		b.fails(t, "")
+		verifyTest(t, ctx, req) // record #2: passes
+		pr := filepath.Join(envValue(req.Env, "FUGARO_STATE_DIR"), "pr.md")
+		if err := os.WriteFile(pr, []byte("# Add feature\n\nAdds feature.txt."), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return agent.Result{CostUSD: 1}, nil
+	}
+	var sawVerify string
+	atReview := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		waitUntil(t, "the registry to carry a verify summary", func() bool {
+			e := b.entry()
+			if e == nil {
+				return false
+			}
+			sawVerify, _ = e["verify"].(string)
+			return sawVerify != ""
+		})
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := b.run(t, work, atReview)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if !strings.HasPrefix(sawVerify, "fugaro verify test #2: passed") {
+		t.Fatalf("verify = %q, want the second (latest) record, not the first", sawVerify)
 	}
 }

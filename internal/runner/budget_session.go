@@ -14,6 +14,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/budget/token"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gateway"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/pricing"
 	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/rtdb"
@@ -303,14 +304,31 @@ func (r *run) noteRegistryPRURL(url string) {
 	r.noteRegistry(func(e *budget.AgentEntry) { e.PRURL = url })
 }
 
-// verifySummaryRunes bounds the registry's verify summary; the rules clip
-// the whole entry at 200 bytes, well under which this still leaves room for
-// the rest of a multi-byte-rune summary.
+// verifySummaryRunes bounds the registry's verify summary before it becomes
+// AgentEntry.Verify. It does not guarantee staying under the 200-byte cap
+// clipEntry enforces on every registry string: 120 runes of multi-byte text
+// (an escaped \uXXXX from Printable, say) can well exceed 200 bytes, in
+// which case clipEntry's clipString clips it again, byte-wise. That second
+// clip is harmless (it drops any partial trailing rune the byte cut leaves),
+// just possibly shorter than 120 runes.
 const verifySummaryRunes = 120
 
+// verifySummaryLine is rec's one-line summary as it goes into the registry:
+// redacted, sanitized through pluginwire.Printable (the text can hold an
+// agent-chosen test name, and clipEntry's own clipString strips control
+// characters but not bidi overrides and other Cf formatting code points),
+// and clipped to verifySummaryRunes.
+func (r *run) verifySummaryLine(rec verify.Record) string {
+	summary := pluginwire.Printable(r.redact(rec.Summary()))
+	if runes := []rune(summary); len(runes) > verifySummaryRunes {
+		summary = string(runes[:verifySummaryRunes])
+	}
+	return summary
+}
+
 // noteVerify reads the latest verify record and shows its one-line summary
-// in the registry, redacted and clipped to verifySummaryRunes. A failed
-// read only warns: the registry simply keeps its last known verify line.
+// in the registry. A failed read only warns: the registry simply keeps its
+// last known verify line.
 func (r *run) noteVerify() {
 	records, err := verify.Records(r.d.StateDir)
 	if err != nil {
@@ -320,10 +338,7 @@ func (r *run) noteVerify() {
 	if len(records) == 0 {
 		return
 	}
-	summary := r.redact(records[len(records)-1].Summary())
-	if runes := []rune(summary); len(runes) > verifySummaryRunes {
-		summary = string(runes[:verifySummaryRunes])
-	}
+	summary := r.verifySummaryLine(records[len(records)-1])
 	r.noteRegistry(func(e *budget.AgentEntry) { e.Verify = summary })
 }
 
