@@ -1,0 +1,8 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+workflows:
+  api:
+    profile: java-service
+    commands: { test: ./gradlew test -x slow }
+    secrets: [{ name: db-password, env: DB_PASSWORD }]

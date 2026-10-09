@@ -700,3 +700,29 @@ func TestFugaroSchemaProfileKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestProjectLayerSchemaCorpus(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	for _, f := range globAll(t, "../testdata/project-layer/valid/*.yaml") {
+		data, _ := os.ReadFile(f)
+		if err := sch.Validate(yamlInstance(t, data)); err != nil {
+			t.Errorf("%s: schema rejects a valid project layer: %v", f, err)
+		}
+	}
+	for _, f := range globAll(t, "../testdata/project-layer/invalid/*.yaml") {
+		data, _ := os.ReadFile(f)
+		if err := sch.Validate(yamlInstance(t, data)); err == nil {
+			t.Errorf("%s: schema accepts an invalid project layer", f)
+		}
+	}
+}
+
+func TestFugaroSchemaLayeredCorpus(t *testing.T) {
+	sch := compile(t, "fugaro.schema.json")
+	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {
+		data, _ := os.ReadFile(f)
+		if err := sch.Validate(yamlInstance(t, data)); err != nil {
+			t.Errorf("%s: schema rejects a valid layered config: %v", f, err)
+		}
+	}
+}
