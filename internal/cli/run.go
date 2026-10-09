@@ -72,6 +72,16 @@ type launchResult struct {
 	// Recipe is the run's recipe; nil when the runner chooses it (no
 	// --recipe and no checkout of the repository: agent.recipe at the ref).
 	Recipe *launchRecipe `json:"recipe,omitempty"`
+	// ProjectLayer is the project layer the stored task actually carries,
+	// nil when none applies (task.ProjectLayer, embedProjectLayer).
+	ProjectLayer *launchProjectLayer `json:"project_layer,omitempty"`
+}
+
+// launchProjectLayer is launchResult's --json view of a task's project
+// layer: just enough to tell which one it was, never its text.
+type launchProjectLayer struct {
+	SHA256     string `json:"sha256"`
+	Generation int64  `json:"generation,omitempty"`
 }
 
 // launchHooks lets tests stop launchRun between its steps, to make the
@@ -255,6 +265,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
+	if spec.ProjectLayer != nil {
+		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
+	}
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 
@@ -566,22 +579,28 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	if string(a) != string(b) {
 		return userErr("run ID %s already holds a different task", spec.RunID)
 	}
+	// The stored task is what the job actually reads: a repeat keeps its
+	// project layer exactly as first launched, however spec just resolved
+	// it (L8, L15 are about a first launch; a repeated run ID is the same
+	// run, not a second resolution of it). Without this, a layer republished
+	// between the first launch and the repeat would make this call embed a
+	// different project_layer into the in-memory spec than what launchRun
+	// and the --json report actually describe.
+	spec.ProjectLayer = have.ProjectLayer
 	return nil
 }
 
-// repeatTaskBytes is spec.Marshal with the project layer's generation
-// cleared first, so a repeated --run-id is judged on the task's actual
-// content (sha256, yaml) alone. embedProjectLayer re-reads the bucket on
-// every call (decision L13, no fresh window), and an object rewritten with
-// unchanged bytes still gets a new generation; without this, two identical
-// repeats of the same run ID would spuriously look like "a different task".
+// repeatTaskBytes is spec.Marshal with the project layer left out entirely,
+// so a repeated --run-id is judged on everything the caller actually chose
+// (repo, ref, workflow, task text, overrides, recipe...), never on the
+// project layer: embedProjectLayer re-reads the bucket on every call
+// (decision L13, no fresh window), so its content can legitimately differ
+// between the first launch and a repeat (a republish, or just a new
+// generation of unchanged bytes); without this, either would make a
+// repeated --run-id spuriously look like "a different task".
 func repeatTaskBytes(spec *task.Spec) ([]byte, error) {
 	clone := *spec
-	if spec.ProjectLayer != nil {
-		pl := *spec.ProjectLayer
-		pl.Generation = 0
-		clone.ProjectLayer = &pl
-	}
+	clone.ProjectLayer = nil
 	return clone.Marshal()
 }
 
