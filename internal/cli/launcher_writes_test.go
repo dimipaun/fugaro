@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -10,6 +12,18 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
 )
+
+// fakeBudgetToken builds a string token.PutObject accepts for slug/run:
+// token.checkNames only base64-decodes the middle segment as JSON and reads
+// uid/claims.fs/claims.fr, never verifying a signature, so a real mint
+// (which needs a signer) is not needed here.
+func fakeBudgetToken(slug, run string) string {
+	payload, _ := json.Marshal(map[string]any{
+		"uid":    token.UID(slug, run),
+		"claims": map[string]any{"fs": slug, "fr": run},
+	})
+	return "h." + base64.RawURLEncoding.EncodeToString(payload) + ".s"
+}
 
 // Every write a launcher makes is under runs/, so the 0.7.0 grants (writes
 // denied everywhere else) leave launching, the claim takeover and release,
@@ -41,6 +55,9 @@ func TestLauncherGrantsCoverEveryLauncherWrite(t *testing.T) {
 	}
 	if err := s.RequestCancel(ctx); err != nil {
 		t.Fatalf("cancel: %v", err)
+	}
+	if err := token.PutObject(ctx, b, slug, run, fakeBudgetToken(slug, run)); err != nil {
+		t.Fatalf("budget token: %v", err)
 	}
 	if err := token.DeleteObject(ctx, b, slug, run); err != nil {
 		t.Fatalf("token cleanup: %v", err)

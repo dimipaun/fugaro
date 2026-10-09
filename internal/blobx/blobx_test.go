@@ -398,3 +398,19 @@ func TestWriteForbiddenIsClassified(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Touch's metadata patch is a write too: a refused one is ErrForbidden, not
+// a silently ignored no-op.
+func TestTouchForbiddenIsClassified(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	fake.Put("runs", "fugaro/x.yaml", []byte("a: 1\n"))
+	fake.DenyWrites("runs", "fugaro/")
+	b := fake.Bucket(t, "runs")
+	if err := b.Touch(ctx, "fugaro/x.yaml", time.Now()); !errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("Touch = %v, want ErrForbidden", err)
+	}
+	if fake.HasCustomTime("runs", "fugaro/x.yaml") {
+		t.Fatal("the refused patch still set the custom time")
+	}
+}

@@ -324,5 +324,8 @@ func (b *Bucket) Touch(ctx context.Context, key string, t time.Time) error {
 		return nil
 	}
 	_, err := c.Bucket(b.GCSName).Object(key).Update(ctx, storage.ObjectAttrsToUpdate{CustomTime: t.UTC()})
+	if isForbidden(err) {
+		return fmt.Errorf("%w: %w", ErrForbidden, err)
+	}
 	return err
 }
