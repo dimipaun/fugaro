@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -35,16 +36,27 @@ var layerAnnounceKeys = []string{"commands.build", "commands.test", "commands.re
 // therefore carries project_layer and is gated by layeredSince, even for a
 // repository whose own fugaro.yaml has no gcp_project: (or could not be
 // read here): the installation's own project/gcp_project anchors it
-// regardless (design §10's rollout order assumes this). It prints one line
-// naming the layer, and one per profile a workflow's commands came from
-// (decision L7).
-func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) error {
+// regardless (design §10's rollout order assumes this). It returns the
+// bytes it resolved the layer against (the checkout's fugaro.yaml, or the
+// installation's synthetic anchor), which the caller passes to
+// announceProjectLayer once spec.ProjectLayer is final: createTask may
+// still swap it for a repeated --run-id's stored one (repeatTaskBytes), so
+// this prints no summary of which layer it is itself — only how the
+// resolution went (a read failure worth knowing about, a cached copy
+// standing in).
+func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) ([]byte, error) {
 	var data []byte
 	if root := checkoutRoot(ctx, spec.Repo); root != "" {
 		var rerr error
 		if data, rerr = readFugaroYAML(filepath.Join(root, "fugaro.yaml")); rerr != nil {
-			fmt.Fprintf(warn, "note: could not read %s (%s); resolving the project layer against the installation's own project instead\n",
-				filepath.Join(root, "fugaro.yaml"), oneLineCLI(rerr.Error()))
+			// os.ErrNotExist is the ordinary case of a checkout with no
+			// fugaro.yaml yet: checkoutParse (cloud.go) already treats that
+			// the same as "no checkout at all", silently. Only a real
+			// problem (permission denied, a directory, ...) is worth a note.
+			if !errors.Is(rerr, os.ErrNotExist) {
+				fmt.Fprintf(warn, "note: could not read %s (%s); resolving the project layer against the installation's own project instead\n",
+					filepath.Join(root, "fugaro.yaml"), oneLineCLI(rerr.Error()))
+			}
 			data = nil
 		}
 	}
@@ -53,19 +65,44 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 	}
 	fl, err := findLayer(ctx, os.Getenv, data, env.lc, layerOptions{}, time.Now())
 	if err != nil {
-		return err
+		return data, err
 	}
 	l := fl.Layer
 	if l == nil {
-		return nil // why none applies is config show's and doctor's to say, not every launch's
+		return data, nil // why none applies is config show's and doctor's to say, not every launch's
 	}
 	if fl.Note != "" {
 		fmt.Fprintln(warn, "note: "+fl.Note) // a cached copy stood in
 	}
 	spec.ProjectLayer = &task.ProjectLayer{SHA256: l.SHA256, Generation: fl.Generation, YAML: string(l.Raw)}
-	fmt.Fprintf(warn, "project layer: %s generation %d (sha256 %s)\n", l.Project, fl.Generation, l.SHA256[:12])
-	announceProfileCommands(warn, data, l, spec.Workflow, fl.Generation)
-	return nil
+	return data, nil
+}
+
+// announceProjectLayer prints the project-layer summary line and, when the
+// launched workflow's commands came from a profile, the L7 commands line,
+// for spec's FINAL project layer: whatever createTask (run.go) left it as,
+// not necessarily what embedProjectLayer most recently resolved. A repeated
+// --run-id has createTask adopt the stored task's project layer
+// (have.ProjectLayer) when the bucket was republished since the first
+// launch, and announcing the freshly re-resolved one here instead would
+// describe a launch that did not happen: the stored task (and the --json
+// report) are what the run actually carries. data is the bytes
+// embedProjectLayer resolved against (the checkout's fugaro.yaml, or the
+// installation's synthetic anchor): the same bytes either way, since only
+// the project layer itself can be swapped out from under them.
+func announceProjectLayer(warn io.Writer, spec *task.Spec, data []byte) {
+	pl := spec.ProjectLayer
+	if pl == nil {
+		return
+	}
+	project, _ := config.ProjectOf(data)
+	gcp, _ := config.GCPProjectOf(data)
+	l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: project, GCPProject: gcp})
+	if len(ps) > 0 {
+		return // already validated when first embedded or first stored
+	}
+	fmt.Fprintf(warn, "project layer: %s generation %d (sha256 %s)\n", l.Project, pl.Generation, pl.SHA256[:12])
+	announceProfileCommands(warn, data, l, spec.Workflow, pl.Generation)
 }
 
 // announceProfileCommands prints the L7 launch line for every profile that

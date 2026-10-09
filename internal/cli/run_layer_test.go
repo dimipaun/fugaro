@@ -180,8 +180,9 @@ func TestRunRepeatedRunIDToleratesLayerRepublish(t *testing.T) {
 	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
 		t.Fatal(err)
 	}
-	writeBucketFile(t, f, config.LayerKey, strings.Replace(testProjectLayer, "auth: api-key", "auth: oauth", 1))
-	out, _, err := execute(t, "run", "--json", "--run-id", "20261008-100000-abcd", "A task")
+	republished := strings.Replace(testProjectLayer, "auth: api-key", "auth: oauth", 1)
+	writeBucketFile(t, f, config.LayerKey, republished)
+	out, errOut, err := execute(t, "run", "--json", "--run-id", "20261008-100000-abcd", "A task")
 	if err != nil {
 		t.Fatalf("repeated --run-id after the layer was republished: %v", err)
 	}
@@ -200,6 +201,16 @@ func TestRunRepeatedRunIDToleratesLayerRepublish(t *testing.T) {
 	pl := readSpecOf(t, f, mustSlug("github", "acme/other"), "20261008-100000-abcd").ProjectLayer
 	if pl == nil || pl.SHA256 != config.LayerSum([]byte(testProjectLayer)) {
 		t.Fatalf("the stored task's project_layer changed after a repeat: %+v", pl)
+	}
+	// The repeat's human-readable stderr line must describe the same
+	// adopted (original) layer, not the republished one it briefly saw
+	// while re-resolving.
+	origShort, newShort := config.LayerSum([]byte(testProjectLayer))[:12], config.LayerSum([]byte(republished))[:12]
+	if !strings.Contains(errOut, "project layer: aurora generation") || !strings.Contains(errOut, origShort) {
+		t.Errorf("stderr %q lacks the adopted layer's own announcement", errOut)
+	}
+	if strings.Contains(errOut, newShort) {
+		t.Errorf("stderr %q announces the republished layer instead of the one actually adopted", errOut)
 	}
 }
 
@@ -267,7 +278,7 @@ func TestEmbedProjectLayerUsesTheCheckoutsOwnProject(t *testing.T) {
 	env := fileEnv(t, f) // the installation's own: aurora/proj-1234
 	spec := &task.Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: config.ImplicitWorkflow, Task: "x"}
 	var warn bytes.Buffer
-	if err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
+	if _, err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
 		t.Fatal(err)
 	}
 	if spec.ProjectLayer == nil || spec.ProjectLayer.SHA256 != config.LayerSum([]byte(otherLayer)) {
@@ -326,11 +337,39 @@ func TestEmbedProjectLayerAnnouncesAnUnreadableCheckoutFile(t *testing.T) {
 	env := fileEnv(t, f)
 	spec := &task.Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: config.ImplicitWorkflow, Task: "x"}
 	var warn bytes.Buffer
-	if err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
+	if _, err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(warn.String(), "note: could not read") || !strings.Contains(warn.String(), "not a regular file") {
 		t.Errorf("warnings %q lack the unreadable-checkout note", warn.String())
+	}
+	if spec.ProjectLayer == nil {
+		t.Fatal("the installation's own layer should still apply as a fallback")
+	}
+}
+
+// Review fix (must-fix): a checkout that simply has no fugaro.yaml yet
+// (os.ErrNotExist) is the ordinary, harmless case checkoutParse (cloud.go)
+// already treats the same as "no checkout at all", silently. Unlike the
+// directory case above, this one must stay quiet: a missing file is not "a
+// real problem", and every fugaro run from such a checkout would otherwise
+// print a misleading note on every single launch.
+func TestEmbedProjectLayerStaysQuietWithNoFugaroYAMLYet(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: config.ImplicitWorkflow, Task: "x"}
+	var warn bytes.Buffer
+	if _, err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(warn.String(), "could not read") {
+		t.Errorf("warnings %q wrongly flag the ordinary missing-file case", warn.String())
 	}
 	if spec.ProjectLayer == nil {
 		t.Fatal("the installation's own layer should still apply as a fallback")

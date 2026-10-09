@@ -208,8 +208,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	var layerData []byte
 	if o.retry == "" && !reused {
-		if err := embedProjectLayer(ctx, env, spec, cmd.ErrOrStderr()); err != nil {
+		if layerData, err = embedProjectLayer(ctx, env, spec, cmd.ErrOrStderr()); err != nil {
 			return err
 		}
 	}
@@ -251,6 +252,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if o.retry == "" {
 		if err := createTask(ctx, s, spec); err != nil {
 			return err
+		}
+		if !reused {
+			// After createTask, so a repeated --run-id announces whatever it
+			// adopted (the stored task's layer), not whatever this call
+			// happened to resolve first.
+			announceProjectLayer(cmd.ErrOrStderr(), spec, layerData)
 		}
 	}
 	chooses := runnerChooses(ctx, spec)
