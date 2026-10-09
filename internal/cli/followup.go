@@ -233,16 +233,18 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 // no run, is fine: the runner takes it over (lock.Acquire). One too large
 // to read is refused: the runner can't take it over either.
 //
-// A lock that still looks live by its expiry is taken over anyway (no
-// write here: the CLI only decides whether to launch, and only the runner
-// writes locks/, §4.1) when lock.Stale says its holder's run has ended:
-// its own run record reached a terminal status. This calls the exact same
-// function the runner's own lock.Acquire uses (lockcache.go's
-// staleHolder), on purpose: the CLI has no stronger proof to offer that
-// the runner could also act on (it has no Cloud Run Admin credential, so
-// it can never confirm a holder's execution through the backend either),
-// and a launch the runner's own lock.Acquire would then refuse as busy is
-// worse than refusing it here. warn gets a note when the takeover happens.
+// A lock that still looks live by its expiry is taken over anyway, by
+// deleting it outright (lock.Takeover) rather than merely launching past
+// it, when lock.Stale says its holder is provably over: the backend
+// independently confirms (executionTerminal) that the holder's own
+// execution has ended, never anything read from runs/, which a launcher
+// could forge (lock.go's own doc explains why). Deleting the lock, not
+// just deciding to launch, is what lets the runner's own lock.Acquire
+// succeed right after: Acquire trusts nothing but the lock object's own
+// ExpiresAt, so with the lock gone it has nothing left to conflict with.
+// A launcher's delete refused for lack of access (the 0.7.0 bucket
+// hardening, §10) is reported with the command an operator or the
+// sweeper runs instead. warn gets a note when the takeover happens.
 func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time, warn io.Writer) error {
 	key := lock.Key(slug, branch)
 	data, _, err := env.bucket.Read(ctx, key)
