@@ -63,6 +63,21 @@ func noProjectLayerBucket(t *testing.T) {
 	t.Cleanup(func() { layerBucketOpener = old })
 }
 
+// noLayerBucketReads fails the test if anything tries to open the project
+// layer bucket at all, for a command whose contract is "never a bucket":
+// unlike noProjectLayerBucket (a fake bucket that answers "not found"),
+// this one proves the bucket is never reached in the first place, not just
+// that it's reached safely.
+func noLayerBucketReads(t *testing.T) {
+	t.Helper()
+	old := layerBucketOpener
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		t.Fatal("the project layer bucket was opened")
+		return nil, nil
+	}
+	t.Cleanup(func() { layerBucketOpener = old })
+}
+
 // layerCheckout makes the working directory a git checkout holding yaml as
 // fugaro.yaml, and returns its root. f is unused today (no test here needs
 // a build record or an origin remote); it is kept so a later test that
