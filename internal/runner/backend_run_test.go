@@ -607,6 +607,49 @@ func TestRegistryEntryWrittenAndDeleted(t *testing.T) {
 	}
 }
 
+// TestRegistryCarriesActionAndTokens (design generic-tool §10.2): a tool call
+// the relay sees reaches the registry as action, and a finished stage's token
+// count stays there until the next stage's own end overwrites it; the next
+// stage's own first beginBudgetStage clears the previous stage's action.
+func TestRegistryCarriesActionAndTokens(t *testing.T) {
+	b := newBK(t, gwConfig(t, ""), "enforce", "", capScript(1)...)
+	const toolLine = `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}` + "\n"
+	implStep := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		if _, err := req.Transcript.Write([]byte(toolLine)); err != nil {
+			t.Fatal(err)
+		}
+		waitUntil(t, "the registry to show the action", func() bool {
+			s, _ := b.entry()["action"].(string)
+			return strings.Contains(s, "tool Bash: go test")
+		})
+		res, err := implement("feature")(t, ctx, req)
+		res.Usage = agent.Usage{Input: 100, Output: 50}
+		return res, err
+	}
+	reviewStep := func(t *testing.T, ctx context.Context, req agent.Request) (agent.Result, error) {
+		// Once review's own beginBudgetStage has run, the implement stage's
+		// tokens are still there (nothing has overwritten them yet) but its
+		// action is gone (the new stage cleared it as it began).
+		waitUntil(t, "the registry to carry the implement stage's tokens with its action cleared", func() bool {
+			e := b.entry()
+			if e == nil || e["action"] != nil {
+				return false
+			}
+			n, ok := e["tokens"].(json.Number)
+			if !ok {
+				return false
+			}
+			v, _ := n.Int64()
+			return v == 150
+		})
+		return review("ship", 0)(t, ctx, req)
+	}
+	rec, err := b.run(t, implStep, reviewStep)
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+}
+
 func TestOutcomeWrittenOnce(t *testing.T) {
 	b := newBK(t, gwConfig(t, ""), "enforce", "")
 	rec, err := b.run(t, implement("feature"), review("ship", 0))

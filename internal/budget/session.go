@@ -112,20 +112,23 @@ type Session struct {
 	mu       sync.Mutex
 	entry    AgentEntry
 	noRecipe bool // the rules refused the recipe key at Start
-	haltOnce sync.Once
-	halted   bool
-	used     func() Micros
-	leased   map[int64]bool // days this run holds a lease on
-	granted  Micros         // everything the leases granted
-	released Micros         // everything released
-	unrel    Micros         // a release that failed, to try again at Finish
-	pend     pending
-	started  bool
-	stopped  bool
-	exp      bool // exp written
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
-	caps     Caps // the last config read, for the heartbeat's limits
+
+	newKeysChecked bool // checkNewKeys has probed action/tokens once
+	newKeysRefused bool // the rules refused action/tokens; both are dropped
+	haltOnce       sync.Once
+	halted         bool
+	used           func() Micros
+	leased         map[int64]bool // days this run holds a lease on
+	granted        Micros         // everything the leases granted
+	released       Micros         // everything released
+	unrel          Micros         // a release that failed, to try again at Finish
+	pend           pending
+	started        bool
+	stopped        bool
+	exp            bool // exp written
+	cancel         context.CancelFunc
+	wg             sync.WaitGroup
+	caps           Caps // the last config read, for the heartbeat's limits
 
 	advised       map[Reason]bool // observe-mode advisories already logged
 	notionalTotal Micros          // an oauth run's notional so far

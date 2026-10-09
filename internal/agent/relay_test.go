@@ -388,3 +388,32 @@ func TestRelayRedactsWrappedBase64(t *testing.T) {
 		}
 	}
 }
+
+// TestRelayOnToolGetsTheRedactedSummary: the hook sees exactly what the log
+// line says, never a secret (design generic-tool §10.2).
+func TestRelayOnToolGetsTheRedactedSummary(t *testing.T) {
+	const secret = "fake-secret-0123456789"
+	var buf bytes.Buffer
+	var got []string
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{secret})
+	r.OnTool = func(s string) { got = append(got, s) }
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"echo ` + secret + ` && go test ./..."}}]}}` + "\n"
+	if _, err := r.Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || strings.Contains(got[0], secret) || !strings.HasPrefix(got[0], "tool Bash: echo [REDACTED] && go test") {
+		t.Fatalf("OnTool got %q", got)
+	}
+}
+
+// TestRelayNoOnToolDoesNothing: a nil hook is the default and never panics.
+func TestRelayNoOnToolDoesNothing(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	if _, err := r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"tool Bash: ls"`) {
+		t.Fatalf("logs = %s", buf.String())
+	}
+}

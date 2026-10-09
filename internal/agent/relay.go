@@ -33,6 +33,10 @@ type Relay struct {
 	forms   []string
 	buf     []byte
 	discard bool // dropping the rest of an oversized line
+
+	// OnTool, when set, is called with each tool call's redacted, clipped
+	// summary (design generic-tool §10.2): the registry's last action.
+	OnTool func(summary string)
 }
 
 // NewRelay returns a Relay logging to log, redacting secrets.
@@ -119,7 +123,11 @@ func (r *Relay) line(raw []byte) {
 					r.log.Info(r.msg(t, relayTextBytes), "event", "text")
 				}
 			case "tool_use":
-				r.log.Info(r.msg("tool "+r.redact(c.Name)+": "+r.toolSummary(c.Input), relayToolBytes), "event", "tool")
+				s := r.redact("tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input))
+				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
+				if r.OnTool != nil {
+					r.OnTool(logtail.Clip(s, 160))
+				}
 			}
 		}
 	case "user":

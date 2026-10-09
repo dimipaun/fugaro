@@ -1310,6 +1310,14 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// LineWriter does: a stalled log stalls the agent rather than dropping
 	// events or buffering without bound.
 	relay := agent.NewRelay(log, r.secretList())
+	relay.OnTool = func(s string) {
+		r.mu.Lock()
+		sess := r.sess
+		r.mu.Unlock()
+		if sess != nil {
+			sess.Update(func(e *budget.AgentEntry) { e.Action = s })
+		}
+	}
 	tw := agent.NewRedactor(io.MultiWriter(&transcript, transcriptTail, relay), r.secretList())
 	sw := agent.NewRedactor(io.MultiWriter(NewLineWriter(log, "agent"), stderrTail), r.secretList())
 	req.Dir, req.Env, req.Transcript, req.Stderr = r.d.WorkDir, gitops.WithVars(r.env, pins), tw, sw
@@ -1358,6 +1366,13 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// An oauth run has no gateway: its stage's own cost figure is its
 	// notional spend, reported whatever became of the stage.
 	r.reportNotional(ctx, res)
+	r.mu.Lock()
+	sess := r.sess
+	r.mu.Unlock()
+	if sess != nil {
+		tokens := res.StageTokens()
+		sess.Update(func(e *budget.AgentEntry) { e.Tokens = tokens })
+	}
 	_ = tw.Flush()
 	relay.Flush()
 	_ = sw.Flush()

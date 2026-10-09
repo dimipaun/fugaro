@@ -30,7 +30,7 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action} {
 		*p = clipString(*p)
 	}
 }
@@ -130,7 +130,58 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	if s.noRecipe {
 		s.entry.Recipe = ""
 	}
+	if s.newKeysRefused {
+		s.entry.Action, s.entry.Tokens = "", 0
+	}
 	clipEntry(&s.entry)
+}
+
+// checkNewKeys probes, once per session, whether the rules accept Action and
+// Tokens (design generic-tool §10.2, review focus 4). It runs the first time
+// the entry carries either field. Rules deployed before 0.7.0 refuse the
+// whole entry with them present; the session then drops both for the rest of
+// the run, as Start already does for the recipe key. A second refusal with
+// both already dropped is a genuinely bad credential, not old rules, and is
+// left for the heartbeat's own retry to report.
+func (s *Session) checkNewKeys(ctx context.Context) {
+	s.mu.Lock()
+	if s.newKeysChecked {
+		s.mu.Unlock()
+		return
+	}
+	e := s.entry
+	if e.Action == "" && e.Tokens == 0 {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
+
+	path := PathAgent(s.cfg.Slug, s.cfg.Run)
+	write := func(v AgentEntry) error {
+		return s.db.Patch(ctx, "", map[string]any{path: v})
+	}
+	if err := write(e); err == nil {
+		s.mu.Lock()
+		s.newKeysChecked = true
+		s.mu.Unlock()
+		s.dbOK()
+		return
+	} else if !errors.Is(err, rtdb.ErrPermission) {
+		return // not a permission matter; the regular heartbeat reports it
+	}
+	e.Action, e.Tokens = "", 0
+	err := write(e)
+	s.mu.Lock()
+	s.newKeysChecked = true
+	if err == nil {
+		s.entry.Action, s.entry.Tokens, s.newKeysRefused = "", 0, true
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return // refused twice: a bad credential, not old rules
+	}
+	s.dbOK()
+	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro init --firebase <firebase-project-id> to update them")
 }
 
 // snapshotEntry is the entry as the next heartbeat sends it.
@@ -153,6 +204,7 @@ func (s *Session) snapshotEntry() AgentEntry {
 // usage report.
 func (s *Session) heartbeat(ctx context.Context) {
 	s.checkKills(ctx, "kill-poll")
+	s.checkNewKeys(ctx)
 	e := s.snapshotEntry()
 	_ = s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
 }
