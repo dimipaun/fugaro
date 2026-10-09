@@ -292,6 +292,18 @@ type queuedScanner struct {
 	workers                  int
 	repoTimeout, openTimeout time.Duration
 
+	// finishedCache holds the finished runs already read, keyed by
+	// "slug/runID": once a run's record is no longer running it never
+	// changes again (nothing in this codebase writes result.json after a
+	// run has finalized), so a later scan reuses the cached row instead of
+	// re-reading task.json, launch.json and result.json for it. cacheMu
+	// guards it: scanRepo runs concurrently across repositories and within
+	// one repository's run reads. pruneFinishedCache drops entries whose
+	// FinishedAt has aged out of finishedLookback, so the cache never
+	// grows past what one scan's window could hold.
+	cacheMu       sync.Mutex
+	finishedCache map[string]watch.FinishedRun
+
 	env *cloudEnv
 	// opening is the open in flight, nil when none.
 	opening chan openResult
@@ -394,6 +406,38 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
+// cachedFinished is key's cached finished run, if any.
+func (s *queuedScanner) cachedFinished(key string) (watch.FinishedRun, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	f, ok := s.finishedCache[key]
+	return f, ok
+}
+
+// cacheFinished remembers f under key, so a later scan does not re-read it.
+func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.finishedCache == nil {
+		s.finishedCache = map[string]watch.FinishedRun{}
+	}
+	s.finishedCache[key] = f
+}
+
+// pruneFinishedCache drops every cached entry whose FinishedAt is before
+// finishedSince: once a scan's lookback has moved past a finished run, it
+// drops out of the finished list on its own (finishedResult), so keeping
+// it cached would only grow the cache forever.
+func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	for key, f := range s.finishedCache {
+		if f.FinishedAt.Before(finishedSince) {
+			delete(s.finishedCache, key)
+		}
+	}
+}
+
 // repoScan is one repository's part of a scan.
 type repoScan struct {
 	queued     []watch.QueuedRun
@@ -408,9 +452,10 @@ type repoScan struct {
 // scanRepo reads slug's queued and finished runs under its own deadline:
 // one listing of the run IDs minted since listMinted (w.FinishedSince's
 // wider window, so a finished run's mint time still falls inside it), then
-// the reads of those runs, up to queuedRunReaders at once. When the
-// deadline fires mid-way the rows already read are kept and the runs not
-// read are counted in cutOff.
+// the reads of those runs not already in the finished cache, up to
+// queuedRunReaders at once. When the deadline fires mid-way the rows
+// already read are kept and the runs not read are counted in cutOff (a
+// cache hit never counts against it: it costs no read at all).
 func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string, listMinted time.Time, w scanWindow, now time.Time) repoScan {
 	rctx, cancel := context.WithTimeout(ctx, s.repoTimeout)
 	defer cancel()
@@ -424,9 +469,17 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 		done bool // the read finished before the deadline
 	}
 	results := make([]result, len(ids))
+	var toRead []int
+	for i, id := range ids {
+		if f, ok := s.cachedFinished(slug + "/" + id); ok {
+			results[i] = result{scanResult{IsFinished: true, Finished: f}, nil, true}
+			continue
+		}
+		toRead = append(toRead, i)
+	}
 	next := make(chan int)
 	var wg sync.WaitGroup
-	for range min(queuedRunReaders, len(ids)) {
+	for range min(queuedRunReaders, len(toRead)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -435,12 +488,15 @@ func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string
 				if rctx.Err() != nil {
 					continue // cut off: the result is not trusted
 				}
+				if res.IsFinished {
+					s.cacheFinished(slug+"/"+ids[i], res.Finished)
+				}
 				results[i] = result{res, err, true}
 			}
 		}()
 	}
 feed:
-	for i := range ids {
+	for _, i := range toRead {
 		select {
 		case next <- i:
 		case <-rctx.Done():
@@ -496,6 +552,7 @@ func (s *queuedScanner) scan(ctx context.Context) (queued []watch.QueuedRun, fin
 	// The one listing per repository covers both queued and finished
 	// detection, so it uses the wider of the two windows.
 	listMinted := w.FinishedSince.Add(-queuedMintMargin)
+	s.pruneFinishedCache(w.FinishedSince)
 
 	results := make([]repoScan, len(slugs))
 	jobs := make(chan int)
@@ -562,7 +619,7 @@ feed:
 		parts = append(parts, fmt.Sprintf("%d could not be read and are not shown (%s)", unreadRuns, runErr))
 	}
 	if len(parts) > 0 {
-		note = "queued runs: " + strings.Join(parts, "; ")
+		note = "runs: " + strings.Join(parts, "; ")
 	}
 	return queued, finished, note, nil
 }

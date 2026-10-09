@@ -19,6 +19,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/runstore"
+	"github.com/dimipaun/fugaro/internal/runview"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -34,6 +36,21 @@ func putQueued(t *testing.T, put func(key string, data []byte), slug, run string
 	}
 	put("runs/"+slug+"/"+run+"/task.json", []byte(`{"version":1,"run_id":"`+run+`","repo":"acme/app","ref":"main","task":"do it","overrides":{}}`))
 	put("runs/"+slug+"/"+run+"/launch.json", launch)
+}
+
+// putFinished writes task.json and a terminal result.json for slug/run,
+// finished at finishedAt.
+func putFinished(t *testing.T, put func(key string, data []byte), slug, run, status string, finishedAt time.Time) {
+	t.Helper()
+	result, err := json.Marshal(map[string]any{
+		"version": 1, "run_id": run, "repo": "acme/app", "status": status, "outcome": "none",
+		"started_at": finishedAt.Add(-time.Minute).UTC(), "finished_at": finishedAt.UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put("runs/"+slug+"/"+run+"/task.json", []byte(`{"version":1,"run_id":"`+run+`","repo":"acme/app","ref":"main","task":"do it","overrides":{}}`))
+	put("runs/"+slug+"/"+run+"/result.json", result)
 }
 
 // openedScanner is a scanner whose bucket is already open on b.
@@ -408,5 +425,129 @@ func TestScannerReturnsFinishedRuns(t *testing.T) {
 	if got.Run != id || got.Status != "succeeded" || got.Outcome != "ready" ||
 		got.PRURL != "https://github.com/acme/app/pull/7" || got.PRNumber != 7 {
 		t.Fatalf("finished[0] = %+v", got)
+	}
+}
+
+// A finished run's result.json never changes once it is no longer running,
+// so a second poll must not re-read it; a still-running (queued) run has
+// no record yet and so is read again every poll.
+func TestScanCachesFinishedRunsAcrossPolls(t *testing.T) {
+	b := memblob.OpenBucket(nil)
+	ctx := context.Background()
+	put := func(key string, data []byte) {
+		if err := b.WriteAll(ctx, key, data, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	finished := time.Now().UTC().Add(-time.Hour).Format("20060102-150405") + "-aaaa"
+	putFinished(t, put, "acme-a", finished, "succeeded", time.Now().Add(-45*time.Minute))
+	running := time.Now().UTC().Add(-time.Minute).Format("20060102-150405") + "-bbbb"
+	putQueued(t, put, "acme-a", running, time.Now().Add(-time.Minute))
+
+	sc := openedScanner(b)
+	sc.slugs = func(context.Context, *cloudEnv) ([]string, error) { return []string{"acme-a"}, nil }
+	var reads atomic.Int32
+	sc.readRun = func(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, now time.Time) (scanResult, error) {
+		reads.Add(1)
+		return scanRun(ctx, env, slug, id, w, now)
+	}
+
+	_, fin1, note, err := sc.scan(ctx)
+	if err != nil || note != "" {
+		t.Fatalf("scan 1: %v, note %q", err, note)
+	}
+	if len(fin1) != 1 {
+		t.Fatalf("scan 1: finished = %+v, want 1", fin1)
+	}
+	if got := reads.Load(); got != 2 {
+		t.Fatalf("scan 1: %d reads, want 2 (the finished run and the running one)", got)
+	}
+
+	queued2, fin2, note, err := sc.scan(ctx)
+	if err != nil || note != "" {
+		t.Fatalf("scan 2: %v, note %q", err, note)
+	}
+	if len(fin2) != 1 || len(queued2) != 1 {
+		t.Fatalf("scan 2: finished = %+v, queued = %+v", fin2, queued2)
+	}
+	if got := reads.Load(); got != 3 {
+		t.Fatalf("after scan 2: %d reads, want 3 (only the running run re-read, the finished one cached)", got)
+	}
+}
+
+// The finished cache is bounded: an entry aged out of finishedLookback is
+// dropped, not kept forever.
+func TestPruneFinishedCacheDropsStaleEntries(t *testing.T) {
+	sc := newQueuedScanner(&localcfg.Config{}, "")
+	now := time.Now()
+	sc.cacheFinished("acme-a/old", watch.FinishedRun{FinishedAt: now.Add(-finishedLookback - time.Minute)})
+	sc.cacheFinished("acme-a/new", watch.FinishedRun{FinishedAt: now.Add(-time.Hour)})
+	sc.pruneFinishedCache(now.Add(-finishedLookback))
+	if _, ok := sc.cachedFinished("acme-a/old"); ok {
+		t.Fatal("an entry older than the lookback must be pruned")
+	}
+	if _, ok := sc.cachedFinished("acme-a/new"); !ok {
+		t.Fatal("an entry within the lookback must survive pruning")
+	}
+}
+
+// A record whose status is still "running" is never reported finished: its
+// live row (from /agents) covers it.
+func TestFinishedResultExcludesRunningRecord(t *testing.T) {
+	now := time.Now()
+	// StartedAt is recent (well inside the lookback) so only the running
+	// check, not the age check, can explain an excluded result.
+	in := runview.Input{Slug: "acme-a", RunID: "x", Record: &runstore.Record{
+		Status: runstore.StatusRunning, StartedAt: now.Add(-time.Minute),
+	}}
+	got := finishedResult(in, now.Add(-finishedLookback), now)
+	if got.IsFinished {
+		t.Fatalf("a running record must not be reported finished: %+v", got)
+	}
+}
+
+// A record that finished before the scanner's lookback is excluded, not
+// just aged: it should never surface even if it were still listed.
+func TestFinishedResultExcludesOlderThanLookback(t *testing.T) {
+	now := time.Now()
+	finishedAt := now.Add(-finishedLookback - time.Minute)
+	in := runview.Input{Slug: "acme-a", RunID: "x", Record: &runstore.Record{
+		Status: runstore.StatusSucceeded, FinishedAt: &finishedAt,
+	}}
+	if got := finishedResult(in, now.Add(-finishedLookback), now); got.IsFinished {
+		t.Fatalf("a record finished before the lookback must be excluded: %+v", got)
+	}
+}
+
+// A record with no FinishedAt (written before the field existed) falls
+// back to StartedAt rather than being misdated as "just now".
+func TestFinishedResultFallsBackToStartedAt(t *testing.T) {
+	now := time.Now()
+	started := now.Add(-time.Hour)
+	in := runview.Input{Slug: "acme-a", RunID: "x", Record: &runstore.Record{
+		Status: runstore.StatusSucceeded, StartedAt: started,
+	}}
+	got := finishedResult(in, now.Add(-finishedLookback), now)
+	if !got.IsFinished || !got.Finished.FinishedAt.Equal(started) {
+		t.Fatalf("want FinishedAt to fall back to StartedAt %v, got %+v", started, got)
+	}
+}
+
+// finishedTitle stops at the task prompt's first line: a second line (a
+// fuller description) never leaks into the one-line title.
+func TestFinishedTitleStopsAtFirstLine(t *testing.T) {
+	got := finishedTitle(&task.Spec{Task: "first line\nsecond line"})
+	if got != "first line" {
+		t.Fatalf("title = %q, want just the first line", got)
+	}
+}
+
+// finishedTitle clips a long first line to 80 runes, like the runner's own
+// registry entry title.
+func TestFinishedTitleClipsAt80Runes(t *testing.T) {
+	long := strings.Repeat("x", 90)
+	got := finishedTitle(&task.Spec{Task: long})
+	if got != long[:80] {
+		t.Fatalf("title = %q (%d runes), want the first 80", got, len([]rune(got)))
 	}
 }
