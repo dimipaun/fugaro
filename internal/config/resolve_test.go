@@ -292,9 +292,14 @@ func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
 const literalsRepo = minimalRepo + `git:
   provider: github
   base_branch: 1.10
-  pr: { labels: [1.10, 1e3, 0x10, yes] }
+  pr:
+    labels: [1.10, 1e3, 0x10, yes]
+    early_draft: !!bool >-
+      true
 agent:
   model: 0x10
+  review_rounds: !!int |-
+    2
 workflows:
   api:
     base: go
@@ -349,6 +354,13 @@ func TestResolveKeepsLiterals(t *testing.T) {
 	if c.Git.BaseBranch != "1.10" || c.Agent.Model != "0x10" || strings.Join(c.Git.PR.Labels, ",") != "1.10,1e3,0x10,yes" ||
 		api.Commands.Build != "1e3" || api.Commands.Test != "010" {
 		t.Fatalf("repository values changed: %q %q %q %+v", c.Git.BaseBranch, c.Agent.Model, c.Git.PR.Labels, api.Commands)
+	}
+	// review_rounds and early_draft are tagged (!!int, !!bool) block
+	// scalars: a merge that drops the tag re-marshals them as plain
+	// double-quoted strings, which fails to decode into an int or a bool.
+	if c.Agent.ReviewRounds != want.Agent.ReviewRounds || c.Git.PR.EarlyDraftOn() != want.Git.PR.EarlyDraftOn() {
+		t.Fatalf("tagged block scalars changed: review_rounds=%v (want %v) early_draft=%v (want %v)",
+			c.Agent.ReviewRounds, want.Agent.ReviewRounds, c.Git.PR.EarlyDraftOn(), want.Git.PR.EarlyDraftOn())
 	}
 	// Folded, literal, chomping, a more-indented line and an explicit tag
 	// (lit1-lit3 in literalsRepo) must reach the resolved config exactly as
