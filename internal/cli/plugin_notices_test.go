@@ -90,7 +90,7 @@ func TestPluginOutputsSayWhatClaudeCodeDoes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "Claude Code installs the plugin when you open", "the folder was already trusted", "/plugin install fugaro@fugaro", "only trust folders you trust"} {
+	for _, want := range []string{"Claude Code run /plugin marketplace update fugaro", "Claude Code installs the plugin when you open", "the folder was already trusted", "fugaro upgrade --local again", "only trust folders you trust"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("update-skills lacks %q:\n%s", want, out)
 		}

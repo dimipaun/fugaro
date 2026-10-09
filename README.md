@@ -40,7 +40,7 @@ Or ask your agent: the plugin's `working` skill launches, watches and diagnoses 
 
 ## Upgrading
 
-`brew upgrade dimipaun/tap/fugaro && fugaro upgrade`, in each checkout, in your own terminal. `fugaro upgrade` pins the plugin in `.claude/settings.json` to the new release (commit the diff), installs or updates it in Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. It asks at each cloud step; `--yes` confirms them all, each billable build included. `--local` does the first two only, `--check` only reports (exit 1 when something is stale) ([design/upgrade.md](docs/design/upgrade.md)).
+`brew upgrade dimipaun/tap/fugaro && fugaro upgrade`, in each checkout, in your own terminal. `fugaro upgrade` pins the plugin in `.claude/settings.json` to the new release (commit the diff), installs or updates it in Claude Code through the `claude` CLI (restart running sessions), and moves the repository's job images onto the release's base image. It asks at each cloud step; `--yes` confirms them all, each billable build included. `--local` does the first two only, `--check` only reports (exit 1 when something is stale); in Claude Code `/fugaro:upgrade` does the local half and hands you the rest ([design/upgrade.md](docs/design/upgrade.md)).
 
 ## How it works
 
@@ -137,7 +137,7 @@ A new cloud is a backend behind the interface in `internal/backend` plus its pro
 ## Roadmap
 
 - [x] Runner, git providers (GitHub, Bitbucket Cloud), base images (`web-node`, `go`, `java-services`), the Cloud Run backend and CLI
-- [x] `fugaro init` and `/fugaro:setup`, the four plugin skills, teammates with no setup
+- [x] `fugaro init` and `/fugaro:setup`, the five plugin skills, teammates with no setup
 - [x] Follow-up runs, early draft PRs, the shared budget, `fugaro watch` and `fugaro report`, other models through OpenRouter (experimental)
 - [x] Releases with GoReleaser, the Homebrew tap and cosign-signed checksums
 - [ ] Signed base images, verified before `fugaro init` copies them

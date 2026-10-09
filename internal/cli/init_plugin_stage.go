@@ -24,16 +24,14 @@ import (
 
 // pluginFirstRun ends the wiring. Observed live 2026-10-07 (cause not
 // verified): after init wired the settings, opening Claude Code in the folder
-// did not make the skills available and the plugin had to be installed by hand
-// with /plugin marketplace add and /plugin install. So the text promises
-// nothing: Claude Code is expected to install it on trust, and the manual
-// commands are given for when it did not (design §4.7). fugaro upgrade's
-// plugin step (Task 6, docs/design/upgrade.md) runs those same commands for
-// you, so it is named first.
+// did not make the skills available and the plugin had to be installed by
+// hand. fugaro upgrade's plugin step (Task 6, docs/design/upgrade.md) does
+// that same work, including its own claude-less fallback (noClaudeHint), so
+// this text points there instead of repeating the manual commands (code
+// review of upgrade task 9, 2026-10-09).
 const pluginFirstRun = "Run fugaro upgrade --local to install the plugin for you.\n" +
 	"Once this is committed, Claude Code installs the plugin when you open this folder in a new session and trust it.\n" +
-	"If the /fugaro: skills are not listed (for example the folder was already trusted), run /plugin marketplace add dimipaun/fugaro and\n" +
-	"/plugin install fugaro@fugaro in Claude Code, then restart the session; fugaro doctor then shows the plugin as installed.\n" +
+	"If the /fugaro: skills are not listed (for example the folder was already trusted), run fugaro upgrade --local again; without claude on your PATH it prints the slash commands to type in Claude Code instead. fugaro doctor then shows the plugin as installed.\n" +
 	"A repository's settings can install a plugin from the marketplace they name, so only trust folders you trust.\n"
 
 // pluginRefresh follows a changed pin: Claude Code reports the new version but
