@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -132,8 +133,8 @@ func Validate(c *Config) []Problem {
 	if c.Agent.Recipe != "" && !recipe.NameRE.MatchString(c.Agent.Recipe) {
 		add("agent.recipe", "must be a recipe name: 1 to 40 of a-z, 0-9 and '-', starting and ending with a letter or digit")
 	}
-	if c.Agent.MaxBudgetUSD < 0 {
-		add("agent.max_budget_usd", "must not be negative")
+	if badUSD(c.Agent.MaxBudgetUSD) {
+		add("agent.max_budget_usd", "must be a finite number, not negative")
 	}
 	ps = append(ps, validateAgentModels(c.Agent)...)
 	ps = append(ps, validateBudget(c.Budget)...)
@@ -355,6 +356,9 @@ func Check(c *Config, root string) []Problem {
 	}
 	return ps
 }
+
+// badUSD reports a dollar amount no limit may be: negative, NaN or infinite.
+func badUSD(v float64) bool { return v < 0 || math.IsNaN(v) || math.IsInf(v, 0) }
 
 // MaxOutputTokensLimit is the highest per-call output limit fugaro.yaml may
 // set: the most any current model produces.

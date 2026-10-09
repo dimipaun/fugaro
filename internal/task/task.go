@@ -60,6 +60,11 @@ type Spec struct {
 	// leaves the choice to the runner (agent.recipe at the ref, else default);
 	// nil on a follow-up is default.
 	Recipe *Recipe `json:"recipe,omitempty"`
+	// ProjectLayer is the project layer the launching CLI read
+	// (docs/design/layered-config.md §8): its exact text, which the runner
+	// resolves fugaro.yaml against. Nil: none. Runners before 0.6.0 refuse
+	// the field, so the CLI checks the job image first (layeredSince).
+	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 }
 
 // Recipe is the recipe the launching CLI resolved (docs/design/recipes.md §5).
@@ -68,6 +73,13 @@ type Recipe struct {
 	Source string `json:"source"`           // "repo" | "project" | "catalog"
 	SHA256 string `json:"sha256,omitempty"` // of YAML; empty for repo
 	YAML   string `json:"yaml,omitempty"`   // the exact text; empty for repo
+}
+
+// ProjectLayer is a project layer as the launching CLI read it.
+type ProjectLayer struct {
+	SHA256     string `json:"sha256"`               // of YAML
+	Generation int64  `json:"generation,omitempty"` // the object's, for display
+	YAML       string `json:"yaml"`                 // the exact text
 }
 
 // Overrides are the only config values a single task may change.
@@ -242,6 +254,17 @@ func (s *Spec) Validate() error {
 			}
 		default:
 			bad("task spec: recipe.source must be repo, project or catalog")
+		}
+	}
+	if pl := s.ProjectLayer; pl != nil {
+		switch {
+		case pl.YAML == "" || len(pl.YAML) > config.LayerMaxBytes:
+			bad("task spec: project_layer.yaml must hold the project layer, at most %d bytes", config.LayerMaxBytes)
+		case pl.SHA256 != config.LayerSum([]byte(pl.YAML)):
+			bad("task spec: project_layer.sha256 does not match project_layer.yaml")
+		}
+		if pl.Generation < 0 {
+			bad("task spec: project_layer.generation must not be negative")
 		}
 	}
 	return errors.Join(errs...)

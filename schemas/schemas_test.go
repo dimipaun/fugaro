@@ -693,6 +693,7 @@ func TestFugaroSchemaProfileKeys(t *testing.T) {
 		"version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  api: { profile: java-service }\n":  true,
 		"version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  api: { commands: { build: a } }\n": false,
 		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nprofile: Bad_Name\n":                              false,
+		"version: 1\nproject: acme\ngcp_project: acme-fugaro\nworkflows:\n  api: { profile: Bad_Name }\n":       false,
 	} {
 		if err := sch.Validate(yamlInstance(t, []byte(text))); (err == nil) != valid {
 			t.Errorf("%q: valid = %v, want %v (%v)", text, err == nil, valid, err)

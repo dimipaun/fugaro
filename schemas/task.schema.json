@@ -39,6 +39,17 @@
         "yaml": { "type": "string", "minLength": 1, "maxLength": 16384 }
       }
     },
+    "project_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sha256", "yaml"],
+      "description": "The project layer the launching CLI read (docs/design/layered-config.md §8); the runner resolves fugaro.yaml against it. Absent: none. Needs a 0.6.0 runner.",
+      "properties": {
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "generation": { "type": "integer", "minimum": 0 },
+        "yaml": { "type": "string", "minLength": 1, "maxLength": 65536 }
+      }
+    },
     "batch": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,62}$" }
   },
   "dependentRequired": {
