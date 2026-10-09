@@ -171,7 +171,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"a rerun each", prof("    commands: { rerun_failed: { command: x, each: y } }\n"), "profiles.p.commands.rerun_failed.each: must contain {id}"},
 		{"a cache key", prof("    cache: [ { paths: [a] } ]\n"), "profiles.p.cache[0].key: must list"},
 		{"cache paths", prof("    cache: [ { key: [a] } ]\n"), "profiles.p.cache[0].paths: must list"},
-		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must be at least 1"},
+		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must not be negative"},
 		{"a memory", prof("    resources: { memory: 16GB }\n"), "profiles.p.resources.memory: must look like"},
 		{"a timeout", prof("    timeouts: { stage: -1h }\n"), "profiles.p.timeouts.stage: must be positive"},
 		{"a rebuild", prof("    rebuild: { check: weekly }\n"), "profiles.p.rebuild.check: must be daily or off"},

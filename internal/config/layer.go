@@ -550,7 +550,7 @@ func validateProfile(p string, pr Profile) []Problem {
 		}
 	}
 	if pr.Resources.CPU < 0 {
-		add(p+".resources.cpu", "must be at least 1 (the compute backend checks its own limits)")
+		add(p+".resources.cpu", "must not be negative (0 leaves it unset, filled in from the workflow's own default later)")
 	}
 	if m := pr.Resources.Memory; m != "" && !memoryRE.MatchString(m) {
 		add(p+".resources.memory", "must look like 512Mi or 16Gi")
