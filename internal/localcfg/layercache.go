@@ -3,6 +3,7 @@ package localcfg
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 
@@ -45,6 +46,9 @@ func SaveLayerCache(getenv func(string) string, project string, e SharedCacheEnt
 	path, err := layerCachePath(getenv, project)
 	if err != nil {
 		return err
+	}
+	if len(e.YAML) > config.LayerMaxBytes {
+		return fmt.Errorf("project layer is %d bytes, over the %d byte cap", len(e.YAML), config.LayerMaxBytes)
 	}
 	data, err := json.Marshal(e)
 	if err != nil {
