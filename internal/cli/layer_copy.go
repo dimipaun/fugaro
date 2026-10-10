@@ -46,11 +46,15 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 // not yet on main: since the runs-bucket IAM hardening (bucket iam task 5,
 // merged) makes a launcher's write to fugaro/ or builds/ come back as
 // blobx.ErrForbidden, a publish must say so plainly rather than failing
-// with a generic remote error. Delete this once operator_write.go lands
-// with the identical function; its other call sites (recipes.go,
-// sharedcfg.go, imagecheck.go) still need wiring then.
+// with a generic remote error. isAccessDenied is also checked: it is the
+// embedded gocloud Bucket's own unclassified 403 (the oversized-object
+// delete above goes through it, not a blobx writer, since its generation
+// is not known), which gocloud maps to a NotFound-shaped error that only
+// isAccessDenied's googleapi.Error check still finds. Delete this once
+// operator_write.go lands with the identical function; its other call
+// sites (recipes.go, sharedcfg.go, imagecheck.go) still need wiring then.
 func operatorWriteErr(url, key string, err error) error {
-	if err == nil || !errors.Is(err, blobx.ErrForbidden) {
+	if err == nil || !(errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err)) {
 		return err
 	}
 	return userErr("nothing was published: writing %s in %s needs the operator role (launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator", key, url)

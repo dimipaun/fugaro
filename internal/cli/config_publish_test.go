@@ -152,6 +152,61 @@ func TestWriteLayerCopyRefusedAsLauncher(t *testing.T) {
 	}
 }
 
+// writeLayerCopy's nil-data path has no caller in this PR (fanOutLayer
+// always passes l.Raw), but is part of its declared interface (a future
+// retiring publish, and Task 14), so it is exercised directly here.
+func TestWriteLayerCopyRemovesAnExistingCopy(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, []byte(testProjectLayer))
+	if err := writeLayerCopy(ctx, b, appSlug, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.Read(ctx, key); !errors.Is(err, blobx.ErrNotExist) {
+		t.Fatalf("the copy was not removed: %v", err)
+	}
+}
+
+// A launcher's removal of a copy is refused the same way, and nothing is
+// deleted.
+func TestWriteLayerCopyRemoveRefusedAsLauncher(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, []byte(testProjectLayer))
+	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	err := writeLayerCopy(ctx, b, appSlug, nil)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+		t.Fatalf("err = %v", err)
+	}
+	if _, _, rerr := b.Read(ctx, key); rerr != nil {
+		t.Fatalf("the copy was removed: %v", rerr)
+	}
+}
+
+// Review Focus 4: the oversized-object branch of writeLayerCopy's removal
+// (the generation is not known, so it deletes through the embedded gocloud
+// Bucket, not a blobx writer) must still classify a 403 as needing the
+// operator role, not a generic error.
+func TestWriteLayerCopyRemoveOfOversizedIsRefusedAsLauncher(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
+	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	err := writeLayerCopy(ctx, b, appSlug, nil)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+		t.Fatalf("err = %v", err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || len(data) != config.LayerMaxBytes+1 {
+		t.Fatalf("the oversized copy was removed: data %d, err %v", len(data), rerr)
+	}
+}
+
 func TestPublishWarnsAboutOldImages(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
