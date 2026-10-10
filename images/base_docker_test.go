@@ -76,6 +76,50 @@ func TestInstallNodeUsesTheBakedKeyring(t *testing.T) {
 	}
 }
 
+// TestBaseImageHardening keeps D1's hardening on Debian 13: not root, no
+// passwordless sudo, the expected setuid and setgid sets (sudo and su are
+// still setuid here; every derived build strips them), ssh-keysign and
+// ssh-agent stripped, no capability, tini as PID 1.
+func TestBaseImageHardening(t *testing.T) {
+	img := testutil.BaseImageOf(t, "base")
+	if got := testutil.Docker(t, "run", "--rm", img, "id", "-u"); got != "1000" {
+		t.Errorf("uid %s", got)
+	}
+	if out, err := exec.Command("docker", "run", "--rm", img, "sudo", "-n", "true").CombinedOutput(); err == nil {
+		t.Errorf("passwordless sudo works: %s", out)
+	}
+	found := testutil.Docker(t, "run", "--rm", "--user", "0", img, "sh", "-c", "find / -xdev -perm /6000 -type f | sort")
+	want := "/usr/bin/chage\n/usr/bin/chfn\n/usr/bin/chsh\n/usr/bin/expiry\n/usr/bin/gpasswd\n/usr/bin/mount\n/usr/bin/newgrp\n/usr/bin/passwd\n/usr/bin/su\n/usr/bin/sudo\n/usr/bin/umount\n/usr/sbin/unix_chkpwd"
+	if found != want {
+		t.Errorf("setuid/setgid files:\n%s\nwant:\n%s", found, want)
+	}
+	if caps := testutil.Docker(t, "run", "--rm", "--user", "0", img, "sh", "-c", "getcap -r / 2>/dev/null || true"); caps != "" {
+		t.Errorf("file capabilities: %s", caps)
+	}
+	if pid1 := testutil.Docker(t, "run", "--rm", img, "sh", "-c", `tr "\000" " " </proc/1/cmdline`); !strings.HasPrefix(pid1, "/usr/bin/tini ") {
+		t.Errorf("PID 1 is %q", pid1)
+	}
+}
+
+// TestBaseImageTools checks that every tools.tsv row answers with no network
+// and an empty HOME, as the CI smoke runs it, and that mise and the harness
+// Node stay apart (no node on the bare base's PATH).
+func TestBaseImageTools(t *testing.T) {
+	img := testutil.BaseImageOf(t, "base")
+	cmd := exec.Command("docker", "run", "--rm", "-i", "--network", "none", img, "fugaro", "image", "selftest")
+	cmd.Stdin = strings.NewReader(`{"tools":"all","tools_only":true}`)
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), `"passed":true`) {
+		t.Fatalf("presence checks: %v\n%s", err, out)
+	}
+	if out, err := exec.Command("docker", "run", "--rm", img, "sh", "-c", "command -v node").CombinedOutput(); err == nil {
+		t.Errorf("a node is on PATH in the bare base: %s", out)
+	}
+	if got := testutil.Docker(t, "run", "--rm", img, "mise", "settings", "get", "trusted_config_paths"); !strings.Contains(got, "/work/repo") {
+		t.Errorf("mise does not trust /work/repo: %s", got)
+	}
+}
+
 // TestBaseImageManagedSettingsDir checks that /etc/claude-code, where the
 // runner writes Claude Code's managed settings, is an empty directory owned
 // by the agent's user (uid 1000), and that the runner's user can write there.

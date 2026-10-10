@@ -79,7 +79,9 @@ ENV HOME=/home/fugaro \
 # 1. The OS and the kit (design section 3), Debian's current packages. sudo
 # is installed with no rules: a derived build grants it to image.setup only
 # and strips its setuid bit (D1). libcap2-bin gives the selftest getcap.
-# ssh-keysign's setuid bit is stripped (host-based ssh auth is never used).
+# ssh-keysign's setuid bit is stripped (host-based ssh auth is never used),
+# and ssh-agent's setgid bit (group _ssh) too: it only affects the socket's
+# group, so the agent works without it.
 # policy-rc.d stops a package's service from starting during a build, and no
 # PostgreSQL package may create a root-owned cluster: fugaro-services makes
 # its own as fugaro. /etc/claude-code is empty and fugaro's: the runner writes
@@ -98,6 +100,7 @@ RUN apt-get update \
  && ln -s /usr/bin/batcat /usr/local/bin/bat \
  && sed -i 's/^# *en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen && locale-gen \
  && chmod u-s /usr/lib/openssh/ssh-keysign \
+ && chmod g-s /usr/bin/ssh-agent \
  && printf '#!/bin/sh\n# Containers start no services while a package installs.\nexit 101\n' > /usr/sbin/policy-rc.d \
  && chmod 0755 /usr/sbin/policy-rc.d \
  && mkdir -p /etc/postgresql-common \

@@ -47,37 +47,44 @@ func DockerPlatform(t *testing.T) string {
 	return "linux/" + Docker(t, "version", "--format", "{{.Server.Arch}}")
 }
 
-var (
-	baseOnce  sync.Once
-	baseImage string
-	baseErr   error
-)
+var baseImages sync.Map // kind -> *baseBuild
 
-// BaseImage returns the web-node base image built from this checkout with
-// images/build-base.sh, once per test binary, for the daemon's platform.
-// FUGARO_TEST_BASE_IMAGE names a prebuilt image to use instead. Derived
-// builds start FROM this local image, so the active docker builder must see
-// local images, as Docker's default builder does.
-func BaseImage(t *testing.T) string {
+type baseBuild struct {
+	once sync.Once
+	ref  string
+	err  error
+}
+
+// BaseImageOf returns the base image images/<kind> built from this checkout
+// with images/build-base.sh, once per test binary and kind, for the daemon's
+// platform. FUGARO_TEST_BASE_IMAGE names a prebuilt image to use instead.
+// Derived builds start FROM this local image, so the active docker builder
+// must see local images, as Docker's default builder does.
+func BaseImageOf(t *testing.T, kind string) string {
 	t.Helper()
 	RequireDocker(t)
 	if img := os.Getenv("FUGARO_TEST_BASE_IMAGE"); img != "" {
 		return img
 	}
 	platform := DockerPlatform(t)
-	baseOnce.Do(func() {
-		baseImage = "fugaro-web-node:test"
-		cmd := exec.Command("sh", filepath.Join(ModuleRoot(), "images", "build-base.sh"), "web-node", baseImage)
+	v, _ := baseImages.LoadOrStore(kind, &baseBuild{})
+	b := v.(*baseBuild)
+	b.once.Do(func() {
+		b.ref = "fugaro-" + kind + ":test"
+		cmd := exec.Command("sh", filepath.Join(ModuleRoot(), "images", "build-base.sh"), kind, b.ref)
 		cmd.Env = append(os.Environ(), "PLATFORM="+platform)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			baseErr = fmt.Errorf("building the base image: %v\n%s", err, Tail(string(out)))
+			b.err = fmt.Errorf("building %s: %v\n%s", kind, err, Tail(string(out)))
 		}
 	})
-	if baseErr != nil {
-		t.Fatal(baseErr)
+	if b.err != nil {
+		t.Fatal(b.err)
 	}
-	return baseImage
+	return b.ref
 }
+
+// BaseImage is BaseImageOf(t, "web-node").
+func BaseImage(t *testing.T) string { return BaseImageOf(t, "web-node") }
 
 // LinuxBinary cross-compiles the Go package pkg for the daemon's platform
 // into dir/name and returns its path.
