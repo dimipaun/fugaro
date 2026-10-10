@@ -12,12 +12,24 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
+// errNewerLayerCopy is writeLayerCopy's report that, between its own read
+// of the copy and its write, another publisher's fan-out already wrote a
+// copy here: the object in place is at least as current as data, so
+// nothing of this publish is lost. fanOutLayer reports this and stops
+// rather than treating it as a failed write of this publish's own.
+var errNewerLayerCopy = errors.New("a newer publish already wrote this repository's copy")
+
 // writeLayerCopy makes builds/<slug>/project-layer.yaml, the copy the daily
 // image check and Cloud Build read (decision L6), hold data, writing only
 // when it differs, except that an existing object over LayerMaxBytes
 // cannot be read to compare: it is always overwritten (ReadMax's old is
 // nil for it, so the equality check below never fires). nil data removes
-// a copy.
+// a copy. The write itself is conditioned on the copy this call read
+// (ReplaceIfType when it existed, Create when it did not), so a publisher
+// slower than a concurrent one can never overwrite that one's newer copy
+// with this call's older data (errNewerLayerCopy instead); the oversized
+// case stays an unconditional Put, as it always was, since there is
+// nothing here to condition it on.
 func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []byte) error {
 	key := config.LayerCopyKey(slug)
 	old, gen, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
@@ -67,9 +79,30 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 		layerCopyRemovalRace(ctx, b, key)
 		return operatorWriteErr(url, key, b.DeleteIf(ctx, key, sa.Generation, nil), layerCopyRemoveLead)
 	}
-	// Put, not WriteAll: only blobx's own writers classify a 403 as
-	// blobx.ErrForbidden (docs/design/bucket-iam.md §2.3).
-	return operatorWriteErr(url, key, b.Put(ctx, key, data, "application/yaml"), layerCopyWriteLead)
+	var werr error
+	switch {
+	case err == nil:
+		// The copy exists and was read whole: condition the write on
+		// exactly what this call read, so a concurrent writer's newer
+		// copy (gen on GCS, content on file:// and mem://, same as
+		// ReplaceIfType's own two drivers) is never clobbered.
+		layerCopyWriteRace(ctx, b, key)
+		_, werr = b.ReplaceIfType(ctx, key, data, "application/yaml", gen, old)
+	case errors.Is(err, blobx.ErrTooLarge):
+		// Unreadable: there is no content or generation to condition on,
+		// so this stays the unconditional overwrite the doc comment above
+		// already promises (Put, not WriteAll: only blobx's own writers
+		// classify a 403 as blobx.ErrForbidden, docs/design/bucket-iam.md
+		// §2.3).
+		werr = b.Put(ctx, key, data, "application/yaml")
+	default: // errors.Is(err, blobx.ErrNotExist)
+		layerCopyWriteRace(ctx, b, key)
+		_, werr = b.Create(ctx, key, data, "application/yaml")
+	}
+	if errors.Is(werr, blobx.ErrConflict) || errors.Is(werr, blobx.ErrExists) {
+		return errNewerLayerCopy
+	}
+	return operatorWriteErr(url, key, werr, layerCopyWriteLead)
 }
 
 // layerCopyWriteLead and layerCopyRemoveLead are writeLayerCopy's own
@@ -86,3 +119,10 @@ const (
 // oversized-removal read of the object's generation and its conditional
 // delete, mirroring config_publish.go's layerPublishRace.
 var layerCopyRemovalRace = func(ctx context.Context, b *blobx.Bucket, key string) {}
+
+// layerCopyWriteRace is a test seam between writeLayerCopy's read of the
+// copy (old, gen) and its conditional write, mirroring layerCopyRemovalRace
+// above and config_publish.go's layerPublishRace: a test hook can write a
+// different copy here to simulate a faster, concurrent publisher's fan-out
+// landing first.
+var layerCopyWriteRace = func(ctx context.Context, b *blobx.Bucket, key string) {}
