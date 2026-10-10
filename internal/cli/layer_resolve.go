@@ -207,9 +207,17 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		}
 		return unread(fmt.Errorf("the project layer's bucket (%s) is a fake endpoint in this installation, so it is not read for real", bucketURL))
 	}
-	octx, cancel := context.WithTimeout(ctx, layerBucketTimeout)
-	b, err := layerBucketOpener(octx, bucketURL)
-	cancel()
+	// Opened with ctx, never a derived, cancellable one: gocloud's gcsblob
+	// driver loads default credentials once per process (a sync.Once in
+	// lazyCredsOpener) using the FIRST open's context, and oauth2 keeps
+	// that context for every later token refresh. A context this function
+	// cancels on return would then make every later open and read in the
+	// whole process fail with "context canceled" once this call's timeout
+	// (or its caller's deadline) passes — proven with blobx.Open on a
+	// cancelled context, then a read. Opening itself does no network I/O
+	// (the credentials load is lazy), so there is nothing here for a
+	// timeout to bound; the read below is where a flaky network can hang.
+	b, err := layerBucketOpener(ctx, bucketURL)
 	if err != nil {
 		// isUnreachable is checked on the raw error, exactly as the read
 		// failure below does: only when the bucket cannot be reached at

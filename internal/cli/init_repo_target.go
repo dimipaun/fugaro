@@ -223,6 +223,53 @@ func defaultBranchRef(ctx context.Context, root string) string {
 	return ""
 }
 
+// defaultBranchResult is a checkout's default branch's fugaro.yaml, as
+// defaultBranchParse read and resolved it: ref is the remote-tracking ref
+// it came from ("" when there is none to read); read is whether the git
+// cat-file itself succeeded (data may still be read and empty, which is
+// not the same as no file there at all); cfg and problems are
+// parseCheckoutFugaroYAML's, over the selected project config.
+type defaultBranchResult struct {
+	ref      string
+	read     bool
+	data     []byte
+	cfg      *config.Config
+	problems []config.Problem
+}
+
+// defaultBranchParse is the checkout's default branch's fugaro.yaml
+// (origin/HEAD, main or master, as last fetched), read from git and
+// resolved over the selected project config, with no cloud call besides
+// reading the project layer (docs/design/layered-config.md). Memoized per
+// command invocation (checkoutParseCache.defaultBranch, cloud.go):
+// resolveRepoTarget and defaultBranchConfig (initsecrets.go) both read
+// this exact file, and fugaro init calls them up to three times in one run.
+func defaultBranchParse(ctx context.Context, root string) defaultBranchResult {
+	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
+	if cache != nil {
+		cache.mu.Lock()
+		r, ok := cache.defaultBranch[root]
+		cache.mu.Unlock()
+		if ok {
+			return r
+		}
+	}
+	var result defaultBranchResult
+	result.ref = defaultBranchRef(ctx, root)
+	if result.ref != "" {
+		if data, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+result.ref+":fugaro.yaml").Output(); err == nil {
+			result.read, result.data = true, data
+			result.cfg, result.problems = parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
+		}
+	}
+	if cache != nil {
+		cache.mu.Lock()
+		cache.defaultBranch[root] = result
+		cache.mu.Unlock()
+	}
+	return result
+}
+
 // resolveRepoTarget finds the checkout (the working directory's) and its
 // default branch's fugaro.yaml, with no cloud call besides reading the
 // project layer (docs/design/layered-config.md). It returns the target
@@ -242,24 +289,20 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	if !ok {
 		return skip("this checkout has no origin repository to onboard")
 	}
-	ref := defaultBranchRef(ctx, root)
-	if ref == "" {
+	db := defaultBranchParse(ctx, root)
+	if db.ref == "" {
 		return skip("no origin/HEAD, origin/main or origin/master ref here, so no default branch to read: run git fetch origin, then rerun fugaro init")
 	}
-	branch := strings.TrimPrefix(ref, "origin/")
+	branch := strings.TrimPrefix(db.ref, "origin/")
 	shown := pluginwire.Printable(branch)
-	var gerr bytes.Buffer
-	cat := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml")
-	cat.Stderr = &gerr
-	data, err := cat.Output()
-	if err != nil {
+	if !db.read {
 		return skip("no fugaro.yaml on the default branch (" + shown + "): /fugaro:setup writes it; merge its pull request, then rerun fugaro init")
 	}
-	cfg, problems := parseCheckoutFugaroYAML(ctx, data, selectedProjectConfig(ctx))
+	cfg := db.cfg
 	if cfg == nil {
 		why := "unreadable"
-		if len(problems) > 0 {
-			why = problems[0].String()
+		if len(db.problems) > 0 {
+			why = db.problems[0].String()
 		}
 		lf := initflow.Left{Stage: initflow.Repository, Kind: initflow.LeftCommand, Text: selfCommand() + " validate"}
 		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "fugaro.yaml on the default branch (" + shown + ") is not valid: " + pluginwire.Printable(oneLineCLI(why)), Left: &lf}
@@ -269,9 +312,9 @@ func resolveRepoTarget(ctx context.Context, project string) (*repoTarget, initfl
 	}
 	// The engine reads the working tree: it must be the default branch's
 	// file (line endings aside).
-	if wt, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(data)) {
+	if wt, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml")); err != nil || !bytes.Equal(normalEOL(wt), normalEOL(db.data)) {
 		lf := switchLeft(branch)
-		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
+		return nil, initflow.Status{State: initflow.NeedsYou, Detail: "this checkout's fugaro.yaml is not the default branch's (" + pluginwire.Printable(db.ref) + "): the repository is onboarded from the default branch, so run git fetch, switch to it and update it (git pull), then rerun fugaro init", Left: &lf}
 	}
 	return &repoTarget{root: root, origin: oi, repo: repo, branch: branch, cfg: cfg}, initflow.Status{}
 }
