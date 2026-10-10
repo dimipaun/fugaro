@@ -98,6 +98,10 @@ func TestImageProblems(t *testing.T) {
 		{"tools and dockerfile", webYAML + "    image: { tools: { node: \"24.19.0\" } }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"jdk on web-node", webYAML + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
 		{"node on java-services", jvm + "    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
+		// code review finding: the new default base (base: omitted) was the
+		// one base kind the JSON schema's allOf block never covered, so an
+		// editor using it showed no error for a document this refuses.
+		{"node with no base at all (the default base)", "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web:\n    commands: { build: go build ./..., test: go test ./... }\n    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
 		{"node minor only", webYAML + "    image: { node: \"24.19\" }\n", "workflows.web.image.node", "major version such as 24"},
 		{"node alias", webYAML + "    image: { node: lts }\n", "workflows.web.image.node", "major version such as 24"},
 		{"jdk on java-services", jvm + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},

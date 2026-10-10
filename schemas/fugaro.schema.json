@@ -160,15 +160,7 @@
       "not": { "required": ["image", "dockerfile"] },
       "allOf": [
         {
-          "if": { "required": ["base"], "properties": { "base": { "const": "go" } } },
-          "then": {
-            "properties": {
-              "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }
-            }
-          }
-        },
-        {
-          "if": { "required": ["base"], "properties": { "base": { "const": "java-services" } } },
+          "if": { "properties": { "base": { "enum": ["base", "go", "java-services"] } } },
           "then": {
             "properties": {
               "image": { "not": { "required": ["node"] }, "properties": { "skip_build_scripts": { "const": false } } }

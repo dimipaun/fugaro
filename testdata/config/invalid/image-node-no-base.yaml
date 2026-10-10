@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  default:
+    image: { node: "24" }
+    commands: { build: go build ./..., test: go test ./... }
