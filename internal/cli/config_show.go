@@ -102,6 +102,32 @@ func showValues(cfg *config.Config, res *config.Resolution, workflow string) ([]
 		out = append(out, configShowValue{Path: path, Value: v, Source: res.SourceOf(path)})
 	}
 	walk("", tree)
+	// project, gcp_project, profile and every workflow's profile are
+	// yaml:"...,omitempty" (config.go): the merge round-trip above leaves
+	// them out of tree entirely when they resolve to "", the same way the
+	// file itself would, so walk never visits their path. config show's
+	// whole purpose is to say where a value came from even when that
+	// value is empty (the hook a script uses to check a repository
+	// resolves as intended, above) — a path missing here would read as
+	// "doesn't exist" rather than "resolves to the default", so each one
+	// not already present gets a row naming its real source.
+	have := make(map[string]bool, len(out))
+	for _, v := range out {
+		have[v.Path] = true
+	}
+	ensure := func(path string) {
+		if !have[path] {
+			out = append(out, configShowValue{Path: path, Value: "", Source: res.SourceOf(path)})
+		}
+	}
+	ensure("project")
+	ensure("gcp_project")
+	ensure("profile")
+	for name := range cfg.Workflows {
+		if workflow == "" || name == workflow {
+			ensure("workflows." + name + ".profile")
+		}
+	}
 	slices.SortFunc(out, func(a, b configShowValue) int { return strings.Compare(a.Path, b.Path) })
 	return out, nil
 }

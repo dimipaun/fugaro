@@ -155,6 +155,54 @@ func TestFindLayerTimesOutLenientWithoutACache(t *testing.T) {
 	}
 }
 
+// Production risk: gocloud.dev's gcsblob driver builds the process's GCS
+// credentials exactly once, in a sync.Once keyed off the first real gs://
+// Open the whole process makes, and that call's context is captured
+// forever by the oauth2 TokenSource it builds (every later token refresh
+// reuses it, with no way to pass a fresher one). findLayer is often a
+// process's first gs:// touch (validate, doctor, init, secrets), so the
+// context it gives layerBucketOpener must never be one findLayer itself
+// cancels a moment later: giving up waiting on a slow open must leave
+// that real call's own context alone, letting it finish in the
+// background exactly as the caller gave it.
+//
+// Mutation (run, restore): change openLayerBucket in layer_resolve.go
+// back to `octx, cancel := context.WithTimeout(ctx, timeout); defer
+// cancel(); return layerBucketOpener(octx, url)`, and this test fails:
+// the fake opener observes its context canceled (and the returned error
+// is no longer a wrapped context.DeadlineExceeded either, since it is
+// now the fake's own error, not openLayerBucket's timeout path).
+func TestOpenLayerBucketNeverCancelsTheOpenersOwnContext(t *testing.T) {
+	old := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = old })
+	oldTimeout := layerBucketTimeout
+	layerBucketTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
+
+	canceled := make(chan error, 1)
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		select {
+		case <-ctx.Done():
+			canceled <- ctx.Err()
+		case <-time.After(300 * time.Millisecond):
+			canceled <- nil // the context outlived openLayerBucket's own timeout, unmolested
+		}
+		return nil, errors.New("fake opener: slow but not stuck")
+	}
+	start := time.Now()
+	_, err := openLayerBucket(context.Background(), "gs://fugaro-runs-proj-1234", layerBucketTimeout)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("openLayerBucket took %s; layerBucketTimeout did not bound the wait", d)
+	}
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want a wrapped context.DeadlineExceeded", err)
+	}
+	if got := <-canceled; got != nil {
+		t.Fatalf("the real opener's own context was canceled (%v) once openLayerBucket gave up waiting for it; "+
+			"every later real gs:// token refresh in this process would reuse that canceled context forever", got)
+	}
+}
+
 // Review Focus 4.
 func TestFindLayerRefusesAnInvalidObject(t *testing.T) {
 	f := newCloudFixture(t)
