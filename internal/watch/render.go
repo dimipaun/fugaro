@@ -3,6 +3,7 @@ package watch
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mattn/go-runewidth"
 
@@ -34,7 +35,8 @@ type RenderOptions struct {
 	Project       string
 	ASCII         bool // ! # . > instead of the warning sign, block characters and cursor
 	Color         bool // SGR colour; off for NO_COLOR, TERM=dumb and --no-color
-	Selected      string
+	Selected      Cursor
+	Expanded      map[Cursor]bool // a run's detail lines show when Expanded[cursor-of-that-run]
 	Collapsed     map[string]bool
 	Scroll        int
 	Follow        bool // bring the selected repository into view
@@ -256,15 +258,23 @@ func Render(v View, o RenderOptions) Frame {
 	// Body.
 	var body []string
 	selTop := 0
-	si := SelectedIndex(v, o.Selected)
+	// The selection falls back to the first block's header when it names no
+	// block in v (SelectedIndex's fallback, kept for a cursor the caller has
+	// not resolved yet: an empty Selected, or one from a stale view).
+	sel := o.Selected
+	if si := SelectedIndex(v, sel.Slug); si >= 0 && v.Repos[si].Slug != sel.Slug {
+		sel = Cursor{Slug: v.Repos[si].Slug}
+	}
 	if o.Help {
 		body = r.helpLines(o.Keys)
 	} else {
-		for i, b := range v.Repos {
-			if i == si {
-				selTop = len(body)
+		for _, b := range v.Repos {
+			before := len(body)
+			lines, selIdx := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug])
+			body = append(body, lines...)
+			if selIdx >= 0 {
+				selTop = before + selIdx
 			}
-			body = append(body, r.repo(tier, b, i == si, o.Collapsed[b.Slug])...)
 		}
 		if len(v.Repos) == 0 {
 			msg := "no repository has spend, runs or a kill switch today"
@@ -539,10 +549,14 @@ func flagColour(run RunRow) string {
 	return ""
 }
 
-// repo is a repository block: its header, its kill banner, its runs.
-func (r *rend) repo(tier int, b RepoBlock, selected, collapsed bool) []string {
+// repo is a repository block: its header, its kill banner, its runs, each
+// expanded run's detail. selIdx is the index into the returned lines of the
+// selected row (the header or a run's first line), or -1 when sel names no
+// row of this block.
+func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool) ([]string, int) {
+	headerSel := sel.Slug == b.Slug && sel.Run == ""
 	cur, nameC := " ", ""
-	if selected {
+	if headerSel {
 		cur, nameC = r.g.cur, cBold
 	}
 	var name seg
@@ -559,28 +573,44 @@ func (r *rend) repo(tier int, b RepoBlock, selected, collapsed bool) []string {
 		segs = append(segs, seg{fmt.Sprintf(" [%d runs hidden]", len(b.Runs)), cFaint})
 	}
 	out := []string{r.line(segs...)}
+	selIdx := -1
+	if headerSel {
+		selIdx = 0
+	}
 	if b.Kill.On {
 		out = append(out, r.line(seg{"  " + killText(b.Kill, r.g.warn, "KILLED"), cBanner}))
 	}
 	if collapsed {
-		return out
+		return out, selIdx
 	}
 	c := colsOf(tier, r.w, r.recW)
 	for _, run := range b.Runs {
-		out = append(out, r.runRows(tier, c, run)...)
+		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
+		idx := len(out)
+		out = append(out, r.runRows(tier, c, run, runSel)...)
+		if runSel {
+			selIdx = idx
+			if expanded[Cursor{Slug: b.Slug, Run: run.Run}] {
+				out = append(out, r.detail(run)...)
+			}
+		}
 	}
-	return out
+	return out, selIdx
 }
 
-func (r *rend) runRows(tier int, c runCols, run RunRow) []string {
+func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string {
 	rnd := "-"
 	if run.Round != "-" {
 		rnd = "r" + run.Round
 	}
 	fl := rowFlags(run, r.g.warn, tier)
 	fc := flagColour(run)
+	cur := " "
+	if selected {
+		cur = r.g.cur
+	}
 	if tier == 1 {
-		l1 := r.line(seg{"  " + r.fit(run.Run, 8) + " ", ""}, seg{run.Title, cBold})
+		l1 := r.line(seg{cur + " " + r.fit(run.Run, 8) + " ", ""}, seg{run.Title, cBold})
 		segs := []seg{{"    " + run.Stage + " " + rnd + " " + ageText(run), ""}}
 		if fl != "" {
 			segs = append(segs, seg{" " + fl, fc})
@@ -600,7 +630,7 @@ func (r *rend) runRows(tier int, c runCols, run RunRow) []string {
 		}
 	}
 	segs := []seg{
-		{"  " + r.fit(run.Run, c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
+		{cur + " " + r.fit(run.Run, c.run) + " ", ""}, {r.fit(run.Title, c.title) + " ", cBold},
 		{r.fit(run.Stage, c.stage) + " ", ""}, {r.fit(rnd, c.round) + " ", ""},
 		{r.fit(ageText(run), c.age) + " ", ""}, {r.fit(sp, c.spend) + " ", ""},
 		{r.fit(fl, c.flags), fc},
@@ -613,6 +643,51 @@ func (r *rend) runRows(tier int, c runCols, run RunRow) []string {
 		segs = append(segs, seg{" " + r.fit(run.Verify, c.verify) + " " + models, ""})
 	}
 	return []string{r.line(segs...)}
+}
+
+// detail is a selected run's expanded lines (design generic-tool §10.2):
+// stage and round, verify, the PR, spent (or notional) dollars, the stage
+// deadline, and the models with the recipe. The design also lists the last
+// action and the token counts; the registry has no action or tokens field
+// yet (that is plan Task 3, held out of this release), so those two lines
+// are left out rather than guessed.
+func (r *rend) detail(run RunRow) []string {
+	rnd := "-"
+	if run.Round != "-" {
+		rnd = "r" + run.Round
+	}
+	pr := "-"
+	if run.PRURL != "" {
+		pr = run.PRURL
+	}
+	sp := "-"
+	if run.HasSpent {
+		sp = USD(run.Spent)
+		if run.Notional {
+			sp += " NOTIONAL"
+		}
+	}
+	dl := "-"
+	if run.DeadlineAt > 0 {
+		dl = time.UnixMilli(run.DeadlineAt).UTC().Format("2006-01-02 15:04Z")
+	}
+	models := run.Models
+	if run.Recipe != "" {
+		models += " · " + run.Recipe
+	}
+	rows := [][2]string{
+		{"stage", run.Stage + " " + rnd},
+		{"verify", run.Verify},
+		{"PR", pr},
+		{"spent", sp},
+		{"deadline", dl},
+		{"models", models},
+	}
+	out := make([]string, 0, len(rows))
+	for _, kv := range rows {
+		out = append(out, r.line(seg{"    " + r.fit(kv[0], 9), cFaint}, seg{" " + kv[1], ""}))
+	}
+	return out
 }
 
 // recipeWidth is the width of " · <recipe>" for the widest recipe name among

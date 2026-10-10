@@ -155,13 +155,19 @@ func TestSelectionAndFold(t *testing.T) {
 	x.seed()
 	s := x.screen()
 	if !strings.Contains(s, "▸ acme/app") || !strings.Contains(s, "build the") {
-		t.Fatalf("first repository (most spend) selected:\n%s", s)
+		t.Fatalf("first repository selected:\n%s", s)
 	}
-	x.key("down")
-	if s = x.screen(); !strings.Contains(s, "▸ acme/lib") || strings.Contains(s, "▸ acme/app") {
-		t.Fatalf("down:\n%s", s)
+	x.key("down") // onto acme/app's one run
+	if s = x.screen(); !strings.Contains(s, "▸ r1") || strings.Contains(s, "▸ acme/app") {
+		t.Fatalf("down onto the run:\n%s", s)
 	}
+	x.key("down") // onto the acme/lib header
+	if s = x.screen(); !strings.Contains(s, "▸ acme/lib") {
+		t.Fatalf("down onto the next header:\n%s", s)
+	}
+	x.key("down") // acme/lib's one run
 	x.key("down") // at the end: stays
+	x.key("up")   // back onto the acme/lib header
 	x.key("space")
 	if s = x.screen(); strings.Contains(s, "fix the o") || !strings.Contains(s, "[1 runs hidden]") {
 		t.Fatalf("fold:\n%s", s)
@@ -177,9 +183,37 @@ func TestSelectionAndFold(t *testing.T) {
 	}
 }
 
+// Space on a run toggles only that run's detail, not the block's fold, and
+// does nothing while help covers the screen (design generic-tool §10.2).
+func TestSpaceTogglesSelectedRunOnly(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	x.key("down") // onto acme/app's one run, r1
+	r1 := Cursor{Slug: "acme%2Fapp", Run: "r1"}
+	if x.m.cur != r1 {
+		t.Fatalf("cursor = %+v, want %+v", x.m.cur, r1)
+	}
+	x.key("space")
+	if !x.m.expanded[r1] || x.m.collapsed["acme%2Fapp"] || len(x.m.expanded) != 1 {
+		t.Fatalf("expanded %v collapsed %v", x.m.expanded, x.m.collapsed)
+	}
+	x.m.help = true
+	x.key("space")
+	if !x.m.expanded[r1] {
+		t.Fatal("space with help open changed the view")
+	}
+	x.m.help = false
+	x.key("up") // back onto the acme/app header
+	x.key("space")
+	if !x.m.collapsed["acme%2Fapp"] {
+		t.Fatal("space on a header did not fold")
+	}
+}
+
 func TestKillRepoThroughTheModel(t *testing.T) {
 	x := newTM(t)
 	x.seed()
+	x.key("down") // acme/app's run
 	x.key("down") // acme/lib
 	x.key("k")
 	if s := x.screen(); !strings.Contains(s, "kill repository acme/lib? y/Enter = yes") {
@@ -264,15 +298,18 @@ func TestKillProjectNeedsNameThenReason(t *testing.T) {
 	}
 }
 
+// Blocks keep a stable order by name (design generic-tool G23): a spend
+// change while a prompt is open must not move acme/lib out from under the
+// cursor, the way a spend-ordered dashboard once would have.
 func TestSelectionSurvivesResortTUI(t *testing.T) {
 	x := newTM(t)
 	x.seed()
+	x.key("down") // acme/app's run
 	x.key("down") // acme/lib
 	x.key("k")
-	// While the prompt is open lib overtakes app in spend: it moves to the top.
 	x.upd(ev(SrcRepos, "/", `{"acme%2Fapp":{"spent":6000000},"acme%2Flib":{"spent":90000000}}`, x.now))
-	if x.m.view.Repos[0].Slug != "acme%2Flib" {
-		t.Fatal("expected a re-sort")
+	if x.m.view.Repos[0].Slug != "acme%2Fapp" || x.m.view.Repos[1].Slug != "acme%2Flib" {
+		t.Fatalf("blocks must keep their order by name, not re-sort by spend: %+v", x.m.view.Repos)
 	}
 	cmd := x.key("y")
 	cmd()

@@ -91,7 +91,7 @@ func fixture() View {
 func TestFrameWide(t *testing.T) {
 	golden(t, "wide_120", frame(fixture(), 120, 0))
 	golden(t, "wide_120_selected_docs_folded", frame(fixture(), 120, 0, func(o *RenderOptions) {
-		o.Selected, o.Collapsed = "acme__docs", map[string]bool{"acme__app": true}
+		o.Selected, o.Collapsed = Cursor{Slug: "acme__docs"}, map[string]bool{"acme__app": true}
 	}))
 }
 
@@ -202,7 +202,7 @@ func TestFrameManyAgentsScrolls(t *testing.T) {
 		t.Fatalf("end frame: scroll %d max %d lines %d", end.Scroll, end.MaxScroll, len(end.Lines))
 	}
 	// Following the selection scrolls back to the second repository's header.
-	sel := Render(v, RenderOptions{Width: 100, Height: 24, Project: "aurora", Selected: "acme__lib", Follow: true})
+	sel := Render(v, RenderOptions{Width: 100, Height: 24, Project: "aurora", Selected: Cursor{Slug: "acme__lib"}, Follow: true})
 	if !strings.Contains(sel.String(), "acme/lib") || len(sel.Lines) > 24 {
 		t.Fatalf("selected repository not shown:\n%s", sel)
 	}
@@ -363,6 +363,25 @@ func TestFrameRecipeMixedRowsAligned(t *testing.T) {
 	if ia, ib := utf8.RuneCountInString(a[:strings.Index(a, "unit")]), utf8.RuneCountInString(b[:strings.Index(b, "unit")]); ia != ib {
 		t.Fatalf("verify column at %d and %d:\n%s", ia, ib, out)
 	}
+}
+
+// An expanded run shows its detail: stage and round, verify, the PR, spent,
+// the deadline and the models with the recipe (design generic-tool §10.2).
+// The design also lists the last action and the token counts; the registry
+// has neither field yet (plan Task 3, held out of this release), so this
+// golden has no lines for them.
+func TestFrameSelectedRunDetail(t *testing.T) {
+	v := fixture()
+	v.Repos[0].Runs[0].PRURL = "https://github.com/acme/app/pull/42"
+	v.Repos[0].Runs[0].DeadlineAt = t0.Add(45 * time.Minute).UnixMilli()
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: v.Repos[0].Runs[0].Run}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	if !strings.Contains(got, "▸ r-aaaa11") {
+		t.Fatalf("selected run not marked:\n%s", got)
+	}
+	golden(t, "detail-120", got)
 }
 
 func TestFrameRecipeLongNameClipped(t *testing.T) {
