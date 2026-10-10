@@ -559,6 +559,37 @@ func TestRunMakesOneLayerBucketRead(t *testing.T) {
 	}
 }
 
+// Review fix [high]: cachedProjectLayer/cacheProjectLayer must scope a
+// cached resolution to the project config it was resolved under
+// (layerCacheScope), never share it across a different, or absent, one. A
+// cache entry from checkoutConfig's lenient resolution, made with no
+// project selected at all (selectedProjectConfig(ctx) == nil), must never
+// stand in for this launch's own strict resolution, which has a real,
+// different scope (env.lc, aurora/proj-1234): reusing it would have let a
+// stale or wrong answer (and, with a nil lc, L13's offline exception a
+// correctly-scoped strict call would never trigger) slip into a launch.
+func TestEmbedProjectLayerIgnoresACacheEntryFromADifferentProjectSelection(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	root := layerCheckout(t, f, minimalAnchored)
+	env := fileEnv(t, f) // this launch's real scope: aurora/proj-1234
+
+	ctx := withCheckoutParseCache(context.Background())
+	fake := foundLayer{Layer: &config.ProjectLayer{
+		SHA256: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef", Project: "aurora", GCPProject: "proj-1234"}}
+	cacheProjectLayer(ctx, root, nil, fake) // scoped to "no project selected", not env.lc
+
+	spec := &task.Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: config.ImplicitWorkflow, Task: "x"}
+	var warn bytes.Buffer
+	if _, err := embedProjectLayer(ctx, env, spec, &warn); err != nil {
+		t.Fatal(err)
+	}
+	if spec.ProjectLayer == nil || spec.ProjectLayer.SHA256 != config.LayerSum([]byte(testProjectLayer)) {
+		t.Fatalf("spec.ProjectLayer = %+v, want the real published layer, resolved fresh under env.lc's own scope", spec.ProjectLayer)
+	}
+}
+
 func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)

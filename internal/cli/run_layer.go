@@ -72,13 +72,14 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 	// this same root's project layer once, through checkoutConfig
 	// (newSpec's repoSlug calls it to tell the git provider): reuse that
 	// bucket read instead of repeating it here. cachedProjectLayer only
-	// ever holds a determinate answer (cacheProjectLayer drops an Unknown
-	// one), so reusing it here is exactly as safe as resolving fresh:
-	// strict and lenient callers only ever disagree on a degraded (Unknown)
-	// outcome, never on a successful or a definitively absent one.
+	// ever returns a determinate answer (cacheProjectLayer drops an
+	// Unknown one) resolved under env.lc's own exact scope (layerCacheScope:
+	// its name, GCP project and bucket URL), never one resolved under a
+	// different or absent project selection, so reusing it here is exactly
+	// as safe as resolving fresh with env.lc.
 	fl, ok := foundLayer{}, false
 	if root != "" {
-		fl, ok = cachedProjectLayer(ctx, root)
+		fl, ok = cachedProjectLayer(ctx, root, env.lc)
 	}
 	if !ok {
 		var err error
@@ -92,7 +93,7 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 			return data, err
 		}
 		if root != "" {
-			cacheProjectLayer(ctx, root, fl)
+			cacheProjectLayer(ctx, root, env.lc, fl)
 		}
 	}
 	l := fl.Layer
