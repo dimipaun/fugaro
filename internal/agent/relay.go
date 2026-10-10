@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"path/filepath"
 	"strings"
 
 	"github.com/dimipaun/fugaro/internal/logtail"
@@ -12,6 +13,10 @@ import (
 const (
 	relayTextBytes = 2000
 	relayToolBytes = 300
+	// actionBytes matches design generic-tool §10.2's 120-character bound on
+	// the registry's action field (aligned here: the code used to clip at
+	// 160 bytes, which the design text never matched).
+	actionBytes = 120
 	// relayMaxLine bounds the relay's own buffer. A longer stream-json
 	// line (in practice a successful tool result carrying a large file,
 	// which the relay would not log anyway) is dropped whole; it is still
@@ -34,9 +39,21 @@ type Relay struct {
 	buf     []byte
 	discard bool // dropping the rest of an oversized line
 
-	// OnTool, when set, is called with each tool call's redacted, clipped
-	// summary (design generic-tool §10.2): the registry's last action.
+	// OnTool, when set, is called with each tool call's safe summary (design
+	// generic-tool §10.2, tightened by the owner's 2026-10 ruling): the
+	// registry's last action. Unlike the log line Write produces, this is
+	// never the raw command or a full external path: both can carry a
+	// secret the run's redactor never saw (one the agent read from a
+	// repository file, an env file, or typed into the task text), and
+	// /agents is readable by every launcher, a much wider audience than the
+	// log view. See actionSummary.
 	OnTool func(summary string)
+
+	// Dir is the job's repository root, used to turn a file tool's path
+	// into one relative to it (or its basename alone, outside Dir or when
+	// Dir is unset). Never required for Write to work; only actionSummary
+	// reads it.
+	Dir string
 }
 
 // NewRelay returns a Relay logging to log, redacting secrets.
@@ -126,7 +143,11 @@ func (r *Relay) line(raw []byte) {
 				s := r.redact("tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input))
 				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
 				if r.OnTool != nil {
-					r.OnTool(logtail.Clip(s, 160))
+					action := "tool " + r.redact(c.Name)
+					if sum := r.actionSummary(c.Name, c.Input); sum != "" {
+						action += ": " + sum
+					}
+					r.OnTool(logtail.Clip(r.redact(action), actionBytes))
 				}
 			}
 		}
@@ -188,6 +209,150 @@ func (r *Relay) contentText(raw json.RawMessage) string {
 			}
 		}
 		return strings.Join(parts, "\n")
+	}
+	return ""
+}
+
+// bashDispatchers are argv0 names known to take a bareword subcommand as
+// their very next word (go test, npm run, git commit, bash -c): the only
+// case actionSummary reveals a second word for Bash at all. Anything else
+// (echo, curl, cat, export, sudo, env, ...) reports argv0 alone, because a
+// plain command's next word is an argument, not a subcommand, and an
+// argument can be anything, secrets included.
+var bashDispatchers = map[string]bool{
+	"go": true, "npm": true, "npx": true, "yarn": true, "pnpm": true,
+	"git": true, "docker": true, "docker-compose": true, "kubectl": true,
+	"cargo": true, "pip": true, "pip3": true, "gem": true, "bundle": true,
+	"make": true, "mvn": true, "gradle": true, "gradlew": true,
+	"python": true, "python3": true, "node": true, "deno": true,
+	"rustup": true, "brew": true, "apt": true, "apt-get": true,
+	"systemctl": true, "terraform": true, "gcloud": true, "aws": true,
+	"az": true, "bash": true, "sh": true, "zsh": true, "fugaro": true,
+}
+
+// isAssignment reports whether s is a shell-style VAR=value word, the shape
+// of a leading env prefix (FOO=bar go test) or an export.
+func isAssignment(s string) bool {
+	name, _, found := strings.Cut(s, "=")
+	if !found || name == "" {
+		return false
+	}
+	for i, r := range name {
+		switch {
+		case r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z':
+		case i > 0 && r >= '0' && r <= '9':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// isBareword reports whether s is short enough, and plain enough, to be a
+// subcommand verb rather than a path, a URL or an arbitrary value: letters,
+// digits, underscore and hyphen only (one leading hyphen allowed, for a
+// short flag like bash's -c), at most 24 characters.
+func isBareword(s string) bool {
+	if s == "" || len(s) > 24 {
+		return false
+	}
+	i := 0
+	if s[0] == '-' {
+		i = 1
+	}
+	if i == len(s) {
+		return false
+	}
+	for ; i < len(s); i++ {
+		c := s[i]
+		if !(c == '_' || c == '-' || c >= '0' && c <= '9' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+// safeBashSummary is argv0 and, only when argv0 is a known dispatcher and
+// the next word reads as a subcommand, that word too: never anything after
+// it. A run of leading VAR=value words (env, or a bare prefix before the
+// real command) is skipped to find argv0. Everything this does not
+// recognise as safe is simply left out, never guessed at: an unsafe guess
+// here is a secret on a dashboard every launcher can read.
+func safeBashSummary(command string) string {
+	fields := strings.Fields(command)
+	i := 0
+	for i < len(fields) && isAssignment(fields[i]) {
+		i++
+	}
+	if i >= len(fields) {
+		return ""
+	}
+	argv0 := fields[i]
+	if i+1 < len(fields) && bashDispatchers[argv0] && isBareword(fields[i+1]) {
+		return argv0 + " " + fields[i+1]
+	}
+	return argv0
+}
+
+// fileToolField is the input field actionSummary reads as a path, by tool
+// name: Read, Edit and Write name the file directly; Grep and Glob name the
+// directory they search (their pattern is user-supplied search text, not a
+// path, and is never reported).
+var fileToolField = map[string]string{
+	"Read": "file_path", "Edit": "file_path", "Write": "file_path",
+	"Grep": "path", "Glob": "path",
+}
+
+// safeFilePath is p relative to r.Dir (the repository root), or just its
+// base name when p resolves outside r.Dir or r.Dir is unset: a path outside
+// the repository can itself be the secret (a credentials file's directory
+// name, a home directory holding a username), where a path inside it is
+// already the repository's own, known structure.
+func (r *Relay) safeFilePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	if r.Dir != "" {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(r.Dir, abs)
+		}
+		if rel, err := filepath.Rel(r.Dir, abs); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return rel
+		}
+	}
+	return filepath.Base(p)
+}
+
+// actionSummary is the registry's action text for a tool call: the owner's
+// 2026-10 tightening of G24, after a review showed the redacted command
+// line alone still published anything the run's redactor didn't know to
+// look for (a secret read from a repository file or .env, a metadata-server
+// token, a URL's embedded credentials) to every launcher, not only to
+// Cloud Logging's narrower audience. It never repeats raw input: a known
+// shape (a Bash dispatcher's subcommand, a file tool's path) or the tool
+// name alone.
+func (r *Relay) actionSummary(name string, input json.RawMessage) string {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(input, &m) != nil {
+		return ""
+	}
+	field := func(k string) string {
+		var s string
+		if raw, ok := m[k]; ok {
+			_ = json.Unmarshal(raw, &s)
+		}
+		return s
+	}
+	switch {
+	case name == "Bash":
+		if s := safeBashSummary(field("command")); s != "" {
+			return s
+		}
+	case fileToolField[name] != "":
+		if p := field(fileToolField[name]); p != "" {
+			return r.safeFilePath(p)
+		}
 	}
 	return ""
 }

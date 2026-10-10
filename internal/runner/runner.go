@@ -1310,6 +1310,7 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	// LineWriter does: a stalled log stalls the agent rather than dropping
 	// events or buffering without bound.
 	relay := agent.NewRelay(log, r.secretList())
+	relay.Dir = r.d.WorkDir
 	relay.OnTool = func(s string) {
 		r.mu.Lock()
 		sess := r.sess
