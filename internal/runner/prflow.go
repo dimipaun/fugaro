@@ -67,6 +67,7 @@ func (r *run) notePR(ctx context.Context, pr gitprov.PR) {
 	}
 	r.rec.PR = &runstore.PRRef{Number: pr.Number, URL: pr.URL, Desc: r.pr.desc}
 	r.save(ctx)
+	r.noteRegistryPRURL(r.rec.PR.URL)
 }
 
 // noteStatusWritten records when the status section was last written, in
@@ -128,6 +129,7 @@ func (r *run) afterStage(ctx context.Context, stage string) {
 			r.d.Log.Error("the pull request flow panicked at a stage boundary; carrying on", "stage", stage, "panic", fmt.Sprint(p))
 		}
 	}()
+	r.noteVerify()
 	if ctx.Err() != nil || r.pr.gone {
 		return
 	}
