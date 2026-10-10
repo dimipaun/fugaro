@@ -6,11 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/initflow"
@@ -352,6 +354,70 @@ func TestRepoStageRunsTheEngine(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) != 0 {
 		t.Errorf("a refused repository was applied: %q", r.calls(t))
+	}
+}
+
+// Review fix (1), security (decision L16): the init repo engine's own build
+// offer (repoEngine, step 6) must use resolveForBuild's strictly-resolved
+// config, not the earlier, lenient one it read at step 1 — pinning the
+// actual call site inside repoEngine, not just the resolveForBuild helper
+// (TestResolveForBuildRefusesWhenTheLayerBucketIsUnreadable, image_layer_test.go,
+// only proves the helper itself refuses; swapping the argument back at the
+// call site left that test, and the whole focused set, green).
+//
+// layerBucketOpener is patched to fail (an unreachable bucket), as
+// run_layer_test.go's TestRunRefusesWhenTheLayerBucketIsUnreadable does for
+// fugaro run: with isolateCache leaving nothing cached, a strict reader
+// refuses outright, and a lenient one resolves as "no layer" (no error).
+// The repository and its first build are onboarded far enough (terraform
+// applies, a build would otherwise be needed and offered) that this is a
+// real refusal of a real build, not an early, unrelated failure.
+//
+// Mutation (run, restore): change repoEngine's `r.offerBuilds(ctx, lc,
+// buildCfg, spec, names)` call to pass `cfg` (the step 1 lenient read)
+// instead of `buildCfg`, and this test fails: the build is offered (and,
+// with --yes and no terminal here, left pending) instead of being refused,
+// and would have gone out with no layer.
+func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:dev-abc}\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
+	r.save(t)
+	isolateCache(t)
+	// Anchored (gcp_project), on bitbucket (no GitHub App to pre-check), with
+	// one workflow that needs no build record to be offered a first build.
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nagent: { auth: oauth }\nworkflows:\n" +
+		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	e := rigEngine(t, r, &initOptions{yes: true})
+	fb := useFakeBuilder(t)
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(context.Context, string) (*blobx.Bucket, error) {
+		return nil, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	err = e.r.repoEngine(t.Context(), ".", "", true)
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "no route to host") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if len(fb.specs) != 0 {
+		t.Fatalf("%d build(s) submitted despite an unreadable, uncached project layer bucket", len(fb.specs))
+	}
+	if len(r.ran(t, "apply")) == 0 {
+		t.Fatal("fixture: the repository's own terraform apply never ran, so this test never reached the build-offer step it means to pin")
 	}
 }
 
