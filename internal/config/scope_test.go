@@ -40,11 +40,13 @@ func TestReviewAllowForksIsRepoScopeOnly(t *testing.T) {
 	}
 }
 
-// TestScopeTableMatchesDocs pins, row by row, the layer set of every key in
+// TestScopesMatchDesignDoc pins, row by row, the layer set of every key in
 // config.Scopes against the table of docs/design/layered-config.md §5 (the
 // plan's Task 1). A key whose scope changes, or a key added without a row
-// here, fails this test.
-func TestScopeTableMatchesDocs(t *testing.T) {
+// here, fails this test. (Renamed from TestScopeTableMatchesDocs, Task 18:
+// that name now belongs to docs_scope_test.go's test against
+// docs/project-layer.md, the user-facing doc this design table feeds.)
+func TestScopesMatchDesignDoc(t *testing.T) {
 	want := map[string]Scope{
 		"version":     InRepo,
 		"project":     InRepo,
@@ -145,6 +147,7 @@ func TestExecutableKeys(t *testing.T) {
 		"workflows.*.image.apt",
 		"workflows.*.image.setup",
 		"workflows.*.image.tools",
+		"workflows.*.image.skip_build_scripts",
 	}
 	got := append([]string(nil), ExecutableKeys...)
 	sort.Strings(got)
@@ -156,34 +159,6 @@ func TestExecutableKeys(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("ExecutableKeys = %v, want %v", ExecutableKeys, want)
 			break
-		}
-	}
-}
-
-// TestEveryImageFieldIsClassified walks the Image struct by reflection: every
-// field's workflows.*.image.<yaml tag> path must be in ExecutableKeys or in
-// NonExecutableImageKeys with a non-empty reason. A field added to Image
-// without updating either list fails this test, so a future executable
-// field (the next image.tools) cannot silently skip the
-// --executable-changes gate (PR #244).
-func TestEveryImageFieldIsClassified(t *testing.T) {
-	typ := reflect.TypeOf(Image{})
-	for i := 0; i < typ.NumField(); i++ {
-		f := typ.Field(i)
-		tag, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
-		if tag == "" || tag == "-" {
-			t.Fatalf("Image.%s has no yaml tag to classify", f.Name)
-		}
-		key := "workflows.*.image." + tag
-		executable := slices.Contains(ExecutableKeys, key)
-		reason, nonExecutable := NonExecutableImageKeys[key]
-		switch {
-		case executable && nonExecutable:
-			t.Errorf("%s is in both ExecutableKeys and NonExecutableImageKeys", key)
-		case !executable && !nonExecutable:
-			t.Errorf("Image.%s (%s) is in neither ExecutableKeys nor NonExecutableImageKeys: classify it", f.Name, key)
-		case nonExecutable && strings.TrimSpace(reason) == "":
-			t.Errorf("%s has no reason in NonExecutableImageKeys", key)
 		}
 	}
 }

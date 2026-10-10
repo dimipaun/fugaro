@@ -1,0 +1,8 @@
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  app:
+    image:
+      tools: { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "24.19.0" }
+    commands: { build: npm run build, test: npm test }

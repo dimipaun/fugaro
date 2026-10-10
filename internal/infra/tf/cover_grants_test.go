@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 )
 
 func grantRoleString(key string) string {
@@ -14,6 +16,22 @@ func grantRoleString(key string) string {
 		return "projects/proj-1/roles/" + id
 	}
 	return key
+}
+
+// bucketCondFor is the condition a bucket iam_member grant's cell needs so
+// that bucketCondition (added alongside grantRules' objectUser/objectViewer
+// toPeople cells) never flips a cell these matrices test only at the table
+// level: the launchers' exact condition for a person, a Fugaro prefix
+// condition for an account. Every other role or type needs none, since
+// bucketCondition does not check them.
+func bucketCondFor(typ, role string, person bool) []any {
+	if typ != "google_storage_bucket_iam_member" || role != "roles/storage.objectUser" {
+		return nil
+	}
+	if person {
+		return []any{map[string]any{"title": gcp.LauncherBucketConditionTitle, "expression": gcp.LauncherBucketCondition("fugaro-runs-proj-1"), "description": nil}}
+	}
+	return []any{map[string]any{"title": "fugaro-x", "expression": gcp.BucketCondition("fugaro-runs-proj-1", gcp.JobBucketPrefixes, "acme-0123456789abcdef"), "description": nil}}
 }
 
 // Every (type, role, kind of principal) triple is covered exactly when the
@@ -37,7 +55,11 @@ func TestGrantRulesMatrix(t *testing.T) {
 			role := grantRoleString(key)
 			for kind, member := range map[who]string{toPeople: person, toAccounts: account} {
 				want := row[key]&kind != 0
-				ch := rc(typ, map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
+				after := map[string]any{"member": member, "role": role, "bucket": "fugaro-runs-proj-1"}
+				if cond := bucketCondFor(typ, role, kind == toPeople); cond != nil {
+					after["condition"] = cond
+				}
+				ch := rc(typ, after, map[string]any{}, "create")
 				got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 				if (len(got) == 0) != want {
 					t.Errorf("%s: %s to %s: NotCovered = %q, covered want %v", typ, role, member, got, want)
@@ -46,7 +68,11 @@ func TestGrantRulesMatrix(t *testing.T) {
 			// A member computed from a service account created in the same
 			// module is an account.
 			sa := rc("google_service_account", map[string]any{}, map[string]any{}, "create")
-			ch := rc(typ, map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}, map[string]any{"member": true}, "create")
+			after := map[string]any{"role": role, "bucket": "fugaro-runs-proj-1"}
+			if cond := bucketCondFor(typ, role, false); cond != nil {
+				after["condition"] = cond
+			}
+			ch := rc(typ, after, map[string]any{"member": true}, "create")
 			got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{sa, ch}}, nil)
 			if want := row[key]&toAccounts != 0; (len(got) == 0) != want {
 				t.Errorf("%s: %s to a computed account: NotCovered = %q, covered want %v", typ, role, got, want)
@@ -244,6 +270,8 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{sacct, "roles/iam.serviceAccountUser", account, true},
 		{bkt, "roles/storage.objectAdmin", person, true},
 		{bkt, "roles/storage.objectUser", account, true},
+		{bkt, "roles/storage.objectUser", person, true},
+		{bkt, "roles/storage.objectViewer", person, true},
 		{repo, "projects/proj-1/roles/fugaroTagMover", account, true},
 		{secret, "roles/secretmanager.secretVersionAdder", person, true},
 		{secret, "roles/secretmanager.secretAccessor", account, true},
@@ -252,7 +280,6 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{logview, "roles/logging.viewAccessor", person, true},
 		// Roles on the wrong type, or to the wrong kind of principal.
 		{bkt, "roles/storage.objectAdmin", account, false},
-		{bkt, "roles/storage.objectUser", person, false},
 		{project, "roles/storage.objectAdmin", person, false},
 		{project, "roles/secretmanager.secretAccessor", account, false},
 		{project, "roles/iam.serviceAccountUser", person, false},
@@ -272,7 +299,15 @@ func TestGrantRulesPinnedCells(t *testing.T) {
 		{logview, "roles/logging.viewAccessor", account, false},
 		{logview, "roles/logging.logWriter", account, false},
 	} {
-		ch := rc(c.typ, map[string]any{"member": c.member, "role": c.role, "bucket": "fugaro-runs-proj-1"}, map[string]any{}, "create")
+		// These cells test checkGrant alone (the table), not the condition,
+		// which TestCoverBucketConditions covers: a bucket objectUser cell
+		// carries the condition its kind of principal needs, so bucketCondition
+		// never flips it to a problem the table did not predict.
+		after := map[string]any{"member": c.member, "role": c.role, "bucket": "fugaro-runs-proj-1"}
+		if cond := bucketCondFor(c.typ, c.role, c.member == person); cond != nil {
+			after["condition"] = cond
+		}
+		ch := rc(c.typ, after, map[string]any{}, "create")
 		got := testCover.NotCovered(&Plan{ResourceChanges: []ResourceChange{ch}}, nil)
 		if (len(got) == 0) != c.covered {
 			t.Errorf("%s: %s to %s: NotCovered = %q, covered want %v", c.typ, c.role, c.member, got, c.covered)

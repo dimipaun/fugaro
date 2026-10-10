@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -40,6 +43,10 @@ func newTM(t *testing.T) *tm {
 		Project: "aurora", Width: 100, Height: 30, NoColor: true, Now: func() time.Time { return x.now },
 		Exec: func(_ context.Context, r Request) Outcome { x.execs = append(x.execs, r); return x.out(r) },
 		Stop: func() { x.stops++ },
+		// A temp file: the real default (AckPath's) must never be touched by a
+		// test, and every test gets its own, so an ack in one never leaks into
+		// another.
+		AckPath: filepath.Join(t.TempDir(), "watch-acks.json"),
 	})
 	return x
 }
@@ -155,13 +162,19 @@ func TestSelectionAndFold(t *testing.T) {
 	x.seed()
 	s := x.screen()
 	if !strings.Contains(s, "▸ acme/app") || !strings.Contains(s, "build the") {
-		t.Fatalf("first repository (most spend) selected:\n%s", s)
+		t.Fatalf("first repository selected:\n%s", s)
 	}
-	x.key("down")
-	if s = x.screen(); !strings.Contains(s, "▸ acme/lib") || strings.Contains(s, "▸ acme/app") {
-		t.Fatalf("down:\n%s", s)
+	x.key("down") // onto acme/app's one run
+	if s = x.screen(); !strings.Contains(s, "▸ r1") || strings.Contains(s, "▸ acme/app") {
+		t.Fatalf("down onto the run:\n%s", s)
 	}
+	x.key("down") // onto the acme/lib header
+	if s = x.screen(); !strings.Contains(s, "▸ acme/lib") {
+		t.Fatalf("down onto the next header:\n%s", s)
+	}
+	x.key("down") // acme/lib's one run
 	x.key("down") // at the end: stays
+	x.key("up")   // back onto the acme/lib header
 	x.key("space")
 	if s = x.screen(); strings.Contains(s, "fix the o") || !strings.Contains(s, "[1 runs hidden]") {
 		t.Fatalf("fold:\n%s", s)
@@ -177,9 +190,148 @@ func TestSelectionAndFold(t *testing.T) {
 	}
 }
 
+// Space on a run toggles only that run's detail, not the block's fold, and
+// does nothing while help covers the screen (design generic-tool §10.2).
+func TestSpaceTogglesSelectedRunOnly(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	x.key("down") // onto acme/app's one run, r1
+	r1 := Cursor{Slug: "acme%2Fapp", Run: "r1"}
+	if x.m.cur != r1 {
+		t.Fatalf("cursor = %+v, want %+v", x.m.cur, r1)
+	}
+	x.key("space")
+	if !x.m.expanded[r1] || x.m.collapsed["acme%2Fapp"] || len(x.m.expanded) != 1 {
+		t.Fatalf("expanded %v collapsed %v", x.m.expanded, x.m.collapsed)
+	}
+	x.m.help = true
+	x.key("space")
+	if !x.m.expanded[r1] {
+		t.Fatal("space with help open changed the view")
+	}
+	x.m.help = false
+	x.key("up") // back onto the acme/app header
+	x.key("space")
+	if !x.m.collapsed["acme%2Fapp"] {
+		t.Fatal("space on a header did not fold")
+	}
+}
+
+// Space is a toggle: pressing it twice on the same row, run or header,
+// returns to where it started.
+func TestSpaceTwicePerRowTogglesBack(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	x.key("down") // onto acme/app's one run, r1
+	r1 := Cursor{Slug: "acme%2Fapp", Run: "r1"}
+	x.key("space")
+	if !x.m.expanded[r1] {
+		t.Fatal("first space did not expand the run")
+	}
+	x.key("space")
+	if x.m.expanded[r1] {
+		t.Fatal("second space on the same run must collapse its detail again")
+	}
+	x.key("up") // the acme/app header
+	x.key("space")
+	if !x.m.collapsed["acme%2Fapp"] {
+		t.Fatal("first space did not fold the header")
+	}
+	x.key("space")
+	if x.m.collapsed["acme%2Fapp"] {
+		t.Fatal("second space on the same header must unfold it again")
+	}
+}
+
+// move and space both set follow, so the frame scrolls to keep the cursor
+// (and an expanded run's detail) in view even over a small viewport
+// (render.go's viewport "keep the selection visible" logic, exercised here
+// end to end through the model).
+func TestMoveAndSpaceFollowScroll(t *testing.T) {
+	x := newTM(t)
+	x.m.h, x.m.o.Height = 16, 16
+	var runs []string
+	for i := 0; i < 20; i++ {
+		runs = append(runs, fmt.Sprintf("%q:%s", fmt.Sprintf("r%02d", i), agent("acme/app", fmt.Sprintf("job %d", i), "")))
+	}
+	at := x.now
+	x.upd(
+		Update{Kind: UpdDay, Day: budget.Day(at), Now: at},
+		ev(SrcConfig, "/", `{}`, at), ev(SrcGlobal, "/", `{}`, at), ev(SrcRepos, "/", `{}`, at),
+		ev(SrcAgents, "/", `{"acme%2Fapp":{`+strings.Join(runs, ",")+`}}`, at),
+	)
+	for i := 0; i < 25; i++ { // past the end: move clamps, follow keeps scrolling
+		x.key("down")
+	}
+	last := Cursor{Slug: "acme%2Fapp", Run: "r19"}
+	if x.m.cur != last {
+		t.Fatalf("cur = %+v, want the last run", x.m.cur)
+	}
+	if !strings.Contains(x.screen(), "▸ r19") {
+		t.Fatalf("move did not scroll to follow the cursor:\n%s", x.screen())
+	}
+	x.key("space") // expand the last run, near the bottom of a tall list
+	if !strings.Contains(x.screen(), "deadline") {
+		t.Fatalf("space did not scroll to keep the expanded detail visible:\n%s", x.screen())
+	}
+}
+
+// expanded is keyed by Cursor, independent of the cursor's own position
+// (design: "expanded is the truth"); when a run disappears, its entry must
+// be pruned, not kept forever or resurrected if a later run reuses the id.
+// The cursor itself must fall back cleanly to the header that remains (one
+// row, in this repository, after the run goes) rather than get stuck on a
+// stale Cursor.
+func TestExpandedPrunedWhenRunVanishes(t *testing.T) {
+	x := newTM(t)
+	x.seed()      // acme/app has run r1; acme/lib has run r2
+	x.key("down") // acme/app's run, r1
+	r1 := Cursor{Slug: "acme%2Fapp", Run: "r1"}
+	if x.m.cur != r1 {
+		t.Fatalf("cur = %+v, want %+v", x.m.cur, r1)
+	}
+	x.key("space")
+	if !x.m.expanded[r1] {
+		t.Fatal("not expanded")
+	}
+	// r1 finishes: the agents tree no longer lists it, but acme/app still
+	// has spend of its own, so its header stays (one row: the header only).
+	x.upd(ev(SrcAgents, "/", `{"acme%2Flib":{"r2":`+agent("acme/lib", "fix the o", "")+`}}`, x.now))
+	if x.m.expanded[r1] {
+		t.Fatal("expanded entry for a vanished run must be pruned")
+	}
+	if x.m.cur.Slug != "acme%2Fapp" || x.m.cur.Run != "" {
+		t.Fatalf("cursor should fall back to the app header, got %+v", x.m.cur)
+	}
+}
+
+// A project with no repositories, and one with a single repository that has
+// no runs (the header is the only row), must not panic and must leave the
+// cursor sane: regression coverage for a stale or zero/one-row cursor.
+func TestModelHandlesZeroThenOneRow(t *testing.T) {
+	x := newTM(t)
+	x.upd(Update{Kind: UpdDay, Day: budget.Day(x.now), Now: x.now}) // no agents, no repos, no kill: zero rows
+	x.key("down")
+	x.key("up")
+	x.key("space")
+	if x.m.cur != (Cursor{}) {
+		t.Fatalf("cur = %+v, want the zero Cursor with no rows", x.m.cur)
+	}
+	x.upd(ev(SrcRepos, "/", `{"acme%2Fapp":{"spent":1000000}}`, x.now)) // one row: the header, no runs yet
+	x.key("down")                                                       // only row: stays
+	if x.m.cur.Slug != "acme%2Fapp" || x.m.cur.Run != "" {
+		t.Fatalf("cur = %+v, want the only header", x.m.cur)
+	}
+	x.key("space")
+	if !x.m.collapsed["acme%2Fapp"] {
+		t.Fatal("space on the only row (a header) must still fold it")
+	}
+}
+
 func TestKillRepoThroughTheModel(t *testing.T) {
 	x := newTM(t)
 	x.seed()
+	x.key("down") // acme/app's run
 	x.key("down") // acme/lib
 	x.key("k")
 	if s := x.screen(); !strings.Contains(s, "kill repository acme/lib? y/Enter = yes") {
@@ -224,6 +376,146 @@ func TestKillingLineTimesOut(t *testing.T) {
 	}
 }
 
+// The a key toggles the finished-run filter between its default ("active +
+// recent") and --all, and the footer reflects it at once (design
+// generic-tool §10.3).
+func TestKeyAToggleFilterAll(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	if x.m.filter.All {
+		t.Fatal("the filter starts off (not --all)")
+	}
+	if !strings.Contains(x.screen(), "showing active + recent") {
+		t.Fatalf("screen:\n%s", x.screen())
+	}
+	x.key("a")
+	if !x.m.filter.All || !strings.Contains(x.screen(), "showing all") {
+		t.Fatalf("a did not switch to --all:\n%s", x.screen())
+	}
+	x.key("a")
+	if x.m.filter.All || !strings.Contains(x.screen(), "showing active + recent") {
+		t.Fatalf("a did not switch back:\n%s", x.screen())
+	}
+}
+
+// The x key acknowledges the selected row's failure when it names a failed
+// finished run, and the next rebuild hides it (design generic-tool §10.3).
+// On anything else (a live run, a header, a successful finished run) it does
+// nothing.
+func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	if !strings.Contains(x.screen(), "f1") {
+		t.Fatalf("the failure is not shown before x:\n%s", x.screen())
+	}
+	x.key("down") // onto acme/app's live run, r1
+	x.key("x")    // x on a live run: no-op
+	if !strings.Contains(x.screen(), "f1") {
+		t.Fatal("x on a live run hid the failure")
+	}
+	x.key("down") // onto acme/app's finished run, f1
+	if x.m.cur.Run != "f1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if !x.m.acks.Has(budget.Key("acme/app"), "f1") {
+		t.Fatal("x did not record the acknowledgement")
+	}
+	if strings.Contains(x.screen(), "f1") {
+		t.Fatalf("acknowledged failure still shown:\n%s", x.screen())
+	}
+}
+
+// x on a successful (non-failed) finished row is a no-op: Has stays false,
+// and — the stronger check — no ack file is ever written, so a viewer
+// pressing x out of habit on a row that needs no acknowledgement cannot
+// create $XDG_STATE_HOME/fugaro/watch-acks.json where none existed.
+func TestKeyXOnSuccessfulFinishedRowIsNoOp(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "s1", Slug: "acme/app", Status: "succeeded", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	x.key("down") // acme/app's live run, r1
+	x.key("down") // acme/app's finished (successful) run, s1
+	if x.m.cur.Run != "s1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if x.m.acks.Has(budget.Key("acme/app"), "s1") {
+		t.Fatal("x acknowledged a non-failed finished run")
+	}
+	if _, err := os.Stat(x.m.o.AckPath); !os.IsNotExist(err) {
+		t.Fatalf("x on a successful run wrote an ack file: stat err = %v", err)
+	}
+}
+
+// A repository with no live run, spend or kill switch of its own, known only
+// through a finished row the filter then hides, never reaches the screen:
+// rebuild() calls DropEmptyFinishedBlocks after MergeFinished and the
+// filter, the way Build itself would never have shown that block in the
+// first place had the finished run never been merged in.
+func TestRebuildDropsEmptyFinishedOnlyBlock(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "g1", Slug: "acme/ghost", Status: "succeeded", FinishedAt: x.now.Add(-30 * time.Hour)}}, ""
+	}
+	x.upd(Update{Kind: UpdDay, Day: budget.Day(x.now), Now: x.now})
+	if strings.Contains(x.screen(), "acme/ghost") {
+		t.Fatalf("a block that exists only for a now-filtered-out finished run must not show:\n%s", x.screen())
+	}
+}
+
+// Under --all every finished row shows regardless of acknowledgement, so x
+// would otherwise look like it did nothing: the footer must say it still
+// recorded the ack.
+func TestKeyXUnderAllShowsAckedNotice(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	x.key("a") // --all: the failure stays shown even once acked
+	x.key("down")
+	x.key("down") // onto acme/app's finished run, f1
+	if x.m.cur.Run != "f1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if !x.m.acks.Has(budget.Key("acme/app"), "f1") {
+		t.Fatal("x did not record the acknowledgement under --all")
+	}
+	s := x.screen()
+	if !strings.Contains(s, "acknowledged (hidden in the recent view)") {
+		t.Fatalf("no notice that the ack still recorded:\n%s", s)
+	}
+	if !strings.Contains(s, "f1") {
+		t.Fatalf("--all must still show the acked failure:\n%s", s)
+	}
+}
+
+// A ready PR stays in "Ready for your review" past --keep (6h by default):
+// the filter bounds how much history the dashboard shows, not what still
+// needs a look (design generic-tool §10.1).
+func TestReadyForReviewSurvivesTheFilter(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "r-old", Slug: "acme/app", Title: "Old but ready", Status: "succeeded",
+			Outcome: "ready", PRURL: "https://github.com/acme/app/pull/9", PRNumber: 9, FinishedAt: x.now.Add(-10 * time.Hour)}}, ""
+	}
+	x.seed()
+	s := x.screen()
+	if strings.Contains(s, "r-old") {
+		t.Fatalf("the 10h-old row should not be in the regular finished list:\n%s", s)
+	}
+	if !strings.Contains(s, "Ready for your review (1)") || !strings.Contains(s, "https://github.com/acme/app/pull/9") {
+		t.Fatalf("the ready PR must still be listed:\n%s", s)
+	}
+}
+
 func TestKeyMappingLowercaseRepoCapitalProject(t *testing.T) {
 	cases := []struct {
 		key  string
@@ -264,15 +556,18 @@ func TestKillProjectNeedsNameThenReason(t *testing.T) {
 	}
 }
 
+// Blocks keep a stable order by name (design generic-tool G23): a spend
+// change while a prompt is open must not move acme/lib out from under the
+// cursor, the way a spend-ordered dashboard once would have.
 func TestSelectionSurvivesResortTUI(t *testing.T) {
 	x := newTM(t)
 	x.seed()
+	x.key("down") // acme/app's run
 	x.key("down") // acme/lib
 	x.key("k")
-	// While the prompt is open lib overtakes app in spend: it moves to the top.
 	x.upd(ev(SrcRepos, "/", `{"acme%2Fapp":{"spent":6000000},"acme%2Flib":{"spent":90000000}}`, x.now))
-	if x.m.view.Repos[0].Slug != "acme%2Flib" {
-		t.Fatal("expected a re-sort")
+	if x.m.view.Repos[0].Slug != "acme%2Fapp" || x.m.view.Repos[1].Slug != "acme%2Flib" {
+		t.Fatalf("blocks must keep their order by name, not re-sort by spend: %+v", x.m.view.Repos)
 	}
 	cmd := x.key("y")
 	cmd()
@@ -487,8 +782,9 @@ func TestProgramSmoke(t *testing.T) {
 	go func() {
 		done <- RunTUI(ctx, TUIOptions{
 			In: pr, Out: out, Project: "aurora", Updates: sup.Updates(), Width: 100, Height: 30, NoColor: true,
-			Exec: func(ctx context.Context, req Request) Outcome { return Execute(ctx, db, req, "tester@x.io") },
-			Stop: func() { stopped.Store(true); supCancel() },
+			Exec:    func(ctx context.Context, req Request) Outcome { return Execute(ctx, db, req, "tester@x.io") },
+			Stop:    func() { stopped.Store(true); supCancel() },
+			AckPath: filepath.Join(t.TempDir(), "watch-acks.json"),
 		})
 	}()
 	waitFor := func(what string, ok func() bool) {
