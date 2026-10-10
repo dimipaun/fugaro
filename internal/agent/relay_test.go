@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -412,6 +413,36 @@ func onToolLine(t *testing.T, r *Relay, name, inputJSON string) string {
 // secrets and /agents is readable by every launcher. A dispatcher's
 // subcommand is kept (go test, npm run, git commit, bash -c); anything a
 // plain command's next word could be, which is anything at all, is not.
+// TestSplitShellWordsHandlesEscapesAndQuotes pins splitShellWords's own
+// tokenisation directly (review item 1): a quoted value keeps an inner
+// space, an escaped quote inside double quotes is literal rather than a
+// terminator, and an unterminated quote runs to the end of the string
+// rather than panicking or looping. safeBashSummary's "an escaped quote"
+// case in TestRelayOnToolNeverRepeatsTheRawCommand is already safe (no
+// secret leaks) whether or not escapes are handled correctly, because the
+// fragments a mishandled escape produces still fail isBareword by
+// accident; this test is what actually fails when escape handling itself
+// breaks.
+func TestSplitShellWordsHandlesEscapesAndQuotes(t *testing.T) {
+	for _, tc := range []struct {
+		name, in string
+		want     []string
+	}{
+		{"single quotes keep a space literal", `echo 'a b'`, []string{"echo", "a b"}},
+		{"double quotes keep a space literal", `echo "a b"`, []string{"echo", "a b"}},
+		{"an escaped double quote inside double quotes is literal, not a terminator", `echo "a\"b c"`, []string{"echo", `a"b c`}},
+		{"a backslash outside quotes escapes the next character", `echo a\ b`, []string{"echo", "a b"}},
+		{"an unterminated single quote runs to the end of the string", `echo 'a b`, []string{"echo", "a b"}},
+		{"an unterminated double quote runs to the end of the string", `echo "a b`, []string{"echo", "a b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := splitShellWords(tc.in); !slices.Equal(got, tc.want) {
+				t.Fatalf("splitShellWords(%q) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 	const secret = "fake-secret-0123456789"
 	for _, tc := range []struct {

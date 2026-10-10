@@ -382,7 +382,7 @@ func splitShellWords(command string) []string {
 // simply left out, never guessed at: an unsafe guess here is a secret on a
 // dashboard every launcher can read.
 func safeBashSummary(command string) string {
-	fields := strings.Fields(command)
+	fields := splitShellWords(command)
 	i := 0
 	for i < len(fields) && isAssignment(fields[i]) {
 		i++
