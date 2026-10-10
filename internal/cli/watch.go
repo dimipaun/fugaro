@@ -55,11 +55,13 @@ type WatchDeps struct {
 	Repo    string // --repo as given
 	ASCII   bool
 	NoColor bool
-	// Queued is the latest queued-run rows and degrade note, read fresh on
-	// every frame; nil when the project has no runs bucket to scan (never
-	// the case for a live project, but degraded mode doesn't set it either:
-	// its own ls-based listing already shows pending and launching runs).
-	Queued func() ([]watch.QueuedRun, string)
+	// Queued is the latest queued-run and finished-run rows and degrade
+	// note, read fresh on every frame; nil when the project has no runs
+	// bucket to scan (never the case for a live project, but degraded mode
+	// doesn't set it either: its own ls-based listing already shows
+	// pending, launching and finished runs). The dashboard does not yet
+	// show the finished rows (plan generic-tool Task 5/6 wire them in).
+	Queued func() ([]watch.QueuedRun, []watch.FinishedRun, string)
 }
 
 // watchStdoutTTY says whether w is a terminal; tests replace it.
@@ -191,8 +193,8 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
 
 	if o.once {
-		rows, note := fetchQueuedOnce(ctx, lc, o.repo)
-		d.Queued = func() ([]watch.QueuedRun, string) { return rows, note }
+		rows, finished, note := fetchQueuedOnce(ctx, lc, o.repo)
+		d.Queued = func() ([]watch.QueuedRun, []watch.FinishedRun, string) { return rows, finished, note }
 		return watchOnce(ctx, d, o)
 	}
 	ctx, cancel := context.WithCancel(ctx)
@@ -287,7 +289,7 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	}
 	v := watch.Build(st, now, d.Config)
 	if d.Queued != nil {
-		rows, note := d.Queued()
+		rows, _, note := d.Queued() // finished rows: not shown yet (plan generic-tool Task 5/6)
 		v = watch.MergeQueued(v, d.Config, rows, note, now)
 	}
 	return d.emit(o, v, false)
@@ -334,7 +336,7 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 		}
 		v := watch.Build(st, u.Now, d.Config)
 		if d.Queued != nil {
-			rows, note := d.Queued()
+			rows, _, note := d.Queued() // finished rows: not shown yet (plan generic-tool Task 5/6)
 			if note != lastQueuedNote || !slices.Equal(rows, lastQueued) {
 				dirty = true
 				lastQueued, lastQueuedNote = rows, note

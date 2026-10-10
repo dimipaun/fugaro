@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -241,18 +242,131 @@ func safeProblems(err error) []Problem {
 	return ps
 }
 
+// blockHeaderRE matches a line ending in a block scalar indicator (| or >,
+// with an optional chomping +/- and an optional explicit indentation digit,
+// in either order: the YAML spec allows both "|-2" and "|2-"), right after
+// the ':' or '-' that introduces it: the header line that opens a literal
+// or folded scalar's body. Applied to a line with any trailing comment
+// already stripped. The digit, wherever it falls, lands in one of the two
+// capture groups (whichever alternative matched); the other is "".
+var blockHeaderRE = regexp.MustCompile(`(?:^|[:-])\s*[|>](?:[+-]([1-9])?|([1-9])[+-]?)?\s*$`)
+
+// commentStart returns the index of the '#' that starts line's comment, or
+// -1 for none: a '#' at the start of the line or after whitespace, outside
+// single or double quotes. A quote left open at line's end (a multi-line
+// flow scalar) is not tracked across lines, so a '#' inside one is rarely,
+// not never, missed as a comment.
+func commentStart(line string) int {
+	var inSingle, inDouble bool
+	for i := 0; i < len(line); i++ {
+		switch c := line[i]; {
+		case inSingle:
+			inSingle = c != '\''
+		case inDouble:
+			if c == '\\' {
+				i++
+			} else {
+				inDouble = c != '"'
+			}
+		case c == '\'':
+			inSingle = true
+		case c == '"':
+			inDouble = true
+		case c == '#' && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			return i
+		}
+	}
+	return -1
+}
+
+// indentOf is the count of leading spaces of line (YAML indentation is
+// never a tab).
+func indentOf(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+
+// block scalar body-tracking states for rawTextProblems.
+const (
+	bodyNone     = iota // not inside a block scalar's body
+	bodyAwaiting        // inside one, but its content indent isn't known yet
+	bodyKnown           // inside one, content indent known
+)
+
 // rawTextProblems scans the whole text, comments and directives included,
-// which the node walk never sees. It reports the line only, never the text.
+// which the node walk never sees (valueProblems already ran over every key
+// and value the node walk does see). A directive (a line starting at
+// column 0 with %, YAML's own rule) and a line's comment, if any, get the
+// key rule, which holds no tab either; the rest of the line gets the value
+// rule. A block scalar's body (opened by a line matching blockHeaderRE) is
+// never split at '#': a literal or folded scalar reads its body as plain
+// text, a '#' in it starts no comment. But YAML's own rule for where that
+// body actually is is "at or past the indentation of its first non-blank
+// line (or the header's own explicit digit, header indent + N)", not
+// merely "more indented than the header": a line indented more than the
+// header but less than the body's real content indent is a real,
+// standalone comment, not body text, the same as yaml.v3 itself reads it.
+// Getting the content indent wrong by using the header's indent alone (an
+// earlier version of this function did) wrongly widens the body and skips
+// tokenRE and badKeyRune on a line that is, in fact, a comment: a
+// credential or a tab there would go unrefused. A body line still runs
+// tokenRE and badRune (never badKeyRune: a tab is fine in a value), so a
+// credential or any other control/bidi character in one is still caught,
+// just without the "(in a comment or directive)" wording, since it is not
+// one. It reports the line only, never the text.
 func rawTextProblems(data []byte) []Problem {
 	var ps []Problem
 	text := strings.TrimPrefix(string(data), "\ufeff")
+	state := bodyNone
+	headerIndent, contentIndent := 0, 0
 	for i, line := range strings.Split(text, "\n") {
 		line = strings.TrimSuffix(line, "\r")
-		switch {
-		case tokenRE.MatchString(line):
+		blank := strings.TrimSpace(line) == ""
+		if state == bodyAwaiting && !blank {
+			if ind := indentOf(line); ind > headerIndent {
+				state, contentIndent = bodyKnown, ind
+			} else {
+				state = bodyNone // the header's scalar is empty
+			}
+		}
+		if state == bodyKnown {
+			if blank {
+				continue
+			}
+			if indentOf(line) < contentIndent {
+				state = bodyNone // dedented out of the body
+			} else {
+				switch {
+				case tokenRE.MatchString(line):
+					ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
+				case strings.ContainsFunc(line, badRune):
+					ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+				}
+				continue
+			}
+		}
+		if tokenRE.MatchString(line) {
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a credential-shaped string (in a comment or directive); nothing in the project layer is secret, and secrets are never published"})
-		case strings.ContainsFunc(line, badKeyRune):
+			continue
+		}
+		strict, loose := "", line
+		switch c := commentStart(line); {
+		case strings.HasPrefix(line, "%"):
+			strict, loose = line, ""
+		case c >= 0:
+			strict, loose = line[c:], line[:c]
+		}
+		switch {
+		case strings.ContainsFunc(strict, badKeyRune):
 			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character (in a comment or directive)"})
+		case strings.ContainsFunc(loose, badRune):
+			ps = append(ps, Problem{Line: i + 1, Message: "holds a control or invisible formatting character"})
+		}
+		if m := blockHeaderRE.FindStringSubmatch(loose); m != nil {
+			headerIndent = indentOf(line)
+			if digit := m[1] + m[2]; digit != "" {
+				n, _ := strconv.Atoi(digit)
+				state, contentIndent = bodyKnown, headerIndent+n
+			} else {
+				state = bodyAwaiting
+			}
 		}
 	}
 	return ps
@@ -470,7 +584,7 @@ func validateProfile(p string, pr Profile) []Problem {
 		}
 	}
 	if pr.Resources.CPU < 0 {
-		add(p+".resources.cpu", "must be at least 1 (the compute backend checks its own limits)")
+		add(p+".resources.cpu", "must not be negative (0 leaves it unset, filled in from the workflow's own default later)")
 	}
 	if m := pr.Resources.Memory; m != "" && !memoryRE.MatchString(m) {
 		add(p+".resources.memory", "must look like 512Mi or 16Gi")

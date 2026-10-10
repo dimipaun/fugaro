@@ -454,6 +454,9 @@ func bucketErrFor(url, what, subject string, err error) error {
 
 // isAccessDenied reports a refusal for lack of access or credentials.
 func isAccessDenied(err error) bool {
+	if errors.Is(err, blobx.ErrForbidden) {
+		return true
+	}
 	if gcerrors.Code(err) == gcerrors.PermissionDenied {
 		return true
 	}

@@ -49,3 +49,9 @@ const (
 //
 //go:embed derived/cloudbuild.yaml
 var CloudBuild []byte
+
+// BaseTools is images/base/tools.tsv, the base image's presence checks,
+// which fugaro image selftest runs (internal/image.ParseTools).
+//
+//go:embed base/tools.tsv
+var BaseTools string

@@ -161,7 +161,7 @@ B); 15 seconds and a full listing per repository before cost about 40
 times that for a repository with 5000 runs.
 
 **When reads fail.** A run that can't be read (or holds a corrupt object)
-is left out and counted in a one-line note ("queued runs: N could not be
+is left out and counted in a one-line note ("runs: N could not be
 read and are not shown"); a repository that can't be read is left out and
 counted the same way ("N of M repositories not read"); the rest of the
 scan goes on. A scan that fails as a whole (bucket unopenable, repository

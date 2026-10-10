@@ -61,7 +61,9 @@ func init() {
 		"runs[].run", "runs[].repo", "runs[].status", "runs[].stage", "runs[].reason", "runs[].halt", "runs[].pr_url",
 		"runs[].branch", "runs[].outcome", "runs[].created", "runs[].cost", "runs[].cost.route_by", "runs[].cost.reported_usd",
 		"runs[].terminal", "runs[].settled", "runs[].base_branch", "runs[].stale_draft", "runs[].draft_fallback", "runs[].pr_status_at")
-	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd", "halt", "verify", "failed", "flaky", "findings", "agent_message",
+	add("diagnose", Diagnosis{}, "row", "row.pr_url", "row.reason", "row.cost.route_by", "row.cost.reported_usd",
+		"row.project_layer", "row.project_layer.sha256", "row.project_layer.generation", "row.project_layer.applied", "row.config_sha256",
+		"halt", "verify", "failed", "flaky", "findings", "agent_message",
 		"log_tail", "draft_note", "report_path", "follow_up", "comments_path", "route_by", "reported_usd")
 	add("logs", logLine{}, "time", "severity", "stage", "stream", "event", "message")
 	add("cancel", cancelResult{}, "project", "run", "status", "hard", "pr")
