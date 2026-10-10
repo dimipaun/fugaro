@@ -18,9 +18,21 @@ import (
 
 // configShowDoc is fugaro config show --json: the hook a script uses to
 // check a repository resolves as intended (docs/design/layered-config.md
-// §12).
+// §12). project_layer alone cannot tell "no layer applies" from "a layer
+// may apply but could not be checked" (--offline with nothing cached:
+// project_layer is null either way, and every value's source reads
+// "default" either way) — LayerUnknown and CheckedAt are the fields a
+// script reads to tell those apart instead of parsing Notes' free text.
 type configShowDoc struct {
-	ProjectLayer *validateLayer    `json:"project_layer"` // null: none applies
+	ProjectLayer *validateLayer `json:"project_layer"` // null: none applies
+	// LayerUnknown is true when whether a layer applies could not be told
+	// (an offline command with nothing usable cached): project_layer is
+	// then also null, but for a different reason than "none applies".
+	LayerUnknown bool `json:"layer_unknown"`
+	// CheckedAt is when ProjectLayer was read, nil when there is none to
+	// read (no layer applies, or LayerUnknown) — the machine-readable form
+	// of the text output's "read %s ago" (design §7).
+	CheckedAt    *time.Time        `json:"checked_at,omitempty"`
 	ConfigSHA256 string            `json:"config_sha256"`
 	Values       []configShowValue `json:"values"`
 	Notes        []string          `json:"notes,omitempty"`
@@ -53,9 +65,13 @@ func newConfigShowCmd() *cobra.Command {
 			if err != nil {
 				return userErr("%v", err)
 			}
-			doc := configShowDoc{ConfigSHA256: rf.Res.ConfigSHA256, Values: values}
+			doc := configShowDoc{ConfigSHA256: rf.Res.ConfigSHA256, Values: values, LayerUnknown: rf.Layer.Unknown}
 			if l := rf.Layer.Layer; l != nil {
 				doc.ProjectLayer = &validateLayer{Where: rf.Layer.Where, Generation: rf.Layer.Generation, SHA256: l.SHA256}
+				if !rf.Layer.CheckedAt.IsZero() {
+					checked := rf.Layer.CheckedAt
+					doc.CheckedAt = &checked
+				}
 			}
 			if rf.Layer.Note != "" {
 				doc.Notes = append(doc.Notes, rf.Layer.Note)
@@ -139,7 +155,21 @@ func printConfigShow(w io.Writer, doc configShowDoc, checked time.Time, asJSON b
 		return enc.Encode(doc)
 	}
 	if l := doc.ProjectLayer; l != nil {
-		fmt.Fprintf(w, "project layer: %s, generation %d, sha256 %s, read %s ago\n", pluginwire.Printable(l.Where), l.Generation, l.SHA256, time.Since(checked).Round(time.Second))
+		parts := []string{pluginwire.Printable(l.Where)}
+		// Generation 0 and a zero checked time both mean "not from a
+		// numbered bucket read" (--project-layer FILE, or a pinned
+		// o.Data): printing them regardless would say "generation 0" for
+		// a file that has none, and compute an age against time.Time's
+		// zero value — "2562047h47m16.854775807s ago" — for a time that
+		// was never read.
+		if l.Generation != 0 {
+			parts = append(parts, fmt.Sprintf("generation %d", l.Generation))
+		}
+		parts = append(parts, fmt.Sprintf("sha256 %s", l.SHA256))
+		if !checked.IsZero() {
+			parts = append(parts, fmt.Sprintf("read %s ago", time.Since(checked).Round(time.Second)))
+		}
+		fmt.Fprintf(w, "project layer: %s\n", strings.Join(parts, ", "))
 	} else {
 		fmt.Fprintln(w, "project layer: none applies")
 	}
@@ -154,6 +184,15 @@ func printConfigShow(w io.Writer, doc configShowDoc, checked time.Time, asJSON b
 		fmt.Fprintf(tw, "%s\t%s\t%s\n", v.Path, pluginwire.Printable(string(val)), v.Source)
 	}
 	return tw.Flush()
+}
+
+// configLayerDoc is fugaro config layer --json's shape, pinned so a script
+// can rely on its exact keys rather than an ad-hoc map.
+type configLayerDoc struct {
+	Where      string `json:"where"`
+	Generation int64  `json:"generation"`
+	SHA256     string `json:"sha256"`
+	YAML       string `json:"yaml"`
 }
 
 func newConfigLayerCmd() *cobra.Command {
@@ -186,7 +225,7 @@ func newConfigLayerCmd() *cobra.Command {
 			if asJSON {
 				enc := json.NewEncoder(cmd.OutOrStdout())
 				enc.SetIndent("", "  ")
-				return enc.Encode(map[string]any{"where": fl.Where, "generation": fl.Generation, "sha256": l.SHA256, "yaml": string(l.Raw)})
+				return enc.Encode(configLayerDoc{Where: fl.Where, Generation: fl.Generation, SHA256: l.SHA256, YAML: string(l.Raw)})
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "# %s, generation %d, sha256 %s\n%s", pluginwire.Printable(fl.Where), fl.Generation, l.SHA256, printableLines(string(l.Raw)))
 			return nil

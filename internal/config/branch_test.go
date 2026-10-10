@@ -30,3 +30,17 @@ func TestBaseBranchProblems(t *testing.T) {
 		})
 	}
 }
+
+// TestValidBranchNameRejectsANewline: fugaro config init writes --base-branch
+// straight into a YAML line unquoted ("git:\n  base_branch: %s\n"), so a
+// newline in it would inject arbitrary YAML (a new top-level key, such as
+// agent:) rather than naming a branch; ValidBranchName (config init's own
+// guard) must refuse it, not merely the quoted path TestBaseBranchProblems
+// above exercises through Parse.
+func TestValidBranchNameRejectsANewline(t *testing.T) {
+	for _, bad := range []string{"main\nagent:\n  auth: api-key", "main\n", "\nmain"} {
+		if ValidBranchName(bad) {
+			t.Errorf("%q: accepted a branch name with a newline", bad)
+		}
+	}
+}
