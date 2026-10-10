@@ -364,3 +364,22 @@ func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildLocalSpecOnTheBase pins localSelftestSpec, the helper BuildLocal
+// calls to build the smoke step's SelftestSpec. It is a direct unit test of
+// that helper, not a full BuildLocal round trip: render.go's checkBase
+// still refuses to render a Dockerfile for the base kind (base-image plan
+// Task 10, the derived template's mise install step, has not landed), so a
+// workflow with no base: cannot reach BuildLocal's smoke step at all today.
+// See the PR body for the full note.
+func TestBuildLocalSpecOnTheBase(t *testing.T) {
+	res := &LocalResult{Commit: "c0ffee", Origin: "https://github.com/acme/app.git"}
+	base := localSelftestSpec(config.Workflow{}, res)
+	if base.Tools != "critical" || !base.Mise || base.Node != "" || base.Base != config.BaseKind {
+		t.Errorf("base: spec = %+v", base)
+	}
+	web := localSelftestSpec(config.Workflow{Base: "web-node", Image: config.Image{Node: "24"}}, res)
+	if web.Tools != "" || web.Mise || web.Node != "24" {
+		t.Errorf("web-node: spec = %+v", web)
+	}
+}

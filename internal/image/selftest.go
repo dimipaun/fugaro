@@ -21,6 +21,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/agent"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitops"
+	"github.com/dimipaun/fugaro/internal/pluginwire"
 	"github.com/dimipaun/fugaro/internal/verify"
 )
 
@@ -321,7 +322,7 @@ func checkMise(ctx context.Context, dir string, add func(string, bool, string, .
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		add("mise-tools", false, "mise ls --current --missing: %v: %s", err, strings.TrimSpace(stderr.String()))
+		add("mise-tools", false, "mise ls --current --missing: %v: %s", err, pluginwire.Printable(strings.TrimSpace(stderr.String())))
 		return
 	}
 	var missing map[string][]struct {

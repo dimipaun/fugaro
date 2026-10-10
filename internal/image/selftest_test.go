@@ -685,6 +685,35 @@ func TestSelftestMiseToolsMissing(t *testing.T) {
 	}
 }
 
+// TestSelftestMiseFailureDetailIsPrintable: checkMise's failure detail
+// interpolates mise's own stderr, which this image never controls (a bad
+// mise config, a corrupt cache); it must go through pluginwire.Printable
+// like every other untrusted string in a check's message, so an ANSI
+// escape or control character in it cannot corrupt the terminal or the
+// --json output's framing.
+func TestSelftestMiseFailureDetailIsPrintable(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	bin := t.TempDir()
+	testutil.WriteFiles(t, bin, map[string]string{"mise": "#!/bin/sh\nprintf '\\033[31mmise: boom\\033[0m' >&2\nexit 1\n"})
+	if err := os.Chmod(filepath.Join(bin, "mise"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK {
+		t.Fatalf("mise-tools = %+v", c)
+	}
+	if strings.ContainsRune(c.Detail, '\x1b') {
+		t.Fatalf("mise-tools detail carries a raw escape byte: %q", c.Detail)
+	}
+	if !strings.Contains(c.Detail, `\u001b`) || !strings.Contains(c.Detail, "mise: boom") {
+		t.Fatalf("mise-tools detail does not show the escaped control character: %q", c.Detail)
+	}
+}
+
 func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
 	for _, rel := range []string{".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
 		".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json"} {
