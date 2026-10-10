@@ -159,7 +159,7 @@
           "auth": { ".validate": "STR && RBOK" },
           "prUrl": { ".validate": "STR && RBOK" },
           "action": { ".validate": "STR && RBOK" },
-          "tokens": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= {{.MaxTokensPerWrite}} && RBOK" },
+          "tokens": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= {{.MaxTokensPerWrite}} && newData.val() % 1 == 0 && RBOK" },
           "halted": { ".validate": "STR && RBOK" },
           "round": { ".validate": "AMOUNT && RBOK" },
           "startedAt": { ".validate": "AMOUNT && RBOK" },
