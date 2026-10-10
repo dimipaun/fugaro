@@ -380,6 +380,7 @@ func TestProfileHasExecutable(t *testing.T) {
 		"commands: { build: make }", "commands: { test: make test }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
 		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
+		"{ base: web-node, image: { skip_build_scripts: true } }",
 	} {
 		if !strings.HasPrefix(body, "{") {
 			body = "{ " + body + " }"
