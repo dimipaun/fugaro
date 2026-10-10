@@ -42,9 +42,19 @@ type TUIOptions struct {
 	Config  Config
 	RepoKey string // --repo's wire key, "" for all
 	Repo    string // --repo as given
-	// Queued is the latest queued-run rows and degrade note, read fresh on
-	// every rebuild; nil when the project has no queued-run source.
-	Queued func() ([]QueuedRun, string)
+	// Queued is the latest queued-run and finished-run rows and degrade
+	// note, read fresh on every rebuild; nil when the project has no
+	// queued-run source.
+	Queued func() ([]QueuedRun, []FinishedRun, string)
+
+	// All, Keep and KeepCount seed the finished-run filter (design
+	// generic-tool §10.3); Keep <= 0 means 6h, KeepCount <= 0 means 15.
+	All       bool
+	Keep      time.Duration
+	KeepCount int
+	// AckPath is the acknowledgements file (AckPath's default when ""); a
+	// bad or missing file is the empty set (LoadAcks never fails).
+	AckPath string
 
 	ASCII, NoColor bool
 	// Exec runs a confirmed kill or resume (Execute against the database).
@@ -91,8 +101,13 @@ type model struct {
 	flow *Flow
 	now  time.Time // the supervisor's (server-adjusted) time, from the last update
 
+	filter Filter
+	acks   *Acks
+
 	w, h      int
-	sel       string
+	cur       Cursor
+	rows      []Cursor // the rows cur was last resolved against, for the next rebuild
+	expanded  map[Cursor]bool
 	collapsed map[string]bool
 	scroll    int
 	follow    bool
@@ -108,7 +123,19 @@ type model struct {
 }
 
 func newModel(ctx context.Context, o TUIOptions) *model {
-	m := &model{o: o, ctx: ctx, st: NewState(), flow: NewFlow(o.Project), collapsed: map[string]bool{}, w: o.Width, h: o.Height, dirty: true}
+	keep, keepCount := o.Keep, o.KeepCount
+	if keep <= 0 {
+		keep = 6 * time.Hour
+	}
+	if keepCount <= 0 {
+		keepCount = 15
+	}
+	ackPath := o.AckPath
+	if ackPath == "" {
+		ackPath = AckPath(os.Getenv)
+	}
+	m := &model{o: o, ctx: ctx, st: NewState(), flow: NewFlow(o.Project), expanded: map[Cursor]bool{}, collapsed: map[string]bool{}, w: o.Width, h: o.Height, dirty: true,
+		filter: Filter{All: o.All, Keep: keep, KeepCount: keepCount, FailedKeep: 24 * time.Hour}, acks: LoadAcks(ackPath)}
 	if m.w <= 0 {
 		m.w = 80
 	}
@@ -226,27 +253,56 @@ func (m *model) live() bool {
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
 	if m.o.Queued != nil {
-		rows, note := m.o.Queued()
+		rows, finished, note := m.o.Queued()
 		v = MergeQueued(v, m.o.Config, rows, note, m.now)
+		v = MergeFinished(v, m.o.Config, finished, m.now)
 	}
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}
+	ready := ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
+	v, _ = m.filter.Apply(v, m.acks.Has)
+	v = DropEmptyFinishedBlocks(v)
 	m.view = v
-	if i := SelectedIndex(v, m.sel); i >= 0 {
-		m.sel = v.Repos[i].Slug // the selection is by slug, so it survives a re-sort
-	}
+	pruneExpanded(m.expanded, v)
+	rows := Rows(v, m.collapsed)
+	m.cur = Resolve(rows, m.rows, m.cur)
+	m.rows = rows
 	m.settle()
 
 	foot := m.footer()
 	fr := Render(v, RenderOptions{
 		Width: m.w, Height: m.h, Project: m.o.Project, ASCII: m.o.ASCII, Color: !m.o.NoColor,
-		Selected: m.sel, Collapsed: m.collapsed, Scroll: m.scroll, Follow: m.follow, Help: m.help,
-		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo,
+		Selected: m.cur, Expanded: m.expanded, Collapsed: m.collapsed, Scroll: m.scroll, Follow: m.follow, Help: m.help,
+		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo, FilterAll: m.filter.All, Ready: ready,
 	})
 	m.scroll, m.follow = fr.Scroll, false
 	m.frame = fr.String()
 	m.dirty = false
+}
+
+// ackSelected acknowledges the selected row's failure (key x), when it names
+// a failed finished run; it is a no-op on anything else (design
+// generic-tool §10.3). A write failure is shown as a notice: the ack is
+// local and best effort, so losing it only shows the failure again. Under
+// --all every finished row shows regardless of acknowledgement, so x would
+// otherwise look like it did nothing; a notice says it still recorded.
+func (m *model) ackSelected() {
+	for _, b := range m.view.Repos {
+		if b.Slug != m.cur.Slug {
+			continue
+		}
+		for _, r := range b.Finished {
+			if r.Run == m.cur.Run && r.Failed {
+				if err := m.acks.Ack(b.Slug, r.Run, m.clock()); err != nil {
+					m.notice = "could not save the acknowledgement: " + oneLine(err.Error())
+				} else if m.filter.All {
+					m.notice = "acknowledged (hidden in the recent view)"
+				}
+				return
+			}
+		}
+	}
 }
 
 // settle drops a pending write once the stream shows it or time is up.
@@ -326,7 +382,7 @@ func (m *model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyPgDown:
 		m.scroll += max(m.h/2, 1)
 	case tea.KeySpace:
-		m.fold()
+		m.space()
 	case tea.KeyRunes:
 		if k.Paste {
 			return m, nil
@@ -337,7 +393,11 @@ func (m *model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.help = !m.help
 		case " ":
-			m.fold()
+			m.space()
+		case "a":
+			m.filter.All = !m.filter.All
+		case "x":
+			m.ackSelected()
 		case "k":
 			return m, m.start(KillRepo)
 		case "K":
@@ -352,32 +412,70 @@ func (m *model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) move(d int) {
-	i := SelectedIndex(m.view, m.sel)
-	if i < 0 {
+	if len(m.rows) == 0 {
 		return
 	}
-	i = min(max(i+d, 0), len(m.view.Repos)-1)
-	m.sel, m.follow = m.view.Repos[i].Slug, true
+	i := 0
+	for idx, r := range m.rows {
+		if r == m.cur {
+			i = idx
+			break
+		}
+	}
+	i = min(max(i+d, 0), len(m.rows)-1)
+	m.cur, m.follow = m.rows[i], true
 }
 
-func (m *model) fold() {
-	if i := SelectedIndex(m.view, m.sel); i >= 0 {
-		s := m.view.Repos[i].Slug
-		m.collapsed[s] = !m.collapsed[s]
-		m.follow = true
+// pruneExpanded drops expanded's entries for runs no longer in v (finished,
+// or their block gone): expanded must not grow forever, and a stale entry
+// must not resurrect a vanished run's detail should a later run reuse its
+// id. It is based on v's runs directly, not Rows(v, collapsed): folding a
+// block must not forget which of its runs were expanded.
+func pruneExpanded(expanded map[Cursor]bool, v View) {
+	if len(expanded) == 0 {
+		return
 	}
+	present := make(map[Cursor]bool)
+	for _, b := range v.Repos {
+		for _, r := range b.Runs {
+			present[Cursor{Slug: b.Slug, Run: r.Run}] = true
+		}
+	}
+	for c := range expanded {
+		if !present[c] {
+			delete(expanded, c)
+		}
+	}
+}
+
+// space is ignored while help covers the screen (today's "folds a hidden
+// block" bug, design generic-tool §10.2); otherwise it toggles the selected
+// run's detail, or folds the selected header's block.
+func (m *model) space() {
+	if m.help {
+		return
+	}
+	if m.cur.Run == "" {
+		m.collapsed[m.cur.Slug] = !m.collapsed[m.cur.Slug]
+	} else {
+		m.expanded[m.cur] = !m.expanded[m.cur]
+	}
+	m.follow = true
 }
 
 // start opens a prompt on the repository selected NOW (the Flow captures the
-// target; a later re-sort cannot retarget it).
+// target; blocks keep a stable order, so a later rebuild cannot retarget it).
 func (m *model) start(kind Kind) tea.Cmd {
 	m.notice = ""
 	if m.o.Exec == nil {
 		return nil
 	}
 	var t Target
-	if i := SelectedIndex(m.view, m.sel); i >= 0 {
-		t = Target{Slug: m.view.Repos[i].Slug, Name: m.view.Repos[i].Name}
+	for _, b := range m.view.Repos {
+		if b.Slug == m.cur.Slug {
+			t = Target{Slug: b.Slug, Name: b.Name}
+			break
+		}
 	}
 	m.flow.Start(kind, t, m.live())
 	return nil

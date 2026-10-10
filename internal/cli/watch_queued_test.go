@@ -485,28 +485,28 @@ func TestQueuedSourceDropsRowsAfterRepeatedFailures(t *testing.T) {
 	rows := []watch.QueuedRun{{Run: "20261002-090000-abcd", Slug: appSlug}}
 	fail := errors.New("boom")
 	var next error
-	qs := &queuedSource{scan: func(context.Context) ([]watch.QueuedRun, string, error) {
+	qs := &queuedSource{scan: func(context.Context) ([]watch.QueuedRun, []watch.FinishedRun, string, error) {
 		if next != nil {
-			return nil, "", next
+			return nil, nil, "", next
 		}
-		return rows, "", nil
+		return rows, nil, "", nil
 	}}
 	ctx := context.Background()
 	qs.refresh(ctx)
 	next = fail
 	for i := 1; i < queuedDropAfter; i++ {
 		qs.refresh(ctx)
-		if got, note := qs.Get(); len(got) != 1 || !strings.Contains(note, "earlier read") {
+		if got, _, note := qs.Get(); len(got) != 1 || !strings.Contains(note, "earlier read") {
 			t.Fatalf("failure %d: rows %v note %q", i, got, note)
 		}
 	}
 	qs.refresh(ctx)
-	if got, note := qs.Get(); got != nil || !strings.Contains(note, "boom") {
+	if got, _, note := qs.Get(); got != nil || !strings.Contains(note, "boom") {
 		t.Fatalf("after %d failures: rows %v note %q", queuedDropAfter, got, note)
 	}
 	next = nil
 	qs.refresh(ctx)
-	if got, note := qs.Get(); len(got) != 1 || note != "" {
+	if got, _, note := qs.Get(); len(got) != 1 || note != "" {
 		t.Fatalf("after recovery: rows %v note %q", got, note)
 	}
 }

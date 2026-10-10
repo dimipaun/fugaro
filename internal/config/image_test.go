@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,6 +54,38 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	if _, problems := Parse([]byte(jvm + "    image: { skip_build_scripts: false }\n")); len(problems) > 0 {
 		t.Fatalf("an explicit false on java-services: %v", problems)
+	}
+}
+
+// imageFieldReasons is config.Image's fields that never run as shell and so
+// stay off ExecutableKeys, with why: Node is a version string checked
+// against nodeVersionRE, never interpolated into a command, and JDK is
+// refused on every base by validateImage, so it never reaches a Dockerfile.
+var imageFieldReasons = map[string]string{
+	"Node": "a version string, matched against nodeVersionRE, never run as shell",
+	"JDK":  "refused on every base by validateImage; it never reaches a Dockerfile",
+}
+
+// TestImageFieldsAreClassified is decision L7's reflection-style guard: a
+// field added to config.Image later must either run as shell (and so be
+// gated, an entry of ExecutableKeys, named "workflows.*.image.<yaml tag>")
+// or have a reason in imageFieldReasons that it is not. A field with
+// neither is caught here, in CI, instead of landing ungated on a live
+// publish.
+func TestImageFieldsAreClassified(t *testing.T) {
+	typ := reflect.TypeOf(Image{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		key := "workflows.*.image." + tag
+		executable := slices.Contains(ExecutableKeys, key)
+		_, reasoned := imageFieldReasons[f.Name]
+		switch {
+		case executable && reasoned:
+			t.Errorf("Image.%s (%s): is both in ExecutableKeys and in imageFieldReasons; it cannot be both gated and exempt", f.Name, key)
+		case !executable && !reasoned:
+			t.Errorf("Image.%s (%s): is in neither ExecutableKeys nor imageFieldReasons; classify it as executable (gated) or add a reason it is not", f.Name, key)
+		}
 	}
 }
 
