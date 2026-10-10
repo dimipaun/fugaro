@@ -6,13 +6,17 @@ import (
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/runner"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // Review Focus 2: one repository file and one layer give one resolved
-// config, whichever consumer resolves it. The runner is pinned to the
-// task's path by TestRunnerRecordsTheLayer (Task 7), which compares its
-// record with config.Resolve over the same embedded text.
+// config, whichever consumer resolves it. The runner leg calls
+// runner.ResolveConfig, the exported core of (*run).resolveConfig
+// (internal/runner/runner.go), not a hand-rolled config.Resolve call: a
+// runner-side divergence (TestRunnerRecordsTheLayer, Task 7, pins the
+// same function from inside the package) would otherwise go unnoticed
+// here.
 func TestEveryConsumerResolvesTheSameBytes(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -37,15 +41,11 @@ func TestEveryConsumerResolvesTheSameBytes(t *testing.T) {
 	if _, err := embedProjectLayer(ctx, env, spec, io.Discard); err != nil || spec.ProjectLayer == nil {
 		t.Fatal(err)
 	}
-	l, ps := config.ParseProjectLayer([]byte(spec.ProjectLayer.YAML), config.LayerAnchor{})
-	if len(ps) > 0 {
-		t.Fatal(ps)
+	rc := runner.ResolveConfig([]byte(repoYAML), spec.ProjectLayer, env.lc.Name)
+	if rc.LayerErr != nil || len(rc.Problems) > 0 || !rc.Applied {
+		t.Fatal(rc.LayerErr, rc.Problems, rc.Applied)
 	}
-	c, _, ps := config.Resolve([]byte(repoYAML), l)
-	if len(ps) > 0 {
-		t.Fatal(ps)
-	}
-	sums["runner (the task's embedded text)"] = c.SHA256()
+	sums["runner (the task's embedded text)"] = rc.Res.ConfigSHA256
 
 	data, err := readLayerCopy(ctx, f.bucket, slug, config.LayerSum([]byte(testProjectLayer)))
 	if err != nil {
@@ -57,11 +57,7 @@ func TestEveryConsumerResolvesTheSameBytes(t *testing.T) {
 	}
 	sums["cloud build render (the copy)"] = rr.Res.ConfigSHA256
 
-	lo, err := jobLayerOptions(ctx, env.bucket, slug)
-	if err != nil {
-		t.Fatal(err)
-	}
-	head, err := readHeadConfig(ctx, cloneOf(t, map[string]string{"fugaro.yaml": repoYAML}), nil, lo)
+	head, err := jobHeadConfig(ctx, env.bucket, slug, cloneOf(t, map[string]string{"fugaro.yaml": repoYAML}), func(string) {})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1001,6 +1001,56 @@ func (r *run) haltedErr() error {
 	return nil
 }
 
+// ConfigResolution is ResolveConfig's result: the pure core of
+// (*run).resolveConfig, with everything the wrapper needs to set its own
+// run record and log line, so both can share one resolution instead of
+// two that could drift apart.
+type ConfigResolution struct {
+	Cfg      *config.Config
+	Res      *config.Resolution
+	Problems []config.Problem
+	// Applied is whether Layer (below) was passed to config.Resolve: a
+	// file whose project: and gcp_project: are not the layer's gets
+	// Problems/Cfg as config.Resolve(data, nil) would.
+	Applied bool
+	// Layer is pl's own parsed layer, set whenever it parses (even when
+	// it did not apply), nil only when pl itself was nil. LayerErr is
+	// set instead when pl's own text fails to parse; Layer is nil then.
+	Layer    *config.ProjectLayer
+	LayerErr error
+}
+
+// ResolveConfig resolves fugaro.yaml (data) over pl, the task's embedded
+// project layer (nil for none), anchored to the job's own project
+// (project, r.d.Project — docs/design/layered-config.md §8). The layer
+// applies only to a file whose project: and gcp_project: are the layer's;
+// a launch from outside a checkout may carry one for a file that is not,
+// and Applied says so. Exported so a consumer that must prove it resolves
+// the same bytes the runner does (internal/cli/consumers_test.go,
+// TestEveryConsumerResolvesTheSameBytes) calls the runner's own
+// resolution, not a copy of its logic that could silently diverge from
+// it; every other caller stays (*run).resolveConfig.
+func ResolveConfig(data []byte, pl *task.ProjectLayer, project string) ConfigResolution {
+	var out ConfigResolution
+	var layer *config.ProjectLayer
+	if pl != nil {
+		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: project})
+		if len(ps) > 0 {
+			out.LayerErr = fmt.Errorf("the task's project layer (sha256 %s) is invalid: %s", pl.SHA256, problemsText(ps))
+			return out
+		}
+		out.Layer = l
+		p, _ := config.ProjectOf(data)
+		gcp, _ := config.GCPProjectOf(data)
+		out.Applied = p == l.Project && gcp == l.GCPProject
+		if out.Applied {
+			layer = l
+		}
+	}
+	out.Cfg, out.Res, out.Problems = config.Resolve(data, layer)
+	return out
+}
+
 // resolveConfig resolves fugaro.yaml (data) over the task's project layer
 // (docs/design/layered-config.md §8) and records which layer and which
 // resolved config the run uses. The layer applies only to a file whose
@@ -1009,32 +1059,26 @@ func (r *run) haltedErr() error {
 // layer was not applied. An invalid layer fails bootstrap, as an invalid
 // fugaro.yaml does.
 func (r *run) resolveConfig(data []byte) (*config.Config, error) {
-	var layer *config.ProjectLayer
-	if pl := r.spec.ProjectLayer; pl != nil {
-		l, ps := config.ParseProjectLayer([]byte(pl.YAML), config.LayerAnchor{Project: r.d.Project})
-		if len(ps) > 0 {
+	pl := r.spec.ProjectLayer
+	out := ResolveConfig(data, pl, r.d.Project)
+	if pl != nil {
+		if out.LayerErr != nil {
 			// Recorded before returning: an invalid layer still names the
 			// run's layer for ls and diagnose (design §8, task 17), even
 			// though it never resolved anything.
 			r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation}
-			return nil, fmt.Errorf("the task's project layer (sha256 %s) is invalid: %s", pl.SHA256, problemsText(ps))
+			return nil, out.LayerErr
 		}
-		project, _ := config.ProjectOf(data)
-		gcp, _ := config.GCPProjectOf(data)
-		applied := project == l.Project && gcp == l.GCPProject
-		r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation, Applied: applied}
-		if applied {
-			layer = l
-		} else {
-			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", l.Project, "layer_gcp_project", l.GCPProject)
+		r.rec.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: pl.SHA256, Generation: pl.Generation, Applied: out.Applied}
+		if !out.Applied {
+			r.d.Log.Info("project layer not applied: fugaro.yaml does not name its project and gcp_project", "layer_project", out.Layer.Project, "layer_gcp_project", out.Layer.GCPProject)
 		}
 	}
-	cfg, res, problems := config.Resolve(data, layer)
-	if len(problems) > 0 {
-		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(problems))
+	if len(out.Problems) > 0 {
+		return nil, fmt.Errorf("fugaro.yaml is invalid: %s", problemsText(out.Problems))
 	}
-	r.rec.ConfigSHA256 = res.ConfigSHA256
-	return cfg, nil
+	r.rec.ConfigSHA256 = out.Res.ConfigSHA256
+	return out.Cfg, nil
 }
 
 // problemsText is problems as one line, "; "-separated.

@@ -228,13 +228,20 @@ func checkedWorkflows(cfg *config.Config) []string {
 
 // readHeadConfig reads head's fugaro.yaml and resolves it over the project
 // layer o finds (docs/design/layered-config.md §8): the check job passes
-// its copy (jobLayerOptions); fugaro image check run locally reads the
+// its copy (jobHeadConfig); fugaro image check run locally reads the
 // published layer with the operator's access (lc).
 func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
 	data, err := tree.ReadFile("fugaro.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
 	}
+	return resolveHeadData(ctx, data, lc, o)
+}
+
+// resolveHeadData is readHeadConfig's resolve step, split out so
+// jobHeadConfig can read the layer copy only once it knows whether head's
+// file is even anchored, without reading fugaro.yaml from tree twice.
+func resolveHeadData(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
 	rf, err := resolveFugaroYAML(ctx, data, lc, o)
 	if err != nil {
 		return nil, err
@@ -251,9 +258,21 @@ func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.
 
 // jobLayerOptions are the check job's: its repository's copy of the project
 // layer (decision L6), in the build account's own prefix, read with the
-// ordinary read (a prefix-conditioned grant answers a missing object with
-// 403, which reads as absent). No copy, no layer; the canonical object is
-// never read (the account cannot).
+// ordinary read, not the strict variant: the account's objectUser grant is
+// conditioned on the builds/<slug>/ prefix, so it lacks
+// storage.objects.list, and GCS answers a GET of a genuinely missing
+// object with 403 for that reason alone (blobx.ReadMax, and
+// TestReadTreatsForbiddenAsAbsent, map any 403 to ErrNotExist for exactly
+// this account shape) — there is no live 403 case this switch could still
+// distinguish from "missing" by using ReadMaxStrict instead, and doing so
+// would misreport "no layer published" as a failure for every repository
+// without one. An oversized copy (over LayerMaxBytes) is always an error:
+// it is present and published, so it never reads as "no layer", and names
+// the fix (republish within the limit). The caller (jobHeadConfig) must
+// call this only once it knows head's own file is anchored: an unanchored
+// repository's check must never touch builds/<slug>/project-layer.yaml at
+// all, so a copy broken for an unrelated reason can't fail a check that
+// was never going to use it.
 func jobLayerOptions(ctx context.Context, b *blobx.Bucket, slug string) (layerOptions, error) {
 	key := config.LayerCopyKey(slug)
 	data, _, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
@@ -262,8 +281,53 @@ func jobLayerOptions(ctx context.Context, b *blobx.Bucket, slug string) (layerOp
 		return layerOptions{Data: data, Where: key, NoBucket: true}, nil
 	case errors.Is(err, blobx.ErrNotExist):
 		return layerOptions{NoBucket: true}, nil
+	case errors.Is(err, blobx.ErrTooLarge):
+		return layerOptions{}, fmt.Errorf("the project layer copy %s is over the %d KiB limit: run fugaro config publish to republish it within the limit", key, config.LayerMaxBytes>>10)
 	}
 	return layerOptions{}, fmt.Errorf("reading the project layer copy %s: %w", key, err)
+}
+
+// jobHeadConfig is the check job's readHeadConfig: head's fugaro.yaml,
+// resolved over its repository's copy of the project layer
+// (jobLayerOptions) — read only when head's own file is anchored
+// (decision L9, anchorOf): an unanchored repository is resolved exactly as
+// it always was, with no copy ever read for it.
+//
+// A missing copy of an anchored file is not always an error: a build
+// without a layer never touches one (decision L6), so "no copy" can be a
+// repository whose project simply never published a layer, same as
+// before this file was anchored at all. The file is first resolved
+// without a layer: one that cannot resolve that way (a minimal file with
+// no workflows: of its own, which needs the layer's default_profile)
+// fails naming the fix, instead of the harder to place "must define at
+// least one workflow"; one that resolves fine without a layer (its own
+// full workflows:) goes on exactly as before, past one warn line, so a
+// project that meant to publish a layer but whose copy went missing is
+// never silent about it. Every other copy outcome (found, invalid,
+// oversized, unreadable) behaves exactly as readHeadConfig's did.
+func jobHeadConfig(ctx context.Context, bucket *blobx.Bucket, slug string, tree *imagecheck.GitTree, warn func(string)) (*config.Config, error) {
+	data, err := tree.ReadFile("fugaro.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
+	}
+	if !isAnchoredFile(data) {
+		return resolveHeadData(ctx, data, nil, layerOptions{NoBucket: true})
+	}
+	lo, err := jobLayerOptions(ctx, bucket, slug)
+	if err != nil {
+		return nil, err
+	}
+	if lo.Data != nil {
+		return resolveHeadData(ctx, data, nil, lo)
+	}
+	// jobLayerOptions found no copy (ErrNotExist, decision L6).
+	key := config.LayerCopyKey(slug)
+	cfg, rerr := resolveHeadData(ctx, data, nil, layerOptions{NoBucket: true})
+	if rerr != nil {
+		return nil, fmt.Errorf("no project layer copy at %s: run fugaro config publish", key)
+	}
+	warn(fmt.Sprintf("no project layer copy at %s: if the project publishes a layer, run fugaro config publish; this check ran without it", key))
+	return cfg, nil
 }
 
 // checkLogLine is the check job's log line for one workflow: Cloud Run
@@ -542,11 +606,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return failAll(err)
 	}
-	lo, err := jobLayerOptions(ctx, bucket, slug)
-	if err != nil {
-		return failAll(err)
-	}
-	cfg, err := readHeadConfig(ctx, tree, nil, lo)
+	cfg, err := jobHeadConfig(ctx, bucket, slug, tree, func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) })
 	if err != nil {
 		return failAll(err)
 	}
