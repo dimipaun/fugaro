@@ -275,6 +275,9 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 		if c, fy := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
 			o.Checks = append(o.Checks, *c)
 			o.FugaroYAML = fy
+			if fy.Valid {
+				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root)...)
+			}
 		}
 		o.Secrets = doctorSecrets(cmd, lc)
 	}
