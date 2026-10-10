@@ -577,11 +577,10 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 // installation's bucket override, miss the layer silently, and let the
 // strict submission proceed as if none applied instead of refusing.
 // Cloud Build's own layer-sha wiring (the builds/<slug>/project-layer.yaml
-// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is Task 14, not
-// built yet; until then, resolving strictly here against the right lc is
-// the whole of this path's layer strictness — it only refuses to submit a
-// build over an unreadable bucket, same as a launch would, rather than
-// silently building on a stale or unknown layer.
+// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is image_layer.go's
+// prepareLayerCopy, called from runImageBuildCloud once cfg is resolved
+// here: resolving strictly here against the right lc is what lets that
+// call trust cfg.Layer, rather than building on a stale or unknown one.
 func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, cfg *config.Config, name string, err error) {
 	root, rf, err := loadCheckoutResolved(ctx, "", lc, o)
 	if err != nil {
