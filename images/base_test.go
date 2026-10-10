@@ -236,6 +236,41 @@ func TestBaseKitProvidesInstallNodeCommands(t *testing.T) {
 	}
 }
 
+// npm and corepack, once installed into $prefix/bin, are themselves
+// `#!/usr/bin/env node` scripts. install-node.sh runs with the harness
+// Node deliberately off the image's PATH (design base-image.md section 6),
+// so unless the script puts $prefix/bin on its own (never the image's)
+// PATH before calling them, `env` cannot find `node` to run them. This is
+// a static check (no Docker): it would have caught the bug where that PATH
+// line was missing and the harness-Node RUN step failed with "env: 'node':
+// No such file or directory".
+func TestInstallNodePutsPrefixOnPathBeforeNpmAndCorepack(t *testing.T) {
+	data, err := os.ReadFile("base/install-node.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(data), "\n")
+	pathLine := -1
+	for i, line := range lines {
+		if strings.Contains(line, `PATH="$prefix/bin:$PATH"`) {
+			pathLine = i
+			break
+		}
+	}
+	if pathLine == -1 {
+		t.Fatal(`install-node.sh does not put $prefix/bin on PATH (no PATH="$prefix/bin:$PATH")`)
+	}
+	// Matches an actual invocation ("$prefix/bin/npm" install ...), not a
+	// `[ -x "$prefix/bin/corepack" ]` presence test.
+	callRe := regexp.MustCompile(`"\$prefix/bin/(npm|corepack)"\s+[A-Za-z0-9_-]`)
+	for i, line := range lines {
+		if callRe.MatchString(line) && i < pathLine {
+			t.Errorf("install-node.sh line %d calls %s before putting $prefix/bin on PATH (line %d): %s",
+				i+1, callRe.FindString(line), pathLine+1, strings.TrimSpace(line))
+		}
+	}
+}
+
 func TestInstallNodeHonoursThePrefix(t *testing.T) {
 	data, err := os.ReadFile("base/install-node.sh")
 	if err != nil {

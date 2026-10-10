@@ -125,6 +125,14 @@ curl -fsSL "$url/$file" -o "$tmp/$file"
 rm -rf "$prefix"
 mkdir -p "$prefix"
 tar -xJf "$tmp/$file" -C "$prefix" --strip-components=1 --no-same-owner
+# npm and corepack are themselves `#!/usr/bin/env node` scripts. The base
+# image deliberately keeps this Node off the image's PATH (design
+# docs/design/base-image.md section 6), so without this, `env` can't find
+# `node` to run them. This PATH change is local to this script's own
+# process (sh does not export changes back to its parent), so it never
+# reaches the image's PATH.
+PATH="$prefix/bin:$PATH"
+export PATH
 if [ ! -x "$prefix/bin/corepack" ]; then
   # Node 25 and later no longer bundle corepack. HOME=/root keeps npm's cache
   # out of the fugaro user's home, where root-owned files would break it.
