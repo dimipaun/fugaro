@@ -37,11 +37,6 @@ func fugaroAccountRE(project string) *regexp.Regexp {
 	return regexp.MustCompile(`^serviceAccount:fugaro-[a-z0-9-]+@` + regexp.QuoteMeta(project) + `\.iam\.gserviceaccount\.com$`)
 }
 
-// broadWriteRoles are the two roles that write every object in the bucket
-// unconditionally, the ones a doctor whose lists are known should never
-// see an unrecognized service account hold.
-var broadWriteRoles = []string{"roles/storage.objectAdmin", "roles/storage.admin"}
-
 // RunsBucketFindings reads the runs bucket's policy against the 0.7.0 end
 // state. With launchers and operators unknown (both empty), an unconditioned
 // writer is info, never a warning. project pins which service accounts this
@@ -85,11 +80,18 @@ func RunsBucketFindings(p *storage.Policy, bucket, project string, launchers, op
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
 					Problem: pm + " holds the custom role " + bd.Role + " on gs://" + bucket + ": doctor cannot tell whether it writes fugaro/",
 					Fix:     "review the role, or " + removeCmd(m, bd.Role)})
-			case known && strings.HasPrefix(m, "serviceAccount:") && slices.Contains(broadWriteRoles, bd.Role):
+			case known && strings.HasPrefix(m, "serviceAccount:"):
+				// Every role reaching this point is already a write role
+				// (bucketWriteRoles, checked by `write` above): objectAdmin
+				// and storage.admin are not the only ones that write every
+				// object, so this is not restricted to those two (the
+				// review finding this fixed: objectUser, objectCreator,
+				// legacyBucketWriter and legacyBucketOwner were previously
+				// left at "info" here, even with known lists).
 				out = append(out, BucketFinding{Severity: "warning", Member: pm, Role: bd.Role,
 					Problem: pm + " is an unrecognized service account holding " + bd.Role + " on gs://" + bucket + " unconditionally: expected only for an operator, or a job/build account under its own condition",
 					Fix:     removeCmd(m, bd.Role)})
-			case !known || strings.HasPrefix(m, "serviceAccount:"):
+			case !known:
 				out = append(out, BucketFinding{Severity: "info", Member: pm, Role: bd.Role,
 					Problem: pm + " can write anywhere in gs://" + bucket + " (" + bd.Role + "): expected only for an operator"})
 			case launcherOnly(m):

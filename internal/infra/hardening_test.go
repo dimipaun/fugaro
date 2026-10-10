@@ -118,23 +118,30 @@ func TestRunsBucketFindings(t *testing.T) {
 			t.Errorf("not flagged as an unrecognized condition: %+v", fs)
 		}
 	})
-	// An unrecognized service account holding an unconditioned broad-write
-	// role is a warning once the launcher/operator lists are known (there is
-	// no legitimate reason for it), but still only info when they are not
-	// (doctor cannot tell who is who).
-	t.Run("an unrecognized service account with unconditioned objectAdmin is a warning when lists are known", func(t *testing.T) {
-		p := &storage.Policy{Bindings: []*storage.PolicyBindings{
-			{Role: "roles/storage.objectAdmin", Members: []string{"serviceAccount:stranger@other-project.iam.gserviceaccount.com"}},
-		}}
-		known := RunsBucketFindings(p, b, hardeningProject, []string{o}, []string{o})
-		if sev(known, "warning") != 1 || sev(known, "info") != 0 {
-			t.Fatalf("known-lists findings %+v", known)
-		}
-		unknown := RunsBucketFindings(p, b, hardeningProject, nil, nil)
-		if sev(unknown, "warning") != 0 || sev(unknown, "info") != 1 {
-			t.Fatalf("unknown-lists findings %+v", unknown)
-		}
-	})
+	// An unrecognized service account holding ANY unconditioned write role is
+	// a warning once the launcher/operator lists are known (there is no
+	// legitimate reason for it), but still only info when they are not
+	// (doctor cannot tell who is who). Every predefined write role, not just
+	// objectAdmin/storage.admin: the review finding this pins.
+	for _, role := range []string{
+		"roles/storage.objectAdmin", "roles/storage.admin",
+		"roles/storage.objectUser", "roles/storage.objectCreator",
+		"roles/storage.legacyBucketWriter", "roles/storage.legacyBucketOwner",
+	} {
+		t.Run("an unrecognized service account with unconditioned "+role+" is a warning when lists are known", func(t *testing.T) {
+			p := &storage.Policy{Bindings: []*storage.PolicyBindings{
+				{Role: role, Members: []string{"serviceAccount:stranger@other-project.iam.gserviceaccount.com"}},
+			}}
+			known := RunsBucketFindings(p, b, hardeningProject, []string{o}, []string{o})
+			if sev(known, "warning") != 1 || sev(known, "info") != 0 {
+				t.Fatalf("known-lists findings %+v", known)
+			}
+			unknown := RunsBucketFindings(p, b, hardeningProject, nil, nil)
+			if sev(unknown, "warning") != 0 || sev(unknown, "info") != 1 {
+				t.Fatalf("unknown-lists findings %+v", unknown)
+			}
+		})
+	}
 }
 
 func TestProjectStorageWriters(t *testing.T) {
