@@ -263,8 +263,9 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 	case "workflows.*.image.skip_build_scripts":
 		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	case "workflows.*.image.tools":
-		// name=version pairs, sorted and %q'd as one slice (as image.apt
-		// is): a reorder or a tool added, removed or repinned is a change.
+		// name=version pairs, sorted (it's a map: YAML key order is not
+		// preserved and must not matter) and %q'd as one slice: a tool
+		// added, removed, renamed or repinned is a change.
 		keys := slices.Sorted(maps.Keys(p.Image.Tools))
 		pairs := make([]string, len(keys))
 		for i, k := range keys {

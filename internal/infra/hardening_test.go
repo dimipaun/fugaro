@@ -43,6 +43,7 @@ func TestHardeningAllowDelete(t *testing.T) {
 		{"a member on no list", full("user:gone@example.com"), nil},
 		{"no reader created", []tf.ResourceChange{full(a)[0], full(a)[2]}, nil},
 		{"no launcher grant created", []tf.ResourceChange{full(a)[0], full(a)[1]}, nil},
+		{"reader replaced (update), not created", []tf.ResourceChange{full(a)[0], rc(grantAddr("runs_reader", a), "roles/storage.objectViewer", "update"), full(a)[2]}, nil},
 		{"a replace, not a delete", []tf.ResourceChange{rc(grantAddr("runs", a), "roles/storage.objectAdmin", "delete", "create"), full(a)[1], full(a)[2]}, nil},
 		{"another role", []tf.ResourceChange{rc(grantAddr("runs", a), "roles/storage.objectViewer", "delete"), full(a)[1], full(a)[2]}, nil},
 		{"another resource", []tf.ResourceChange{rc(grantAddr("state", a), "roles/storage.objectAdmin", "delete"), full(a)[1], full(a)[2]}, nil},
