@@ -48,6 +48,10 @@ var skillJSONFields = []jsonFieldClaim{
 	{"secrets ls", []secretEntry{}, "[].id"},
 	{"secrets ls", []secretEntry{}, "[].versions"},
 	{"secrets ls", []secretEntry{}, "[].latest"},
+	{"config layer", configLayerDoc{}, "where"},
+	{"config layer", configLayerDoc{}, "generation"},
+	{"config layer", configLayerDoc{}, "sha256"},
+	{"config layer", configLayerDoc{}, "yaml"},
 }
 
 func init() {
@@ -215,4 +219,62 @@ func TestSkillJSONClaimsMatchTheTable(t *testing.T) {
 	if known["cost.total_usd_renamed"] || !known["row.cost.route_by"] {
 		t.Error("the table does not tell a renamed field from a real one")
 	}
+}
+
+// TestProjectLayerSkillClaimsRealFields: fieldTokenRE only catches field
+// names shaped with an underscore or a dot (TestSkillJSONClaimsMatchTheTable
+// above), so it cannot catch a bad rename of a bare single-word field like
+// `yaml` or `sha256`. A review on this PR found exactly that kind of bug:
+// the setup skill's "Does the project publish a project layer?" step
+// (plan Task 19) claimed `profiles` as a top-level field of `fugaro config
+// layer --json`, when configLayerDoc (config_show.go) has only where,
+// generation, sha256 and yaml — profiles and default_profile are keys
+// inside the yaml field's text, not of the envelope. This checks that
+// step's claims directly against configLayerDoc, on both sides: a rename in
+// the skill's prose (the backtick-quoted word disappears from the section)
+// or in the struct's json tag (hasJSONField no longer finds it) each fail
+// here independently of skillJSONFields / TestLintJSONFieldsExist.
+func TestProjectLayerSkillClaimsRealFields(t *testing.T) {
+	skill := setupSkillMD(t)
+	start := strings.Index(skill, "### Does the project publish a project layer?")
+	end := strings.Index(skill, "## 2. Investigate the repository")
+	if start < 0 || end < 0 || end < start {
+		t.Fatal("SKILL.md's project-layer step moved or was renamed; update this test")
+	}
+	section := skill[start:end]
+	for _, c := range skillJSONFields {
+		if c.command != "config layer" {
+			continue
+		}
+		if !strings.Contains(section, "`"+c.path+"`") {
+			t.Errorf("the project-layer step no longer names `%s`; if config layer --json dropped it, remove it from skillJSONFields too", c.path)
+		}
+		if !hasJSONField(reflect.TypeOf(configLayerDoc{}), c.path) {
+			t.Errorf("the project-layer step claims `%s` for fugaro config layer --json, but configLayerDoc has no such field", c.path)
+		}
+	}
+	// profiles and default_profile are real project-layer keys, but of the
+	// embedded yaml text, never of the --json envelope: the step must say
+	// so (with a trailing colon, the convention this file uses for a YAML
+	// key rather than a JSON field), and configLayerDoc must stay flat.
+	for _, key := range []string{"profiles", "default_profile"} {
+		if !strings.Contains(section, "`"+key+":`") {
+			t.Errorf("the project-layer step does not read `%s:` from the yaml field", key)
+		}
+		if hasJSONField(reflect.TypeOf(configLayerDoc{}), key) {
+			t.Errorf("configLayerDoc now has a top-level %q field; the step's yaml-field caveat is stale", key)
+		}
+	}
+}
+
+// setupSkillMD returns the setup skill's SKILL.md text.
+func setupSkillMD(t *testing.T) string {
+	t.Helper()
+	for path, text := range skillTexts(t) {
+		if strings.HasSuffix(path, filepath.Join("setup", "SKILL.md")) {
+			return text
+		}
+	}
+	t.Fatal("skills/setup/SKILL.md not found")
+	return ""
 }
