@@ -68,18 +68,14 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	if err != nil {
 		return nil, userErr("%s: %v", p.lcPath, err)
 	}
-	// Re-resolved strictly, against this freshly reloaded lc, rather than
-	// reused from p.cfg (refreshPreflight's loadCheckoutConfigAt, read
-	// lc==nil, flag-blind, and lenient): the rebuild this step leads to is
-	// a billable Cloud Build submission (decision L16, like fugaro image
-	// build's own), and p.cfg could carry no layer (an unreadable bucket)
-	// or a stale cached one, which prepareLayerCopy would then write over
-	// the repository's copy, undoing fugaro config publish silently.
-	_, rf, err := loadCheckoutResolved(ctx, p.root, lc, layerOptions{})
+	// Re-resolved strictly through the shared helper, against this
+	// freshly reloaded lc, rather than reused from p.cfg
+	// (refreshPreflight's loadCheckoutConfigAt, read lc==nil, flag-blind,
+	// and lenient): resolveForBuild's own doc comment has why.
+	cfg, err := resolveForBuild(ctx, p.root, lc)
 	if err != nil {
 		return nil, err
 	}
-	cfg := rf.Cfg
 	repoURL, err := checkoutURL(ctx, p.root)
 	if err != nil {
 		return nil, err

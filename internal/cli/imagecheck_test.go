@@ -277,6 +277,128 @@ func TestCheckJobSubmitsBuild(t *testing.T) {
 	}
 }
 
+// layeredCheckInstalledYAML is what fugaro init --repo would have seen
+// when it installed the check job: same workflow name and base kind as
+// layeredCheckYAML (below), but with base and image.* given directly
+// instead of through a profile, so config.Parse (no layer) resolves it on
+// its own -- newCheckJob only uses it to compute the installed spec's env
+// (FUGARO_CHECK_SPEC, base_images), never what the job itself reads.
+const layeredCheckInstalledYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckYAML is acme/app's actual fugaro.yaml for the layer test:
+// anchored (gcp_project, matching checkLC's project and GCP project), its
+// own full workflows: (not minimal), naming the layer's profile for base
+// and image.* -- settings only a profile, never defaults:, may carry, so
+// this proves the job resolved the copy, not just read past it.
+const layeredCheckYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { profile: svc, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckLayer is the project layer layeredCheckYAML's workflow
+// names: profile svc supplies the base (web-node, matching checkLC's own
+// base_images) and image.apt/setup/skip_build_scripts.
+const layeredCheckLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc:
+    base: web-node
+    image: { apt: [graphviz], setup: ["./scripts/warm.sh"], skip_build_scripts: true }
+default_profile: svc
+`
+
+func layeredCheckFiles() map[string]string {
+	files := npmFiles()
+	files["fugaro.yaml"] = layeredCheckYAML
+	return files
+}
+
+// Review fix: no test ran runImageCheckJob end to end with a layer
+// present. This one publishes the repository's copy
+// (builds/<slug>/project-layer.yaml) before running the job, against a
+// repository fugaro.yaml with its own full workflows: (not minimal) that
+// names the layer's profile for base and image.apt/setup/
+// skip_build_scripts. Asserts two things reflect the layer: the
+// submitted Cloud Build request's _PROJECT_LAYER_SHA256 equals the
+// copy's own sum (review item 2), and the job's own resolution actually
+// applied the profile's image settings -- proven through the recorded
+// ImageConfigHash, which only Base and Image.{Apt,Setup,SkipBuildScripts}
+// feed, matching the hash of resolving the same bytes over the same
+// layer independently (review item 1).
+//
+// Mutation (run, restore): replace the jobHeadConfig(...) call in
+// runImageCheckJob with readHeadConfig(ctx, tree, nil,
+// layerOptions{NoBucket: true}) (resolves without ever reading the copy,
+// the shape before this PR's own fix), and this test fails on both
+// counts: _PROJECT_LAYER_SHA256 is empty, and the recorded
+// ImageConfigHash no longer matches (image.apt/setup/skip_build_scripts
+// never applied, since profile: svc cannot resolve with no layer at all
+// -- the job would in fact fail outright with "fugaro.yaml has 1
+// problem(s)", which this test also catches as "err != nil").
+func TestCheckJobResolvesAndSubmitsWithTheLayer(t *testing.T) {
+	f := newCheckJob(t, layeredCheckFiles(), layeredCheckInstalledYAML)
+	layerPath := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), config.LayerCopyKey(f.slug))
+	if err := os.MkdirAll(filepath.Dir(layerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layerPath, []byte(layeredCheckLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := runCheckJob(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d", buildPosts(f.fb))
+	}
+	if len(lines) != 1 || lines[0].Decision != imagecheck.Rebuild {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	got := f.fb.Last()
+	subs, _ := got["substitutions"].(map[string]any)
+	wantSHA := config.LayerSum([]byte(layeredCheckLayer))
+	if subs["_PROJECT_LAYER_SHA256"] != wantSHA {
+		t.Fatalf("_PROJECT_LAYER_SHA256 = %v, want %s", subs["_PROJECT_LAYER_SHA256"], wantSHA)
+	}
+
+	l, ps := config.ParseProjectLayer([]byte(layeredCheckLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	wantCfg, _, ps := config.Resolve([]byte(layeredCheckYAML), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if wantCfg.Workflows["app"].Base != "web-node" || len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
+		t.Fatalf("test fixture itself does not resolve the layer: %+v", wantCfg.Workflows["app"])
+	}
+	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
+	tree, err := imagecheck.Open(context.Background(), f.work, "HEAD", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := imagecheck.ImageConfigHash(wantCfg, "app", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := f.checkState(t, "app")
+	if st == nil || st.BuildInputs == nil || st.BuildInputs.ImageConfigHash != wantHash {
+		t.Fatalf("check.json = %+v, want ImageConfigHash %s", st, wantHash)
+	}
+}
+
 func TestCheckJobSkipsAndLogs(t *testing.T) {
 	f := newCheckJob(t, checkFiles(), bitbucketYAML)
 	f.seedRecord(t)

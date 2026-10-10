@@ -403,6 +403,21 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
 	t.Chdir(dir)
+	// Both of app's secrets (its git credential and, agent.auth: oauth,
+	// claude-oauth-token) need a version, or infra.NeedsBuild leaves the
+	// workflow out as not ready to build (same reason as the "both seeded"
+	// comment below), and this test would never reach resolveForBuild at
+	// all: the layer bucket's own unreadability would then go untested.
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedLabel := func(name string) map[string]string {
+		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
+	}
+	r.sm.Seed(gcp.SecretID(slug, "bitbucket-token"), seedLabel("bitbucket-token"), []byte("tok"))
+	r.sm.Seed(gcp.SecretID(slug, "claude-oauth-token"), seedLabel("claude-oauth-token"), []byte("tok"))
 	e := rigEngine(t, r, &initOptions{yes: true})
 	fb := useFakeBuilder(t)
 	open := layerBucketOpener

@@ -73,6 +73,29 @@ var layerBucketOpener = blobx.Open
 // shorten it.
 var layerBucketTimeout = 15 * time.Second
 
+// anchorOf is data's project: and gcp_project:, and whether they are
+// shaped like a real anchor (decision L9: config.ProjectNameRE and
+// config.GCPProjectRE). A project layer, and the check job's copy of one,
+// applies only to a file this reports anchored for; a malformed or absent
+// gcp_project: makes it false, and the parse (not this helper) is what
+// reports the file malformed.
+func anchorOf(data []byte) (project, gcpProject string, ok bool) {
+	project, perr := config.ProjectOf(data)
+	gcp, gerr := config.GCPProjectOf(data)
+	if perr != nil || gerr != nil || gcp == "" || !config.ProjectNameRE.MatchString(project) || !config.GCPProjectRE.MatchString(gcp) {
+		return "", "", false
+	}
+	return project, gcp, true
+}
+
+// isAnchoredFile reports whether data's fugaro.yaml is anchored
+// (anchorOf), for a caller that only needs the yes/no, not the names
+// (the check job: jobLayerOptions must run only for an anchored repository).
+func isAnchoredFile(data []byte) bool {
+	_, _, ok := anchorOf(data)
+	return ok
+}
+
 // findLayer is the project layer that applies to the fugaro.yaml data
 // (docs/design/layered-config.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
@@ -81,9 +104,8 @@ var layerBucketTimeout = 15 * time.Second
 // all does a cached copy up to 7 days old stand in, with a note. A present
 // but invalid object is an error; it never counts as none.
 func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc *localcfg.Config, o layerOptions, now time.Time) (foundLayer, error) {
-	project, perr := config.ProjectOf(data)
-	gcp, gerr := config.GCPProjectOf(data)
-	if perr != nil || gerr != nil || gcp == "" || !config.ProjectNameRE.MatchString(project) || !config.GCPProjectRE.MatchString(gcp) {
+	project, gcp, ok := anchorOf(data)
+	if !ok {
 		return foundLayer{}, nil // not anchored; the parse reports a malformed file
 	}
 	anchor := config.LayerAnchor{Project: project, GCPProject: gcp}

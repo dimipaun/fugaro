@@ -16,6 +16,7 @@ import (
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -69,6 +70,50 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	}
 	if buildPosts(fb) != 0 {
 		t.Error("a build without its registry reached Cloud Build")
+	}
+}
+
+// Review fix: a declined (or unconfirmable) billable build must leave no
+// trace in the bucket. prepareLayerCopy both writes
+// builds/<slug>/project-layer.yaml and validates the base image's release,
+// so running it before confirmBuild would publish the copy (and could even
+// refuse the build on the base-image gate) before the user ever typed
+// anything.
+//
+// Mutation (run, restore): move the cfg.Layer != nil { ... prepareLayerCopy
+// ... } block in runImageBuildCloud back above confirmBuild, and this test
+// fails: the copy is written even though "not-aurora" never confirms the
+// build.
+func TestImageBuildCloudDeclinedConfirmationWritesNoLayerCopy(t *testing.T) {
+	fb := gcpfake.NewBuild(t)
+	f := newCloudFixture(t, "cloud_build: "+fb.URL+"/")
+	publishedLayer(t, f, testProjectLayer)
+	path := os.Getenv("FUGARO_CONFIG")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const reposLine = "repos:\n  acme/app: { provider: github, base_branch: main, workflows: [web] }\n"
+	updated := strings.Replace(string(data), reposLine, reposLine+`  acme/other: { provider: github, github_app_id: "12345" }`+"\n", 1)
+	if updated == string(data) {
+		t.Fatal("the fixture config's repos: line has changed")
+	}
+	if err := os.WriteFile(path, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	slug := mustSlug("github", "acme/other")
+	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(slug))
+	layerCheckout(t, f, minimalAnchored)
+	fakeTerminal(t)
+	_, _, err = executeStdin(t, "not-aurora\n", "image", "build", "--base", "b:1")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "not confirmed") {
+		t.Fatalf("err = %v", err)
+	}
+	if buildPosts(fb) != 0 {
+		t.Fatal("a declined build still reached Cloud Build")
+	}
+	if bucketText(t, f, config.LayerCopyKey(slug)) != "" {
+		t.Fatal("a declined build still wrote the project layer copy")
 	}
 }
 
