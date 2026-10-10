@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,7 +52,43 @@ func TestMain(m *testing.M) {
 	// while their configs carry fake endpoints, so they turn the skip off and
 	// the tests of the skip itself turn it on.
 	skipGSOnFakeEndpoints = false
+	// findLayer's bucket has no seam override redirecting gs:// elsewhere
+	// the way sharedBucketOpener does above: a rig whose local config
+	// computes a gs:// runs bucket URL (most do; only bucket_url: file://
+	// fixtures don't) would otherwise have it opened for real the first
+	// time anything resolves a project layer. A test that means to
+	// exercise a layer already uses a file:// bucket_url or overrides this
+	// var itself; anything else panics loudly instead of quietly reaching
+	// storage.googleapis.com.
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		if strings.HasPrefix(url, "gs://") {
+			panic("fugaro: test tried to open a real gs:// project layer bucket: " + url + "; use a bucket_url: file:// fixture or override layerBucketOpener")
+		}
+		return blobx.Open(ctx, url)
+	}
 	os.Exit(m.Run())
+}
+
+// A test that reaches findLayer's bucket with a gs:// URL and no seam
+// override of its own must crash loudly, not quietly cross the network
+// (TestNoRealGCSFromTests would stop the credentials and the proxy, but a
+// slow failure there is still the gax retry loop the production risk fix
+// in layer_resolve.go's layerBucketTimeout exists for).
+//
+// Mutation (run, restore): change the `strings.HasPrefix(url, "gs://")`
+// condition in TestMain to `false`, and this test fails because nothing
+// panics.
+func TestLayerBucketOpenerRefusesARealGSBucket(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("layerBucketOpener did not panic on a gs:// URL")
+		}
+		if !strings.Contains(fmt.Sprint(r), "gs://") {
+			t.Fatalf("panic = %v", r)
+		}
+	}()
+	_, _ = layerBucketOpener(context.Background(), "gs://fugaro-tests-should-never-open-this")
 }
 
 func TestNoRealGCSFromTests(t *testing.T) {

@@ -158,7 +158,7 @@ func TestMergeQueuedSanitisesTaskFields(t *testing.T) {
 			}
 			v := MergeQueued(fixture(), Config{}, []QueuedRun{q}, "", t0)
 			var plain strings.Builder
-			if err := RenderPlain(&plain, "aurora", v, PlainOptions{}); err != nil {
+			if err := RenderPlain(&plain, "aurora", v, nil, PlainOptions{}); err != nil {
 				t.Fatal(err)
 			}
 			doc, err := json.Marshal(BuildJSON("aurora", v))

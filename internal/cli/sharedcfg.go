@@ -18,7 +18,6 @@ import (
 	"strings"
 	"time"
 
-	"gocloud.dev/blob"
 	"gocloud.dev/gcerrors"
 	"google.golang.org/api/googleapi"
 	"gopkg.in/yaml.v3"
@@ -99,8 +98,8 @@ func publishSharedWarn(ctx context.Context, lc *localcfg.Config, warn func(strin
 		warn("not publishing the shared config: " + err.Error())
 		return false, nil
 	}
-	if err := b.Bucket.WriteAll(ctx, infra.SharedConfigObject, data, &blob.WriterOptions{ContentType: "application/yaml"}); err != nil {
-		return false, err
+	if err := b.Put(ctx, infra.SharedConfigObject, data, "application/yaml"); err != nil {
+		return false, operatorWriteErr(lc.BucketURL(), infra.SharedConfigObject, err)
 	}
 	return true, nil
 }
@@ -454,6 +453,9 @@ func bucketErrFor(url, what, subject string, err error) error {
 
 // isAccessDenied reports a refusal for lack of access or credentials.
 func isAccessDenied(err error) bool {
+	if errors.Is(err, blobx.ErrForbidden) {
+		return true
+	}
 	if gcerrors.Code(err) == gcerrors.PermissionDenied {
 		return true
 	}

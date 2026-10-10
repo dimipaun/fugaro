@@ -41,6 +41,12 @@ type cloudVerdict struct {
 // cannot see a build that failed after the base moved: build records live in
 // the bucket. It prints nothing; rerun is the command line a blocked reason
 // tells the user to run again ("" is the bare fugaro upgrade).
+//
+// loadCheckoutResolved also resolves the checkout's project layer
+// (layered-config.md): Offline: true keeps that resolution to the local
+// cache (decision L13), never the bucket itself, so an anchored checkout
+// with no cached layer leaves it unknown rather than reading one for real;
+// the project layer's own values, when cached, still apply normally.
 func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string) cloudVerdict {
 	if rerun == "" {
 		rerun = selfCommand() + " upgrade"
@@ -56,10 +62,11 @@ func cloudCheck(ctx context.Context, root string, co cloudOptions, rerun string)
 	if _, err := os.Stat(filepath.Join(root, "fugaro.yaml")); errors.Is(err, os.ErrNotExist) {
 		return cloudVerdict{state: cloudNotHere, reason: "no fugaro.yaml yet, so no job image to refresh"}
 	}
-	_, cfg, err := loadCheckoutConfigAt(ctx, root)
+	_, rf, err := loadCheckoutResolved(ctx, root, nil, layerOptions{Lenient: true, Offline: true})
 	if err != nil {
 		return failed("", err)
 	}
+	cfg := rf.Cfg
 	repo, err := checkoutRepo(ctx, root)
 	if err != nil {
 		return failed("", err)
