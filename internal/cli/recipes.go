@@ -362,6 +362,8 @@ func publishRecipe(ctx context.Context, w io.Writer, b *blobx.Bucket, key, name 
 	switch {
 	case errors.Is(err, blobx.ErrConflict), errors.Is(err, blobx.ErrExists):
 		return 0, userErr("nothing was published: another publisher changed %s while this ran; look at it (fugaro recipes show %s) and run this again", key, name)
+	case errors.Is(err, blobx.ErrForbidden):
+		return 0, operatorWriteErr("gs://"+b.GCSName, key, err)
 	case err != nil:
 		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", key, err))
 	}

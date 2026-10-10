@@ -121,6 +121,22 @@ func TestInitPublishConfigAlone(t *testing.T) {
 	}
 }
 
+// A launcher's --publish-config is refused with the operator text and exit
+// 1, since 0.7.0 only operators may write fugaro/ (bucket-iam.md H8).
+func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
+	r := newInitRig(t)
+	old := sharedBucketOpener
+	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return r.gcs.Bucket(t, initRunsBucket), nil
+	}
+	t.Cleanup(func() { sharedBucketOpener = old })
+	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
+	_, _, err := executeStdin(t, "", "init", "--publish-config")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+}
+
 func TestInitPublishConfigNeedsALocalConfig(t *testing.T) {
 	r := newInitRig(t)
 	sharedRuns(t)
