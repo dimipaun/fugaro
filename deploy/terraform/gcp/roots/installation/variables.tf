@@ -79,6 +79,13 @@ variable "operators" {
   nullable = false
 }
 
+variable "launcher_bucket_condition" {
+  type = object({
+    title      = string
+    expression = string
+  })
+}
+
 variable "budget" {
   type = object({
     billing_account = string

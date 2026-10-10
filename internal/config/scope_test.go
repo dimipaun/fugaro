@@ -1,7 +1,10 @@
 package config
 
 import (
+	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +26,17 @@ func TestScopeOf(t *testing.T) {
 	}
 	if s := (InProject | InRepo).String(); s != "project, repo" {
 		t.Errorf("String = %q", s)
+	}
+}
+
+// TestReviewAllowForksIsRepoScopeOnly (generic-tool Task 9, G12):
+// review.allow_forks is read from the base branch, like followup.trusted,
+// so a project layer or a profile may not set it, and a task flag can't
+// override it.
+func TestReviewAllowForksIsRepoScopeOnly(t *testing.T) {
+	row, ok := ScopeOf("review.allow_forks")
+	if !ok || row.In != InRepo {
+		t.Fatalf("ScopeOf(review.allow_forks) = %+v, %v, want repo scope only", row, ok)
 	}
 }
 
@@ -73,9 +87,12 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 		"workflows.*.image.setup":               InProfile | InRepo,
 		"workflows.*.image.skip_build_scripts":  InProfile | InRepo,
 		"workflows.*.checkout":                  InProfile | InRepo,
+		"workflows.*.image.tools":               InProfile | InRepo,
 		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,
 		"workflows.*.commands.test":             InProfile | InRepo,
+		"workflows.*.commands.lint":             InProfile | InRepo,
+		"workflows.*.commands.fix":              InProfile | InRepo,
 		"workflows.*.commands.rerun_failed":     InProfile | InRepo,
 		"workflows.*.commands.reports":          InProfile | InRepo,
 		"workflows.*.cache":                     InProfile | InRepo,
@@ -94,6 +111,8 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 
 		"followup.trusted":      InRepo,
 		"followup.allow_public": InRepo,
+
+		"review.allow_forks": InRepo,
 	}
 
 	seen := make(map[string]bool, len(Scopes))
@@ -121,9 +140,12 @@ func TestExecutableKeys(t *testing.T) {
 	want := []string{
 		"workflows.*.commands.build",
 		"workflows.*.commands.test",
+		"workflows.*.commands.lint",
+		"workflows.*.commands.fix",
 		"workflows.*.commands.rerun_failed",
 		"workflows.*.image.apt",
 		"workflows.*.image.setup",
+		"workflows.*.image.tools",
 	}
 	got := append([]string(nil), ExecutableKeys...)
 	sort.Strings(got)
@@ -135,6 +157,67 @@ func TestExecutableKeys(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("ExecutableKeys = %v, want %v", ExecutableKeys, want)
 			break
+		}
+	}
+}
+
+// TestEveryImageFieldIsClassified walks the Image struct by reflection: every
+// field's workflows.*.image.<yaml tag> path must be in ExecutableKeys or in
+// NonExecutableImageKeys with a non-empty reason. A field added to Image
+// without updating either list fails this test, so a future executable
+// field (the next image.tools) cannot silently skip the
+// --executable-changes gate (PR #244).
+func TestEveryImageFieldIsClassified(t *testing.T) {
+	typ := reflect.TypeOf(Image{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if tag == "" || tag == "-" {
+			t.Fatalf("Image.%s has no yaml tag to classify", f.Name)
+		}
+		key := "workflows.*.image." + tag
+		executable := slices.Contains(ExecutableKeys, key)
+		reason, nonExecutable := NonExecutableImageKeys[key]
+		switch {
+		case executable && nonExecutable:
+			t.Errorf("%s is in both ExecutableKeys and NonExecutableImageKeys", key)
+		case !executable && !nonExecutable:
+			t.Errorf("Image.%s (%s) is in neither ExecutableKeys nor NonExecutableImageKeys: classify it", f.Name, key)
+		case nonExecutable && strings.TrimSpace(reason) == "":
+			t.Errorf("%s has no reason in NonExecutableImageKeys", key)
+		}
+	}
+}
+
+// commandsNotExecutable lists Commands struct fields that never run as
+// shell, with why. TestEveryCommandFieldIsExecutableOrExplained forces the
+// next field someone adds to Commands into either ExecutableKeys or here,
+// so it can't silently skip the config publish --executable-changes gate
+// (L7 option A).
+var commandsNotExecutable = map[string]string{
+	"Reports": "a list of result-file paths the agent reads, not code",
+}
+
+// TestEveryCommandFieldIsExecutableOrExplained walks every field of
+// Commands by reflection: each must be in ExecutableKeys
+// ("workflows.*.commands.<field>") or in commandsNotExecutable, never both,
+// never neither.
+func TestEveryCommandFieldIsExecutableOrExplained(t *testing.T) {
+	typ := reflect.TypeOf(Commands{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if name == "" {
+			t.Fatalf("Commands.%s has no yaml tag", f.Name)
+		}
+		key := "workflows.*.commands." + name
+		_, explained := commandsNotExecutable[f.Name]
+		inExec := slices.Contains(ExecutableKeys, key)
+		switch {
+		case inExec && explained:
+			t.Errorf("Commands.%s (key %s) is in both ExecutableKeys and commandsNotExecutable", f.Name, key)
+		case !inExec && !explained:
+			t.Errorf("Commands.%s (key %s) is in neither ExecutableKeys nor commandsNotExecutable: classify it as one or the other", f.Name, key)
 		}
 	}
 }

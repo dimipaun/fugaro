@@ -84,7 +84,7 @@
       ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
-        "base": { "enum": ["go", "java-services", "web-node"] },
+        "base": { "enum": ["base", "go", "java-services", "web-node"] },
         "checkout": { "enum": ["baked", "clone"] },
         "image": {
           "type": "object",
@@ -93,15 +93,23 @@
             "node": { "type": ["string", "integer"], "pattern": "^[0-9]+(\\.[0-9]+\\.[0-9]+)?$" },
             "skip_build_scripts": { "type": "boolean" },
             "apt": { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]+(=[A-Za-z0-9.+~:-]+)?$" } },
-            "setup": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$", "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" } } }
+            "setup": { "type": "array", "items": { "type": "string", "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$", "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" } } },
+            "tools": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._/:@-]*$", "maxLength": 128 },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~:-]*$", "maxLength": 64 }
+            }
           }
         },
         "commands": {
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": { "fix": ["lint"] },
           "properties": {
             "build": { "type": "string", "minLength": 1 },
             "test": { "type": "string", "minLength": 1 },
+            "lint": { "type": "string", "minLength": 1 },
+            "fix": { "type": "string", "minLength": 1 },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,

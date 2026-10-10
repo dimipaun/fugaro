@@ -20,6 +20,17 @@ A project config's `backend:` key names the backend (`cloud-run` is the default 
 
 No live service is touched: CI never runs against a real cloud.
 
+## The control plane seam
+
+Compute is not the only thing a backend needs. The `Backend` interface above is the compute seam; there is a second, unabstracted dependency on Firebase as the **control plane**: the budget's atomic counters, the dashboard and the run history. A replacement control plane would have to provide what Firebase provides today:
+
+- **Atomic multi-path conditional updates (leases):** the budget's reservations are read-modify-write across several paths at once, refused if any of them changed since the read (`internal/budget`'s leases).
+- **Server-evaluated rules that tie counters together:** the Realtime Database's rules enforce the budget invariants (a session's spend never exceeds its reservation, no reservation while a kill switch is on) without trusting the client that writes them (`internal/rtdb`).
+- **Event streams:** `fugaro watch`'s live updates and the kill switches react to a value changing, not to polling (`internal/rtdb`, `internal/watch`).
+- **A document store for history:** run records, spend history and reporting live in a queryable store across runs (`internal/firestore`).
+
+**Firebase stays GCP-bound regardless of compute backend** (see above): a second compute backend (AWS, Azure) still talks to the same Firebase project for budget, dashboard and history. The seam is not abstracted, and will not be before a second control plane is actually needed: `internal/budget`, `internal/rtdb`, `internal/firestore` and `internal/watch` depend on Firebase's REST APIs directly. Neither `internal/rtdb` nor `internal/firestore` uses a Firebase SDK — both are small, hand-rolled REST clients (the Realtime Database Admin SDK cannot authenticate as a single run's own ID token, and the Firestore SDK is more than the handful of calls Fugaro needs), but the dependency on Firebase's own HTTP APIs, and on their specific behaviour (ETags, if-match, multi-path PATCH, Server-Sent-Event streams), is just as direct. This section is documentation only; no interface exists here yet.
+
 ## Live checks
 
 The offline suites above prove a backend's logic, not the real service. The GCP backend's provisioning stages (project creation, the image mirror, the secrets and plugin-wiring stages, `doctor`) are exercised against real Google, ghcr.io and Artifact Registry by [Check 27](gcp-live-checklist.md) of the live checklist: user-run on a throwaway project, with exact steps, expected results and what to paste back. **It has not been run**; until it is, those stages' claims about Google and registry behaviour are from documentation, as the M11 design's §14 says. A second backend brings its own checklist entry for the stages it adds.

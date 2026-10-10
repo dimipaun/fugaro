@@ -124,6 +124,14 @@
         "allow_public": { "type": "boolean", "description": "Allow follow-ups on a public repository, where anyone can comment." }
       }
     },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Review mode: an agent reviewing a pull request instead of implementing one (design generic-tool §1).",
+      "properties": {
+        "allow_forks": { "type": "boolean", "description": "Let review mode run a fork pull request's code next to the job's secrets (default false). Read from the base branch, like followup.trusted." }
+      }
+    },
     "workflows": {
       "type": "object",
       "minProperties": 1,
@@ -169,7 +177,7 @@
         },
         {
           "if": { "not": { "required": ["profile"] } },
-          "then": { "required": ["base", "commands"], "properties": { "commands": { "required": ["build", "test"] } } }
+          "then": { "required": ["commands"], "properties": { "commands": { "required": ["build", "test"] } } }
         },
         {
           "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
@@ -185,11 +193,15 @@
               }
             }
           }
+        },
+        {
+          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
+          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
-        "base": { "enum": ["go", "java-services", "web-node"] },
+        "base": { "enum": ["base", "go", "java-services", "web-node"] },
         "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository. clone: the job runs the installation's base image directly, with no build; image.apt, image.setup, image.skip_build_scripts and dockerfile are refused. Needs fugaro 0.7.0." },
         "image": {
           "type": "object",
@@ -208,6 +220,11 @@
                 "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
                 "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" }
               }
+            },
+            "tools": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._/:@-]*$", "maxLength": 128 },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~:-]*$", "maxLength": 64 }
             }
           }
         },
@@ -219,9 +236,12 @@
         "commands": {
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": { "fix": ["lint"] },
           "properties": {
             "build": { "type": "string", "minLength": 1 },
             "test": { "type": "string", "minLength": 1 },
+            "lint": { "type": "string", "minLength": 1, "description": "The check step's gate command (build | test | lint)." },
+            "fix": { "type": "string", "minLength": 1, "description": "The check step's autofix command; needs lint, since the gate runs fix, then lint." },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,

@@ -120,7 +120,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a merge key", head + "profiles:\n  p:\n    <<: {base: go}\n", "merge key"},
 		{"a repeated key", head + "profiles:\n  p: {base: go}\n  p: {base: go}\n", `repeats the key "p"`},
 		{"two documents", head + "---\nversion: 1\n", "more than one YAML document"},
-		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: must be one of go, java-services, web-node"},
+		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: must be one of go, java-services, web-node, or left out for the Fugaro base"},
 		{"an unknown default profile", head + "profiles:\n  p: { base: go }\ndefault_profile: q\n", `default_profile: names "q"`},
 		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
@@ -260,8 +260,16 @@ func TestProjectLayerErrorsArePrintable(t *testing.T) {
 func TestProfileHasExecutable(t *testing.T) {
 	for _, body := range []string{
 		"commands: { build: make }", "commands: { test: make test }",
+		"commands: { lint: make lint }", "commands: { fix: make fmt }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
 		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
+		// A mise tool is as powerful as image.setup: every URL/host-form
+		// backend (cargo:, go:, npm:, asdf:/vfox:, ubi:/github:/aqua:)
+		// passes ValidMiseTool's charset, and the build installs it with
+		// the workflow's build secrets mounted. A profile holding only
+		// this must report HasExecutable true, so publishing it needs
+		// --executable-changes.
+		`image: { tools: { "cargo:https://evil.example/x": "ref:main" } }`,
 	} {
 		if !strings.HasPrefix(body, "{") {
 			body = "{ " + body + " }"

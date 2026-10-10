@@ -123,12 +123,13 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `agent.instructions`, `agent.review` | | | yes | | they name files in the repository (and are prompt text) |
 | `agent.max_run_tokens`, `agent.max_output_tokens.*`, `budget.*` | | | yes | | policy: the ceiling is the owner's, in the installation config; a repository only tightens it |
 | `workflows.*.profile` | | | yes | | it chooses a profile |
-| `workflows.*.base`, `checkout`, `image.{node,apt,setup,skip_build_scripts}`, `commands.*`, `cache`, `resources.*`, `timeouts.{stage,verify,finalize_reserve}`, `rebuild.*` | | yes | yes | | |
+| `workflows.*.base`, `checkout`, `image.{node,apt,setup,skip_build_scripts,tools}`, `commands.*`, `cache`, `resources.*`, `timeouts.{stage,verify,finalize_reserve}`, `rebuild.*` | | yes | yes | | |
 | `workflows.*.timeouts.total` | | yes | yes | yes | |
 | `workflows.*.image.jdk` | | | yes | | refused on every base, as today |
 | `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
+| `review.allow_forks` | | | yes | | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 
 **Secrets and tokens.** No `fugaro.yaml` key holds a secret value: `workflows.*.secrets` maps names to variables. The project layer additionally refuses any value shaped like a credential (`sk-ant-…`, `ghp_…`, `github_pat_…`, a PEM private key, and the like), since nothing in it is secret (decision L18).
 

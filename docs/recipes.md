@@ -33,7 +33,7 @@ steps:
 - `first_line` may appear at most once, with `max_rounds` 1 to 3. It is a review by the coder's model in a fresh session, followed by a fix when it asks for changes. It never decides readiness.
 - `review` is required in every recipe: exactly once, and last, with `max_rounds` 1 to 10. A recipe cannot produce a ready pull request without a senior review.
 - A step without `max_rounds` takes `agent.first_line_rounds` or `agent.review_rounds` from `fugaro.yaml`. A recipe's own `max_rounds` wins over those keys. A per-task `review_rounds` override (the task's `overrides`) wins over a recipe's `max_rounds` for the `review` step.
-- `roles: { reviewer: coder }` makes the reviewer run on the coder's model, in a fresh session, with the reviewer's prompt. "Solo" means exactly this: the same model reviews, in a new session that has not seen the coder's reasoning. It is the only role mapping allowed.
+- `roles: { reviewer: coder }` makes the reviewer run on the coder's model, in a fresh session, with the reviewer's prompt. "Solo" means exactly this: the same model reviews, in a new session that has not seen the coder's reasoning. `roles: { coder: reviewer }` is the other direction: the recipe format accepts it too, and the two exclude each other (a recipe cannot set both). The runner does not yet act on `coder: reviewer` (no model or output-limit aliasing the way `reviewer: coder` gets below); that lands in a later release.
 - Models are never named in a recipe. They come from `agent.models` in `fugaro.yaml`, as they always did.
 - Readiness is unchanged and not configurable: a pull request is ready only if the final commit has a verified passing test and the senior review's verdict is `ship`. Anything else is a draft.
 - Under `reviewer: coder`, the reviewer's model and its per-call output limit are the coder's, and `agent.models.reviewer` is ignored (the run logs that). The output limit is applied before the project's policy: if the default branch's `fugaro.yaml` sets a tighter `agent.max_output_tokens.reviewer`, the aliased reviewer limit ends up tighter than the coder's, and the run's report notes that the looser value was ignored. Limits from policy can only tighten.
@@ -91,12 +91,12 @@ A published project recipe is cached on each machine for 24 hours (up to 7 days 
 
 A recipe that uses a reserved key is refused with a message that says so:
 
-- `checks`: check steps are reserved for a later recipe version. The runner runs no checks; the coder calls `fugaro verify`.
+- `checks` as a step name: the step type is `check`, not `checks`.
 - `goto` and `on_reject`: no jumps or bounces between steps.
 - `extends`: copy the recipe instead.
 - `on_pass` and `on_fail`: outcome rules are not configurable.
 - `model` and `models`: a recipe never names a model; models come from `agent.models`.
-- any role other than `reviewer`, and any role value other than `coder`.
+- any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 
 What recipes do not do in 0.5.0: run check steps, jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
 

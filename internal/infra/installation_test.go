@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	terraform "github.com/dimipaun/fugaro/deploy/terraform"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/infra/tf"
 )
 
@@ -135,6 +136,26 @@ func TestInstallationLogIsolation(t *testing.T) {
 	data, _ = InstallationVars(s)
 	if !strings.Contains(string(data), `"log_isolation": false`) {
 		t.Errorf("--no-log-isolation tfvars:\n%s", data)
+	}
+}
+
+// The installation spec carries the launchers' condition exactly as
+// gcp.LauncherBucketCondition spells it, for the spec's own runs bucket.
+func TestInstallationSpecCarriesTheLauncherCondition(t *testing.T) {
+	spec := installationSpec(t)
+	want := Condition{Title: gcp.LauncherBucketConditionTitle, Expression: gcp.LauncherBucketCondition(spec.RunsBucket)}
+	if spec.LauncherBucketCondition != want {
+		t.Fatalf("launcher condition = %+v, want %+v", spec.LauncherBucketCondition, want)
+	}
+	data, err := InstallationVars(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		C Condition `json:"launcher_bucket_condition"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil || doc.C != want {
+		t.Fatalf("tfvars launcher_bucket_condition = %+v (%v), want %+v", doc.C, err, want)
 	}
 }
 

@@ -39,6 +39,8 @@ type Config struct {
 	Budget    *Budget             `yaml:"budget,omitempty"`
 	Workflows map[string]Workflow `yaml:"workflows"`
 	Followup  Followup            `yaml:"followup"`
+	// Review configures review mode (design generic-tool §1, G12).
+	Review Review `yaml:"review"`
 
 	// Layer is the project layer Resolve resolved this config over, nil
 	// for none. It is never part of the file or of SHA256: a consumer that
@@ -80,6 +82,15 @@ type Followup struct {
 	// AllowPublic lets a follow-up run on a public repository, where
 	// anyone can comment.
 	AllowPublic bool `yaml:"allow_public"`
+}
+
+// Review configures review mode (design generic-tool §1, G12): an agent
+// reviewing a pull request instead of implementing one.
+type Review struct {
+	// AllowForks lets review mode run a fork pull request's code next to
+	// the job's secrets; false (the default) refuses a fork PR. Read from
+	// the base branch, like Followup.Trusted, so a PR can't opt itself in.
+	AllowForks bool `yaml:"allow_forks"`
 }
 
 // Git describes the repository's git provider and pull request settings.
@@ -227,7 +238,9 @@ type Workflow struct {
 	// Profile names the project layer's profile this workflow starts from;
 	// the workflow's own keys override it field by field. "" is none.
 	// Binaries before 0.6.0 refuse the key.
-	Profile    string       `yaml:"profile,omitempty"`
+	Profile string `yaml:"profile,omitempty"`
+	// Base is a legacy base kind (go, java-services, web-node); empty means
+	// the one Fugaro base. Read it through BaseKind.
 	Base       string       `yaml:"base"`
 	Image      Image        `yaml:"image"`
 	Dockerfile string       `yaml:"dockerfile"`
@@ -249,6 +262,14 @@ const (
 	CheckoutBaked = "baked"
 	CheckoutClone = "clone"
 )
+
+// BaseKind is the base kind w builds on: its legacy base:, or BaseKind.
+func (w Workflow) BaseKind() string {
+	if w.Base != "" {
+		return w.Base
+	}
+	return BaseKind
+}
 
 // Rebuild says when the daily image check rebuilds the workflow's image
 // (design §7.2). A change to image:, dockerfile: (or the file it names), base
@@ -304,17 +325,27 @@ type Image struct {
 	// running package lifecycle or build scripts, leaving those builds to
 	// the workflow's build command (design §7.2).
 	SkipBuildScripts bool `yaml:"skip_build_scripts"`
+	// Tools are mise tools, name to version, written to the image's global
+	// mise config for a repository without a mise config of its own (design
+	// base-image.md section 4). The Fugaro base only.
+	Tools MiseTools `yaml:"tools"`
 }
 
 // IsZero reports whether the image block sets nothing.
 func (i Image) IsZero() bool {
-	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts
+	return i.Node == "" && i.JDK == "" && len(i.Apt) == 0 && len(i.Setup) == 0 && !i.SkipBuildScripts && len(i.Tools) == 0
 }
 
 // Commands are the repository's build and test commands, run through `sh -c`.
 type Commands struct {
-	Build       string       `yaml:"build"`
-	Test        string       `yaml:"test"`
+	Build string `yaml:"build"`
+	Test  string `yaml:"test"`
+	// Lint runs as the check step's gate command (design generic-tool
+	// §1, G10); "" means the recipe may not name a check step over lint.
+	Lint string `yaml:"lint"`
+	// Fix is the check step's autofix command; it needs Lint, since the
+	// gate runs fix, then lint, to judge whether the fix worked.
+	Fix         string       `yaml:"fix"`
 	RerunFailed *RerunFailed `yaml:"rerun_failed"`
 	Reports     []string     `yaml:"reports"`
 }

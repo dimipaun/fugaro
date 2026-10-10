@@ -929,6 +929,18 @@ Expect the four addresses under `module.firebase.`.
 
 **Restore.** Nothing to restore beyond `git checkout -- .claude/settings.json` if you do not want the pin.
 
+## Check 33: a vendor's own endpoint (sandbox only, run by you; optional; USER-RUN, NOT RUN)
+
+**No step below has been run; nothing here is a claim that it works.** Check 25 settles OpenRouter; this is the same question for a vendor's own Anthropic-compatible endpoint (`docs/multi-model.md`, "Direct to the vendor", design `generic-tool.md` §6, G18): whether it accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. **Optional**: skip it if you only route through OpenRouter.
+
+**Before it (free).** A `providers.<name>` entry in the local project config pointed at the vendor's own endpoint (for example `https://api.deepseek.com/anthropic`), with `allow_data_to: [edgeappinc/fugarosandbox]`, a `model_prices` entry, and `budget: { mode: enforce, per_run_usd: 2 }`. `fugaro secrets set <the provider's secret>` from the sandbox's checkout, then `fugaro init --repo .`.
+
+1. **⚠ CONFIRM, a passing run.** `fugaro run --repo edgeappinc/fugarosandbox "<your small task>"` with the coder pinned to a model the vendor entry claims. Expected: the run ends in a PR.
+2. **FACT lines to record:** the `model call` log lines' `priced_as` (whether the vendor served the pinned model or something else); the settled charge Fugaro recorded (`fugaro diagnose <run>`'s `Cost:` and `Reported:`); the vendor's own reported usage for the same calls (its dashboard or API), beside the settled charge.
+3. **Clean up.** Decline the sandbox PR this check opened and delete its branch (Check 24's "Clean up").
+
+**Restore.** Revoke the vendor key if one was created for this check alone, and remove the `providers.<name>` entry (or its `allow_data_to` line) from the local project config if you do not want to keep it.
+
 ## Not covered by these tests (manual)
 
 - **Live cancel of a running run.** The hermetic `TestCloudCancel` covers the
