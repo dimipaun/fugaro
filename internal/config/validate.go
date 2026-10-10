@@ -393,7 +393,7 @@ func CheckWarnings(c *Config, root string) []Problem {
 			continue
 		}
 		if files, err := MiseConfigFiles(root); err == nil && len(files) == 0 {
-			ps = append(ps, Problem{Path: "workflows." + name, Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
+			ps = append(ps, Problem{Path: "workflows." + showKey(name), Message: "no mise.toml, .tool-versions or image.tools: the image installs no language runtime (docs/base-image.md)"})
 		}
 	}
 	return ps

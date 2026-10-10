@@ -82,7 +82,7 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"a merge key", head + "profiles:\n  p:\n    <<: {base: go}\n", "merge key"},
 		{"a repeated key", head + "profiles:\n  p: {base: go}\n  p: {base: go}\n", `repeats the key "p"`},
 		{"two documents", head + "---\nversion: 1\n", "more than one YAML document"},
-		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: must be one of base, go, java-services, web-node"},
+		{"a bad base", head + "profiles:\n  p: { base: java-17 }\n", "profiles.p.base: must be one of go, java-services, web-node, or left out for the Fugaro base"},
 		{"an unknown default profile", head + "profiles:\n  p: { base: go }\ndefault_profile: q\n", `default_profile: names "q"`},
 		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},

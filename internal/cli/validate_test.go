@@ -62,6 +62,70 @@ func TestValidateChecksFiles(t *testing.T) {
 	}
 }
 
+// cliBaseYAML is cliMinimalYAML's workflow with no base: (the default
+// Fugaro base), and no image.tools, dockerfile: or mise config: exactly
+// what CheckWarnings' "installs no language runtime" warning is for.
+const cliBaseYAML = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: sh build.sh, test: sh test.sh } }
+`
+
+// TestValidateWarnsNoLanguageRuntime pins config.CheckWarnings' wiring into
+// `fugaro validate` (internal/cli/validate.go's one call to it): a Fugaro-
+// base workflow with no mise config and no image.tools is valid but prints
+// the warning, in both the plain and --json forms.
+func TestValidateWarnsNoLanguageRuntime(t *testing.T) {
+	path := writeConfig(t, cliBaseYAML)
+	out, errOut, err := execute(t, "validate", path)
+	if err != nil {
+		t.Fatalf("out=%q errOut=%q err=%v", out, errOut, err)
+	}
+	if !strings.Contains(errOut, "warning: workflows.app: no mise.toml, .tool-versions or image.tools") {
+		t.Fatalf("errOut = %q", errOut)
+	}
+	out, _, err = execute(t, "validate", "--json", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got validateOutput
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid JSON %q: %v", out, err)
+	}
+	if !got.Valid || len(got.Warnings) != 1 || got.Warnings[0].Path != "workflows.app" {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+// TestValidateSkipsNoLanguageRuntimeWarning covers CheckWarnings' three skip
+// conditions through the CLI: image.tools set, dockerfile: set, and a
+// legacy base all silence the warning that a plain Fugaro-base workflow
+// gets.
+func TestValidateSkipsNoLanguageRuntimeWarning(t *testing.T) {
+	for name, body := range map[string]string{
+		"image.tools set": strings.Replace(cliBaseYAML, "{ commands:", "{ image: { tools: { node: \"24\" } }, commands:", 1),
+		"dockerfile set":  strings.Replace(cliBaseYAML, "{ commands:", "{ dockerfile: .fugaro/app.Dockerfile, commands:", 1),
+		"legacy base":     strings.Replace(cliBaseYAML, "{ commands:", "{ base: web-node, commands:", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, body)
+			if name == "dockerfile set" {
+				if err := os.MkdirAll(filepath.Join(filepath.Dir(path), ".fugaro"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(filepath.Dir(path), ".fugaro", "app.Dockerfile"), []byte("FROM x\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, errOut, _ := execute(t, "validate", path)
+			if strings.Contains(errOut, "installs no language runtime") {
+				t.Fatalf("%s: unexpected warning: %q", name, errOut)
+			}
+		})
+	}
+}
+
 func TestConfigExample(t *testing.T) {
 	isolateProjects(t, t.TempDir())
 	t.Chdir(t.TempDir())

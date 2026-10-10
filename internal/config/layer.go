@@ -450,7 +450,7 @@ func validateProfile(p string, pr Profile) []Problem {
 		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
 	if pr.Base != "" && !slices.Contains(Bases, pr.Base) {
-		add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
+		add(p+".base", "must be one of %s, or left out for the Fugaro base", strings.Join(Bases[1:], ", "))
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
 	if rf := pr.Commands.RerunFailed; rf != nil {

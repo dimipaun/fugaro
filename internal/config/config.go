@@ -306,7 +306,7 @@ type Image struct {
 	// Tools are mise tools, name to version, written to the image's global
 	// mise config for a repository without a mise config of its own (design
 	// base-image.md section 4). The Fugaro base only.
-	Tools map[string]string `yaml:"tools"`
+	Tools MiseTools `yaml:"tools"`
 }
 
 // IsZero reports whether the image block sets nothing.

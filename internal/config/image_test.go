@@ -59,6 +59,9 @@ func TestImageProblems(t *testing.T) {
 	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	cases := []struct{ name, yaml, path, msg string }{
 		{"image and dockerfile", webYAML + "    image: { node: \"24\" }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
+		// Image.IsZero must count Tools: before it did, a workflow with
+		// only image.tools set and a dockerfile: slipped past this check.
+		{"tools and dockerfile", webYAML + "    image: { tools: { node: \"24.19.0\" } }\n    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile", "mutually exclusive"},
 		{"jdk on web-node", webYAML + "    image: { jdk: \"21\" }\n", "workflows.web.image.jdk", "is not supported"},
 		{"node on java-services", jvm + "    image: { node: \"24\" }\n", "workflows.web.image.node", "only applies to base web-node"},
 		{"node minor only", webYAML + "    image: { node: \"24.19\" }\n", "workflows.web.image.node", "major version such as 24"},
@@ -111,6 +114,93 @@ func TestGoBase(t *testing.T) {
 		}
 		if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != path {
 			t.Errorf("%s: problems = %v, want one at %s", file, ps, path)
+		}
+	}
+}
+
+// TestValidMiseTool is a table test of the single gate validateImage uses
+// for every image.tools entry. Every image.tools key or version reaches a
+// Dockerfile or a generated mise config verbatim (design base-image.md
+// section 4), so this charset is a strict allowlist, not a denylist: each
+// bad case below is a valid prefix plus exactly one character (or, for the
+// length caps, one byte) that must not be let through. A regex or cap
+// change that lets any of these pass is a real security regression
+// (arbitrary code execution through a mise backend such as cargo:, go:,
+// npm:, asdf:/vfox: or ubi:/github:/aqua:, per the ExecutableKeys ruling
+// above).
+func TestValidMiseTool(t *testing.T) {
+	for _, name := range []string{"npm:@scope/pkg", "aqua:owner/repo", "node"} {
+		if !ValidMiseTool(name, "1.0.0") {
+			t.Errorf("ValidMiseTool(%q, \"1.0.0\") = false, want true", name)
+		}
+	}
+	for _, version := range []string{"temurin-25", "24.19.0"} {
+		if !ValidMiseTool("node", version) {
+			t.Errorf("ValidMiseTool(\"node\", %q) = false, want true", version)
+		}
+	}
+	badVersions := []string{
+		"24\"", "24'", "24\\", "24\n", "24 ", "24;", "24$x", "24`x`",
+		"24/x", "24@x", "24%", "24\x00", "２４", "-24",
+	}
+	for _, v := range badVersions {
+		if ValidMiseTool("node", v) {
+			t.Errorf("ValidMiseTool(\"node\", %q) = true, want false", v)
+		}
+	}
+	badNames := []string{
+		`node"`, "node\n", "node x", "node=", "node]", "!node", "Node", "-node", "ｎode",
+	}
+	for _, name := range badNames {
+		if ValidMiseTool(name, "1.0.0") {
+			t.Errorf("ValidMiseTool(%q, \"1.0.0\") = true, want false", name)
+		}
+	}
+}
+
+// TestValidMiseToolLengthCaps pins the exact boundary of each cap: the
+// longest accepted key or version, and one byte past it.
+func TestValidMiseToolLengthCaps(t *testing.T) {
+	longName := strings.Repeat("a", maxMiseToolNameLen)
+	if !ValidMiseTool(longName, "1.0.0") {
+		t.Errorf("a %d-byte name must be valid", maxMiseToolNameLen)
+	}
+	if ValidMiseTool(longName+"a", "1.0.0") {
+		t.Errorf("a %d-byte name must be refused", maxMiseToolNameLen+1)
+	}
+	longVersion := strings.Repeat("1", maxMiseToolVersionLen)
+	if !ValidMiseTool("node", longVersion) {
+		t.Errorf("a %d-byte version must be valid", maxMiseToolVersionLen)
+	}
+	if ValidMiseTool("node", longVersion+"1") {
+		t.Errorf("a %d-byte version must be refused", maxMiseToolVersionLen+1)
+	}
+}
+
+// TestImageToolsVersionMustBeAQuotedString pins the ruling that an
+// image.tools version must be a YAML string scalar: "python: 3.10" is an
+// unquoted YAML float (a human reading it expects the string "3.10"), and
+// schemas/fugaro.schema.json already requires a JSON string there, so Go
+// must refuse it rather than silently stringify it (looser than the
+// schema). A plain scalar YAML does not resolve as a number, bool or null,
+// such as temurin-25, stays accepted without quotes.
+func TestImageToolsVersionMustBeAQuotedString(t *testing.T) {
+	for _, tc := range []struct{ value, want string }{
+		{"3.10", "must be a quoted string version"},
+		{"24", "must be a quoted string version"},
+		{"25.00", "must be a quoted string version"},
+		{"true", "must be a quoted string version"},
+		{`"24.19.0"`, ""},
+		{"temurin-25", ""},
+	} {
+		y := strings.Replace(baseYAML, "    commands:", "    image: { tools: { node: "+tc.value+" } }\n    commands:", 1)
+		_, problems := Parse([]byte(y))
+		got := ""
+		for _, p := range problems {
+			got += p.String() + "\n"
+		}
+		if (tc.want == "") != (got == "") || (tc.want != "" && !strings.Contains(got, tc.want)) {
+			t.Errorf("node: %s: problems %q, want %q", tc.value, got, tc.want)
 		}
 	}
 }
