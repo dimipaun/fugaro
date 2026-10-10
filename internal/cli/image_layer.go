@@ -38,6 +38,22 @@ func resolveForBuild(ctx context.Context, root string, lc *localcfg.Config) (*co
 	return rf.Cfg, nil
 }
 
+// baseImagePredatesLayer reports whether base is a release reference
+// (one of config.Bases, baseRefReleaseRE) older than layeredSince (0.6.0):
+// its own fugaro renders with no project layer at all, so it does not
+// recognize the render step's hidden --layer-bucket/--layer-slug/
+// --layer-sha256 flags (an old fugaro would refuse them as unknown). A
+// custom or dev base (no match) is assumed current. release is the
+// matched release ("" when base doesn't match at all), for a refusal
+// message.
+func baseImagePredatesLayer(base string) (release string, predates bool) {
+	m := baseRefReleaseRE.FindStringSubmatch(base)
+	if m == nil {
+		return "", false
+	}
+	return m[2], imagePredates(m[2], layeredSince)
+}
+
 // prepareLayerCopy makes the repository's copy hold the layer a build is
 // about to resolve against (decision L6) and returns its sum for the
 // build. A layer needs a base whose fugaro renders with it (layeredSince):
@@ -45,9 +61,9 @@ func resolveForBuild(ctx context.Context, root string, lc *localcfg.Config) (*co
 // call it only with a layer; a build without one never touches a copy
 // (to retire a layer, publish one with no defaults and no profiles).
 func prepareLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, l *config.ProjectLayer, base string) (string, error) {
-	if m := baseRefReleaseRE.FindStringSubmatch(base); m != nil && imagePredates(m[2], layeredSince) {
+	if release, predates := baseImagePredatesLayer(base); predates {
 		return "", userErr("the project layer needs a base image whose fugaro reads it (fugaro %s or later), but this build starts from %s, release %s: run fugaro image refresh in the checkout, in your own terminal window",
-			layeredSince, pluginwire.Printable(base), m[2])
+			layeredSince, pluginwire.Printable(base), release)
 	}
 	if err := writeLayerCopy(ctx, b, slug, l.Raw); err != nil {
 		return "", remote(fmt.Errorf("writing the project layer copy %s: %w", config.LayerCopyKey(slug), err))

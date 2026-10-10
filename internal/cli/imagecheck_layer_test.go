@@ -48,6 +48,34 @@ func forbidden403Bucket(t *testing.T) *blobx.Bucket {
 	return b
 }
 
+// serverError5xxBucket is a real gcsblob bucket whose server answers every
+// GET with 503: a transient failure, unlike a 403 (which the account's own
+// IAM shape makes indistinguishable from "missing", decision L6) or a 404
+// (genuinely missing). jobLayerOptions must report this as a failure, not
+// silently resolve without a layer.
+func serverError5xxBucket(t *testing.T) *blobx.Bucket {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		fmt.Fprint(w, `{"error":{"code":503,"message":"backend error"}}`)
+	}))
+	t.Cleanup(srv.Close)
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx, option.WithEndpoint(srv.URL+"/storage/v1/"), option.WithoutAuthentication(), storage.WithJSONReads())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.SetRetry(storage.WithPolicy(storage.RetryNever))
+	gb, err := gcsblob.OpenBucket(ctx, nil, "b", &gcsblob.Options{Client: client})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &blobx.Bucket{Bucket: gb, GCSName: "b"}
+	t.Cleanup(func() { _ = b.Close() })
+	return b
+}
+
 func cloneOf(t *testing.T, files map[string]string) *imagecheck.GitTree {
 	t.Helper()
 	testutil.IsolateGit(t)
@@ -170,6 +198,24 @@ func TestJobLayerOptionsTreatsForbiddenAsNoCopy(t *testing.T) {
 	lo, err := jobLayerOptions(ctx, b, "acme-other-deadbeef")
 	if err != nil || !lo.NoBucket || lo.Data != nil {
 		t.Fatalf("a 403 copy read: %+v, %v", lo, err)
+	}
+}
+
+// Review fix: unlike a 404 (genuinely missing, decision L6) or a 403 (the
+// account's own IAM shape makes it indistinguishable from missing), a 5xx
+// is a transient failure of the bucket itself, not of this one object: it
+// must fail the check, not silently resolve as though no layer existed.
+//
+// Mutation (run, restore): in jobLayerOptions, change the final
+// `return layerOptions{}, fmt.Errorf(...)` to
+// `return layerOptions{NoBucket: true}, nil` (the same shape as the
+// ErrNotExist case), and this test fails: a 503 now reads as "no copy".
+func TestJobLayerOptionsServerErrorIsAFailure(t *testing.T) {
+	ctx := context.Background()
+	b := serverError5xxBucket(t)
+	lo, err := jobLayerOptions(ctx, b, "acme-other-deadbeef")
+	if err == nil || lo.NoBucket {
+		t.Fatalf("a 503 copy read: %+v, %v, want an error, not NoBucket", lo, err)
 	}
 }
 

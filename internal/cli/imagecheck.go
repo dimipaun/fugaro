@@ -227,9 +227,10 @@ func checkedWorkflows(cfg *config.Config) []string {
 }
 
 // readHeadConfig reads head's fugaro.yaml and resolves it over the project
-// layer o finds (docs/design/layered-config.md §8): the check job passes
-// its copy (jobHeadConfig); fugaro image check run locally reads the
-// published layer with the operator's access (lc).
+// layer o finds (docs/design/layered-config.md §8): fugaro image check run
+// locally, with the operator's own access (lc). The check job does not call
+// this: it goes through jobHeadConfig -> resolveHeadData instead, so it can
+// decide whether to read its copy at all before resolving (decision L9).
 func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
 	data, err := tree.ReadFile("fugaro.yaml")
 	if err != nil {
@@ -690,6 +691,18 @@ func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra
 	base := s.BaseImages[kind]
 	if base == "" {
 		return "", "", fmt.Errorf("the installed check job has no %s base image: %s", kind, notInstalledReason)
+	}
+	// cloudBuildSpec always sets ProjectLayerSHA256 from cfg.Layer (empty
+	// for none), which the render step reads as --layer-bucket/--layer-
+	// slug/--layer-sha256 (gcp.BuildSpec): an older base's own fugaro
+	// predates those flags and would refuse them as unknown, so a layer
+	// is never submitted against one (the same gate prepareLayerCopy
+	// uses for a human-triggered build, image_layer.go).
+	if cfg.Layer != nil {
+		if release, predates := baseImagePredatesLayer(base); predates {
+			return "", "", fmt.Errorf("the project layer needs a base image whose fugaro reads it (fugaro %s or later), but %s's %s base is %s, release %s: rebuild the base image first (fugaro image refresh)",
+				layeredSince, name, kind, base, release)
+		}
 	}
 	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket)
 	if err != nil {
