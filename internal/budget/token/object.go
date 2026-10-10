@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"gocloud.dev/gcerrors"
+	"google.golang.org/api/googleapi"
 )
 
 // ObjectKey is where a run's custom token waits in the runs bucket.
@@ -33,15 +35,27 @@ func PutObject(ctx context.Context, b *blobx.Bucket, slug, run, tok string) erro
 }
 
 // DeleteObject removes the run's token object (the launcher's cleanup when
-// the launch fails after the token was left). A missing object is fine.
+// the launch fails after the token was left). A missing object is fine. A
+// refused delete (HTTP 403) must not read as "already gone": gocloud maps a
+// GCS 403 to the same gcerrors.NotFound a missing object gets, so the 403
+// is detected first and reported as blobx.ErrForbidden, never silently
+// treated as success. A token a refused cleanup left behind stays
+// replayable (bucket-iam.md §2.3).
 func DeleteObject(ctx context.Context, b *blobx.Bucket, slug, run string) error {
 	if !validSegment(slug) || !validSegment(run) {
 		return errors.New("budget token: invalid slug or run id")
 	}
-	if err := b.Delete(ctx, ObjectKey(slug, run)); err != nil && !isNotExist(err) {
+	err := b.Delete(ctx, ObjectKey(slug, run))
+	switch {
+	case err == nil:
+		return nil
+	case isForbidden(err):
+		return fmt.Errorf("budget token: deleting the token object failed: %w: %w", blobx.ErrForbidden, err)
+	case isNotExist(err):
+		return nil
+	default:
 		return fmt.Errorf("budget token: deleting the token object failed: %s", errText(err))
 	}
-	return nil
 }
 
 // Untaken objects: a token nobody takes is dead after an hour but the object
@@ -100,6 +114,14 @@ func checkNames(tok, slug, run string) error {
 }
 
 func isNotExist(err error) bool { return gcerrors.Code(err) == gcerrors.NotFound }
+
+// isForbidden reports an HTTP 403 from GCS. gocloud maps a 403 to
+// gcerrors.NotFound on reads and writes alike, so this must be checked
+// before isNotExist (blobx.isForbidden does the same, for the same reason).
+func isForbidden(err error) bool {
+	var ae *googleapi.Error
+	return errors.As(err, &ae) && ae.Code == http.StatusForbidden
+}
 
 // errText returns err's text. Bucket errors carry the object name and a
 // status, never the object body, so the text is safe to include.
