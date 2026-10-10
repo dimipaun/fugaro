@@ -1233,9 +1233,14 @@ func (r *initRun) installRoot(ctx context.Context, c *infra.Clients, t *tf.TF, w
 			return outs, false, remote(err)
 		}
 		fmt.Fprint(r.w, tf.Summary(plan))
-		if err := guard(plan, r.o.allowDelete); err != nil {
+		// The 0.7.0 bucket hardening deletes launchers' old objectAdmin
+		// grants; exactly those are allowed, and named (bucket-iam.md H7).
+		// A delete is never covered, so the step still asks its own name.
+		hardening := infra.HardeningAllowDelete(plan, spec.Launchers, spec.Operators)
+		if err := guard(plan, append(slices.Clone(r.o.allowDelete), hardening...)); err != nil {
 			return outs, false, err
 		}
+		fmt.Fprint(r.w, infra.HardeningBanner(hardening))
 		counts := infra.CountPlan(plan)
 		r.res.Changes = &counts
 		if r.o.planOnly {
