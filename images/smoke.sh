@@ -14,6 +14,11 @@
 # root filesystem, a Postgres with PostGIS and pgvector, Redis and the Firebase
 # emulators answer, and the preflight of an EdgeServer-style repository
 # passes, before they are stopped.
+# For BASE=base, the pins additionally include MISE_VERSION, GCLOUD_VERSION,
+# DOCKER_CLI_VERSION, YQ_VERSION, CODEX_VERSION, OPENCODE_VERSION,
+# GOOSE_VERSION, CRUSH_VERSION and HARNESS_NODE_VERSION, and the image's
+# presence checks (images/base/tools.tsv) are run with no network through
+# `fugaro image selftest`.
 set -eu
 image=${1:?usage: smoke.sh IMAGE BASE}
 base=${2:?usage: smoke.sh IMAGE BASE}
@@ -177,6 +182,34 @@ echo "services ok"
 '
     docker run --rm --read-only --tmpfs /tmp --tmpfs /home/fugaro:uid=1000,gid=1000,mode=0755 "$image" bash -c "$services_check" \
       || fail "fugaro-services failed (output above)"
+    ;;
+  base)
+    # pinned NAME CMD... asserts CMD's output names the Dockerfile's pin NAME.
+    pinned() {
+      name=$1; shift
+      want=$(eval "printf '%s' \"\${$name:-}\"")
+      [ -n "$want" ] || want=$(arg_default "$name")
+      [ -n "$want" ] || fail "$dockerfile has no ARG $name=... pin"
+      got=$(first_line "$(run "$@" 2>&1)") || fail "$* failed"
+      echo "$got"
+      case "$got" in *"$want"*) ;; *) fail "$* reports '$got', not pinned $name=$want" ;; esac
+    }
+    pinned MISE_VERSION mise --version
+    pinned GCLOUD_VERSION gcloud --version
+    pinned DOCKER_CLI_VERSION docker --version
+    pinned YQ_VERSION yq --version
+    pinned CODEX_VERSION codex --version
+    pinned OPENCODE_VERSION opencode --version
+    pinned GOOSE_VERSION goose --version
+    pinned CRUSH_VERSION crush --version
+    pinned HARNESS_NODE_VERSION /opt/fugaro/node/bin/node -v
+    pinned MISE_VERSION cat /etc/fugaro/base.json
+    # Every row of images/base/tools.tsv, presence only: no network, and the
+    # selftest gives each tool an empty HOME.
+    report=$(printf '%s' '{"tools":"all","tools_only":true}' | docker run --rm -i --network none "$image" fugaro image selftest) \
+      || { printf '%s\n' "$report"; fail "the presence checks failed (report above)"; }
+    case "$report" in *'"passed":true'*) ;; *) printf '%s\n' "$report"; fail "the presence checks did not pass" ;; esac
+    echo "presence checks passed"
     ;;
   *) fail "unknown base $base" ;;
 esac

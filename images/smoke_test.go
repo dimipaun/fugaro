@@ -93,6 +93,26 @@ case "$cmd" in
     exit 1 ;;
   "sh -c "*".claude.json"*)
     exit 1 ;;
+  "mise --version")
+    [ "$missing" = mise ] && fail_missing mise
+    echo "$FAKE_MISE_VERSION linux-x64 (2026-10-07)" ;;
+  "gcloud --version")
+    [ "$missing" = gcloud ] && fail_missing gcloud
+    printf 'Google Cloud SDK %s\nbq 2.1.0\n' "$FAKE_GCLOUD_VERSION" ;;
+  "docker --version")
+    echo "Docker version $FAKE_DOCKER_CLI_VERSION, build 1a2b3c4" ;;
+  "yq --version")
+    echo "yq (https://github.com/mikefarah/yq/) version v$FAKE_YQ_VERSION" ;;
+  "codex --version") echo "codex-cli $FAKE_CODEX_VERSION" ;;
+  "opencode --version") echo "$FAKE_OPENCODE_VERSION" ;;
+  "goose --version") echo " $FAKE_GOOSE_VERSION" ;;
+  "crush --version") echo "crush version v$FAKE_CRUSH_VERSION" ;;
+  "/opt/fugaro/node/bin/node -v") echo "v$FAKE_HARNESS_NODE_VERSION" ;;
+  "cat /etc/fugaro/base.json") printf '{"mise":"%s"}\n' "$FAKE_MISE_VERSION" ;;
+  "fugaro image selftest")
+    cat >/dev/null
+    if [ "$missing" = selftest ]; then echo '{"passed":false,"checks":[{"name":"tool:gemini","ok":false}]}'; exit 1; fi
+    echo '{"passed":true,"checks":[{"name":"tool:gemini","ok":true}]}' ;;
   *)
     echo "fake-docker: unhandled command: $cmd" >&2
     exit 99 ;;
