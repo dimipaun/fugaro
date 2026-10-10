@@ -97,12 +97,16 @@ var Scopes = []ScopeRow{
 	{Key: "followup.allow_public", In: InRepo, Why: whyFollowup},
 }
 
-// ExecutableKeys are the profile keys whose values run as shell, in the
-// job or in the image build (decision L7): a publish that changes one needs
-// --executable-changes.
+// ExecutableKeys are the profile keys whose values run as shell, or control
+// whether shell a profile already describes runs, in the job or in the
+// image build (decision L7): a publish that changes one needs
+// --executable-changes. image.skip_build_scripts going from true to false
+// (or being dropped) turns the dependency install/build scripts back on in
+// the image build; going from false to true is reported too (the owner's
+// ruling: a direction being safer is not a reason to leave it ungated).
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.rerun_failed",
-	"workflows.*.image.apt", "workflows.*.image.setup",
+	"workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.skip_build_scripts",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

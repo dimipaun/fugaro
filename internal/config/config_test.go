@@ -624,3 +624,10 @@ func TestValidateProfileNames(t *testing.T) {
 		t.Fatalf("profile problems at %v", paths)
 	}
 }
+
+func TestDurationMarshalsAsWritten(t *testing.T) {
+	out, err := yaml.Marshal(Timeouts{Total: Duration{Duration: 90 * time.Minute, Set: true}})
+	if err != nil || !strings.Contains(string(out), "total: 1h30m0s") {
+		t.Fatalf("%s %v", out, err)
+	}
+}
