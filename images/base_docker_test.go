@@ -93,7 +93,7 @@ func TestBaseImageHardening(t *testing.T) {
 	if found != want {
 		t.Errorf("setuid/setgid files:\n%s\nwant:\n%s", found, want)
 	}
-	if caps := testutil.Docker(t, "run", "--rm", "--user", "0", img, "sh", "-c", "getcap -r / 2>/dev/null || true"); caps != "" {
+	if caps := testutil.Docker(t, "run", "--rm", "--user", "0", img, "sh", "-c", "find / -xdev -type f -exec getcap {} + 2>/dev/null || true"); caps != "" {
 		t.Errorf("file capabilities: %s", caps)
 	}
 	if pid1 := testutil.Docker(t, "run", "--rm", img, "sh", "-c", `tr "\000" " " </proc/1/cmdline`); !strings.HasPrefix(pid1, "/usr/bin/tini ") {

@@ -57,14 +57,23 @@ type baseBuild struct {
 
 // BaseImageOf returns the base image images/<kind> built from this checkout
 // with images/build-base.sh, once per test binary and kind, for the daemon's
-// platform. FUGARO_TEST_BASE_IMAGE names a prebuilt image to use instead.
-// Derived builds start FROM this local image, so the active docker builder
-// must see local images, as Docker's default builder does.
+// platform. FUGARO_TEST_BASE_IMAGE_<KIND> (kind upper-cased, "-" turned into
+// "_", e.g. FUGARO_TEST_BASE_IMAGE_WEB_NODE) names a prebuilt image to use
+// for that kind instead of building one; FUGARO_TEST_BASE_IMAGE is a
+// back-compat alias scoped to kind "web-node" only, from when it was the
+// only kind BaseImage built. Derived builds start FROM this local image, so
+// the active docker builder must see local images, as Docker's default
+// builder does.
 func BaseImageOf(t *testing.T, kind string) string {
 	t.Helper()
 	RequireDocker(t)
-	if img := os.Getenv("FUGARO_TEST_BASE_IMAGE"); img != "" {
+	if img := os.Getenv("FUGARO_TEST_BASE_IMAGE_" + strings.ToUpper(strings.ReplaceAll(kind, "-", "_"))); img != "" {
 		return img
+	}
+	if kind == "web-node" {
+		if img := os.Getenv("FUGARO_TEST_BASE_IMAGE"); img != "" {
+			return img
+		}
 	}
 	platform := DockerPlatform(t)
 	v, _ := baseImages.LoadOrStore(kind, &baseBuild{})
