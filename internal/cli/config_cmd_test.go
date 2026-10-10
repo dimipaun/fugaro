@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -224,6 +225,54 @@ func TestConfigShowJSONTellsLayerUnknownFromNone(t *testing.T) {
 	}
 	if doc2.ProjectLayer != nil || doc2.LayerUnknown {
 		t.Fatalf("doc2 = %+v, want ProjectLayer nil and LayerUnknown false", doc2)
+	}
+}
+
+// The raw JSON text, not the unmarshalled struct: a stray `,omitempty` on
+// LayerUnknown's tag, or a wrong json name, would still round-trip
+// through encoding/json's own zero-value handling and hide behind
+// Go's Unmarshal (an absent "layer_unknown" key and an explicit `false`
+// both decode to the same Go zero value). layer_unknown has no omitempty,
+// so the key is always there, true or false; checked_at does, so the key
+// exists only when a layer was actually read at a real time.
+//
+// Mutation (run, restore): add `,omitempty` to LayerUnknown's json tag in
+// configShowDoc (config_show.go). The command's own LayerUnknown is false
+// in the first scenario below (a layer was read), so the key vanishes
+// from the raw text and the first assertion below fails.
+func TestConfigShowJSONRawKeysLayerUnknownAndCheckedAt(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	out, _, err := execute(t, "config", "show", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"layer_unknown"`) {
+		t.Fatalf(`raw JSON has no "layer_unknown" key at all:%s`, out)
+	}
+	if !strings.Contains(out, `"checked_at"`) {
+		t.Fatalf(`raw JSON has no "checked_at" key for a layer that was actually read:%s`, out)
+	}
+
+	// --project-layer FILE never has a checked time at all (findLayer's
+	// o.File case sets no CheckedAt): checked_at must be entirely absent
+	// from the raw text, not present as null or a zero time.
+	dir := layerCheckout(t, nil, minimalAnchored)
+	layerPath := filepath.Join(dir, "project-layer.yaml")
+	if err := os.WriteFile(layerPath, []byte(testProjectLayer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out2, _, err := execute(t, "config", "show", "--project-layer", layerPath, "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out2, `"layer_unknown"`) {
+		t.Fatalf(`raw JSON has no "layer_unknown" key at all:%s`, out2)
+	}
+	if strings.Contains(out2, `"checked_at"`) {
+		t.Fatalf(`raw JSON has a "checked_at" key for a layer that was never "checked":%s`, out2)
 	}
 }
 
@@ -485,6 +534,37 @@ func TestConfigInitRefusesWithoutALayer(t *testing.T) {
 	_, _, err := execute(t, "config", "init", "--project", "aurora", "--yes")
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "publishes no project layer") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// writeMinimalFugaroYAML opens with mode 0o644 (config_init.go); the
+// process umask can mask bits out of whatever a writer asks for, so this
+// pins the actual on-disk mode against a umask of 0 (set for the
+// duration, restored after) rather than guessing or depending on the
+// test runner's ambient umask.
+//
+// Mutation (run, restore): change the 0o644 argument to
+// os.OpenFile in writeMinimalFugaroYAML (config_init.go) to 0o600, and
+// this test fails: the written file is rw------- instead of rw-r--r--.
+func TestConfigInitWritesFileMode0644(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := layerCheckout(t, f, minimalAnchored)
+	if err := os.Remove(filepath.Join(dir, "fugaro.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	old := syscall.Umask(0)
+	defer syscall.Umask(old)
+	if _, _, err := execute(t, "config", "init", "--project", "aurora", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "fugaro.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o644 {
+		t.Fatalf("mode = %o, want 0644", got)
 	}
 }
 
