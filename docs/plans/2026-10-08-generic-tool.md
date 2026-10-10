@@ -742,8 +742,8 @@ Expected: compile errors.
 
 `Filter.Apply`:
 - For each block, partition `Finished` into failures and successes.
-- A failure is kept when `!acked(slug, run) && (All || Age <= FailedKeep)`.
-- Successes, already newest first, are kept while `All || (Age <= Keep && kept < KeepCount)`.
+- A failure is kept when `All || (!acked(slug, run) && Age < FailedKeep)`: *younger than* FailedKeep, strictly, so a failure exactly as old as the window (Age == FailedKeep) is hidden, not kept.
+- Successes, already newest first, are kept while `All || (Age < Keep && kept < KeepCount)`: likewise younger than Keep, strictly; a success exactly at the edge is hidden.
 - Return the blocks with `Finished` replaced and the hidden count.
 - A block with no runs, no spend and no kept finished rows is dropped, as today.
 

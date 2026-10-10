@@ -43,6 +43,42 @@ func TestFailedRunsStayUntilAcked(t *testing.T) {
 	}
 }
 
+// FailedKeep's edge is the same strict "younger than" boundary as the
+// success rule's Keep (docs/design/generic-tool.md §10.3, docs/plans/...
+// Task 6): a failure exactly 24h old, or older, is hidden; one younger is
+// kept. TestFailedRunsStayUntilAcked only exercises 10h, well inside the
+// window either way, so it cannot tell a strict `<` from a `<=`.
+func TestFailedKeepBoundaryIsStrictlyYoungerThan(t *testing.T) {
+	f := Filter{Keep: 6 * time.Hour, KeepCount: 15, FailedKeep: 24 * time.Hour}
+	v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "old", Finished: true, Failed: true, Age: 30 * time.Hour},
+		{Run: "at-edge", Finished: true, Failed: true, Age: 24 * time.Hour},
+		{Run: "young", Finished: true, Failed: true, Age: 23 * time.Hour},
+	}}}}
+	got, hidden := f.Apply(v, nil)
+	if len(got.Repos[0].Finished) != 1 || got.Repos[0].Finished[0].Run != "young" {
+		t.Fatalf("got %+v, want only the 23h-old failure", got.Repos[0].Finished)
+	}
+	if hidden != 2 {
+		t.Fatalf("hidden = %d, want 2 (the 30h and the exactly-24h failures)", hidden)
+	}
+}
+
+// All bypasses both the age check and the ack check for a failure, not just
+// one of them: an old, unacknowledged failure and a young, acknowledged one
+// must both reappear under --all.
+func TestAllBypassesBothFailureRules(t *testing.T) {
+	f := Filter{All: true, Keep: 6 * time.Hour, KeepCount: 15, FailedKeep: 24 * time.Hour}
+	v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{
+		{Run: "old", Finished: true, Failed: true, Age: 100 * time.Hour},
+		{Run: "acked", Finished: true, Failed: true, Age: time.Hour},
+	}}}}
+	got, hidden := f.Apply(v, func(_, run string) bool { return run == "acked" })
+	if len(got.Repos[0].Finished) != 2 || hidden != 0 {
+		t.Fatalf("got %+v hidden %d, want both failures kept under --all", got.Repos[0].Finished, hidden)
+	}
+}
+
 // ReadyForReview lists only "ready" rows, across repositories, newest first;
 // a "draft" outcome (passed review on a draft whose test failed, design
 // generic-tool §10.1) never appears there even though it is still a
@@ -75,5 +111,17 @@ func TestDropEmptyMergedBlockOnceFilteredAway(t *testing.T) {
 	got = DropEmptyFinishedBlocks(got)
 	if len(got.Repos) != 1 || got.Repos[0].Slug != "b" {
 		t.Fatalf("got %+v, want only the block that still has a live run", got.Repos)
+	}
+}
+
+// A block with no runs, no spend and no kill switch is still kept when a
+// finished row of its own survived the filter: len(b.Finished) > 0 is its
+// own, independent reason to keep a block, not merely incidental to one of
+// the others DropEmptyFinishedBlocks also checks.
+func TestDropEmptyFinishedBlocksKeepsABlockWithSurvivingFinished(t *testing.T) {
+	v := View{Repos: []RepoBlock{{Slug: "a", Finished: []RunRow{{Run: "recent", Age: time.Minute}}}}}
+	got := DropEmptyFinishedBlocks(v)
+	if len(got.Repos) != 1 || len(got.Repos[0].Finished) != 1 {
+		t.Fatalf("got %+v, want the block kept for its surviving finished row", got.Repos)
 	}
 }

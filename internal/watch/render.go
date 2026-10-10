@@ -433,6 +433,8 @@ func (r *rend) helpLines(keys bool) []string {
 		{"Up Down", "select a repository or run"},
 		{"PgUp PgDn", "scroll"},
 		{"space", "fold the selected repository, or show/hide the selected run's detail"},
+		{"a", "toggle finished runs: recent / all"},
+		{"x", "acknowledge the selected failed run"},
 	}
 	if keys {
 		rows = append(rows,

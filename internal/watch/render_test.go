@@ -488,6 +488,19 @@ func TestKeyLineAndHelpNameRunsAndDetail(t *testing.T) {
 	}
 }
 
+// The help screen names a and x, the finished-run filter toggle and the
+// failure-acknowledgement key (design generic-tool §10.3): a screen with no
+// way to recall them would leave a viewer unable to discover either.
+func TestHelpNamesFilterToggleAndAck(t *testing.T) {
+	help := frame(fixture(), 120, 0, func(o *RenderOptions) { o.Help = true })
+	if !strings.Contains(help, "toggle finished runs: recent / all") {
+		t.Fatalf("help must describe the a key:\n%s", help)
+	}
+	if !strings.Contains(help, "acknowledge the selected failed run") {
+		t.Fatalf("help must describe the x key:\n%s", help)
+	}
+}
+
 // The finished-run filter's state leads the key line and is never the part a
 // narrow width clips away (design generic-tool §10.3): both wordings must
 // show in full at every width the screen supports.

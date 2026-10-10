@@ -284,7 +284,9 @@ func (m *model) rebuild() {
 // ackSelected acknowledges the selected row's failure (key x), when it names
 // a failed finished run; it is a no-op on anything else (design
 // generic-tool §10.3). A write failure is shown as a notice: the ack is
-// local and best effort, so losing it only shows the failure again.
+// local and best effort, so losing it only shows the failure again. Under
+// --all every finished row shows regardless of acknowledgement, so x would
+// otherwise look like it did nothing; a notice says it still recorded.
 func (m *model) ackSelected() {
 	for _, b := range m.view.Repos {
 		if b.Slug != m.cur.Slug {
@@ -294,6 +296,8 @@ func (m *model) ackSelected() {
 			if r.Run == m.cur.Run && r.Failed {
 				if err := m.acks.Ack(b.Slug, r.Run, m.clock()); err != nil {
 					m.notice = "could not save the acknowledgement: " + oneLine(err.Error())
+				} else if m.filter.All {
+					m.notice = "acknowledged (hidden in the recent view)"
 				}
 				return
 			}

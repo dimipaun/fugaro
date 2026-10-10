@@ -2,6 +2,7 @@ package watch
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -11,6 +12,13 @@ import (
 // on the next write, so the file does not grow forever (design
 // generic-tool §10.3).
 const ackPrune = 7 * 24 * time.Hour
+
+// ackMaxBytes bounds how much of the acks file LoadAcks reads: a real one
+// holds at most a handful of small entries, so anything past this is not
+// trusted (a huge or hostile file at this path must not make every `fugaro
+// watch` read it all into memory). It is read as "too big", the same as a
+// corrupt file: the empty set.
+const ackMaxBytes = 1 << 20 // 1 MiB
 
 // Acks is a viewer's local acknowledgements of failed finished runs (design
 // generic-tool §10.3): best effort, per machine, never shared. Losing the
@@ -22,15 +30,27 @@ type Acks struct {
 
 func ackKey(slug, run string) string { return slug + "/" + run }
 
-// LoadAcks never fails: a missing or unreadable file is the empty set.
+// LoadAcks never fails: a missing, oversized, or unreadable-as-the-expected-
+// shape file is the empty set. JSON null (or any value whose shape is not an
+// object of timestamps) unmarshals into a nil map with no error from
+// encoding/json; treating a nil result the same as an error keeps a.at a
+// live, writable map, so the next Ack never panics assigning into it.
 func LoadAcks(path string) *Acks {
 	a := &Acks{path: path, at: map[string]time.Time{}}
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return a
+	}
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil || fi.Size() > ackMaxBytes {
+		return a // too big to trust; never read any of it
+	}
+	b, err := io.ReadAll(f)
 	if err != nil {
 		return a
 	}
 	var raw map[string]time.Time
-	if err := json.Unmarshal(b, &raw); err != nil {
+	if err := json.Unmarshal(b, &raw); err != nil || raw == nil {
 		return a
 	}
 	a.at = raw

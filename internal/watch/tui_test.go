@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -425,6 +426,74 @@ func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
 	}
 	if strings.Contains(x.screen(), "f1") {
 		t.Fatalf("acknowledged failure still shown:\n%s", x.screen())
+	}
+}
+
+// x on a successful (non-failed) finished row is a no-op: Has stays false,
+// and — the stronger check — no ack file is ever written, so a viewer
+// pressing x out of habit on a row that needs no acknowledgement cannot
+// create $XDG_STATE_HOME/fugaro/watch-acks.json where none existed.
+func TestKeyXOnSuccessfulFinishedRowIsNoOp(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "s1", Slug: "acme/app", Status: "succeeded", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	x.key("down") // acme/app's live run, r1
+	x.key("down") // acme/app's finished (successful) run, s1
+	if x.m.cur.Run != "s1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if x.m.acks.Has(budget.Key("acme/app"), "s1") {
+		t.Fatal("x acknowledged a non-failed finished run")
+	}
+	if _, err := os.Stat(x.m.o.AckPath); !os.IsNotExist(err) {
+		t.Fatalf("x on a successful run wrote an ack file: stat err = %v", err)
+	}
+}
+
+// A repository with no live run, spend or kill switch of its own, known only
+// through a finished row the filter then hides, never reaches the screen:
+// rebuild() calls DropEmptyFinishedBlocks after MergeFinished and the
+// filter, the way Build itself would never have shown that block in the
+// first place had the finished run never been merged in.
+func TestRebuildDropsEmptyFinishedOnlyBlock(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "g1", Slug: "acme/ghost", Status: "succeeded", FinishedAt: x.now.Add(-30 * time.Hour)}}, ""
+	}
+	x.upd(Update{Kind: UpdDay, Day: budget.Day(x.now), Now: x.now})
+	if strings.Contains(x.screen(), "acme/ghost") {
+		t.Fatalf("a block that exists only for a now-filtered-out finished run must not show:\n%s", x.screen())
+	}
+}
+
+// Under --all every finished row shows regardless of acknowledgement, so x
+// would otherwise look like it did nothing: the footer must say it still
+// recorded the ack.
+func TestKeyXUnderAllShowsAckedNotice(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	x.key("a") // --all: the failure stays shown even once acked
+	x.key("down")
+	x.key("down") // onto acme/app's finished run, f1
+	if x.m.cur.Run != "f1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if !x.m.acks.Has(budget.Key("acme/app"), "f1") {
+		t.Fatal("x did not record the acknowledgement under --all")
+	}
+	s := x.screen()
+	if !strings.Contains(s, "acknowledged (hidden in the recent view)") {
+		t.Fatalf("no notice that the ack still recorded:\n%s", s)
+	}
+	if !strings.Contains(s, "f1") {
+		t.Fatalf("--all must still show the acked failure:\n%s", s)
 	}
 }
 

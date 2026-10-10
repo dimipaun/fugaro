@@ -87,6 +87,17 @@ func TestFinishedRowSanitisesHostileTitle(t *testing.T) {
 	}
 }
 
+// finishedRow's PRURL goes through cleanURL, the same as the live-run path
+// (TestRunRowPRURLAndDeadline): a non-https PRURL from a finished run's
+// result.json (bucket text, no less untrusted than the registry's) must
+// never reach the row raw.
+func TestFinishedRowPRURLGoesThroughCleanURL(t *testing.T) {
+	f := FinishedRun{Run: "r1", Slug: "o-r", Status: "succeeded", PRURL: "javascript:alert(1)", FinishedAt: time.Now()}
+	if row := finishedRow(f, time.Now()); row.PRURL != "" {
+		t.Fatalf("hostile PRURL kept: %q", row.PRURL)
+	}
+}
+
 // cleanURL refuses anything but a short https:// URL: neither a
 // javascript: URL nor an https URL over 200 bytes is ever shown.
 func TestCleanURLRefusesNonHTTPSAndOverlongURL(t *testing.T) {

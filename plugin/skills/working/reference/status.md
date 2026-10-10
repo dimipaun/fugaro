@@ -61,6 +61,8 @@ fugaro watch
 
 It is an interactive screen that only the user can read. For a snapshot you can read, run `fugaro watch --once` (add `--json` to parse it). `fugaro ls --watch` redraws the run list until every run has settled, and needs no budget backend. A run that has not reported for a minute is `silent`, and for three minutes `lost`.
 
+A finished run stays shown for `--keep` (default 6h) or among the most recent `--keep-count` (default 15), whichever is stricter; a failed one stays until the user acknowledges it (the `x` key, in the screen) or a day passes. `--all` shows every finished run, and the screen's `a` key toggles that without relaunching. `--json` is always unfiltered: it carries every finished run and, among them, the ones ready for review. Acknowledgements are local to the user's machine, in `$XDG_STATE_HOME/fugaro/watch-acks.json` (or `~/.local/state/fugaro/` when that variable is unset), mode 0600, pruned after 7 days; it is best effort, so a second viewer on another machine, or a concurrent one on the same file, sees their own copy, not a shared one.
+
 ## 4. What the statuses mean
 
 | Status | Meaning |

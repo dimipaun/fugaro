@@ -295,8 +295,8 @@ The runner writes them only if the rules accept them, and drops them once with a
 ### 10.3 Completed-run filtering (G25)
 
 - **Ordering:** running at the top, then queued, then finished, newest first.
-- **Default filter:** a finished success is hidden when it is older than `--keep 6h` or beyond the 15 most recent finished rows (`--keep-count 15`), whichever is stricter.
-- **Failures** (`failed`, `halted`, `infra_error`) stay for 24 h, or until acknowledged with `x` on the selected row. Acknowledgements are local, per viewer, in `$XDG_STATE_HOME/fugaro/watch-acks.json` (best effort; losing it only shows failures again).
+- **Default filter:** a finished success is shown only while it is younger than `--keep 6h` (strictly: a run exactly 6h old is hidden, not kept) and among the 15 most recent finished rows (`--keep-count 15`), whichever is stricter.
+- **Failures** (`failed`, `halted`, `infra_error`) stay while younger than 24 h (same strict edge), or until acknowledged with `x` on the selected row. Acknowledgements are local, per viewer, in `$XDG_STATE_HOME/fugaro/watch-acks.json` (best effort; losing it only shows failures again).
 - **`--all`** starts unfiltered. **`a`** toggles between filtered and full without relaunching.
 - **The footer** shows the view: `showing active + recent · a: all` or `showing all · a: recent`, and it is advertised at every width.
 - **Degraded mode** (no budget backend) gets the same filter over its `ls`-style rows.
