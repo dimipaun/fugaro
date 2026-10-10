@@ -5,6 +5,7 @@ package image
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -14,21 +15,13 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
-// bases are the base kinds the derived template (images/derived/Dockerfile.tmpl)
-// can actually build FROM today: config.Bases minus BaseKind. The base
-// image itself is published (images/base/), but this template has no
-// image.tools/mise step yet (base-image plan Task 10 adds it). Until then,
-// checkBase must refuse BaseKind too, or a workflow with base: base (or no
-// base: at all) and image.tools set would pass fugaro validate and then
-// render/build silently, dropping every configured tool with no error.
-var bases = slices.DeleteFunc(slices.Clone(config.Bases), func(b string) bool { return b == config.BaseKind })
-
 // RenderInput is what the derived-image template is rendered from.
 type RenderInput struct {
 	Workflow string         // workflow name, for the header
 	Base     string         // the workflow's base
 	Image    config.Image   // the workflow's image: settings
 	PM       *config.NodePM // web-node's package manager; nil skips the warm-up
+	Mise     bool           // install the checkout's mise config and image.tools
 	Secrets  []string       // workflow secret variables, mounted into the warm-up and setup steps
 	Version  string         // fugaro version, for the header
 }
@@ -50,9 +43,17 @@ func Render(in RenderInput) ([]byte, error) {
 	data := struct {
 		RenderInput
 		WarmUp, WarmUpFor, SecretMounts, SecretEnv string
+		ToolLines                                  []string
 	}{RenderInput: in}
 	if in.PM != nil {
 		data.WarmUp, data.WarmUpFor = in.PM.WarmUp(in.Image.SkipBuildScripts), in.PM.Lockfile
+	}
+	for _, name := range slices.Sorted(maps.Keys(in.Image.Tools)) {
+		v := in.Image.Tools[name]
+		if !config.ValidMiseTool(name, v) {
+			return nil, fmt.Errorf("image.tools.%s: %q is not a mise tool and version this template can write", name, v)
+		}
+		data.ToolLines = append(data.ToolLines, fmt.Sprintf("%q = %q", name, v))
 	}
 	data.SecretMounts, data.SecretEnv = secretMounts(in.Secrets)
 	var buf bytes.Buffer
@@ -85,13 +86,10 @@ func secretMounts(vars []string) (mounts, prefix string) {
 }
 
 func checkBase(base string) error {
-	if slices.Contains(bases, base) {
+	if slices.Contains(config.Bases, base) {
 		return nil
 	}
-	if base == "" || base == config.BaseKind {
-		return fmt.Errorf("the Fugaro base has no derived-image support yet (the renderer has no image.tools/mise step): set base: to one of %s", strings.Join(bases, ", "))
-	}
-	return fmt.Errorf("base %s has no published image yet (have %s)", base, strings.Join(bases, ", "))
+	return fmt.Errorf("base %s has no published image yet (have %s)", base, strings.Join(config.Bases, ", "))
 }
 
 // Dockerfile returns the Dockerfile that builds workflow name's derived image
@@ -103,7 +101,7 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 	if !ok {
 		return nil, "", fmt.Errorf("fugaro.yaml has no workflow %q", name)
 	}
-	if err := checkBase(w.Base); err != nil {
+	if err := checkBase(w.BaseKind()); err != nil {
 		return nil, "", err
 	}
 	if w.Dockerfile != "" {
@@ -113,14 +111,22 @@ func Dockerfile(root string, cfg *config.Config, name, version string) (data []b
 		}
 		return data, w.Dockerfile, nil
 	}
-	in := RenderInput{Workflow: name, Base: w.Base, Image: w.Image, Version: version}
+	kind := w.BaseKind()
+	in := RenderInput{Workflow: name, Base: kind, Image: w.Image, Version: version}
 	for _, s := range w.Secrets {
 		in.Secrets = append(in.Secrets, s.Env)
 	}
-	if w.Base == "web-node" {
+	if kind == "web-node" || kind == config.BaseKind {
 		if in.PM, err = config.DetectNodePM(root); err != nil {
 			return nil, "", fmt.Errorf("workflows.%s: %w", name, err)
 		}
+	}
+	if kind == config.BaseKind {
+		files, err := config.MiseConfigFiles(root)
+		if err != nil {
+			return nil, "", fmt.Errorf("workflows.%s: reading the mise config: %w", name, err)
+		}
+		in.Mise = len(files) > 0 || len(w.Image.Tools) > 0
 	}
 	data, err = Render(in)
 	return data, "", err
