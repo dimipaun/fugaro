@@ -65,7 +65,6 @@ func TestValidateProjectLayerFileRefusesASymlink(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
-
 func TestValidateOfflineNeedsTheLayerForAMinimalFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
