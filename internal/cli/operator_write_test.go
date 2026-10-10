@@ -86,15 +86,23 @@ func TestPublishReplaceAsLauncherIsRefusedWithTheOperatorText(t *testing.T) {
 	}
 }
 
-// A person running fugaro image check without --dry-run and without the
-// operator role is refused the operator text, not a generic write error.
-func TestWriteStateForbiddenIsTheOperatorText(t *testing.T) {
+// A forbidden check.json write is named for the build service account's
+// Terraform grant, not the launcher/operator role: the job runs as that
+// account, never as a launcher asking to publish something, so
+// operatorWriteErr's "ask an operator ... fugaro init --operator" text
+// would send an on-call engineer looking in the wrong place. The refusal is
+// a remote failure (exit 2): nobody running the job can fix a broken
+// Terraform grant themselves.
+func TestWriteStateForbiddenNamesTheBuildAccountsGrant(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
 	fake.DenyWrites("fugaro-runs-proj-1234", "builds/")
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
 	err := writeState(ctx, b, "builds/acme-web/app/check.json", &imagecheck.CheckState{Version: 1}, evaluation{})
-	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+	if ExitCode(err) != ExitRemoteError || !strings.Contains(err.Error(), "Terraform IAM condition") || !strings.Contains(err.Error(), "build service account") {
 		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if strings.Contains(err.Error(), "operator role") || strings.Contains(err.Error(), "fugaro init --operator") {
+		t.Errorf("error points at the operator role, not the build account's Terraform grant: %v", err)
 	}
 }

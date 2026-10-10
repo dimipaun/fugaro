@@ -641,8 +641,9 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 // not something "ask an operator to publish it" or fugaro init --operator
 // addresses). The job's documented exit 2 for a failed check
 // (imagecheck.go's "It exits 2 when the check itself failed") holds; the
-// refusal text still names the operator role in the JSON log line, for
-// whoever reads the job's logs.
+// refusal text in the JSON log line names the build account's Terraform
+// grant, not the operator role, so an on-call engineer is pointed at the
+// right fix.
 func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
 	f := newCheckJob(t, checkFiles(), bitbucketYAML)
 	gcs := gcpfake.NewGCS(t)
@@ -653,8 +654,15 @@ func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
 		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
 	}
 	lines := checkLines(t, out)
-	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || !strings.Contains(lines[0].Error, "operator role") {
+	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed ||
+		!strings.Contains(lines[0].Error, "Terraform IAM condition") || !strings.Contains(lines[0].Error, "build service account") {
 		t.Fatalf("lines = %+v", lines)
+	}
+	// The real fix is the Terraform grant, not adding a person as an
+	// operator: the job never runs as a launcher asking to publish
+	// something.
+	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro init --operator") {
+		t.Errorf("error points at the operator role, not the build account's Terraform grant: %s", lines[0].Error)
 	}
 	// "nothing was published" would be false here: the build did run.
 	if strings.Contains(lines[0].Error, "nothing was published") {

@@ -329,7 +329,7 @@ func writeState(ctx context.Context, b *blobx.Bucket, key string, s *imagecheck.
 		return fmt.Errorf("%s changed while this check ran (another check?); not overwriting it", key)
 	}
 	if errors.Is(err, blobx.ErrForbidden) {
-		return operatorWriteErr("gs://"+b.GCSName, key, err, "the write was refused")
+		return checkWriteErr("gs://"+b.GCSName, key, err)
 	}
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
