@@ -3,6 +3,7 @@ package runner_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -96,6 +97,145 @@ func TestBranchBusyIsInfraError(t *testing.T) {
 	}
 	if ok, _ := b.Exists(context.Background(), key); !ok {
 		t.Fatal("a busy run released someone else's lock")
+	}
+}
+
+// TestForgedRecordNeverTakesOverALiveLock is the security-review test:
+// Acquire trusts only the lock object's own ExpiresAt, never a runs/
+// record. A launcher can write any run's result.json (bucket-iam.md §10,
+// L3) even under the 0.7.0 hardening, which only closes locks/ itself; if
+// Acquire read it, a forged "succeeded" record over a live run's lock
+// would let a launcher start a second run on the same branch while the
+// first is still pushing. Every record shape here — forged terminal,
+// genuinely running, or missing entirely — must leave a live lock busy.
+func TestForgedRecordNeverTakesOverALiveLock(t *testing.T) {
+	const holder = "20260101-000000-ffff"
+	cases := []struct {
+		name string
+		rec  *runstore.Record // nil: no record at all, forged or otherwise
+	}{
+		{"forged terminal record (succeeded)", &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Status: runstore.StatusSucceeded,
+			Stage: "writeback", Outcome: runstore.OutcomeReady, StartedAt: time.Now().Add(-2 * time.Hour)}},
+		{"forged terminal record (failed)", &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Status: runstore.StatusFailed,
+			Stage: "implement", Outcome: runstore.OutcomeDraft, StartedAt: time.Now().Add(-2 * time.Hour)}},
+		{"genuinely running record", &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Status: runstore.StatusRunning,
+			Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)}},
+		{"no record at all", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, "", nil)
+			b := withBucket(h)
+			key := lock.Key("acme-app", "fugaro/"+runID)
+			if c.rec != nil {
+				if err := runstore.Open(h.bucket, "acme-app", holder).WriteRecord(context.Background(), c.rec); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
+			rec, err := h.run(t) // no agent steps may run: the lock must refuse the run before any
+			if err == nil || rec.Status != runstore.StatusInfraError || !strings.Contains(rec.Reason, "branch busy") {
+				t.Fatalf("rec = %+v, err = %v, want infra_error: branch busy", rec, err)
+			}
+			if ok, _ := b.Exists(context.Background(), key); !ok {
+				t.Fatal("a refused run took over the live lock")
+			}
+		})
+	}
+}
+
+// TestSelfReleaseMarkerLetsAFollowUpAcquireAtOnce: a run that finishes
+// normally marks its own lock releasing (ExpiresAt = now) before Release
+// deletes it, so even if Release itself never ran (a kill right after),
+// Acquire already sees it as expired — the same test as an ordinary
+// expired lock, needing no new field. Here Release does run (a normal
+// exit), so the lock is gone entirely; a follow-up's Acquire needs no
+// wait either way.
+func TestSelfReleaseMarkerLetsAFollowUpAcquireAtOnce(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	key := lock.Key("acme-app", "fugaro/"+runID)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	if ok, _ := b.Exists(context.Background(), key); ok {
+		t.Fatal("the lock survives a normal run")
+	}
+	// A follow-up on the same branch acquires at once: nothing to wait for.
+	l, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: "20260101-000000-ffff", ExpiresAt: time.Now().Add(time.Hour)}, time.Now())
+	if err != nil {
+		t.Fatalf("a follow-up's Acquire right after = %v", err)
+	}
+	if err := l.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSelfReleaseMarkerSurvivesAMissingRelease: writeback marks the lock
+// releasing before the delete; if the delete itself never happens (the
+// container is killed right after, as releaseLockFails below simulates by
+// making the delete itself fail), the marked lock is already expired, so
+// a follow-up's Acquire needs no wait — the fix for the main real case
+// (an OOM, SIGBUS, cancel --hard, or a node loss killing the container
+// mid-stage): it used to leave the record "running" and the lock live for
+// up to the task timeout.
+func TestSelfReleaseMarkerSurvivesAMissingRelease(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	key := lock.Key("acme-app", "fugaro/"+runID)
+	// As if the container died between MarkReleasing and the delete: the
+	// delete itself fails, without touching the real object.
+	runner.SetLockRelease(t, func(*lock.Lock, context.Context) error {
+		return errors.New("forced: release failed")
+	})
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	// The delete failed (forced), so the marked-releasing lock is still there.
+	data, _, err := b.Read(context.Background(), key)
+	if err != nil {
+		t.Fatalf("the lock is gone despite the forced release failure: %v", err)
+	}
+	var held lock.Holder
+	if json.Unmarshal(data, &held) != nil || !held.ExpiresAt.After(time.Time{}) || !time.Now().After(held.ExpiresAt.Add(-time.Second)) {
+		t.Fatalf("the lock was not marked releasing: %+v", held)
+	}
+	// A follow-up needs no wait: the marked lock already reads as expired.
+	l, err := lock.Acquire(context.Background(), b, key, lock.Holder{RunID: "20260101-000000-ffff", ExpiresAt: time.Now().Add(time.Hour)}, time.Now())
+	if err != nil {
+		t.Fatalf("a follow-up's Acquire over the marked lock = %v", err)
+	}
+	if err := l.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestLockMarkerFailureDoesNotFailTheRun: MarkReleasing itself failing
+// (simulated: the lock changed from underneath between Acquire and
+// writeback) must not fail the run — only Release, whose own tolerance of
+// a changed lock is unaffected, decides whether the lock is held after.
+func TestLockMarkerFailureDoesNotFailTheRun(t *testing.T) {
+	h := newHarness(t, "", nil)
+	b := withBucket(h)
+	runner.SetMarkLockReleasing(t, func(*lock.Lock, context.Context, time.Time) error {
+		return errors.New("forced: marking failed")
+	})
+	var logs bytes.Buffer
+	h.deps.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Status != runstore.StatusSucceeded {
+		t.Fatalf("a failed marking must not fail the run: rec = %+v, err = %v", rec, err)
+	}
+	if !strings.Contains(logs.String(), "marking the branch lock as releasing failed") {
+		t.Fatalf("no warning logged for the failed marking:\n%s", logs.String())
+	}
+	key := lock.Key("acme-app", "fugaro/"+runID)
+	if ok, _ := b.Exists(context.Background(), key); ok {
+		t.Fatal("the lock survives despite Release, which does not depend on marking")
 	}
 }
 
