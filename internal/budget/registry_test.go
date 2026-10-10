@@ -108,9 +108,15 @@ func TestCheckNewKeysProbesTheCurrentSnapshot(t *testing.T) {
 	if e.Spent != 5_000_000 {
 		t.Fatalf("the probe's spent = %d, want 5000000 (the current snapshot, not Start's stale 0)", e.Spent)
 	}
-	if staleness := time.Since(time.UnixMilli(e.UpdatedAt)); staleness > 2*time.Second {
-		t.Fatalf("the probe's updatedAt is %s old, want a fresh snapshot", staleness)
-	}
+	// updatedAt is not asserted here: this fixture pins the database's clock
+	// (noon, fixture_test.go) to one fixed instant, so Start's stale value
+	// and snapshotEntry's fresh one are numerically identical in this test
+	// regardless of which the probe sends — only Spent (which Start never
+	// sets at all) can tell them apart. Comparing e.UpdatedAt against the
+	// real wall clock would be wrong: it would fail or pass purely
+	// depending on how far real time has drifted from noon when the test
+	// happens to run, which is exactly the flakiness this comment is
+	// warning the next editor away from reintroducing.
 }
 
 // A second refusal with the new keys already dropped is a genuinely bad
