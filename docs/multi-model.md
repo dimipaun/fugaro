@@ -126,7 +126,7 @@ providers:
     allow_data_to: [edgeappinc/fugarosandbox]
 ```
 
-There is no separate "direct" knob: the `providers:` map is the only knob there is. The provider entry that claims a model is its route: to switch a model family between OpenRouter and its vendor, move its pattern from one entry to the other and run `fugaro init --repo`. Providers may not overlap (`fugaro validate` refuses two entries claiming the same model), so a family belongs to exactly one route at a time, and Claude models never go through a provider: `claude-*` and `anthropic/*` are unclaimable (§5), and always go direct to Anthropic regardless of what `providers:` lists.
+There is no separate "direct" knob: the `providers:` map is the only knob there is. The provider entry that claims a model is its route: to switch a model family between OpenRouter and its vendor, move its pattern from one entry to the other and run `fugaro init --repo`. Providers may not overlap (`fugaro validate` refuses two entries claiming the same model), so a family belongs to exactly one route at a time, and Claude models never go through a provider: `claude-*` and `anthropic/*` are unclaimable (§2), and always go direct to Anthropic regardless of what `providers:` lists.
 
 The account-side settings of §1 (no fallbacks, the data policy) are OpenRouter's own; a vendor's own endpoint has its own account-side settings to review, which are not enumerated here.
 

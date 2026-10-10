@@ -24,8 +24,8 @@ No live service is touched: CI never runs against a real cloud.
 
 Compute is not the only thing a backend needs. The `Backend` interface above is the compute seam; there is a second, unabstracted dependency on Firebase as the **control plane**: the budget's atomic counters, the dashboard and the run history. A replacement control plane would have to provide what Firebase provides today:
 
-- **Atomic multi-path conditional updates (leases):** the budget's reservations and the run lock are read-modify-write across several paths at once, refused if any of them changed since the read (`internal/budget`'s leases).
-- **Server-evaluated rules that tie counters together:** the Realtime Database's rules enforce the budget invariants (a session's spend never exceeds its reservation, a drained kill switch stays drained) without trusting the client that writes them (`internal/rtdb`).
+- **Atomic multi-path conditional updates (leases):** the budget's reservations are read-modify-write across several paths at once, refused if any of them changed since the read (`internal/budget`'s leases).
+- **Server-evaluated rules that tie counters together:** the Realtime Database's rules enforce the budget invariants (a session's spend never exceeds its reservation, no reservation while a kill switch is on) without trusting the client that writes them (`internal/rtdb`).
 - **Event streams:** `fugaro watch`'s live updates and the kill switches react to a value changing, not to polling (`internal/rtdb`, `internal/watch`).
 - **A document store for history:** run records, spend history and reporting live in a queryable store across runs (`internal/firestore`).
 
