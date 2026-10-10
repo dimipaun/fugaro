@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 )
 
@@ -77,20 +78,23 @@ type InstallationSpec struct {
 	Project string `json:"project"`
 	// FugaroProject is the Fugaro project's name (not the GCP ID, which is
 	// Project: Terraform's own variable keeps its name).
-	FugaroProject       string            `json:"fugaro_project"`
-	Region              string            `json:"region"`
-	RunsBucket          string            `json:"runs_bucket"`
-	StateBucket         string            `json:"state_bucket"`
-	Names               InstallationNames `json:"names"`
-	BucketLifecycle     BucketLifecycle   `json:"bucket_lifecycle"`
-	EnableVertex        bool              `json:"enable_vertex"`
-	ManageAPIs          bool              `json:"manage_apis"`
-	Launchers           []string          `json:"launchers"`
-	Operators           []string          `json:"operators"`
-	Budget              *Budget           `json:"budget"`
-	AlertEmail          *string           `json:"alert_email"`
-	RegistryCleanup     RegistryCleanup   `json:"registry_cleanup"`
-	AdoptLegacyRegistry bool              `json:"adopt_legacy_registry"`
+	FugaroProject   string            `json:"fugaro_project"`
+	Region          string            `json:"region"`
+	RunsBucket      string            `json:"runs_bucket"`
+	StateBucket     string            `json:"state_bucket"`
+	Names           InstallationNames `json:"names"`
+	BucketLifecycle BucketLifecycle   `json:"bucket_lifecycle"`
+	EnableVertex    bool              `json:"enable_vertex"`
+	ManageAPIs      bool              `json:"manage_apis"`
+	Launchers       []string          `json:"launchers"`
+	Operators       []string          `json:"operators"`
+	// LauncherBucketCondition limits the launchers' write grant on the runs
+	// bucket to runs/ (gcp.LauncherBucketCondition).
+	LauncherBucketCondition Condition       `json:"launcher_bucket_condition"`
+	Budget                  *Budget         `json:"budget"`
+	AlertEmail              *string         `json:"alert_email"`
+	RegistryCleanup         RegistryCleanup `json:"registry_cleanup"`
+	AdoptLegacyRegistry     bool            `json:"adopt_legacy_registry"`
 	// LogBucketDescription is the log bucket's ownership mark.
 	LogBucketDescription string `json:"log_bucket_description"`
 	// LogIsolation is nil for the module's default, which is on; only
@@ -164,11 +168,15 @@ func Installation(lc *localcfg.Config, o InstallOptions) (InstallationSpec, erro
 			RoleIDs:                   InstallationRoleIDs{Launcher: RoleLauncher, JobRunner: RoleJobRunner, BuildSubmitter: RoleBuildSubmitter, TagMover: RoleTagMover},
 			Log:                       LogNames{Bucket: LogBucket, View: LogView, Sink: LogSink, Exclusion: LogExclusion},
 		},
-		BucketLifecycle:      BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
-		EnableVertex:         o.EnableVertex || lc.UsesVertex(),
-		ManageAPIs:           !o.SkipAPIs,
-		Launchers:            members(o.Launchers, lc.Terraform.Launchers),
-		Operators:            members(o.Operators, lc.Terraform.Operators),
+		BucketLifecycle: BucketLifecycle{RunsDays: runsDays, CacheCustomTimeDays: cacheCustomTimeDays, CacheAgeDays: cacheAgeDays},
+		EnableVertex:    o.EnableVertex || lc.UsesVertex(),
+		ManageAPIs:      !o.SkipAPIs,
+		Launchers:       members(o.Launchers, lc.Terraform.Launchers),
+		Operators:       members(o.Operators, lc.Terraform.Operators),
+		LauncherBucketCondition: Condition{
+			Title:      gcp.LauncherBucketConditionTitle,
+			Expression: gcp.LauncherBucketCondition(bucket),
+		},
 		Budget:               o.Budget,
 		AdoptLegacyRegistry:  o.AdoptLegacyRegistry,
 		LogBucketDescription: LogBucketDescription,

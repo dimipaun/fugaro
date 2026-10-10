@@ -17,8 +17,9 @@ import (
 // installation's Fugaro project. The installation's Terraform writes it,
 // beside the bucket's fugaro_project label and the project_name output;
 // launchers can't read a label, so every cloud command reads this object
-// to check its project config (design §2.5). It is a safety label, not a
-// boundary: no job account can write it, but a launcher could.
+// to check its project config (design §2.5). No job account can write it,
+// and since 0.7.0 no launcher (docs/design/bucket-iam.md); an operator or a
+// project-level storage writer can.
 const ProjectMarkerObject = "fugaro/project.json"
 
 // SharedConfigObject is the object in the runs bucket that holds the
