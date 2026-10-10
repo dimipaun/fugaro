@@ -188,6 +188,7 @@
                 "properties": {
                   "apt": { "maxItems": 0 },
                   "setup": { "maxItems": 0 },
+                  "tools": { "maxProperties": 0 },
                   "skip_build_scripts": { "const": false }
                 }
               }
@@ -202,7 +203,7 @@
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
         "base": { "enum": ["base", "go", "java-services", "web-node"] },
-        "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository. clone: the job runs the installation's base image directly, with no build; image.apt, image.setup, image.skip_build_scripts and dockerfile are refused. Needs fugaro 0.7.0." },
+        "checkout": { "enum": ["baked", "clone"], "description": "baked (default): a derived image is built per repository. clone: the job runs the installation's base image directly, with no build; image.apt, image.setup, image.tools, image.skip_build_scripts and dockerfile are refused. Needs fugaro 0.7.0." },
         "image": {
           "type": "object",
           "additionalProperties": false,

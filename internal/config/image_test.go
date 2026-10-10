@@ -97,9 +97,7 @@ func TestImageProblems(t *testing.T) {
 // TestCloneRefusesImageBuildKeys pins design generic-tool.md §2 (G3): a
 // checkout: clone workflow runs the installation's base image with no
 // build, so a key that only a build can honor is refused, naming
-// checkout: baked. image.tools is not in this table: it does not exist yet
-// in config.Image (it ships with the base-image plan's own Task 9), so it
-// cannot be refused here; add it to this table once that field lands.
+// checkout: baked.
 func TestCloneRefusesImageBuildKeys(t *testing.T) {
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	cases := []struct{ name, extra, path string }{
@@ -116,6 +114,17 @@ func TestCloneRefusesImageBuildKeys(t *testing.T) {
 			}
 		})
 	}
+	// image.tools needs the Fugaro base (BaseKind), not web-node, so it is
+	// its own case rather than a loop entry over webYAML (base: web-node):
+	// combining tools with a legacy base would also trip the unrelated
+	// "applies to the Fugaro base only" rule, muddying what this pins.
+	t.Run("image.tools", func(t *testing.T) {
+		yaml := "\nversion: 1\nproject: aurora\ngit:\n  provider: github\nworkflows:\n  web:\n    checkout: clone\n    image: { tools: { node: \"24\" } }\n    commands:\n      build: npm run build\n      test: npm test\n"
+		_, problems := Parse([]byte(yaml))
+		if !hasProblem(problems, "workflows.web.image.tools", msg, 0) {
+			t.Errorf("problems = %v, want one at workflows.web.image.tools: %s", problems, msg)
+		}
+	})
 	cfg, problems := Parse([]byte(webYAML))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
@@ -138,12 +147,12 @@ func TestCheckoutCloneAlone(t *testing.T) {
 }
 
 // TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
-// build key's value, not its mere presence: an empty image.apt or
-// image.setup, or an empty dockerfile:, means nothing to refuse (schema
+// build key's value, not its mere presence: an empty image.apt, image.setup
+// or image.tools, or an empty dockerfile:, means nothing to refuse (schema
 // corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
 // same boundary against fugaro.schema.json).
 func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
-	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], skip_build_scripts: false }\n"))
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], tools: {}, skip_build_scripts: false }\n"))
 	if len(problems) > 0 {
 		t.Fatalf("unexpected problems: %v", problems)
 	}
@@ -171,6 +180,20 @@ func TestCheckoutBadValueCorpus(t *testing.T) {
 	}
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.checkout" || !strings.Contains(ps[0].Message, "must be baked or clone") {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.checkout: must be baked or clone", ps)
+	}
+}
+
+// TestCheckoutCloneToolsCorpus is testdata/config/invalid/checkout-clone-tools.yaml:
+// checkout: clone refuses image.tools exactly like image.apt and
+// image.setup, read from disk like TestCheckoutBadValueCorpus.
+func TestCheckoutCloneToolsCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-tools.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.tools" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.tools: %s", ps, msg)
 	}
 }
 

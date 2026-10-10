@@ -75,11 +75,16 @@
                 "properties": {
                   "apt": { "maxItems": 0 },
                   "setup": { "maxItems": 0 },
+                  "tools": { "maxProperties": 0 },
                   "skip_build_scripts": { "const": false }
                 }
               }
             }
           }
+        },
+        {
+          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
+          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {

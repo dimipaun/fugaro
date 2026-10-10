@@ -34,10 +34,14 @@ steps:
 - `review` is required in every recipe: exactly once, and last, with `max_rounds` 1 to 10. A recipe cannot produce a ready pull request without a senior review.
 - A step without `max_rounds` takes `agent.first_line_rounds` or `agent.review_rounds` from `fugaro.yaml`. A recipe's own `max_rounds` wins over those keys. A per-task `review_rounds` override (the task's `overrides`) wins over a recipe's `max_rounds` for the `review` step.
 - `roles: { reviewer: coder }` makes the reviewer run on the coder's model, in a fresh session, with the reviewer's prompt. "Solo" means exactly this: the same model reviews, in a new session that has not seen the coder's reasoning. `roles: { coder: reviewer }` is the other direction: the recipe format accepts it too, and the two exclude each other (a recipe cannot set both). The runner does not yet act on `coder: reviewer` (no model or output-limit aliasing the way `reviewer: coder` gets below); that lands in a later release.
+- `review: { bounce: first_line }` needs a `first_line` step earlier in the same recipe. The recipe format accepts it (a senior `changes` verdict would run the cheap loop again instead of ending the run), but the runner does not act on it yet; a bounce recipe runs today exactly as it would without `bounce:`.
+- A `check` step (`check: { command: build | test | lint }`, optionally `autofix: true` for `command: lint`) may appear at most once, and only before any `first_line` or `review` step. The recipe format accepts it, but the runner does not run it yet: it contributes nothing to a run today. `autofix` is refused on anything but `command: lint`.
+- `mode: review` restricts the recipe to exactly one `review` step with `max_rounds: 1` and nothing else (no `first_line`, no `check`). The recipe format accepts it, but the runner does not act on it yet: a run executes the normal implement loop regardless of `mode`.
+- `use_when` (optional, at most 300 bytes, no control characters) is a short "use this recipe when…" description for a future routing skill to match a task against. It is accepted and stored today; nothing reads it yet.
 - Models are never named in a recipe. They come from `agent.models` in `fugaro.yaml`, as they always did.
 - Readiness is unchanged and not configurable: a pull request is ready only if the final commit has a verified passing test and the senior review's verdict is `ship`. Anything else is a draft.
 - Under `reviewer: coder`, the reviewer's model and its per-call output limit are the coder's, and `agent.models.reviewer` is ignored (the run logs that). The output limit is applied before the project's policy: if the default branch's `fugaro.yaml` sets a tighter `agent.max_output_tokens.reviewer`, the aliased reviewer limit ends up tighter than the coder's, and the run's report notes that the looser value was ignored. Limits from policy can only tighten.
-- A recipe file is at most 16 KiB and is strictly parsed: unknown keys, duplicate keys, YAML anchors, aliases, tags and extra documents are refused.
+- A recipe file is at most 16 KiB and is strictly parsed: unknown keys, duplicate keys, YAML anchors, aliases, tags and extra documents are refused. A recipe that uses `use_when`, `mode`, `roles.coder`, a `check` step or `review.bounce` needs a 0.7.0 runner; an older one refuses the file as holding an unknown key.
 
 ## 2. The catalog
 
@@ -92,13 +96,13 @@ A published project recipe is cached on each machine for 24 hours (up to 7 days 
 A recipe that uses a reserved key is refused with a message that says so:
 
 - `checks` as a step name: the step type is `check`, not `checks`.
-- `goto` and `on_reject`: no jumps or bounces between steps.
+- `goto` and `on_reject`: no jumps between steps, and no bounce other than the one built-in form, `review: { bounce: first_line }`.
 - `extends`: copy the recipe instead.
 - `on_pass` and `on_fail`: outcome rules are not configurable.
 - `model` and `models`: a recipe never names a model; models come from `agent.models`.
 - any role other than `reviewer` or `coder`; any `reviewer` value other than `coder`; any `coder` value other than `reviewer`; and both mapped at once (`reviewer: coder` and `coder: reviewer` exclude each other).
 
-What recipes do not do in 0.5.0: run check steps, jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. There are no task-shaped catalog recipes (fix a bug, add a feature) yet.
+What recipes do not do: jump with `goto`, extend another recipe, pin a model per recipe, or configure `on_pass` and `on_fail`. There are no task-shaped catalog recipes (fix a bug, add a feature) yet. A `check` step, `review: { bounce: first_line }`, `mode: review` and `roles: { coder: reviewer }` are valid recipe format as of 0.7.0 (section 1), but `fugaro run` does not act on any of them yet: it plans and runs a recipe exactly as it would with none of them present. `use_when` is accepted and stored, but nothing reads it yet.
 
 ## 7. Rolling out 0.5.0
 

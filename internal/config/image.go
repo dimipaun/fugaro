@@ -172,6 +172,9 @@ func validateCheckout(p string, w Workflow) []Problem {
 	if len(w.Image.Setup) > 0 {
 		add(p+".image.setup", "%s", msg)
 	}
+	if len(w.Image.Tools) > 0 {
+		add(p+".image.tools", "%s", msg)
+	}
 	if w.Image.SkipBuildScripts {
 		add(p+".image.skip_build_scripts", "%s", msg)
 	}

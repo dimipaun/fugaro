@@ -76,9 +76,10 @@ func TestProfileCheckout(t *testing.T) {
 // TestCheckoutProfileCorpusOneReason reads each checkout-related
 // testdata/project-layer/invalid fixture from disk and pins that it fails
 // for exactly the one reason it exists to exercise: a schema corpus gap
-// (project-layer.schema.json's checkout enum, and its clone-refuses-setup
-// and clone-refuses-skip_build_scripts rules, each previously uncovered
-// except apt) is only closed if the fixture is this precise.
+// (project-layer.schema.json's checkout enum, its clone-refuses-setup,
+// clone-refuses-skip_build_scripts and clone-refuses-tools rules, and its
+// base-restricts-tools rule, each previously uncovered except apt) is only
+// closed if the fixture is this precise.
 func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
 	const cloneMsg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
@@ -87,6 +88,8 @@ func TestCheckoutProfileCorpusOneReason(t *testing.T) {
 		"checkout-clone-apt-profile":        {"profiles.p.image.apt", cloneMsg},
 		"checkout-clone-setup-profile":      {"profiles.p.image.setup", cloneMsg},
 		"checkout-clone-skip-build-profile": {"profiles.p.image.skip_build_scripts", cloneMsg},
+		"checkout-clone-tools-profile":      {"profiles.p.image.tools", cloneMsg},
+		"image-tools-on-web-node-profile":   {"profiles.p.image.tools", "applies to the Fugaro base only"},
 	} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", file+".yaml"))
 		if err != nil {
