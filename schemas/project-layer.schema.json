@@ -66,9 +66,26 @@
     "profile": {
       "type": "object",
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "required": ["checkout"], "properties": { "checkout": { "const": "clone" } } },
+          "then": {
+            "properties": {
+              "image": {
+                "properties": {
+                  "apt": { "maxItems": 0 },
+                  "setup": { "maxItems": 0 },
+                  "skip_build_scripts": { "const": false }
+                }
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "description": { "type": "string", "maxLength": 200, "pattern": "^[^\\r\\n]*$" },
         "base": { "enum": ["base", "go", "java-services", "web-node"] },
+        "checkout": { "enum": ["baked", "clone"] },
         "image": {
           "type": "object",
           "additionalProperties": false,

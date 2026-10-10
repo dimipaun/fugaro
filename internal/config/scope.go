@@ -76,6 +76,7 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
 	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
 	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
+	{Key: "workflows.*.checkout", In: InProfile | InRepo},
 	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},

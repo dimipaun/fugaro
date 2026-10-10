@@ -86,6 +86,7 @@ func TestScopeTableMatchesDocs(t *testing.T) {
 		"workflows.*.image.apt":                 InProfile | InRepo,
 		"workflows.*.image.setup":               InProfile | InRepo,
 		"workflows.*.image.skip_build_scripts":  InProfile | InRepo,
+		"workflows.*.checkout":                  InProfile | InRepo,
 		"workflows.*.image.tools":               InProfile | InRepo,
 		"workflows.*.dockerfile":                InRepo,
 		"workflows.*.commands.build":            InProfile | InRepo,

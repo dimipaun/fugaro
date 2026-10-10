@@ -94,6 +94,86 @@ func TestImageProblems(t *testing.T) {
 	}
 }
 
+// TestCloneRefusesImageBuildKeys pins design generic-tool.md §2 (G3): a
+// checkout: clone workflow runs the installation's base image with no
+// build, so a key that only a build can honor is refused, naming
+// checkout: baked. image.tools is not in this table: it does not exist yet
+// in config.Image (it ships with the base-image plan's own Task 9), so it
+// cannot be refused here; add it to this table once that field lands.
+func TestCloneRefusesImageBuildKeys(t *testing.T) {
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	cases := []struct{ name, extra, path string }{
+		{"image.apt", "    image: { apt: [jq] }\n", "workflows.web.image.apt"},
+		{"image.setup", "    image: { setup: [\"make deps\"] }\n", "workflows.web.image.setup"},
+		{"image.skip_build_scripts", "    image: { skip_build_scripts: true }\n", "workflows.web.image.skip_build_scripts"},
+		{"dockerfile", "    dockerfile: .fugaro/web.Dockerfile\n", "workflows.web.dockerfile"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, problems := Parse([]byte(webYAML + "    checkout: clone\n" + tc.extra))
+			if !hasProblem(problems, tc.path, msg, 0) {
+				t.Errorf("problems = %v, want one at %s: %s", problems, tc.path, msg)
+			}
+		})
+	}
+	cfg, problems := Parse([]byte(webYAML))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutBaked {
+		t.Fatalf("default checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutBaked)
+	}
+}
+
+// TestCheckoutCloneAlone is the companion to TestCloneRefusesImageBuildKeys:
+// checkout: clone with no build keys set is valid.
+func TestCheckoutCloneAlone(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutCloneAllowsEmptyBuildKeys pins that checkout: clone checks a
+// build key's value, not its mere presence: an empty image.apt or
+// image.setup, or an empty dockerfile:, means nothing to refuse (schema
+// corpus: testdata/config/valid/checkout-clone-empty-apt.yaml exercises the
+// same boundary against fugaro.schema.json).
+func TestCheckoutCloneAllowsEmptyBuildKeys(t *testing.T) {
+	cfg, problems := Parse([]byte(webYAML + "    checkout: clone\n    image: { apt: [], setup: [], skip_build_scripts: false }\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if cfg.Workflows["web"].Checkout != CheckoutClone {
+		t.Fatalf("checkout = %q, want %q", cfg.Workflows["web"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutInvalidValue pins that checkout: is an enum of baked and clone.
+func TestCheckoutInvalidValue(t *testing.T) {
+	_, problems := Parse([]byte(webYAML + "    checkout: sometimes\n"))
+	if !hasProblem(problems, "workflows.web.checkout", "must be baked or clone", 0) {
+		t.Fatalf("problems = %v", problems)
+	}
+}
+
+// TestCheckoutBadValueCorpus is testdata/config/invalid/checkout-bad-value.yaml
+// (the schema corpus: fugaro.schema.json's checkout enum had no corpus case),
+// read from disk like TestGoBase's and TestJavaServicesBase's corpus cases:
+// it must fail for exactly the one reason the file exists to pin.
+func TestCheckoutBadValueCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-bad-value.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.checkout" || !strings.Contains(ps[0].Message, "must be baked or clone") {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.checkout: must be baked or clone", ps)
+	}
+}
+
 func TestGoBase(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/config/valid/go.yaml")
 	if err != nil {

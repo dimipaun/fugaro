@@ -61,6 +61,44 @@ func TestParseProjectLayer(t *testing.T) {
 	}
 }
 
+// TestProfileCheckout pins that a profile may set checkout: (scope
+// InProfile|InRepo, design generic-tool.md §2, G3): it decodes onto
+// Profile.Checkout rather than failing the strict decode as an unknown
+// field.
+func TestProfileCheckout(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"profiles:\n  p:\n    base: go\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	if l.Profiles["p"].Checkout != CheckoutClone {
+		t.Fatalf("Profiles[p].Checkout = %q, want %q", l.Profiles["p"].Checkout, CheckoutClone)
+	}
+}
+
+// TestCheckoutProfileCorpusOneReason reads each checkout-related
+// testdata/project-layer/invalid fixture from disk and pins that it fails
+// for exactly the one reason it exists to exercise: a schema corpus gap
+// (project-layer.schema.json's checkout enum, and its clone-refuses-setup
+// and clone-refuses-skip_build_scripts rules, each previously uncovered
+// except apt) is only closed if the fixture is this precise.
+func TestCheckoutProfileCorpusOneReason(t *testing.T) {
+	a := LayerAnchor{Project: "aurora", GCPProject: "proj-1234"}
+	const cloneMsg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	for file, want := range map[string]struct{ path, msg string }{
+		"checkout-bad-value-profile":        {"profiles.p.checkout", "must be baked or clone"},
+		"checkout-clone-apt-profile":        {"profiles.p.image.apt", cloneMsg},
+		"checkout-clone-setup-profile":      {"profiles.p.image.setup", cloneMsg},
+		"checkout-clone-skip-build-profile": {"profiles.p.image.skip_build_scripts", cloneMsg},
+	} {
+		data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "project-layer", "invalid", file+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, ps := ParseProjectLayer(data, a)
+		if len(ps) != 1 || ps[0].Path != want.path || !strings.Contains(ps[0].Message, want.msg) {
+			t.Errorf("%s: problems = %v, want exactly one at %s: %s", file, ps, want.path, want.msg)
+		}
+	}
+}
+
 func TestParseProjectLayerRefuses(t *testing.T) {
 	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
 	for _, tc := range []struct{ name, text, want string }{
@@ -86,6 +124,8 @@ func TestParseProjectLayerRefuses(t *testing.T) {
 		{"an unknown default profile", head + "profiles:\n  p: { base: go }\ndefault_profile: q\n", `default_profile: names "q"`},
 		{"a bad profile name", head + "profiles:\n  P_1: { base: go }\n", "a profile name must be"},
 		{"node off web-node", head + "profiles:\n  p: { base: go, image: { node: '20' } }\n", "only applies to base web-node"},
+		{"a bad checkout", head + "profiles:\n  p: { checkout: sometimes }\n", "profiles.p.checkout: must be baked or clone"},
+		{"clone refuses apt in a profile", head + "profiles:\n  p: { checkout: clone, image: { apt: [jq] } }\n", "profiles.p.image.apt: checkout: clone runs the base image with no build; use checkout: baked to build an image"},
 		{"oversized", head + "# " + strings.Repeat("x", LayerMaxBytes) + "\n", "over the 64 KiB limit"},
 		// A null profile would otherwise decode as a valid empty Profile
 		// (even as default_profile) with no scope check ever run on it,
