@@ -225,7 +225,7 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 		}
 		c.DockerfileBlob = id
 	}
-	if false && w.BaseKind() == config.BaseKind {
+	if w.BaseKind() == config.BaseKind {
 		files, err := miseFiles(tree)
 		if err != nil {
 			return "", fmt.Errorf("workflows.%s: %w", workflow, err)
