@@ -214,6 +214,79 @@ func TestRecordJSON(t *testing.T) {
 	}
 }
 
+const baseWorkflowYAML = `version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  app: { commands: { build: make, test: make test } }
+`
+
+// A changed root mise file or image.tools makes the image wrong: the hash
+// moves. Files mise does not read at the root leave it alone.
+func TestImageConfigHashCoversMiseFiles(t *testing.T) {
+	hash := func(t *testing.T, yaml string, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		testutil.WriteFiles(t, dir, files)
+		h, err := ImageConfigHash(parse(t, yaml), "app", Dir{Root: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	}
+	ref := hash(t, baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"})
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		files   map[string]string
+		changes bool
+	}{
+		{"same", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, false},
+		{"mise.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"}, true},
+		{"mise.lock", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.lock": "x"}, true},
+		{"conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/a.toml": "x"}, true},
+		{".tool-versions", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".tool-versions": "go 1.27\n"}, true},
+		{"subdirectory", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "web/mise.toml": "x"}, false},
+		{"mise.local.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.local.toml": "x"}, false},
+		{"image.tools", strings.Replace(baseWorkflowYAML, "app: {", "app: { image: { tools: { node: \"24\" } },", 1), map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n"}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hash(t, tc.yaml, tc.files); (got != ref) != tc.changes {
+				t.Errorf("changed = %v, want %v", got != ref, tc.changes)
+			}
+		})
+	}
+}
+
+func TestImageConfigHashLegacyUnchanged(t *testing.T) {
+	// The canonical form of a legacy workflow is what it was: no new keys.
+	c := imageConfig{Base: "web-node"}
+	data, _ := json.Marshal(c)
+	if strings.Contains(string(data), "tools") || strings.Contains(string(data), "mise_files") {
+		t.Errorf("legacy canonical form gained keys: %s", data)
+	}
+}
+
+// TestKeyFilesDefaultsBaseKind: the base kind's default cache is the Node
+// package manager's, same as web-node (KeyFiles gives the base kind the
+// Node default cache), keyed by whatever lockfile is present.
+func TestKeyFilesDefaultsBaseKind(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"package.json": `{"name":"app","packageManager":"yarn@1.22.22"}`,
+		"yarn.lock":    "# yarn lockfile v1\n",
+	}
+	testutil.WriteFiles(t, dir, files)
+	got, err := KeyFiles(parse(t, baseWorkflowYAML), "app", Dir{Root: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"yarn.lock": gitBlobID(files["yarn.lock"])}
+	if !maps.Equal(got, want) {
+		t.Fatalf("KeyFiles = %v, want %v", got, want)
+	}
+}
+
 // TestRecordNewerThan: newer compares the source commits' committer
 // times, then, for one commit, the build times.
 func TestRecordNewerThan(t *testing.T) {
