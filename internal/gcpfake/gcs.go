@@ -55,6 +55,8 @@ import (
 //     or an insert made; objects can be stored in any bucket without it.
 //   - A bucket insert needs the project to have been added (AddProject),
 //     and otherwise answers 403.
+//   - DenyWrites answers 403 for a write under a prefix, as a conditional
+//     grant would; reads and listings are never denied.
 type GCS struct {
 	*Server
 	mu      sync.Mutex
@@ -69,6 +71,8 @@ type GCS struct {
 	failDeletes int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
+	// denied maps a bucket to the prefixes DenyWrites has closed.
+	denied map[string][]string
 }
 
 // bucketMeta is what a bucket's get and getIamPolicy report.
@@ -107,7 +111,7 @@ type upload struct {
 func NewGCS(t *testing.T) *GCS {
 	t.Helper()
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
-		uploads: map[string]*upload{}, projects: map[string]uint64{}}
+		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -238,6 +242,27 @@ func (g *GCS) Put(bucket, name string, data []byte) {
 	}
 	g.gen++
 	objs[name] = &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, updated: time.Now().UTC()}
+}
+
+// DenyWrites makes every create, overwrite, delete and metadata patch of an
+// object under prefix in bucket answer 403, as GCS does for a principal
+// whose write grant is conditioned elsewhere (bucket-iam.md). Reads and
+// listings are not affected.
+func (g *GCS) DenyWrites(bucket, prefix string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.denied[bucket] = append(g.denied[bucket], prefix)
+}
+
+// deniedWrite answers 403 and reports true when name is under a denied prefix.
+func (g *GCS) deniedWrite(w http.ResponseWriter, bucket, name string) bool {
+	for _, p := range g.denied[bucket] {
+		if strings.HasPrefix(name, p) {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "caller does not have storage.objects.create access to the Google Cloud Storage object.")
+			return true
+		}
+	}
+	return false
 }
 
 // ListCalls is how many object listing requests (pages) the fake has
@@ -555,6 +580,9 @@ func (g *GCS) store(w http.ResponseWriter, bucket, name, ct string, cond *int64,
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "upload without an object name")
 		return
 	}
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	objs := g.buckets[bucket]
 	if objs == nil {
 		objs = map[string]*object{}
@@ -621,6 +649,9 @@ func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string
 		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "try again")
 		return
 	}
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	cond, err := ifGenerationMatch(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
@@ -640,6 +671,9 @@ func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string
 }
 
 func (g *GCS) patch(w http.ResponseWriter, bucket, name string, body []byte) {
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	o := g.buckets[bucket][name]
 	if o == nil {
 		g.notFound(w, bucket, name)

@@ -29,16 +29,6 @@ var layerAnnounceKeys = []string{"commands.build", "commands.test", "commands.re
 // failure's exact text can be controlled without touching the filesystem.
 var readCheckoutFugaroYAML = readFugaroYAML
 
-// shortSHA is the first 12 characters of a sum, or all of a shorter one.
-// Task 10 (PR #231) defines the same helper in validate.go/doctor.go; this
-// one merges into that single definition once #231 lands on this branch.
-func shortSHA(s string) string {
-	if len(s) > 12 {
-		return s[:12]
-	}
-	return s
-}
-
 // embedProjectLayer puts the project layer that applies to the task's
 // repository into spec (decisions L8, L9, L13). In the repository's
 // checkout, it is the one findLayer finds for its fugaro.yaml. Outside one
@@ -60,7 +50,8 @@ func shortSHA(s string) string {
 // standing in).
 func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn io.Writer) ([]byte, error) {
 	var data []byte
-	if root := checkoutRoot(ctx, spec.Repo); root != "" {
+	root := checkoutRoot(ctx, spec.Repo)
+	if root != "" {
 		var rerr error
 		if data, rerr = readCheckoutFugaroYAML(filepath.Join(root, "fugaro.yaml")); rerr != nil {
 			// os.ErrNotExist is the ordinary case of a checkout with no
@@ -77,13 +68,32 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 	if data == nil {
 		data = []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", env.lc.Name, env.lc.GCPProject))
 	}
-	// layerOptions{} is strict (Lenient defaults to false): decision L16
-	// says launches are strict, never lenient like validate/doctor. A
-	// bucket that cannot be read must fail the launch, not silently launch
-	// without a layer a full fugaro.yaml may depend on for its defaults.
-	fl, err := findLayer(ctx, os.Getenv, data, env.lc, layerOptions{}, time.Now())
-	if err != nil {
-		return data, err
+	// Every first-run launch of a checked-out repository already resolves
+	// this same root's project layer once, through checkoutConfig
+	// (newSpec's repoSlug calls it to tell the git provider): reuse that
+	// bucket read instead of repeating it here. cachedProjectLayer only
+	// ever holds a determinate answer (cacheProjectLayer drops an Unknown
+	// one), so reusing it here is exactly as safe as resolving fresh:
+	// strict and lenient callers only ever disagree on a degraded (Unknown)
+	// outcome, never on a successful or a definitively absent one.
+	fl, ok := foundLayer{}, false
+	if root != "" {
+		fl, ok = cachedProjectLayer(ctx, root)
+	}
+	if !ok {
+		var err error
+		// layerOptions{} is strict (Lenient defaults to false): decision
+		// L16 says launches are strict, never lenient like
+		// validate/doctor. A bucket that cannot be read must fail the
+		// launch, not silently launch without a layer a full fugaro.yaml
+		// may depend on for its defaults.
+		fl, err = findLayer(ctx, os.Getenv, data, env.lc, layerOptions{}, time.Now())
+		if err != nil {
+			return data, err
+		}
+		if root != "" {
+			cacheProjectLayer(ctx, root, fl)
+		}
 	}
 	l := fl.Layer
 	if l == nil {

@@ -2,9 +2,10 @@
 # install-node keyring builds the Node.js release keyring at $keyring below,
 # once, while the base image is built. install-node VERSION then installs
 # Node.js VERSION (N for the latest N.x, or N.N.N) from nodejs.org into
-# /opt/node, replacing any Node already there: in the base image build, and
-# in derived images for image.node. VERSION never touches a keyserver, so a
-# derived build doesn't depend on one being up.
+# $NODE_PREFIX (default /opt/node), replacing any Node already there: in the
+# base image build, for the private harness Node, and in derived images for
+# image.node. VERSION never touches a keyserver, so a derived build doesn't
+# depend on one being up.
 #
 # SHASUMS256.txt is verified with gpgv against its detached signature
 # (SHASUMS256.txt.sig) and the baked keyring, the way the official
@@ -12,11 +13,12 @@
 # SHASUMS256.txt. It also makes sure corepack is present and enabled, so yarn
 # and pnpm resolve through it. It runs as root and needs curl and gpgv on
 # PATH, plus gpg (and dirmngr, for the keyserver fallback) for keyring
-# (installed by the web-node Dockerfile).
+# (installed by the base Dockerfile).
 set -eu
 usage="usage: install-node keyring | install-node VERSION"
 want=${1:?$usage}
 keyring=/usr/local/lib/fugaro/nodejs.gpg
+prefix=${NODE_PREFIX:-/opt/node}
 
 # The Node.js release keys, pinned by full fingerprint: the Release Team's
 # primary keys, and the "Other keys used to sign some previous releases",
@@ -114,19 +116,27 @@ if [ -z "$file" ]; then
   echo "install-node: nodejs.org has no linux-$arch build for Node $want" >&2
   exit 1
 fi
-if [ -x /opt/node/bin/node ] && [ "node-$(/opt/node/bin/node -v)-linux-$arch.tar.xz" = "$file" ]; then
-  echo "install-node: Node $(/opt/node/bin/node -v) is already installed"
+if [ -x "$prefix/bin/node" ] && [ "node-$("$prefix/bin/node" -v)-linux-$arch.tar.xz" = "$file" ]; then
+  echo "install-node: Node $("$prefix/bin/node" -v) is already installed"
   exit 0
 fi
 curl -fsSL "$url/$file" -o "$tmp/$file"
 (cd "$tmp" && grep "  $file\$" SHASUMS256.txt | sha256sum -c -)
-rm -rf /opt/node
-mkdir -p /opt/node
-tar -xJf "$tmp/$file" -C /opt/node --strip-components=1 --no-same-owner
-if [ ! -x /opt/node/bin/corepack ]; then
+rm -rf "$prefix"
+mkdir -p "$prefix"
+tar -xJf "$tmp/$file" -C "$prefix" --strip-components=1 --no-same-owner
+# npm and corepack are themselves `#!/usr/bin/env node` scripts. The base
+# image deliberately keeps this Node off the image's PATH (design
+# docs/design/base-image.md section 6), so without this, `env` can't find
+# `node` to run them. This PATH change is local to this script's own
+# process (sh does not export changes back to its parent), so it never
+# reaches the image's PATH.
+PATH="$prefix/bin:$PATH"
+export PATH
+if [ ! -x "$prefix/bin/corepack" ]; then
   # Node 25 and later no longer bundle corepack. HOME=/root keeps npm's cache
   # out of the fugaro user's home, where root-owned files would break it.
-  HOME=/root /opt/node/bin/npm install --global --no-fund --no-audit corepack@0.36.0
+  HOME=/root "$prefix/bin/npm" install --global --no-fund --no-audit corepack@0.36.0
 fi
-/opt/node/bin/corepack enable
-echo "install-node: installed Node $(/opt/node/bin/node -v)"
+"$prefix/bin/corepack" enable
+echo "install-node: installed Node $("$prefix/bin/node" -v)"

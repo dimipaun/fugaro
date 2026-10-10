@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -62,6 +60,15 @@ var layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error
 // layerBucketOpener opens the runs bucket; tests replace it.
 var layerBucketOpener = blobx.Open
 
+// layerBucketTimeout bounds opening the runs bucket and reading the layer
+// from it: many lenient commands (validate, doctor, init, secrets, cancel,
+// budget, run through checkoutConfig) now read this bucket on an ordinary
+// run, and a flaky or offline network must not make them hang in a client
+// retry loop instead of falling back to the cache (decision L13) or, in a
+// strict command, failing with a clear error. A package var so a test can
+// shorten it.
+var layerBucketTimeout = 15 * time.Second
+
 // findLayer is the project layer that applies to the fugaro.yaml data
 // (docs/design/layered-config.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
@@ -90,7 +97,7 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	case o.File != "":
 		text, err := readLayerFile(o.File)
 		if err != nil {
-			return foundLayer{}, userErr("%v", err)
+			return foundLayer{}, userErr("%s", pluginwire.Printable(oneLineCLI(err.Error())))
 		}
 		l, err := parse(text, o.File)
 		return foundLayer{Layer: l, Where: o.File}, err
@@ -177,6 +184,31 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	// a bucket that fails to open at all and one that opens but whose read
 	// fails: either way the bucket "cannot be reached".
 	unreachableNote := fmt.Sprintf("using the cached project layer of %s, %s old: %s is unreachable", project, ageDays(now.Sub(cached.CheckedAt)), bucketURL)
+	if lc != nil && fakeEndpointsOnGS(lc, bucketURL) {
+		// This installation's endpoints are fakes (a test, or a developer
+		// pointed everything else at an emulator or no_auth): the gs://
+		// bucket above is not the one they stand for, so it is never
+		// opened for real (the same guard publishSharedWarn and
+		// readRefreshRecord apply to their own bucket reads). Treated
+		// exactly like a bucket that cannot be reached at all (decision
+		// L13): the cache stands in when it is fresh enough, else unread
+		// below leaves the layer unknown for a lenient caller and refuses
+		// a strict one.
+		if ours {
+			return fromCache(unreachableNote)
+		}
+		return unread(fmt.Errorf("the project layer's bucket (%s) is a fake endpoint in this installation, so it is not read for real", bucketURL))
+	}
+	// Opened with ctx, never a derived, cancellable one: gocloud's gcsblob
+	// driver loads default credentials once per process (a sync.Once in
+	// lazyCredsOpener) using the FIRST open's context, and oauth2 keeps
+	// that context for every later token refresh. A context this function
+	// cancels on return would then make every later open and read in the
+	// whole process fail with "context canceled" once this call's timeout
+	// (or its caller's deadline) passes — proven with blobx.Open on a
+	// cancelled context, then a read. Opening itself does no network I/O
+	// (the credentials load is lazy), so there is nothing here for a
+	// timeout to bound; the read below is where a flaky network can hang.
 	b, err := layerBucketOpener(ctx, bucketURL)
 	if err != nil {
 		// isUnreachable is checked on the raw error, exactly as the read
@@ -193,7 +225,9 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		return unread(bucketErrFor(bucketURL, "opening the bucket", "the project layer of "+project, err))
 	}
 	defer b.Close()
-	text, gen, err := layerRead(ctx, b)
+	rctx, rcancel := context.WithTimeout(ctx, layerBucketTimeout)
+	text, gen, err := layerRead(rctx, b)
+	rcancel()
 	switch {
 	case err == nil:
 	case errors.Is(err, blobx.ErrNotExist):
@@ -249,29 +283,14 @@ func parseCheckoutFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Conf
 	return rf.Cfg, rf.Problems
 }
 
-// readLayerFile reads a project layer file the user names: a regular file
-// only, opened without blocking, read through a cap of the size limit.
+// readLayerFile reads a project layer file the user names (--project-layer
+// FILE): config.ReadRegular, the one reader of an untrusted path in this
+// codebase (readFugaroYAML is its other caller) — never a symlink, which
+// could name any file the user can read, nor a FIFO or a device, which
+// could block the read or never end; at most config.LayerMaxBytes, checked
+// before the file is opened. A missing file is os.ErrNotExist.
 func readLayerFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, config.LayerMaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > config.LayerMaxBytes {
-		return nil, fmt.Errorf("%s is over the %d KiB limit", path, config.LayerMaxBytes>>10)
-	}
-	return data, nil
+	return config.ReadRegular(path, config.LayerMaxBytes)
 }
 
 // layerProblemsText is ps as one line.

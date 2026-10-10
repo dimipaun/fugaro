@@ -307,10 +307,43 @@ func TestDisplayNamesAndConditions(t *testing.T) {
 		{BucketConditionTitle("fugaro-x-12345678"), "fugaro-fugaro-x-12345678"},
 		{BucketCondition("b", []string{"runs", "cache"}, "s"),
 			`resource.name.startsWith("projects/_/buckets/b/objects/runs/s/") || resource.name.startsWith("projects/_/buckets/b/objects/cache/s/")`},
+		{LauncherBucketConditionTitle, "fugaro-launchers-runs"},
+		{LauncherBucketCondition("fugaro-runs-proj-1234"),
+			`resource.name.startsWith("projects/_/buckets/fugaro-runs-proj-1234/objects/runs/")`},
 	} {
 		if c.got != c.want {
 			t.Errorf("got %q, want %q", c.got, c.want)
 		}
+	}
+}
+
+// LauncherBucketCondition embeds bucket in a CEL string literal unescaped: a
+// name outside [a-z0-9._-] (a quote, in particular) could otherwise break out
+// of it and widen the condition the installation module, the install guard
+// and doctor all compare against byte for byte (docs/design/bucket-iam.md
+// H5-H6). A caller passing such a name is a bug, so this panics rather than
+// returning a condition that looks plausible but is not what it claims to be.
+func TestLauncherBucketConditionRejectsBadBucketNames(t *testing.T) {
+	for _, bad := range []string{
+		`fugaro-runs-proj-1234"`,
+		`fugaro-runs-proj") || resource.name.startsWith("projects/_/buckets/x/objects/`,
+		"Fugaro-Runs-Proj-1234",
+		"fugaro runs proj",
+		"fugaro-runs-proj/x",
+		"",
+	} {
+		t.Run(bad, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("LauncherBucketCondition(%q) did not panic", bad)
+				}
+			}()
+			LauncherBucketCondition(bad)
+		})
+	}
+	// A bucket name of only the allowed characters never panics.
+	if got := LauncherBucketCondition("fugaro-runs-proj-1234"); got == "" {
+		t.Error("a valid bucket name panicked")
 	}
 }
 

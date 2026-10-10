@@ -263,3 +263,39 @@ func BucketCondition(bucket string, prefixes []string, slug string) string {
 // BucketConditionTitle is the title of the bucket condition of the account
 // saID, as the bootstrap set it.
 func BucketConditionTitle(saID string) string { return "fugaro-" + saID }
+
+// LauncherBucketConditionTitle is the title of the launchers' objectUser
+// grant on the runs bucket (docs/design/bucket-iam.md H5).
+const LauncherBucketConditionTitle = "fugaro-launchers-runs"
+
+// bucketNameRE is the charset LauncherBucketCondition accepts: narrower than
+// GCS's own bucket name rules, but every bucket Fugaro creates or accepts
+// already fits it (tfvars.go's "fugaro-runs-" prefix check does not enforce
+// the rest, so this is the one place that does).
+var bucketNameRE = regexp.MustCompile(`^[a-z0-9._-]+$`)
+
+// ValidBucketName reports whether bucket is the charset
+// LauncherBucketCondition accepts. A caller that did not itself validate a
+// configured bucket name (a local config's bucket_url, for instance, which
+// localcfg only charset-checks when runs_bucket, not bucket_url, is set)
+// should check this before calling LauncherBucketCondition with it, since
+// that function panics rather than widen on a bad one.
+func ValidBucketName(bucket string) bool { return bucketNameRE.MatchString(bucket) }
+
+// LauncherBucketCondition limits the launchers' objectUser grant on bucket
+// to runs/, every repository's (H2). Every launcher carries this exact
+// string and LauncherBucketConditionTitle, with no description, so IAM keeps
+// them in one conditional binding. The installation module, the install
+// guard and doctor all compare against it: this is its one definition.
+//
+// bucket is embedded in the CEL expression unescaped, so it must already be
+// a plain bucket name: a byte outside [a-z0-9._-] (a quote, in particular)
+// could otherwise break out of the string literal and widen the condition.
+// LauncherBucketCondition panics rather than return a condition that looks
+// plausible but is not the one every comparison expects byte for byte.
+func LauncherBucketCondition(bucket string) string {
+	if !bucketNameRE.MatchString(bucket) {
+		panic(fmt.Sprintf("gcp.LauncherBucketCondition: bucket name %q has a byte outside [a-z0-9._-]", bucket))
+	}
+	return fmt.Sprintf(`resource.name.startsWith("projects/_/buckets/%s/objects/runs/")`, bucket)
+}

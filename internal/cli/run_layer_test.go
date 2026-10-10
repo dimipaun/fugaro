@@ -529,6 +529,36 @@ func TestRunGatesOnTheAdoptedLayerForAnUnlaunchedStoredTask(t *testing.T) {
 	}
 }
 
+// Merge fix (Task 10/#231 + Task 11): a checked-out launch used to read the
+// project layer bucket twice in one command — once through checkoutConfig
+// (newSpec's repoSlug calls it to tell the git provider, itself cached per
+// command by #231's checkoutParseCache so further checkoutConfig calls in
+// the same command don't re-read) and once more, independently, through
+// embedProjectLayer. cachedProjectLayer/cacheProjectLayer (cloud.go) now
+// share that same per-command cache between the two, so the whole launch
+// makes exactly one bucket read.
+func TestRunMakesOneLayerBucketRead(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	var calls int
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		calls++
+		return read(ctx, b)
+	}
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 1 {
+		t.Fatalf("layerRead was called %d times, want 1", calls)
+	}
+}
+
 func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
