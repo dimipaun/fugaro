@@ -723,6 +723,24 @@ func TestInstallationSpec(t *testing.T) {
 	}
 }
 
+// TestInstallationRefusesAnInvalidBucketURLCharset (code review finding):
+// localcfg only charset-checks runs_bucket, not bucket_url, so a local
+// config that names its runs bucket through bucket_url (not runs_bucket)
+// can carry a bucket name gcp.LauncherBucketCondition refuses to widen on;
+// that function panics by design rather than accept it.
+// Installation must turn that into a clean UserError before ever calling
+// it, not let the panic through to fugaro init.
+func TestInstallationRefusesAnInvalidBucketURLCharset(t *testing.T) {
+	lc := parseLC(t, strings.Replace(m4LocalConfig, "runs_bucket: fugaro-runs-proj-1234", "bucket_url: gs://fugaro-runs-Proj1234", 1))
+	if lc.RunsBucketName() != "fugaro-runs-Proj1234" {
+		t.Fatalf("test setup: RunsBucketName() = %q, want the bucket_url's host (uppercase, invalid)", lc.RunsBucketName())
+	}
+	var ue *UserError
+	if _, err := Installation(lc, InstallOptions{}); !errors.As(err, &ue) {
+		t.Fatalf("bucket_url with a byte outside the charset gcp.LauncherBucketCondition accepts: %v", err)
+	}
+}
+
 // The repository tfvars' installation block falls back to the names Go
 // gives the installation when its outputs aren't known yet.
 func TestDefaultInstallationOutputs(t *testing.T) {
