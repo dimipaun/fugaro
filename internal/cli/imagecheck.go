@@ -226,20 +226,108 @@ func checkedWorkflows(cfg *config.Config) []string {
 	return out
 }
 
-// readHeadConfig reads and parses head's fugaro.yaml.
-func readHeadConfig(tree *imagecheck.GitTree) (*config.Config, error) {
+// readHeadConfig reads head's fugaro.yaml and resolves it over the project
+// layer o finds (docs/design/layered-config.md §8): fugaro image check run
+// locally, with the operator's own access (lc). The check job does not call
+// this: it goes through jobHeadConfig -> resolveHeadData instead, so it can
+// decide whether to read its copy at all before resolving (decision L9).
+func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
 	data, err := tree.ReadFile("fugaro.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
 	}
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		msgs := make([]string, len(problems))
-		for i, p := range problems {
+	return resolveHeadData(ctx, data, lc, o)
+}
+
+// resolveHeadData is readHeadConfig's resolve step, split out so
+// jobHeadConfig can read the layer copy only once it knows whether head's
+// file is even anchored, without reading fugaro.yaml from tree twice.
+func resolveHeadData(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
+	rf, err := resolveFugaroYAML(ctx, data, lc, o)
+	if err != nil {
+		return nil, err
+	}
+	if len(rf.Problems) > 0 {
+		msgs := make([]string, len(rf.Problems))
+		for i, p := range rf.Problems {
 			msgs[i] = p.String()
 		}
-		return nil, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(problems), strings.Join(msgs, "; "))
+		return nil, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(rf.Problems), strings.Join(msgs, "; "))
 	}
+	return rf.Cfg, nil
+}
+
+// jobLayerOptions are the check job's: its repository's copy of the project
+// layer (decision L6), in the build account's own prefix, read with the
+// ordinary read, not the strict variant: the account's objectUser grant is
+// conditioned on the builds/<slug>/ prefix, so it lacks
+// storage.objects.list, and GCS answers a GET of a genuinely missing
+// object with 403 for that reason alone (blobx.ReadMax, and
+// TestReadTreatsForbiddenAsAbsent, map any 403 to ErrNotExist for exactly
+// this account shape) — there is no live 403 case this switch could still
+// distinguish from "missing" by using ReadMaxStrict instead, and doing so
+// would misreport "no layer published" as a failure for every repository
+// without one. An oversized copy (over LayerMaxBytes) is always an error:
+// it is present and published, so it never reads as "no layer", and names
+// the fix (republish within the limit). The caller (jobHeadConfig) must
+// call this only once it knows head's own file is anchored: an unanchored
+// repository's check must never touch builds/<slug>/project-layer.yaml at
+// all, so a copy broken for an unrelated reason can't fail a check that
+// was never going to use it.
+func jobLayerOptions(ctx context.Context, b *blobx.Bucket, slug string) (layerOptions, error) {
+	key := config.LayerCopyKey(slug)
+	data, _, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
+	switch {
+	case err == nil:
+		return layerOptions{Data: data, Where: key, NoBucket: true}, nil
+	case errors.Is(err, blobx.ErrNotExist):
+		return layerOptions{NoBucket: true}, nil
+	case errors.Is(err, blobx.ErrTooLarge):
+		return layerOptions{}, fmt.Errorf("the project layer copy %s is over the %d KiB limit: run fugaro config publish to republish it within the limit", key, config.LayerMaxBytes>>10)
+	}
+	return layerOptions{}, fmt.Errorf("reading the project layer copy %s: %w", key, err)
+}
+
+// jobHeadConfig is the check job's readHeadConfig: head's fugaro.yaml,
+// resolved over its repository's copy of the project layer
+// (jobLayerOptions) — read only when head's own file is anchored
+// (decision L9, anchorOf): an unanchored repository is resolved exactly as
+// it always was, with no copy ever read for it.
+//
+// A missing copy of an anchored file is not always an error: a build
+// without a layer never touches one (decision L6), so "no copy" can be a
+// repository whose project simply never published a layer, same as
+// before this file was anchored at all. The file is first resolved
+// without a layer: one that cannot resolve that way (a minimal file with
+// no workflows: of its own, which needs the layer's default_profile)
+// fails naming the fix, instead of the harder to place "must define at
+// least one workflow"; one that resolves fine without a layer (its own
+// full workflows:) goes on exactly as before, past one warn line, so a
+// project that meant to publish a layer but whose copy went missing is
+// never silent about it. Every other copy outcome (found, invalid,
+// oversized, unreadable) behaves exactly as readHeadConfig's did.
+func jobHeadConfig(ctx context.Context, bucket *blobx.Bucket, slug string, tree *imagecheck.GitTree, warn func(string)) (*config.Config, error) {
+	data, err := tree.ReadFile("fugaro.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
+	}
+	if !isAnchoredFile(data) {
+		return resolveHeadData(ctx, data, nil, layerOptions{NoBucket: true})
+	}
+	lo, err := jobLayerOptions(ctx, bucket, slug)
+	if err != nil {
+		return nil, err
+	}
+	if lo.Data != nil {
+		return resolveHeadData(ctx, data, nil, lo)
+	}
+	// jobLayerOptions found no copy (ErrNotExist, decision L6).
+	key := config.LayerCopyKey(slug)
+	cfg, rerr := resolveHeadData(ctx, data, nil, layerOptions{NoBucket: true})
+	if rerr != nil {
+		return nil, fmt.Errorf("no project layer copy at %s: run fugaro config publish", key)
+	}
+	warn(fmt.Sprintf("no project layer copy at %s: if the project publishes a layer, run fugaro config publish; this check ran without it", key))
 	return cfg, nil
 }
 
@@ -327,6 +415,9 @@ func writeState(ctx context.Context, b *blobx.Bucket, key string, s *imagecheck.
 	}
 	if errors.Is(err, blobx.ErrConflict) || errors.Is(err, blobx.ErrExists) {
 		return fmt.Errorf("%s changed while this check ran (another check?); not overwriting it", key)
+	}
+	if errors.Is(err, blobx.ErrForbidden) {
+		return checkWriteErr("gs://"+b.GCSName, key, err)
 	}
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
@@ -516,7 +607,7 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return failAll(err)
 	}
-	cfg, err := readHeadConfig(tree)
+	cfg, err := jobHeadConfig(ctx, bucket, slug, tree, func(msg string) { fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", msg) })
 	if err != nil {
 		return failAll(err)
 	}
@@ -601,6 +692,18 @@ func submitRebuild(ctx context.Context, b *gcp.Builder, project string, rs infra
 	if base == "" {
 		return "", "", fmt.Errorf("the installed check job has no %s base image: %s", kind, notInstalledReason)
 	}
+	// cloudBuildSpec always sets ProjectLayerSHA256 from cfg.Layer (empty
+	// for none), which the render step reads as --layer-bucket/--layer-
+	// slug/--layer-sha256 (gcp.BuildSpec): an older base's own fugaro
+	// predates those flags and would refuse them as unknown, so a layer
+	// is never submitted against one (the same gate prepareLayerCopy
+	// uses for a human-triggered build, image_layer.go).
+	if cfg.Layer != nil {
+		if release, predates := baseImagePredatesLayer(base); predates {
+			return "", "", fmt.Errorf("the project layer needs a base image whose fugaro reads it (fugaro %s or later), but %s's %s base is %s, release %s: rebuild the base image first (fugaro image refresh)",
+				layeredSince, name, kind, base, release)
+		}
+	}
 	spec, err := cloudBuildSpec(rs, cfg, name, base, s.MachineType, recordBucket)
 	if err != nil {
 		return "", "", err
@@ -632,10 +735,17 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, checkoutCfg, err := loadCheckoutConfig(ctx)
+	// Passes lc, already selected from --config/--project/--gcp-project
+	// (openCloud, above): loadCheckoutConfig's own flag-blind
+	// selectedProjectConfig fallback could pick a different installation
+	// (or none), which would read the wrong project layer bucket, or none
+	// at all, and resolve this file against a stale cache or "unknown"
+	// instead of the one this command actually points at.
+	_, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{Lenient: true})
 	if err != nil {
 		return err
 	}
+	checkoutCfg := rf.Cfg
 	for _, name := range checkedWorkflows(checkoutCfg) {
 		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
 			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
@@ -668,7 +778,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return remote(fmt.Errorf("%w (the check clones origin's %s with your own git access)", err, branch))
 	}
-	cfg, err := readHeadConfig(tree)
+	cfg, err := readHeadConfig(ctx, tree, lc, layerOptions{})
 	if err != nil {
 		return userErr("%v", err)
 	}

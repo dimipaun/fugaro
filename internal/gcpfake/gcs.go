@@ -55,6 +55,8 @@ import (
 //     or an insert made; objects can be stored in any bucket without it.
 //   - A bucket insert needs the project to have been added (AddProject),
 //     and otherwise answers 403.
+//   - DenyWrites answers 403 for a write under a prefix, as a conditional
+//     grant would; reads and listings are never denied.
 type GCS struct {
 	*Server
 	mu      sync.Mutex
@@ -67,8 +69,14 @@ type GCS struct {
 	projects map[string]uint64
 	// failDeletes makes the next object deletes answer 503.
 	failDeletes int
+	// failGets makes the next metadata-only object reads (Attributes, not
+	// a content GET) answer 503, as a flaky network or an overloaded
+	// backend would.
+	failGets int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
+	// denied maps a bucket to the prefixes DenyWrites has closed.
+	denied map[string][]string
 }
 
 // bucketMeta is what a bucket's get and getIamPolicy report.
@@ -107,7 +115,7 @@ type upload struct {
 func NewGCS(t *testing.T) *GCS {
 	t.Helper()
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
-		uploads: map[string]*upload{}, projects: map[string]uint64{}}
+		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -136,6 +144,18 @@ func (g *GCS) FailObjectDeletes(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failDeletes = n
+}
+
+// FailObjectGets makes the next n metadata-only object reads (gocloud's
+// Attributes, a GET without alt=media) answer 404 even though the object
+// exists, modeling a failure to read it that is not "the object does not
+// exist" and not "this driver has no generation concept" (file://,
+// mem://): a real GCS failure a caller must not paper over with an
+// unconditional delete. A content read (alt=media) is unaffected.
+func (g *GCS) FailObjectGets(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failGets = n
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -238,6 +258,27 @@ func (g *GCS) Put(bucket, name string, data []byte) {
 	}
 	g.gen++
 	objs[name] = &object{data: append([]byte(nil), data...), gen: g.gen, metagen: 1, updated: time.Now().UTC()}
+}
+
+// DenyWrites makes every create, overwrite, delete and metadata patch of an
+// object under prefix in bucket answer 403, as GCS does for a principal
+// whose write grant is conditioned elsewhere (bucket-iam.md). Reads and
+// listings are not affected.
+func (g *GCS) DenyWrites(bucket, prefix string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.denied[bucket] = append(g.denied[bucket], prefix)
+}
+
+// deniedWrite answers 403 and reports true when name is under a denied prefix.
+func (g *GCS) deniedWrite(w http.ResponseWriter, bucket, name string) bool {
+	for _, p := range g.denied[bucket] {
+		if strings.HasPrefix(name, p) {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "caller does not have storage.objects.create access to the Google Cloud Storage object.")
+			return true
+		}
+	}
+	return false
 }
 
 // ListCalls is how many object listing requests (pages) the fake has
@@ -555,6 +596,9 @@ func (g *GCS) store(w http.ResponseWriter, bucket, name, ct string, cond *int64,
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "upload without an object name")
 		return
 	}
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	objs := g.buckets[bucket]
 	if objs == nil {
 		objs = map[string]*object{}
@@ -599,6 +643,17 @@ func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 		return
 	}
 	if !media {
+		if g.failGets > 0 {
+			g.failGets--
+			// NOT_FOUND, not a 5xx: the storage client retries a 5xx on
+			// its own (idempotent GETs), which would make this answer
+			// transparently instead of ever reaching the caller; a 404
+			// here is deterministic and fast, and models the same "the
+			// object just is not readable as expected" failure (e.g. a
+			// concurrent delete that already removed it).
+			g.notFound(w, bucket, name)
+			return
+		}
 		writeJSON(w, http.StatusOK, meta(bucket, name, o))
 		return
 	}
@@ -621,6 +676,9 @@ func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string
 		writeError(w, http.StatusServiceUnavailable, "UNAVAILABLE", "try again")
 		return
 	}
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	cond, err := ifGenerationMatch(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
@@ -640,6 +698,9 @@ func (g *GCS) delete(w http.ResponseWriter, r *http.Request, bucket, name string
 }
 
 func (g *GCS) patch(w http.ResponseWriter, bucket, name string, body []byte) {
+	if g.deniedWrite(w, bucket, name) {
+		return
+	}
 	o := g.buckets[bucket][name]
 	if o == nil {
 		g.notFound(w, bucket, name)
