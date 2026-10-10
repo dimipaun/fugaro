@@ -634,6 +634,52 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 	}
 }
 
+// TestCheckJobForbiddenWriteIsExitUserError: a check.json write refused with
+// blobx.ErrForbidden (H8, docs/design/bucket-iam.md) is exit 1, not the
+// job's usual exit 2 for a failed check; the build it could not record
+// still ran.
+func TestCheckJobForbiddenWriteIsExitUserError(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	gcs := gcpfake.NewGCS(t)
+	gcs.DenyWrites(checkBucket, "builds/")
+	checkOpenBucket = func(context.Context, string) (*blobx.Bucket, error) { return gcs.Bucket(t, checkBucket), nil }
+	out, stderr, err := executeJob(t, "image", "check", "--job")
+	if ExitCode(err) != ExitUserError {
+		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || !strings.Contains(lines[0].Error, "operator role") {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d, want 1 (the build runs; only recording it is refused)", buildPosts(f.fb))
+	}
+}
+
+// TestCheckJobForbiddenWriteAfterAnotherFailureStaysExitRemoteError: when a
+// workflow is already failed for another reason (here, submitting the
+// rebuild), a forbidden check.json write on top of that is not the sole
+// cause, so the exit code stays 2: only a write that is itself the only
+// problem is exit 1 (H8, docs/design/bucket-iam.md).
+func TestCheckJobForbiddenWriteAfterAnotherFailureStaysExitRemoteError(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	gcs := gcpfake.NewGCS(t)
+	gcs.DenyWrites(checkBucket, "builds/")
+	checkOpenBucket = func(context.Context, string) (*blobx.Bucket, error) { return gcs.Bucket(t, checkBucket), nil }
+	checkEndpoints.CloudBuild = "http://127.0.0.1:1/" // refuses every connection: submitRebuild fails
+	out, stderr, err := executeJob(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed || !strings.Contains(lines[0].Error, "submitting the rebuild") {
+		t.Fatalf("lines = %+v", lines)
+	}
+	if buildPosts(f.fb) != 0 {
+		t.Fatalf("builds submitted = %d, want 0", buildPosts(f.fb))
+	}
+}
+
 // TestCheckJobUnreadableStateFailsSafe: check.json holds the back-off
 // state, so an unreadable one stops the check (no build, ERROR, exit 2)
 // and is left for a human, instead of being replaced.
