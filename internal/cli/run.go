@@ -224,6 +224,21 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 			return err
 		}
 	}
+	if o.retry == "" {
+		// Before the image gate below, not after: a run ID whose earlier
+		// attempt stored a task but never launched it (prior == nil, an
+		// ambiguous launch failure, say) must be gated on the layer that
+		// stored task actually carries, since createTask keeps it
+		// regardless of what embedProjectLayer just freshly re-resolved
+		// (repeatTaskBytes excludes the layer from "is this the same
+		// task", and createTask adopts the stored one either way). Doing
+		// this adoption only here, as a read-only peek, keeps a genuinely
+		// new launch's image gate running before any write, as it always
+		// has: createTask's own, later ReadTask only happens on ErrExists.
+		if err := adoptStoredProjectLayer(ctx, s, spec); err != nil {
+			return err
+		}
+	}
 	if prior == nil {
 		agentRecipe, kind := "", ""
 		if co := checkoutConfig(ctx, spec.Repo); co != nil {
@@ -561,6 +576,34 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	}
 	if len(active) >= env.lc.MaxParallel {
 		return userErr("%d runs active; max_parallel is %d", len(active), env.lc.MaxParallel)
+	}
+	return nil
+}
+
+// adoptStoredProjectLayer peeks at whatever task is already stored for
+// spec's run ID, without writing anything, and when it is spec's own task
+// (repeatTaskBytes equal, ignoring the layer itself), adopts its project
+// layer into spec before the image gate below runs: a repeat whose earlier
+// attempt stored a task but never launched it must be gated on the layer
+// that stored task actually carries, since createTask (below) keeps it
+// either way. No stored task (ErrNotFound), or one for a different
+// request, leaves spec untouched: createTask is still the one that refuses
+// "a different task".
+func adoptStoredProjectLayer(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
+	have, err := s.ReadTask(ctx)
+	if errors.Is(err, runstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return remote(err)
+	}
+	a, err1 := repeatTaskBytes(have)
+	b, err2 := repeatTaskBytes(spec)
+	if err := errors.Join(err1, err2); err != nil {
+		return err
+	}
+	if string(a) == string(b) {
+		spec.ProjectLayer = have.ProjectLayer
 	}
 	return nil
 }

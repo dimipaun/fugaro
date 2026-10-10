@@ -25,6 +25,20 @@ import (
 // never as part of this launch, so a launch never announces them.
 var layerAnnounceKeys = []string{"commands.build", "commands.test", "commands.rerun_failed"}
 
+// readCheckoutFugaroYAML is readFugaroYAML; a test seam, so a read
+// failure's exact text can be controlled without touching the filesystem.
+var readCheckoutFugaroYAML = readFugaroYAML
+
+// shortSHA is the first 12 characters of a sum, or all of a shorter one.
+// Task 10 (PR #231) defines the same helper in validate.go/doctor.go; this
+// one merges into that single definition once #231 lands on this branch.
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
 // embedProjectLayer puts the project layer that applies to the task's
 // repository into spec (decisions L8, L9, L13). In the repository's
 // checkout, it is the one findLayer finds for its fugaro.yaml. Outside one
@@ -48,7 +62,7 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 	var data []byte
 	if root := checkoutRoot(ctx, spec.Repo); root != "" {
 		var rerr error
-		if data, rerr = readFugaroYAML(filepath.Join(root, "fugaro.yaml")); rerr != nil {
+		if data, rerr = readCheckoutFugaroYAML(filepath.Join(root, "fugaro.yaml")); rerr != nil {
 			// os.ErrNotExist is the ordinary case of a checkout with no
 			// fugaro.yaml yet: checkoutParse (cloud.go) already treats that
 			// the same as "no checkout at all", silently. Only a real
@@ -63,6 +77,10 @@ func embedProjectLayer(ctx context.Context, env *cloudEnv, spec *task.Spec, warn
 	if data == nil {
 		data = []byte(fmt.Sprintf("version: 1\nproject: %s\ngcp_project: %s\n", env.lc.Name, env.lc.GCPProject))
 	}
+	// layerOptions{} is strict (Lenient defaults to false): decision L16
+	// says launches are strict, never lenient like validate/doctor. A
+	// bucket that cannot be read must fail the launch, not silently launch
+	// without a layer a full fugaro.yaml may depend on for its defaults.
 	fl, err := findLayer(ctx, os.Getenv, data, env.lc, layerOptions{}, time.Now())
 	if err != nil {
 		return data, err
@@ -101,7 +119,7 @@ func announceProjectLayer(warn io.Writer, spec *task.Spec, data []byte) {
 	if len(ps) > 0 {
 		return // already validated when first embedded or first stored
 	}
-	fmt.Fprintf(warn, "project layer: %s generation %d (sha256 %s)\n", l.Project, pl.Generation, pl.SHA256[:12])
+	fmt.Fprintf(warn, "project layer: %s generation %d (sha256 %s)\n", l.Project, pl.Generation, shortSHA(pl.SHA256))
 	announceProfileCommands(warn, data, l, spec.Workflow, pl.Generation)
 }
 

@@ -401,6 +401,134 @@ func TestRunAnnouncesWhenLocalResolutionFails(t *testing.T) {
 	}
 }
 
+// Round-2 review fix (1), security (decision L16): a launch is strict, never
+// lenient like validate/doctor. A bucket that cannot be read, with nothing
+// usable cached, must refuse the launch outright: a full fugaro.yaml may
+// depend on project defaults a silently-skipped layer would otherwise drop
+// without anyone noticing.
+func TestRunRefusesWhenTheLayerBucketIsUnreadable(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(context.Context, *blobx.Bucket) ([]byte, int64, error) {
+		return nil, 0, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err == nil {
+		t.Fatal("launched despite an unreadable project layer bucket with nothing cached")
+	}
+	if n := len(f.run.Executions()); n != 0 {
+		t.Fatalf("%d executions, want none", n)
+	}
+}
+
+// Round-2 review fix (2), B13: the read-error note must go through
+// oneLineCLI (collapsed to one line, control characters escaped), the same
+// as every other message built from text this codebase does not fully
+// trust. readCheckoutFugaroYAML is patched directly, since the real
+// config.ReadRegular errors never embed anything but a (safe) path.
+func TestEmbedProjectLayerEscapesAReadError(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	read := readCheckoutFugaroYAML
+	t.Cleanup(func() { readCheckoutFugaroYAML = read })
+	readCheckoutFugaroYAML = func(string) ([]byte, error) {
+		return nil, errors.New("line one\x1b[31mESCAPED\x1b[0m\nline two")
+	}
+	env := fileEnv(t, f)
+	spec := &task.Spec{Version: 1, RunID: "20261008-100000-abcd", Repo: "acme/other", Ref: "main", Workflow: config.ImplicitWorkflow, Task: "x"}
+	var warn bytes.Buffer
+	if _, err := embedProjectLayer(context.Background(), env, spec, &warn); err != nil {
+		t.Fatal(err)
+	}
+	out := warn.String()
+	if !strings.Contains(out, "line one") {
+		t.Errorf("warnings %q lack the error's first line", out)
+	}
+	if strings.Contains(out, "line two") {
+		t.Errorf("warnings %q wrongly carry a second line", out)
+	}
+	if strings.ContainsRune(out, '\x1b') {
+		t.Errorf("warnings %q contain a raw escape byte", out)
+	}
+	if !strings.Contains(out, `\u001b`) {
+		t.Errorf("warnings %q lack the escaped control character", out)
+	}
+}
+
+// Round-2 review fix (3), B14: the L7 line is one per distinct profile; a
+// bug that appended a duplicate would pass every existing assertion, since
+// they only use strings.Contains.
+func TestRunAnnouncesEachProfileLineExactlyOnce(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := "commands: from profile svc (build, test; project layer generation 0)\n"
+	if n := strings.Count(errOut, line); n != 1 {
+		t.Fatalf("stderr %q has the commands line %d times, want 1", errOut, n)
+	}
+}
+
+// Round-2 review fix (4): a repeated --run-id whose earlier attempt stored
+// a task but never actually launched it (here, an ambiguous launch
+// failure) must gate on the project layer that stored task actually
+// carries, not whatever embedProjectLayer freshly re-resolves this time:
+// createTask (via repeatTaskBytes/adoptStoredProjectLayer) keeps the
+// stored task's layer regardless of what changed in the bucket since, so
+// the image gate must judge that SAME adopted layer rather than skip it
+// because a fresh resolve this time found none.
+func TestRunGatesOnTheAdoptedLayerForAnUnlaunchedStoredTask(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	registerOtherLocally(t, f)
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), config.ImplicitWorkflow, release060)
+	// The first attempt resolves and stores the layer, passes the image
+	// gate (the job image is new enough), but its launch itself fails
+	// ambiguously: task.json exists, launch.json never gets written.
+	f.run.FailRunWith = 503
+	if _, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task"); err == nil || !strings.Contains(err.Error(), "unknown") {
+		t.Fatalf("first attempt: %v", err)
+	}
+	f.run.FailRunWith = 0
+	slug := mustSlug("github", "acme/other")
+	runDir := filepath.Join(f.dir, "runs", "runs", slug, "20261008-100000-abcd")
+	// Drop the launch claim the failed attempt left (it survives an
+	// ambiguous failure on purpose, to block an immediate relaunch): this
+	// test is about the image gate, not the claim's own staleness rules.
+	if err := os.Remove(filepath.Join(runDir, "launching")); err != nil {
+		t.Fatal(err)
+	}
+	// Between the two attempts, the layer is unpublished and the job
+	// image now predates layeredSince: a launch that still carries the
+	// stored task's layer must refuse it.
+	if err := os.Remove(filepath.Join(f.dir, "runs", filepath.FromSlash(config.LayerKey))); err != nil {
+		t.Fatal(err)
+	}
+	writeBuildRecord(t, f, slug, config.ImplicitWorkflow, release050)
+	n := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "the project layer needs a job image whose runner knows the project layer (fugaro 0.6.0 or later)") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.run.Executions()) != n {
+		t.Fatal("a second execution started despite the refusal")
+	}
+}
+
 func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
