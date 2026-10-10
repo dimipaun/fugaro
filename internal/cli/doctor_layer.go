@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -139,13 +139,40 @@ func imageConfigChecks(ctx context.Context, rb *blobx.Bucket, slug string, cfg *
 		if err != nil || rec.ImageConfigHash == want {
 			continue
 		}
-		from := res.SourceOf("workflows." + name + ".base")
-		if s := res.SourceOf("workflows." + name + ".image"); s != config.SourceDefault {
-			from = s
-		}
+		reason := imageConfigReason(res, name)
 		out = append(out, doctorCheck{ID: "image-config-" + name, Severity: "warning",
-			Problem: fmt.Sprintf("workflow %s's job image was built from other image settings than it resolves to now (its base and image settings come from %s)", name, from),
+			Problem: fmt.Sprintf("workflow %s's job image was built from other image settings than it resolves to now (%s)", name, reason),
 			Fix:     "the daily image check rebuilds it; to do it now: fugaro image build --workflow " + name})
 	}
 	return out
+}
+
+// imageLeafKeys are the leaf paths under workflows.<name>. that decide a
+// generated image's content (the fields imagecheck.ImageConfigHash hashes):
+// base is a scalar on its own; the rest are image:'s own leaves.
+// Resolution.SourceOf only ever sees leaves (a bare "workflows.X.image" is
+// never itself a key, since the resolve.go merge records a source only for
+// a scalar or a list, never for a map it recurses into), so asking it for
+// "workflows.X.image" the way an earlier version of this function did
+// always answered SourceDefault, silently never attributing an image
+// override to anything.
+var imageLeafKeys = []string{"base", "image.node", "image.jdk", "image.apt", "image.setup", "image.skip_build_scripts"}
+
+// imageConfigReason names where a workflow's image-affecting settings come
+// from, for imageConfigChecks' message: base's own source first, then every
+// other distinct non-default source among the rest of imageLeafKeys (at
+// most one more in practice: a workflow has one profile and one repo
+// override, so sources are limited to SourceRepo and one SourceProfile).
+func imageConfigReason(res *config.Resolution, name string) string {
+	baseFrom := res.SourceOf("workflows." + name + ".base")
+	others := map[string]bool{}
+	for _, k := range imageLeafKeys[1:] {
+		if s := res.SourceOf("workflows." + name + "." + k); s != config.SourceDefault && s != baseFrom {
+			others[s] = true
+		}
+	}
+	if len(others) == 0 {
+		return fmt.Sprintf("its base comes from %s", baseFrom)
+	}
+	return fmt.Sprintf("its base comes from %s and its image settings from %s", baseFrom, strings.Join(slices.Sorted(maps.Keys(others)), ", "))
 }
