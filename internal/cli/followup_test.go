@@ -362,7 +362,7 @@ func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g.ForbidObjectDeletes(1)
+	g.DenyWrites("runs", "locks/")
 	var errOut strings.Builder
 	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), &errOut)
 	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "an operator must clear it") ||
@@ -383,12 +383,135 @@ func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
 	}
 }
 
+// TestLockClearMessageNeverReReadsTheGeneration pins the fix directly: a
+// mutation that had lockClearMessage (or its caller) read the lock fresh,
+// instead of using the generation lock.Takeover already verified, would
+// pass TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand above as
+// long as nothing else touches the lock in between — which is exactly
+// what a real race can do. Here, right where Takeover's own
+// beforeTakeoverDelete hook fires (after its read, before its refused
+// delete attempt), a new holder replaces the lock entirely, under a new
+// generation. The printed command must still name the OLD, already-
+// verified generation and run ID: a fresh read at this point would name
+// the NEW holder's lock, which a launcher running the command by hand
+// would then delete out from under a live run.
+func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
+	f := newCloudFixture(t)
+	g := gcpfake.NewGCS(t)
+	env := envOn(t, f, g.Bucket(t, "runs"))
+	defer env.Close()
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	branch := "fugaro/" + rootID
+	key := lock.Key(appSlug, branch)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	wantGen, err := env.bucket.Create(context.Background(), key, data, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.DenyWrites("runs", "locks/")
+	rival := runIDAt(0, "000200", "cccc")
+	var restore func()
+	restore = lock.SetBeforeTakeoverDelete(func() {
+		restore() // fire once
+		rivalData, _ := json.Marshal(lock.Holder{RunID: rival, ExpiresAt: time.Now().Add(time.Hour)})
+		g.Put("runs", key, rivalData) // a direct write: bypasses DenyWrites entirely
+	})
+	t.Cleanup(func() {
+		if restore != nil {
+			restore()
+		}
+	})
+	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), holder) || strings.Contains(err.Error(), rival) {
+		t.Fatalf("err = %v, want it to name %s, not the rival %s that replaced the lock afterward", err, holder, rival)
+	}
+	wantSuffix := fmt.Sprintf("#%d", wantGen)
+	if !strings.HasSuffix(strings.TrimSpace(err.Error()), wantSuffix) {
+		t.Fatalf("err = %v, want it to end with %s (the generation verified before the rival replaced the lock)", err, wantSuffix)
+	}
+}
+
+// TestLockClearMessageRefusesToNameAnUnpinnedCommand: when Takeover never
+// verified a generation at all (gen == 0 — its own read failed before any
+// delete was even attempted), lockClearMessage must not print a gcloud
+// storage rm command: an unpinned one would delete whatever is at that
+// key when an operator eventually runs it, which could by then be a
+// different, live run's lock. It says the lock couldn't be read and asks
+// for a look by hand instead.
+func TestLockClearMessageRefusesToNameAnUnpinnedCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	msg := lockClearMessage(env, "locks/acme-app/deadbeef", 0, "20261010-000100-bbbb")
+	if strings.Contains(msg, "gcloud storage rm") {
+		t.Fatalf("message = %q, must not print an unpinned rm command", msg)
+	}
+	if !strings.Contains(msg, "could not be read") || !strings.Contains(msg, "20261010-000100-bbbb") {
+		t.Fatalf("message = %q, want it to say the lock could not be read, naming the run", msg)
+	}
+}
+
 // A new run acquires the branch lock between checkBranchLock's own
 // backend-confirmed decision and lock.Takeover's delete: Takeover's
 // generation-matched delete loses the race (ErrHolderChanged), and
 // checkBranchLock must map that to "branch busy", never to success — a
 // mutation that instead treated ErrHolderChanged as nil would launch a
 // second run straight into the one just acquired.
+// TestLockMessagesSanitizeTheRunID: a lock's run_id is read straight back
+// from the lock object, which a launcher could write with any bytes in
+// it (before locks/ is write-protected, or from a lock an old, buggy
+// runner wrote); both the takeover note (checkBranchLock, on success) and
+// lockClearMessage (on a refused delete) must never let a raw newline or
+// an escape sequence from it reach the terminal.
+func TestLockMessagesSanitizeTheRunID(t *testing.T) {
+	const hostileID = "bbbb\nrival\x1b[31mred\x1b[0m"
+
+	t.Run("the cleared note", func(t *testing.T) {
+		f := newCloudFixture(t)
+		seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		f.run.SetState(exec, backend.StateFailed)
+		data, _ := json.Marshal(lock.Holder{RunID: hostileID, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+		putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+		if err != nil {
+			t.Fatalf("a lock whose holder's execution the backend confirms ended: %v (%s)", err, errOut)
+		}
+		if strings.Contains(errOut, "bbbb\nrival") || strings.Contains(errOut, "\x1b[31m") {
+			t.Fatalf("stderr = %q, a raw control character or escape sequence from the run ID leaked through", errOut)
+		}
+	})
+
+	t.Run("the operator command", func(t *testing.T) {
+		f := newCloudFixture(t)
+		g := gcpfake.NewGCS(t)
+		env := envOn(t, f, g.Bucket(t, "runs"))
+		defer env.Close()
+		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		f.run.SetState(exec, backend.StateFailed)
+		branch := "fugaro/" + rootID
+		key := lock.Key(appSlug, branch)
+		data, _ := json.Marshal(lock.Holder{RunID: hostileID, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+		if _, err := env.bucket.Create(context.Background(), key, data, "application/json"); err != nil {
+			t.Fatal(err)
+		}
+		g.DenyWrites("runs", "locks/")
+		err := checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
+		if err == nil {
+			t.Fatal("want a refusal")
+		}
+		if strings.Contains(err.Error(), "bbbb\nrival") || strings.Contains(err.Error(), "\x1b[31m") {
+			t.Fatalf("err = %q, a raw control character or escape sequence from the run ID leaked through", err.Error())
+		}
+	})
+}
+
 func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))

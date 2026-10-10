@@ -179,7 +179,7 @@ func TestTakeoverSurfacesAForbiddenDelete(t *testing.T) {
 	if _, err := b.Create(ctx, key, mustJSON(t, holder), "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	g.ForbidObjectDeletes(1)
+	g.DenyWrites("runs", "locks/")
 	_, wantGen, err := b.Read(ctx, key)
 	if err != nil {
 		t.Fatal(err)

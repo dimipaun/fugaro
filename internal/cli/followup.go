@@ -304,15 +304,29 @@ func executionTerminal(ctx context.Context, env *cloudEnv, execution string) boo
 // a failure): it is never read fresh here, because a second read, after
 // Takeover already failed, could see a different run's lock by then — a
 // launcher who ran the printed command against its current generation
-// could delete a live run's lock. gen zero (nothing was verified, or the
-// driver doesn't carry one) omits the generation from the object name.
+// could delete a live run's lock.
+//
+// gen zero means Takeover never verified a generation at all (its own
+// read failed before the delete was even attempted — reads are not what
+// the 0.7.0 hardening denies, so this is a different, rarer failure).
+// Printing an unpinned gcloud storage rm then would be just as unsafe as
+// a fresh re-read: without a generation to match, the command deletes
+// whatever is at that key when an operator finally runs it, which could
+// by then be a different, live run's lock. So no command is printed;
+// the message says the lock could not be read and asks for a look by
+// hand instead.
 func lockClearMessage(env *cloudEnv, key string, gen int64, runID string) string {
+	if gen == 0 {
+		object := key
+		if name := env.lc.RunsBucketName(); name != "" {
+			object = "gs://" + name + "/" + key
+		}
+		return fmt.Sprintf("the lock of run %s is held by an execution that ended, but it could not be read to name its generation safely; an operator must inspect %s by hand before clearing it",
+			oneLine(runID), object)
+	}
 	object := key
 	if name := env.lc.RunsBucketName(); name != "" {
-		object = "gs://" + name + "/" + key
-		if gen != 0 {
-			object = fmt.Sprintf("%s#%d", object, gen)
-		}
+		object = fmt.Sprintf("gs://%s/%s#%d", name, key, gen)
 	}
 	return fmt.Sprintf("the lock of run %s is held by an execution that ended; an operator must clear it (or the sweeper does): gcloud storage rm %s",
 		oneLine(runID), object)

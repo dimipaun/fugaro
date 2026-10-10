@@ -666,7 +666,7 @@ func TestCancelForbiddenDeleteReportsLockHeldAndTheOperatorCommand(t *testing.T)
 	if _, err := env.bucket.Create(ctx, key, data, "application/json"); err != nil {
 		t.Fatal(err)
 	}
-	g.ForbidObjectDeletes(1)
+	g.DenyWrites("runs", "locks/")
 	var out, errOut strings.Builder
 	o := &cancelOptions{grace: time.Second, floorSet: true, finalizeWait: time.Second, poll: time.Millisecond, asJSON: true}
 	if err := cancelRun(ctx, env, o, id, &out, &errOut); err != nil {
