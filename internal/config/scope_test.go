@@ -40,11 +40,13 @@ func TestReviewAllowForksIsRepoScopeOnly(t *testing.T) {
 	}
 }
 
-// TestScopeTableMatchesDocs pins, row by row, the layer set of every key in
+// TestScopesMatchDesignDoc pins, row by row, the layer set of every key in
 // config.Scopes against the table of docs/design/layered-config.md §5 (the
 // plan's Task 1). A key whose scope changes, or a key added without a row
-// here, fails this test.
-func TestScopeTableMatchesDocs(t *testing.T) {
+// here, fails this test. (Renamed from TestScopeTableMatchesDocs, Task 18:
+// that name now belongs to docs_scope_test.go's test against
+// docs/project-layer.md, the user-facing doc this design table feeds.)
+func TestScopesMatchDesignDoc(t *testing.T) {
 	want := map[string]Scope{
 		"version":     InRepo,
 		"project":     InRepo,
@@ -145,6 +147,7 @@ func TestExecutableKeys(t *testing.T) {
 		"workflows.*.image.apt",
 		"workflows.*.image.setup",
 		"workflows.*.image.tools",
+		"workflows.*.image.skip_build_scripts",
 	}
 	got := append([]string(nil), ExecutableKeys...)
 	sort.Strings(got)

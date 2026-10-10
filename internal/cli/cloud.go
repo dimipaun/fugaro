@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -391,6 +392,132 @@ func checkoutRoot(ctx context.Context, repo string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// checkoutParseCacheKey is the context key withCheckoutParseCache installs.
+type checkoutParseCacheKey struct{}
+
+// checkoutParseResult is what checkoutParse returns, cached whole: a nil
+// cfg with no problems means "no such checkout or file", which is worth
+// remembering too (a repeat of the same failed git/file lookup).
+type checkoutParseResult struct {
+	cfg      *config.Config
+	problems []config.Problem
+}
+
+// checkoutParseCache memoizes two distinct reads of a checkout's
+// fugaro.yaml by root, for one command invocation: the working tree's
+// (checkoutParse, below) and the default branch's, read from git
+// (defaultBranchParse, init_repo_target.go) — different bytes at the same
+// root, so they get separate maps and never share a key. A third map,
+// layer, is keyed the same way and shared with run.go's embedProjectLayer
+// (Task 11): whichever of the two resolves the checkout's project layer
+// first in a command leaves it here for the other, scoped (see
+// layerCacheScope) so a launch never inherits an answer that was resolved
+// under a different, or absent, project selection.
+//
+// checkoutParse: run.go's launch path calls it (through checkoutConfig) up
+// to three times for the same spec.Repo, launch_budget.go once more, and
+// secrets.go a fourth time when its own first read came back nil — each
+// one, uncached, re-reads fugaro.yaml from disk and resolves the project
+// layer again (a bucket read, Task 10). The one thing besides root that
+// could vary call to call is layerOptions, but every path through
+// checkoutParse hands parseCheckoutFugaroYAML the same fixed
+// layerOptions{Lenient: true}, so root alone is key enough here.
+//
+// defaultBranchParse: fugaro init reads the default branch's fugaro.yaml
+// up to three times in one run (once while gathering inputs for the
+// anchor hint, once more in the repository stage, once in the secrets
+// stage), every time with the same selectedProjectConfig(ctx) too.
+type checkoutParseCache struct {
+	mu            sync.Mutex
+	workingTree   map[string]checkoutParseResult
+	defaultBranch map[string]defaultBranchResult
+	layer         map[string]layerCacheEntry
+}
+
+// layerCacheEntry is a cached project-layer resolution together with the
+// scope it was resolved under.
+type layerCacheEntry struct {
+	layer foundLayer
+	scope layerCacheScope
+}
+
+// layerCacheScope is the part of findLayer's input, besides the checkout's
+// own bytes, that decides what it does: which local project config (if
+// any) is selected. findLayer's bucket URL comes from lc when lc names the
+// same project and GCP project the checkout does, and a nil lc forces a
+// lenient call offline (findLayer, "offline is forced"). checkoutParse
+// resolves against selectedProjectConfig(ctx) (the ambient selection: a
+// committed project, FUGARO_PROJECT, FUGARO_CONFIG...); embedProjectLayer
+// resolves against env.lc (the one openCloud actually selected for this
+// command, which may differ: --project, --config and --gcp-project all
+// select env.lc without changing what selectedProjectConfig(ctx) sees).
+// Two resolutions only ever share a cache entry when their scopes are
+// equal, so a strict launch (decision L16) never reuses a lenient
+// resolution made under a different, or absent, project selection — which
+// would otherwise also smuggle in decision L13's offline exception for a
+// nil lc (a stale local cache standing in for a bucket read that a
+// differently-scoped strict call would have made for real).
+type layerCacheScope struct {
+	selected         bool
+	name, gcpProject string
+	bucketURL        string
+}
+
+func layerScopeOf(lc *localcfg.Config) layerCacheScope {
+	if lc == nil {
+		return layerCacheScope{}
+	}
+	return layerCacheScope{selected: true, name: lc.Name, gcpProject: lc.GCPProject, bucketURL: lc.BucketURL()}
+}
+
+// withCheckoutParseCache installs an empty checkoutParseCache, root.go's
+// PersistentPreRun does this once per command so every checkoutParse and
+// defaultBranchParse call within the same invocation shares it; a context
+// without one (a direct unit test, or any call before the command tree
+// installs it) makes both work exactly as before, uncached.
+func withCheckoutParseCache(ctx context.Context) context.Context {
+	return context.WithValue(ctx, checkoutParseCacheKey{},
+		&checkoutParseCache{workingTree: map[string]checkoutParseResult{}, defaultBranch: map[string]defaultBranchResult{}, layer: map[string]layerCacheEntry{}})
+}
+
+// cachedProjectLayer is the project layer checkoutParse (or embedProjectLayer
+// itself) already resolved for root in this command under lc's exact scope
+// (layerCacheScope), if any: only ever a determinate one (never Unknown —
+// see cacheProjectLayer), and only ever one resolved under the same
+// project selection lc names, so reusing it is exactly as safe as lc's own
+// caller resolving it fresh.
+func cachedProjectLayer(ctx context.Context, root string, lc *localcfg.Config) (foundLayer, bool) {
+	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
+	if cache == nil {
+		return foundLayer{}, false
+	}
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	e, ok := cache.layer[root]
+	if !ok || e.scope != layerScopeOf(lc) {
+		return foundLayer{}, false
+	}
+	return e.layer, true
+}
+
+// cacheProjectLayer records fl as root's project layer for the rest of this
+// command, scoped to lc (the project config it was resolved against), when
+// fl is a determinate answer (never Unknown: a lenient caller's "could not
+// tell" is never reused by a strict one). cachedProjectLayer only ever
+// returns an entry whose scope matches the caller's own lc.
+func cacheProjectLayer(ctx context.Context, root string, lc *localcfg.Config, fl foundLayer) {
+	if fl.Unknown {
+		return
+	}
+	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
+	if cache == nil {
+		return
+	}
+	cache.mu.Lock()
+	cache.layer[root] = layerCacheEntry{layer: fl, scope: layerScopeOf(lc)}
+	cache.mu.Unlock()
+}
+
 // checkoutParse is checkoutConfig with the parse's problems: nil and no
 // problems when there is no such checkout or file, nil and the problems
 // when its fugaro.yaml doesn't parse.
@@ -399,11 +526,33 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	if root == "" {
 		return nil, nil
 	}
-	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
-	if err != nil {
-		return nil, nil
+	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
+	if cache != nil {
+		cache.mu.Lock()
+		r, ok := cache.workingTree[root]
+		cache.mu.Unlock()
+		if ok {
+			return r.cfg, r.problems
+		}
 	}
-	return config.Parse(data)
+	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
+	var result checkoutParseResult
+	if err == nil {
+		lc := selectedProjectConfig(ctx)
+		rf, rerr := resolveFugaroYAML(ctx, data, lc, layerOptions{Lenient: true})
+		if rerr != nil {
+			result.problems = []config.Problem{{Path: "project layer", Message: oneLineCLI(rerr.Error())}}
+		} else {
+			result.cfg, result.problems = rf.Cfg, rf.Problems
+			cacheProjectLayer(ctx, root, lc, rf.Layer)
+		}
+	}
+	if cache != nil {
+		cache.mu.Lock()
+		cache.workingTree[root] = result
+		cache.mu.Unlock()
+	}
+	return result.cfg, result.problems
 }
 
 // refuseHTTP2Debug refuses to talk to Google while GODEBUG holds

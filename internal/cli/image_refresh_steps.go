@@ -68,6 +68,14 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	if err != nil {
 		return nil, userErr("%s: %v", p.lcPath, err)
 	}
+	// Re-resolved strictly through the shared helper, against this
+	// freshly reloaded lc, rather than reused from p.cfg
+	// (refreshPreflight's loadCheckoutConfigAt, read lc==nil, flag-blind,
+	// and lenient): resolveForBuild's own doc comment has why.
+	cfg, err := resolveForBuild(ctx, p.root, lc)
+	if err != nil {
+		return nil, err
+	}
 	repoURL, err := checkoutURL(ctx, p.root)
 	if err != nil {
 		return nil, err
@@ -77,18 +85,18 @@ func refreshReload(ctx context.Context, p *refreshPlan) (*refreshTarget, error) 
 	if specLC.BaseImages == nil {
 		specLC.BaseImages = map[string]string{}
 	}
-	for _, w := range p.cfg.Workflows {
+	for _, w := range cfg.Workflows {
 		if specLC.BaseImages[w.Base] == "" {
 			if specLC.BaseImages[w.Base], err = image.BaseRef(w.Base, Version); err != nil {
 				return nil, userErr("%v", err)
 			}
 		}
 	}
-	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: p.cfg, RepoURL: repoURL})
+	spec, err := infra.Repo(infra.Inputs{LC: &specLC, Repo: p.repo, Cfg: cfg, RepoURL: repoURL})
 	if err != nil {
 		return nil, userErr("%v", err)
 	}
-	return &refreshTarget{lc: lc, cfg: p.cfg, spec: spec, kinds: p.kinds}, nil
+	return &refreshTarget{lc: lc, cfg: cfg, spec: spec, kinds: p.kinds}, nil
 }
 
 // refreshCheckJob is step 3 (D7): the check job's image and
