@@ -257,7 +257,7 @@ func Render(v View, o RenderOptions) Frame {
 
 	// Body.
 	var body []string
-	selTop := 0
+	selTop, selBottom := 0, 0
 	// The selection falls back to the first block's header when it names no
 	// block in v (SelectedIndex's fallback, kept for a cursor the caller has
 	// not resolved yet: an empty Selected, or one from a stale view).
@@ -270,10 +270,10 @@ func Render(v View, o RenderOptions) Frame {
 	} else {
 		for _, b := range v.Repos {
 			before := len(body)
-			lines, selIdx := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug])
+			lines, rowTop, rowBottom := r.repo(tier, b, sel, o.Expanded, o.Collapsed[b.Slug])
 			body = append(body, lines...)
-			if selIdx >= 0 {
-				selTop = before + selIdx
+			if rowTop >= 0 {
+				selTop, selBottom = before+rowTop, before+rowBottom
 			}
 		}
 		if len(v.Repos) == 0 {
@@ -322,14 +322,18 @@ func Render(v View, o RenderOptions) Frame {
 	if o.Height > 0 {
 		bodyH = max(o.Height-len(top)-len(foot), 3)
 	}
-	lines, scroll, maxScroll := r.viewport(body, bodyH, o.Scroll, selTop, o.Follow && !o.Help)
+	lines, scroll, maxScroll := r.viewport(body, bodyH, o.Scroll, selTop, selBottom, o.Follow && !o.Help)
 	out := append(append(top, lines...), foot...)
 	return Frame{Lines: out, Scroll: scroll, MaxScroll: maxScroll}
 }
 
 // viewport shows body[scroll:] in h rows, with one row each for "more above"
-// and "more below" when the body does not fit.
-func (r *rend) viewport(body []string, h, scroll, selTop int, follow bool) ([]string, int, int) {
+// and "more below" when the body does not fit. selTop and selBottom are the
+// first and last line of the selected row, the latter past the end of an
+// expanded run's detail: following must keep both ends in view, not just the
+// top (an expanded run near the bottom must not have its detail scrolled
+// away while only its own row stays on screen).
+func (r *rend) viewport(body []string, h, scroll, selTop, selBottom int, follow bool) ([]string, int, int) {
 	total := len(body)
 	if total <= h {
 		return body, 0, 0
@@ -349,8 +353,11 @@ func (r *rend) viewport(body []string, h, scroll, selTop int, follow bool) ([]st
 	if follow {
 		if selTop < scroll {
 			scroll = selTop
-		} else if n := rows(scroll); selTop >= scroll+n {
-			scroll = min(max(selTop-(h-3), 0), maxScroll)
+		} else if n := rows(scroll); selBottom >= scroll+n {
+			scroll = min(max(selBottom-(h-3), 0), maxScroll)
+			if scroll > selTop { // never scroll the top of the selection off screen
+				scroll = selTop
+			}
 		}
 	}
 	n := rows(scroll)
@@ -390,13 +397,13 @@ func (r *rend) keyLine(tier int, keys, live bool) string {
 	var parts []string
 	switch {
 	case tier == 3 && keys:
-		parts = []string{sel, "space fold", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit"}
+		parts = []string{sel, "space fold/expand", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit"}
 	case tier == 3:
-		parts = []string{sel, "space fold", "PgUp/PgDn scroll", "? help", "q quit"}
+		parts = []string{sel, "space fold/expand", "PgUp/PgDn scroll", "? help", "q quit"}
 	case tier == 2 && keys:
-		parts = []string{sel, "space fold", "k/K kill", "r/R resume", "? help", "q quit"}
+		parts = []string{sel, "space fold/expand", "k/K kill", "r/R resume", "? help", "q quit"}
 	case tier == 2:
-		parts = []string{sel, "space fold", "? help", "q quit"}
+		parts = []string{sel, "space fold/expand", "? help", "q quit"}
 	default:
 		parts = []string{sel, "? help", "q quit"}
 	}
@@ -405,9 +412,9 @@ func (r *rend) keyLine(tier int, keys, live bool) string {
 
 func (r *rend) helpLines(keys bool) []string {
 	rows := [][2]string{
-		{"Up Down", "select a repository"},
+		{"Up Down", "select a repository or run"},
 		{"PgUp PgDn", "scroll"},
-		{"space", "fold or unfold the selected repository"},
+		{"space", "fold the selected repository, or show/hide the selected run's detail"},
 	}
 	if keys {
 		rows = append(rows,
@@ -549,11 +556,13 @@ func flagColour(run RunRow) string {
 	return ""
 }
 
-// repo is a repository block: its header, its kill banner, its runs, each
-// expanded run's detail. selIdx is the index into the returned lines of the
-// selected row (the header or a run's first line), or -1 when sel names no
-// row of this block.
-func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool) ([]string, int) {
+// repo is a repository block: its header, its kill banner, its runs, and
+// every expanded run's detail (expanded is the truth: a run shows its
+// detail whenever its cursor is in the map, whether or not it is also the
+// selected row). selTop and selBottom are the first and last line of the
+// selected row within the returned lines (selBottom past an expanded
+// selected run's own detail), or -1 when sel names no row of this block.
+func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool, collapsed bool) (lines []string, selTop, selBottom int) {
 	headerSel := sel.Slug == b.Slug && sel.Run == ""
 	cur, nameC := " ", ""
 	if headerSel {
@@ -573,29 +582,31 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 		segs = append(segs, seg{fmt.Sprintf(" [%d runs hidden]", len(b.Runs)), cFaint})
 	}
 	out := []string{r.line(segs...)}
-	selIdx := -1
+	selTop, selBottom = -1, -1
 	if headerSel {
-		selIdx = 0
+		selTop, selBottom = 0, 0
 	}
 	if b.Kill.On {
 		out = append(out, r.line(seg{"  " + killText(b.Kill, r.g.warn, "KILLED"), cBanner}))
 	}
 	if collapsed {
-		return out, selIdx
+		return out, selTop, selBottom
 	}
 	c := colsOf(tier, r.w, r.recW)
 	for _, run := range b.Runs {
 		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
 		idx := len(out)
 		out = append(out, r.runRows(tier, c, run, runSel)...)
+		last := len(out) - 1
+		if expanded[Cursor{Slug: b.Slug, Run: run.Run}] {
+			out = append(out, r.detail(run)...)
+			last = len(out) - 1
+		}
 		if runSel {
-			selIdx = idx
-			if expanded[Cursor{Slug: b.Slug, Run: run.Run}] {
-				out = append(out, r.detail(run)...)
-			}
+			selTop, selBottom = idx, last
 		}
 	}
-	return out, selIdx
+	return out, selTop, selBottom
 }
 
 func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string {

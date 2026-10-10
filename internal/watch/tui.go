@@ -237,6 +237,7 @@ func (m *model) rebuild() {
 		v = FilterRepo(v, m.o.RepoKey)
 	}
 	m.view = v
+	pruneExpanded(m.expanded, v)
 	rows := Rows(v, m.collapsed)
 	m.cur = Resolve(rows, m.rows, m.cur)
 	m.rows = rows
@@ -368,6 +369,28 @@ func (m *model) move(d int) {
 	}
 	i = min(max(i+d, 0), len(m.rows)-1)
 	m.cur, m.follow = m.rows[i], true
+}
+
+// pruneExpanded drops expanded's entries for runs no longer in v (finished,
+// or their block gone): expanded must not grow forever, and a stale entry
+// must not resurrect a vanished run's detail should a later run reuse its
+// id. It is based on v's runs directly, not Rows(v, collapsed): folding a
+// block must not forget which of its runs were expanded.
+func pruneExpanded(expanded map[Cursor]bool, v View) {
+	if len(expanded) == 0 {
+		return
+	}
+	present := make(map[Cursor]bool)
+	for _, b := range v.Repos {
+		for _, r := range b.Runs {
+			present[Cursor{Slug: b.Slug, Run: r.Run}] = true
+		}
+	}
+	for c := range expanded {
+		if !present[c] {
+			delete(expanded, c)
+		}
+	}
 }
 
 // space is ignored while help covers the screen (today's "folds a hidden

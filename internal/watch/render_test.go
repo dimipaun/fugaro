@@ -223,6 +223,36 @@ func TestFrameManyAgentsScrolls(t *testing.T) {
 	}
 }
 
+// Expanding a run near the bottom of a scrolled viewport must bring its
+// detail into view, not just its own row: following must track the bottom
+// of the selection (the detail's last line), not only its top.
+func TestFrameFollowKeepsExpandedDetailVisible(t *testing.T) {
+	v := manyAgents(30)
+	last := v.Repos[0].Runs[len(v.Repos[0].Runs)-1]
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: last.Run}
+	for _, w := range []int{50, 80, 120} {
+		got := frame(v, w, 14, func(o *RenderOptions) {
+			o.Selected, o.Expanded, o.Follow = sel, map[Cursor]bool{sel: true}, true
+		})
+		if !strings.Contains(got, "deadline") {
+			t.Fatalf("width %d: expanded detail scrolled out of view:\n%s", w, got)
+		}
+	}
+}
+
+// A stale cursor (naming a run that is not, or no longer, in the block) must
+// mark nothing and must not panic, whether the block has no runs or one.
+func TestFrameStaleCursorZeroAndOneRun(t *testing.T) {
+	zero := View{Repos: []RepoBlock{{Slug: "a", Name: "a"}}}
+	if got := frame(zero, 80, 0, func(o *RenderOptions) { o.Selected = Cursor{Slug: "a", Run: "gone"} }); strings.Contains(got, "▸") {
+		t.Fatalf("a stale run cursor on an empty block must mark nothing:\n%s", got)
+	}
+	one := View{Repos: []RepoBlock{{Slug: "a", Name: "a", Runs: []RunRow{{Run: "r1"}}}}}
+	if got := frame(one, 80, 0, func(o *RenderOptions) { o.Selected = Cursor{Slug: "a", Run: "gone"} }); strings.Contains(got, "▸ r1") {
+		t.Fatalf("a stale run cursor must not mark the real run:\n%s", got)
+	}
+}
+
 func TestWideRunesClipByWidth(t *testing.T) {
 	v := fixture()
 	long := strings.Repeat("日本語", 30) + "🚀🚀🚀"
@@ -397,6 +427,65 @@ func TestFrameSelectedRunDetail(t *testing.T) {
 		t.Fatalf("selected run not marked:\n%s", got)
 	}
 	golden(t, "detail-120", got)
+}
+
+// Every expanded run shows its detail, not only the selected one: expanded
+// is the truth (orchestrator ruling), so two expanded runs in the same
+// block both show their lines even though only one can be selected.
+func TestFrameEveryExpandedRunShowsDetail(t *testing.T) {
+	v := fixture()
+	a, b := v.Repos[0].Runs[0], v.Repos[0].Runs[1]
+	ca, cb := Cursor{Slug: v.Repos[0].Slug, Run: a.Run}, Cursor{Slug: v.Repos[0].Slug, Run: b.Run}
+	got := frame(v, 120, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = ca, map[Cursor]bool{ca: true, cb: true}
+	})
+	n := 0
+	for _, l := range strings.Split(got, "\n") {
+		if strings.HasPrefix(l, "    deadline") { // the detail line, not a FLAGS mention of "deadline"
+			n++
+		}
+	}
+	if n != 2 {
+		t.Fatalf("want both runs' detail (2 deadline lines), got %d:\n%s", n, got)
+	}
+}
+
+// At tier 2 the detail models line must still show the recipe suffix, and a
+// notional (oauth) run's spent line must still show " NOTIONAL" (design
+// generic-tool §10.2): both suffixes are easy to drop by accident at a
+// narrower width.
+func TestFrameSelectedRunDetailTier2Notional(t *testing.T) {
+	v := fixture()
+	run := &v.Repos[0].Runs[1] // r-bbbb22: oauth, notional, near deadline
+	run.Recipe = "claude-solo"
+	sel := Cursor{Slug: v.Repos[0].Slug, Run: run.Run}
+	got := frame(v, 80, 0, func(o *RenderOptions) {
+		o.Selected, o.Expanded = sel, map[Cursor]bool{sel: true}
+	})
+	if !strings.Contains(got, "NOTIONAL") {
+		t.Fatalf("detail spent line dropped NOTIONAL:\n%s", got)
+	}
+	if !strings.Contains(got, "claude-solo") {
+		t.Fatalf("detail models line dropped the recipe:\n%s", got)
+	}
+	golden(t, "detail-80-notional", got)
+}
+
+// The key line and the help screen must describe what space actually does
+// now that the cursor selects runs, not only repositories: it expands a
+// run's detail as well as folding a repository.
+func TestKeyLineAndHelpNameRunsAndDetail(t *testing.T) {
+	got := frame(fixture(), 120, 0, func(o *RenderOptions) { o.Keys = true })
+	if !strings.Contains(got, "space fold/expand") {
+		t.Fatalf("key line must say fold/expand:\n%s", got)
+	}
+	help := frame(fixture(), 120, 0, func(o *RenderOptions) { o.Help = true })
+	if !strings.Contains(help, "select a repository or run") {
+		t.Fatalf("help must say the cursor selects a repository or a run:\n%s", help)
+	}
+	if !strings.Contains(help, "fold the selected repository, or show/hide the selected run's detail") {
+		t.Fatalf("help must describe both of space's behaviours:\n%s", help)
+	}
 }
 
 func TestFrameRecipeLongNameClipped(t *testing.T) {
