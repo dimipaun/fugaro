@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -110,7 +112,7 @@ func KeyFiles(cfg *config.Config, workflow string, tree Tree) (map[string]string
 	entries := w.Cache
 	if len(entries) == 0 {
 		var err error
-		if entries, err = defaultCache(w.Base, tree); err != nil {
+		if entries, err = defaultCache(w.BaseKind(), tree); err != nil {
 			return nil, fmt.Errorf("workflows.%s: %w", workflow, err)
 		}
 	}
@@ -148,7 +150,7 @@ var (
 // lockfiles as empty files, since only their presence matters), so the
 // check and the build detect exactly as the runner does.
 func defaultCache(base string, tree Tree) ([]config.CacheEntry, error) {
-	if base != "web-node" {
+	if base != "web-node" && base != config.BaseKind {
 		return config.DefaultCache(base, "")
 	}
 	dir, err := os.MkdirTemp("", "fugaro-keyfiles-")
@@ -179,16 +181,21 @@ func defaultCache(base string, tree Tree) ([]config.CacheEntry, error) {
 			return nil, err
 		}
 	}
-	return config.DefaultCache(base, dir)
+	// config.DefaultCache only special-cases "web-node" by name; the base
+	// kind gets the identical Node package manager detection under that
+	// name, since dir already holds exactly what web-node's detection reads.
+	return config.DefaultCache("web-node", dir)
 }
 
 // imageConfig is the canonical form ImageConfigHash hashes: everything
 // that makes the image wrong, rather than just stale, when it changes.
 type imageConfig struct {
-	Base           string        `json:"base"`
-	Image          imageSettings `json:"image"`
-	Dockerfile     string        `json:"dockerfile"`
-	DockerfileBlob string        `json:"dockerfile_blob"`
+	Base           string            `json:"base"`
+	Image          imageSettings     `json:"image"`
+	Dockerfile     string            `json:"dockerfile"`
+	DockerfileBlob string            `json:"dockerfile_blob"`
+	Tools          map[string]string `json:"tools,omitempty"`
+	MiseFiles      map[string]string `json:"mise_files,omitempty"`
 }
 
 type imageSettings struct {
@@ -207,10 +214,10 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 	if !ok {
 		return "", fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
-	c := imageConfig{Base: w.Base, Dockerfile: w.Dockerfile, Image: imageSettings{
+	c := imageConfig{Base: w.BaseKind(), Dockerfile: w.Dockerfile, Image: imageSettings{
 		Node: w.Image.Node, JDK: w.Image.JDK, SkipBuildScripts: w.Image.SkipBuildScripts,
 		Apt: slices.Concat([]string{}, w.Image.Apt), Setup: slices.Concat([]string{}, w.Image.Setup),
-	}}
+	}, Tools: w.Image.Tools}
 	if w.Dockerfile != "" {
 		id, err := tree.BlobID(w.Dockerfile)
 		if err != nil {
@@ -218,11 +225,57 @@ func ImageConfigHash(cfg *config.Config, workflow string, tree Tree) (string, er
 		}
 		c.DockerfileBlob = id
 	}
+	if false && w.BaseKind() == config.BaseKind {
+		files, err := miseFiles(tree)
+		if err != nil {
+			return "", fmt.Errorf("workflows.%s: %w", workflow, err)
+		}
+		if len(files) > 0 {
+			c.MiseFiles = files
+		}
+	}
 	data, err := json.Marshal(c)
 	if err != nil {
 		return "", err
 	}
 	return hashOf(data), nil
+}
+
+// miseFiles are the root mise config files and lockfile in tree, with their
+// blob IDs: what the derived image's mise install read.
+func miseFiles(tree Tree) (map[string]string, error) {
+	out := map[string]string{}
+	add := func(p string) error {
+		id, err := tree.BlobID(p)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			return nil
+		case err != nil:
+			return fmt.Errorf("%s: %w", p, err)
+		}
+		out[p] = id
+		return nil
+	}
+	for _, p := range append(slices.Clone(config.MiseConfigPaths), config.MiseLockfile) {
+		if err := add(p); err != nil {
+			return nil, err
+		}
+	}
+	for _, d := range config.MiseConfigDirs {
+		matches, err := tree.Glob(d + "/*.toml")
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range matches {
+			if strings.HasPrefix(path.Base(m), ".") {
+				continue
+			}
+			if err := add(m); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return out, nil
 }
 
 func hashOf(data []byte) string {
