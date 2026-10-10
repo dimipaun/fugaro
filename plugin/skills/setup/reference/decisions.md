@@ -69,3 +69,7 @@ Almost always the defaults: leave it out and say so. Propose `rebuild.paths` onl
 ## 11. Workflow names and anything to keep off Fugaro
 
 With several workflows, confirm the names (`fugaro run --workflow` selects one). Ask whether any task type must stay off Fugaro (money, security, production data): if so, write it in the file `agent.instructions` points to (a repository-relative path to a text file that must exist; it is appended to the agent's prompt, so it is shown to the user like any executed text and goes in the pull request) or in the team's own routing notes, never in a secret.
+
+## Minimal file or full file?
+
+With a project layer and a fitting profile, the minimal file keeps the repository on the project's settings: a profile change reaches it without a pull request. A full file is for a repository whose build or image is its own. Never copy a profile's values into `fugaro.yaml`; that would stop it from following the profile.
