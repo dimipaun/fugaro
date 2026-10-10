@@ -702,3 +702,25 @@ func TestDockerfileOnTheBaseDetectsMiseAndNode(t *testing.T) {
 		t.Error("the base installs Node through install-node")
 	}
 }
+
+// TestDockerfileOnTheBaseInstallsMiseForImageToolsAlone: a workflow on the
+// Fugaro base with image.tools set but no mise config file in the checkout
+// still gets the mise install step (Dockerfile's in.Mise is "a root mise
+// config OR image.tools", and this pins the image.tools half of that OR on
+// its own, since TestDockerfileOnTheBaseDetectsMiseAndNode's root always has
+// a mise.toml too and so never exercises it alone).
+func TestDockerfileOnTheBaseInstallsMiseForImageToolsAlone(t *testing.T) {
+	root := t.TempDir()
+	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\n" +
+		"workflows:\n  app: { commands: { build: make, test: make test }, image: { tools: { node: \"24.19.0\" } } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	got, repoFile, err := Dockerfile(root, cfg, "app", "dev")
+	if err != nil || repoFile != "" {
+		t.Fatalf("%v %q", err, repoFile)
+	}
+	if !strings.Contains(string(got), "mise install") {
+		t.Errorf("image.tools alone (no mise config file) does not install mise tools:\n%s", got)
+	}
+}

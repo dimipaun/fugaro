@@ -94,6 +94,13 @@ func TestDefaultCache(t *testing.T) {
 	if err != nil || len(got) != 1 || !slices.Equal(got[0].Key, []string{"yarn.lock"}) || !slices.Equal(got[0].Paths, []string{"~/.yarn/berry/cache"}) {
 		t.Fatalf("DefaultCache = %+v, %v", got, err)
 	}
+	// The Fugaro base (design base-image.md section 4, base-image plan
+	// Task 10) gets the same Node default cache as web-node, since its
+	// derived image also detects and warms up the checkout's package
+	// manager.
+	if got, err := DefaultCache(BaseKind, root); err != nil || len(got) != 1 || !slices.Equal(got[0].Key, []string{"yarn.lock"}) || !slices.Equal(got[0].Paths, []string{"~/.yarn/berry/cache"}) {
+		t.Fatalf("DefaultCache(BaseKind) = %+v, %v", got, err)
+	}
 	if got, err := DefaultCache("java-services", root); got != nil || err != nil {
 		t.Fatalf("java-services DefaultCache = %+v, %v", got, err)
 	}
