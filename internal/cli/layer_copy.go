@@ -31,14 +31,14 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 		if err == nil {
 			// gen is known: delete under a precondition, so a concurrent
 			// writer's copy is never dropped out from under it.
-			return operatorWriteErr(url, key, b.DeleteIf(ctx, key, gen, old))
+			return operatorWriteErr("the repository's copy was not removed", url, key, b.DeleteIf(ctx, key, gen, old))
 		}
 		// ErrTooLarge: the oversized object's generation is not known.
-		return operatorWriteErr(url, key, b.Delete(ctx, key))
+		return operatorWriteErr("the repository's copy was not removed", url, key, b.Delete(ctx, key))
 	}
 	// Put, not WriteAll: only blobx's own writers classify a 403 as
 	// blobx.ErrForbidden (docs/design/bucket-iam.md §2.3).
-	return operatorWriteErr(url, key, b.Put(ctx, key, data, "application/yaml"))
+	return operatorWriteErr("the repository's copy was not written", url, key, b.Put(ctx, key, data, "application/yaml"))
 }
 
 // operatorWriteErr is a stand-in for bucket-iam plan Task 6's
@@ -53,9 +53,15 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 // isAccessDenied's googleapi.Error check still finds. Delete this once
 // operator_write.go lands with the identical function; its other call
 // sites (recipes.go, sharedcfg.go, imagecheck.go) still need wiring then.
-func operatorWriteErr(url, key string, err error) error {
+//
+// prefix says what the caller's own write was about ("nothing was
+// published" for the main object, "the repository's copy was not
+// written/removed" for a fan-out copy): during a fan-out the main object
+// IS already published, so echoing "nothing was published" there would be
+// false.
+func operatorWriteErr(prefix, url, key string, err error) error {
 	if err == nil || !(errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err)) {
 		return err
 	}
-	return userErr("nothing was published: writing %s in %s needs the operator role (launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator", key, url)
+	return userErr("%s: writing %s in %s needs the operator role (launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator", prefix, key, url)
 }

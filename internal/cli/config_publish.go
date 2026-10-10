@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,8 +71,8 @@ func newConfigPublishCmd() *cobra.Command {
 			bucket := "fugaro-runs-" + env.lc.GCPProject
 			_ = localcfg.SaveLayerCache(os.Getenv, env.lc.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
 			fmt.Fprintf(cmd.OutOrStdout(), "published the project layer of %s to gs://%s/%s (generation %d, sha256 %s)\n", env.lc.Name, bucket, config.LayerKey, gen, l.SHA256)
-			failed := fanOutLayer(ctx, cmd.OutOrStdout(), env, l)
-			warnOldImages(ctx, cmd.ErrOrStderr(), env)
+			failed := fanOutLayer(ctx, cmd.OutOrStdout(), env, l, gen)
+			warnOldImages(ctx, cmd.ErrOrStderr(), env, l)
 			if failed > 0 {
 				return remote(fmt.Errorf("the project layer is published, but %d repository copy(ies) failed (listed above); run fugaro config publish again", failed))
 			}
@@ -97,14 +98,25 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 	var prev *config.ProjectLayer
 	switch {
 	case rerr == nil:
-		if string(old) == string(l.Raw) {
+		// prev is parsed from old (the object as it is in the bucket right
+		// now), never aliased to l (the new layer this call is about to
+		// write): comparing l to itself would always show zero executable
+		// changes and silently defeat the whole --executable-changes gate.
+		op, invalid := config.ParseProjectLayer(old, config.LayerAnchor{})
+		switch {
+		case string(old) == string(l.Raw):
 			fmt.Fprintln(w, "note: the project already has this exact layer; writing it again")
-		} else {
-			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s):\n%s", config.LayerSum(old), l.SHA256, printableLines(lineDiff(string(old), string(l.Raw))))
+			prev = op
+		case len(invalid) > 0:
+			// The old object is untrusted and unvalidated: never echo it
+			// (it may hold a credential a hand edit put there), and never
+			// diff against it. prev stays nil, so every executable key of
+			// l counts as changed (decision L7's fail-closed default).
+			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s): the published layer is invalid (%d problem(s)); every executable key counts as changed\n", config.LayerSum(old), l.SHA256, len(invalid))
+		default:
+			prev = op
+			fmt.Fprintf(w, "replacing the project layer (sha256 %s -> %s):\n%s", config.LayerSum(old), l.SHA256, layerDiffText(string(old), string(l.Raw)))
 		}
-		// An unparseable old object compares as empty: every executable
-		// key of the new one counts as changed.
-		prev, _ = config.ParseProjectLayer(old, config.LayerAnchor{})
 	case errors.Is(rerr, blobx.ErrNotExist):
 	case errors.Is(rerr, blobx.ErrTooLarge):
 		return 0, userErr("nothing was published: the existing %s is over the %d KiB limit: delete it by hand, then run this again", config.LayerKey, config.LayerMaxBytes>>10)
@@ -131,35 +143,47 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 	case errors.Is(err, blobx.ErrConflict), errors.Is(err, blobx.ErrExists):
 		return 0, userErr("nothing was published: another publisher changed %s while this ran; look at it (fugaro config layer) and run this again", config.LayerKey)
 	case errors.Is(err, blobx.ErrForbidden):
-		return 0, operatorWriteErr("gs://"+b.GCSName, config.LayerKey, err)
+		return 0, operatorWriteErr("nothing was published", "gs://"+b.GCSName, config.LayerKey, err)
 	case err != nil:
 		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", config.LayerKey, err))
 	}
 	return gen, nil
 }
 
+// diffMaxCells caps lineDiff's longest-common-subsequence table (len(a's
+// lines) * len(b's lines) int entries): two 64 KiB objects of short lines
+// would need gigabytes. Past the cap, the banner says so instead of
+// building the table.
+const diffMaxCells = 1_000_000
+
+// diffText is the banner's line diff of a project layer's old and new
+// text, or a note instead of one too large to build safely.
+func layerDiffText(a, b string) string {
+	x, y := splitLines(a), splitLines(b)
+	if n := len(x) * len(y); n > diffMaxCells {
+		return fmt.Sprintf("  (the diff is skipped: %d and %d lines would need a table of %d cells)\n", len(x), len(y), n)
+	}
+	return printableLines(lineDiff(a, b))
+}
+
 // executableChanges lists, per profile, each executable key
-// (config.ExecutableKeys) whose value differs between prev (nil: none) and
-// next, as `profile p: commands.test: "old" -> "new"`.
+// (config.ExecutableKeys) whose stored value differs between prev (nil:
+// none published, or an invalid old object) and next, as
+// `profile p: commands.test: "old" -> "new"`, plus one line when
+// default_profile changes and either profile names has an executable
+// setting (decision L7; the owner's ruling on default_profile).
 func executableChanges(prev, next *config.ProjectLayer) []string {
 	values := func(l *config.ProjectLayer, name string) map[string]string {
+		var p config.Profile
+		if l != nil {
+			// A missing profile reads as the zero Profile{}, exactly what
+			// an explicitly empty one decodes to: adding or removing a
+			// profile with no executable keys is not a change.
+			p = l.Profiles[name]
+		}
 		out := map[string]string{}
-		if l == nil {
-			return out
-		}
-		p, ok := l.Profiles[name]
-		if !ok {
-			return out
-		}
-		out["commands.build"], out["commands.test"] = p.Commands.Build, p.Commands.Test
-		if rf := p.Commands.RerunFailed; rf != nil {
-			out["commands.rerun_failed"] = rf.Command + " " + rf.Each
-		}
-		if len(p.Image.Apt) > 0 {
-			out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
-		}
-		if len(p.Image.Setup) > 0 {
-			out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
+		for _, key := range config.ExecutableKeys {
+			executableKeyValues(out, p, key)
 		}
 		return out
 	}
@@ -174,22 +198,95 @@ func executableChanges(prev, next *config.ProjectLayer) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		a, b := values(prev, name), values(next, name)
-		for _, k := range []string{"commands.build", "commands.test", "commands.rerun_failed", "image.apt", "image.setup"} {
+		keys := map[string]bool{}
+		for k := range a {
+			keys[k] = true
+		}
+		for k := range b {
+			keys[k] = true
+		}
+		for _, k := range slices.Sorted(maps.Keys(keys)) {
 			if a[k] != b[k] {
-				out = append(out, fmt.Sprintf("profile %s: %s: %q -> %q", name, k, a[k], b[k]))
+				// a[k], b[k] are already display-ready (strconv.Quote or
+				// %q, done once in executableKeyValues): not quoted again.
+				out = append(out, fmt.Sprintf("profile %s: %s: %s -> %s", name, k, a[k], b[k]))
 			}
 		}
 	}
+	if c := defaultProfileChange(prev, next); c != "" {
+		out = append(out, c)
+	}
 	return out
+}
+
+// executableKeyValues inserts into out the display label(s) and value(s)
+// of profile p's key, an entry of config.ExecutableKeys, with every value
+// already quoted for the banner. commands.rerun_failed is two entries
+// (its Command and Each quoted separately, never concatenated: two
+// different (command, each) pairs could otherwise join into the same
+// text, e.g. {"pytest -k", "{id}"} and {"pytest", "-k {id}"}). A key with
+// no case here would publish unreviewed: fail closed.
+func executableKeyValues(out map[string]string, p config.Profile, key string) {
+	switch key {
+	case "workflows.*.commands.build":
+		out["commands.build"] = strconv.Quote(p.Commands.Build)
+	case "workflows.*.commands.test":
+		out["commands.test"] = strconv.Quote(p.Commands.Test)
+	case "workflows.*.commands.rerun_failed":
+		var cmd, each string
+		if rf := p.Commands.RerunFailed; rf != nil {
+			cmd, each = rf.Command, rf.Each
+		}
+		out["commands.rerun_failed.command"] = strconv.Quote(cmd)
+		out["commands.rerun_failed.each"] = strconv.Quote(each)
+	case "workflows.*.image.apt":
+		// %q of the whole list, not of each entry, so a reorder or a step
+		// split into two (or joined into one) is a change.
+		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
+	case "workflows.*.image.setup":
+		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
+	default:
+		panic("executableChanges: no comparison for " + key)
+	}
+}
+
+// defaultProfileChange is the change line for default_profile itself
+// (first set, or a -> b), when either the old or the new profile
+// HasExecutable: repositories with no workflows: run that profile's
+// commands, so changing it changes what they run even though no
+// profile's own fields moved.
+func defaultProfileChange(prev, next *config.ProjectLayer) string {
+	var oldDefault string
+	var oldProfile config.Profile
+	if prev != nil {
+		oldDefault = prev.DefaultProfile
+		oldProfile = prev.Profiles[oldDefault]
+	}
+	newDefault := next.DefaultProfile
+	newProfile := next.Profiles[newDefault]
+	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable()) {
+		return ""
+	}
+	return fmt.Sprintf("default_profile: %q -> %q (repositories without workflows: now run profile %s's commands)", oldDefault, newDefault, newDefault)
 }
 
 // fanOutLayer copies l's exact bytes to every repository the installation
 // config lists (decision L19), reporting each, and returns how many copies
 // failed. A repository whose provider neither the installation config nor
 // the layer's defaults names has no slug yet; it is skipped with a note,
-// and its next image build or init --repo writes its copy.
-func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer) (failed int) {
-	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
+// and its next image build or init --repo writes its copy. Before each
+// copy it re-reads config.LayerKey's generation: if it is no longer gen
+// (another publisher replaced it while this fan-out ran), the remaining
+// repositories are not touched with a stale layer; they count as failed,
+// and a plain fugaro config publish fans the current object out again.
+func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer, gen int64) (failed int) {
+	repos := slices.Sorted(maps.Keys(env.lc.Repos))
+	for i, repo := range repos {
+		if _, curGen, err := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes); err != nil || curGen != gen {
+			fmt.Fprintf(w, "  stopped: another publisher changed %s while this fan-out ran; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)\n",
+				config.LayerKey, len(repos)-i, len(repos))
+			return failed + (len(repos) - i)
+		}
 		provider := env.lc.Repos[repo].Provider
 		if provider == "" {
 			provider = l.Defaults.Git.Provider
@@ -215,14 +312,18 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 // warnOldImages names every listed workflow whose build record says its job
 // image predates layeredSince (decision L14): its launches are refused until
 // fugaro image refresh. Best effort: a record it cannot read says nothing.
-func warnOldImages(ctx context.Context, w io.Writer, env *cloudEnv) {
+func warnOldImages(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer) {
 	b, err := env.recordBucket(ctx)
 	if err != nil {
 		return
 	}
 	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
 		r := env.lc.Repos[repo]
-		slug, err := task.Slug(r.Provider, repo)
+		provider := r.Provider
+		if provider == "" {
+			provider = l.Defaults.Git.Provider
+		}
+		slug, err := task.Slug(provider, repo)
 		if err != nil {
 			continue
 		}
