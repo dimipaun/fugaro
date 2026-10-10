@@ -157,6 +157,20 @@ func TestCheckoutInvalidValue(t *testing.T) {
 	}
 }
 
+// TestCheckoutBadValueCorpus is testdata/config/invalid/checkout-bad-value.yaml
+// (the schema corpus: fugaro.schema.json's checkout enum had no corpus case),
+// read from disk like TestGoBase's and TestJavaServicesBase's corpus cases:
+// it must fail for exactly the one reason the file exists to pin.
+func TestCheckoutBadValueCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-bad-value.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.checkout" || !strings.Contains(ps[0].Message, "must be baked or clone") {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.checkout: must be baked or clone", ps)
+	}
+}
+
 func TestGoBase(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/config/valid/go.yaml")
 	if err != nil {
