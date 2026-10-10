@@ -2,10 +2,12 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
+	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
@@ -16,6 +18,24 @@ func layerSHAOf(cfg *config.Config) string {
 		return ""
 	}
 	return cfg.Layer.SHA256
+}
+
+// resolveForBuild re-resolves the checkout's fugaro.yaml at root strictly,
+// against lc (decision L16: a billable Cloud Build submission, same as
+// fugaro image build's own), for fugaro init's first builds and fugaro
+// image refresh's rebuilds. Both lead here from an earlier, lenient,
+// flag-blind read (loadCheckoutConfigAt, read with lc==nil before lc
+// itself was even loaded): reusing that cfg could silently send the build
+// with no layer (an unreadable bucket) or a stale one (lc==nil forces
+// findLayer's offline, cache-only mode even when the bucket is reachable),
+// which prepareLayerCopy would then write over the repository's copy,
+// undoing fugaro config publish.
+func resolveForBuild(ctx context.Context, root string, lc *localcfg.Config) (*config.Config, error) {
+	_, rf, err := loadCheckoutResolved(ctx, root, lc, layerOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return rf.Cfg, nil
 }
 
 // prepareLayerCopy makes the repository's copy hold the layer a build is
@@ -46,11 +66,14 @@ func readLayerCopy(ctx context.Context, bucketURL, slug, sha string) ([]byte, er
 	defer b.Close()
 	key := config.LayerCopyKey(slug)
 	data, _, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
-	if err != nil {
+	switch {
+	case errors.Is(err, blobx.ErrNotExist):
+		return nil, userErr("the project layer copy %s is missing: run fugaro config publish, then the build again", key)
+	case err != nil:
 		return nil, remote(fmt.Errorf("reading the project layer copy %s: %w", key, err))
 	}
 	if got := config.LayerSum(data); got != sha {
-		return nil, userErr("the project layer changed while the build was queued (its copy %s has sha256 %s, the build was submitted with %s): run the build again", key, got, pluginwire.Printable(sha))
+		return nil, userErr("the project layer changed while the build was queued (its copy %s has sha256 %s, the build was submitted with %s): run the build again, or run fugaro config publish if it is stale", key, got, pluginwire.Printable(sha))
 	}
 	return data, nil
 }
