@@ -88,7 +88,7 @@ RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       autoconf automake bash bat bind9-dnsutils build-essential bzip2 ca-certificates clang cmake curl \
-      diffutils dirmngr eza fd-find file fzf git git-lfs gnupg httpie jq less libbz2-dev libcap2-bin \
+      diffutils dirmngr eza fd-find file fzf git git-lfs gnupg gpgv httpie jq less libbz2-dev libcap2-bin \
       libffi-dev libgdbm-dev liblzma-dev libncurses-dev libreadline-dev libsqlite3-dev libssl-dev libtool \
       libxml2-dev libxslt1-dev libyaml-dev locales make nano netcat-openbsd openssh-client patch pkg-config \
       procps ripgrep rsync shellcheck sqlite3 sudo tini tk-dev tree tzdata unzip uuid-dev vim-tiny wget \
