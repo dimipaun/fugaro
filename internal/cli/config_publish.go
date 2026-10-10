@@ -260,18 +260,13 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
+	case "workflows.*.image.tools":
+		// fmt's %q on a map sorts its keys before formatting, so a reorder
+		// of the YAML source is never a change: only a tool added, removed,
+		// renamed or repinned changes the quoted text.
+		out["image.tools"] = fmt.Sprintf("%q", p.Image.Tools)
 	case "workflows.*.image.skip_build_scripts":
 		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
-	case "workflows.*.image.tools":
-		// name=version pairs, sorted (it's a map: YAML key order is not
-		// preserved and must not matter) and %q'd as one slice: a tool
-		// added, removed, renamed or repinned is a change.
-		keys := slices.Sorted(maps.Keys(p.Image.Tools))
-		pairs := make([]string, len(keys))
-		for i, k := range keys {
-			pairs[i] = k + "=" + p.Image.Tools[k]
-		}
-		out["image.tools"] = fmt.Sprintf("%q", pairs)
 	default:
 		return fmt.Errorf("%s", key)
 	}

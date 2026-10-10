@@ -124,17 +124,6 @@ var ExecutableKeys = []string{
 	"workflows.*.image.skip_build_scripts",
 }
 
-// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
-// deliberately leaves out, each with why its value never runs as shell.
-// TestEveryImageFieldIsClassified walks Image by reflection and fails if a
-// future field is in neither this map nor ExecutableKeys, so a field that
-// slips past config publish's --executable-changes gate (PR #244) is a
-// compile-time-visible test failure, not a silent gap.
-var NonExecutableImageKeys = map[string]string{
-	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
-	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
-}
-
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
 // ("workflows.web.commands.test") or "*". A path inside a listed key (an
 // entry of cache:) is the listed key's. false: no such key.
