@@ -714,6 +714,29 @@ func TestSelftestMiseFailureDetailIsPrintable(t *testing.T) {
 	}
 }
 
+// TestSelftestMiseMissingToolNameIsPrintable: checkMise's "not installed"
+// detail interpolates the tool names and versions mise reports missing,
+// which come from the checkout's own mise config (and so, like mise's
+// stderr above, are never under this image's control); it must go through
+// pluginwire.Printable the same way.
+func TestSelftestMiseMissingToolNameIsPrintable(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	fakeMise(t, `{"node":[{"version":"1\u001b[31mboom\u001b[0m","requested_version":"1","install_path":"/x"}]}`)
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK {
+		t.Fatalf("mise-tools = %+v", c)
+	}
+	if strings.ContainsRune(c.Detail, '\x1b') {
+		t.Fatalf("mise-tools detail carries a raw escape byte: %q", c.Detail)
+	}
+	if !strings.Contains(c.Detail, `\u001b`) || !strings.Contains(c.Detail, "node@1") || !strings.Contains(c.Detail, "boom") {
+		t.Fatalf("mise-tools detail does not show the escaped control character: %q", c.Detail)
+	}
+}
+
 func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
 	for _, rel := range []string{".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
 		".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json"} {

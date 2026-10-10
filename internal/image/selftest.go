@@ -339,7 +339,7 @@ func checkMise(ctx context.Context, dir string, add func(string, bool, string, .
 		}
 	}
 	if len(names) > 0 {
-		add("mise-tools", false, "not installed: %s (the image's mise install did not run or failed; start from fugaro image render)", strings.Join(names, ", "))
+		add("mise-tools", false, "not installed: %s (the image's mise install did not run or failed; start from fugaro image render)", pluginwire.Printable(strings.Join(names, ", ")))
 		return
 	}
 	add("mise-tools", true, "every tool the mise config declares is installed")
