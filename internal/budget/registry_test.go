@@ -119,8 +119,10 @@ func TestCheckNewKeysProbesTheCurrentSnapshot(t *testing.T) {
 	// warning the next editor away from reintroducing.
 }
 
-// A second refusal with the new keys already dropped is a genuinely bad
-// credential, not old rules: it must not be mistaken for the same fallback.
+// TestRegistryKeepsNewKeysWhenRulesAccept: when the rules accept action and
+// tokens outright (the fixture's fake rules refuse nothing), checkNewKeys's
+// probe succeeds on the first attempt, both keys stay in the entry, and the
+// drop-once fallback never warns.
 func TestRegistryKeepsNewKeysWhenRulesAccept(t *testing.T) {
 	f := newFixture(t)
 	logs := captureLog(f)
