@@ -57,6 +57,7 @@ substitutions:
   _SECRET_ENVS: ""    # space-separated workflow secret variables; each is also in availableSecrets
   _BUCKET: ""         # the runs bucket, gs://<name>, which holds the build record
   _SLUG: ""           # the repository's storage slug: the record is builds/<slug>/<workflow>/image.json
+  _PROJECT_LAYER_SHA256: ""  # the project layer's sha256, "" for none: render reads builds/<slug>/project-layer.yaml and refuses another (docs/design/layered-config.md §8)
 options:
   logging: CLOUD_LOGGING_ONLY
 availableSecrets:
@@ -95,13 +96,24 @@ steps:
   # so the root-owned clone needs safe.directory. It also writes, into
   # /workspace/out, what the later steps need: the smoke's selftest spec,
   # the record's source side (record.json), and the source commit and
-  # build time the image's labels carry.
+  # build time the image's labels carry. With a project layer
+  # (_PROJECT_LAYER_SHA256 set) it resolves fugaro.yaml over the
+  # repository's copy of it, read as the build account, whose sum must be
+  # the one the build was submitted with.
   - id: render
     name: ${_FUGARO_BASE}
     dir: src
     entrypoint: sh
-    env: [GIT_CONFIG_COUNT=1, GIT_CONFIG_KEY_0=safe.directory, "GIT_CONFIG_VALUE_0=*", "WORKFLOW=${_WORKFLOW}"]
-    args: [-c, 'fugaro image render --workflow "$$WORKFLOW" --cloud-outputs /workspace/out > /workspace/context/Dockerfile']
+    env: [GIT_CONFIG_COUNT=1, GIT_CONFIG_KEY_0=safe.directory, "GIT_CONFIG_VALUE_0=*", "WORKFLOW=${_WORKFLOW}", "BUCKET=${_BUCKET}", "SLUG=${_SLUG}", "LAYER_SHA=${_PROJECT_LAYER_SHA256}"]
+    args:
+      - -c
+      - |
+        set -eu
+        set --
+        if [ -n "$$LAYER_SHA" ]; then
+          set -- --layer-bucket "$$BUCKET" --layer-slug "$$SLUG" --layer-sha256 "$$LAYER_SHA"
+        fi
+        fugaro image render --workflow "$$WORKFLOW" --cloud-outputs /workspace/out "$$@" > /workspace/context/Dockerfile
   # Reuses the exact base image the render step ran (no second pull), so a
   # republished tag between the steps cannot split render and build. The
   # Dockerfile clones the full base branch itself, with the credential as a

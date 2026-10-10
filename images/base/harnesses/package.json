@@ -1,0 +1,10 @@
+{
+  "name": "fugaro-base-harnesses",
+  "private": true,
+  "description": "The Node-based agent harnesses of the Fugaro base image (docs/design/base-image.md section 6), installed with npm ci --ignore-scripts and bumped by images/base/bump.sh. Present but not driven by the Fugaro runner.",
+  "dependencies": {
+    "@google/gemini-cli": "0.63.0",
+    "@mariozechner/pi-coding-agent": "0.73.1",
+    "@qwen-code/qwen-code": "0.25.0"
+  }
+}

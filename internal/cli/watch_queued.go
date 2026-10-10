@@ -19,6 +19,7 @@ import (
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/runview"
 	"github.com/dimipaun/fugaro/internal/safetext"
+	"github.com/dimipaun/fugaro/internal/task"
 	"github.com/dimipaun/fugaro/internal/watch"
 )
 
@@ -64,6 +65,16 @@ const queuedLookback = 30 * time.Minute
 // (fugaro run --retry of an old stored task) is not found: it shows once
 // its runner starts, and fugaro ls shows it pending meanwhile.
 const queuedMintMargin = 5 * time.Minute
+
+// finishedLookback bounds how long a run whose result.json exists still
+// shows as finished (design generic-tool §10.1): long enough that a run
+// taking a while to finish is still found after its registry entry (and
+// so its live row) is gone (budget.Session.Finish deletes it once the
+// record is written). It governs the scanner's one listing per
+// repository (the same listing queued-run detection shares), widened past
+// queuedLookback so a finished run's mint time, usually close to when it
+// started, still falls inside it.
+const finishedLookback = 24 * time.Hour
 
 // queuedStepTimeout bounds each whole-project step of a scan: the project
 // marker check and the listing of repositories.
@@ -128,39 +139,105 @@ func launchedAt(in runview.Input, created time.Time) time.Time {
 	}
 }
 
-// queuedFromRun reads one run and says whether watch shows it queued, and
-// how. A run is queued when it has a launch claim or launch.json, no
-// record (result.json), no cancel marker and no corrupt object, and
-// runview.Join calls it launching or pending (fresh) or unlaunched with a
-// claim or lost (stale: runview gave the launch up after
-// runstore.ClaimTTL, so the row is stuck). A run with a record is never
-// queued: it started (it is running, finished, or lost after starting).
-// A corrupt object is an error, so the scan notes the run as unreadable.
-func queuedFromRun(ctx context.Context, env *cloudEnv, slug, id string, since, now time.Time) (watch.QueuedRun, bool, error) {
+// scanWindow bounds what scanRun reports about a run: QueuedSince and
+// QueuedMinted keep queued-run detection exactly as narrow as before
+// finished runs were added (queuedLookback, queuedMintMargin), while
+// FinishedSince is the wider finishedLookback that the scanner's one
+// listing per repository is now based on (scan), so a finished run whose
+// mint time has aged past the queued margin is still found.
+type scanWindow struct {
+	QueuedSince, QueuedMinted, FinishedSince time.Time
+}
+
+// scanResult is what scanRun found about one run: at most one of Queued
+// or Finished is set (IsQueued, IsFinished).
+type scanResult struct {
+	Queued     watch.QueuedRun
+	IsQueued   bool
+	Finished   watch.FinishedRun
+	IsFinished bool
+}
+
+// scanRun reads one run and says what the scanner should report about it:
+// queued, finished, or neither (still running, cancelled before launch, or
+// outside the window either way). A corrupt object is an error, so the
+// scan notes the run as unreadable.
+func scanRun(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, now time.Time) (scanResult, error) {
 	ro, err := readRun(ctx, env, slug, id)
 	if err != nil {
-		return watch.QueuedRun{}, false, err
+		return scanResult{}, err
 	}
 	in := ro.in
 	if in.Problem != "" {
-		return watch.QueuedRun{}, false, errors.New(in.Problem) // a corrupt object: ls's error row
+		return scanResult{}, errors.New(in.Problem) // a corrupt object: ls's error row
 	}
 	if in.Record != nil {
-		// Started: Join would not call it queued either; this only saves
-		// the cancel-marker read.
-		return watch.QueuedRun{}, false, nil
+		return finishedResult(in, w.FinishedSince, now), nil
 	}
 	if in.Launch != nil {
 		// readRun checks the cancel marker only for a run with no
 		// launch.json; a run cancelled while pending has both.
 		cancelled, err := ro.store.CancelRequested(ctx)
 		if err != nil {
-			return watch.QueuedRun{}, false, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
+			return scanResult{}, fmt.Errorf("checking %s/%s's cancel marker: %w", slug, id, err)
 		}
 		if cancelled {
-			return watch.QueuedRun{}, false, nil
+			return scanResult{}, nil
 		}
 	}
+	return queuedResult(in, w.QueuedSince, w.QueuedMinted, now), nil
+}
+
+// finishedResult is run's scanResult when its record (result.json) exists:
+// finished when the record is no longer running and ended within
+// finishedSince of now, else nothing (still running: its /agents entry
+// covers it; or too old for the scanner's lookback).
+func finishedResult(in runview.Input, finishedSince, now time.Time) scanResult {
+	r := in.Record
+	if r.Status == runstore.StatusRunning {
+		return scanResult{}
+	}
+	finishedAt := r.StartedAt
+	if r.FinishedAt != nil {
+		finishedAt = *r.FinishedAt
+	}
+	if finishedAt.Before(finishedSince) {
+		return scanResult{}
+	}
+	row := runview.Join(in, noComputePrices, now)
+	return scanResult{IsFinished: true, Finished: watch.FinishedRun{
+		Run: in.RunID, Slug: in.Slug, Title: finishedTitle(in.Task), Workflow: row.Workflow,
+		Status: row.Status, Outcome: row.Outcome, PRNumber: row.PR, PRURL: row.PRURL,
+		FinishedAt: finishedAt,
+	}}
+}
+
+// finishedTitle is a finished run's one-line title: the first line of its
+// task prompt, clipped as the runner's own registry entry titles a live
+// run (budget_session.go's registryEntry). Unlike that entry, it is not
+// redacted against the run's own secrets, which this reader never holds;
+// watch.clean sanitises it for display like every other bucket-derived
+// field here.
+func finishedTitle(t *task.Spec) string {
+	if t == nil {
+		return ""
+	}
+	title, _, _ := strings.Cut(strings.TrimSpace(t.Task), "\n")
+	if runes := []rune(title); len(runes) > 80 {
+		title = string(runes[:80])
+	}
+	return title
+}
+
+// queuedResult is run's scanResult when it has no record yet: queued when
+// runview.Join calls it launching or pending (fresh) or unlaunched with a
+// claim or lost (stale: runview gave the launch up after
+// runstore.ClaimTTL, so the row is stuck) and it is within queuedSince of
+// its launch; else nothing. queuedMinted excludes a stale ID outside the
+// original queued margin even though the scanner's wider listing (for
+// finished runs) surfaced it, so queued detection is unchanged from before
+// finished runs were added.
+func queuedResult(in runview.Input, queuedSince, queuedMinted, now time.Time) scanResult {
 	row := runview.Join(in, noComputePrices, now)
 	var stale bool
 	switch {
@@ -170,16 +247,16 @@ func queuedFromRun(ctx context.Context, env *cloudEnv, slug, id string, since, n
 	case row.Status == string(runstore.StatusInfraError) && row.Reason == runview.ReasonLost:
 		stale = true
 	default:
-		return watch.QueuedRun{}, false, nil
+		return scanResult{}
 	}
 	at := launchedAt(in, row.Created)
-	if at.Before(since) {
-		return watch.QueuedRun{}, false, nil
+	if at.Before(queuedSince) || row.Created.Before(queuedMinted) {
+		return scanResult{}
 	}
-	return watch.QueuedRun{
-		Run: id, Slug: slug, Workflow: row.Workflow, Recipe: row.Recipe, RequestedBy: row.RequestedBy,
+	return scanResult{IsQueued: true, Queued: watch.QueuedRun{
+		Run: in.RunID, Slug: in.Slug, Workflow: row.Workflow, Recipe: row.Recipe, RequestedBy: row.RequestedBy,
 		LaunchedAt: at, Stale: stale,
-	}, true, nil
+	}}
 }
 
 // errText is err for a note: a deadline says which one, any other error
@@ -209,11 +286,23 @@ type queuedScanner struct {
 	slugs   func(context.Context, *cloudEnv) ([]string, error)
 	listIDs func(context.Context, *blob.Bucket, string, time.Time) ([]string, error)
 	now     func() time.Time
-	// readRun reads one run (queuedFromRun; tests slow it down).
-	readRun func(ctx context.Context, env *cloudEnv, slug, id string, since, now time.Time) (watch.QueuedRun, bool, error)
+	// readRun reads one run (scanRun; tests slow it down).
+	readRun func(ctx context.Context, env *cloudEnv, slug, id string, w scanWindow, now time.Time) (scanResult, error)
 
 	workers                  int
 	repoTimeout, openTimeout time.Duration
+
+	// finishedCache holds the finished runs already read, keyed by
+	// "slug/runID": once a run's record is no longer running it never
+	// changes again (nothing in this codebase writes result.json after a
+	// run has finalized), so a later scan reuses the cached row instead of
+	// re-reading task.json, launch.json and result.json for it. cacheMu
+	// guards it: scanRepo runs concurrently across repositories and within
+	// one repository's run reads. pruneFinishedCache drops entries whose
+	// FinishedAt has aged out of finishedLookback, so the cache never
+	// grows past what one scan's window could hold.
+	cacheMu       sync.Mutex
+	finishedCache map[string]watch.FinishedRun
 
 	env *cloudEnv
 	// opening is the open in flight, nil when none.
@@ -238,7 +327,7 @@ func newQueuedScanner(lc *localcfg.Config, repo string) *queuedScanner {
 		},
 		listIDs: runstore.ListRunIDs,
 		now:     time.Now,
-		readRun: queuedFromRun,
+		readRun: scanRun,
 		workers: queuedWorkers, repoTimeout: queuedRepoTimeout, openTimeout: queuedOpenTimeout,
 	}
 }
@@ -317,9 +406,42 @@ func (s *queuedScanner) connect(ctx context.Context) (*cloudEnv, error) {
 	}
 }
 
+// cachedFinished is key's cached finished run, if any.
+func (s *queuedScanner) cachedFinished(key string) (watch.FinishedRun, bool) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	f, ok := s.finishedCache[key]
+	return f, ok
+}
+
+// cacheFinished remembers f under key, so a later scan does not re-read it.
+func (s *queuedScanner) cacheFinished(key string, f watch.FinishedRun) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	if s.finishedCache == nil {
+		s.finishedCache = map[string]watch.FinishedRun{}
+	}
+	s.finishedCache[key] = f
+}
+
+// pruneFinishedCache drops every cached entry whose FinishedAt is before
+// finishedSince: once a scan's lookback has moved past a finished run, it
+// drops out of the finished list on its own (finishedResult), so keeping
+// it cached would only grow the cache forever.
+func (s *queuedScanner) pruneFinishedCache(finishedSince time.Time) {
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	for key, f := range s.finishedCache {
+		if f.FinishedAt.Before(finishedSince) {
+			delete(s.finishedCache, key)
+		}
+	}
+}
+
 // repoScan is one repository's part of a scan.
 type repoScan struct {
-	rows       []watch.QueuedRun
+	queued     []watch.QueuedRun
+	finished   []watch.FinishedRun
 	unreadable int   // runs left out (failed reads)
 	runErr     error // the first of them's error
 	cutOff     int   // runs not read before the repository's deadline
@@ -327,41 +449,54 @@ type repoScan struct {
 	err        error // the repository could not be listed: rows is nil
 }
 
-// scanRepo reads slug's queued runs under its own deadline: one listing of
-// the run IDs minted since minted, then the reads of those runs, up to
+// scanRepo reads slug's queued and finished runs under its own deadline:
+// one listing of the run IDs minted since listMinted (w.FinishedSince's
+// wider window, so a finished run's mint time still falls inside it), then
+// the reads of those runs not already in the finished cache, up to
 // queuedRunReaders at once. When the deadline fires mid-way the rows
-// already read are kept and the runs not read are counted in cutOff.
-func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string, minted, since, now time.Time) repoScan {
+// already read are kept and the runs not read are counted in cutOff (a
+// cache hit never counts against it: it costs no read at all).
+func (s *queuedScanner) scanRepo(ctx context.Context, env *cloudEnv, slug string, listMinted time.Time, w scanWindow, now time.Time) repoScan {
 	rctx, cancel := context.WithTimeout(ctx, s.repoTimeout)
 	defer cancel()
-	ids, err := s.listIDs(rctx, env.bucket.Bucket, slug, minted)
+	ids, err := s.listIDs(rctx, env.bucket.Bucket, slug, listMinted)
 	if err != nil {
 		return repoScan{err: err}
 	}
 	type result struct {
-		q    watch.QueuedRun
-		ok   bool
+		res  scanResult
 		err  error
 		done bool // the read finished before the deadline
 	}
 	results := make([]result, len(ids))
+	var toRead []int
+	for i, id := range ids {
+		if f, ok := s.cachedFinished(slug + "/" + id); ok {
+			results[i] = result{scanResult{IsFinished: true, Finished: f}, nil, true}
+			continue
+		}
+		toRead = append(toRead, i)
+	}
 	next := make(chan int)
 	var wg sync.WaitGroup
-	for range min(queuedRunReaders, len(ids)) {
+	for range min(queuedRunReaders, len(toRead)) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				q, ok, err := s.readRun(rctx, env, slug, ids[i], since, now)
+				res, err := s.readRun(rctx, env, slug, ids[i], w, now)
 				if rctx.Err() != nil {
 					continue // cut off: the result is not trusted
 				}
-				results[i] = result{q, ok, err, true}
+				if res.IsFinished {
+					s.cacheFinished(slug+"/"+ids[i], res.Finished)
+				}
+				results[i] = result{res, err, true}
 			}
 		}()
 	}
 feed:
-	for i := range ids {
+	for _, i := range toRead {
 		select {
 		case next <- i:
 		case <-rctx.Done():
@@ -381,8 +516,10 @@ feed:
 			if r.runErr == nil {
 				r.runErr = res.err
 			}
-		case res.ok:
-			r.rows = append(r.rows, res.q)
+		case res.res.IsQueued:
+			r.queued = append(r.queued, res.res.Queued)
+		case res.res.IsFinished:
+			r.finished = append(r.finished, res.res.Finished)
 		}
 	}
 	if ctx.Err() != nil {
@@ -392,23 +529,30 @@ feed:
 }
 
 // scan is one read of the runs bucket. err means nothing could be read
-// (rows is nil then); note, when not "", says some repositories or runs
-// could not be read and are left out of rows. Repositories are read in
-// parallel (s.workers at a time), each under its own deadline.
-func (s *queuedScanner) scan(ctx context.Context) (rows []watch.QueuedRun, note string, err error) {
+// (queued and finished are nil then); note, when not "", says some
+// repositories or runs could not be read and are left out. Repositories are
+// read in parallel (s.workers at a time), each under its own deadline.
+func (s *queuedScanner) scan(ctx context.Context) (queued []watch.QueuedRun, finished []watch.FinishedRun, note string, err error) {
 	env, err := s.connect(ctx)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	lctx, cancel := context.WithTimeout(ctx, queuedStepTimeout)
 	slugs, err := s.slugs(lctx, env)
 	cancel()
 	if err != nil {
-		return nil, "", err
+		return nil, nil, "", err
 	}
 	now := s.now().UTC()
-	since := now.Add(-queuedLookback)
-	minted := since.Add(-queuedMintMargin)
+	w := scanWindow{
+		QueuedSince:   now.Add(-queuedLookback),
+		FinishedSince: now.Add(-finishedLookback),
+	}
+	w.QueuedMinted = w.QueuedSince.Add(-queuedMintMargin)
+	// The one listing per repository covers both queued and finished
+	// detection, so it uses the wider of the two windows.
+	listMinted := w.FinishedSince.Add(-queuedMintMargin)
+	s.pruneFinishedCache(w.FinishedSince)
 
 	results := make([]repoScan, len(slugs))
 	jobs := make(chan int)
@@ -418,7 +562,7 @@ func (s *queuedScanner) scan(ctx context.Context) (rows []watch.QueuedRun, note 
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				results[i] = s.scanRepo(ctx, env, slugs[i], minted, since, now)
+				results[i] = s.scanRepo(ctx, env, slugs[i], listMinted, w, now)
 			}
 		}()
 	}
@@ -433,7 +577,7 @@ feed:
 	close(jobs)
 	wg.Wait()
 	if ctx.Err() != nil {
-		return nil, "", ctx.Err() // shutting down
+		return nil, nil, "", ctx.Err() // shutting down
 	}
 
 	var parts []string
@@ -448,7 +592,8 @@ feed:
 			unreadRepos++
 			continue
 		}
-		rows = append(rows, r.rows...)
+		queued = append(queued, r.queued...)
+		finished = append(finished, r.finished...)
 		if r.cutOff > 0 {
 			if cutRepos == 0 {
 				cutOff = fmt.Sprintf("%s: %d of %d runs not read (%s)", slugs[i], r.cutOff, r.total, errText(context.DeadlineExceeded, s.repoTimeout))
@@ -474,18 +619,19 @@ feed:
 		parts = append(parts, fmt.Sprintf("%d could not be read and are not shown (%s)", unreadRuns, runErr))
 	}
 	if len(parts) > 0 {
-		note = "queued runs: " + strings.Join(parts, "; ")
+		note = "runs: " + strings.Join(parts, "; ")
 	}
-	return rows, note, nil
+	return queued, finished, note, nil
 }
 
-// fetchQueuedOnce is watch --once's read of the queued rows: one scan in
-// the background, waited for at most queuedOnceWait; past that it returns
-// no rows and a note, and the scan is abandoned.
-func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]watch.QueuedRun, string) {
+// fetchQueuedOnce is watch --once's read of the queued and finished rows:
+// one scan in the background, waited for at most queuedOnceWait; past that
+// it returns no rows and a note, and the scan is abandoned.
+func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]watch.QueuedRun, []watch.FinishedRun, string) {
 	type result struct {
-		rows []watch.QueuedRun
-		note string
+		queued   []watch.QueuedRun
+		finished []watch.FinishedRun
+		note     string
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -493,31 +639,32 @@ func fetchQueuedOnce(ctx context.Context, lc *localcfg.Config, repo string) ([]w
 	done := make(chan result, 1)
 	go func() {
 		defer sc.Close()
-		rows, note, err := sc.scan(ctx)
+		queued, finished, note, err := sc.scan(ctx)
 		if err != nil {
 			note = queuedNote(err)
 		}
-		done <- result{rows, note}
+		done <- result{queued, finished, note}
 	}()
 	select {
 	case r := <-done:
-		return r.rows, r.note
+		return r.queued, r.finished, r.note
 	case <-time.After(queuedOnceWait):
-		return nil, fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedOnceWait)
+		return nil, nil, fmt.Sprintf("queued runs unavailable: the runs bucket did not answer within %s", queuedOnceWait)
 	}
 }
 
-// queuedSource polls the runs bucket for queued runs on its own goroutine
-// and clock, and caches the latest result for Get, which the render loops
-// call on every frame: no bucket read ever happens on the render path, so
-// a slow or unreachable bucket never stalls the RTDB-driven view, and the
-// first frame never waits for the first scan.
+// queuedSource polls the runs bucket for queued and finished runs on its
+// own goroutine and clock, and caches the latest result for Get, which the
+// render loops call on every frame: no bucket read ever happens on the
+// render path, so a slow or unreachable bucket never stalls the
+// RTDB-driven view, and the first frame never waits for the first scan.
 type queuedSource struct {
-	scan func(context.Context) ([]watch.QueuedRun, string, error)
+	scan func(context.Context) ([]watch.QueuedRun, []watch.FinishedRun, string, error)
 	wg   sync.WaitGroup
 
 	mu       sync.Mutex
 	rows     []watch.QueuedRun
+	finished []watch.FinishedRun
 	note     string
 	failures int // scans failed in a row
 }
@@ -533,7 +680,7 @@ func startQueuedSource(ctx context.Context, lc *localcfg.Config, repo string) *q
 
 // runQueuedSource polls scan on its own goroutine until ctx ends, then
 // calls done.
-func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.QueuedRun, string, error), done func()) *queuedSource {
+func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.QueuedRun, []watch.FinishedRun, string, error), done func()) *queuedSource {
 	qs := &queuedSource{scan: scan}
 	qs.wg.Add(1)
 	go func() {
@@ -558,29 +705,29 @@ func runQueuedSource(ctx context.Context, scan func(context.Context) ([]watch.Qu
 func (qs *queuedSource) Wait() { qs.wg.Wait() }
 
 func (qs *queuedSource) refresh(ctx context.Context) {
-	rows, note, err := qs.scan(ctx)
+	rows, finished, note, err := qs.scan(ctx)
 	if ctx.Err() != nil {
 		return // shutting down: nothing will render it
 	}
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
 	if err == nil {
-		qs.rows, qs.note, qs.failures = rows, note, 0
+		qs.rows, qs.finished, qs.note, qs.failures = rows, finished, note, 0
 		return
 	}
 	qs.failures++
 	qs.note = queuedNote(err)
 	if qs.failures >= queuedDropAfter {
-		qs.rows = nil
-	} else if len(qs.rows) > 0 {
+		qs.rows, qs.finished = nil, nil
+	} else if len(qs.rows) > 0 || len(qs.finished) > 0 {
 		qs.note += " (the queued rows shown are from an earlier read)"
 	}
 }
 
-// Get is the latest queued rows and note, safe to call on every frame: it
-// never blocks on the network.
-func (qs *queuedSource) Get() ([]watch.QueuedRun, string) {
+// Get is the latest queued and finished rows and note, safe to call on
+// every frame: it never blocks on the network.
+func (qs *queuedSource) Get() ([]watch.QueuedRun, []watch.FinishedRun, string) {
 	qs.mu.Lock()
 	defer qs.mu.Unlock()
-	return qs.rows, qs.note
+	return qs.rows, qs.finished, qs.note
 }

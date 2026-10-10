@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"gocloud.dev/blob"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -251,7 +251,7 @@ func newRecipesPublishCmd() *cobra.Command {
 			}
 			data, err := readRecipeFile(args[0])
 			if err != nil {
-				return userErr("nothing was published: %v", err)
+				return userErr("nothing was published: %s", pluginwire.Printable(oneLineCLI(err.Error())))
 			}
 			// The same checks as fugaro recipes validate.
 			if ps := recipeFileProblems(args[0], data); len(ps) > 0 {
@@ -287,30 +287,14 @@ func newRecipesPublishCmd() *cobra.Command {
 	return cmd
 }
 
-// readRecipeFile reads a recipe file the user names: a regular file only
-// (so a FIFO or device is never read), opened without blocking and read
-// through a cap of the recipe size limit.
+// readRecipeFile reads a recipe file the user names (fugaro recipes
+// validate|publish FILE): config.ReadRegular, the one reader of an
+// untrusted path in this codebase — never a symlink, which could name any
+// file the user can read, nor a FIFO or a device, which could block the
+// read or never end; at most recipe.MaxBytes, checked before the file is
+// opened. A missing file is os.ErrNotExist.
 func readRecipeFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, recipe.MaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > recipe.MaxBytes {
-		return nil, fmt.Errorf("%s is over the 16 KiB limit", path)
-	}
-	return data, nil
+	return config.ReadRegular(path, recipe.MaxBytes)
 }
 
 // recipeFileProblems are a recipe file's problems: the parse's, and a file
@@ -362,6 +346,8 @@ func publishRecipe(ctx context.Context, w io.Writer, b *blobx.Bucket, key, name 
 	switch {
 	case errors.Is(err, blobx.ErrConflict), errors.Is(err, blobx.ErrExists):
 		return 0, userErr("nothing was published: another publisher changed %s while this ran; look at it (fugaro recipes show %s) and run this again", key, name)
+	case errors.Is(err, blobx.ErrForbidden):
+		return 0, operatorWriteErr("gs://"+b.GCSName, key, err)
 	case err != nil:
 		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", key, err))
 	}
@@ -377,7 +363,7 @@ func newRecipesValidateCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			data, err := readRecipeFile(args[0])
 			if err != nil {
-				return userErr("%v", err)
+				return userErr("%s", pluginwire.Printable(oneLineCLI(err.Error())))
 			}
 			ps := recipeFileProblems(args[0], data)
 			out := cmd.OutOrStdout()

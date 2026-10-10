@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"github.com/dimipaun/fugaro/internal/initflow"
+	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -135,10 +138,11 @@ func TestRefreshBaseStepNeverReplacesCustomBase(t *testing.T) {
 }
 
 // refreshReload re-reads the local config the base step wrote (not the
-// plan's own, now-stale copy) and computes the repository's spec from it:
-// the checkout's config is carried through, and the check job's image (the
-// first workflow's kind, sorted: api's go before app's web-node) is the
-// re-read base.
+// plan's own, now-stale copy) and re-resolves the checkout's config
+// strictly against it (decision L16: this leads to a billable Cloud Build
+// submission, so it must not reuse preflight's own lenient, flag-blind
+// read), and the check job's image (the first workflow's kind, sorted:
+// api's go before app's web-node) is the re-read base.
 func TestRefreshReload(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
@@ -167,8 +171,12 @@ func TestRefreshReload(t *testing.T) {
 	if tg.lc.BaseImages["web-node"] != managedRef("web-node", "0.5.1") || tg.lc.BaseImages["go"] != managedRef("go", "0.5.1") {
 		t.Fatalf("lc.BaseImages = %v, want both kinds the base step just recorded", tg.lc.BaseImages)
 	}
-	if tg.cfg != p.cfg {
-		t.Error("the checkout's config was not carried through")
+	// Re-resolved (a fresh object, strictly, against tg.lc), not the same
+	// pointer as preflight's own lenient p.cfg; it must still resolve to
+	// the same bytes, since nothing about the checkout or its layer changed
+	// between the two reads.
+	if tg.cfg == p.cfg || tg.cfg.SHA256() != p.cfg.SHA256() {
+		t.Errorf("tg.cfg SHA256 = %s, p.cfg SHA256 = %s (same pointer: %v)", tg.cfg.SHA256(), p.cfg.SHA256(), tg.cfg == p.cfg)
 	}
 	if tg.spec.Name != "acme/app" || tg.spec.Slug != p.slug || tg.spec.RegistryPath == "" || tg.spec.BuildServiceAccountEmail == "" {
 		t.Fatalf("spec %+v", tg.spec)
@@ -208,6 +216,116 @@ func TestRefreshReloadFillsMissingBaseFromRelease(t *testing.T) {
 	}
 	if tg.spec.Check == nil || tg.spec.Check.Image != want {
 		t.Fatalf("check image = %+v, want the release fallback %s", tg.spec.Check, want)
+	}
+}
+
+// anchoredRefreshYAML is acme/other, anchored to aurora/proj-1234, with one
+// workflow named config.ImplicitWorkflow (matching layerCheckout's
+// pre-added Cloud Run job and registerOtherLocally's repos: entry) that
+// needs nothing from the project layer to validate: refreshPreflight's own
+// (lenient, flag-blind) read may come back Unknown without failing the
+// fixture, so these tests can isolate refreshReload's own, separately
+// strict read.
+var anchoredRefreshYAML = "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nagent: { auth: oauth }\nworkflows:\n" +
+	"  " + config.ImplicitWorkflow + ": { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+
+// Review fix (1), security (decision L16): fugaro image refresh's rebuild is
+// a billable Cloud Build submission, never lenient like refreshPreflight's
+// earlier, flag-blind read (loadCheckoutConfigAt, lc==nil). A bucket that
+// cannot be read, with nothing cached, must refuse before refreshReload ever
+// hands a config to refreshBuilds, so submitAndWait (and Submit) are never
+// reached — the same contract fugaro run's own TestRunRefusesWhenTheLayerBucketIsUnreadable
+// pins for launches.
+//
+// Mutation (run, restore): change refreshReload's `cfg := rf.Cfg` back to
+// `cfg := p.cfg`, and this test fails: p.cfg comes from the earlier lenient
+// read, which (lc==nil forces offline) never even attempts the live read
+// this test breaks, and comes back Unknown (no layer, no error) instead of
+// refusing.
+func TestRefreshReloadRefusesWhenTheLayerBucketIsUnreadable(t *testing.T) {
+	useVersion(t, "0.6.0")
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, anchoredRefreshYAML)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: ["+config.ImplicitWorkflow+"], github_app_id: \"12345\" }\n")
+	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// refreshPreflight's own read just succeeded, which caches the layer as
+	// a side effect (findLayer, on every successful read): a fresh, empty
+	// cache directory, so the "unreachable, but a cache entry can stand in"
+	// fallback (decision L13) does not mask the refusal this test pins.
+	isolateCache(t)
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(context.Context, *blobx.Bucket) ([]byte, int64, error) {
+		return nil, 0, &net.OpError{Op: "dial", Err: errors.New("no route to host")}
+	}
+	// refreshReload itself refuses, so refreshBuilds (and submitAndWait,
+	// and Submit) is never even reached: there is nothing here to build
+	// against yet, which is the whole point — a build is never submitted
+	// over an unknown or stale layer.
+	if _, err := refreshReload(t.Context(), p); err == nil {
+		t.Fatal("reloaded despite an unreadable project layer bucket with nothing cached")
+	}
+}
+
+// Review fix (1): the earlier, flag-blind p.cfg (loadCheckoutConfigAt,
+// lc==nil) never even attempts a live bucket read: with lc==nil forcing
+// offline mode (decision L16's Lenient path), it is satisfied by whatever
+// is cached, however stale, as soon as findLayer sees one for the right
+// project and bucket name. refreshReload's own re-resolution, against the
+// real lc, must do a live read instead, even though a cache entry (seeded
+// here directly, standing in for one left over from an earlier command)
+// would otherwise satisfy it.
+//
+// Mutation (run, restore): change refreshReload's `cfg := rf.Cfg` back to
+// `cfg := p.cfg`, and this test fails: the resolved layer's sha256 becomes
+// the stale cached one, not the live bucket's current text.
+func TestRefreshReloadIgnoresAStaleCachedLayer(t *testing.T) {
+	useVersion(t, "0.6.0")
+	f := newCloudFixture(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, anchoredRefreshYAML)
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: ["+config.ImplicitWorkflow+"], github_app_id: \"12345\" }\n")
+	cfgPath := os.Getenv("FUGARO_CONFIG")
+	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
+	// and points XDG (config and cache) at empty directories, so
+	// loadCheckoutConfigAt's own flag-blind fallback (selectedProjectConfig,
+	// which refreshPreflight's first, lenient read uses, never iopts.cloud)
+	// has nothing to find by name, $FUGARO_*, or "exactly one project
+	// config" — only --config below (iopts.cloud, which loadRepoConfig
+	// does thread through) names the installation at all. Without this,
+	// selectedProjectConfig would find the same config loadRepoConfig does
+	// (both discoverable via $FUGARO_CONFIG alone), and the bug this test
+	// pins (lc==nil forcing cache-only mode) would never trigger.
+	isolateProjects(t, t.TempDir())
+	stale := strings.Replace(testProjectLayer, "sh build.sh", "sh stale-build.sh", 1)
+	if stale == testProjectLayer {
+		t.Fatal("fixture: testProjectLayer has no \"sh build.sh\" to make a distinct stale copy of")
+	}
+	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
+		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", Generation: 1, CheckedAt: time.Now(), YAML: stale,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// The bucket itself still holds testProjectLayer (published above),
+	// perfectly reachable: only the cache is stale.
+	p, err := refreshPreflight(t.Context(), refreshOptions{}, &initOptions{cloud: cloudOptions{config: cfgPath}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.cfg.Layer == nil || p.cfg.Layer.SHA256 != config.LayerSum([]byte(stale)) {
+		t.Fatalf("fixture: refreshPreflight's own lenient read did not pick up the stale cache (layer %v), so this test would not catch a regression", p.cfg.Layer)
+	}
+	tg, err := refreshReload(t.Context(), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := config.LayerSum([]byte(testProjectLayer)); tg.cfg.Layer == nil || tg.cfg.Layer.SHA256 != want {
+		t.Fatalf("resolved layer sha = %v, want the live bucket's %s (not the stale cache)", tg.cfg.Layer, want)
 	}
 }
 
@@ -455,6 +573,58 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 	err := e.r.refreshBuilds(t.Context(), p, tg)
 	if err == nil || !strings.Contains(err.Error(), "api") || len(fb.specs) != 0 {
 		t.Fatalf("%v, %d builds\n%s", err, len(fb.specs), out.String())
+	}
+}
+
+// Review fix (code review on the prior fix): submitAndWait's project-layer
+// copy write now opens the record bucket through openRecordBucket (the
+// test seam every other record-bucket caller uses), not blobx.Open
+// directly, which could not be exercised successfully in a test at all
+// (lc.RecordBucketURL() is always a real gs:// URL, and blobx has no
+// endpoint-override mechanism). This is the happy path the previous test
+// suite never covered for fugaro image refresh's rebuilds: a project
+// layer, a reachable (fake, file://-backed) record bucket, and the copy
+// actually landing at builds/<slug>/project-layer.yaml with the sha the
+// build was submitted with.
+//
+// Mutation (run, restore): change submitAndWait's openRecordBucket(ctx,
+// lc.RecordBucketURL()) call back to blobx.Open(ctx, lc.RecordBucketURL()),
+// and this test fails: blobx.Open ignores the openRecordBucket override
+// below entirely and tries to open the real gs:// URL, which is not
+// panic-guarded the way layerBucketOpener is (TestMain only guards that
+// one), so it attempts a real network connection and the build fails with
+// a connection/credentials error instead of succeeding.
+func TestRefreshBuildsWritesTheProjectLayerCopy(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTargetOpts(t, r, &initOptions{yes: true})
+	l, ps := config.ParseProjectLayer([]byte(testProjectLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	tg.cfg.Layer = l
+	// A layer needs a base whose fugaro reads it (layeredSince, 0.6.0):
+	// buildTargetOpts' own 0.5.1 base would otherwise be refused before the
+	// copy write this test means to exercise.
+	tg.lc.BaseImages["web-node"] = managedRef("web-node", "0.6.0")
+	recordsDir := t.TempDir()
+	prevRB := openRecordBucket
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+recordsDir)
+	}
+	t.Cleanup(func() { openRecordBucket = prevRB })
+	p := &refreshPlan{workflows: []string{"app"}}
+	out := atNoTerminal(e)
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].ProjectLayerSHA256 != l.SHA256 {
+		t.Fatalf("specs = %+v, want one with ProjectLayerSHA256 %s", fb.specs, l.SHA256)
+	}
+	got, err := os.ReadFile(filepath.Join(recordsDir, "builds", tg.spec.Slug, "project-layer.yaml"))
+	if err != nil || string(got) != testProjectLayer {
+		t.Fatalf("the copy = %q, %v; want testProjectLayer", got, err)
 	}
 }
 
