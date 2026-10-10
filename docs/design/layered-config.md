@@ -352,7 +352,7 @@ After the cut, `fugaro validate` refuses a legacy kind with a message naming the
 
 ## 11. Security and the threat model
 
-**Who can write the project layer.** Anyone holding `roles/storage.objectAdmin` on the runs bucket: launchers and operators (`modules/installation/iam.tf`). The job and build accounts cannot write `fugaro/`. They write only under their slug, and the build account's copy is discussed in §8.
+**Who can write the project layer.** Anyone holding `roles/storage.objectAdmin` on the runs bucket: launchers and operators (`modules/installation/iam.tf`). The job and build accounts cannot write `fugaro/`. They write only under their slug, and the build account's copy is discussed in §8. That grant (`objectUser` on `builds/<slug>/`, decision L6) also means a later, repository-controlled build step (the Dockerfile's own `RUN` steps, or anything else the build runs with the build account's credentials) could rewrite the same copy before the next daily check job (Task 15) reads it. This stays confined to the one repository and the build secrets it already has access to: it cannot reach another repository's copy, the canonical object in `fugaro/`, or anything `objectUser` on its own prefix does not already allow.
 
 **What a malicious or careless writer could do:**
 

@@ -232,6 +232,15 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
+	if cfg.Layer != nil {
+		rb, err := env.recordBucket(ctx)
+		if err != nil {
+			return remote(err)
+		}
+		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
+			return err
+		}
+	}
 	spec.NoSmoke = o.noSmoke
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
@@ -359,8 +368,9 @@ func cloudBuildSpec(rs infra.RepoSpec, cfg *config.Config, name, base, machineTy
 		Image:       gcp.ImageName(rs.RegistryPath, rs.Slug, name),
 		GitSecretID: rs.Secrets[ws.GitSecret], GitUser: rs.GitUser, GitHubAppID: rs.GitHubAppID,
 		ServiceAccount: rs.BuildServiceAccountEmail, MachineType: machineType,
-		WorkflowSecrets: cfg.Workflows[name].Secrets,
-		Bucket:          bucket,
+		WorkflowSecrets:    cfg.Workflows[name].Secrets,
+		Bucket:             bucket,
+		ProjectLayerSHA256: layerSHAOf(cfg),
 	}, nil
 }
 
@@ -408,7 +418,7 @@ func printImageResult(w io.Writer, res *image.LocalResult, asJSON bool) error {
 }
 
 func newImageRenderCmd() *cobra.Command {
-	var workflow, cloudOutputs string
+	var workflow, cloudOutputs, layerBucket, layerSlug, layerSHA string
 	cmd := &cobra.Command{
 		Use:   "render",
 		Short: "Print the Dockerfile that builds the workflow's derived image",
@@ -417,9 +427,23 @@ func newImageRenderCmd() *cobra.Command {
 			"is the Dockerfile itself, not a report about one.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			root, cfg, name, err := loadCheckout(cmd.Context(), workflow)
+			var o layerOptions
+			if layerSHA != "" {
+				data, err := readLayerCopy(cmd.Context(), layerBucket, layerSlug, layerSHA)
+				if err != nil {
+					return err
+				}
+				o = layerOptions{Data: data, Where: layerBucket + "/" + config.LayerCopyKey(layerSlug)}
+			}
+			o.Lenient = true
+			root, rf, err := loadCheckoutResolved(cmd.Context(), "", nil, o)
 			if err != nil {
 				return err
+			}
+			cfg := rf.Cfg
+			name, _, err := cfg.SelectWorkflow(workflow)
+			if err != nil {
+				return &ExitError{Code: ExitUserError, Err: err}
 			}
 			data, repoFile, err := image.Dockerfile(root, cfg, name, Version)
 			if err != nil {
@@ -440,6 +464,12 @@ func newImageRenderCmd() *cobra.Command {
 	cmd.Flags().StringVar(&workflow, "workflow", "", "workflow to render; optional when fugaro.yaml defines one")
 	cmd.Flags().StringVar(&cloudOutputs, "cloud-outputs", "", "also write, into this directory, what the Cloud Build steps after render need (used by the image build)")
 	_ = cmd.Flags().MarkHidden("cloud-outputs")
+	cmd.Flags().StringVar(&layerBucket, "layer-bucket", "", "the runs bucket holding the repository's copy of the project layer (used by the image build)")
+	cmd.Flags().StringVar(&layerSlug, "layer-slug", "", "the repository's storage slug (used by the image build)")
+	cmd.Flags().StringVar(&layerSHA, "layer-sha256", "", "the project layer's sha256 the build was submitted with (used by the image build)")
+	for _, n := range []string{"layer-bucket", "layer-slug", "layer-sha256"} {
+		_ = cmd.Flags().MarkHidden(n)
+	}
 	return cmd
 }
 
@@ -547,11 +577,10 @@ func loadCheckout(ctx context.Context, workflow string) (root string, cfg *confi
 // installation's bucket override, miss the layer silently, and let the
 // strict submission proceed as if none applied instead of refusing.
 // Cloud Build's own layer-sha wiring (the builds/<slug>/project-layer.yaml
-// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is Task 14, not
-// built yet; until then, resolving strictly here against the right lc is
-// the whole of this path's layer strictness — it only refuses to submit a
-// build over an unreadable bucket, same as a launch would, rather than
-// silently building on a stale or unknown layer.
+// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is image_layer.go's
+// prepareLayerCopy, called from runImageBuildCloud once cfg is resolved
+// here: resolving strictly here against the right lc is what lets that
+// call trust cfg.Layer, rather than building on a stale or unknown one.
 func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, cfg *config.Config, name string, err error) {
 	root, rf, err := loadCheckoutResolved(ctx, "", lc, o)
 	if err != nil {
