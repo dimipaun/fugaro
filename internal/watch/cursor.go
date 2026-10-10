@@ -21,8 +21,10 @@ func Rows(v View, collapsed map[string]bool) []Cursor {
 }
 
 // Resolve finds c in rows; if it is gone it returns its nearest neighbour in
-// the same block (the row now at its old position, else the header), and the
-// first row only when the whole block is gone.
+// the same block: the row now at its old position (the sibling that slid up
+// to fill the gap, i.e. the next one in the old order), else an earlier
+// sibling, else the header, and the first row only when the whole block is
+// gone.
 func Resolve(rows []Cursor, prev []Cursor, c Cursor) Cursor {
 	for _, r := range rows {
 		if r == c {
@@ -45,12 +47,12 @@ func Resolve(rows []Cursor, prev []Cursor, c Cursor) Cursor {
 		block = append(block, r)
 	}
 	if idx >= 0 {
-		for i := idx - 1; i >= 0; i-- {
+		for i := idx + 1; i < len(block); i++ {
 			if present[block[i]] {
 				return block[i]
 			}
 		}
-		for i := idx + 1; i < len(block); i++ {
+		for i := idx - 1; i >= 0; i-- {
 			if present[block[i]] {
 				return block[i]
 			}

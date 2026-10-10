@@ -13,6 +13,18 @@ func TestCursorFollowsRunAcrossRebuild(t *testing.T) {
 	}
 }
 
+// The common case: a vanished row's "old position" is filled by the row
+// that was after it, not the one before it (removing an item from a list
+// slides the rest up, it doesn't slide them down). When both an earlier and
+// a later sibling survive, Resolve must prefer the later one.
+func TestCursorPrefersDownwardNeighbourOverUpward(t *testing.T) {
+	before := []Cursor{{"a", ""}, {"a", "r1"}, {"a", "r2"}, {"a", "r3"}}
+	after := []Cursor{{"a", ""}, {"a", "r1"}, {"a", "r3"}} // r2 vanished; r1 and r3 both remain
+	if got := Resolve(after, before, Cursor{"a", "r2"}); got != (Cursor{"a", "r3"}) {
+		t.Fatalf("got %+v, want r3 (the row that slid up into r2's old slot), not r1", got)
+	}
+}
+
 // When nothing below the vanished row survives, Resolve climbs back to the
 // header; when the header is gone too, it falls back to the first row. "z"
 // sorts before "a" so the header and the first row are never the same
