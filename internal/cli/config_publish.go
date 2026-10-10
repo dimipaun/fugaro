@@ -20,7 +20,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
-	"github.com/dimipaun/fugaro/internal/task"
 )
 
 // layeredSince is the first fugaro release whose runner reads a task's
@@ -72,7 +71,7 @@ func newConfigPublishCmd() *cobra.Command {
 			_ = localcfg.SaveLayerCache(os.Getenv, env.lc.Name, localcfg.SharedCacheEntry{GCPProject: env.lc.GCPProject, Bucket: bucket, Generation: gen, CheckedAt: time.Now(), YAML: string(data)})
 			fmt.Fprintf(cmd.OutOrStdout(), "published the project layer of %s to gs://%s/%s (generation %d, sha256 %s)\n", env.lc.Name, bucket, config.LayerKey, gen, l.SHA256)
 			failed := fanOutLayer(ctx, cmd.OutOrStdout(), env, l, gen)
-			warnOldImages(ctx, cmd.ErrOrStderr(), env, l)
+			warnOldImages(ctx, cmd.ErrOrStderr(), env)
 			if failed > 0 {
 				return remote(fmt.Errorf("the project layer is published, but %d repository copy(ies) failed (listed above); run fugaro config publish again", failed))
 			}
@@ -123,7 +122,11 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 	default:
 		return 0, remote(fmt.Errorf("nothing was published: reading %s before replacing it: %w", config.LayerKey, rerr))
 	}
-	if changes := executableChanges(prev, l); len(changes) > 0 {
+	changes, cerr := executableChanges(prev, l)
+	if cerr != nil {
+		return 0, userErr("nothing was published: this fugaro cannot compare executable key %s: upgrade it or file a bug", cerr)
+	}
+	if len(changes) > 0 {
 		fmt.Fprintln(w, "=== EXECUTABLE CHANGES: these run as shell in every repository that takes the profile ===")
 		for _, c := range changes {
 			fmt.Fprintln(w, "  "+pluginwire.Printable(c))
@@ -171,9 +174,12 @@ func layerDiffText(a, b string) string {
 // none published, or an invalid old object) and next, as
 // `profile p: commands.test: "old" -> "new"`, plus one line when
 // default_profile changes and either profile names has an executable
-// setting (decision L7; the owner's ruling on default_profile).
-func executableChanges(prev, next *config.ProjectLayer) []string {
-	values := func(l *config.ProjectLayer, name string) map[string]string {
+// setting (decision L7; the owner's ruling on default_profile). An error
+// names a config.ExecutableKeys entry executableKeyValues does not know
+// (a landed key missing its case): the caller must refuse the publish,
+// never guess whether it is executable.
+func executableChanges(prev, next *config.ProjectLayer) ([]string, error) {
+	values := func(l *config.ProjectLayer, name string) (map[string]string, error) {
 		var p config.Profile
 		if l != nil {
 			// A missing profile reads as the zero Profile{}, exactly what
@@ -183,9 +189,11 @@ func executableChanges(prev, next *config.ProjectLayer) []string {
 		}
 		out := map[string]string{}
 		for _, key := range config.ExecutableKeys {
-			executableKeyValues(out, p, key)
+			if err := executableKeyValues(out, p, key); err != nil {
+				return nil, err
+			}
 		}
-		return out
+		return out, nil
 	}
 	names := map[string]bool{}
 	for _, l := range []*config.ProjectLayer{prev, next} {
@@ -197,7 +205,14 @@ func executableChanges(prev, next *config.ProjectLayer) []string {
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(names)) {
-		a, b := values(prev, name), values(next, name)
+		a, err := values(prev, name)
+		if err != nil {
+			return nil, err
+		}
+		b, err := values(next, name)
+		if err != nil {
+			return nil, err
+		}
 		keys := map[string]bool{}
 		for k := range a {
 			keys[k] = true
@@ -216,7 +231,7 @@ func executableChanges(prev, next *config.ProjectLayer) []string {
 	if c := defaultProfileChange(prev, next); c != "" {
 		out = append(out, c)
 	}
-	return out
+	return out, nil
 }
 
 // executableKeyValues inserts into out the display label(s) and value(s)
@@ -225,8 +240,12 @@ func executableChanges(prev, next *config.ProjectLayer) []string {
 // (its Command and Each quoted separately, never concatenated: two
 // different (command, each) pairs could otherwise join into the same
 // text, e.g. {"pytest -k", "{id}"} and {"pytest", "-k {id}"}). A key with
-// no case here would publish unreviewed: fail closed.
-func executableKeyValues(out map[string]string, p config.Profile, key string) {
+// no case here is an unreviewed executable key: executableKeyValues fails
+// closed with an error (TestExecutableKeyValuesCoversEveryExecutableKey
+// is the CI guard that a landed config.ExecutableKeys entry always has
+// one; this is the live path's own backstop, which must refuse the
+// publish instead of crashing it).
+func executableKeyValues(out map[string]string, p config.Profile, key string) error {
 	switch key {
 	case "workflows.*.commands.build":
 		out["commands.build"] = strconv.Quote(p.Commands.Build)
@@ -246,8 +265,9 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) {
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
 	default:
-		panic("executableChanges: no comparison for " + key)
+		return fmt.Errorf("%s", key)
 	}
+	return nil
 }
 
 // defaultProfileChange is the change line for default_profile itself
@@ -272,10 +292,13 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 
 // fanOutLayer copies l's exact bytes to every repository the installation
 // config lists (decision L19), reporting each, and returns how many copies
-// failed. A repository whose provider neither the installation config nor
-// the layer's defaults names has no slug yet; it is skipped with a note,
-// and its next image build or init --repo writes its copy. Before each
-// copy it re-reads config.LayerKey's generation: if it is no longer gen
+// failed. A repository whose provider env.repoSlug cannot resolve (the
+// local config does not set it, and this is not a checkout of that
+// repository) has no slug yet; its copy is not written, it counts as
+// failed (the same as any other fan-out failure: --allow-skip is not a
+// flag this takes), and its next image build or init --repo writes its
+// copy once the provider is known. Before each copy it re-reads
+// config.LayerKey's generation: if it is no longer gen
 // (another publisher replaced it while this fan-out ran), the remaining
 // repositories are not touched with a stale layer; they count as failed,
 // and a plain fugaro config publish fans the current object out again. A
@@ -304,19 +327,18 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 				config.LayerKey, oneLineCLI(err.Error()), remaining, len(repos))
 			return failed + remaining
 		}
-		provider := env.lc.Repos[repo].Provider
-		if provider == "" {
-			provider = l.Defaults.Git.Provider
-		}
-		if provider == "" {
-			fmt.Fprintf(w, "  %s: skipped: no provider is known for it yet; its next fugaro image build or fugaro init --repo writes its copy\n", repo)
+		// The provider resolves exactly as a launch's own env.repoSlug
+		// does (the local config, else the checkout whose origin is this
+		// repo), never guessed from the layer's defaults.git.provider:
+		// Repo.Provider's own doc says empty means "the checkout decides",
+		// and guessing wrong would write a copy under the wrong slug.
+		slug, err := env.repoSlug(repo, checkoutOf(ctx, repo))
+		if err != nil {
+			fmt.Fprintf(w, "  %s: skipped: provider of %s is not known here: set repos.<name>.provider in the local config or publish from its checkout; its copy was not written\n", repo, repo)
+			failed++
 			continue
 		}
-		slug, err := task.Slug(provider, repo)
-		if err == nil {
-			err = writeLayerCopy(ctx, env.bucket, slug, l.Raw)
-		}
-		if err != nil {
+		if err := writeLayerCopy(ctx, env.bucket, slug, l.Raw); err != nil {
 			fmt.Fprintf(w, "  %s: not copied: %s\n", repo, oneLineCLI(err.Error()))
 			failed++
 			continue
@@ -327,20 +349,22 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 }
 
 // warnOldImages names every listed workflow whose build record says its job
-// image predates layeredSince (decision L14): its launches are refused until
-// fugaro image refresh. Best effort: a record it cannot read says nothing.
-func warnOldImages(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer) {
+// image predates layeredSince (decision L14): publish-time, this is
+// advisory only, a heads-up before the daily rebuild catches up; the
+// launch-time refusal lives in fugaro run's own image gate
+// (checkImageSince, layered-config plan Task 11). Best effort: a record
+// it cannot read says nothing, and so does a repository whose provider
+// cannot be resolved (env.repoSlug: the local config, else the checkout
+// whose origin is that repository; never guessed from the layer's
+// defaults.git.provider, which Repo.Provider's own doc does not license).
+func warnOldImages(ctx context.Context, w io.Writer, env *cloudEnv) {
 	b, err := env.recordBucket(ctx)
 	if err != nil {
 		return
 	}
 	for _, repo := range slices.Sorted(maps.Keys(env.lc.Repos)) {
 		r := env.lc.Repos[repo]
-		provider := r.Provider
-		if provider == "" {
-			provider = l.Defaults.Git.Provider
-		}
-		slug, err := task.Slug(provider, repo)
+		slug, err := env.repoSlug(repo, checkoutOf(ctx, repo))
 		if err != nil {
 			continue
 		}

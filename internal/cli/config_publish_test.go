@@ -210,6 +210,50 @@ func TestWriteLayerCopyRemoveOfOversizedIsRefusedAsLauncher(t *testing.T) {
 	}
 }
 
+// Review Focus 4, ruling: an existing oversized copy cannot be read to
+// compare (ReadMax's old is nil for it), so writeLayerCopy's "writes only
+// when it differs" doc must not claim equality skips the write here: it
+// always overwrites.
+func TestWriteLayerCopyAlwaysOverwritesAnOversizedExistingCopy(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
+	if err := writeLayerCopy(ctx, b, appSlug, []byte(testProjectLayer)); err != nil {
+		t.Fatal(err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || string(data) != testProjectLayer {
+		t.Fatalf("the oversized copy was not overwritten: data %q, err %v", data, rerr)
+	}
+}
+
+// Review Focus 4, ruling: the oversized-removal path used an unconditional
+// Delete with no generation check, which could delete a valid object a
+// concurrent writer just replaced it with. It must instead read the
+// generation first and delete under that precondition, leaving (and
+// reporting, not silently keeping) a concurrent replacement alone.
+func TestWriteLayerCopyRemoveOfOversizedLeavesAConcurrentReplacementAlone(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
+	race := layerCopyRemovalRace
+	t.Cleanup(func() { layerCopyRemovalRace = race })
+	replacement := []byte(testProjectLayer)
+	layerCopyRemovalRace = func(context.Context, *blobx.Bucket, string) {
+		fake.Put("fugaro-runs-proj-1234", key, replacement)
+	}
+	err := writeLayerCopy(ctx, b, appSlug, nil)
+	if !errors.Is(err, blobx.ErrConflict) {
+		t.Fatalf("err = %v, want ErrConflict", err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || string(data) != string(replacement) {
+		t.Fatalf("the concurrent replacement was deleted: data %q, err %v", data, rerr)
+	}
+}
+
 func TestPublishWarnsAboutOldImages(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -343,7 +387,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
 	repos := map[string]localcfg.Repo{
 		"acme/app":   {Provider: "github", Workflows: []string{"web"}},
-		"acme/other": {Provider: "GitHub", Workflows: []string{"svc"}}, // not a provider kind (task.Slug is case-sensitive)
+		"acme/other": {Provider: "GitHub", Workflows: []string{"svc"}}, // not a provider kind (task.Slug, inside env.repoSlug, is case-sensitive)
 	}
 	env := envOnRepos(b, repos)
 	l := parseLayerOrFatal(t, testProjectLayer)
@@ -358,7 +402,7 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 	if !strings.Contains(w.String(), "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
 		t.Fatalf("the other repository was not copied: %s", w.String())
 	}
-	if !strings.Contains(w.String(), "acme/other: not copied:") {
+	if !strings.Contains(w.String(), "acme/other: skipped: provider of acme/other is not known here") {
 		t.Fatalf("the failure was not reported: %s", w.String())
 	}
 	repos["acme/other"] = localcfg.Repo{Provider: "github", Workflows: []string{"svc"}}
@@ -372,46 +416,65 @@ func TestFanOutCountsAFailedCopyAndRerunIsIdempotent(t *testing.T) {
 	}
 }
 
-// Review Focus 4: a repository with no provider of its own falls back to
-// the layer's defaults.git.provider, exactly as fanOutLayer's own slug
-// lookup already has to.
-func TestFanOutUsesTheLayersDefaultProviderWhenTheRepoHasNone(t *testing.T) {
+// Review Focus 4, ruling: a repository's provider resolves exactly as a
+// launch's own env.repoSlug does (the local config, else the checkout
+// whose origin is that repository), never guessed from the layer's
+// defaults.git.provider: Repo.Provider's own doc (internal/localcfg/
+// localcfg.go) says empty means "the checkout's fugaro.yaml decides",
+// not "the project layer decides". A repository with a known provider
+// still gets its copy.
+func TestFanOutNeverGuessesAProviderFromTheLayerDefault(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
-	env := envOnRepos(b, map[string]localcfg.Repo{"acme/app": {Workflows: []string{"web"}}})
-	l := parseLayerOrFatal(t, testProjectLayer) // defaults.git.provider: github
+	env := envOnRepos(b, map[string]localcfg.Repo{
+		"acme/app":   {Provider: "github", Workflows: []string{"web"}},
+		"acme/other": {Workflows: []string{"svc"}}, // no provider of its own
+	})
+	// defaults.git.provider is bitbucket: a different provider than
+	// acme/app's, so a wrongly-guessed slug for acme/other is easy to
+	// tell apart from a correct one.
+	l := parseLayerOrFatal(t, strings.Replace(testProjectLayer, "provider: github", "provider: bitbucket", 1))
 	gen, err := b.Create(ctx, config.LayerKey, l.Raw, "application/yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var w bytes.Buffer
-	if failed := fanOutLayer(ctx, &w, env, l, gen); failed != 0 {
-		t.Fatalf("failed = %d: %s", failed, w.String())
+	failed := fanOutLayer(ctx, &w, env, l, gen)
+	if failed != 1 {
+		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
 	}
 	if !strings.Contains(w.String(), "acme/app: copied to "+config.LayerCopyKey(appSlug)) {
-		t.Fatalf("did not fall back to the layer's default provider: %s", w.String())
+		t.Fatalf("the repository with a known provider was not copied: %s", w.String())
+	}
+	if !strings.Contains(w.String(), "provider of acme/other is not known here") || !strings.Contains(w.String(), "its copy was not written") {
+		t.Fatalf("no note that the provider could not be determined: %s", w.String())
+	}
+	guessedSlug := mustSlug("bitbucket", "acme/other")
+	if _, _, rerr := b.Read(ctx, config.LayerCopyKey(guessedSlug)); !errors.Is(rerr, blobx.ErrNotExist) {
+		t.Fatalf("a copy was written under a slug guessed from the layer's default provider: %v", rerr)
 	}
 }
 
-// Review Focus 4: warnOldImages used r.Provider with no fallback to
-// l.Defaults.Git.Provider, unlike fanOutLayer; a repository relying on the
-// fallback silently got no warning at all.
-func TestWarnOldImagesUsesTheLayersDefaultProviderWhenTheRepoHasNone(t *testing.T) {
+// Review Focus 4, ruling: warnOldImages must resolve a repository's
+// provider the same way, never guessing from the layer's default; a
+// build record that only the guessed (wrong) slug would find must stay
+// unseen.
+func TestWarnOldImagesNeverGuessesAProviderFromTheLayerDefault(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
 	b := fake.Bucket(t, "fugaro-runs-proj-1234")
-	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/app", Workflow: "web", BaseRef: release050, FugaroVersion: "0.5.0"})
+	data, err := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "svc", BaseRef: release050, FugaroVersion: "0.5.0"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	fake.Put("fugaro-runs-proj-1234", imagecheck.RecordKey(appSlug, "web"), data)
-	env := envOnRepos(b, map[string]localcfg.Repo{"acme/app": {Workflows: []string{"web"}}})
-	l := parseLayerOrFatal(t, testProjectLayer) // defaults.git.provider: github
+	guessedSlug := mustSlug("bitbucket", "acme/other")
+	fake.Put("fugaro-runs-proj-1234", imagecheck.RecordKey(guessedSlug, "svc"), data)
+	env := envOnRepos(b, map[string]localcfg.Repo{"acme/other": {Workflows: []string{"svc"}}})
 	var w bytes.Buffer
-	warnOldImages(ctx, &w, env, l)
-	if !strings.Contains(w.String(), "acme/app workflow web runs a job image built from") {
-		t.Fatalf("did not fall back to the layer's default provider: %s", w.String())
+	warnOldImages(ctx, &w, env)
+	if w.String() != "" {
+		t.Fatalf("warned using a provider guessed from the layer's default: %s", w.String())
 	}
 }
 

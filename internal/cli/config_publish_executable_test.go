@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/dimipaun/fugaro/internal/config"
@@ -178,7 +180,10 @@ func TestExecutableChangesTable(t *testing.T) {
 				prev = parseLayerOrFatal(t, c.prev)
 			}
 			next := parseLayerOrFatal(t, c.next)
-			got := executableChanges(prev, next)
+			got, err := executableChanges(prev, next)
+			if err != nil {
+				t.Fatalf("err = %v", err)
+			}
 			if len(got) == 0 && len(c.want) == 0 {
 				return
 			}
@@ -203,34 +208,51 @@ func equalStrings(a, b []string) bool {
 
 // TestExecutableKeyValuesCoversEveryExecutableKey loops over
 // config.ExecutableKeys (not a fixed, hand-copied list) and confirms none
-// of them hits executableKeyValues' default: panic case, so a key added
-// to config.ExecutableKeys later without a comparison here fails closed
-// (and loudly, in this test) rather than silently publishing unreviewed.
+// of them hits executableKeyValues' default: error case, so a key added
+// to config.ExecutableKeys later without a comparison here is caught here
+// (loudly, in CI) rather than only discovered on a live publish.
 func TestExecutableKeyValuesCoversEveryExecutableKey(t *testing.T) {
 	p := parseLayerOrFatal(t, layerPreamble+
 		"profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n      rerun_failed: { command: pytest, each: \"-k {id}\" }\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
 	).Profiles["svc"]
 	for _, key := range config.ExecutableKeys {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					t.Errorf("key %s: %v", key, r)
-				}
-			}()
-			executableKeyValues(map[string]string{}, p, key)
-		}()
+		if err := executableKeyValues(map[string]string{}, p, key); err != nil {
+			t.Errorf("key %s: %v", key, err)
+		}
 	}
 }
 
 // TestExecutableKeyValuesRefusesAnUnknownKey confirms the fail-closed
-// default itself still panics for a key it was never taught (the point
-// of the coverage test above: config.ExecutableKeys growing a new entry
-// must not silently skip it).
+// default itself still refuses a key it was never taught (the point of
+// the coverage test above: config.ExecutableKeys growing a new entry
+// must not silently skip it). It must return an error, not panic: this
+// runs on the live publish path, and a panic there would crash the
+// command instead of cleanly refusing to publish.
 func TestExecutableKeyValuesRefusesAnUnknownKey(t *testing.T) {
-	defer func() {
-		if recover() == nil {
-			t.Fatal("an unknown key did not panic")
-		}
-	}()
-	executableKeyValues(map[string]string{}, config.Profile{}, "workflows.*.a_future_key")
+	if err := executableKeyValues(map[string]string{}, config.Profile{}, "workflows.*.a_future_key"); err == nil {
+		t.Fatal("an unknown key was not refused")
+	}
+}
+
+// TestPublishRefusesWhenExecutableKeysGrowsAnUnknownEntry is the live-path
+// backstop itself: with config.ExecutableKeys temporarily given an entry
+// executableKeyValues has no case for (a test hook: the var is mutated
+// and restored, simulating a future key landing in config.ExecutableKeys
+// without a matching case here), config publish must refuse cleanly
+// (fail closed, no crash) and nothing is written.
+func TestPublishRefusesWhenExecutableKeysGrowsAnUnknownEntry(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "")
+	noAgentSession(t)
+	orig := config.ExecutableKeys
+	config.ExecutableKeys = append(slices.Clone(orig), "workflows.*.a_future_key")
+	t.Cleanup(func() { config.ExecutableKeys = orig })
+	_, _, err := execute(t, "config", "publish", "--executable-changes", layerFile(t, testProjectLayer))
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "cannot compare executable key workflows.*.a_future_key") {
+		t.Fatalf("err = %v", err)
+	}
+	if bucketText(t, f, config.LayerKey) != "" {
+		t.Fatal("published despite an unknown executable key")
+	}
 }

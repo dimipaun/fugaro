@@ -5,13 +5,18 @@ import (
 	"context"
 	"errors"
 
+	"cloud.google.com/go/storage"
+
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
 // writeLayerCopy makes builds/<slug>/project-layer.yaml, the copy the daily
 // image check and Cloud Build read (decision L6), hold data, writing only
-// when it differs; nil data removes a copy.
+// when it differs, except that an existing object over LayerMaxBytes
+// cannot be read to compare: it is always overwritten (ReadMax's old is
+// nil for it, so the equality check below never fires). nil data removes
+// a copy.
 func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []byte) error {
 	key := config.LayerCopyKey(slug)
 	old, gen, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
@@ -33,13 +38,34 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 			// writer's copy is never dropped out from under it.
 			return operatorWriteErr("the repository's copy was not removed", url, key, b.DeleteIf(ctx, key, gen, old))
 		}
-		// ErrTooLarge: the oversized object's generation is not known.
+		// ErrTooLarge: the content is unreadable, but the object's
+		// generation is still available as metadata (Attributes is a
+		// HEAD, not a GET of the oversized body): delete under that
+		// precondition too, so a concurrent writer's replacement (even
+		// one no longer oversized) is never dropped out from under it;
+		// ErrConflict there means someone replaced it, and the
+		// replacement is left alone, not deleted.
+		if attrs, aerr := b.Attributes(ctx, key); aerr == nil {
+			var sa storage.ObjectAttrs
+			if attrs.As(&sa) && sa.Generation != 0 {
+				layerCopyRemovalRace(ctx, b, key)
+				return operatorWriteErr("the repository's copy was not removed", url, key, b.DeleteIf(ctx, key, sa.Generation, nil))
+			}
+		}
+		// A driver with no generation concept (file://, mem://: the
+		// single-writer dev and test fakes, never a real concurrent
+		// writer): there is nothing to match against.
 		return operatorWriteErr("the repository's copy was not removed", url, key, b.Delete(ctx, key))
 	}
 	// Put, not WriteAll: only blobx's own writers classify a 403 as
 	// blobx.ErrForbidden (docs/design/bucket-iam.md §2.3).
 	return operatorWriteErr("the repository's copy was not written", url, key, b.Put(ctx, key, data, "application/yaml"))
 }
+
+// layerCopyRemovalRace is a test seam between writeLayerCopy's
+// oversized-removal read of the object's generation and its conditional
+// delete, mirroring config_publish.go's layerPublishRace.
+var layerCopyRemovalRace = func(ctx context.Context, b *blobx.Bucket, key string) {}
 
 // operatorWriteErr is a stand-in for bucket-iam plan Task 6's
 // internal/cli/operator_write.go (docs/plans/2026-10-08-bucket-iam.md),
@@ -48,9 +74,9 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 // blobx.ErrForbidden, a publish must say so plainly rather than failing
 // with a generic remote error. isAccessDenied is also checked: it is the
 // embedded gocloud Bucket's own unclassified 403 (the oversized-object
-// delete above goes through it, not a blobx writer, since its generation
-// is not known), which gocloud maps to a NotFound-shaped error that only
-// isAccessDenied's googleapi.Error check still finds. Delete this once
+// delete falls back to it only on a driver with no generation concept),
+// which gocloud maps to a NotFound-shaped error that only isAccessDenied's
+// googleapi.Error check still finds. Delete this once
 // operator_write.go lands with the identical function; its other call
 // sites (recipes.go, sharedcfg.go, imagecheck.go) still need wiring then.
 //
