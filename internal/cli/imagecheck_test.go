@@ -497,6 +497,45 @@ func TestLocalCheckNeverSubmits(t *testing.T) {
 	}
 }
 
+// TestLocalCheckUsesTheSelectedProjectsLayer: the local check's own
+// checkout config must resolve against the project --config (or
+// --project/--gcp-project) actually selected, never a flag-blind
+// re-selection (loadCheckoutConfig's own fallback, selectedProjectConfig,
+// which looks at $FUGARO_PROJECT/$FUGARO_CONFIG and the "exactly one
+// project config" default, none of which this test leaves anything for).
+// A flag-blind lc=nil forces findLayer into its cache-only mode (decision
+// L16's Lenient path) even though the real installation --config names is
+// reachable, so a file with no workflows: that needs the project layer
+// would wrongly refuse with "needs the project layer" instead of
+// resolving it from the (reachable, never actually offline) bucket.
+//
+// Mutation (run, restore): change runImageCheckLocal's
+// loadCheckoutResolved(ctx, "", lc, layerOptions{Lenient: true}) call to
+// pass nil instead of lc, and this test fails: the command then refuses
+// with "needs the project layer" before ever reaching originRepo.
+func TestLocalCheckUsesTheSelectedProjectsLayer(t *testing.T) {
+	f := newCloudFixture(t)
+	publishedLayer(t, f, testProjectLayer)
+	cfgPath := os.Getenv("FUGARO_CONFIG")
+	f.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	layerCheckout(t, f, minimalAnchored)
+	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
+	// and points XDG at an empty directory, and isolateCache gives the
+	// layer cache a directory of its own, so loadCheckoutConfig's
+	// flag-blind fallback has nothing to find by name, $FUGARO_*, or
+	// "exactly one project config", and nothing cached either — only
+	// --config below names the installation at all.
+	isolateProjects(t, t.TempDir())
+	isolateCache(t)
+	_, _, err := execute(t, "image", "check", "--config", cfgPath)
+	// The layer resolved fine (no "needs the project layer" refusal): the
+	// run reaches past it to the next thing this bare checkout lacks, its
+	// origin remote.
+	if !strings.Contains(err.Error(), "no origin remote") {
+		t.Fatalf("err = %v, want it to fail at the origin remote, not the project layer", err)
+	}
+}
+
 func TestImageStatusJSON(t *testing.T) {
 	f := newCloudFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)

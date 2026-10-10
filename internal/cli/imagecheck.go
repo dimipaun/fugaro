@@ -635,10 +635,17 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, checkoutCfg, err := loadCheckoutConfig(ctx)
+	// Passes lc, already selected from --config/--project/--gcp-project
+	// (openCloud, above): loadCheckoutConfig's own flag-blind
+	// selectedProjectConfig fallback could pick a different installation
+	// (or none), which would read the wrong project layer bucket, or none
+	// at all, and resolve this file against a stale cache or "unknown"
+	// instead of the one this command actually points at.
+	_, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{Lenient: true})
 	if err != nil {
 		return err
 	}
+	checkoutCfg := rf.Cfg
 	for _, name := range checkedWorkflows(checkoutCfg) {
 		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
 			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
