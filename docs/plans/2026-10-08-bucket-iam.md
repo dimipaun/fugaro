@@ -2068,6 +2068,7 @@ Expected: all pass. Read each job's log, not only the summary line: the `terrafo
 
 **Files:**
 - Modify: `docs/releases/v0.7.0.md` (created by the base image plan's Task 22, or created here if this lands first)
+- Modify: `SECURITY.md`
 
 - [ ] **Step 1: Write the section**
 
@@ -2087,6 +2088,10 @@ In `### For operators`, add these two steps after the base-image steps:
 - [ ] **Step 2: Merge with the release notes PR**
 
 The notes go into the same PR as the base image plan's release notes, before `/new-release 0.7.0` runs. That release's Highlights name this bullet. The user still owes Check 32.
+
+- [ ] **Step 3: Update SECURITY.md's launcher-write-access paragraph**
+
+SECURITY.md's "What is not on by default" section has a bullet, "Every launcher can write the whole runs bucket," that describes the gap this plan closes as present "until the bucket IAM hardening ships (release 0.7.0...)". Once this plan has merged, that sentence is stale. Replace the bullet with what changed: launchers now hold read access plus write access to `runs/` only, not `roles/storage.objectAdmin` on the whole bucket, so a launcher can no longer rewrite the project layer, a recipe, the shared config, a build record or another repository's cache. Keep whatever of this plan's own residual risks still apply (a compromised agent inside a run is unchanged, §"What exists today"/§13) in the bullet it belongs under instead.
 
 ---
 

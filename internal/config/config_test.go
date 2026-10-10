@@ -83,6 +83,11 @@ func TestParseProblems(t *testing.T) {
 		{"cpu", minimalYAML + "    resources: { cpu: -1 }\n", "workflows.server.resources.cpu", "must be at least 1", 0},
 		{"reserved secret", minimalYAML + "    secrets:\n      - { name: claude-oauth-token, env: TOK }\n", "workflows.server.secrets[0].name", "reserved", 0},
 		{"cache key", minimalYAML + "    cache:\n      - { key: [], paths: [~/.gradle] }\n", "workflows.server.cache[0].key", "at least one file", 0},
+		// A verbatim tag's own text stands in for !!str in yaml.v3's type
+		// error, so a fugaro.yaml can put anything a YAML tag allows,
+		// including an escape sequence or a bidi override character, into
+		// that text; the message must escape it rather than print it raw.
+		{"tagged value with control and bidi characters", strings.Replace(minimalYAML, "version: 1", "version: !<tag:x,%1B%5B2J%E2%80%AE> 1", 1), "", `cannot unmarshal tag:x,\u001b[2J\u202e`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -104,6 +109,55 @@ func hasProblem(ps []Problem, path, msg string, line int) bool {
 		}
 	}
 	return false
+}
+
+// TestParseVerbatimTagNeverEchoesValue: yamlValueRE strips the backtick-quoted
+// value after a type error's tag, whatever the tag's own text looks like.
+// yaml.v3 percent-decodes a verbatim tag, so that text can hold a space (not
+// just a control or bidi character showKey alone would escape); a regex that
+// only matched \S+ for the tag would then fail to match at all, leaving the
+// value (truncated to 7 characters by yaml.v3, but still a leak) in the
+// message.
+func TestParseVerbatimTagNeverEchoesValue(t *testing.T) {
+	const secret = "topsecretvalue1234567"
+	yaml := strings.Replace(minimalYAML, "version: 1", "version: !<tag:x%20y> "+secret, 1)
+	_, ps := Parse([]byte(yaml))
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.Message)
+	}
+	got := strings.Join(msgs, "; ")
+	if !strings.Contains(got, "cannot unmarshal tag:x y into int") {
+		t.Fatalf("problems %q, want one containing %q", got, "cannot unmarshal tag:x y into int")
+	}
+	if strings.Contains(got, secret[:7]) {
+		t.Fatalf("problems echo the value: %q", got)
+	}
+}
+
+// TestParseVerbatimTagWithFakeIntoNeverEchoesValue: a verbatim tag can
+// itself decode to text containing "` into " (the exact text yamlValueRE
+// looks for to find where the real value ends), so a lazy value group
+// would stop at that first, fake occurrence inside the tag and leave the
+// real value, after it, unstripped. yamlValueRE's value group must be
+// greedy, matching through to the last "` into " in the message, which is
+// always the real one (the type name after it is ours, never the
+// writer's).
+func TestParseVerbatimTagWithFakeIntoNeverEchoesValue(t *testing.T) {
+	const secret = "topsecretvalue1234567"
+	yaml := strings.Replace(minimalYAML, "version: 1", "version: !<tag:x%20%60y%60%20into%20z> "+secret, 1)
+	_, ps := Parse([]byte(yaml))
+	var msgs []string
+	for _, p := range ps {
+		msgs = append(msgs, p.Message)
+	}
+	got := strings.Join(msgs, "; ")
+	if !strings.Contains(got, "cannot unmarshal tag:x into int") {
+		t.Fatalf("problems %q, want one containing %q", got, "cannot unmarshal tag:x into int")
+	}
+	if strings.Contains(got, secret[:7]) {
+		t.Fatalf("problems echo the value: %q", got)
+	}
 }
 
 func TestSelectWorkflow(t *testing.T) {

@@ -175,7 +175,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, layerOptions{})
+	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{})
 	if err != nil {
 		return err
 	}
@@ -528,22 +528,32 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 // loads its fugaro.yaml, validates and checks it the way `fugaro validate`
 // does, and selects the workflow. Lenient (decision L16): image build
 // --local and image render, the two callers that worked offline before
-// 0.6.0.
+// 0.6.0. Neither resolves a cloud project config of its own (no cloud
+// flags), so loadCheckoutWorkflow falls back to selectedProjectConfig.
 func loadCheckout(ctx context.Context, workflow string) (root string, cfg *config.Config, name string, err error) {
-	return loadCheckoutWorkflow(ctx, workflow, layerOptions{Lenient: true})
+	return loadCheckoutWorkflow(ctx, workflow, nil, layerOptions{Lenient: true})
 }
 
-// loadCheckoutWorkflow is loadCheckout resolved over o. runImageBuildCloud
-// is its one strict caller: design §8 lists Cloud Build submission as
+// loadCheckoutWorkflow is loadCheckout resolved over o, against lc (nil:
+// loadCheckoutResolved falls back to selectedProjectConfig, the flag-blind
+// selection loadCheckout's two lenient callers have no better option for).
+// runImageBuildCloud is the one strict caller, and the one that already has
+// a project config of its own: design §8 lists Cloud Build submission as
 // strict ("fail when the bucket cannot be read"), alongside launches and
-// config show|layer|publish. Cloud Build's own layer-sha wiring (the
-// builds/<slug>/project-layer.yaml copy and _PROJECT_LAYER_SHA256, §8's
-// Cloud Build row) is Task 14, not built yet; until then, resolving
-// strictly here is the whole of this path's layer strictness — it only
-// refuses to submit a build over an unreadable bucket, same as a launch
-// would, rather than silently building on a stale or unknown layer.
-func loadCheckoutWorkflow(ctx context.Context, workflow string, o layerOptions) (root string, cfg *config.Config, name string, err error) {
-	root, rf, err := loadCheckoutResolved(ctx, "", nil, o)
+// config show|layer|publish. It must pass the same lc openCloud resolved
+// from --project/--config/--gcp-project, not nil: findLayer's bucket
+// comes from that lc's own bucket_url and runs_bucket (layer_resolve.go),
+// so re-deriving a flag-blind selection here could check a different
+// installation's bucket override, miss the layer silently, and let the
+// strict submission proceed as if none applied instead of refusing.
+// Cloud Build's own layer-sha wiring (the builds/<slug>/project-layer.yaml
+// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is Task 14, not
+// built yet; until then, resolving strictly here against the right lc is
+// the whole of this path's layer strictness — it only refuses to submit a
+// build over an unreadable bucket, same as a launch would, rather than
+// silently building on a stale or unknown layer.
+func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, cfg *config.Config, name string, err error) {
+	root, rf, err := loadCheckoutResolved(ctx, "", lc, o)
 	if err != nil {
 		return "", nil, "", err
 	}

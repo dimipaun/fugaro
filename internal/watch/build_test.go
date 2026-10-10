@@ -526,6 +526,40 @@ func TestRepoNameFromConfig(t *testing.T) {
 	}
 }
 
+// Blocks keep a stable order by repository name: a later spend change must
+// not move the cursor's block (design generic-tool G23).
+func TestBlocksKeepTheirOrderWhenSpendChanges(t *testing.T) {
+	build := func(aSpent, bSpent int64) View {
+		s := newState(t)
+		put(t, s, SrcAgents, "/", `{"a":{"r1":`+agent("a", "t", "")+`},"b":{"r2":`+agent("b", "t", "")+`}}`, t0)
+		put(t, s, SrcRepos, "/", fmt.Sprintf(`{"a":{"spent":%d},"b":{"spent":%d}}`, aSpent, bSpent), t0)
+		return Build(s, t0, Config{})
+	}
+	v1 := build(1, 9)
+	v2 := build(20, 9)
+	if v1.Repos[0].Slug != "a" || v2.Repos[0].Slug != "a" {
+		t.Fatalf("blocks re-sorted by spend: v1 %+v v2 %+v", v1.Repos, v2.Repos)
+	}
+}
+
+// runRow fills PRURL from the registry (design generic-tool G24: the
+// detail view's PR line) and DeadlineAt from StageDeadline (the detail
+// view's deadline line); a hostile or non-https PRURL is dropped.
+func TestRunRowPRURLAndDeadline(t *testing.T) {
+	e := budget.AgentEntry{Repo: "acme/app", PRURL: "https://github.com/acme/app/pull/9", StageDeadline: ms(t0.Add(time.Hour))}
+	r := runRow("acme__app", "r1", e, t0)
+	if r.PRURL != "https://github.com/acme/app/pull/9" {
+		t.Fatalf("PRURL = %q", r.PRURL)
+	}
+	if r.DeadlineAt != ms(t0.Add(time.Hour)) {
+		t.Fatalf("DeadlineAt = %d", r.DeadlineAt)
+	}
+	hostile := runRow("acme__app", "r1", budget.AgentEntry{Repo: "acme/app", PRURL: "javascript:alert(1)"}, t0)
+	if hostile.PRURL != "" {
+		t.Fatalf("hostile PRURL kept: %q", hostile.PRURL)
+	}
+}
+
 func TestRunRowRecipe(t *testing.T) {
 	r := runRow("acme__app", "r1", budget.AgentEntry{Repo: "acme/app", Recipe: "claude-solo", Coder: "opus", Reviewer: "opus"}, time.Now())
 	if r.Recipe != "claude-solo" {

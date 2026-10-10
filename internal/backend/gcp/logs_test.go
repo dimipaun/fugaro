@@ -57,6 +57,20 @@ func TestLogsOnceAndFollow(t *testing.T) {
 	}
 }
 
+// The fake's FailReads lets a caller prove it reads no log at all (fugaro
+// logs --url).
+func TestLogsFailReads(t *testing.T) {
+	ctx := context.Background()
+	b, fr, fl := newTestBackend(t)
+	fr.AddJob(webJob, "4", "8Gi")
+	ref, _ := b.Launch(ctx, backend.LaunchSpec{Repo: backend.RepoRef{Repo: "acme/app", Slug: "acme-app"}, Workflow: "web", RunID: "20260927-100000-abcd"})
+	fl.FailReads = true
+	err := b.Logs(ctx, backend.LogQuery{Execution: ref.Name}, func(backend.LogEntry) error { return nil })
+	if err == nil {
+		t.Fatal("Logs with FailReads = nil error, want one")
+	}
+}
+
 // Cloud Logging can ingest an entry after a newer one. Follow reads back
 // over a lookback window, so the late entry is emitted, once.
 func TestLogsFollowCatchesLateIngestedEntries(t *testing.T) {

@@ -258,6 +258,8 @@ Each consumer below runs the same `config.Resolve` on the same two inputs. Each 
 - `project_layer: {sha256, generation, applied}`, which traces a run to the exact layer text;
 - `config_sha256`, which traces it to the exact resolved config.
 
+**Showing it.** `fugaro ls` adds a LAYER column once any listed run has `project_layer`: `gen N`, or `gen N (not applied)` for a run whose `fugaro.yaml` at the ref didn't name the layer's project and gcp_project, so it resolved without the layer (a launch from outside a checkout); a run with none shows `-`. `fugaro diagnose` adds a `Config:` line: `project layer generation N (sha256 <short>)`, `, not applied` when it wasn't, and `; resolved sha256 <short>` when the run also recorded one; a run with no layer but a resolved sum shows `no project layer; resolved sha256 <short>` instead. `--json` carries both fields on every row unredacted: `project_layer: {sha256, generation, applied}` and `config_sha256`. `result.json` itself is launcher-written and read with a plain unmarshal, not checked against a schema, so neither command trusts its own sha256 or generation at face value: a value that isn't a 64-character hex sha256, or a negative generation, shows as `(invalid)` or `-` in the text view rather than being sliced or printed as though it were real; `--json` still carries it unmodified, since a machine reader may want the raw value.
+
 **Why a per-repository copy for the check job and Cloud Build (decision L6).** The alternatives were weighed as follows:
 
 - **The check job's spec env (`FUGARO_CHECK_SPEC`).** Terraform renders it, so every publish would need a job update for each of 50 repositories, and the layer's 64 KiB is large for an env var.

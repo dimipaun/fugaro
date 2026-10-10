@@ -113,8 +113,12 @@ type RunRow struct {
 	HasAge    bool
 	Health    Health
 	Deadline  Deadline
-	Halted    string // reason, "" when not halted
-	StartedAt int64  // epoch ms, for ordering
+	// DeadlineAt is e.StageDeadline, epoch ms; 0 when the registry has none.
+	// The detail view formats it; Deadline above is only the OK/near/over
+	// flag the row and the colour of FLAGS use.
+	DeadlineAt int64
+	Halted     string // reason, "" when not halted
+	StartedAt  int64  // epoch ms, for ordering
 
 	// Queued marks a run known only from the runs bucket (a launch claim or
 	// launch.json, no registry entry yet): its stage, round and spend are
@@ -125,6 +129,20 @@ type RunRow struct {
 	Stuck       bool
 	Workflow    string
 	RequestedBy string
+
+	// Finished marks a row built from the runs bucket's result.json, not
+	// RTDB: the run's registry entry is already gone (design generic-tool
+	// §10.1). Outcome is the record's outcome (ready, draft or none);
+	// Failed is set when Stage's status is not "succeeded"; PRNumber, when
+	// the run opened one.
+	Finished bool
+	Outcome  string
+	Failed   bool
+	// PRURL is the run's PR link, once it has one: for a live run, from the
+	// registry's prUrl (design generic-tool G24); for a finished row, from
+	// the runs bucket's result.json. Always an https:// URL or "" (cleanURL).
+	PRURL    string
+	PRNumber int
 }
 
 // RepoBlock is one repository.
@@ -136,6 +154,9 @@ type RepoBlock struct {
 	Burn                     Burn
 	Kill                     KillState
 	Runs                     []RunRow
+	// Finished are rows from the runs bucket, not RTDB (MergeFinished):
+	// runs whose registry entry is already gone. Newest first.
+	Finished []RunRow
 }
 
 // View is the typed snapshot a renderer draws.
@@ -337,15 +358,13 @@ func repoDisplayName(slug string, cfg Config) string {
 	return name
 }
 
-// lessRepoBlock orders repository blocks: killed first, then by spend, then
-// by name and slug (Build and MergeQueued share this so a queued-only
-// repository sorts in among the rest the same way).
+// lessRepoBlock orders repository blocks: killed first, then by name and
+// slug, so a later spend change never moves a block the cursor may be on
+// (design generic-tool G23). Build and MergeQueued share this so a
+// queued-only repository sorts in among the rest the same way.
 func lessRepoBlock(a, b RepoBlock) bool {
 	if a.Kill.On != b.Kill.On {
 		return a.Kill.On
-	}
-	if sa, sb := a.Spent+a.Notional, b.Spent+b.Notional; sa != sb {
-		return sa > sb
 	}
 	if a.Name != b.Name {
 		return a.Name < b.Name
@@ -370,13 +389,15 @@ func runRow(slug, run string, e budget.AgentEntry, now time.Time) RunRow {
 	r := RunRow{
 		Run: clean(unkey(run)), Slug: slug,
 		Title: dash(e.Title), Stage: dash(e.Stage), Verify: dash(e.Verify), Auth: dash(e.Auth),
-		Round:     "-",
-		Notional:  e.Auth == "oauth",
-		Spent:     nonneg(e.Spent),
-		HasSpent:  e.Spent != 0,
-		Halted:    clean(e.Halted),
-		Recipe:    clean(e.Recipe),
-		StartedAt: e.StartedAt,
+		Round:      "-",
+		Notional:   e.Auth == "oauth",
+		Spent:      nonneg(e.Spent),
+		HasSpent:   e.Spent != 0,
+		Halted:     clean(e.Halted),
+		Recipe:     clean(e.Recipe),
+		StartedAt:  e.StartedAt,
+		PRURL:      cleanURL(e.PRURL),
+		DeadlineAt: e.StageDeadline,
 	}
 	if e.Round > 0 {
 		r.Round = strconv.Itoa(e.Round)

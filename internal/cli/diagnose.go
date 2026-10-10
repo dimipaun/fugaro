@@ -215,7 +215,7 @@ func diagnose(ctx context.Context, env *cloudEnv, s *runstore.Store, l *runstore
 		// whole job is the logs, still fails with exit 2.
 		fmt.Fprintf(warn, "warning: reading the logs: %s\n", oneLine(red(err.Error())))
 	} else if seen == 0 {
-		emptyViewHint(warn, env)
+		emptyViewHint(warn, env, l.LogURL)
 	}
 	for i := max(0, seen-diagnoseLogLines); i < seen; i++ {
 		d.LogTail = append(d.LogTail, tail[i%diagnoseLogLines])
@@ -457,6 +457,18 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	fmt.Fprintf(&b, "Status:   %s\n", oneLine(status))
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
+	}
+	if pl := r.ProjectLayer; pl != nil && validGeneration(pl.Generation) {
+		line := fmt.Sprintf("Config:   project layer generation %d (sha256 %s)", pl.Generation, shortSHA(pl.SHA256))
+		if !pl.Applied {
+			line += ", not applied"
+		}
+		if r.ConfigSHA256 != "" {
+			line += "; resolved sha256 " + shortSHA(r.ConfigSHA256)
+		}
+		fmt.Fprintf(&b, "%s\n", oneLine(line))
+	} else if r.ConfigSHA256 != "" {
+		fmt.Fprintf(&b, "Config:   no project layer; resolved sha256 %s\n", oneLine(shortSHA(r.ConfigSHA256)))
 	}
 	if h := d.Halt; h != nil {
 		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))

@@ -1,0 +1,18 @@
+# mise's system config in the Fugaro base image (design base-image.md section
+# 4): a file, because the agent's environment is an allowlist that carries no
+# MISE_* variable.
+[settings]
+# A repository's mise config can run code (env sources, hooks, tasks); so can
+# everything else in the checkout the agent works on.
+trusted_config_paths = ["/work/repo"]
+# Only mise.toml, .tool-versions and their siblings decide what is installed:
+# the image config hash covers exactly those files.
+idiomatic_version_file_enable_tools = []
+# A tool missing at run time fails loudly rather than downloading mid-run.
+auto_install = false
+not_found_auto_install = false
+yes = true
+
+[settings.node]
+# pnpm and Yarn through package.json's packageManager, as on web-node today.
+corepack = true

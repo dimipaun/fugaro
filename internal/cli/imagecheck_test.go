@@ -634,6 +634,45 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 	}
 }
 
+// TestCheckJobForbiddenWriteStaysExitRemoteError: the daily check job runs
+// as the build account, the only writer of check.json, so a check.json
+// write it is forbidden to make means that account's builds/ grant itself
+// is broken (an infrastructure fault for an operator to fix with Terraform,
+// not something "ask an operator to publish it" or fugaro init --operator
+// addresses). The job's documented exit 2 for a failed check
+// (imagecheck.go's "It exits 2 when the check itself failed") holds; the
+// refusal text in the JSON log line names the build account's Terraform
+// grant, not the operator role, so an on-call engineer is pointed at the
+// right fix.
+func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	gcs := gcpfake.NewGCS(t)
+	gcs.DenyWrites(checkBucket, "builds/")
+	checkOpenBucket = func(context.Context, string) (*blobx.Bucket, error) { return gcs.Bucket(t, checkBucket), nil }
+	out, stderr, err := executeJob(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed ||
+		!strings.Contains(lines[0].Error, "Terraform IAM condition") || !strings.Contains(lines[0].Error, "build service account") {
+		t.Fatalf("lines = %+v", lines)
+	}
+	// The real fix is the Terraform grant, not adding a person as an
+	// operator: the job never runs as a launcher asking to publish
+	// something.
+	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro init --operator") {
+		t.Errorf("error points at the operator role, not the build account's Terraform grant: %s", lines[0].Error)
+	}
+	// "nothing was published" would be false here: the build did run.
+	if strings.Contains(lines[0].Error, "nothing was published") {
+		t.Errorf("error says nothing was published, but a build ran: %s", lines[0].Error)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d, want 1 (the build runs; only recording it is refused)", buildPosts(f.fb))
+	}
+}
+
 // TestCheckJobUnreadableStateFailsSafe: check.json holds the back-off
 // state, so an unreadable one stops the check (no build, ERROR, exit 2)
 // and is left for a human, instead of being replaced.

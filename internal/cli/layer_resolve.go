@@ -4,10 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
@@ -109,7 +107,7 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 	case o.File != "":
 		text, err := readLayerFile(o.File)
 		if err != nil {
-			return foundLayer{}, userErr("%v", err)
+			return foundLayer{}, userErr("%s", pluginwire.Printable(oneLineCLI(err.Error())))
 		}
 		l, err := parse(text, o.File)
 		return foundLayer{Layer: l, Where: o.File}, err
@@ -295,29 +293,14 @@ func parseCheckoutFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Conf
 	return rf.Cfg, rf.Problems
 }
 
-// readLayerFile reads a project layer file the user names: a regular file
-// only, opened without blocking, read through a cap of the size limit.
+// readLayerFile reads a project layer file the user names (--project-layer
+// FILE): config.ReadRegular, the one reader of an untrusted path in this
+// codebase (readFugaroYAML is its other caller) — never a symlink, which
+// could name any file the user can read, nor a FIFO or a device, which
+// could block the read or never end; at most config.LayerMaxBytes, checked
+// before the file is opened. A missing file is os.ErrNotExist.
 func readLayerFile(path string) ([]byte, error) {
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", path)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, config.LayerMaxBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > config.LayerMaxBytes {
-		return nil, fmt.Errorf("%s is over the %d KiB limit", path, config.LayerMaxBytes>>10)
-	}
-	return data, nil
+	return config.ReadRegular(path, config.LayerMaxBytes)
 }
 
 // layerProblemsText is ps as one line.

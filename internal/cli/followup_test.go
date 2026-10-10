@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +13,10 @@ import (
 
 	"gocloud.dev/blob"
 
+	"github.com/dimipaun/fugaro/internal/backend"
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
+	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/runstore"
 	"github.com/dimipaun/fugaro/internal/task"
@@ -190,6 +195,361 @@ func TestRunPRRefusesLiveLock(t *testing.T) {
 	putLock(time.Now().Add(-time.Minute))
 	if _, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7"); err != nil {
 		t.Fatalf("expired lock: %v", err)
+	}
+}
+
+// TestRunPRForgedRecordNeverBypassesTheLock is the security-review test:
+// a launcher can write any run's result.json (bucket-iam.md §10, L3) even
+// under the 0.7.0 hardening, which closes locks/ itself but not runs/. If
+// checkBranchLock read it, writing {"status":"succeeded"} over a live
+// run's record would let a second launch proceed to push the same branch.
+// Every record shape here — forged terminal, genuinely running, or
+// missing entirely — must still refuse: only the backend's own word on
+// the holder's execution (below) can lift a live lock.
+func TestRunPRForgedRecordNeverBypassesTheLock(t *testing.T) {
+	holder := runIDAt(0, "000100", "bbbb")
+	cases := []struct {
+		name string
+		rec  *runstore.Record
+	}{
+		{"forged terminal record (succeeded)", &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Workflow: "web",
+			Status: runstore.StatusSucceeded, Stage: "writeback", Outcome: runstore.OutcomeReady, StartedAt: time.Now().Add(-2 * time.Hour)}},
+		{"genuinely running record", &runstore.Record{Version: 1, RunID: holder, Repo: "acme/app", Workflow: "web",
+			Status: runstore.StatusRunning, Stage: "implement", Outcome: runstore.OutcomeNone, StartedAt: time.Now().Add(-2 * time.Hour)}},
+		{"no record at all", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newCloudFixture(t)
+			seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+			if c.rec != nil {
+				writeRecord(t, f, holder, c.rec)
+			}
+			data, _ := json.Marshal(lock.Holder{RunID: holder, ExpiresAt: time.Now().Add(time.Hour)})
+			putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+			wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
+		})
+	}
+}
+
+// A live lock is taken over, and deleted outright (not just bypassed), the
+// moment the backend confirms its holder's own execution has ended: the
+// one signal a launcher cannot forge. Deleting it, rather than merely
+// deciding to launch past it, is what lets the runner's own lock.Acquire
+// (the only place a lock is ever taken over) succeed right after: it
+// creates the lock afresh, finding nothing there to conflict with.
+func TestRunPRTakesOverLockWhenBackendConfirmsTermination(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	key := lock.Key(appSlug, "fugaro/"+rootID)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+	_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if err != nil {
+		t.Fatalf("a lock whose holder's execution the backend confirms ended: %v (%s)", err, errOut)
+	}
+	if !strings.Contains(errOut, holder) {
+		t.Fatalf("stderr = %q, want a note naming %s", errOut, holder)
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	if _, err := os.Stat(path); err == nil {
+		t.Fatal("the lock survives a takeover the backend confirmed")
+	}
+}
+
+// Neither signal proves the holder over: its execution is genuinely still
+// running.
+func TestRunPRRefusesLockWhenExecutionStillRunning(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateRunning)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	n := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(f.run.Executions()) != n {
+		t.Fatal("a follow-up launched even though its holder's execution is still running")
+	}
+}
+
+// Nor does an execution the backend has never heard of (never started, or
+// long forgotten): "unknown" is not "terminal".
+func TestRunPRRefusesLockWhenExecutionUnknown(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	const unknownExec = "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/fugaro-acme-app-web-99999"
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: unknownExec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+	wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
+}
+
+// mismatchedNameBackend answers every Execution call truthfully except
+// that it renames the result, as if the backend had, by some fault,
+// confused two executions.
+type mismatchedNameBackend struct {
+	backend.Backend
+	answerAs string
+}
+
+func (m mismatchedNameBackend) Execution(ctx context.Context, name string) (backend.Execution, error) {
+	e, err := m.Backend.Execution(ctx, name)
+	if err != nil {
+		return e, err
+	}
+	e.Name = m.answerAs
+	return e, nil
+}
+
+// executionTerminal's defensive backend.SameExecution check matters: a
+// backend that answers Terminal() for a DIFFERENT execution than the one
+// asked about (a bug, or a name collision) must never be read as proof
+// the asked-about one is over, or a launcher could take over a live
+// lock on another run's unrelated termination.
+func TestCheckBranchLockRequiresTheSameExecutionNamed(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	env.be = mismatchedNameBackend{Backend: env.be, answerAs: "projects/proj-1234/locations/us-east5/jobs/fugaro-acme-app-web/executions/some-other-run"}
+	branch := "fugaro/" + rootID
+	key := lock.Key(appSlug, branch)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	if _, err := env.bucket.Create(context.Background(), key, data, "application/json"); err != nil {
+		t.Fatal(err)
+	}
+	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
+		t.Fatalf("err = %v, want branch busy naming %s", err, holder)
+	}
+	if ok, _ := env.bucket.Exists(context.Background(), key); !ok {
+		t.Fatal("the lock was taken over on a mismatched execution name")
+	}
+}
+
+// Under the 0.7.0 bucket hardening a launcher's delete of locks/ answers
+// 403: checkBranchLock must print the clear operator message, naming the
+// gcloud command, rather than crash or silently refuse as plain "branch
+// busy" (which would send an operator looking at the wrong thing — the
+// backend has, in fact, already proven the holder over).
+func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	g := gcpfake.NewGCS(t)
+	env := envOn(t, f, g.Bucket(t, "runs"))
+	defer env.Close()
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	branch := "fugaro/" + rootID
+	key := lock.Key(appSlug, branch)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	wantGen, err := env.bucket.Create(context.Background(), key, data, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.DenyWrites("runs", "locks/")
+	var errOut strings.Builder
+	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), &errOut)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "an operator must clear it") ||
+		!strings.Contains(err.Error(), "gcloud storage rm") || !strings.Contains(err.Error(), holder) {
+		t.Fatalf("err = %v", err)
+	}
+	// The generation named is the one Takeover itself verified (its own
+	// read, right before the refused delete), never a later re-read: a
+	// second read, after the delete already failed, could by then see a
+	// different run's lock and print its generation instead, which an
+	// operator running the command by hand would delete.
+	wantSuffix := fmt.Sprintf("#%d", wantGen)
+	if !strings.HasSuffix(strings.TrimSpace(err.Error()), wantSuffix) {
+		t.Fatalf("err = %v, want it to end with %s (the lock's own generation)", err, wantSuffix)
+	}
+	if ok, _ := env.bucket.Exists(context.Background(), key); !ok {
+		t.Fatal("a forbidden delete must not be reported as if the lock were gone")
+	}
+}
+
+// TestLockClearMessageNeverReReadsTheGeneration pins the fix directly: a
+// mutation that had lockClearMessage (or its caller) read the lock fresh,
+// instead of using the generation lock.Takeover already verified, would
+// pass TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand above as
+// long as nothing else touches the lock in between — which is exactly
+// what a real race can do. Here, right where Takeover's own
+// beforeTakeoverDelete hook fires (after its read, before its refused
+// delete attempt), a new holder replaces the lock entirely, under a new
+// generation. The printed command must still name the OLD, already-
+// verified generation and run ID: a fresh read at this point would name
+// the NEW holder's lock, which a launcher running the command by hand
+// would then delete out from under a live run.
+func TestLockClearMessageNeverReReadsTheGeneration(t *testing.T) {
+	f := newCloudFixture(t)
+	g := gcpfake.NewGCS(t)
+	env := envOn(t, f, g.Bucket(t, "runs"))
+	defer env.Close()
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	branch := "fugaro/" + rootID
+	key := lock.Key(appSlug, branch)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	wantGen, err := env.bucket.Create(context.Background(), key, data, "application/json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.DenyWrites("runs", "locks/")
+	rival := runIDAt(0, "000200", "cccc")
+	var restore func()
+	restore = lock.SetBeforeTakeoverDelete(func() {
+		restore() // fire once
+		rivalData, _ := json.Marshal(lock.Holder{RunID: rival, ExpiresAt: time.Now().Add(time.Hour)})
+		g.Put("runs", key, rivalData) // a direct write: bypasses DenyWrites entirely
+	})
+	t.Cleanup(func() {
+		if restore != nil {
+			restore()
+		}
+	})
+	err = checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), holder) || strings.Contains(err.Error(), rival) {
+		t.Fatalf("err = %v, want it to name %s, not the rival %s that replaced the lock afterward", err, holder, rival)
+	}
+	wantSuffix := fmt.Sprintf("#%d", wantGen)
+	if !strings.HasSuffix(strings.TrimSpace(err.Error()), wantSuffix) {
+		t.Fatalf("err = %v, want it to end with %s (the generation verified before the rival replaced the lock)", err, wantSuffix)
+	}
+}
+
+// TestLockClearMessageRefusesToNameAnUnpinnedCommand: when Takeover never
+// verified a generation at all (gen == 0 — its own read failed before any
+// delete was even attempted), lockClearMessage must not print a gcloud
+// storage rm command: an unpinned one would delete whatever is at that
+// key when an operator eventually runs it, which could by then be a
+// different, live run's lock. It says the lock couldn't be read and asks
+// for a look by hand instead.
+func TestLockClearMessageRefusesToNameAnUnpinnedCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	bucket, err := blobx.Open(context.Background(), f.bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := envOn(t, f, bucket)
+	defer env.Close()
+	msg := lockClearMessage(env, "locks/acme-app/deadbeef", 0, "20261010-000100-bbbb")
+	if strings.Contains(msg, "gcloud storage rm") {
+		t.Fatalf("message = %q, must not print an unpinned rm command", msg)
+	}
+	if !strings.Contains(msg, "could not be read") || !strings.Contains(msg, "20261010-000100-bbbb") {
+		t.Fatalf("message = %q, want it to say the lock could not be read, naming the run", msg)
+	}
+}
+
+// TestLockMessagesSanitizeTheRunID: a lock's run_id is read straight back
+// from the lock object, which a launcher could write with any bytes in
+// it (before locks/ is write-protected, or from a lock an old, buggy
+// runner wrote); both the takeover note (checkBranchLock, on success) and
+// lockClearMessage (on a refused delete) must never let a raw newline or
+// an escape sequence from it reach the terminal.
+func TestLockMessagesSanitizeTheRunID(t *testing.T) {
+	const hostileID = "bbbb\nrival\x1b[31mred\x1b[0m"
+
+	t.Run("the cleared note", func(t *testing.T) {
+		f := newCloudFixture(t)
+		seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		f.run.SetState(exec, backend.StateFailed)
+		data, _ := json.Marshal(lock.Holder{RunID: hostileID, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+		putBuildObject(t, f, lock.Key(appSlug, "fugaro/"+rootID), data)
+		_, errOut, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+		if err != nil {
+			t.Fatalf("a lock whose holder's execution the backend confirms ended: %v (%s)", err, errOut)
+		}
+		if strings.Contains(errOut, "bbbb\nrival") || strings.Contains(errOut, "\x1b[31m") {
+			t.Fatalf("stderr = %q, a raw control character or escape sequence from the run ID leaked through", errOut)
+		}
+	})
+
+	t.Run("the operator command", func(t *testing.T) {
+		f := newCloudFixture(t)
+		g := gcpfake.NewGCS(t)
+		env := envOn(t, f, g.Bucket(t, "runs"))
+		defer env.Close()
+		exec := f.run.Start(gcp.JobName(appSlug, "web"))
+		f.run.SetState(exec, backend.StateFailed)
+		branch := "fugaro/" + rootID
+		key := lock.Key(appSlug, branch)
+		data, _ := json.Marshal(lock.Holder{RunID: hostileID, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+		if _, err := env.bucket.Create(context.Background(), key, data, "application/json"); err != nil {
+			t.Fatal(err)
+		}
+		g.DenyWrites("runs", "locks/")
+		err := checkBranchLock(context.Background(), env, appSlug, branch, time.Now(), io.Discard)
+		if err == nil {
+			t.Fatal("want a refusal")
+		}
+		if strings.Contains(err.Error(), "bbbb\nrival") || strings.Contains(err.Error(), "\x1b[31m") {
+			t.Fatalf("err = %q, a raw control character or escape sequence from the run ID leaked through", err.Error())
+		}
+	})
+}
+
+// A new run acquires the branch lock between checkBranchLock's own
+// backend-confirmed decision and lock.Takeover's delete: Takeover's
+// generation-matched delete loses the race (ErrHolderChanged), and
+// checkBranchLock must map that to "branch busy", never to success — a
+// mutation that instead treated ErrHolderChanged as nil would launch a
+// second run straight into the one just acquired.
+func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
+	f := newCloudFixture(t)
+	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
+	holder := runIDAt(0, "000100", "bbbb")
+	exec := f.run.Start(gcp.JobName(appSlug, "web"))
+	f.run.SetState(exec, backend.StateFailed)
+	key := lock.Key(appSlug, "fugaro/"+rootID)
+	data, _ := json.Marshal(lock.Holder{RunID: holder, Execution: exec, ExpiresAt: time.Now().Add(time.Hour)})
+	putBuildObject(t, f, key, data)
+
+	rival := runIDAt(0, "000200", "cccc")
+	var restore func()
+	restore = lock.SetBeforeTakeoverDelete(func() {
+		restore() // fire once
+		rivalData, _ := json.Marshal(lock.Holder{RunID: rival, ExpiresAt: time.Now().Add(time.Hour)})
+		putBuildObject(t, f, key, rivalData)
+	})
+	t.Cleanup(func() {
+		if restore != nil {
+			restore()
+		}
+	})
+	n := len(f.run.Executions())
+	_, _, err := execute(t, "run", "--repo", "acme/app", "--pr", "7")
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "branch busy: run "+holder) {
+		t.Fatalf("err = %v, want branch busy naming %s", err, holder)
+	}
+	if len(f.run.Executions()) != n {
+		t.Fatal("a follow-up launched despite the lock changing during its takeover")
+	}
+	path := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), key)
+	data2, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got lock.Holder
+	if json.Unmarshal(data2, &got) != nil || got.RunID != rival {
+		t.Fatalf("the rival's lock did not survive: %s", data2)
 	}
 }
 

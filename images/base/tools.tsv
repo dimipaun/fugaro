@@ -1,0 +1,65 @@
+# The Fugaro base image's presence checks (design base-image.md section 6),
+# run by fugaro image selftest: "critical" rows in every derived image's
+# smoke, every row in the base's CI smoke, each with HOME set to an empty
+# directory and, in the smokes, no network. Fields, tab-separated: the
+# command (on PATH, or an absolute path); the argv that must exit 0, or "-"
+# for presence only; the architectures it exists on, "all" or a comma list
+# of amd64 and arm64; the tier: critical, kit or harness.
+fugaro	fugaro version	all	critical
+claude	claude --version	all	critical
+git	git --version	all	critical
+gh	gh --version	all	critical
+mise	mise --version	all	critical
+tini	tini --version	all	critical
+/usr/local/lib/fugaro/finalize-checkout	-	all	critical
+fugaro-services	-	all	kit
+git-lfs	git-lfs version	all	kit
+ssh	ssh -V	all	kit
+curl	curl --version	all	kit
+wget	wget --version	all	kit
+http	http --version	all	kit
+dig	dig -v	all	kit
+nc	-	all	kit
+rg	rg --version	all	kit
+fd	fd --version	all	kit
+fzf	fzf --version	all	kit
+tree	tree --version	all	kit
+bat	bat --version	all	kit
+eza	eza --version	all	kit
+jq	jq --version	all	kit
+yq	yq --version	all	kit
+sqlite3	sqlite3 --version	all	kit
+make	make --version	all	kit
+cmake	cmake --version	all	kit
+gcc	gcc --version	all	kit
+clang	clang --version	all	kit
+pkg-config	pkg-config --version	all	kit
+autoconf	autoconf --version	all	kit
+automake	automake --version	all	kit
+libtoolize	libtoolize --version	all	kit
+shellcheck	shellcheck --version	all	kit
+bash	bash --version	all	kit
+diff	diff --version	all	kit
+patch	patch --version	all	kit
+less	less --version	all	kit
+vi	-	all	kit
+nano	nano --version	all	kit
+zip	zip -v	all	kit
+unzip	-	all	kit
+xz	xz --version	all	kit
+zstd	zstd --version	all	kit
+tar	tar --version	all	kit
+rsync	rsync --version	all	kit
+ps	ps --version	all	kit
+gpg	gpg --version	all	kit
+gpgv	gpgv --version	all	kit
+python3	python3 --version	all	kit
+gcloud	gcloud --version	all	kit
+docker	docker --version	all	kit
+codex	codex --version	all	harness
+gemini	gemini --version	all	harness
+pi	pi --version	all	harness
+qwen	qwen --version	all	harness
+opencode	opencode --version	all	harness
+goose	goose --version	all	harness
+crush	crush --version	all	harness

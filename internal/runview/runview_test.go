@@ -1,6 +1,7 @@
 package runview
 
 import (
+	"encoding/json"
 	"math"
 	"strings"
 	"testing"
@@ -386,5 +387,40 @@ func TestJoinRecipe(t *testing.T) {
 	}
 	if got := Join(Input{Task: spec}, prices, now); got.Recipe != "" {
 		t.Fatalf("none: %q", got.Recipe)
+	}
+}
+
+func TestJoinCarriesTheProjectLayer(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}
+	r.ConfigSHA256 = strings.Repeat("b", 64)
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.ProjectLayer == nil || row.ProjectLayer.Generation != 3 || row.ConfigSHA256 != r.ConfigSHA256 {
+		t.Fatalf("row %+v", row)
+	}
+}
+
+// TestRowProjectLayerFieldsKeepTheirJSONNames pins the wire names ls --json
+// and diagnose --json promise in docs/recipes.md: a rename here is a
+// breaking change to that document, caught only by checking the actual
+// marshaled keys rather than the Go field names.
+func TestRowProjectLayerFieldsKeepTheirJSONNames(t *testing.T) {
+	row := Row{
+		ProjectLayer: &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true},
+		ConfigSHA256: strings.Repeat("b", 64),
+	}
+	data, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["project_layer"]; !ok {
+		t.Errorf("no project_layer key: %s", data)
+	}
+	if _, ok := m["config_sha256"]; !ok {
+		t.Errorf("no config_sha256 key: %s", data)
 	}
 }
