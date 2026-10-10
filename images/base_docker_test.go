@@ -85,8 +85,21 @@ func TestBaseImageHardening(t *testing.T) {
 	if got := testutil.Docker(t, "run", "--rm", img, "id", "-u"); got != "1000" {
 		t.Errorf("uid %s", got)
 	}
-	if out, err := exec.Command("docker", "run", "--rm", img, "sudo", "-n", "true").CombinedOutput(); err == nil {
-		t.Errorf("passwordless sudo works: %s", out)
+	// sudo -n true's own exit status (not docker run's, and not "err == nil")
+	// decides the check: an unrelated docker-run failure (missing image, a
+	// bad daemon) would otherwise look identical to "sudo refused", and a
+	// missing sudo binary (sh's "not found", exit 127) would otherwise look
+	// identical to "sudo refused" too, passing both vacuously.
+	sudoProbe := testutil.Docker(t, "run", "--rm", img, "sh", "-c", "sudo -n true >/dev/null 2>&1; echo EXIT=$?")
+	switch sudoProbe {
+	case "EXIT=0":
+		t.Errorf("passwordless sudo works")
+	case "EXIT=127":
+		t.Errorf("sudo is not installed in the base image")
+	default:
+		if !strings.HasPrefix(sudoProbe, "EXIT=") {
+			t.Errorf("sudo -n true probe produced no exit marker: %q", sudoProbe)
+		}
 	}
 	found := testutil.Docker(t, "run", "--rm", "--user", "0", img, "sh", "-c", "find / -xdev -perm /6000 -type f | sort")
 	want := "/usr/bin/chage\n/usr/bin/chfn\n/usr/bin/chsh\n/usr/bin/expiry\n/usr/bin/gpasswd\n/usr/bin/mount\n/usr/bin/newgrp\n/usr/bin/passwd\n/usr/bin/su\n/usr/bin/sudo\n/usr/bin/umount\n/usr/sbin/unix_chkpwd"
@@ -112,8 +125,14 @@ func TestBaseImageTools(t *testing.T) {
 	if err != nil || !strings.Contains(string(out), `"passed":true`) {
 		t.Fatalf("presence checks: %v\n%s", err, out)
 	}
-	if out, err := exec.Command("docker", "run", "--rm", img, "sh", "-c", "command -v node").CombinedOutput(); err == nil {
-		t.Errorf("a node is on PATH in the bare base: %s", out)
+	// As with the sudo probe above, the exit marker (not "err == nil") tells
+	// "node is on PATH" apart from an unrelated docker-run failure, which
+	// would otherwise look identical to "node is absent" and pass vacuously.
+	// dash's "command -v" exits 127 (not 1) for a missing command, so the
+	// check is "found" (EXIT=0) vs. anything else, not a specific code.
+	nodeProbe := testutil.Docker(t, "run", "--rm", img, "sh", "-c", "command -v node 2>&1; echo EXIT=$?")
+	if strings.HasSuffix(nodeProbe, "EXIT=0") {
+		t.Errorf("a node is on PATH in the bare base: %s", nodeProbe)
 	}
 	if got := testutil.Docker(t, "run", "--rm", img, "mise", "settings", "get", "trusted_config_paths"); !strings.Contains(got, "/work/repo") {
 		t.Errorf("mise does not trust /work/repo: %s", got)
