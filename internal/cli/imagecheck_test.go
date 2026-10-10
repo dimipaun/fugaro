@@ -529,10 +529,10 @@ func TestLocalCheckUsesTheSelectedProjectsLayer(t *testing.T) {
 	isolateCache(t)
 	_, _, err := execute(t, "image", "check", "--config", cfgPath)
 	// The layer resolved fine (no "needs the project layer" refusal): the
-	// run reaches past it to the next thing this bare checkout lacks, its
-	// origin remote.
-	if !strings.Contains(err.Error(), "no origin remote") {
-		t.Fatalf("err = %v, want it to fail at the origin remote, not the project layer", err)
+	// run reaches past it to the next thing this checkout (acme/other, on
+	// GitHub, layerCheckout's own origin) lacks, a GitHub App ID.
+	if !strings.Contains(err.Error(), "no GitHub App ID") {
+		t.Fatalf("err = %v, want it to fail past the project layer, not at it", err)
 	}
 }
 

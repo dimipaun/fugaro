@@ -9,9 +9,8 @@ import (
 	"github.com/dimipaun/fugaro/internal/infra"
 )
 
-// release060 is a release base image at layeredSince: the one base a build
-// with a project layer may start from.
-const release060 = "ghcr.io/dimipaun/fugaro-web-node:0.6.0"
+// release060 (a build with a project layer may start from it) is defined in
+// run_layer_test.go.
 
 // Review Focus 3.
 func TestImageBuildRefusesOldBaseWithLayer(t *testing.T) {
