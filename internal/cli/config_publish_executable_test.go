@@ -143,6 +143,12 @@ func TestExecutableChangesTable(t *testing.T) {
 			want: []string{`default_profile: "svc" -> "other" (repositories without workflows: now run profile other's commands)`},
 		},
 		{
+			name: "default_profile cleared, the old default HasExecutable: gated, says no profile, not \"profile 's commands\"",
+			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      test: sh test.sh\n",
+			want: []string{`default_profile: "svc" -> "" (repositories without workflows: now run no profile's commands)`},
+		},
+		{
 			name: "default_profile a -> b, neither side HasExecutable: not gated",
 			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\ndefault_profile: svc\n",
 			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\ndefault_profile: other\n",
@@ -159,6 +165,24 @@ func TestExecutableChangesTable(t *testing.T) {
 				`profile svc: image.setup: [] -> ["echo hi"]`,
 				`default_profile: "" -> "svc" (repositories without workflows: now run profile svc's commands)`,
 			},
+		},
+		{
+			name: "skip_build_scripts true -> false turns build scripts back on: a change",
+			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
+			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
+		},
+		{
+			name: "skip_build_scripts true removed (reads as false): a change",
+			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\ndefault_profile: svc\n",
+			want: []string{`profile svc: image.skip_build_scripts: true -> false`},
+		},
+		{
+			name: "skip_build_scripts false -> true is also reported, even though it is the safer direction",
+			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: false\ndefault_profile: svc\n",
+			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
+			want: []string{`profile svc: image.skip_build_scripts: false -> true`},
 		},
 		{
 			name: "null vs absent apt: equal, no change",

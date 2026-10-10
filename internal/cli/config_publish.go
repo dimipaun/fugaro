@@ -256,6 +256,8 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
+	case "workflows.*.image.skip_build_scripts":
+		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	default:
 		return fmt.Errorf("%s", key)
 	}
@@ -279,7 +281,18 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable()) {
 		return ""
 	}
-	return fmt.Sprintf("default_profile: %q -> %q (repositories without workflows: now run profile %s's commands)", oldDefault, newDefault, newDefault)
+	return fmt.Sprintf("default_profile: %q -> %q (repositories without workflows: now run %s's commands)", oldDefault, newDefault, profileClause(newDefault))
+}
+
+// profileClause names name, a default_profile value, for the banner's
+// prose: "profile svc" or, when name is "" (no default_profile set, either
+// before or after), "no profile" instead of "profile " with nothing after
+// it, which would leave a sentence such as "now run profile 's commands".
+func profileClause(name string) string {
+	if name == "" {
+		return "no profile"
+	}
+	return "profile " + name
 }
 
 // fanOutLayer copies l's exact bytes to every repository the installation
@@ -297,7 +310,13 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 // read that fails outright (a transient error, a permissions problem, the
 // object briefly over LayerMaxBytes) is not the same thing and must not
 // be misreported as a concurrent publish, as publishLayer's own read of
-// the same object, 30 lines above, already takes care to distinguish.
+// the same object, 30 lines above, already takes care to distinguish. That
+// per-repository generation check narrows but does not close the race: a
+// second publisher can still write a given repository's own copy between
+// this fan-out's check and its writeLayerCopy call for that repository.
+// writeLayerCopy's own conditional write catches that (errNewerLayerCopy),
+// and this fan-out stops the same way, rather than let a slower publisher's
+// older copy clobber the faster one's newer one.
 func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer, gen int64) (failed int) {
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))
 	for i, repo := range repos {
@@ -331,6 +350,11 @@ func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.Proj
 			continue
 		}
 		if err := writeLayerCopy(ctx, env.bucket, slug, l.Raw); err != nil {
+			if errors.Is(err, errNewerLayerCopy) {
+				fmt.Fprintf(w, "  stopped: another publisher's fan-out already wrote %s's copy; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)\n",
+					repo, remaining, len(repos))
+				return failed + remaining
+			}
 			fmt.Fprintf(w, "  %s: not copied: %s\n", repo, oneLineCLI(err.Error()))
 			failed++
 			continue

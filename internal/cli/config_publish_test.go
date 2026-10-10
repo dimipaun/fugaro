@@ -275,6 +275,99 @@ func TestWriteLayerCopyRemoveOfOversizedReportsATransientAttributesError(t *test
 	}
 }
 
+// Review Focus 4, ruling: the copy write used to be an unconditional Put, a
+// window where a slower publisher A can overwrite a faster publisher B's
+// newer copy with A's own, older bytes. The write must instead be
+// conditioned on what writeLayerCopy itself read, so a copy B wrote between
+// that read and A's write is left alone, reported as errNewerLayerCopy
+// instead of being clobbered.
+func TestWriteLayerCopyLeavesANewerConcurrentCopyAlone(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, []byte(testProjectLayer))
+	race := layerCopyWriteRace
+	t.Cleanup(func() { layerCopyWriteRace = race })
+	newer := strings.Replace(testProjectLayer, "auth: api-key", "auth: oauth", 1)
+	layerCopyWriteRace = func(context.Context, *blobx.Bucket, string) {
+		fake.Put("fugaro-runs-proj-1234", key, []byte(newer))
+	}
+	stale := strings.Replace(testProjectLayer, "auth: api-key", "auth: vertex", 1)
+	err := writeLayerCopy(ctx, b, appSlug, []byte(stale))
+	if !errors.Is(err, errNewerLayerCopy) {
+		t.Fatalf("err = %v, want errNewerLayerCopy", err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || string(data) != newer {
+		t.Fatalf("the newer concurrent copy was overwritten: data %q, err %v", data, rerr)
+	}
+}
+
+// Review Focus 4, ruling: the same race, but exercised through Create (the
+// copy did not exist when writeLayerCopy read it, but a concurrent
+// publisher created it before writeLayerCopy's own write).
+func TestWriteLayerCopyLeavesANewerConcurrentCopyAloneOnCreate(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	race := layerCopyWriteRace
+	t.Cleanup(func() { layerCopyWriteRace = race })
+	newer := strings.Replace(testProjectLayer, "auth: api-key", "auth: oauth", 1)
+	layerCopyWriteRace = func(context.Context, *blobx.Bucket, string) {
+		fake.Put("fugaro-runs-proj-1234", key, []byte(newer))
+	}
+	err := writeLayerCopy(ctx, b, appSlug, []byte(testProjectLayer))
+	if !errors.Is(err, errNewerLayerCopy) {
+		t.Fatalf("err = %v, want errNewerLayerCopy", err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || string(data) != newer {
+		t.Fatalf("the newer concurrent copy was overwritten: data %q, err %v", data, rerr)
+	}
+}
+
+// Review Focus 4: fanOutLayer reports writeLayerCopy's errNewerLayerCopy as
+// a stop, not as a failed write of this publish's own, and does not touch
+// the remaining repositories (same shape as
+// TestFanOutStopsWhenAnotherPublisherReplacedTheLayer, one layer down: the
+// race here is per-repository, inside writeLayerCopy, not over
+// config.LayerKey itself).
+func TestFanOutStopsWhenANewerPublisherWonTheCopyRace(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	env := envOnRepos(b, map[string]localcfg.Repo{
+		"acme/app":   {Provider: "github", Workflows: []string{"web"}},
+		"acme/other": {Provider: "github", Workflows: []string{"svc"}},
+	})
+	l := parseLayerOrFatal(t, testProjectLayer)
+	gen, err := b.Create(ctx, config.LayerKey, l.Raw, "application/yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	race := layerCopyWriteRace
+	t.Cleanup(func() { layerCopyWriteRace = race })
+	newer := []byte(strings.Replace(testProjectLayer, "auth: api-key", "auth: oauth", 1))
+	layerCopyWriteRace = func(context.Context, *blobx.Bucket, string) {
+		fake.Put("fugaro-runs-proj-1234", config.LayerCopyKey(appSlug), newer)
+	}
+	var w bytes.Buffer
+	failed := fanOutLayer(ctx, &w, env, l, gen)
+	if failed != 2 {
+		t.Fatalf("failed = %d, want 2 (acme/app's race stops the rest too): %s", failed, w.String())
+	}
+	if !strings.Contains(w.String(), "stopped") || !strings.Contains(w.String(), "another publisher's fan-out already wrote") {
+		t.Fatalf("no note that a newer publish won the copy race: %s", w.String())
+	}
+	if data, _, rerr := b.Read(ctx, config.LayerCopyKey(appSlug)); rerr != nil || string(data) != string(newer) {
+		t.Fatalf("the newer concurrent copy was overwritten: data %q, err %v", data, rerr)
+	}
+	otherSlug := mustSlug("github", "acme/other")
+	if _, _, rerr := b.Read(ctx, config.LayerCopyKey(otherSlug)); !errors.Is(rerr, blobx.ErrNotExist) {
+		t.Fatalf("the remaining repository was still copied after the stop: %v", rerr)
+	}
+}
+
 func TestPublishWarnsAboutOldImages(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
@@ -524,11 +617,13 @@ func TestFanOutForbiddenMessageDoesNotClaimNothingWasPublished(t *testing.T) {
 	}
 }
 
-// Review Focus 4: copies are written with an unconditional Put. If
-// publisher A writes v1, then publisher B publishes v2 before A's own
-// (delayed) fan-out runs, A's fan-out must notice config.LayerKey is no
-// longer the generation it wrote and stop, rather than put v1's bytes
-// over B's v2.
+// Review Focus 4: if publisher A writes v1, then publisher B publishes v2
+// before A's own (delayed) fan-out runs, A's fan-out must notice
+// config.LayerKey is no longer the generation it wrote and stop, rather
+// than put v1's bytes over B's v2 (a coarser, earlier check than
+// writeLayerCopy's own per-repository one, TestWriteLayerCopyLeavesANewer
+// ConcurrentCopyAlone and TestFanOutStopsWhenANewerPublisherWonTheCopyRace
+// below).
 func TestFanOutStopsWhenAnotherPublisherReplacedTheLayer(t *testing.T) {
 	ctx := context.Background()
 	fake := gcpfake.NewGCS(t)
