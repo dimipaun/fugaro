@@ -128,7 +128,12 @@ type run struct {
 	// plan is the loop after implement, from the recipe resolved at
 	// bootstrap (resolveRecipe) with its rounds decided (planOf); it always
 	// ends with a review step.
-	plan    []planStep
+	plan []planStep
+	// bounce counts how many times a senior rejection has sent the run back
+	// to the cheap loop (review: {bounce: first_line}); 0 until the first
+	// one. Stamped onto each first-line ReviewSummary (firstLine) so the
+	// record shows which cheap loop a review followed.
+	bounce  int
 	repo    *gitops.Repo
 	env     []string
 	secrets []string
@@ -841,6 +846,9 @@ func (r *run) bootstrap(ctx context.Context) error {
 	if rcp.ReviewerIsCoder && cfg.Agent.Models.Reviewer != "" {
 		r.d.Log.Info("agent.models.reviewer ignored: recipe maps reviewer to coder", "recipe", rrec.Name, "reviewer", cfg.Agent.Models.Reviewer)
 	}
+	if rcp.CoderIsReviewer && cfg.Agent.Models.Coder != "" {
+		r.d.Log.Info("agent.models.coder ignored: recipe maps coder to reviewer", "recipe", rrec.Name, "coder", cfg.Agent.Models.Coder)
+	}
 	ApplyRoles(&cfg.Agent, rcp)
 	r.cfg, r.wf, r.rec.Workflow, r.rec.BaseBranch = cfg, wf, name, cfg.Git.BaseBranch
 	r.rec.FinalizeReserveS = wf.Timeouts.FinalizeReserve.Seconds()
@@ -1159,18 +1167,23 @@ func (r *run) agentLoop(ctx context.Context) {
 			}
 		case recipe.StepReview:
 			// The last step (recipe.Parse refuses any other order).
-			r.seniorLoop(ctx, st.Rounds, tier, reviewPrompt, sys, sessionID)
+			r.seniorLoop(ctx, st, tier, reviewPrompt, sys, sessionID)
 			return
 		}
 	}
 }
 
-// seniorLoop is a review step: up to rounds senior reviews on the reviewer's
-// model, each followed by a fix while it asks for changes. Its verdict alone
-// decides readiness (seniorReview). tier is "senior" when a first line came
-// before it, "" otherwise, as runs without a first line always recorded.
-func (r *run) seniorLoop(ctx context.Context, rounds int, tier, reviewPrompt, sys, sessionID string) {
-	for round := 1; round <= rounds; round++ {
+// seniorLoop is a review step: up to st.Rounds senior reviews on the
+// reviewer's model, each followed by a fix while it asks for changes. Its
+// verdict alone decides readiness (seniorReview). tier is "senior" when a
+// first line came before it, "" otherwise, as runs without a first line
+// always recorded. When st.Bounce and st.FirstRounds > 0 (review:
+// {bounce: first_line} with a first_line step before it), a rejection's fix
+// is followed by another cheap loop (firstLine) instead of going straight to
+// the next senior round; a bounce with FirstRounds == 0 behaves like a plain
+// review step, since there is no cheap loop to bounce back to.
+func (r *run) seniorLoop(ctx context.Context, st planStep, tier, reviewPrompt, sys, sessionID string) {
+	for round := 1; round <= st.Rounds; round++ {
 		res, ok, _ := r.stage(ctx, "review", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{})
 		r.countTokens(res)
 		if !ok {
@@ -1179,7 +1192,7 @@ func (r *run) seniorLoop(ctx context.Context, rounds int, tier, reviewPrompt, sy
 		v := ParseVerdict(res)
 		r.rec.Reviews = append(r.rec.Reviews, runstore.ReviewSummary{Round: round, Tier: tier, Verdict: v.Verdict, Findings: len(v.Findings)})
 		r.save(ctx)
-		if r.capReached() || v.Verdict == "ship" || round == rounds {
+		if r.capReached() || v.Verdict == "ship" || round == st.Rounds {
 			return
 		}
 		r.afterStage(ctx, "review")
@@ -1188,6 +1201,12 @@ func (r *run) seniorLoop(ctx context.Context, rounds int, tier, reviewPrompt, sy
 		}
 		if sessionID, ok = r.fix(ctx, v, sys, sessionID); !ok {
 			return
+		}
+		if st.Bounce && st.FirstRounds > 0 {
+			r.bounce++
+			if sessionID, ok = r.firstLine(ctx, st.FirstRounds, reviewPrompt, sys, sessionID); !ok {
+				return
+			}
 		}
 	}
 }
@@ -1221,7 +1240,7 @@ func (r *run) firstLine(ctx context.Context, rounds int, reviewPrompt, sys, sess
 	for round := 1; round <= rounds; round++ {
 		res, ok, err := r.stage(ctx, "review_first", agent.Request{Prompt: reviewPrompt, SessionID: agent.NewSessionID(), JSONSchema: VerdictSchema}, stageOpts{Skippable: true})
 		r.countTokens(res)
-		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none"}
+		sum := runstore.ReviewSummary{Round: round, Tier: runstore.TierFirst, Verdict: "none", Bounce: r.bounce}
 		var v Verdict
 		switch skipped := (skippedError{}); {
 		case errors.As(err, &skipped):

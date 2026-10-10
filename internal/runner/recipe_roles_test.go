@@ -79,6 +79,54 @@ func TestRecipeSoloCannotEscapeAllowList(t *testing.T) {
 	refusedBeforeAnyCall(t, newGW(t, cfg, "observe", ""), "agent.models.coder")
 }
 
+// coderIsReviewerRecipe is a custom repo recipe with roles: {coder:
+// reviewer} (G9, premium's "coder on the reviewer's model"): one senior
+// review, no first line.
+const coderIsReviewerRecipe = "version: 1\nname: coder-reviewer\nroles:\n  coder: reviewer\nsteps:\n  - review: { max_rounds: 1 }\n"
+
+// TestCoderIsReviewerPinsTheReviewerModel: under roles: {coder: reviewer},
+// the implement stage's gateway pin is the reviewer's model (and the old
+// coder's is refused, mirroring TestRecipeSoloPinsTheCoder's check of the
+// review stage under reviewer: coder); the review stage's own pin, already
+// the reviewer's, is unchanged.
+func TestCoderIsReviewerPinsTheReviewerModel(t *testing.T) {
+	files := map[string]string{".fugaro/recipes/coder-reviewer.yaml": coderIsReviewerRecipe}
+	reply := anthropicfake.MessageOK(opus, pricing.Usage{Output: 10})
+	g := newGWFiles(t, soloGW(t, "  recipe: coder-reviewer\n", ""), "observe", "", files, reply)
+	var st []int
+	// The implement stage fails once the refused probe runs (same as a
+	// refused call during any pinned stage), so the run's final outcome is
+	// not checked here, exactly as TestRecipeSoloPinsTheCoder does not check
+	// it for the review stage.
+	_, err := g.run(t, calling(&st, implement("feature"), call{opus, 100}, call{sonnet, 100}))
+	if err != nil || len(st) != 2 || st[0] != 200 || st[1] != 400 {
+		t.Fatalf("err = %v, statuses = %v (the gateway pins the reviewer's model for the implement stage and refuses the old coder's)", err, st)
+	}
+	if n := strings.Count(g.logs.String(), "agent.models.coder ignored: recipe maps coder to reviewer"); n != 1 {
+		t.Fatalf("the dropped coder model was logged %d times:\n%s", n, g.logs.String())
+	}
+	c := g.agent.calls
+	if c[0].Model != opus {
+		t.Fatalf("implement model = %q, want the reviewer's %s", c[0].Model, opus)
+	}
+	if got := envValue(c[0].Env, "ANTHROPIC_DEFAULT_OPUS_MODEL"); got != opus {
+		t.Fatalf("implement pin = %q, want the reviewer's %s", got, opus)
+	}
+
+	// The review stage's own pin is unchanged: a plain run (no gateway
+	// probing) still sends it to the reviewer's model, distinct from the
+	// coder's.
+	h := newHarnessFiles(t, firstLineCfg(t, 3, "  recipe: coder-reviewer\n"), nil, files)
+	rec, err := h.run(t, implement("feature"), review("ship", 0))
+	if err != nil || rec.Outcome != runstore.OutcomeReady {
+		t.Fatalf("rec = %+v, err = %v", rec, err)
+	}
+	c = h.agent.calls
+	if len(c) != 2 || c[0].Model != "senior-model" || c[1].Model != "senior-model" {
+		t.Fatalf("calls = %+v (both implement and review run on the reviewer's model)", c)
+	}
+}
+
 // The reviewer takes the coder's per-call output limit too (D8): under solo a
 // 3,000-token review call passes the coder's 4,096 limit; without the recipe
 // the reviewer's own limit of 100 refuses it.
