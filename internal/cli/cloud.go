@@ -403,27 +403,39 @@ type checkoutParseResult struct {
 	problems []config.Problem
 }
 
-// checkoutParseCache memoizes checkoutParse by checkout root for one
-// command invocation: run.go's launch path calls it (through
-// checkoutConfig) up to three times for the same spec.Repo, launch_budget.go
-// once more, and secrets.go a fourth time when its own first read came back
-// nil — each one, uncached, re-reads fugaro.yaml from disk and resolves the
-// project layer again (a bucket read, Task 10). The one thing besides root
-// that could vary call to call is layerOptions, but every path through
+// checkoutParseCache memoizes two distinct reads of a checkout's
+// fugaro.yaml by root, for one command invocation: the working tree's
+// (checkoutParse, below) and the default branch's, read from git
+// (defaultBranchParse, init_repo_target.go) — different bytes at the same
+// root, so they get separate maps and never share a key.
+//
+// checkoutParse: run.go's launch path calls it (through checkoutConfig) up
+// to three times for the same spec.Repo, launch_budget.go once more, and
+// secrets.go a fourth time when its own first read came back nil — each
+// one, uncached, re-reads fugaro.yaml from disk and resolves the project
+// layer again (a bucket read, Task 10). The one thing besides root that
+// could vary call to call is layerOptions, but every path through
 // checkoutParse hands parseCheckoutFugaroYAML the same fixed
 // layerOptions{Lenient: true}, so root alone is key enough here.
+//
+// defaultBranchParse: fugaro init reads the default branch's fugaro.yaml
+// up to three times in one run (once while gathering inputs for the
+// anchor hint, once more in the repository stage, once in the secrets
+// stage), every time with the same selectedProjectConfig(ctx) too.
 type checkoutParseCache struct {
-	mu      sync.Mutex
-	entries map[string]checkoutParseResult
+	mu            sync.Mutex
+	workingTree   map[string]checkoutParseResult
+	defaultBranch map[string]defaultBranchResult
 }
 
 // withCheckoutParseCache installs an empty checkoutParseCache, root.go's
-// PersistentPreRun does this once per command so every checkoutParse call
-// within the same invocation shares it; a context without one (a direct
-// unit test of checkoutParse, or any call before the command tree installs
-// it) makes checkoutParse work exactly as before, uncached.
+// PersistentPreRun does this once per command so every checkoutParse and
+// defaultBranchParse call within the same invocation shares it; a context
+// without one (a direct unit test, or any call before the command tree
+// installs it) makes both work exactly as before, uncached.
 func withCheckoutParseCache(ctx context.Context) context.Context {
-	return context.WithValue(ctx, checkoutParseCacheKey{}, &checkoutParseCache{entries: map[string]checkoutParseResult{}})
+	return context.WithValue(ctx, checkoutParseCacheKey{},
+		&checkoutParseCache{workingTree: map[string]checkoutParseResult{}, defaultBranch: map[string]defaultBranchResult{}})
 }
 
 // checkoutParse is checkoutConfig with the parse's problems: nil and no
@@ -437,7 +449,7 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	cache, _ := ctx.Value(checkoutParseCacheKey{}).(*checkoutParseCache)
 	if cache != nil {
 		cache.mu.Lock()
-		r, ok := cache.entries[root]
+		r, ok := cache.workingTree[root]
 		cache.mu.Unlock()
 		if ok {
 			return r.cfg, r.problems
@@ -450,7 +462,7 @@ func checkoutParse(ctx context.Context, repo string) (*config.Config, []config.P
 	}
 	if cache != nil {
 		cache.mu.Lock()
-		cache.entries[root] = result
+		cache.workingTree[root] = result
 		cache.mu.Unlock()
 	}
 	return result.cfg, result.problems

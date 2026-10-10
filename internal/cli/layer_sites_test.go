@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -285,6 +286,78 @@ func TestCheckoutParseCachesTheLayerReadPerCommand(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		if cfg, _ := checkoutParse(ctx, "acme/other"); cfg == nil {
 			t.Fatalf("call %d: checkoutParse found no config", i)
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("layerRead called %d times, want 1", reads)
+	}
+}
+
+// TestRunMemoizesTheLayerReadThroughTheRealCommand is
+// TestCheckoutParseCachesTheLayerReadPerCommand end to end, through a real
+// `fugaro run` (NewRootCmd, not a call to withCheckoutParseCache): run.go
+// calls checkoutConfig twice in the first-run path (once directly, once
+// inside runnerChooses), so without root.go's PersistentPreRun installing
+// the cache, this is two bucket reads for one command.
+//
+// Mutation (run, restore): remove the
+// `cmd.SetContext(withCheckoutParseCache(cmd.Context()))` line from
+// root.go's PersistentPreRun, and this test fails (reads becomes 2).
+func TestRunMemoizesTheLayerReadThroughTheRealCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "") // the default runs bucket name; no layer object needed
+	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": "version: 1\nproject: aurora\ngcp_project: proj-1234\n" +
+		"git: { provider: github, base_branch: develop }\nagent:\n  auth: api-key\n" +
+		"workflows:\n  svc: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"})
+	t.Chdir(dir)
+
+	reads := 0
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		reads++
+		return read(ctx, b)
+	}
+	if _, _, err := execute(t, "run", "--run-id", "20261007-100000-abcd", "A task"); err != nil {
+		t.Fatal(err)
+	}
+	if reads != 1 {
+		t.Fatalf("layerRead called %d times through the real command, want 1", reads)
+	}
+}
+
+// defaultBranchParse must read the bucket at most once per command
+// invocation too: fugaro init calls it (through resolveRepoTarget, once
+// while gathering inputs and once more in the repository stage, and
+// through defaultBranchConfig in the secrets stage) up to three times for
+// the same checkout.
+//
+// Mutation (run, restore): make defaultBranchParse skip the cache lookup
+// and always read fresh, and this test fails (reads becomes 3, not 1).
+func TestDefaultBranchParseCachesTheLayerReadPerCommand(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	dir := repoCheckout(t, "https://github.com/acme/app.git", minimalAnchored)
+	t.Chdir(dir)
+
+	reads := 0
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		reads++
+		return read(ctx, b)
+	}
+	ctx := withCheckoutParseCache(context.Background())
+	for i := 0; i < 3; i++ {
+		if db := defaultBranchParse(ctx, dir); db.cfg == nil {
+			t.Fatalf("call %d: defaultBranchParse found no config: %+v", i, db)
 		}
 	}
 	if reads != 1 {

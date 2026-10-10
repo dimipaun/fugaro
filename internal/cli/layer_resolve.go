@@ -81,54 +81,6 @@ var layerBucketOpener = blobx.Open
 // shorten it.
 var layerBucketTimeout = 15 * time.Second
 
-// openLayerBucket opens the project layer's bucket, giving up waiting after
-// timeout rather than hanging (decision L13, layerBucketTimeout) — but,
-// unlike a plain context.WithTimeout around the call, it never cancels the
-// context it hands to layerBucketOpener. gocloud.dev's gcsblob driver
-// builds the process's GCS credentials exactly once, in a package-level
-// sync.Once keyed off the first real gs:// Open the whole process makes
-// (gcsblob.lazyCredsOpener), and that call captures whichever context it
-// was given inside the oauth2 TokenSource it builds; every later token
-// refresh reuses that same stored context forever (golang.org/x/oauth2's
-// tokenRefresher.ctx field — refreshes are triggered with no context
-// argument of their own, so a fresher one can never be substituted in).
-// findLayer is often a process's first gs:// touch (validate, doctor,
-// init and secrets read nothing else from the cloud first): handing that
-// call a context we then cancel a moment later would, from then on,
-// break every other real bucket operation for the rest of the process
-// with "context canceled" — run records, locks, the shared config. So
-// this bounds only how long findLayer waits for the result: a call still
-// running when timeout elapses keeps running in the background, using
-// ctx exactly as the caller gave it, until it finishes or the process
-// exits.
-func openLayerBucket(ctx context.Context, url string, timeout time.Duration) (*blobx.Bucket, error) {
-	type result struct {
-		b   *blobx.Bucket
-		err error
-	}
-	ch := make(chan result, 1)
-	// opener is read here, synchronously, and not as layerBucketOpener
-	// inside the goroutine below: a test that swaps layerBucketOpener back
-	// in a t.Cleanup (as the one for a bucket that never returns does) runs
-	// that cleanup while this goroutine may still be running, and the
-	// package var is not synchronized against it.
-	opener := layerBucketOpener
-	go func() {
-		b, err := opener(ctx, url)
-		ch <- result{b, err}
-	}()
-	select {
-	case r := <-ch:
-		return r.b, r.err
-	case <-time.After(timeout):
-		// Wrapping context.DeadlineExceeded keeps this exactly as
-		// isUnreachable (sharedcfg.go) already treats a timed-out open:
-		// the one case, besides a dial or DNS failure, where a cached
-		// layer may stand in (decision L13).
-		return nil, fmt.Errorf("timed out after %s opening the bucket: %w", timeout, context.DeadlineExceeded)
-	}
-}
-
 // findLayer is the project layer that applies to the fugaro.yaml data
 // (docs/design/layered-config.md §3 and §7). None applies to a file
 // without gcp_project: (decision L9), or to an installation whose runs
@@ -259,7 +211,17 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 		}
 		return unread(fmt.Errorf("the project layer's bucket (%s) is a fake endpoint in this installation, so it is not read for real", bucketURL))
 	}
-	b, err := openLayerBucket(ctx, bucketURL, layerBucketTimeout)
+	// Opened with ctx, never a derived, cancellable one: gocloud's gcsblob
+	// driver loads default credentials once per process (a sync.Once in
+	// lazyCredsOpener) using the FIRST open's context, and oauth2 keeps
+	// that context for every later token refresh. A context this function
+	// cancels on return would then make every later open and read in the
+	// whole process fail with "context canceled" once this call's timeout
+	// (or its caller's deadline) passes — proven with blobx.Open on a
+	// cancelled context, then a read. Opening itself does no network I/O
+	// (the credentials load is lazy), so there is nothing here for a
+	// timeout to bound; the read below is where a flaky network can hang.
+	b, err := layerBucketOpener(ctx, bucketURL)
 	if err != nil {
 		// isUnreachable is checked on the raw error, exactly as the read
 		// failure below does: only when the bucket cannot be reached at

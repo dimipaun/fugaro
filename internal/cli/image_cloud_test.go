@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
@@ -65,6 +68,45 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	}
 	if buildPosts(fb) != 0 {
 		t.Error("a build without its registry reached Cloud Build")
+	}
+}
+
+// A Cloud Build submission must refuse, not silently proceed, when the
+// project layer's bucket cannot be read: design §8 and decision L16
+// classify Cloud Build submission as strict ("fail when the bucket cannot
+// be read"), unlike image build --local and image render, which stay
+// lenient. cloudBuildCheckout's fixture isn't anchored (no gcp_project:),
+// so this adds one to exercise findLayer's bucket read at all.
+//
+// Mutation (run, restore): change runImageBuildCloud's
+// loadCheckoutWorkflow(ctx, o.workflow, layerOptions{}) call back to
+// loadCheckout(ctx, o.workflow) (lenient), and this test fails: the build
+// is submitted despite the unreadable bucket.
+func TestImageBuildCloudRefusesAnUnreadableProjectLayer(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	isolateCache(t)
+	publishedLayer(t, f, "") // the default runs bucket name; no layer object needed
+	data, err := os.ReadFile("fugaro.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchored := strings.Replace(string(data), "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)
+	if anchored == string(data) {
+		t.Fatal("fugaro.yaml has no project: line to anchor")
+	}
+	if err := os.WriteFile("fugaro.yaml", []byte(anchored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(context.Context, *blobx.Bucket) ([]byte, int64, error) {
+		return nil, 0, errors.New("boom")
+	}
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+	if buildPosts(fb) != 0 {
+		t.Error("a build over an unreadable project layer reached Cloud Build")
 	}
 }
 

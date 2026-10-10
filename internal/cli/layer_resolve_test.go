@@ -127,79 +127,41 @@ func TestFindLayerTimesOutAndFallsBackToTheCache(t *testing.T) {
 	}
 }
 
-// Without a usable cache, a lenient caller gets "not checked" instead of
-// hanging (and a strict one a clear error, TestFindLayerOpenFailureGoesThroughBucketErrFor
-// already covers every other open failure's shape the same way a timeout
-// takes).
-func TestFindLayerTimesOutLenientWithoutACache(t *testing.T) {
+// The bucket opener must receive findLayer's own incoming context, never a
+// context.WithTimeout derived from it and cancelled before findLayer
+// returns: gocloud's gcsblob driver loads default credentials once per
+// process (a sync.Once in lazyCredsOpener) using the FIRST open's context,
+// and oauth2 keeps that context for every later token refresh. A cancelled
+// one there would make every later open and read in the whole process fail
+// with "context canceled" once this call's timeout passed — proven by
+// reverting the fix (wrapping the open in context.WithTimeout again) below.
+// Opening itself does no network I/O, so there is nothing to time-bound
+// here; TestFindLayerTimesOutAndFallsBackToTheCache covers the read, which
+// is where a flaky network can actually hang.
+//
+// This exercises the real blobx.Open (a file:// bucket, never gs://) so a
+// spy only wraps it to capture the context it receives, rather than
+// replacing it outright.
+func TestFindLayerOpensWithTheIncomingContextNeverACancelledOne(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	lc := fileEnv(t, f).lc
-	oldTimeout := layerBucketTimeout
-	layerBucketTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
+	var openCtx context.Context
 	open := layerBucketOpener
 	t.Cleanup(func() { layerBucketOpener = open })
 	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		openCtx = ctx
+		return open(ctx, url)
 	}
-	start := time.Now()
-	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{Lenient: true}, layerNow)
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("findLayer took %s; layerBucketTimeout did not bound the open", d)
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
 	}
-	if err != nil || !got.Unknown || got.Layer != nil || !strings.Contains(got.Note, "not checked") {
-		t.Fatalf("got %+v, %v", got, err)
+	if openCtx == nil {
+		t.Fatal("layerBucketOpener was never called")
 	}
-}
-
-// Production risk: gocloud.dev's gcsblob driver builds the process's GCS
-// credentials exactly once, in a sync.Once keyed off the first real gs://
-// Open the whole process makes, and that call's context is captured
-// forever by the oauth2 TokenSource it builds (every later token refresh
-// reuses it, with no way to pass a fresher one). findLayer is often a
-// process's first gs:// touch (validate, doctor, init, secrets), so the
-// context it gives layerBucketOpener must never be one findLayer itself
-// cancels a moment later: giving up waiting on a slow open must leave
-// that real call's own context alone, letting it finish in the
-// background exactly as the caller gave it.
-//
-// Mutation (run, restore): change openLayerBucket in layer_resolve.go
-// back to `octx, cancel := context.WithTimeout(ctx, timeout); defer
-// cancel(); return layerBucketOpener(octx, url)`, and this test fails:
-// the fake opener observes its context canceled (and the returned error
-// is no longer a wrapped context.DeadlineExceeded either, since it is
-// now the fake's own error, not openLayerBucket's timeout path).
-func TestOpenLayerBucketNeverCancelsTheOpenersOwnContext(t *testing.T) {
-	old := layerBucketOpener
-	t.Cleanup(func() { layerBucketOpener = old })
-	oldTimeout := layerBucketTimeout
-	layerBucketTimeout = 20 * time.Millisecond
-	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
-
-	canceled := make(chan error, 1)
-	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
-		select {
-		case <-ctx.Done():
-			canceled <- ctx.Err()
-		case <-time.After(300 * time.Millisecond):
-			canceled <- nil // the context outlived openLayerBucket's own timeout, unmolested
-		}
-		return nil, errors.New("fake opener: slow but not stuck")
-	}
-	start := time.Now()
-	_, err := openLayerBucket(context.Background(), "gs://fugaro-runs-proj-1234", layerBucketTimeout)
-	if d := time.Since(start); d > 2*time.Second {
-		t.Fatalf("openLayerBucket took %s; layerBucketTimeout did not bound the wait", d)
-	}
-	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want a wrapped context.DeadlineExceeded", err)
-	}
-	if got := <-canceled; got != nil {
-		t.Fatalf("the real opener's own context was canceled (%v) once openLayerBucket gave up waiting for it; "+
-			"every later real gs:// token refresh in this process would reuse that canceled context forever", got)
+	if err := openCtx.Err(); err != nil {
+		t.Fatalf("the context the bucket opener received is already done after findLayer returned (%v): a timeout wrapped around Open would poison every later GCS token refresh in the process", err)
 	}
 }
 
@@ -451,6 +413,34 @@ func TestFindLayerSkipsAFakeEndpointGSBucket(t *testing.T) {
 	}
 	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow); err == nil || !strings.Contains(err.Error(), "fake") {
 		t.Fatalf("strict: %v", err)
+	}
+}
+
+// The fake-endpoint branch itself falls back to a fresh cache exactly like
+// an unreachable bucket does (decision L13), not just "not checked":
+// TestFindLayerSkipsAFakeEndpointGSBucket never primes a cache, so its
+// `ours` is always false and never exercises the `if ours { return
+// fromCache(...) }` line inside that branch.
+//
+// Mutation (run, restore): delete the `if ours { return
+// fromCache(unreachableNote) }` two lines from the fake-endpoint branch in
+// findLayer (falling straight through to unread), and this test fails: the
+// cached layer disappears and the note stops mentioning "unreachable".
+func TestFindLayerFakeEndpointFallsBackToAFreshCache(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := *fileEnv(t, f).lc
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	lc.Bucket = "" // as a real installation's config would be: BucketURL() falls back to gs://<runs_bucket>
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow.Add(time.Minute))
+	if err != nil || got.Layer == nil || got.Layer.SHA256 != config.LayerSum([]byte(testProjectLayer)) || !strings.Contains(got.Note, "unreachable") {
+		t.Fatalf("got %+v, %v", got, err)
 	}
 }
 
