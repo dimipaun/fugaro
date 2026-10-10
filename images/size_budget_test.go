@@ -35,3 +35,26 @@ func TestSizeBudget(t *testing.T) {
 		t.Errorf("a custom budget is ignored: %s", out)
 	}
 }
+
+// TestSizeBudgetBoundary: exactly the budget passes, one MB over it fails
+// (the comparison is "over the budget", not "at or over it").
+func TestSizeBudgetBoundary(t *testing.T) {
+	if out, err := runBudget(t, "4000000000"); err != nil {
+		t.Errorf("exactly the budget failed: %v\n%s", err, out)
+	}
+	if out, err := runBudget(t, "4001000000"); err == nil {
+		t.Errorf("one MB over the budget passed:\n%s", out)
+	}
+}
+
+// TestSizeBudgetRejectsNonNumericSize: a docker whose `image inspect
+// --format {{.Size}}` prints anything but a plain byte count (empty output,
+// or non-numeric text, as containerd's image store can) is a hard failure,
+// not a silent 0 MB pass.
+func TestSizeBudgetRejectsNonNumericSize(t *testing.T) {
+	for _, bytes := range []string{"", "not-a-number", "12.5"} {
+		if out, err := runBudget(t, bytes); err == nil {
+			t.Errorf("bytes=%q passed:\n%s", bytes, out)
+		}
+	}
+}

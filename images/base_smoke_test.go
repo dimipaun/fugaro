@@ -35,6 +35,7 @@ func runSmokeBase(t *testing.T, missing string, fakeEnv ...string) (string, erro
 		}
 		cmd.Env = append(cmd.Env, fake+"="+argIn(t, df, pin))
 	}
+	cmd.Env = append(cmd.Env, "FAKE_DEBIAN_DIGEST="+argIn(t, df, "DEBIAN_DIGEST"))
 	cmd.Env = append(cmd.Env, fakeEnv...)
 	if missing != "" {
 		cmd.Env = append(cmd.Env, "FAKE_DOCKER_MISSING="+missing)
@@ -60,9 +61,47 @@ func TestSmokeBaseChecksEveryPin(t *testing.T) {
 }
 
 func TestSmokeBaseFailsWhenAToolIsMissing(t *testing.T) {
-	for _, missing := range []string{"mise", "gcloud", "selftest"} {
+	// codex is a harness-tier tool, yq a kit-tier tool (design base-image.md
+	// section 6); selftest-passed-false is a selftest that exits 0 but
+	// reports "passed":false, proving smoke.sh reads the report body and
+	// doesn't trust the exit code alone.
+	for _, missing := range []string{"mise", "gcloud", "selftest", "codex", "yq", "selftest-passed-false"} {
 		if out, err := runSmokeBase(t, missing); err == nil {
 			t.Errorf("passed with %s missing:\n%s", missing, out)
+		}
+	}
+}
+
+// TestSmokeBasePinsRequireExactVersionMatch: a pin must match the reported
+// version exactly, not as a substring (1.2.3 must not accept 11.2.30 or
+// 1.2.34, both of which contain "1.2.3").
+func TestSmokeBasePinsRequireExactVersionMatch(t *testing.T) {
+	for _, reported := range []string{"11.2.30", "1.2.34"} {
+		out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_MISE_VERSION="+reported)
+		if err == nil || !strings.Contains(out, "not pinned") {
+			t.Errorf("reported %s against pin 1.2.3: err=%v\n%s", reported, err, out)
+		}
+	}
+	if out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_MISE_VERSION=1.2.3"); err != nil {
+		t.Errorf("an exact match failed: %v\n%s", err, out)
+	}
+}
+
+// TestSmokeBaseChecksBaseJSONAgainstEveryPin: every one of base.json's 12
+// fields (images/base/Dockerfile) is checked against its own Dockerfile
+// pin, not just mise. FAKE_BASE_JSON_MISMATCH corrupts one field in the
+// image's reported /etc/fugaro/base.json without touching that tool's own
+// --version output, so a mismatch can only be caught by a check that
+// actually reads base.json.
+func TestSmokeBaseChecksBaseJSONAgainstEveryPin(t *testing.T) {
+	for _, field := range []string{"debian", "mise", "claude_code", "gh", "yq", "gcloud",
+		"docker_cli", "harness_node", "codex", "opencode", "goose", "crush"} {
+		out, err := runSmokeBase(t, "", "FAKE_BASE_JSON_MISMATCH="+field)
+		if err == nil {
+			t.Errorf("a wrong %s in base.json passed:\n%s", field, out)
+		}
+		if !strings.Contains(out, "base.json") {
+			t.Errorf("a wrong %s in base.json: the failure doesn't name base.json:\n%s", field, out)
 		}
 	}
 }
