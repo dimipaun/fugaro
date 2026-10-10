@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -54,6 +57,9 @@ type SelftestSpec struct {
 	// the base image itself, which has no checkout. Every other field is
 	// ignored.
 	ToolsOnly bool `json:"tools_only,omitempty"`
+	// Mise checks that every tool the checkout's mise config and
+	// image.tools declare is installed: the base kind.
+	Mise bool `json:"mise,omitempty"`
 }
 
 // SpecForCloud is the selftest the Cloud Build smoke step runs in the
@@ -68,10 +74,13 @@ func SpecForCloud(cfg *config.Config, workflow, commit, origin string) (Selftest
 	if !ok {
 		return SelftestSpec{}, fmt.Errorf("fugaro.yaml has no workflow %q", workflow)
 	}
-	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: commit, Origin: origin,
+	spec := SelftestSpec{Base: w.BaseKind(), RepoDir: "/work/repo", Commit: commit, Origin: origin,
 		CheckInit: true, CheckHardening: true, SkipVerify: true}
-	if w.Base == "web-node" {
+	if w.BaseKind() == "web-node" {
 		spec.Node = w.Image.Node
+	}
+	if w.BaseKind() == config.BaseKind {
+		spec.Base, spec.Tools, spec.Mise = config.BaseKind, "critical", true
 	}
 	return spec, nil
 }
@@ -91,8 +100,13 @@ type Report struct {
 
 // homeCredentialFiles must not exist in the agent user's HOME: the agent's
 // credentials come from the environment and the runner, never from files
-// baked into the image.
-var homeCredentialFiles = []string{".git-credentials", ".netrc", ".docker/config.json", ".config/gh/hosts.yml"}
+// baked into the image. The harness credential files are design
+// base-image.md section 6's table.
+var homeCredentialFiles = []string{
+	".git-credentials", ".netrc", ".docker/config.json", ".config/gh/hosts.yml",
+	".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
+	".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json",
+}
 
 // literalTokenRE finds a registry token written into .npmrc or .yarnrc.yml
 // as a literal rather than as an environment reference such as ${NPM_TOKEN}.
@@ -206,6 +220,9 @@ func Selftest(ctx context.Context, spec SelftestSpec, log io.Writer) Report {
 		}
 	}
 	checkoutOK := checkCheckout(ctx, spec, add)
+	if spec.Mise && checkoutOK {
+		checkMise(ctx, spec.RepoDir, add)
+	}
 	checkHome(add)
 	if checkoutOK && !spec.SkipVerify {
 		if err := verifyBuild(ctx, spec.Verify, log); err != nil {
@@ -291,6 +308,40 @@ func credentialConfigSection(ctx context.Context, repo string) string {
 		}
 	}
 	return ""
+}
+
+// checkMise reports "mise-tools": every tool the checkout's mise config and
+// image.tools declare is installed. It reads mise offline in dir, so it
+// works in the smoke's container, which has no network.
+func checkMise(ctx context.Context, dir string, add func(string, bool, string, ...any)) {
+	cmd := exec.CommandContext(ctx, "mise", "ls", "--current", "--missing", "--json")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "MISE_OFFLINE=1", "NO_COLOR=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		add("mise-tools", false, "mise ls --current --missing: %v: %s", err, strings.TrimSpace(stderr.String()))
+		return
+	}
+	var missing map[string][]struct {
+		Version string `json:"version"`
+	}
+	if err := json.Unmarshal(out, &missing); err != nil {
+		add("mise-tools", false, "mise ls printed no JSON: %v", err)
+		return
+	}
+	var names []string
+	for _, tool := range slices.Sorted(maps.Keys(missing)) {
+		for _, v := range missing[tool] {
+			names = append(names, tool+"@"+v.Version)
+		}
+	}
+	if len(names) > 0 {
+		add("mise-tools", false, "not installed: %s (the image's mise install did not run or failed; start from fugaro image render)", strings.Join(names, ", "))
+		return
+	}
+	add("mise-tools", true, "every tool the mise config declares is installed")
 }
 
 func checkHome(add func(string, bool, string, ...any)) {

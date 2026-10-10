@@ -217,12 +217,15 @@ func BuildLocal(ctx context.Context, o LocalOptions) (*LocalResult, error) {
 	// image's own hardening, alongside the checkout check; this is not a
 	// user option, since an image that fails it must not be pushed. The sudoers check runs here, and
 	// the setuid, setgid and file-capability scans run as root below.
-	spec := SelftestSpec{Base: w.Base, RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true, Verify: verify.Settings{
+	spec := SelftestSpec{Base: w.BaseKind(), RepoDir: "/work/repo", Commit: res.Commit, Origin: res.Origin, CheckInit: true, CheckHardening: true, Verify: verify.Settings{
 		RepoDir: "/work/repo", Build: w.Commands.Build, Test: w.Commands.Test, RerunFailed: w.Commands.RerunFailed,
 		Reports: w.Commands.Reports, TimeoutS: int(w.Timeouts.Verify.Seconds()),
 	}}
-	if w.Base == "web-node" {
+	switch w.BaseKind() {
+	case "web-node":
 		spec.Node = w.Image.Node
+	case config.BaseKind:
+		spec.Tools, spec.Mise = "critical", true
 	}
 	in, err := json.Marshal(spec)
 	if err != nil {

@@ -656,3 +656,61 @@ func TestSelftestManagedSettingsDirExtraEntries(t *testing.T) {
 		})
 	}
 }
+
+// fakeMise puts a mise on PATH that prints out for `ls --current --missing --json`.
+func fakeMise(t *testing.T, out string) {
+	t.Helper()
+	bin := t.TempDir()
+	testutil.WriteFiles(t, bin, map[string]string{"mise": "#!/bin/sh\n[ \"$MISE_OFFLINE\" = 1 ] || { echo 'not offline' >&2; exit 2; }\nprintf '%s\\n' '" + out + "'\n"})
+	if err := os.Chmod(filepath.Join(bin, "mise"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func TestSelftestMiseToolsMissing(t *testing.T) {
+	selftestEnv(t, 1)
+	spec := selftestFixture(t)
+	spec.Mise = true
+	fakeMise(t, `{"node":[{"version":"24.19.0","requested_version":"24","install_path":"/x"}]}`)
+	r := Selftest(context.Background(), spec, &bytes.Buffer{})
+	c, ok := checkNamed(r, "mise-tools")
+	if !ok || c.OK || !strings.Contains(c.Detail, "node@24.19.0") || r.Passed {
+		t.Fatalf("mise-tools = %+v (passed %v)", c, r.Passed)
+	}
+	fakeMise(t, `{}`)
+	r = Selftest(context.Background(), spec, &bytes.Buffer{})
+	if c, ok := checkNamed(r, "mise-tools"); !ok || !c.OK {
+		t.Fatalf("nothing missing: %+v", c)
+	}
+}
+
+func TestSelftestRefusesHarnessCredentialFiles(t *testing.T) {
+	for _, rel := range []string{".codex/auth.json", ".gemini/oauth_creds.json", ".local/share/opencode/auth.json",
+		".config/gcloud/credentials.db", ".config/gcloud/application_default_credentials.json", ".claude/.credentials.json"} {
+		t.Run(rel, func(t *testing.T) {
+			selftestEnv(t, 1)
+			spec := selftestFixture(t)
+			testutil.WriteFiles(t, os.Getenv("HOME"), map[string]string{rel: "x"})
+			r := Selftest(context.Background(), spec, &bytes.Buffer{})
+			if c, _ := checkNamed(r, "home-credentials"); c.OK || !strings.Contains(c.Detail, rel) {
+				t.Fatalf("home-credentials = %+v", c)
+			}
+		})
+	}
+}
+
+func TestSpecForCloudOnTheBase(t *testing.T) {
+	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: make, test: make test } }\n  web: { base: web-node, image: { node: \"24\" }, commands: { build: make, test: make test } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	base, _ := SpecForCloud(cfg, "app", "c0ffee", "https://github.com/acme/app.git")
+	if base.Tools != "critical" || !base.Mise || base.Base != config.BaseKind {
+		t.Errorf("base: %+v", base)
+	}
+	web, _ := SpecForCloud(cfg, "web", "c0ffee", "https://github.com/acme/app.git")
+	if web.Tools != "" || web.Mise || web.Node != "24" {
+		t.Errorf("web-node: %+v", web)
+	}
+}

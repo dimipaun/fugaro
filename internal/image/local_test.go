@@ -345,3 +345,37 @@ func TestDefaultTag(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
+	root, cfg := localFixture(t)
+	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "claude", OK: true}}}}
+	var log bytes.Buffer
+	o := localOptions(root, cfg, f, &log)
+	o.Platform = "linux/arm64"
+	if _, err := BuildLocal(context.Background(), o); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	if !slices.Contains(f.builds[0], "linux/arm64") {
+		t.Errorf("build: %q", f.builds[0])
+	}
+	for i, r := range f.runs {
+		if !slices.Contains(r, "linux/arm64") {
+			t.Errorf("selftest run %d lacks the platform: %q", i, r)
+		}
+	}
+}
+
+func TestBuildLocalSpecOnTheBase(t *testing.T) {
+	root, cfg := localFixture(t)
+	w := cfg.Workflows["web"]
+	w.Base, w.Image.Node = "", ""
+	cfg.Workflows["web"] = w
+	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "claude", OK: true}}}}
+	var log bytes.Buffer
+	if _, err := BuildLocal(context.Background(), localOptions(root, cfg, f, &log)); err != nil {
+		t.Fatalf("%v\n%s", err, log.String())
+	}
+	if f.spec.Tools != "critical" || !f.spec.Mise || f.spec.Node != "" {
+		t.Errorf("spec = %+v", f.spec)
+	}
+}
