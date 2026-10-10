@@ -418,6 +418,25 @@ run "launcher_condition_must_be_this_buckets_runs" {
   expect_failures = [google_storage_bucket_iam_member.runs_launcher]
 }
 
+# The right expression under the wrong title still fails the plan: the
+# precondition checks both, not only the expression.
+run "launcher_condition_title_must_match" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "other"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
 run "apis" {
   command = plan
 
@@ -597,6 +616,27 @@ run "bad_member" {
   }
 
   expect_failures = [var.launchers]
+}
+
+# launcher_bucket_condition's own validation fires even when no launcher
+# grant exists to carry the precondition (a one-person installation plans
+# no runs_launcher instance at all), so it is not redundant with the
+# resource precondition above and needs its own coverage.
+run "bad_launcher_bucket_condition" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs"
+      expression = "true"
+    }
+  }
+
+  expect_failures = [var.launcher_bucket_condition]
 }
 
 run "log_isolation_on" {
