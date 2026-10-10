@@ -222,6 +222,13 @@ func TestProfileHasExecutable(t *testing.T) {
 		"commands: { build: make }", "commands: { test: make test }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
 		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
+		// A mise tool is as powerful as image.setup: every URL/host-form
+		// backend (cargo:, go:, npm:, asdf:/vfox:, ubi:/github:/aqua:)
+		// passes ValidMiseTool's charset, and the build installs it with
+		// the workflow's build secrets mounted. A profile holding only
+		// this must report HasExecutable true, so publishing it needs
+		// --executable-changes.
+		`image: { tools: { "cargo:https://evil.example/x": "ref:main" } }`,
 	} {
 		if !strings.HasPrefix(body, "{") {
 			body = "{ " + body + " }"
