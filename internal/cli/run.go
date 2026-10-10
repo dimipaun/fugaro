@@ -72,6 +72,16 @@ type launchResult struct {
 	// Recipe is the run's recipe; nil when the runner chooses it (no
 	// --recipe and no checkout of the repository: agent.recipe at the ref).
 	Recipe *launchRecipe `json:"recipe,omitempty"`
+	// ProjectLayer is the project layer the stored task actually carries,
+	// nil when none applies (task.ProjectLayer, embedProjectLayer).
+	ProjectLayer *launchProjectLayer `json:"project_layer,omitempty"`
+}
+
+// launchProjectLayer is launchResult's --json view of a task's project
+// layer: just enough to tell which one it was, never its text.
+type launchProjectLayer struct {
+	SHA256     string `json:"sha256"`
+	Generation int64  `json:"generation,omitempty"`
 }
 
 // launchHooks lets tests stop launchRun between its steps, to make the
@@ -198,6 +208,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if err != nil {
 		return err
 	}
+	var layerData []byte
+	if o.retry == "" && !reused {
+		if layerData, err = embedProjectLayer(ctx, env, spec, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+	}
 	s := runstore.Open(env.bucket.Bucket, slug, spec.RunID)
 	prior, err := existingLaunch(ctx, env, s, spec)
 	if err != nil {
@@ -205,6 +221,21 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	if prior == nil && reused {
 		if err := recheckFollowUp(ctx, env, slug, spec, cmd.ErrOrStderr()); err != nil {
+			return err
+		}
+	}
+	if o.retry == "" {
+		// Before the image gate below, not after: a run ID whose earlier
+		// attempt stored a task but never launched it (prior == nil, an
+		// ambiguous launch failure, say) must be gated on the layer that
+		// stored task actually carries, since createTask keeps it
+		// regardless of what embedProjectLayer just freshly re-resolved
+		// (repeatTaskBytes excludes the layer from "is this the same
+		// task", and createTask adopts the stored one either way). Doing
+		// this adoption only here, as a read-only peek, keeps a genuinely
+		// new launch's image gate running before any write, as it always
+		// has: createTask's own, later ReadTask only happens on ErrExists.
+		if err := adoptStoredProjectLayer(ctx, s, spec); err != nil {
 			return err
 		}
 	}
@@ -221,6 +252,11 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 				return err
 			}
 		}
+		if spec.ProjectLayer != nil {
+			if err := checkImageSince(ctx, env, slug, spec, kind, layeredSince, "the project layer", "the project layer", "", cmd.ErrOrStderr()); err != nil {
+				return err
+			}
+		}
 		if err := checkMaxParallel(ctx, env); err != nil {
 			return err
 		}
@@ -231,6 +267,12 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	if o.retry == "" {
 		if err := createTask(ctx, s, spec); err != nil {
 			return err
+		}
+		if !reused {
+			// After createTask, so a repeated --run-id announces whatever it
+			// adopted (the stored task's layer), not whatever this call
+			// happened to resolve first.
+			announceProjectLayer(cmd.ErrOrStderr(), spec, layerData)
 		}
 	}
 	chooses := runnerChooses(ctx, spec)
@@ -245,6 +287,9 @@ func runRun(cmd *cobra.Command, o *runOptions, args []string) error {
 	}
 	res.Project = env.lc.Name
 	res.Recipe = launchRecipeOf(spec, chooses)
+	if spec.ProjectLayer != nil {
+		res.ProjectLayer = &launchProjectLayer{SHA256: spec.ProjectLayer.SHA256, Generation: spec.ProjectLayer.Generation}
+	}
 	return printLaunch(cmd.OutOrStdout(), res, o.asJSON)
 }
 
@@ -541,6 +586,34 @@ func checkMaxParallel(ctx context.Context, env *cloudEnv) error {
 	return nil
 }
 
+// adoptStoredProjectLayer peeks at whatever task is already stored for
+// spec's run ID, without writing anything, and when it is spec's own task
+// (repeatTaskBytes equal, ignoring the layer itself), adopts its project
+// layer into spec before the image gate below runs: a repeat whose earlier
+// attempt stored a task but never launched it must be gated on the layer
+// that stored task actually carries, since createTask (below) keeps it
+// either way. No stored task (ErrNotFound), or one for a different
+// request, leaves spec untouched: createTask is still the one that refuses
+// "a different task".
+func adoptStoredProjectLayer(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
+	have, err := s.ReadTask(ctx)
+	if errors.Is(err, runstore.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return remote(err)
+	}
+	a, err1 := repeatTaskBytes(have)
+	b, err2 := repeatTaskBytes(spec)
+	if err := errors.Join(err1, err2); err != nil {
+		return err
+	}
+	if string(a) == string(b) {
+		spec.ProjectLayer = have.ProjectLayer
+	}
+	return nil
+}
+
 // createTask stores task.json once. A repeated run ID must repeat its task.
 func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	err := s.CreateTask(ctx, spec)
@@ -554,15 +627,37 @@ func createTask(ctx context.Context, s *runstore.Store, spec *task.Spec) error {
 	if err != nil {
 		return remote(err)
 	}
-	a, err1 := have.Marshal()
-	b, err2 := spec.Marshal()
+	a, err1 := repeatTaskBytes(have)
+	b, err2 := repeatTaskBytes(spec)
 	if err := errors.Join(err1, err2); err != nil {
 		return err
 	}
 	if string(a) != string(b) {
 		return userErr("run ID %s already holds a different task", spec.RunID)
 	}
+	// The stored task is what the job actually reads: a repeat keeps its
+	// project layer exactly as first launched, however spec just resolved
+	// it (L8, L15 are about a first launch; a repeated run ID is the same
+	// run, not a second resolution of it). Without this, a layer republished
+	// between the first launch and the repeat would make this call embed a
+	// different project_layer into the in-memory spec than what launchRun
+	// and the --json report actually describe.
+	spec.ProjectLayer = have.ProjectLayer
 	return nil
+}
+
+// repeatTaskBytes is spec.Marshal with the project layer left out entirely,
+// so a repeated --run-id is judged on everything the caller actually chose
+// (repo, ref, workflow, task text, overrides, recipe...), never on the
+// project layer: embedProjectLayer re-reads the bucket on every call
+// (decision L13, no fresh window), so its content can legitimately differ
+// between the first launch and a repeat (a republish, or just a new
+// generation of unchanged bytes); without this, either would make a
+// repeated --run-id spuriously look like "a different task".
+func repeatTaskBytes(spec *task.Spec) ([]byte, error) {
+	clone := *spec
+	clone.ProjectLayer = nil
+	return clone.Marshal()
 }
 
 func printLaunch(w io.Writer, res launchResult, asJSON bool) error {
