@@ -97,6 +97,21 @@ func TestFrameWide(t *testing.T) {
 
 func TestFrameMedium(t *testing.T) { golden(t, "medium_80", frame(fixture(), 80, 0)) }
 func TestFrameNarrow(t *testing.T) { golden(t, "narrow_50", frame(fixture(), 50, 0)) }
+
+// At tier 1 (width < 70) a selected run is marked on its own two-line row,
+// not just a selected header: runRows' cur glyph must reach the narrow
+// layout too, not only the wide table (TestFrameSelectedRunDetail is tier 3).
+func TestFrameNarrowSelectedRun(t *testing.T) {
+	sel := Cursor{Slug: "acme__app", Run: "r-aaaa11"}
+	got := frame(fixture(), 50, 0, func(o *RenderOptions) { o.Selected = sel })
+	if !strings.Contains(got, "▸ r-aaaa11") {
+		t.Fatalf("selected run not marked at tier 1:\n%s", got)
+	}
+	if strings.Contains(got, "▸ acme/app") {
+		t.Fatalf("header must not also be marked:\n%s", got)
+	}
+	golden(t, "narrow_50_selected_run", got)
+}
 func TestFrameTooNarrow(t *testing.T) {
 	got := frame(fixture(), 38, 0)
 	golden(t, "toonarrow_38", got)
