@@ -277,6 +277,128 @@ func TestCheckJobSubmitsBuild(t *testing.T) {
 	}
 }
 
+// layeredCheckInstalledYAML is what fugaro init --repo would have seen
+// when it installed the check job: same workflow name and base kind as
+// layeredCheckYAML (below), but with base and image.* given directly
+// instead of through a profile, so config.Parse (no layer) resolves it on
+// its own -- newCheckJob only uses it to compute the installed spec's env
+// (FUGARO_CHECK_SPEC, base_images), never what the job itself reads.
+const layeredCheckInstalledYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckYAML is acme/app's actual fugaro.yaml for the layer test:
+// anchored (gcp_project, matching checkLC's project and GCP project), its
+// own full workflows: (not minimal), naming the layer's profile for base
+// and image.* -- settings only a profile, never defaults:, may carry, so
+// this proves the job resolved the copy, not just read past it.
+const layeredCheckYAML = `version: 1
+project: aurora
+gcp_project: proj-1234
+git: { provider: bitbucket }
+workflows:
+  app: { profile: svc, commands: { build: sh build.sh, test: sh test.sh }, secrets: [{ name: npm-token, env: NPM_TOKEN }] }
+`
+
+// layeredCheckLayer is the project layer layeredCheckYAML's workflow
+// names: profile svc supplies the base (web-node, matching checkLC's own
+// base_images) and image.apt/setup/skip_build_scripts.
+const layeredCheckLayer = `version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  svc:
+    base: web-node
+    image: { apt: [graphviz], setup: ["./scripts/warm.sh"], skip_build_scripts: true }
+default_profile: svc
+`
+
+func layeredCheckFiles() map[string]string {
+	files := npmFiles()
+	files["fugaro.yaml"] = layeredCheckYAML
+	return files
+}
+
+// Review fix: no test ran runImageCheckJob end to end with a layer
+// present. This one publishes the repository's copy
+// (builds/<slug>/project-layer.yaml) before running the job, against a
+// repository fugaro.yaml with its own full workflows: (not minimal) that
+// names the layer's profile for base and image.apt/setup/
+// skip_build_scripts. Asserts two things reflect the layer: the
+// submitted Cloud Build request's _PROJECT_LAYER_SHA256 equals the
+// copy's own sum (review item 2), and the job's own resolution actually
+// applied the profile's image settings -- proven through the recorded
+// ImageConfigHash, which only Base and Image.{Apt,Setup,SkipBuildScripts}
+// feed, matching the hash of resolving the same bytes over the same
+// layer independently (review item 1).
+//
+// Mutation (run, restore): replace the jobHeadConfig(...) call in
+// runImageCheckJob with readHeadConfig(ctx, tree, nil,
+// layerOptions{NoBucket: true}) (resolves without ever reading the copy,
+// the shape before this PR's own fix), and this test fails on both
+// counts: _PROJECT_LAYER_SHA256 is empty, and the recorded
+// ImageConfigHash no longer matches (image.apt/setup/skip_build_scripts
+// never applied, since profile: svc cannot resolve with no layer at all
+// -- the job would in fact fail outright with "fugaro.yaml has 1
+// problem(s)", which this test also catches as "err != nil").
+func TestCheckJobResolvesAndSubmitsWithTheLayer(t *testing.T) {
+	f := newCheckJob(t, layeredCheckFiles(), layeredCheckInstalledYAML)
+	layerPath := filepath.Join(strings.TrimPrefix(f.bucket, "file://"), config.LayerCopyKey(f.slug))
+	if err := os.MkdirAll(filepath.Dir(layerPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(layerPath, []byte(layeredCheckLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	lines, err := runCheckJob(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d", buildPosts(f.fb))
+	}
+	if len(lines) != 1 || lines[0].Decision != imagecheck.Rebuild {
+		t.Fatalf("lines = %+v", lines)
+	}
+
+	got := f.fb.Last()
+	subs, _ := got["substitutions"].(map[string]any)
+	wantSHA := config.LayerSum([]byte(layeredCheckLayer))
+	if subs["_PROJECT_LAYER_SHA256"] != wantSHA {
+		t.Fatalf("_PROJECT_LAYER_SHA256 = %v, want %s", subs["_PROJECT_LAYER_SHA256"], wantSHA)
+	}
+
+	l, ps := config.ParseProjectLayer([]byte(layeredCheckLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	wantCfg, _, ps := config.Resolve([]byte(layeredCheckYAML), l)
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if wantCfg.Workflows["app"].Base != "web-node" || len(wantCfg.Workflows["app"].Image.Apt) == 0 || !wantCfg.Workflows["app"].Image.SkipBuildScripts {
+		t.Fatalf("test fixture itself does not resolve the layer: %+v", wantCfg.Workflows["app"])
+	}
+	testutil.Git(t, f.work, "pull", "--quiet", "--ff-only")
+	tree, err := imagecheck.Open(context.Background(), f.work, "HEAD", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantHash, err := imagecheck.ImageConfigHash(wantCfg, "app", tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := f.checkState(t, "app")
+	if st == nil || st.BuildInputs == nil || st.BuildInputs.ImageConfigHash != wantHash {
+		t.Fatalf("check.json = %+v, want ImageConfigHash %s", st, wantHash)
+	}
+}
+
 func TestCheckJobSkipsAndLogs(t *testing.T) {
 	f := newCheckJob(t, checkFiles(), bitbucketYAML)
 	f.seedRecord(t)
@@ -497,6 +619,45 @@ func TestLocalCheckNeverSubmits(t *testing.T) {
 	}
 }
 
+// TestLocalCheckUsesTheSelectedProjectsLayer: the local check's own
+// checkout config must resolve against the project --config (or
+// --project/--gcp-project) actually selected, never a flag-blind
+// re-selection (loadCheckoutConfig's own fallback, selectedProjectConfig,
+// which looks at $FUGARO_PROJECT/$FUGARO_CONFIG and the "exactly one
+// project config" default, none of which this test leaves anything for).
+// A flag-blind lc=nil forces findLayer into its cache-only mode (decision
+// L16's Lenient path) even though the real installation --config names is
+// reachable, so a file with no workflows: that needs the project layer
+// would wrongly refuse with "needs the project layer" instead of
+// resolving it from the (reachable, never actually offline) bucket.
+//
+// Mutation (run, restore): change runImageCheckLocal's
+// loadCheckoutResolved(ctx, "", lc, layerOptions{Lenient: true}) call to
+// pass nil instead of lc, and this test fails: the command then refuses
+// with "needs the project layer" before ever reaching originRepo.
+func TestLocalCheckUsesTheSelectedProjectsLayer(t *testing.T) {
+	f := newCloudFixture(t)
+	publishedLayer(t, f, testProjectLayer)
+	cfgPath := os.Getenv("FUGARO_CONFIG")
+	f.appendConfig(t, "base_images: {web-node: "+checkBase+"}\n")
+	layerCheckout(t, f, minimalAnchored)
+	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
+	// and points XDG at an empty directory, and isolateCache gives the
+	// layer cache a directory of its own, so loadCheckoutConfig's
+	// flag-blind fallback has nothing to find by name, $FUGARO_*, or
+	// "exactly one project config", and nothing cached either — only
+	// --config below names the installation at all.
+	isolateProjects(t, t.TempDir())
+	isolateCache(t)
+	_, _, err := execute(t, "image", "check", "--config", cfgPath)
+	// The layer resolved fine (no "needs the project layer" refusal): the
+	// run reaches past it to the next thing this checkout (acme/other, on
+	// GitHub, layerCheckout's own origin) lacks, a GitHub App ID.
+	if !strings.Contains(err.Error(), "no GitHub App ID") {
+		t.Fatalf("err = %v, want it to fail past the project layer, not at it", err)
+	}
+}
+
 func TestImageStatusJSON(t *testing.T) {
 	f := newCloudFixture(t)
 	now := time.Now().UTC().Truncate(time.Second)
@@ -631,6 +792,45 @@ func TestCheckJobRecordWriteFailureAfterSubmit(t *testing.T) {
 	if len(lines) != 1 || lines[0].Severity != "ERROR" || lines[0].Decision != imagecheck.CheckFailed || *lines[0].BuildID != "b0001" ||
 		!strings.Contains(lines[0].Error, "submitted Cloud Build build b0001") || buildPosts(f.fb) != 1 {
 		t.Fatalf("lines = %+v, %d builds", lines, buildPosts(f.fb))
+	}
+}
+
+// TestCheckJobForbiddenWriteStaysExitRemoteError: the daily check job runs
+// as the build account, the only writer of check.json, so a check.json
+// write it is forbidden to make means that account's builds/ grant itself
+// is broken (an infrastructure fault for an operator to fix with Terraform,
+// not something "ask an operator to publish it" or fugaro init --operator
+// addresses). The job's documented exit 2 for a failed check
+// (imagecheck.go's "It exits 2 when the check itself failed") holds; the
+// refusal text in the JSON log line names the build account's Terraform
+// grant, not the operator role, so an on-call engineer is pointed at the
+// right fix.
+func TestCheckJobForbiddenWriteStaysExitRemoteError(t *testing.T) {
+	f := newCheckJob(t, checkFiles(), bitbucketYAML)
+	gcs := gcpfake.NewGCS(t)
+	gcs.DenyWrites(checkBucket, "builds/")
+	checkOpenBucket = func(context.Context, string) (*blobx.Bucket, error) { return gcs.Bucket(t, checkBucket), nil }
+	out, stderr, err := executeJob(t, "image", "check", "--job")
+	if ExitCode(err) != ExitRemoteError {
+		t.Fatalf("exit %d, %v (%s)", ExitCode(err), err, stderr)
+	}
+	lines := checkLines(t, out)
+	if len(lines) != 1 || lines[0].Decision != imagecheck.CheckFailed ||
+		!strings.Contains(lines[0].Error, "Terraform IAM condition") || !strings.Contains(lines[0].Error, "build service account") {
+		t.Fatalf("lines = %+v", lines)
+	}
+	// The real fix is the Terraform grant, not adding a person as an
+	// operator: the job never runs as a launcher asking to publish
+	// something.
+	if strings.Contains(lines[0].Error, "operator role") || strings.Contains(lines[0].Error, "fugaro init --operator") {
+		t.Errorf("error points at the operator role, not the build account's Terraform grant: %s", lines[0].Error)
+	}
+	// "nothing was published" would be false here: the build did run.
+	if strings.Contains(lines[0].Error, "nothing was published") {
+		t.Errorf("error says nothing was published, but a build ran: %s", lines[0].Error)
+	}
+	if buildPosts(f.fb) != 1 {
+		t.Fatalf("builds submitted = %d, want 1 (the build runs; only recording it is refused)", buildPosts(f.fb))
 	}
 }
 

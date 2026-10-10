@@ -127,7 +127,7 @@ RUN set -eu; \
     install -m 0755 "$tmp/gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
     rm -rf "$tmp"; \
     HOME=/root gh --version
-COPY --chmod=0755 images/web-node/install-node.sh /usr/local/lib/fugaro/install-node
+COPY --chmod=0755 images/base/install-node.sh /usr/local/lib/fugaro/install-node
 COPY --chmod=0755 images/common/finalize-checkout.sh /usr/local/lib/fugaro/finalize-checkout
 # Node.js (installed and verified by web-node's script, from nodejs.org into
 # /opt/node), then firebase-tools and the emulator jars. `firebase

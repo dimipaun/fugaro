@@ -55,6 +55,10 @@ type BuildSpec struct {
 	// NoSmoke leaves out the candidate's smoke test (fugaro image build
 	// --no-smoke). The daily check never sets it.
 	NoSmoke bool
+	// ProjectLayerSHA256 is the project layer's sha256, "" for none: the
+	// render step reads the repository's copy (builds/<Slug>/project-layer.yaml)
+	// and refuses one with another sum.
+	ProjectLayerSHA256 string
 }
 
 // BuildResult is a submitted or finished Cloud Build build.
@@ -96,6 +100,8 @@ var (
 	digestRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	// registryHostRE is <region>-docker.pkg.dev/<project>.
 	registryHostRE = regexp.MustCompile(`^([a-z]+-[a-z]+[0-9]+)-docker\.pkg\.dev/([a-z][a-z0-9-]{4,28}[a-z0-9])$`)
+	// sha256HexRE is a sha256 sum as 64 hex digits.
+	sha256HexRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // The credential step's provider secret, as the variable it reads, and the
@@ -171,14 +177,15 @@ func BuildRequest(project string, s BuildSpec) (*cloudbuild.Build, error) {
 	// Cloud Build refuses a substitution the request doesn't reference, so
 	// each provider sends only its own.
 	b.Substitutions = map[string]string{
-		"_REPO_URL":    s.RepoURL,
-		"_BASE_BRANCH": s.BaseBranch,
-		"_WORKFLOW":    s.Workflow,
-		"_FUGARO_BASE": s.Base,
-		"_IMAGE":       s.Image,
-		"_SECRET_ENVS": strings.Join(envs, " "),
-		"_BUCKET":      s.Bucket,
-		"_SLUG":        s.Slug,
+		"_REPO_URL":             s.RepoURL,
+		"_BASE_BRANCH":          s.BaseBranch,
+		"_WORKFLOW":             s.Workflow,
+		"_FUGARO_BASE":          s.Base,
+		"_IMAGE":                s.Image,
+		"_SECRET_ENVS":          strings.Join(envs, " "),
+		"_BUCKET":               s.Bucket,
+		"_SLUG":                 s.Slug,
+		"_PROJECT_LAYER_SHA256": s.ProjectLayerSHA256,
 	}
 	switch s.GitProvider {
 	case gitprov.KindBitbucket:
@@ -263,6 +270,9 @@ func (s BuildSpec) check(project string, reserved map[string]bool) error {
 	}
 	if !bucketURLRE.MatchString(s.Bucket) {
 		return fmt.Errorf("the runs bucket %q is not gs://<bucket>; the build records its image there", s.Bucket)
+	}
+	if s.ProjectLayerSHA256 != "" && !sha256HexRE.MatchString(s.ProjectLayerSHA256) {
+		return fmt.Errorf("the project layer sum %q is not 64 hex digits", s.ProjectLayerSHA256)
 	}
 	// The build account holds the repository's secrets and writes its
 	// registry; any other account (the retired shared one, another

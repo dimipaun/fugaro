@@ -272,6 +272,25 @@ func TestRecipesPublishAndValidateRefuseAFifo(t *testing.T) {
 	}
 }
 
+// fugaro recipes validate|publish FILE must refuse a symlink, not follow
+// it: a symlink could name any file the user running the command can read.
+//
+// Mutation (run, restore): revert readRecipeFile to open the path
+// directly (os.OpenFile without O_NOFOLLOW, as it did before), and this
+// test fails: validate reads the file through the symlink and reports it
+// valid.
+func TestRecipesValidateRefusesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	good := writeRecipeFile(t, dir, "team.yaml", projectTeam)
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(good, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := execute(t, "recipes", "validate", link); ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 // validate and publish agree on the file name rule, wherever it is run.
 func TestRecipesValidateStemRule(t *testing.T) {
 	dir := t.TempDir()

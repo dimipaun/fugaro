@@ -27,7 +27,9 @@ var projectWriteRoles = []string{"roles/owner", "roles/editor", "roles/storage.a
 
 var fugaroAccountMember = regexp.MustCompile(`^serviceAccount:fugaro-[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$`)
 
-func customRole(r string) bool { return strings.HasPrefix(r, "projects/") || strings.HasPrefix(r, "organizations/") }
+func customRole(r string) bool {
+	return strings.HasPrefix(r, "projects/") || strings.HasPrefix(r, "organizations/")
+}
 
 // RunsBucketFindings reads the runs bucket's policy against the 0.7.0 end
 // state. With launchers and operators unknown (both empty), an unconditioned
