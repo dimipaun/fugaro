@@ -44,6 +44,10 @@ type RenderOptions struct {
 	Footer        []string // the prompt, notice or killing line; wrapped here, never clipped
 	Keys          bool     // list the kill and resume keys in the help line
 	Repo          string   // --repo as given
+	// FilterAll is the finished-run filter's current state (design
+	// generic-tool §10.3): false shows "showing active + recent · a: all",
+	// true shows "showing all · a: recent". Always drawn, at every width.
+	FilterAll bool
 }
 
 // Frame is a drawn screen.
@@ -287,8 +291,15 @@ func Render(v View, o RenderOptions) Frame {
 			body = append(body, r.line(seg{msg, cFaint}))
 		}
 	}
+	if !o.Help {
+		if ready := ReadyForReview(v); len(ready) > 0 {
+			body = append(body, r.readyForReview(v, ready)...)
+		}
+	}
 
-	// Footer: the prompt or notice (wrapped), then the key line.
+	// Footer: the prompt or notice (wrapped), then the key line (which leads
+	// with the finished-run filter's state, design generic-tool §10.3, so it
+	// is never the part a narrow width clips away).
 	r.dim = false
 	var foot []string
 	for _, f := range o.Footer {
@@ -299,7 +310,7 @@ func Render(v View, o RenderOptions) Frame {
 	if !live && o.Keys {
 		foot = append(foot, r.line(seg{"kill and resume keys are off until the data is live", cFaint}))
 	}
-	foot = append(foot, r.line(seg{r.keyLine(tier, o.Keys, live), cFaint}))
+	foot = append(foot, r.line(seg{r.keyLine(tier, o.Keys, live, o.FilterAll), cFaint}))
 
 	// A terminal too short for the header, a body of three rows and the footer
 	// would have the renderer cut the top lines, exactly the connection line
@@ -389,23 +400,26 @@ func (r *rend) connSegs(v View) []seg {
 	return []seg{{"live", cOK}}
 }
 
-func (r *rend) keyLine(tier int, keys, live bool) string {
+func (r *rend) keyLine(tier int, keys, live, filterAll bool) string {
 	sel := "↑↓ select"
 	if r.g.ell == "..." { // --ascii
 		sel = "Up/Down select"
 	}
-	var parts []string
+	// The filter note leads (design generic-tool §10.3): line() clips later
+	// segments first, so this is the one part of the line a narrow width
+	// never drops.
+	parts := []string{r.filterNote(filterAll)}
 	switch {
 	case tier == 3 && keys:
-		parts = []string{sel, "space fold/expand", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit"}
+		parts = append(parts, sel, "space fold/expand", "x ack", "PgUp/PgDn scroll", "k/K kill repo/project", "r/R resume", "? help", "q quit")
 	case tier == 3:
-		parts = []string{sel, "space fold/expand", "PgUp/PgDn scroll", "? help", "q quit"}
+		parts = append(parts, sel, "space fold/expand", "x ack", "PgUp/PgDn scroll", "? help", "q quit")
 	case tier == 2 && keys:
-		parts = []string{sel, "space fold/expand", "k/K kill", "r/R resume", "? help", "q quit"}
+		parts = append(parts, sel, "space fold/expand", "x ack", "k/K kill", "r/R resume", "? help", "q quit")
 	case tier == 2:
-		parts = []string{sel, "space fold/expand", "? help", "q quit"}
+		parts = append(parts, sel, "space fold/expand", "x ack", "? help", "q quit")
 	default:
-		parts = []string{sel, "? help", "q quit"}
+		parts = append(parts, sel, "? help", "q quit")
 	}
 	return strings.Join(parts, r.g.sep)
 }
@@ -577,9 +591,10 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 	default:
 		name = seg{r.clipW(b.Name, 14) + " ", nameC}
 	}
+	hiddenCount := len(b.Runs) + len(b.Finished)
 	segs := append([]seg{{cur + " ", nameC}, name, {" ", ""}}, r.figures(tier, b.Bar, b.Counted, b.Spent, b.Notional, b.Burn, false)...)
-	if collapsed && len(b.Runs) > 0 {
-		segs = append(segs, seg{fmt.Sprintf(" [%d runs hidden]", len(b.Runs)), cFaint})
+	if collapsed && hiddenCount > 0 {
+		segs = append(segs, seg{fmt.Sprintf(" [%d runs hidden]", hiddenCount), cFaint})
 	}
 	out := []string{r.line(segs...)}
 	selTop, selBottom = -1, -1
@@ -606,7 +621,78 @@ func (r *rend) repo(tier int, b RepoBlock, sel Cursor, expanded map[Cursor]bool,
 			selTop, selBottom = idx, last
 		}
 	}
+	for _, run := range b.Finished {
+		runSel := sel.Slug == b.Slug && sel.Run != "" && sel.Run == run.Run
+		idx := len(out)
+		out = append(out, r.finishedRow(run, runSel))
+		if runSel {
+			selTop, selBottom = idx, idx
+		}
+	}
 	return out, selTop, selBottom
+}
+
+// finishedRow is one line for a run whose result.json already exists (design
+// generic-tool §10.3): the run id, its outcome and, once it has one, its PR
+// link, coloured to flag a failure or a review-ready success.
+func (r *rend) finishedRow(run RunRow, selected bool) string {
+	cur := " "
+	if selected {
+		cur = r.g.cur
+	}
+	word, c := strings.ToUpper(run.Stage), ""
+	if run.Failed {
+		c = cBad
+	}
+	switch run.Outcome {
+	case "ready":
+		word, c = "ready for review", cOK
+	case "draft":
+		word += ", passed review"
+	}
+	segs := []seg{{cur + " " + run.Run + " ", ""}, {dash(run.Title) + " ", cBold}, {word, c}}
+	if run.PRURL != "" {
+		segs = append(segs, seg{" " + run.PRURL, ""})
+	}
+	segs = append(segs, seg{r.g.sep + ageText(run) + " ago", cFaint})
+	return r.line(segs...)
+}
+
+// filterNote is the dashboard's current finished-run filter, always shown
+// (design generic-tool §10.3): "a" toggles between the two.
+func (r *rend) filterNote(all bool) string {
+	if all {
+		return "showing all" + r.g.sep + "a: recent"
+	}
+	return "showing active + recent" + r.g.sep + "a: all"
+}
+
+// readyForReview is the "Ready for your review" section (design
+// generic-tool §10.1): a header with the count, then one line per run with
+// its repository, PR number and link, and its title.
+func (r *rend) readyForReview(v View, ready []RunRow) []string {
+	name := func(slug string) string {
+		for _, b := range v.Repos {
+			if b.Slug == slug {
+				return b.Name
+			}
+		}
+		return "-"
+	}
+	out := []string{"", r.line(seg{fmt.Sprintf("Ready for your review (%d)", len(ready)), cBold})}
+	for _, row := range ready {
+		pr := "-"
+		if row.PRURL != "" {
+			pr = row.PRURL
+		}
+		out = append(out, r.line(
+			seg{"  " + r.fit(name(row.Slug), 18) + " ", ""},
+			seg{r.fit(fmt.Sprintf("#%d", row.PRNumber), 6) + " ", ""},
+			seg{pr + "  ", cInfo},
+			seg{dash(row.Title), cFaint},
+		))
+	}
+	return out
 }
 
 func (r *rend) runRows(tier int, c runCols, run RunRow, selected bool) []string {

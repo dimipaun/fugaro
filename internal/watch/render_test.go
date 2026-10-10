@@ -488,6 +488,53 @@ func TestKeyLineAndHelpNameRunsAndDetail(t *testing.T) {
 	}
 }
 
+// The finished-run filter's state leads the key line and is never the part a
+// narrow width clips away (design generic-tool §10.3): both wordings must
+// show in full at every width the screen supports.
+func TestFooterNamesTheView(t *testing.T) {
+	for _, w := range []int{60, 80, 120} {
+		got := frame(fixture(), w, 0)
+		if !strings.Contains(got, "showing active + recent · a: all") {
+			t.Fatalf("width %d: filter note missing or clipped:\n%s", w, got)
+		}
+		golden(t, fmt.Sprintf("footer_%d", w), got)
+	}
+	all := frame(fixture(), 80, 0, func(o *RenderOptions) { o.FilterAll = true })
+	if !strings.Contains(all, "showing all · a: recent") {
+		t.Fatalf("--all wording missing:\n%s", all)
+	}
+}
+
+// "Ready for your review" lists only runs whose outcome is ready (a senior
+// ship and a verified passing test, design generic-tool §10.1): a draft
+// outcome (passed review on a draft whose test failed) stays out of it even
+// though it is also a finished row.
+func TestReadyForReviewSection(t *testing.T) {
+	v := fixture()
+	v = MergeFinished(v, Config{}, []FinishedRun{
+		{Run: "r-ready1", Slug: "acme__app", Title: "Fix the login bug", Status: "succeeded", Outcome: "ready",
+			PRURL: "https://github.com/acme/app/pull/101", PRNumber: 101, FinishedAt: t0.Add(-30 * time.Minute)},
+		{Run: "r-ready2", Slug: "acme__lib", Title: "Speed up the parser", Status: "succeeded", Outcome: "ready",
+			PRURL: "https://github.com/acme/lib/pull/55", PRNumber: 55, FinishedAt: t0.Add(-5 * time.Minute)},
+		{Run: "r-draft1", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
+			PRURL: "https://github.com/acme/app/pull/102", PRNumber: 102, FinishedAt: t0.Add(-10 * time.Minute)},
+	}, t0)
+	got := frame(v, 100, 0)
+	if !strings.Contains(got, "Ready for your review (2)") {
+		t.Fatalf("missing header:\n%s", got)
+	}
+	for _, want := range []string{"https://github.com/acme/app/pull/101", "https://github.com/acme/lib/pull/55", "Fix the login bug", "Speed up the parser"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q:\n%s", want, got)
+		}
+	}
+	section := got[strings.Index(got, "Ready for your review"):]
+	if strings.Contains(section, "pull/102") || strings.Contains(section, "Half-done refactor") {
+		t.Fatalf("the draft outcome must not be listed in the review section:\n%s", section)
+	}
+	golden(t, "ready_for_review_100", got)
+}
+
 func TestFrameRecipeLongNameClipped(t *testing.T) {
 	v := fixture()
 	long := strings.Repeat("abcdefghij", 3)
