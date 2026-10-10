@@ -8,7 +8,7 @@ Every person who uses an installation keeps a local project config, `~/.config/f
 
 **Goal.** A teammate with a launcher or operator role, in a checkout of an onboarded repository, on a fresh machine, runs `fugaro run`, `ls`, `diagnose` and the rest with no setup command. A tampered shared file cannot redirect their tools to another project's database or token signer, and no secret ever appears in it.
 
-**Non-goals.** Replacing the local config (it stays, and always wins). Changing how operators adopt. Sharing anything per-person or owner-only. Discovering installations that use a custom `--runs-bucket` name.
+**Non-goals.** Replacing the local config (it stays, and always wins). Changing how operators adopt. Sharing anything per-person or owner-only. Discovering installations that use a custom `--runs-bucket` name. Repository settings shared by a project live in the project layer: see [layered-config.md](layered-config.md).
 
 ## 2. Decisions (from the user)
 
