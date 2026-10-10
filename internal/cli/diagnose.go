@@ -458,6 +458,18 @@ func printDiagnosis(w io.Writer, d *Diagnosis, asJSON bool) error {
 	if r.Reason != "" {
 		fmt.Fprintf(&b, "Reason:   %s\n", oneLine(r.Reason))
 	}
+	if pl := r.ProjectLayer; pl != nil && validGeneration(pl.Generation) {
+		line := fmt.Sprintf("Config:   project layer generation %d (sha256 %s)", pl.Generation, shortSHA(pl.SHA256))
+		if !pl.Applied {
+			line += ", not applied"
+		}
+		if r.ConfigSHA256 != "" {
+			line += "; resolved sha256 " + shortSHA(r.ConfigSHA256)
+		}
+		fmt.Fprintf(&b, "%s\n", oneLine(line))
+	} else if r.ConfigSHA256 != "" {
+		fmt.Fprintf(&b, "Config:   no project layer; resolved sha256 %s\n", oneLine(shortSHA(r.ConfigSHA256)))
+	}
 	if h := d.Halt; h != nil {
 		line := fmt.Sprintf("Halted:   %s (%s) at %s", h.Reason, h.Scope, h.At.UTC().Format(time.RFC3339))
 		if h.Detail != "" {

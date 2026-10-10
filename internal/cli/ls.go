@@ -510,9 +510,13 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
+	showLayer := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ProjectLayer != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
+	}
+	if showLayer {
+		header += "\tLAYER"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -530,6 +534,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 				name = recipe.DefaultName
 			}
 			line += "\t" + oneLine(name)
+		}
+		if showLayer {
+			line += "\t" + layerCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -561,6 +568,51 @@ func statusCell(r runview.Row) string {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
 	}
 	return r.Status
+}
+
+// validSHA256 reports whether s is a sha256 hex digest: exactly 64 lowercase
+// hex characters. The record a sha comes from is launcher-writable and
+// json.Unmarshal (runstore.ReadRecordVersion) never checks it against the
+// schema, so it can be any text; shortSHA must reject it before slicing, or
+// a multibyte rune cut mid-byte would corrupt the terminal output.
+func validSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shortSHA is a sha256 hex digest shortened for display; a string that
+// isn't 64 lowercase hex characters shows as "(invalid)" instead.
+func shortSHA(s string) string {
+	if !validSHA256(s) {
+		return "(invalid)"
+	}
+	return s[:12]
+}
+
+// validGeneration reports whether g could be a real layer generation: a
+// publisher only ever increments from 0, so negative means the record
+// wasn't written by one (same untrusted-record concern as validSHA256).
+func validGeneration(g int64) bool { return g >= 0 }
+
+// layerCell is a run's project layer in ls: its generation, "-" for none
+// or for a record whose generation isn't trustworthy.
+func layerCell(r runview.Row) string {
+	pl := r.ProjectLayer
+	switch {
+	case pl == nil || !validGeneration(pl.Generation):
+		return "-"
+	case !pl.Applied:
+		return fmt.Sprintf("gen %d (not applied)", pl.Generation)
+	}
+	return fmt.Sprintf("gen %d", pl.Generation)
 }
 
 // prColumn is a row's pull request: "#N <url>", "#N" while the URL is

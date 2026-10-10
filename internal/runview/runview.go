@@ -61,10 +61,15 @@ type Row struct {
 	// Recipe is the run's recipe: the record's, else the task's; "" when
 	// neither names one (a default run launched before 0.5.0, or not started).
 	Recipe string `json:"recipe,omitempty"`
-	RunID  string `json:"run_id"`
-	Status string `json:"status"`
-	Stage  string `json:"stage,omitempty"`
-	Reason string `json:"reason,omitempty"`
+	// ProjectLayer is the project layer the run's task carried, and
+	// ConfigSHA256 its resolved config's sum (docs/design/layered-config.md
+	// §8); both absent before 0.6.0 and for a run that has not started.
+	ProjectLayer *runstore.ProjectLayerRecord `json:"project_layer,omitempty"`
+	ConfigSHA256 string                       `json:"config_sha256,omitempty"`
+	RunID        string                       `json:"run_id"`
+	Status       string                       `json:"status"`
+	Stage        string                       `json:"stage,omitempty"`
+	Reason       string                       `json:"reason,omitempty"`
 	// Halt is why a halted run was halted.
 	Halt        *runstore.Halt `json:"halt,omitempty"`
 	Batch       string         `json:"batch,omitempty"`
@@ -166,6 +171,7 @@ func Join(in Input, prices PriceBook, now time.Time) Row {
 		row.Recipe = in.Task.Recipe.Name
 	}
 	if r != nil {
+		row.ProjectLayer, row.ConfigSHA256 = r.ProjectLayer, r.ConfigSHA256
 		row.Stage = r.Stage
 		if r.Reason != "" {
 			row.Reason = r.Reason
