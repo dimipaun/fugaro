@@ -124,7 +124,12 @@ case "$cmd" in
     echo "v$FAKE_HARNESS_NODE_VERSION" ;;
   "cat /etc/fugaro/base.json")
     [ "$missing" = base-json ] && fail_missing cat
-    debian=$FAKE_DEBIAN_DIGEST; mise=$FAKE_MISE_VERSION; claude_code=$FAKE_CLAUDE_VERSION; gh=$FAKE_GH_VERSION
+    # mise's base.json field defaults to FAKE_MISE_VERSION (the same value
+    # "mise --version" reports) but FAKE_BASE_JSON_MISE overrides it alone,
+    # so a test can hold base.json at the real pin while varying what the
+    # tool itself reports: the two checks (pinned()'s own, and
+    # check_json_field's) are then independently defeatable.
+    debian=$FAKE_DEBIAN_DIGEST; mise=${FAKE_BASE_JSON_MISE:-$FAKE_MISE_VERSION}; claude_code=$FAKE_CLAUDE_VERSION; gh=$FAKE_GH_VERSION
     yq=$FAKE_YQ_VERSION; gcloud=$FAKE_GCLOUD_VERSION; docker_cli=$FAKE_DOCKER_CLI_VERSION; harness_node=$FAKE_HARNESS_NODE_VERSION
     codex=$FAKE_CODEX_VERSION; opencode=$FAKE_OPENCODE_VERSION; goose=$FAKE_GOOSE_VERSION; crush=$FAKE_CRUSH_VERSION
     # FAKE_BASE_JSON_MISMATCH names one field to corrupt independently of its

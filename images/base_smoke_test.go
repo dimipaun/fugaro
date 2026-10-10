@@ -74,15 +74,20 @@ func TestSmokeBaseFailsWhenAToolIsMissing(t *testing.T) {
 
 // TestSmokeBasePinsRequireExactVersionMatch: a pin must match the reported
 // version exactly, not as a substring (1.2.3 must not accept 11.2.30 or
-// 1.2.34, both of which contain "1.2.3").
+// 1.2.34, both of which contain "1.2.3"). FAKE_BASE_JSON_MISE holds
+// base.json's mise field at the real pin (1.2.3) while FAKE_MISE_VERSION
+// alone varies what "mise --version" itself reports, so this proves
+// pinned()'s own equality check, not the separate, always-strict
+// check_json_field("mise", ...) check below it (which would otherwise also
+// fail on a wrong FAKE_MISE_VERSION and mask a weakened pinned()).
 func TestSmokeBasePinsRequireExactVersionMatch(t *testing.T) {
 	for _, reported := range []string{"11.2.30", "1.2.34"} {
-		out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_MISE_VERSION="+reported)
-		if err == nil || !strings.Contains(out, "not pinned") {
+		out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_BASE_JSON_MISE=1.2.3", "FAKE_MISE_VERSION="+reported)
+		if err == nil || !strings.Contains(out, "mise --version reports") {
 			t.Errorf("reported %s against pin 1.2.3: err=%v\n%s", reported, err, out)
 		}
 	}
-	if out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_MISE_VERSION=1.2.3"); err != nil {
+	if out, err := runSmokeBase(t, "", "MISE_VERSION=1.2.3", "FAKE_BASE_JSON_MISE=1.2.3", "FAKE_MISE_VERSION=1.2.3"); err != nil {
 		t.Errorf("an exact match failed: %v\n%s", err, out)
 	}
 }
