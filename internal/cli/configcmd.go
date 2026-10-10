@@ -17,5 +17,6 @@ func newConfigCmd() *cobra.Command {
 			return err
 		},
 	})
+	cmd.AddCommand(newConfigPublishCmd())
 	return cmd
 }
