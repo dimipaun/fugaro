@@ -93,7 +93,7 @@ func TestDoctorFugaroYAMLResolves(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	if c, fy := fugaroYAMLCheck(context.Background(), dir, fileEnv(t, f).lc); c == nil || !c.OK || fy == nil || !fy.Valid {
+	if c, fy, _ := fugaroYAMLCheck(context.Background(), dir, fileEnv(t, f).lc); c == nil || !c.OK || fy == nil || !fy.Valid {
 		t.Fatalf("check %+v, %+v", c, fy)
 	}
 }

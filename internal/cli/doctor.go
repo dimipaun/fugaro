@@ -272,11 +272,11 @@ func runDoctor(cmd *cobra.Command, cloudOpts cloudOptions, dir string, pluginOnl
 	o.Project = &doctorProject{Name: lc.Name, GCPProject: lc.GCPProject, Region: lc.Region, RegistryHost: lc.RegistryHost, BaseImages: lc.BaseImages}
 
 	if co, _ := checkoutProject(ctx, ""); co != nil {
-		if c, fy := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
+		if c, fy, rf := fugaroYAMLCheck(ctx, co.Root, lc); c != nil {
 			o.Checks = append(o.Checks, *c)
 			o.FugaroYAML = fy
-			if fy.Valid {
-				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root)...)
+			if fy.Valid && rf != nil {
+				o.Checks = append(o.Checks, doctorLayerChecks(ctx, lc, co.Root, *rf)...)
 			}
 		}
 		o.Secrets = doctorSecrets(cmd, lc)
@@ -351,31 +351,41 @@ func doctorAPIOptsQuota(lc *localcfg.Config, endpoint string, withQuota bool) []
 	return opts
 }
 
-// fugaroYAMLCheck reads root/fugaro.yaml and checks it (parseCheckoutFugaroYAML
-// and config.Check, as fugaro validate does), nil when there is no such file.
-func fugaroYAMLCheck(ctx context.Context, root string, lc *localcfg.Config) (*doctorCheck, *doctorFugaroYAML) {
+// fugaroYAMLCheck reads root/fugaro.yaml and checks it (resolveFugaroYAML and
+// config.Check, as fugaro validate does: the same resolution
+// parseCheckoutFugaroYAML would do, but keeping the resolvedFile so
+// doctorLayerChecks can reuse it instead of resolving the project layer a
+// second time), nil when there is no such file. The third return is non-nil
+// only when the file is valid (len(problems) == 0).
+func fugaroYAMLCheck(ctx context.Context, root string, lc *localcfg.Config) (*doctorCheck, *doctorFugaroYAML, *resolvedFile) {
 	path := filepath.Join(root, "fugaro.yaml")
 	data, err := readFugaroYAML(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
 		// Present and not a file to read (a link, a FIFO, too large): reported,
 		// never followed.
 		return &doctorCheck{ID: "fugaro-yaml", OK: false, Problem: oneLineCLI(err.Error()),
-			Fix: "replace it with a regular fugaro.yaml of the repository's own"}, &doctorFugaroYAML{Path: path, Problems: []config.Problem{{Message: "not read"}}}
+			Fix: "replace it with a regular fugaro.yaml of the repository's own"}, &doctorFugaroYAML{Path: path, Problems: []config.Problem{{Message: "not read"}}}, nil
 	}
-	cfg, problems := parseCheckoutFugaroYAML(ctx, data, lc)
-	if cfg != nil {
-		problems = append(problems, config.Check(cfg, root)...)
+	rf, rerr := resolveFugaroYAML(ctx, data, lc, layerOptions{Lenient: true})
+	var problems []config.Problem
+	if rerr != nil {
+		problems = []config.Problem{{Path: "project layer", Message: oneLineCLI(rerr.Error())}}
+	} else {
+		problems = rf.Problems
+		if rf.Cfg != nil {
+			problems = append(problems, config.Check(rf.Cfg, root)...)
+		}
 	}
 	fy := &doctorFugaroYAML{Path: path, Valid: len(problems) == 0, Problems: problems}
 	if len(problems) == 0 {
-		return &doctorCheck{ID: "fugaro-yaml", OK: true}, fy
+		return &doctorCheck{ID: "fugaro-yaml", OK: true}, fy, &rf
 	}
 	return &doctorCheck{ID: "fugaro-yaml", OK: false,
 		Problem: fmt.Sprintf("%s has %d problem(s)", path, len(problems)),
-		Fix:     "run fugaro validate to see them"}, fy
+		Fix:     "run fugaro validate to see them"}, fy, nil
 }
 
 // doctorSecrets lists the checkout's repository's stored secrets by name,

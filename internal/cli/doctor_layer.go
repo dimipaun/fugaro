@@ -18,8 +18,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
-// doctorLayerChecks are doctor's project layer lines (decision L20), in a
-// checkout whose fugaro.yaml resolves:
+// doctorLayerChecks are doctor's project layer lines (decision L20), given
+// rf, the checkout's fugaro.yaml already resolved over its project layer by
+// fugaroYAMLCheck (never re-resolved here, which would be a second bucket
+// round trip per doctor invocation and could disagree with fy if the
+// published layer changed in between):
 //   - the layer that applies (info);
 //   - whether the repository's last run used it;
 //   - whether the repository's copy, which the daily check and Cloud Build
@@ -28,15 +31,7 @@ import (
 //     resolves to now.
 //
 // Best effort: what cannot be read says nothing.
-func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string) []doctorCheck {
-	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
-	if err != nil {
-		return nil
-	}
-	rf, err := resolveFugaroYAML(ctx, data, lc, layerOptions{Lenient: true})
-	if err != nil || rf.Cfg == nil {
-		return nil // fugaroYAMLCheck reports it
-	}
+func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf resolvedFile) []doctorCheck {
 	l := rf.Layer.Layer
 	if l == nil {
 		msg := "no project layer applies to this checkout"
@@ -50,8 +45,14 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string) []
 	}
 	out := []doctorCheck{{ID: "project-layer", Severity: "info",
 		Problem: fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))}}
+	// A rewritten origin (the checkout's raw .git/config disagreeing with
+	// what git resolves) is not trusted by name (readOrigin's doc comment),
+	// the same guard every other consumer of it in this package applies
+	// (checkoutOriginAt, repoKnown): otherwise a spoofed .git/config could
+	// make doctor compute another repository's slug and show its
+	// layer-drift, copy-staleness and image-config state here.
 	oi, ok := readOrigin(ctx, root)
-	if !ok {
+	if !ok || oi.Rewritten {
 		return out
 	}
 	slug, err := task.Slug(rf.Cfg.Git.Provider, oi.Repo)
@@ -62,10 +63,10 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string) []
 	if err != nil {
 		return out
 	}
-	defer b.Close()
+	env := &cloudEnv{lc: lc, bucket: b}
+	defer env.Close() // closes b, and env.records if recordBucket opened one
 	out = append(out, layerDrift(ctx, b, slug, l)...)
 	out = append(out, layerCopyCheck(ctx, b, slug, l)...)
-	env := &cloudEnv{lc: lc, bucket: b}
 	if rb, err := env.recordBucket(ctx); err == nil {
 		out = append(out, imageConfigChecks(ctx, rb, slug, rf.Cfg, rf.Res)...)
 	}
