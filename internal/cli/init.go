@@ -2005,7 +2005,18 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err != nil {
 			return initErr(err)
 		}
-		built, err := r.offerBuilds(ctx, lc, cfg, spec, names)
+		// A billable Cloud Build submission is strict (decision L16), like
+		// fugaro image build's own: a stale re-read of the earlier lenient
+		// cfg (loadCheckoutConfigAt, above, which reads lc==nil, flag-blind,
+		// and only the offline cache on an unreachable bucket) could send
+		// the build with no layer, or a stale one, overwriting the
+		// repository's copy and undoing fugaro config publish silently.
+		// Re-resolved here, against this run's own lc, strictly.
+		_, buildRF, err := loadCheckoutResolved(ctx, root, lc, layerOptions{})
+		if err != nil {
+			return err
+		}
+		built, err := r.offerBuilds(ctx, lc, buildRF.Cfg, spec, names)
 		if err != nil {
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
