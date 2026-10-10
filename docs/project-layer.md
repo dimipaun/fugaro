@@ -1,6 +1,6 @@
 # The project layer
 
-Design: [design/layered-config.md](design/layered-config.md). Plan: [plans/2026-10-08-layered-config.md](plans/2026-10-08-layered-config.md).
+Design: [design/layered-config.md](design/layered-config.md). Plan: [plans/2026-10-08-layered-config.md](plans/2026-10-08-layered-config.md). The runs-bucket write access this design assumes is narrowed in a later release: [design/bucket-iam.md](design/bucket-iam.md) (§8).
 
 ## 1. What it is
 
@@ -174,20 +174,37 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 
 `fugaro doctor` adds, inside a checkout whose project publishes a project layer: which layer applies (or why none does); a warning when the repository's last run launched without the layer or on an older generation; a warning when the repository's per-repository copy (the one Cloud Build and the daily image check read) differs from the published object; and, per workflow, a warning when its job image was built from image settings other than what it resolves to now.
 
+`fugaro ls` adds a LAYER column once any listed run carries a project layer: `gen N`, `gen N (not applied)` for a run that resolved without it (a launch from outside a checkout whose `fugaro.yaml` at the ref didn't name the layer's project and `gcp_project`), or `-` for a run with none. `fugaro diagnose` adds a `Config:` line: `project layer generation N (sha256 <short>)`, with `, not applied` and `; resolved sha256 <short>` appended when they apply; a run with no layer but a resolved sum shows `no project layer; resolved sha256 <short>` instead.
+
 ## 8. Publishing safely
 
-Only an operator's own terminal can publish: `fugaro config publish` refuses in a coding-agent session, before anything else.
+**`--executable-changes` is a CLI check, not an access control.** Until the 0.7.0 bucket IAM hardening ([design/bucket-iam.md](design/bucket-iam.md)) ships, every launcher holds `roles/storage.objectAdmin` on the runs bucket and can write the layer object, and the per-repository `builds/<slug>/` copy, directly (for example with `gcloud storage cp`), bypassing the guard below and the sha256 trail.
 
-**`--executable-changes`.** A profile may set `commands.*`, `image.apt` and `image.setup` — values that run as shell, in the job or in Cloud Build. `config publish` refuses a change to any of them unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first.
+`fugaro config publish` refuses in a coding-agent session, before anything else. That is what "only from your own terminal" means here — not "only an operator's": any launcher's own terminal can publish today, the same as any launcher can already push code or launch a run.
 
-**The write.** It is made under a generation precondition, so a concurrent publisher is refused rather than overwritten, and a diff against the previous object is shown first. The exact bytes are then copied to `builds/<slug>/project-layer.yaml` for each repository the installation config lists — the per-repository copy that Cloud Build's render step and the daily check job read, since neither holds a grant on `fugaro/project-layer.yaml` itself. `fugaro doctor` reports a repository whose copy differs from the published object.
+**`--executable-changes`.** A profile may set the keys of `config.ExecutableKeys`:
+
+<!-- executable-keys:start -->
+- `workflows.*.commands.build`
+- `workflows.*.commands.test`
+- `workflows.*.commands.rerun_failed`
+- `workflows.*.image.apt`
+- `workflows.*.image.setup`
+- `workflows.*.image.skip_build_scripts`
+<!-- executable-keys:end -->
+
+— values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
+
+**The write.** It is made under a generation precondition, so a concurrent publisher is refused rather than overwritten, and a diff against the previous object is shown first. The exact bytes are then copied to `builds/<slug>/project-layer.yaml` for each repository the installation config lists. `fugaro doctor` reports a repository whose copy differs from the published object.
+
+**Not shipped yet.** On `main` today, nothing reads that copy. Cloud Build's render step consuming it (`_PROJECT_LAYER_SHA256`, and the hidden `--layer-bucket`/`--layer-slug`/`--layer-sha256` flags of `fugaro image render`) is Task 14 of the layered-config plan, PR #254, open; the daily check job resolving the project layer at all is Task 15, not started — it still reads `fugaro.yaml` alone, with `config.Parse`, ignoring every layer. Until Task 14 lands, no image build — one a person triggers (`image build`, `image refresh`) or the nightly check submits — applies a profile's `image.apt`, `image.setup` or `image.skip_build_scripts`; only a workflow's `commands.*` take effect today, because those run in the job's own container, which already gets the layer through the embedding `fugaro run` does (§7), not through this copy. **If a later release ships Task 14 without Task 15,** a human-triggered `image build`/`image refresh` would pick up a profile's `image.*` settings, but the unattended nightly rebuild would not, so the two would silently drift apart until Task 15 lands too; until both ship, don't rely on a profile's image settings reaching a repository's generated image — build it by hand to check it (§9 covers what this means for the rollout order).
 
 **The threat model (design §11):**
 
-- **Who can write.** Anyone holding `roles/storage.objectAdmin` on the runs bucket — today that is every launcher and every operator, not operators alone.
-- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile; add `image.apt` or `image.setup`, which run in Cloud Build on the next daily rebuild with no human launching anything; raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail.
+- **Who can write.** Anyone holding `roles/storage.objectAdmin` on the runs bucket — today that is every launcher and every operator, not operators alone (see the lead note above).
+- **What a hostile or careless layer could do.** Replace build or test commands for every repository that takes a profile: this already takes effect, through the embedded layer every launch carries, with no human reviewing the change first. Once Task 14 and Task 15 ship (not yet: see "Not shipped yet" above), add `image.apt`, `image.setup` or turn off `image.skip_build_scripts`, which would then run in Cloud Build, including on the nightly rebuild with no human launching anything. Also: raise `resources` or `timeouts`; change `agent.model`, `recipe` or `auth`; point `base` at another shipped kind; or hide any of this, since a plain bucket write leaves no review trail.
 - **What already bounds it.** The project layer cannot hold policy keys, `secrets`, `followup.*`, `base_branch`, `reviewers`, `dockerfile` or `instructions` (§5); the policy ceiling (dollars, tokens, allowed models) still comes from the owner and only tightens; base images stay `config.Bases`; and every run records the layer's sha256 and generation, which `fugaro ls`, `diagnose` and `doctor` show.
-- **Recommended future work.** Narrowing the launchers' bucket grant so only operators can write `fugaro/` (an IAM change in the installation module) is not done in 0.6.0: the bucket stays writable by launchers until that hardening lands.
+- **The recommended fix.** [design/bucket-iam.md](design/bucket-iam.md) narrows the bucket grant so only operators (and, for its own copy, a repository's own build account) can write `fugaro/` and `builds/<slug>/`. It ships in release 0.7.0, with the base image consolidation; the bucket stays writable by every launcher until then.
 
 ## 9. Rollout (0.6.0)
 
@@ -201,8 +218,13 @@ The order:
 
 What an older CLI does, in a repository with a project layer: a minimal or profile-using file is refused as invalid, so there is no silent misrun; a full file runs with today's behaviour, without the project defaults.
 
+Step 5 is safe before Task 14 and Task 15 ship (§8): the project's `defaults:` and a profile's `commands.*`, `resources` and `timeouts` all take effect at once, through the layer every launch embeds. Only a profile's `image.apt`, `image.setup` and `image.skip_build_scripts` do not yet reach a repository's generated image either way it is built, until Task 14 lands; and even then, only a human-triggered `image build`/`image refresh` would pick them up, not the unattended nightly rebuild, until Task 15 lands too.
+
 ## 10. Not yet
 
+- **Cloud Build consuming the per-repository copy** (`_PROJECT_LAYER_SHA256`, the render step's `--layer-bucket`/`--layer-slug`/`--layer-sha256` flags): Task 14 of the layered-config plan, PR #254, open. Until it lands, no image build applies a profile's `image.apt`, `image.setup` or `image.skip_build_scripts` (§8).
+- **The daily check job resolving the project layer:** Task 15, not started. It still parses `fugaro.yaml` alone, with no defaults or profile (§8).
+- **The 0.7.0 bucket IAM hardening** ([design/bucket-iam.md](design/bucket-iam.md)): narrows who can write `fugaro/project-layer.yaml` and `builds/<slug>/project-layer.yaml` from every launcher to operators only (§8).
 - The image catalog (`environments:`): Phase 2, blocked on the base image consolidation — see [design/layered-config.md §9](design/layered-config.md#9-the-image-catalog-phase-2-blocked-on-the-base-image-consolidation).
 - `extends` (a profile extending another).
 - `fugaro config extract` (suggesting a project layer from several repositories' files).
