@@ -52,6 +52,10 @@ type resolvedFile struct {
 	Problems []config.Problem
 }
 
+// getenvOS is os.Getenv, named so every findLayer call site in a command
+// passes the same name.
+var getenvOS = os.Getenv
+
 // layerRead reads the canonical object; tests replace it.
 var layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
 	return b.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
@@ -257,7 +261,7 @@ func findLayer(ctx context.Context, getenv func(string) string, data []byte, lc 
 // runner will (decision L16): over the project layer findLayer finds for
 // it. Every in-checkout command goes through here.
 func resolveFugaroYAML(ctx context.Context, data []byte, lc *localcfg.Config, o layerOptions) (resolvedFile, error) {
-	fl, err := findLayer(ctx, os.Getenv, data, lc, o, time.Now())
+	fl, err := findLayer(ctx, getenvOS, data, lc, o, time.Now())
 	if err != nil {
 		return resolvedFile{}, err
 	}
