@@ -47,6 +47,7 @@ func TestBaseDockerfileStripsKeysignAndPinsEverything(t *testing.T) {
 	for _, must := range []string{
 		"apt-get upgrade -y",
 		"chmod u-s /usr/lib/openssh/ssh-keysign",
+		"chmod g-s /usr/bin/ssh-agent",
 		"/usr/sbin/policy-rc.d",
 		"create_main_cluster = false",
 		"useradd --uid 1000 --user-group --create-home --shell /bin/bash fugaro",
