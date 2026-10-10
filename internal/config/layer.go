@@ -105,17 +105,16 @@ type Profile struct {
 	Rebuild     Rebuild      `yaml:"rebuild"`
 }
 
-// HasExecutable reports whether the profile sets a key that runs as shell,
-// or controls whether shell the profile already describes runs
-// (ExecutableKeys). SkipBuildScripts counts even though true is the safer
-// direction: default_profile's own gate (defaultProfileChange) uses this to
-// decide whether switching to or from a profile needs
-// --executable-changes, and a profile whose only setting is
-// skip_build_scripts still changes what every repository without
-// workflows does in its image build.
+// HasExecutable reports whether the profile sets a key that runs as shell
+// (ExecutableKeys). Image.SkipBuildScripts is deliberately not one of
+// these: true is the safe setting (it skips third-party install/build
+// scripts), so a profile whose only setting is skip_build_scripts: true
+// must not count as executable on its own; only a change to the value
+// (true -> false, or a true removed) is gated, through the direct
+// executableChanges key comparison in internal/cli/config_publish.go, not
+// through this method.
 func (p Profile) HasExecutable() bool {
-	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.RerunFailed != nil ||
-		len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0 || p.Image.SkipBuildScripts
+	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0
 }
 
 // LayerSum is the hex sha256 of a project layer's text.

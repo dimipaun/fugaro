@@ -380,7 +380,6 @@ func TestProfileHasExecutable(t *testing.T) {
 		"commands: { build: make }", "commands: { test: make test }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
 		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
-		"{ base: web-node, image: { skip_build_scripts: true } }",
 	} {
 		if !strings.HasPrefix(body, "{") {
 			body = "{ " + body + " }"
@@ -393,6 +392,15 @@ func TestProfileHasExecutable(t *testing.T) {
 	l := mustLayer(t, layerHead+"profiles:\n  p: { base: go, description: x, resources: { cpu: 2 }, commands: { reports: [r.xml] } }\n")
 	if l.Profiles["p"].HasExecutable() {
 		t.Error("a profile with no shell has HasExecutable() = true")
+	}
+	// Ruling: skip_build_scripts: true is the safe setting (it skips
+	// third-party install/build scripts); a profile whose only setting is
+	// that true must not count as executable on its own. Only a change of
+	// the value is gated, through executableChanges' direct key comparison,
+	// never through HasExecutable.
+	safe := mustLayer(t, layerHead+"profiles:\n  p: { base: web-node, image: { skip_build_scripts: true } }\n")
+	if safe.Profiles["p"].HasExecutable() {
+		t.Error("a profile whose only setting is skip_build_scripts: true has HasExecutable() = true, want false (true is the safe direction)")
 	}
 }
 

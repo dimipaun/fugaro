@@ -155,16 +155,18 @@ func TestExecutableChangesTable(t *testing.T) {
 			want: nil,
 		},
 		{
-			// Both profiles are unchanged between prev and next (so no
-			// per-key diff from executableChanges' own loop): the only
-			// thing that moves is default_profile itself, from a profile
-			// with no executable keys at all to one whose only setting is
-			// image.skip_build_scripts, gated solely through
-			// Profile.HasExecutable.
-			name: "default_profile a -> b, the new default's only setting is skip_build_scripts: gated",
+			// Ruling: skip_build_scripts: true is the safe setting, so a
+			// profile whose only setting is that true must not make
+			// Profile.HasExecutable report true on its own. Both profiles
+			// are unchanged between prev and next (so no per-key diff from
+			// executableChanges' own loop either): the only thing that
+			// moves is default_profile itself, between two profiles
+			// neither of which HasExecutable considers executable, so this
+			// switch is not gated.
+			name: "default_profile a -> b, the new default's only setting is skip_build_scripts: true: not gated (true is the safe direction)",
 			prev: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: svc\n",
 			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n  other:\n    base: web-node\n    image:\n      skip_build_scripts: true\ndefault_profile: other\n",
-			want: []string{`default_profile: "svc" -> "other" (repositories without workflows: now run profile other's commands)`},
+			want: nil,
 		},
 		{
 			name: "first publish (nil previous): every executable key of the one profile, plus default_profile",
