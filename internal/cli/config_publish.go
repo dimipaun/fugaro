@@ -243,6 +243,10 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["commands.build"] = strconv.Quote(p.Commands.Build)
 	case "workflows.*.commands.test":
 		out["commands.test"] = strconv.Quote(p.Commands.Test)
+	case "workflows.*.commands.lint":
+		out["commands.lint"] = strconv.Quote(p.Commands.Lint)
+	case "workflows.*.commands.fix":
+		out["commands.fix"] = strconv.Quote(p.Commands.Fix)
 	case "workflows.*.commands.rerun_failed":
 		var cmd, each string
 		if rf := p.Commands.RerunFailed; rf != nil {
@@ -258,6 +262,15 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
 	case "workflows.*.image.skip_build_scripts":
 		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
+	case "workflows.*.image.tools":
+		// Sorted by name: a map has no order of its own, so two reads of
+		// the same tools: must format identically, or executableChanges
+		// would report a change that never happened.
+		var pairs []string
+		for _, name := range slices.Sorted(maps.Keys(p.Image.Tools)) {
+			pairs = append(pairs, fmt.Sprintf("%s=%s", name, p.Image.Tools[name]))
+		}
+		out["image.tools"] = fmt.Sprintf("%q", pairs)
 	default:
 		return fmt.Errorf("%s", key)
 	}
