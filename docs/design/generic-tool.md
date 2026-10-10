@@ -283,14 +283,14 @@ A section **"Ready for your review"** at the bottom lists runs whose `Outcome` i
 - `prUrl`: once the early draft PR exists.
 
 Both keys are already accepted by the deployed rules. New keys, which need a rules change (deployed only by `fugaro init`):
-- `action`: the last tool summary, from `agent.Relay`'s redacted `toolSummary`, clipped to 120 characters, like `tool Bash: go test ./internal/...`;
-- `tokens`: the stage's input and output tokens, from the stream's usage.
+- `action`: a **safe summary** of the last tool call, clipped to 120 characters, never the raw command or a full external path: for `Bash`, argv0 and, only when argv0 is a known dispatcher (`go`, `npm`, `git`, `bash`, ...) and the next word reads as a bareword subcommand, that word too (`tool Bash: go test`, `tool Bash: bash -c`), everything else dropped; for a file tool (`Read`, `Edit`, `Write`, `Grep`, `Glob`), the path relative to the repository, or its basename alone when it resolves outside the repository; for anything else, the tool name alone. This tightens the original design (owner ruling, 2026-10): a review showed the redacted command line still published anything the run's redactor did not know to look for (a secret read from a repository file or `.env`, a metadata-server token, a URL's embedded credentials) to every launcher. Redaction, clipping and `safetext.Strip` still run on top, as defence in depth. The raw, merely-redacted command keeps going to Cloud Logging as before, for the narrower audience that already reads it.
+- `tokens`: the stage's `Result.StageTokens()` (the larger of the usage event's total and the sum over `ModelUsage`, so it includes cache tokens), consistent with the run's own token-budget accounting (`halt.go`). Clamped on the Go side to `[0, MaxTokensPerWrite]` before it is ever sent, so a stage that miscounts can't make the rules refuse the whole entry.
 
-The runner writes them only if the rules accept them, and drops them once with a warning naming `fugaro init`, exactly as `recipe` did in 0.5.0 (`registry.go:54`).
+The runner writes them only if the rules accept them, and drops them once with a warning naming `fugaro init`, exactly as `recipe` did in 0.5.0 (`registry.go:54`); a credential that is refused twice in a row, rather than once, is treated as ambiguous (a blip, not necessarily old rules) and retried on the next heartbeat, not given up on.
 
 **Expanded content:** stage and round, the last action, verify, the PR link, spent dollars (or notional) and tokens, the deadline, and the models with the recipe.
 
-**Data exposure.** `action` is the redacted text that already goes to the run's Cloud Logging lines, but RTDB readers are a wider set: anyone the database rules let read `/agents`, which is the launchers. That widens who sees command lines and file paths from log-view holders to dashboard readers. SECURITY.md says so. Veto alternative: no `action` field; the detail view shows only the stage, verify and spend.
+**Data exposure.** `action` is read by a wider audience than Cloud Logging: anyone the database rules let read `/agents`, which is the launchers. The safe-summary shape above (not the raw command) is what bounds that exposure; SECURITY.md says so. Veto alternative: no `action` field; the detail view shows only the stage, verify and spend.
 
 ### 10.3 Completed-run filtering (G25)
 

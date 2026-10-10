@@ -576,12 +576,19 @@ func (s *Session) flush(ctx context.Context, extra map[string]any, source string
 		case errors.Is(err, rtdb.ErrPermission):
 			stale++
 			if stale >= maxStale {
+				werr := fmt.Errorf("budget: %d usage writes in a row were denied", stale)
 				if len(extra) > 0 {
 					if perr := s.db.Patch(ctx, "", extra); perr == nil {
 						s.dbOK()
+					} else if errors.Is(perr, rtdb.ErrPermission) {
+						// extra (the registry heartbeat) was denied on its
+						// own too, not only alongside the usage counters:
+						// keep that signal so a caller can tell the registry
+						// write itself apart from an unrelated stale race.
+						werr = fmt.Errorf("%w: %v", rtdb.ErrPermission, werr)
 					}
 				}
-				return s.observe(source, fmt.Errorf("budget: %d usage writes in a row were denied", stale))
+				return s.observe(source, werr)
 			}
 			if werr := s.sleep(ctx, s.jitter(stale)); werr != nil {
 				return werr

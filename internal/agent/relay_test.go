@@ -388,3 +388,133 @@ func TestRelayRedactsWrappedBase64(t *testing.T) {
 		}
 	}
 }
+
+// onToolLine builds a tool_use stream-json line and runs it through r,
+// returning what OnTool saw (or "" if it was never called).
+func onToolLine(t *testing.T, r *Relay, name, inputJSON string) string {
+	t.Helper()
+	var got string
+	called := false
+	r.OnTool = func(s string) { got, called = s, true }
+	line := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"` + name + `","input":` + inputJSON + `}]}}` + "\n"
+	if _, err := r.Write([]byte(line)); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("OnTool was never called")
+	}
+	return got
+}
+
+// TestRelayOnToolNeverRepeatsTheRawCommand (design generic-tool §10.2, the
+// owner's 2026-10 tightening of G24): action is a safe summary, never the
+// raw redacted command, because the run's redactor only knows the run's own
+// secrets and /agents is readable by every launcher. A dispatcher's
+// subcommand is kept (go test, npm run, git commit, bash -c); anything a
+// plain command's next word could be, which is anything at all, is not.
+func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
+	const secret = "fake-secret-0123456789"
+	for _, tc := range []struct {
+		name, command, want string
+	}{
+		{"dispatcher subcommand kept, args dropped", "go test ./internal/...", "tool Bash: go test"},
+		{"npm run", "npm run build", "tool Bash: npm run"},
+		{"git commit", "git commit -m 'msg'", "tool Bash: git commit"},
+		{"bash -c keeps the flag, drops the script", `bash -c "echo ` + secret + `"`, "tool Bash: bash -c"},
+		{"a URL looks nothing like a subcommand", "curl https://user:pass@host/" + secret, "tool Bash: curl"},
+		{"an env assignment is not a subcommand", "export TOKEN=" + secret, "tool Bash: export"},
+		{"a home-relative path is not a subcommand", "cat ~/.config/gh/hosts.yml", "tool Bash: cat"},
+		{"a leading env prefix is skipped to find the real argv0", "FOO=" + secret + " go test", "tool Bash: go test"},
+		{"a bare command with no subcommand at all", "sudo", "tool Bash: sudo"},
+		{"env alone", "env", "tool Bash: env"},
+		{"echo's argument is not a subcommand, even a plain word", "echo " + secret, "tool Bash: echo"},
+		{"a very long argv0 is still bounded", "go" + strings.Repeat("x", 10000), "tool Bash: go" + strings.Repeat("x", 10000)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{secret})
+			input, err := json.Marshal(map[string]string{"command": tc.command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := onToolLine(t, r, "Bash", string(input))
+			if strings.Contains(got, secret) {
+				t.Fatalf("OnTool got %q, which still carries the secret", got)
+			}
+			want := tc.want
+			if len(want) > actionBytes {
+				want = want[:actionBytes] + " …" // logtail.Clip's cut mark
+			}
+			if got != want {
+				t.Fatalf("OnTool got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestRelayOnToolFileToolsReportAPathNeverARawInput (design generic-tool
+// §10.2, the owner's tightening): Read, Edit, Write, Grep and Glob report a
+// repository-relative path, or just a basename outside the repository
+// (never the full external path, which can itself be the secret: a
+// directory named after a project, a username in a home directory).
+func TestRelayOnToolFileToolsReportAPathNeverARawInput(t *testing.T) {
+	const secretDir = "very-secret-codename"
+	for _, tc := range []struct {
+		name, tool, field, path, dir, want string
+	}{
+		{"Read inside the repo, relative to it", "Read", "file_path", "/repo/internal/foo.go", "/repo", "internal/foo.go"},
+		{"Edit inside the repo, already relative", "Edit", "file_path", "internal/bar.go", "/repo", "internal/bar.go"},
+		{"Write outside the repo: basename only", "Write", "file_path", "/home/alice/" + secretDir + "/notes.md", "/repo", "notes.md"},
+		{"Grep's directory, outside the repo: basename only", "Grep", "path", "/var/" + secretDir + "/logs", "/repo", "logs"},
+		{"Glob with no repository root configured: basename only", "Glob", "path", "/home/" + secretDir + "/x.go", "", "x.go"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+			r.Dir = tc.dir
+			input, err := json.Marshal(map[string]string{tc.field: tc.path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := onToolLine(t, r, tc.tool, string(input))
+			if strings.Contains(got, secretDir) {
+				t.Fatalf("OnTool got %q, which still names the secret-looking directory", got)
+			}
+			want := "tool " + tc.tool + ": " + tc.want
+			if got != want {
+				t.Fatalf("OnTool got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// TestRelayOnToolUnknownToolIsNameOnly: a tool that is neither Bash nor a
+// recognised file tool (WebFetch, say, or a future one) reports only its
+// name, never its input.
+func TestRelayOnToolUnknownToolIsNameOnly(t *testing.T) {
+	const secret = "fake-secret-0123456789"
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), []string{secret})
+	input, err := json.Marshal(map[string]string{"url": "https://" + secret + ".example/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := onToolLine(t, r, "WebFetch", string(input))
+	if got != "tool WebFetch" {
+		t.Fatalf("OnTool got %q, want \"tool WebFetch\"", got)
+	}
+}
+
+// TestRelayNoOnToolDoesNothing: a nil hook is the default and never panics,
+// and the log line (Cloud Logging's audience) is unaffected by any of this:
+// it still carries the raw, merely-redacted command, as today.
+func TestRelayNoOnToolDoesNothing(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRelay(slog.New(slog.NewJSONHandler(&buf, nil)), nil)
+	if _, err := r.Write([]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls"}}]}}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), `"tool Bash: ls"`) {
+		t.Fatalf("logs = %s", buf.String())
+	}
+}

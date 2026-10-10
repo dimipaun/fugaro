@@ -316,9 +316,14 @@ type AgentEntry struct {
 	// Recipe is the run's recipe when it is not default (docs/design/
 	// recipes.md §8). Rules deployed before 0.5.0 refuse it; Start then
 	// drops it.
-	Recipe         string `json:"recipe,omitempty"`
-	Auth           string `json:"auth,omitempty"`
-	PRURL          string `json:"prUrl,omitempty"`
+	Recipe string `json:"recipe,omitempty"`
+	Auth   string `json:"auth,omitempty"`
+	PRURL  string `json:"prUrl,omitempty"`
+	// Action is the agent's last tool call, redacted (design generic-tool
+	// §10.2). Rules deployed before 0.7.0 refuse it and Tokens; the session
+	// then drops both.
+	Action         string `json:"action,omitempty"`
+	Tokens         int64  `json:"tokens,omitempty"`
 	StartedAt      int64  `json:"startedAt,omitempty"`
 	StageStartedAt int64  `json:"stageStartedAt,omitempty"`
 	StageDeadline  int64  `json:"stageDeadline,omitempty"`

@@ -6,23 +6,29 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/dimipaun/fugaro/internal/rtdb"
+	"github.com/dimipaun/fugaro/internal/safetext"
 )
 
 // maxEntryString is the rules' bound on every registry string.
 const maxEntryString = 200
 
+// MaxEntryTokens bounds AgentEntry.Tokens; it must equal
+// rules.MaxTokensPerWrite (internal/budget/rules/rules.go). This package
+// can't import that one: its own emulator and parity tests import
+// internal/budget, so the import would cycle. TestMaxEntryTokensMatchesRules
+// (internal/budget/registry_test.go, package budget_test, which can import
+// both) pins the two together.
+const MaxEntryTokens = 1_000_000_000
+
 // clipString makes s one clean line of at most 200 bytes: the rules refuse
-// longer strings, and registry text is untrusted anyway.
+// longer strings, and registry text is untrusted anyway. safetext.Strip
+// drops every control, BiDi override and zero-width character (not just
+// unicode.IsControl's narrower set), since a dashboard reader's terminal
+// trusts this text as much as any other line it prints.
 func clipString(s string) string {
-	s = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
-			return ' '
-		}
-		return r
-	}, s)
+	s = safetext.Strip(s)
 	if len(s) > maxEntryString {
 		s = strings.ToValidUTF8(s[:maxEntryString], "")
 	}
@@ -30,9 +36,14 @@ func clipString(s string) string {
 }
 
 func clipEntry(e *AgentEntry) {
-	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted} {
+	for _, p := range []*string{&e.Repo, &e.Workflow, &e.Title, &e.Stage, &e.Verify, &e.Coder, &e.Reviewer, &e.Recipe, &e.Auth, &e.PRURL, &e.Halted, &e.Action} {
 		*p = clipString(*p)
 	}
+	// The rules refuse the whole entry for a tokens value outside
+	// [0, MaxEntryTokens] or a non-integer; clamp here so a stage that
+	// miscounts (or a negative figure from a bug) can't silently stop every
+	// later heartbeat the way an unclamped value would (review focus 4).
+	e.Tokens = min(max(e.Tokens, 0), MaxEntryTokens)
 }
 
 // Start creates the run's registry entry and its ledger's exp, then begins
@@ -130,7 +141,63 @@ func (s *Session) Update(fn func(*AgentEntry)) {
 	if s.noRecipe {
 		s.entry.Recipe = ""
 	}
+	if s.newKeysRefused {
+		s.entry.Action, s.entry.Tokens = "", 0
+	}
 	clipEntry(&s.entry)
+}
+
+// checkNewKeys probes, once per session, whether the rules accept Action and
+// Tokens (design generic-tool §10.2, review focus 4). It runs on every
+// heartbeat until it reaches a definite answer: the entry carries either
+// field, the rules accept them (done, newKeysChecked), or a write with them
+// stripped succeeds where one with them present did not (refused: dropped
+// for the rest of the run, newKeysChecked and newKeysRefused). A probe uses
+// snapshotEntry, not the Start-time entry, so it carries the run's current
+// spent and updatedAt rather than resurrecting stale ones.
+//
+// Two denials in a row are deliberately left ambiguous rather than called a
+// bad credential: unlike Start (which runs once, so a second denial right
+// after the first means the same credential failed twice under the same
+// conditions), a heartbeat's two attempts can straddle an unrelated blip (a
+// token refresh, a slow rules deploy), so newKeysChecked is left false and
+// the next heartbeat's call probes again from scratch. heartbeat's own
+// fallback (below) also re-arms this probe if a later, already-"accepted"
+// write to the registry is refused.
+func (s *Session) checkNewKeys(ctx context.Context) {
+	s.mu.Lock()
+	checked := s.newKeysChecked
+	hasKeys := s.entry.Action != "" || s.entry.Tokens != 0
+	s.mu.Unlock()
+	if checked || !hasKeys {
+		return
+	}
+	e := s.snapshotEntry()
+
+	path := PathAgent(s.cfg.Slug, s.cfg.Run)
+	write := func(v AgentEntry) error {
+		return s.db.Patch(ctx, "", map[string]any{path: v})
+	}
+	if err := write(e); err == nil {
+		s.mu.Lock()
+		s.newKeysChecked = true
+		s.mu.Unlock()
+		s.dbOK()
+		return
+	} else if !errors.Is(err, rtdb.ErrPermission) {
+		return // not a permission matter; the regular heartbeat reports it
+	}
+	e.Action, e.Tokens = "", 0
+	err := write(e)
+	if err != nil {
+		return // both attempts denied: ambiguous, try again next beat
+	}
+	s.mu.Lock()
+	s.newKeysChecked, s.newKeysRefused = true, true
+	s.entry.Action, s.entry.Tokens = "", 0
+	s.mu.Unlock()
+	s.dbOK()
+	s.log.Warn("budget: the dashboard rules predate 0.7.0, so the last action and token count are not shown; run fugaro init --firebase <firebase-project-id> to update them")
 }
 
 // snapshotEntry is the entry as the next heartbeat sends it.
@@ -153,8 +220,20 @@ func (s *Session) snapshotEntry() AgentEntry {
 // usage report.
 func (s *Session) heartbeat(ctx context.Context) {
 	s.checkKills(ctx, "kill-poll")
+	s.checkNewKeys(ctx)
 	e := s.snapshotEntry()
-	_ = s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
+	err := s.flush(ctx, map[string]any{PathAgent(s.cfg.Slug, s.cfg.Run): e}, "heartbeat")
+	if err != nil && errors.Is(err, rtdb.ErrPermission) && (e.Action != "" || e.Tokens != 0) {
+		// The bundled write just carried action or tokens into a permission
+		// refusal: re-arm the dedicated probe so the next beat finds out,
+		// with its own isolated write, whether they are really the cause
+		// (checkNewKeys never blames the shared usage counters for this).
+		s.mu.Lock()
+		if !s.newKeysRefused {
+			s.newKeysChecked = false
+		}
+		s.mu.Unlock()
+	}
 }
 
 // outcomeStatuses are the statuses the rules accept in an outcome.
