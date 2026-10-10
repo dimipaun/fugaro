@@ -836,6 +836,44 @@ func TestCIWorkflowCheckoutsDropCredentials(t *testing.T) {
 	}
 }
 
+// TestRenderStepTakesTheProjectLayer: the render step's substitution and
+// script carry the project layer's sha256 to the hidden --layer-* flags,
+// and an empty sum (no layer) renders exactly as before (no flags added).
+func TestRenderStepTakesTheProjectLayer(t *testing.T) {
+	var cb struct {
+		Substitutions map[string]string `yaml:"substitutions"`
+		Steps         []struct {
+			ID   string   `yaml:"id"`
+			Env  []string `yaml:"env"`
+			Args []string `yaml:"args"`
+		} `yaml:"steps"`
+	}
+	if err := yaml.Unmarshal(images.CloudBuild, &cb); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := cb.Substitutions["_PROJECT_LAYER_SHA256"]; !ok || v != "" {
+		t.Fatalf("_PROJECT_LAYER_SHA256 = %q, %v", v, ok)
+	}
+	for _, s := range cb.Steps {
+		if s.ID != "render" {
+			continue
+		}
+		env, script := strings.Join(s.Env, " "), strings.Join(s.Args, " ")
+		for _, want := range []string{"LAYER_SHA=${_PROJECT_LAYER_SHA256}", "BUCKET=${_BUCKET}", "SLUG=${_SLUG}"} {
+			if !strings.Contains(env, want) {
+				t.Errorf("render env lacks %s", want)
+			}
+		}
+		for _, want := range []string{`if [ -n "$$LAYER_SHA" ]`, `--layer-sha256 "$$LAYER_SHA"`, `fugaro image render --workflow "$$WORKFLOW" --cloud-outputs /workspace/out "$$@"`} {
+			if !strings.Contains(script, want) {
+				t.Errorf("render script lacks %s", want)
+			}
+		}
+		return
+	}
+	t.Fatal("no render step")
+}
+
 // TestCloudBuildCredentialScripts runs the source and build step scripts
 // under bash, with git and docker stubbed, against a credential file in a
 // stand-in for the volume: both hand git and BuildKit that file (never its
