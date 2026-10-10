@@ -106,6 +106,35 @@ func hasProblem(ps []Problem, path, msg string, line int) bool {
 	return false
 }
 
+// TestCommandsLintAndFix (generic-tool Task 9, G10): commands.lint and
+// commands.fix parse like build and test, and fix without lint is refused
+// (the check gate runs fix, then lint).
+func TestCommandsLintAndFix(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML + "      lint: make lint\n      fix: make fmt\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if got := cfg.Workflows["server"].Commands; got.Lint != "make lint" || got.Fix != "make fmt" {
+		t.Fatalf("commands = %+v, want lint=make lint fix=make fmt", got)
+	}
+	_, problems = Parse([]byte(minimalYAML + "      fix: make fmt\n"))
+	if !hasProblem(problems, "workflows.server.commands.fix", "needs commands.lint (the check step runs fix, then lint)", 0) {
+		t.Fatalf("fix without lint: %v", problems)
+	}
+}
+
+// TestReviewAllowForksParses (generic-tool Task 9, G12): review.allow_forks
+// is a plain top-level boolean.
+func TestReviewAllowForksParses(t *testing.T) {
+	cfg, problems := Parse([]byte(minimalYAML + "review:\n  allow_forks: true\n"))
+	if len(problems) > 0 {
+		t.Fatalf("unexpected problems: %v", problems)
+	}
+	if !cfg.Review.AllowForks {
+		t.Fatalf("Review.AllowForks = false, want true")
+	}
+}
+
 func TestSelectWorkflow(t *testing.T) {
 	cfg, _ := Parse([]byte(minimalYAML))
 	if name, _, err := cfg.SelectWorkflow(""); err != nil || name != "server" {

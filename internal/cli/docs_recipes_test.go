@@ -80,7 +80,7 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		}
 	}
 	// Each reserved key the guide lists is really refused with its own message.
-	for _, key := range []string{"checks", "goto", "on_reject", "extends", "on_pass", "on_fail", "model", "models"} {
+	for _, key := range []string{"goto", "on_reject", "extends", "on_pass", "on_fail", "model", "models"} {
 		if !strings.Contains(doc, "`"+key+"`") {
 			t.Errorf("docs/recipes.md never lists the reserved key %s", key)
 		}
@@ -88,6 +88,13 @@ func TestRecipesGuideMatchesTheCLI(t *testing.T) {
 		if len(ps) == 0 || strings.Contains(recipe.ProblemsText(ps), "is not a recipe key") {
 			t.Errorf("reserved key %s is not refused with a message of its own: %v", key, ps)
 		}
+	}
+	// checks is refused only as a step name: the step type is check.
+	if !strings.Contains(doc, "`checks`") {
+		t.Error("docs/recipes.md never lists the reserved step name checks")
+	}
+	if _, ps := recipe.Parse([]byte("version: 1\nname: x\nsteps:\n  - checks: {}\n  - review: {}\n")); len(ps) == 0 || strings.Contains(recipe.ProblemsText(ps), "is not a recipe key") {
+		t.Errorf("a checks step is not refused with a message of its own: %v", ps)
 	}
 	for _, sub := range []string{"ls", "show", "validate"} {
 		if !strings.Contains(doc, "`"+sub+"`") || !strings.Contains(doc, "take `--json`") {

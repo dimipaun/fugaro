@@ -26,23 +26,24 @@ provider "google" {
 module "installation" {
   source = "../../modules/installation"
 
-  project                = var.project
-  fugaro_project         = var.fugaro_project
-  region                 = var.region
-  runs_bucket            = var.runs_bucket
-  state_bucket           = var.state_bucket
-  names                  = var.names
-  log_bucket_description = var.log_bucket_description
-  bucket_lifecycle       = var.bucket_lifecycle
-  enable_vertex          = var.enable_vertex
-  manage_apis            = var.manage_apis
-  launchers              = var.launchers
-  operators              = var.operators
-  budget                 = var.budget
-  alert_email            = var.alert_email
-  registry_cleanup       = var.registry_cleanup
-  adopt_legacy_registry  = var.adopt_legacy_registry
-  log_isolation          = var.log_isolation
-  enable_budget          = var.enable_budget
-  history                = var.history
+  project                   = var.project
+  fugaro_project            = var.fugaro_project
+  region                    = var.region
+  runs_bucket               = var.runs_bucket
+  state_bucket              = var.state_bucket
+  names                     = var.names
+  log_bucket_description    = var.log_bucket_description
+  bucket_lifecycle          = var.bucket_lifecycle
+  enable_vertex             = var.enable_vertex
+  manage_apis               = var.manage_apis
+  launchers                 = var.launchers
+  operators                 = var.operators
+  launcher_bucket_condition = var.launcher_bucket_condition
+  budget                    = var.budget
+  alert_email               = var.alert_email
+  registry_cleanup          = var.registry_cleanup
+  adopt_legacy_registry     = var.adopt_legacy_registry
+  log_isolation             = var.log_isolation
+  enable_budget             = var.enable_budget
+  history                   = var.history
 }

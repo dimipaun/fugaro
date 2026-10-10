@@ -742,6 +742,39 @@ func TestProjectLayerSchemaCorpus(t *testing.T) {
 	}
 }
 
+// TestProjectLayerSchemaCommandsLintFix checks the profile schema's
+// commands.lint and commands.fix the same way TestSchemaBudgetBlock checks
+// budget: inline snippets, not the shared testdata/project-layer corpus.
+// They can't live in that corpus: TestProjectLayerCorpus (layer_test.go)
+// requires every file there to agree with config.ParseProjectLayer too, and
+// the Go parser deliberately leaves both rules to the merged config's
+// Validate (validateProfile's own comment: "what [a profile] leaves out the
+// repository may set, and Validate checks the merged workflow") — a profile
+// may ship commands.fix alone and let a repository supply commands.lint by
+// its own key, which the key-by-key merge (docs/design/layered-config.md
+// §4) allows. The schema is intentionally stricter here, to catch the
+// likely mistake at authoring time; that's a false positive in an editor at
+// worst, never a false negative, so it doesn't need Go to agree.
+func TestProjectLayerSchemaCommandsLintFix(t *testing.T) {
+	sch := compile(t, "project-layer.schema.json")
+	const base = "version: 1\nproject: aurora\ngcp_project: proj-1234\nprofiles:\n  p:\n    base: java-services\n    commands: "
+	for _, c := range []struct {
+		commands string
+		ok       bool
+	}{
+		{"{ lint: make lint, fix: make fmt }", true},
+		{"{ lint: make lint }", true},
+		{"{ fix: make fmt }", false}, // dependentRequired: fix needs lint
+		{"{ lint: '' }", false},      // minLength: 1
+		{"{ lint: make lint, fix: '' }", false},
+	} {
+		err := sch.Validate(yamlInstance(t, []byte(base+c.commands+"\n")))
+		if (err == nil) != c.ok {
+			t.Errorf("commands: %s: schema err = %v, want ok=%v", c.commands, err, c.ok)
+		}
+	}
+}
+
 func TestFugaroSchemaLayeredCorpus(t *testing.T) {
 	sch := compile(t, "fugaro.schema.json")
 	for _, f := range globAll(t, "../testdata/config/layered/valid/*.yaml") {

@@ -36,6 +36,11 @@ steps:
 	if r.Steps[0].MaxRounds != 0 || r.Steps[1].MaxRounds != 0 {
 		t.Fatalf("empty bodies = %+v", r.Steps)
 	}
+	// A recipe that never writes mode defaults to ModeImplement, not "".
+	r = mustParse(t, "version: 1\nname: no-mode\nsteps:\n  - review: {}\n")
+	if r.Mode != ModeImplement {
+		t.Fatalf("Mode = %q, want %q", r.Mode, ModeImplement)
+	}
 }
 
 func TestParseInvalid(t *testing.T) {
@@ -93,18 +98,17 @@ func TestReservedKeysEachSaySo(t *testing.T) {
 		}
 	}
 	_, ps := Parse([]byte("version: 1\nname: a\nsteps:\n  - checks: {}\n  - review: {}\n"))
-	if !strings.Contains(ProblemsText(ps), reserved["checks"]) {
+	if !strings.Contains(ProblemsText(ps), "the step type is check, not checks") {
 		t.Errorf("a checks step: %v", ps)
 	}
 	for _, tc := range []struct{ roles, want string }{
-		{"{ coder: reviewer }", "only the reviewer role can be mapped"},
-		{"{ background: coder }", "only the reviewer role can be mapped"},
-		{"{ reviewer: background }", "can only be coder"},
+		{"{ background: coder }", "only the reviewer and coder roles can be mapped"},
+		{"{ reviewer: background }", "must be coder"},
 		{"{ reviewer: claude-opus-5 }", modelMsg},
 		{"{ reviewer: deepseek/deepseek-v4 }", modelMsg},
-		{"{ reviewer: [coder] }", "the only allowed value is coder"},
-		{"{ reviewer: }", "the only allowed value is coder"},
-		{"{ reviewer: 5 }", "the only allowed value is coder"},
+		{"{ reviewer: [coder] }", "must be coder"},
+		{"{ reviewer: }", "must be coder"},
+		{"{ reviewer: 5 }", "must be coder"},
 	} {
 		_, ps := Parse([]byte("version: 1\nname: a\nroles: " + tc.roles + "\nsteps:\n  - review: {}\n"))
 		if !strings.Contains(ProblemsText(ps), tc.want) {
@@ -150,6 +154,177 @@ func TestProblemPathEscapesUntrustedKeys(t *testing.T) {
 			}
 			t.Fatalf("no problem path echoing the bad key: %v", ps)
 		})
+	}
+}
+
+func TestExtendedFormatParses(t *testing.T) {
+	for name, src := range map[string]string{
+		"standard": "version: 1\nname: standard\nuse_when: typical work\nsteps:\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+		"premium":  "version: 1\nname: premium\nroles: { coder: reviewer }\nsteps:\n  - review: {}\n",
+		"review":   "version: 1\nname: review-only\nmode: review\nsteps:\n  - review: { max_rounds: 1 }\n",
+		"testfix":  "version: 1\nname: test-and-fix\nsteps:\n  - check: { command: test }\n  - first_line: {}\n  - review: { bounce: first_line }\n",
+		"lintfix":  "version: 1\nname: lint-fix\nroles: { reviewer: coder }\nsteps:\n  - check: { command: lint, autofix: true }\n  - review: {}\n",
+	} {
+		r, ps := Parse([]byte(src))
+		if len(ps) != 0 {
+			t.Errorf("%s: %s", name, ProblemsText(ps))
+			continue
+		}
+		if !UsesV07(r) {
+			t.Errorf("%s: UsesV07 false", name)
+		}
+	}
+}
+
+func TestCheckCommandIsAnEnum(t *testing.T) {
+	for _, bad := range []string{"make test", "rm -rf /", "fix", "Test", ""} {
+		src := "version: 1\nname: x\nsteps:\n  - check: { command: \"" + bad + "\" }\n  - review: {}\n"
+		_, ps := Parse([]byte(src))
+		want := "must be build, test or lint (it names a commands.* key of fugaro.yaml; a recipe never holds a command)"
+		if !strings.Contains(ProblemsText(ps), want) {
+			t.Errorf("command %q: %s", bad, ProblemsText(ps))
+		}
+		if ok := func() bool {
+			for _, p := range ps {
+				if p.Path == "steps[0].check.command" && p.Line > 0 {
+					return true
+				}
+			}
+			return false
+		}(); !ok {
+			t.Errorf("command %q: no steps[0].check.command problem with a line number: %v", bad, ps)
+		}
+	}
+	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: test, autofix: true }\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "autofix is only for command: lint") {
+		t.Errorf("autofix on test: %s", ProblemsText(ps))
+	}
+	if n := strings.Count(ProblemsText(ps), "autofix is only for command: lint"); n != 1 {
+		t.Errorf("autofix on test reported %d times: %s", n, ProblemsText(ps))
+	}
+	for _, p := range ps {
+		if p.Path == "steps[0].check.autofix" {
+			if p.Line == 0 {
+				t.Fatalf("autofix problem has no line number: %+v", p)
+			}
+			break
+		}
+	}
+	// An invalid command is one problem, not two: autofix's own message adds
+	// nothing once the command itself is already refused.
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: bogus, autofix: true }\n  - review: {}\n"))
+	if n := len(ps); n != 1 {
+		t.Errorf("bogus command with autofix: true produced %d problems, want 1: %v", n, ps)
+	}
+}
+
+// TestCheckAutofixIsStrictlyBoolean: YAML 1.1 also resolves True, TRUE, False
+// and FALSE to tag !!bool, but a recipe is untrusted input that Parse refuses
+// rather than repairs, so only the literal true/false are accepted; anything
+// else is refused, never silently reinterpreted as false.
+func TestCheckAutofixIsStrictlyBoolean(t *testing.T) {
+	for _, bad := range []string{"True", "TRUE", "False", "FALSE", "yes", "1"} {
+		src := "version: 1\nname: x\nsteps:\n  - check: { command: lint, autofix: " + bad + " }\n  - review: {}\n"
+		_, ps := Parse([]byte(src))
+		if !strings.Contains(ProblemsText(ps), "must be true or false") {
+			t.Errorf("autofix: %q: %s", bad, ProblemsText(ps))
+		}
+	}
+}
+
+// TestCheckStepsAtMostOne: the Go parser and schemas/recipe.schema.json's
+// steps oneOf must agree that at most one check step is allowed.
+func TestCheckStepsAtMostOne(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: test }\n  - check: { command: lint }\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "check may appear at most once") {
+		t.Fatal(ProblemsText(ps))
+	}
+}
+
+func TestRecipeNamesNoModelEvenAsRole(t *testing.T) {
+	for src, want := range map[string]string{
+		"roles: { coder: claude-opus-4-1 }":           "a recipe never names a model",
+		"roles: { coder: reviewer, reviewer: coder }": "roles: coder: reviewer and reviewer: coder exclude each other",
+		"roles: { background: coder }":                "only the reviewer and coder roles can be mapped",
+	} {
+		_, ps := Parse([]byte("version: 1\nname: x\n" + src + "\nsteps:\n  - review: {}\n"))
+		if !strings.Contains(ProblemsText(ps), want) {
+			t.Errorf("%s: %s", src, ProblemsText(ps))
+		}
+	}
+}
+
+func TestBounceNeedsFirstLine(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nsteps:\n  - review: { bounce: first_line }\n"))
+	if !strings.Contains(ProblemsText(ps), "bounce: first_line needs a first_line step before the review") {
+		t.Fatal(ProblemsText(ps))
+	}
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - first_line: {}\n  - review: { bounce: review }\n"))
+	if !strings.Contains(ProblemsText(ps), "bounce can only be first_line") {
+		t.Fatal(ProblemsText(ps))
+	}
+	for _, p := range ps {
+		if p.Path == "steps[1].review.bounce" {
+			if p.Line == 0 {
+				t.Fatalf("bounce problem has no line number: %+v", p)
+			}
+			return
+		}
+	}
+	t.Fatalf("no steps[1].review.bounce problem: %v", ps)
+}
+
+// TestNewMessagesCarryLineNumbers: use_when, review.bounce and check.command
+// point at the offending value's line, the same as their sibling checks
+// (description, max_rounds).
+func TestNewMessagesCarryLineNumbers(t *testing.T) {
+	for _, tc := range []struct{ name, text, path string }{
+		{"use_when", "version: 1\nname: x\nuse_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n", "use_when"},
+		{"check.command", "version: 1\nname: x\nsteps:\n  - check: { command: bogus }\n  - review: {}\n", "steps[0].check.command"},
+		{"mode", "version: 1\nname: x\nmode: plan\nsteps:\n  - review: {}\n", "mode"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, ps := Parse([]byte(tc.text))
+			for _, p := range ps {
+				if p.Path == tc.path {
+					if p.Line == 0 {
+						t.Fatalf("%s problem has no line number: %+v", tc.name, p)
+					}
+					return
+				}
+			}
+			t.Fatalf("no %s problem: %v", tc.path, ps)
+		})
+	}
+}
+
+func TestOrderWithChecksAndModes(t *testing.T) {
+	for src, want := range map[string]string{
+		"steps:\n  - first_line: {}\n  - check: { command: test }\n  - review: {}\n": "check steps must come first",
+		"mode: review\nsteps:\n  - first_line: {}\n  - review: {}\n":                 "mode: review allows exactly one review step and nothing else",
+		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
+		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement or review",
+		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
+	} {
+		_, ps := Parse([]byte("version: 1\nname: x\n" + src))
+		if !strings.Contains(ProblemsText(ps), want) {
+			t.Errorf("%q: got %s", src, ProblemsText(ps))
+		}
+	}
+}
+
+// TestUseWhenRefusesControlChars: use_when is shown verbatim by `recipes ls`
+// and the routing skill, and a project recipe comes from the runs bucket
+// (untrusted), so a control character or newline must be refused, not
+// echoed to a terminal or a skill prompt.
+func TestUseWhenRefusesControlChars(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nuse_when: \"a\\e[2Jb\\nc\"\nsteps:\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+		t.Fatal(ProblemsText(ps))
+	}
+	_, ps = Parse([]byte("version: 1\nname: x\nuse_when: \"a\\tb\"\nsteps:\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+		t.Fatalf("tab: %s", ProblemsText(ps))
 	}
 }
 

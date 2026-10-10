@@ -1,0 +1,6 @@
+version: 1
+name: check-twice
+steps:
+  - check: { command: test }
+  - check: { command: lint }
+  - review: {}

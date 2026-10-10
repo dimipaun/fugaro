@@ -96,6 +96,31 @@ func TestCheckLintsDockerfile(t *testing.T) {
 	}
 }
 
+// TestCheckLintsDockerfileOnTheFugaroBase: a workflow with no base: (the
+// default Fugaro base, BaseKind) lints its repository Dockerfile against
+// "base", not against the raw, empty Workflow.Base: checkDockerfile must
+// pass w.BaseKind() to LintDockerfile, or a literal FROM
+// ghcr.io/dimipaun/fugaro-base reference is always flagged as building from
+// the wrong base.
+func TestCheckLintsDockerfileOnTheFugaroBase(t *testing.T) {
+	root := t.TempDir()
+	y := strings.Replace(baseYAML, "    commands:", "    dockerfile: .fugaro/app.Dockerfile\n    commands:", 1)
+	cfg, problems := Parse([]byte(y))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	df := "FROM ghcr.io/dimipaun/fugaro-base:1.2.3\nRUN --mount=type=bind,target=/src git clone \"$REPO_URL\" /work/repo\n"
+	if err := os.WriteFile(filepath.Join(root, ".fugaro", "app.Dockerfile"), []byte(df), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if ps := Check(cfg, root); len(ps) != 0 {
+		t.Fatalf("a workflow on the default Fugaro base with a Dockerfile FROM fugaro-base: %v", ps)
+	}
+}
+
 // TestParseDockerfileContinuations pins two corners of Docker's own parser:
 // an escape character followed only by trailing spaces or tabs still
 // continues the line, and a leading `# escape=` directive changes the escape

@@ -114,6 +114,19 @@ workflows:
     commands: { build: npm run build, test: npm test }
 ```
 
+A workflow with no `base:` builds on the one Fugaro base; `fugaro validate` accepts `image.tools` (a mise tool-to-version map) as its in-`fugaro.yaml` alternative to a repository `mise.toml`. This base kind does not have a published image yet, so do not propose it to a user today; it is shown here only so the config shape stays validated as the base lands:
+
+```yaml fugaro.yaml
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  app:
+    image:
+      tools: { node: "24.19.0", python: "3.12" }
+    commands: { build: npm run build, test: npm test }
+```
+
 ## The Dockerfile rule
 
 Use `image:` unless the evidence needs something it can't express: a toolchain that isn't a Node version or an apt package, a vendor installer, a multi-stage tool build, or build arguments the template doesn't have. The template carries what is security-critical and easy to get wrong (the git credential as a build secret no layer keeps, workflow secrets as mounts, the sudo rule and setuid bits removed, `finalize-checkout`). So:

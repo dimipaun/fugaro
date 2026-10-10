@@ -2,9 +2,17 @@ package config
 
 import "time"
 
-// Bases are the base images Fugaro publishes, the values of a workflow's
-// base: (and the keys of the local config's base_images).
-var Bases = []string{"go", "java-services", "web-node"}
+// BaseKind is the one Fugaro base image's kind (design base-image.md): what a
+// workflow without base: builds on, and its key in the local config's
+// base_images.
+const BaseKind = "base"
+
+// MigrationDoc is the guide every refusal of a removed base setting names.
+const MigrationDoc = "docs/base-image-migration.md"
+
+// Bases are the base kinds: BaseKind and, until the 0.7.0 cut, the legacy
+// kinds a workflow's base: may still name.
+var Bases = []string{BaseKind, "go", "java-services", "web-node"}
 
 type baseDefault struct {
 	reports []string
@@ -20,6 +28,7 @@ var baseDefaults = map[string]baseDefault{
 	"java-services": {reports: []string{"**/build/test-results/**/*.xml"}, cpu: 4, memory: "16Gi"},
 	"go":            {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
 	"web-node":      {reports: []string{"**/junit*.xml"}, cpu: 4, memory: "8Gi"},
+	BaseKind:        {reports: []string{"**/junit*.xml", "**/build/test-results/**/*.xml"}, cpu: 4, memory: "8Gi"},
 }
 
 // applyDefaults fills in every field fugaro.yaml may omit. The per-base cache
@@ -49,7 +58,7 @@ func applyDefaults(c *Config) {
 		c.Agent.MaxBudgetUSD = 25
 	}
 	for name, w := range c.Workflows {
-		if d, ok := baseDefaults[w.Base]; ok {
+		if d, ok := baseDefaults[w.BaseKind()]; ok {
 			if len(w.Commands.Reports) == 0 {
 				w.Commands.Reports = d.reports
 			}

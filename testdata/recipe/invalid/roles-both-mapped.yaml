@@ -1,6 +1,7 @@
 version: 1
-name: roles-coder
+name: roles-both-mapped
 roles:
   coder: reviewer
+  reviewer: coder
 steps:
   - review: {}

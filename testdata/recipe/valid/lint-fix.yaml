@@ -1,0 +1,7 @@
+version: 1
+name: lint-fix
+roles:
+  reviewer: coder
+steps:
+  - check: { command: lint, autofix: true }
+  - review: {}

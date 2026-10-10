@@ -273,6 +273,7 @@ func newValidateCmd() *cobra.Command {
 				ecfg := withRecipeRoles(filepath.Dir(path), cfg)
 				bp, bw := budgetProblems(ecfg, lc)
 				problems, warnings = append(problems, bp...), append(bw, rw...)
+				warnings = append(warnings, config.CheckWarnings(cfg, filepath.Dir(path))...)
 				pp, pw := providerProblems(cmd.Context(), ecfg, lc)
 				problems, warnings = append(problems, pp...), append(warnings, pw...)
 				annotateProjectRecipe(filepath.Dir(path), cfg, problems)

@@ -47,6 +47,9 @@ agent:
 #                             #   Bitbucket: account_id
 #   allow_public: false       # refuse follow-ups on a public repository unless true
 
+# review:                     # optional; read from the base branch, so a PR can't opt itself in
+#   allow_forks: false        # let a review-mode recipe run a fork pull request's code next to the job's secrets
+
 workflows:
   web:                        # workflow name, chosen with `fugaro run --workflow`
     base: web-node            # go | java-services | web-node
@@ -60,6 +63,8 @@ workflows:
     commands:
       build: npm run build
       test: npm test
+      # lint: npm run lint        # the check step's gate command (build | test | lint)
+      # fix: npm run lint -- --fix   # the check step's autofix command; needs lint, since the gate runs fix, then lint
       reports: ["**/junit*.xml"]   # JUnit XML, such as jest-junit or Vitest's junit reporter
     secrets:                  # logical names; infrastructure maps them to Secret Manager
       - { name: npm-token, env: NPM_TOKEN }

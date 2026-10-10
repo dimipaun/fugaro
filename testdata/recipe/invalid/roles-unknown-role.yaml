@@ -1,0 +1,6 @@
+version: 1
+name: roles-unknown-role
+roles:
+  background: coder
+steps:
+  - review: {}

@@ -34,6 +34,10 @@ variables {
   log_bucket_description = "Fugaro job logs (managed by fugaro)"
   launchers              = ["user:launcher@example.com"]
   operators              = ["user:operator@example.com"]
+  launcher_bucket_condition = {
+    title      = "fugaro-launchers-runs"
+    expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+  }
 }
 
 run "root_passes_inputs" {
@@ -329,12 +333,31 @@ run "people" {
     error_message = "only the launchers get fugaroLauncher"
   }
   assert {
-    condition     = keys(google_storage_bucket_iam_member.runs) == ["user:launcher@example.com", "user:operator@example.com"]
-    error_message = "launchers and operators get objectAdmin on the runs bucket"
+    condition     = keys(google_storage_bucket_iam_member.runs) == ["user:operator@example.com"]
+    error_message = "only operators get objectAdmin on the runs bucket"
   }
   assert {
-    condition     = alltrue([for m in google_storage_bucket_iam_member.runs : m.role == "roles/storage.objectAdmin" && m.bucket == "fugaro-runs-proj-1234"])
-    error_message = "the runs bucket grants must be objectAdmin on the runs bucket"
+    condition     = alltrue([for m in google_storage_bucket_iam_member.runs : m.role == "roles/storage.objectAdmin" && m.bucket == "fugaro-runs-proj-1234" && length(m.condition) == 0])
+    error_message = "operators' runs bucket grants must be unconditioned objectAdmin"
+  }
+  assert {
+    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com"]
+    error_message = "launchers who are not operators read the runs bucket"
+  }
+  assert {
+    condition     = alltrue([for m in google_storage_bucket_iam_member.runs_reader : m.role == "roles/storage.objectViewer" && m.bucket == "fugaro-runs-proj-1234" && length(m.condition) == 0])
+    error_message = "the launchers' read grant is unconditioned objectViewer: listing needs it"
+  }
+  assert {
+    condition     = keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
+    error_message = "launchers who are not operators write runs/"
+  }
+  assert {
+    condition = alltrue([for m in google_storage_bucket_iam_member.runs_launcher :
+      m.role == "roles/storage.objectUser" && m.bucket == "fugaro-runs-proj-1234" &&
+      one(m.condition).title == "fugaro-launchers-runs" &&
+    one(m.condition).expression == "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"])
+    error_message = "the launchers' write grant is objectUser on runs/ only"
   }
   assert {
     condition     = keys(google_storage_bucket_iam_member.state) == ["user:operator@example.com"] && google_storage_bucket_iam_member.state["user:operator@example.com"].bucket == "fugaro-tfstate-proj-1234"
@@ -352,6 +375,66 @@ run "people" {
     condition     = google_service_account.scheduler.account_id == "fugaro-scheduler" && google_service_account.scheduler.display_name == "Fugaro scheduler"
     error_message = "the scheduler account's ID is the input and its display name is the mark"
   }
+}
+
+# A member on both lists gets the operator grant only (H4).
+run "launcher_who_is_an_operator" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launchers = ["user:both@example.com", "user:launcher@example.com"]
+    operators = ["user:both@example.com"]
+  }
+
+  assert {
+    condition     = keys(google_storage_bucket_iam_member.runs) == ["user:both@example.com"]
+    error_message = "the operator keeps objectAdmin"
+  }
+  assert {
+    condition     = keys(google_storage_bucket_iam_member.runs_reader) == ["user:launcher@example.com"] && keys(google_storage_bucket_iam_member.runs_launcher) == ["user:launcher@example.com"]
+    error_message = "an operator who is also a launcher gets no launcher grant"
+  }
+}
+
+# A condition that is not runs/ of this bucket fails the plan.
+run "launcher_condition_must_be_this_buckets_runs" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
+}
+
+# The right expression under the wrong title still fails the plan: the
+# precondition checks both, not only the expression.
+run "launcher_condition_title_must_match" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "other"
+      expression = "resource.name.startsWith(\"projects/_/buckets/fugaro-runs-proj-1234/objects/runs/\")"
+    }
+  }
+
+  expect_failures = [google_storage_bucket_iam_member.runs_launcher]
 }
 
 run "apis" {
@@ -533,6 +616,27 @@ run "bad_member" {
   }
 
   expect_failures = [var.launchers]
+}
+
+# launcher_bucket_condition's own validation fires even when no launcher
+# grant exists to carry the precondition (a one-person installation plans
+# no runs_launcher instance at all), so it is not redundant with the
+# resource precondition above and needs its own coverage.
+run "bad_launcher_bucket_condition" {
+  command = plan
+
+  module {
+    source = "../../modules/installation"
+  }
+
+  variables {
+    launcher_bucket_condition = {
+      title      = "fugaro-launchers-runs"
+      expression = "true"
+    }
+  }
+
+  expect_failures = [var.launcher_bucket_condition]
 }
 
 run "log_isolation_on" {

@@ -695,7 +695,7 @@ func TestInstallationSpec(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Exactly the installation root's variables.
-	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launchers", "log_bucket_description", "manage_apis",
+	want := []string{"adopt_legacy_registry", "alert_email", "bucket_lifecycle", "budget", "enable_vertex", "fugaro_project", "launcher_bucket_condition", "launchers", "log_bucket_description", "manage_apis",
 		"names", "operators", "project", "region", "registry_cleanup", "runs_bucket", "state_bucket"}
 	if got := slices.Sorted(maps.Keys(doc)); !slices.Equal(got, want) {
 		t.Errorf("keys = %v, want %v", got, want)

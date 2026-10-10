@@ -103,3 +103,31 @@ Provider models are real dollars: the charge is the table price of the reported 
 - The provider key is in the runner's memory (the D2 residual of the gateway): use the per-project credit limit. Besides `/proc/<runner>/environ`, a prompt-injected agent can reach the job service account's metadata token, and that account has `secretAccessor` on the mounted provider secret, so it can read the key itself. The credit limit on the key is the real backstop; the gateway's pins and caps do not bound a key the agent holds.
 - A provider route passes only these top-level body fields (`routedKeys` in `internal/gateway/forward.go`): `model`, `max_tokens`, `messages`, `system`, `stream`, `tools`, `tool_choice`, `temperature`, `top_p`, `top_k`, `stop_sequences`, `metadata`, `thinking`, `output_config`. `metadata` may hold only `user_id` (Claude Code sends `metadata.user_id`, a device-hash identifier, on every request and the gateway never rewrites a body, so the provider sees it; the impact is low). Any other field, or any other key inside `metadata`, is refused as a violation, because it could bill outside token pricing or override the account's data policy: OpenRouter's `plugins`, `provider`, `models`, `route`, `transforms`, `usage`, `web_search_options`, and also Messages API fields the budget doesn't price on this path (`context_management`, a top-level `cache_control`, `output_format`, `speed`, `service_tier`, `inference_geo`, `container`, `mcp_servers`). Whether a request that Claude Code builds for a provider model carries one of these is recorded by Check 25; the list is widened only on that live evidence.
 - Claude Code features that a compatible endpoint may not support (extended thinking, beta headers, server tools) surface as the upstream's error and fail the stage; which of them break is assumed until Check 25 records it. The same holds for token counting: the local 404 for a provider model is a design choice, and how OpenRouter's `count_tokens` answers is assumed until Check 25.
+
+## Direct to the vendor
+
+A model family does not have to go through OpenRouter. The same `providers:` block (§2) accepts a second entry pointed straight at the vendor's own Anthropic-compatible endpoint instead:
+
+```yaml
+providers:
+  openrouter:
+    kind: anthropic-compat
+    base_url: https://openrouter.ai/api
+    auth: bearer
+    secret: openrouter-api-key
+    models: ["qwen/*"]
+    allow_data_to: [edgeappinc/fugarosandbox]
+  deepseek:
+    kind: anthropic-compat
+    base_url: https://api.deepseek.com/anthropic   # the vendor's own endpoint, not openrouter.ai
+    auth: bearer
+    secret: deepseek-api-key
+    models: ["deepseek/*"]
+    allow_data_to: [edgeappinc/fugarosandbox]
+```
+
+There is no separate "direct" knob: the `providers:` map is the only knob there is. The provider entry that claims a model is its route: to switch a model family between OpenRouter and its vendor, move its pattern from one entry to the other and run `fugaro init --repo`. Providers may not overlap (`fugaro validate` refuses two entries claiming the same model), so a family belongs to exactly one route at a time, and Claude models never go through a provider: `claude-*` and `anthropic/*` are unclaimable (§2), and always go direct to Anthropic regardless of what `providers:` lists.
+
+The account-side settings of §1 (no fallbacks, the data policy) are OpenRouter's own; a vendor's own endpoint has its own account-side settings to review, which are not enumerated here.
+
+**Unverified until Check 33:** that a vendor's own Anthropic-compatible endpoint (DeepSeek's, Moonshot's) accepts the gateway's forwarded request bodies byte for byte and reports usage the way the gateway reads it. Check 25 (§1) settles this for OpenRouter only; Check 33 of [gcp-live-checklist.md](gcp-live-checklist.md) is the equivalent for a vendor's own endpoint, and is optional and user-run.

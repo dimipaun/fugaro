@@ -291,6 +291,13 @@ func checkDerivedFromRender(t *testing.T, wf, base, df string) {
 // static contract the skill tells the agent to keep.
 func TestRenderedDockerfilePassesContract(t *testing.T) {
 	for _, base := range config.Bases {
+		if base == config.BaseKind {
+			// The base image is published (images/base/), but the derived
+			// template has no image.tools/mise step yet, so image.Render
+			// refuses it until base-image plan Task 10 lands
+			// (internal/image/render.go's checkBase).
+			continue
+		}
 		for _, img := range []config.Image{{}, {Apt: []string{"libvips-dev"}, Setup: []string{"echo ok"}}} {
 			df, err := image.Render(image.RenderInput{Workflow: "w", Base: base, Image: img, Version: fixtureVersion})
 			if err != nil {

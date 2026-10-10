@@ -416,6 +416,29 @@ func TestRenderRefusesUnpublishedBase(t *testing.T) {
 	}
 }
 
+// TestRenderRefusesTheFugaroBaseUntilTask10: config.Bases (and so
+// fugaro validate) accepts base: base and an omitted base: (BaseKind), but
+// images/derived/Dockerfile.tmpl has no image.tools/mise step yet. Render
+// must refuse both forms, the same way, rather than silently rendering a
+// Dockerfile that drops every configured tool (found by review: checkBase
+// inherited config.Bases wholesale, so base: base alone passed while an
+// omitted base: - the documented way to use the new kind - failed with a
+// confusing doubled-space message that listed "base" as available).
+func TestRenderRefusesTheFugaroBaseUntilTask10(t *testing.T) {
+	const want = "the Fugaro base has no derived-image support yet (the renderer has no image.tools/mise step): set base: to one of go, java-services, web-node"
+	for _, base := range []string{config.BaseKind, ""} {
+		t.Run("base="+base, func(t *testing.T) {
+			_, err := Render(RenderInput{Workflow: "app", Base: base, Image: config.Image{Tools: config.MiseTools{"node": "24.19.0"}}})
+			if err == nil {
+				t.Fatal("want an error, got none (image.tools would be silently dropped)")
+			}
+			if err.Error() != want {
+				t.Errorf("err = %q, want %q", err.Error(), want)
+			}
+		})
+	}
+}
+
 func parseConfig(t *testing.T, yaml string) *config.Config {
 	t.Helper()
 	cfg, problems := config.Parse([]byte(yaml))

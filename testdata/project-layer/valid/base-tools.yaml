@@ -1,0 +1,9 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  app:
+    base: base
+    image:
+      tools: { node: "24.19.0", "npm:firebase-tools": "15.32.1" }
+    commands: { build: npm run build, test: npm test }
