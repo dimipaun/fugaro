@@ -44,9 +44,17 @@ type TUIOptions struct {
 	Repo    string // --repo as given
 	// Queued is the latest queued-run and finished-run rows and degrade
 	// note, read fresh on every rebuild; nil when the project has no
-	// queued-run source. The screen does not yet show the finished rows
-	// (plan generic-tool Task 6 wires them in, with the filter they need).
+	// queued-run source.
 	Queued func() ([]QueuedRun, []FinishedRun, string)
+
+	// All, Keep and KeepCount seed the finished-run filter (design
+	// generic-tool §10.3); Keep <= 0 means 6h, KeepCount <= 0 means 15.
+	All       bool
+	Keep      time.Duration
+	KeepCount int
+	// AckPath is the acknowledgements file (AckPath's default when ""); a
+	// bad or missing file is the empty set (LoadAcks never fails).
+	AckPath string
 
 	ASCII, NoColor bool
 	// Exec runs a confirmed kill or resume (Execute against the database).
@@ -93,6 +101,9 @@ type model struct {
 	flow *Flow
 	now  time.Time // the supervisor's (server-adjusted) time, from the last update
 
+	filter Filter
+	acks   *Acks
+
 	w, h      int
 	cur       Cursor
 	rows      []Cursor // the rows cur was last resolved against, for the next rebuild
@@ -112,7 +123,19 @@ type model struct {
 }
 
 func newModel(ctx context.Context, o TUIOptions) *model {
-	m := &model{o: o, ctx: ctx, st: NewState(), flow: NewFlow(o.Project), expanded: map[Cursor]bool{}, collapsed: map[string]bool{}, w: o.Width, h: o.Height, dirty: true}
+	keep, keepCount := o.Keep, o.KeepCount
+	if keep <= 0 {
+		keep = 6 * time.Hour
+	}
+	if keepCount <= 0 {
+		keepCount = 15
+	}
+	ackPath := o.AckPath
+	if ackPath == "" {
+		ackPath = AckPath(os.Getenv)
+	}
+	m := &model{o: o, ctx: ctx, st: NewState(), flow: NewFlow(o.Project), expanded: map[Cursor]bool{}, collapsed: map[string]bool{}, w: o.Width, h: o.Height, dirty: true,
+		filter: Filter{All: o.All, Keep: keep, KeepCount: keepCount, FailedKeep: 24 * time.Hour}, acks: LoadAcks(ackPath)}
 	if m.w <= 0 {
 		m.w = 80
 	}
@@ -230,12 +253,16 @@ func (m *model) live() bool {
 func (m *model) rebuild() {
 	v := Build(m.st, m.now, m.o.Config)
 	if m.o.Queued != nil {
-		rows, _, note := m.o.Queued() // finished rows: not shown yet (plan generic-tool Task 6)
+		rows, finished, note := m.o.Queued()
 		v = MergeQueued(v, m.o.Config, rows, note, m.now)
+		v = MergeFinished(v, m.o.Config, finished, m.now)
 	}
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}
+	ready := ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
+	v, _ = m.filter.Apply(v, m.acks.Has)
+	v = DropEmptyFinishedBlocks(v)
 	m.view = v
 	pruneExpanded(m.expanded, v)
 	rows := Rows(v, m.collapsed)
@@ -247,11 +274,35 @@ func (m *model) rebuild() {
 	fr := Render(v, RenderOptions{
 		Width: m.w, Height: m.h, Project: m.o.Project, ASCII: m.o.ASCII, Color: !m.o.NoColor,
 		Selected: m.cur, Expanded: m.expanded, Collapsed: m.collapsed, Scroll: m.scroll, Follow: m.follow, Help: m.help,
-		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo,
+		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo, FilterAll: m.filter.All, Ready: ready,
 	})
 	m.scroll, m.follow = fr.Scroll, false
 	m.frame = fr.String()
 	m.dirty = false
+}
+
+// ackSelected acknowledges the selected row's failure (key x), when it names
+// a failed finished run; it is a no-op on anything else (design
+// generic-tool §10.3). A write failure is shown as a notice: the ack is
+// local and best effort, so losing it only shows the failure again. Under
+// --all every finished row shows regardless of acknowledgement, so x would
+// otherwise look like it did nothing; a notice says it still recorded.
+func (m *model) ackSelected() {
+	for _, b := range m.view.Repos {
+		if b.Slug != m.cur.Slug {
+			continue
+		}
+		for _, r := range b.Finished {
+			if r.Run == m.cur.Run && r.Failed {
+				if err := m.acks.Ack(b.Slug, r.Run, m.clock()); err != nil {
+					m.notice = "could not save the acknowledgement: " + oneLine(err.Error())
+				} else if m.filter.All {
+					m.notice = "acknowledged (hidden in the recent view)"
+				}
+				return
+			}
+		}
+	}
 }
 
 // settle drops a pending write once the stream shows it or time is up.
@@ -343,6 +394,10 @@ func (m *model) key(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.help = !m.help
 		case " ":
 			m.space()
+		case "a":
+			m.filter.All = !m.filter.All
+		case "x":
+			m.ackSelected()
 		case "k":
 			return m, m.start(KillRepo)
 		case "K":

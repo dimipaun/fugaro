@@ -4,8 +4,10 @@ package watch
 type Cursor struct{ Slug, Run string }
 
 // Rows lists the selectable rows of v in screen order, honouring folds: a
-// repository's header, then each of its runs unless the repository is
-// collapsed.
+// repository's header, then each of its running and queued runs, then its
+// finished runs (design generic-tool §10.3's ordering), unless the
+// repository is collapsed. A finished run is selectable so `x` can
+// acknowledge the one the cursor names.
 func Rows(v View, collapsed map[string]bool) []Cursor {
 	var rows []Cursor
 	for _, b := range v.Repos {
@@ -14,6 +16,9 @@ func Rows(v View, collapsed map[string]bool) []Cursor {
 			continue
 		}
 		for _, r := range b.Runs {
+			rows = append(rows, Cursor{Slug: b.Slug, Run: r.Run})
+		}
+		for _, r := range b.Finished {
 			rows = append(rows, Cursor{Slug: b.Slug, Run: r.Run})
 		}
 	}

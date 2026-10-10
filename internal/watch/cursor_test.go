@@ -41,6 +41,30 @@ func TestCursorFallsBackToHeaderThenFirstRow(t *testing.T) {
 	}
 }
 
+// A finished run is a selectable row too (design generic-tool §10.3: "x on
+// the selected row" acknowledges a failure), listed after the block's
+// running and queued runs, so x can target one without a special key.
+func TestRowsIncludesFinishedAfterRuns(t *testing.T) {
+	v := View{Repos: []RepoBlock{
+		{Slug: "a", Runs: []RunRow{{Run: "r1"}}, Finished: []RunRow{{Run: "f1"}, {Run: "f2"}}},
+	}}
+	got := Rows(v, nil)
+	want := []Cursor{{"a", ""}, {"a", "r1"}, {"a", "f1"}, {"a", "f2"}}
+	if len(got) != len(want) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %+v, want %+v", got, want)
+		}
+	}
+	// A folded block hides its finished rows too, like it hides its runs.
+	folded := Rows(v, map[string]bool{"a": true})
+	if len(folded) != 1 {
+		t.Fatalf("folded: got %+v, want only the header", folded)
+	}
+}
+
 func TestRowsHonoursFolds(t *testing.T) {
 	v := View{Repos: []RepoBlock{
 		{Slug: "a", Runs: []RunRow{{Run: "r1"}, {Run: "r2"}}},
