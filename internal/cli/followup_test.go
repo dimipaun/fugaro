@@ -292,9 +292,6 @@ func TestRunPRRefusesLockWhenExecutionUnknown(t *testing.T) {
 	wantRefused(t, f, "branch busy: run "+holder, "run", "--repo", "acme/app", "--pr", "7")
 }
 
-// Under the 0.7.0 bucket hardening a launcher's delete of locks/ answers
-// 403: checkBranchLock must print the clear operator message, naming the
-// gcloud command, rather than crash or silently refuse as plain "branch
 // mismatchedNameBackend answers every Execution call truthfully except
 // that it renames the result, as if the backend had, by some fault,
 // confused two executions.
@@ -345,6 +342,9 @@ func TestCheckBranchLockRequiresTheSameExecutionNamed(t *testing.T) {
 	}
 }
 
+// Under the 0.7.0 bucket hardening a launcher's delete of locks/ answers
+// 403: checkBranchLock must print the clear operator message, naming the
+// gcloud command, rather than crash or silently refuse as plain "branch
 // busy" (which would send an operator looking at the wrong thing — the
 // backend has, in fact, already proven the holder over).
 func TestCheckBranchLockForbiddenDeleteNamesTheOperatorCommand(t *testing.T) {
@@ -457,12 +457,6 @@ func TestLockClearMessageRefusesToNameAnUnpinnedCommand(t *testing.T) {
 	}
 }
 
-// A new run acquires the branch lock between checkBranchLock's own
-// backend-confirmed decision and lock.Takeover's delete: Takeover's
-// generation-matched delete loses the race (ErrHolderChanged), and
-// checkBranchLock must map that to "branch busy", never to success — a
-// mutation that instead treated ErrHolderChanged as nil would launch a
-// second run straight into the one just acquired.
 // TestLockMessagesSanitizeTheRunID: a lock's run_id is read straight back
 // from the lock object, which a launcher could write with any bytes in
 // it (before locks/ is write-protected, or from a lock an old, buggy
@@ -512,6 +506,12 @@ func TestLockMessagesSanitizeTheRunID(t *testing.T) {
 	})
 }
 
+// A new run acquires the branch lock between checkBranchLock's own
+// backend-confirmed decision and lock.Takeover's delete: Takeover's
+// generation-matched delete loses the race (ErrHolderChanged), and
+// checkBranchLock must map that to "branch busy", never to success — a
+// mutation that instead treated ErrHolderChanged as nil would launch a
+// second run straight into the one just acquired.
 func TestRunPRRefusesWhenLockChangesDuringTakeover(t *testing.T) {
 	f := newCloudFixture(t)
 	seedRoot(t, f, rootID, time.Now().Add(-time.Hour))
