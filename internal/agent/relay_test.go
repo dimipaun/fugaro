@@ -428,7 +428,20 @@ func TestRelayOnToolNeverRepeatsTheRawCommand(t *testing.T) {
 		{"a bare command with no subcommand at all", "sudo", "tool Bash: sudo"},
 		{"env alone", "env", "tool Bash: env"},
 		{"echo's argument is not a subcommand, even a plain word", "echo " + secret, "tool Bash: echo"},
-		{"a very long argv0 is still bounded", "go" + strings.Repeat("x", 10000), "tool Bash: go" + strings.Repeat("x", 10000)},
+		{"a very long single-token argv0 reports the tool name alone", "go" + strings.Repeat("x", 10000), "tool Bash"},
+		{"a very long path's basename is still shown and bounded", "/" + strings.Repeat("dir/", 2000) + "deploy --flag", "tool Bash: deploy"},
+		// review item 1: a quoted value containing a space breaks naive
+		// whitespace splitting, and the broken-off tail used to become
+		// argv0 (a real published secret: PGPASSWORD='hunter2 s3cr3tw0rd'
+		// psql used to report "s3cr3tw0rd'").
+		{"a quoted assignment value with a space inside it", "PGPASSWORD='hunter2 " + secret + "' psql --host db", "tool Bash: psql"},
+		{"a double-quoted value with a space publishes nothing of it", `AUTH="Bearer ` + secret + `" curl https://api.example/`, "tool Bash: curl"},
+		{"an escaped quote inside a quoted value", `AUTH="abc\"` + secret + `\"xyz" curl https://api.example/`, "tool Bash: curl"},
+		{"an unterminated quote swallows the rest of the line, not just the value", `TOKEN="unterminated ` + secret + ` curl --fail`, "tool Bash"},
+		{"an absolute argv0 reduces to its basename, not the full path", "/home/alice/" + secret + "/bin/deploy --flag", "tool Bash: deploy"},
+		// review item 2: only an allowlisted subcommand word is kept after
+		// a dispatcher; a short, plain-looking secret is not one.
+		{"a dispatcher's argument that merely looks like a subcommand", "git " + secret, "tool Bash: git"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var buf bytes.Buffer

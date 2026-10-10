@@ -213,21 +213,38 @@ func (r *Relay) contentText(raw json.RawMessage) string {
 	return ""
 }
 
-// bashDispatchers are argv0 names known to take a bareword subcommand as
-// their very next word (go test, npm run, git commit, bash -c): the only
-// case actionSummary reveals a second word for Bash at all. Anything else
-// (echo, curl, cat, export, sudo, env, ...) reports argv0 alone, because a
-// plain command's next word is an argument, not a subcommand, and an
-// argument can be anything, secrets included.
-var bashDispatchers = map[string]bool{
-	"go": true, "npm": true, "npx": true, "yarn": true, "pnpm": true,
-	"git": true, "docker": true, "docker-compose": true, "kubectl": true,
-	"cargo": true, "pip": true, "pip3": true, "gem": true, "bundle": true,
-	"make": true, "mvn": true, "gradle": true, "gradlew": true,
-	"python": true, "python3": true, "node": true, "deno": true,
-	"rustup": true, "brew": true, "apt": true, "apt-get": true,
-	"systemctl": true, "terraform": true, "gcloud": true, "aws": true,
-	"az": true, "bash": true, "sh": true, "zsh": true, "fugaro": true,
+// bashSubcommands are the literal second words actionSummary ever reveals
+// for a Bash dispatcher, by argv0: the only case it shows a second word at
+// all. This is a fixed allowlist, not "any short bareword" (review item 2):
+// "any bareword" would still let `git <short-secret>` through whenever the
+// secret happened to be short and plain enough to look like a subcommand.
+// Anything not in this map (echo, curl, cat, export, sudo, env, an
+// uncommon dispatcher, ...) reports argv0 alone: a plain command's next
+// word is an argument, not a subcommand, and an argument can be anything,
+// secrets included. bash/sh/zsh's only entry is -c, the owner's original
+// ruling's one named case.
+var bashSubcommands = map[string]map[string]bool{
+	"git":     set("add", "branch", "checkout", "clone", "commit", "config", "diff", "fetch", "init", "log", "merge", "mv", "pull", "push", "rebase", "remote", "reset", "restore", "rm", "show", "stash", "status", "switch", "tag"),
+	"go":      set("build", "clean", "doc", "env", "fix", "fmt", "generate", "get", "install", "list", "mod", "run", "test", "tool", "vet", "version", "work"),
+	"npm":     set("audit", "ci", "exec", "init", "install", "link", "pack", "publish", "run", "start", "test", "uninstall", "update", "version"),
+	"docker":  set("build", "compose", "exec", "images", "inspect", "logs", "network", "ps", "pull", "push", "rm", "rmi", "run", "start", "stop", "tag", "volume"),
+	"gh":      set("api", "auth", "browse", "gist", "issue", "pr", "release", "repo", "run", "workflow"),
+	"make":    set("all", "build", "check", "ci", "clean", "deploy", "docs", "fmt", "install", "lint", "release", "run", "test", "vet"),
+	"cargo":   set("add", "bench", "build", "check", "clippy", "doc", "fmt", "install", "publish", "remove", "run", "test", "update"),
+	"fugaro":  set("budget", "cancel", "config", "diagnose", "doctor", "image", "init", "logs", "ls", "recipes", "report", "run", "secrets", "upgrade", "version", "watch"),
+	"kubectl": set("apply", "config", "create", "delete", "describe", "exec", "get", "logs", "port-forward", "rollout", "scale", "top"),
+	"gcloud":  set("auth", "builds", "compute", "config", "iam", "projects", "run", "services", "storage"),
+	"bash":    set("-c"),
+	"sh":      set("-c"),
+	"zsh":     set("-c"),
+}
+
+func set(words ...string) map[string]bool {
+	m := make(map[string]bool, len(words))
+	for _, w := range words {
+		m[w] = true
+	}
+	return m
 }
 
 // isAssignment reports whether s is a shell-style VAR=value word, the shape
@@ -249,9 +266,13 @@ func isAssignment(s string) bool {
 }
 
 // isBareword reports whether s is short enough, and plain enough, to be a
-// subcommand verb rather than a path, a URL or an arbitrary value: letters,
+// plain name rather than a path, a URL or an arbitrary value: letters,
 // digits, underscore and hyphen only (one leading hyphen allowed, for a
-// short flag like bash's -c), at most 24 characters.
+// short flag like bash's -c), at most 24 characters. Used only to decide
+// whether argv0 itself (or its basename) is safe to show; which second
+// word a dispatcher takes is the fixed bashSubcommands allowlist above, not
+// this (review item 2: "any bareword" would still let a short secret that
+// happens to look plain through).
 func isBareword(s string) bool {
 	if s == "" || len(s) > 24 {
 		return false
@@ -272,12 +293,94 @@ func isBareword(s string) bool {
 	return true
 }
 
-// safeBashSummary is argv0 and, only when argv0 is a known dispatcher and
-// the next word reads as a subcommand, that word too: never anything after
-// it. A run of leading VAR=value words (env, or a bare prefix before the
-// real command) is skipped to find argv0. Everything this does not
-// recognise as safe is simply left out, never guessed at: an unsafe guess
-// here is a secret on a dashboard every launcher can read.
+// safeArgv0 is s if it already reads as a bareword, or its filepath.Base if
+// that does (an absolute or relative script path reduces to just its name,
+// the repository-relative-path-or-basename rule file tools get), or ""
+// when neither does. "" matters: splitShellWords splitting on a malformed
+// or unterminated quote can leave a plain-looking fragment of a quoted
+// secret sitting where argv0 is expected (review item 1); reporting
+// whatever is there unchecked would publish it. A short, plain-looking
+// fragment is exactly as presentable as a real command name, so there is
+// no test here that tells them apart except refusing anything that is not
+// obviously a name or a path to one.
+func safeArgv0(s string) string {
+	if isBareword(s) {
+		return s
+	}
+	if b := filepath.Base(s); isBareword(b) {
+		return b
+	}
+	return ""
+}
+
+// splitShellWords splits command the way a shell would for the purpose of
+// finding argv0: single quotes take everything up to the next one
+// literally, double quotes the same but with backslash recognised before
+// ", \, $ and ` (POSIX's double-quote escapes), and a bare backslash
+// escapes the one character after it. An unterminated quote runs to the
+// end of the string instead of erroring: this is a best-effort summary,
+// not a shell, and a malformed command must still fail safe. This is what
+// makes safeBashSummary quote-aware (review item 1): naive whitespace
+// splitting breaks PGPASSWORD='hunter2 s3cr3tw0rd' into two words, and the
+// second one (the tail of the secret) would land where argv0 is read from.
+func splitShellWords(command string) []string {
+	var words []string
+	var buf strings.Builder
+	has := false
+	i := 0
+	for i < len(command) {
+		switch c := command[i]; {
+		case c == ' ' || c == '\t':
+			if has {
+				words = append(words, buf.String())
+				buf.Reset()
+				has = false
+			}
+			i++
+		case c == '\'':
+			has = true
+			i++
+			for i < len(command) && command[i] != '\'' {
+				buf.WriteByte(command[i])
+				i++
+			}
+			i++ // the closing quote, or past the end if there was none
+		case c == '"':
+			has = true
+			i++
+			for i < len(command) && command[i] != '"' {
+				if command[i] == '\\' && i+1 < len(command) && strings.IndexByte(`"\$`+"`", command[i+1]) >= 0 {
+					buf.WriteByte(command[i+1])
+					i += 2
+					continue
+				}
+				buf.WriteByte(command[i])
+				i++
+			}
+			i++
+		case c == '\\' && i+1 < len(command):
+			has = true
+			buf.WriteByte(command[i+1])
+			i += 2
+		default:
+			has = true
+			buf.WriteByte(c)
+			i++
+		}
+	}
+	if has {
+		words = append(words, buf.String())
+	}
+	return words
+}
+
+// safeBashSummary is argv0 (reduced through safeArgv0) and, only when it is
+// a known dispatcher and the next word is one of its allowlisted
+// subcommands, that word too: never anything after it. A run of leading
+// VAR=value words (env, or a bare prefix before the real command) is
+// skipped to find argv0. Everything this does not recognise as safe is
+// simply left out, never guessed at: an unsafe guess here is a secret on a
+// dashboard every launcher can read.
 func safeBashSummary(command string) string {
 	fields := strings.Fields(command)
 	i := 0
@@ -287,8 +390,11 @@ func safeBashSummary(command string) string {
 	if i >= len(fields) {
 		return ""
 	}
-	argv0 := fields[i]
-	if i+1 < len(fields) && bashDispatchers[argv0] && isBareword(fields[i+1]) {
+	argv0 := safeArgv0(fields[i])
+	if argv0 == "" {
+		return ""
+	}
+	if i+1 < len(fields) && bashSubcommands[argv0][fields[i+1]] {
 		return argv0 + " " + fields[i+1]
 	}
 	return argv0
