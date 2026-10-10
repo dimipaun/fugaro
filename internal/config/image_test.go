@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -52,6 +54,38 @@ func TestParseImageSkipBuildScripts(t *testing.T) {
 	jvm := strings.Replace(webYAML, "web-node", "java-services", 1)
 	if _, problems := Parse([]byte(jvm + "    image: { skip_build_scripts: false }\n")); len(problems) > 0 {
 		t.Fatalf("an explicit false on java-services: %v", problems)
+	}
+}
+
+// imageFieldReasons is config.Image's fields that never run as shell and so
+// stay off ExecutableKeys, with why: Node is a version string checked
+// against nodeVersionRE, never interpolated into a command, and JDK is
+// refused on every base by validateImage, so it never reaches a Dockerfile.
+var imageFieldReasons = map[string]string{
+	"Node": "a version string, matched against nodeVersionRE, never run as shell",
+	"JDK":  "refused on every base by validateImage; it never reaches a Dockerfile",
+}
+
+// TestImageFieldsAreClassified is decision L7's reflection-style guard: a
+// field added to config.Image later must either run as shell (and so be
+// gated, an entry of ExecutableKeys, named "workflows.*.image.<yaml tag>")
+// or have a reason in imageFieldReasons that it is not. A field with
+// neither is caught here, in CI, instead of landing ungated on a live
+// publish.
+func TestImageFieldsAreClassified(t *testing.T) {
+	typ := reflect.TypeOf(Image{})
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		tag, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		key := "workflows.*.image." + tag
+		executable := slices.Contains(ExecutableKeys, key)
+		_, reasoned := imageFieldReasons[f.Name]
+		switch {
+		case executable && reasoned:
+			t.Errorf("Image.%s (%s): is both in ExecutableKeys and in imageFieldReasons; it cannot be both gated and exempt", f.Name, key)
+		case !executable && !reasoned:
+			t.Errorf("Image.%s (%s): is in neither ExecutableKeys nor imageFieldReasons; classify it as executable (gated) or add a reason it is not", f.Name, key)
+		}
 	}
 }
 
@@ -194,6 +228,24 @@ func TestCheckoutCloneToolsCorpus(t *testing.T) {
 	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
 	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.tools" || !strings.Contains(ps[0].Message, msg) {
 		t.Fatalf("problems = %v, want exactly one at workflows.web.image.tools: %s", ps, msg)
+	}
+}
+
+// TestCheckoutCloneSkipBuildCorpus is
+// testdata/config/invalid/checkout-clone-skip-build.yaml: checkout: clone
+// refuses image.skip_build_scripts, read from disk like
+// TestCheckoutCloneToolsCorpus. It closes a schema corpus gap: fugaro.schema.json's
+// checkout: clone branch has a skip_build_scripts: {const: false} clause
+// with no corpus file exercising it (every other clause in that branch had
+// one).
+func TestCheckoutCloneSkipBuildCorpus(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/config/invalid/checkout-clone-skip-build.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const msg = "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if _, ps := Parse(data); len(ps) != 1 || ps[0].Path != "workflows.web.image.skip_build_scripts" || !strings.Contains(ps[0].Message, msg) {
+		t.Fatalf("problems = %v, want exactly one at workflows.web.image.skip_build_scripts: %s", ps, msg)
 	}
 }
 

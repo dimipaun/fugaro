@@ -108,6 +108,9 @@ type Recipe struct {
 	newKeys bool
 }
 
+// Renamed are catalog names removed in 0.7.0 and what replaced them.
+var Renamed = map[string]string{"cheap-loop-senior": "standard", "claude-solo": "solo"}
+
 // Problem is one reason a recipe is invalid.
 type Problem struct {
 	Path    string `json:"path,omitempty"`

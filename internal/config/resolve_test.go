@@ -292,9 +292,14 @@ func TestResolveOverAnEmptyLayerIsParse(t *testing.T) {
 const literalsRepo = minimalRepo + `git:
   provider: github
   base_branch: 1.10
-  pr: { labels: [1.10, 1e3, 0x10, yes] }
+  pr:
+    labels: [1.10, 1e3, 0x10, yes]
+    early_draft: !!bool >-
+      true
 agent:
   model: 0x10
+  review_rounds: !!int |-
+    2
 workflows:
   api:
     base: go
@@ -349,6 +354,13 @@ func TestResolveKeepsLiterals(t *testing.T) {
 	if c.Git.BaseBranch != "1.10" || c.Agent.Model != "0x10" || strings.Join(c.Git.PR.Labels, ",") != "1.10,1e3,0x10,yes" ||
 		api.Commands.Build != "1e3" || api.Commands.Test != "010" {
 		t.Fatalf("repository values changed: %q %q %q %+v", c.Git.BaseBranch, c.Agent.Model, c.Git.PR.Labels, api.Commands)
+	}
+	// review_rounds and early_draft are tagged (!!int, !!bool) block
+	// scalars: a merge that drops the tag re-marshals them as plain
+	// double-quoted strings, which fails to decode into an int or a bool.
+	if c.Agent.ReviewRounds != want.Agent.ReviewRounds || c.Git.PR.EarlyDraftOn() != want.Git.PR.EarlyDraftOn() {
+		t.Fatalf("tagged block scalars changed: review_rounds=%v (want %v) early_draft=%v (want %v)",
+			c.Agent.ReviewRounds, want.Agent.ReviewRounds, c.Git.PR.EarlyDraftOn(), want.Git.PR.EarlyDraftOn())
 	}
 	// Folded, literal, chomping, a more-indented line and an explicit tag
 	// (lit1-lit3 in literalsRepo) must reach the resolved config exactly as
@@ -523,6 +535,44 @@ func btoa(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+// TestResolveProfileCheckoutSurvivesDefaulting pins that a profile's
+// checkout: clone reaches the resolved config: applyDefaults (defaults.go)
+// only fills Checkout when it is "", and in Resolve's layered path that
+// check runs after the project layer, the profile and the repository are
+// already merged into one tree (resolve.go: the merged YAML is decoded into
+// c before applyDefaults(&c) runs), so a profile's value is never seen as
+// unset and clobbered back to the baked default.
+func TestResolveProfileCheckoutSurvivesDefaulting(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"profiles:\n  p:\n    base: base\n    checkout: clone\n    commands: { build: make, test: make test }\n")
+	c, res, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nprofile: p\n"), l)
+	if len(ps) > 0 {
+		t.Fatalf("problems: %v", ps)
+	}
+	w := c.Workflows[ImplicitWorkflow]
+	if w.Checkout != CheckoutClone {
+		t.Fatalf("Checkout = %q, want %q (the default must not override a profile's value)", w.Checkout, CheckoutClone)
+	}
+	if got := res.SourceOf("workflows.default.checkout"); got != SourceProfile("p") {
+		t.Fatalf("SourceOf(checkout) = %q, want %q", got, SourceProfile("p"))
+	}
+}
+
+// TestResolveCrossLayerCheckoutConflict pins that checkout: clone's refusal
+// of a build-only key sees the merged workflow, not each layer alone: a
+// profile's image.apt plus the repository's own checkout: clone must be
+// refused together, with the problem attributed to the profile that set the
+// conflicting key (annotate in resolve.go).
+func TestResolveCrossLayerCheckoutConflict(t *testing.T) {
+	head := "version: 1\nproject: acme\ngcp_project: acme-fugaro\n"
+	l := mustLayer(t, head+"profiles:\n  p:\n    base: base\n    image: { apt: [jq] }\n    commands: { build: make, test: make test }\n")
+	_, _, ps := Resolve([]byte(minimalRepo+"git: { provider: github }\nworkflows:\n  web:\n    profile: p\n    checkout: clone\n"), l)
+	const path, msg = "workflows.web.image.apt", "checkout: clone runs the base image with no build; use checkout: baked to build an image"
+	if !hasProblem(ps, path, msg, 0) {
+		t.Fatalf("problems = %v, want one at %s: %s (a profile's image.apt and the repo's own checkout: clone must be checked together)", ps, path, msg)
+	}
 }
 
 func TestLayeredCorpus(t *testing.T) {

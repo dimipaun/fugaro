@@ -69,13 +69,12 @@ resource "google_storage_bucket" "runs" {
   depends_on = [google_project_service.this]
 }
 
-# The project marker. No bucket-object IAM role (operators' objectAdmin,
-# launchers' objectViewer and runs/-scoped objectUser) can read a bucket
-# label, so every Fugaro command reads this object instead to check that its
-# project config points at the project's own installation. No job account
-# can write it (the jobs' grants cover runs/, cache/ and locks/; builds
-# cover builds/), and since 0.7.0 no launcher either (bucket-iam.md): only
-# operators, and project-level storage writers.
+# The project marker. Launchers hold objectAdmin on the runs bucket, which
+# can't read a bucket label, so every Fugaro command reads this object to
+# check that its project config points at the project's own installation.
+# No job account can write it (the jobs' grants cover runs/, cache/ and
+# locks/; builds cover builds/), and since 0.7.0 no launcher either
+# (bucket-iam.md): only operators, and project-level storage writers.
 resource "google_storage_bucket_object" "project_marker" {
   bucket       = google_storage_bucket.runs.name
   name         = "fugaro/project.json"

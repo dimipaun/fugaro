@@ -78,6 +78,21 @@ type JSONRun struct {
 	RequestedBy string `json:"requested_by,omitempty"`
 }
 
+// JSONFinished is a finished run (design generic-tool §10.1 and §10.3): a
+// result.json already exists, so it is read from the runs bucket, not RTDB.
+type JSONFinished struct {
+	Run      string  `json:"run"`
+	Slug     string  `json:"slug"`
+	Repo     string  `json:"repo"`
+	Title    string  `json:"title"`
+	Status   string  `json:"status"` // the runstore status: succeeded, failed, halted, cancelled, infra_error
+	Outcome  string  `json:"outcome"`
+	Failed   bool    `json:"failed"`
+	PRURL    string  `json:"pr_url,omitempty"`
+	PRNumber int     `json:"pr_number,omitempty"`
+	AgeSecs  float64 `json:"age_seconds"`
+}
+
 // JSONDoc is one watch --json document.
 type JSONDoc struct {
 	Project    string     `json:"project"`
@@ -88,9 +103,20 @@ type JSONDoc struct {
 	Total      JSONTotal  `json:"total"`
 	Repos      []JSONRepo `json:"repos"`
 	Runs       []JSONRun  `json:"runs"`
+	// Finished and Ready are unfiltered (design generic-tool §10.3): every
+	// finished run, and the ones among them whose Outcome is "ready", are
+	// listed regardless of age or count; --all, --keep and --keep-count only
+	// bound the interactive and plain views.
+	Finished []JSONFinished `json:"finished"`
+	Ready    []JSONFinished `json:"ready"`
 	// QueuedNote is a one-line, already-sanitised reason the runs bucket
 	// could not be read for queued rows; absent when it was (or wasn't asked).
 	QueuedNote string `json:"queued_note,omitempty"`
+}
+
+func jsonFinished(slug, repo string, r RunRow) JSONFinished {
+	return JSONFinished{Run: r.Run, Slug: slug, Repo: repo, Title: r.Title, Status: r.Stage, Outcome: r.Outcome,
+		Failed: r.Failed, PRURL: r.PRURL, PRNumber: r.PRNumber, AgeSecs: r.Age.Seconds()}
 }
 
 func usdPtr(b Bar) (cap, pct *float64) {
@@ -122,7 +148,7 @@ var connNames = [...]string{ConnLive: "live", ConnStale: "stale", ConnOffline: "
 func BuildJSON(project string, v View) JSONDoc {
 	d := JSONDoc{Project: project, Mode: v.Mode, Day: v.Day, Now: v.Now.UTC().Format(time.RFC3339),
 		Connection: JSONConn{State: connNames[v.Conn.Kind], Reason: v.Conn.Reason, AgeSeconds: v.Conn.Age.Seconds()},
-		Repos:      []JSONRepo{}, Runs: []JSONRun{}, QueuedNote: v.QueuedNote}
+		Repos:      []JSONRepo{}, Runs: []JSONRun{}, Finished: []JSONFinished{}, Ready: []JSONFinished{}, QueuedNote: v.QueuedNote}
 	p := v.Project
 	d.Total = JSONTotal{CountedUSD: p.Counted.USD(), SpentUSD: p.Spent.USD(), NotionalUSD: p.Notional.USD(),
 		Burn: jsonBurn(p.Burn), Kill: jsonKill(p.Kill), Runs: p.Runs, RunHours: p.RunHours}
@@ -151,6 +177,12 @@ func BuildJSON(project string, v View) JSONDoc {
 			}
 			d.Runs = append(d.Runs, j)
 		}
+		for _, f := range r.Finished {
+			d.Finished = append(d.Finished, jsonFinished(jr.Slug, r.Name, f))
+		}
+	}
+	for _, item := range ReadyRowsOf(v) {
+		d.Ready = append(d.Ready, jsonFinished(safetext.Strip(item.Run.Slug), item.Repo, item.Run))
 	}
 	return d
 }
