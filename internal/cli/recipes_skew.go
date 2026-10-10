@@ -19,6 +19,12 @@ import (
 // tag") has the release checklist verify it.
 const recipesSince = "0.5.0"
 
+// layeredSince is the first fugaro release whose runner reads a task's
+// project layer and fugaro.yaml's profile keys, and whose base image's
+// fugaro renders with --layer-bucket; an older one refuses all of them.
+// docs/release.md ("Before you tag") has the checklist verify it.
+const layeredSince = "0.6.0"
+
 // needsRecipeImage reports whether a launch needs a runner that knows
 // recipes: the task carries one, or the checkout's fugaro.yaml sets
 // agent.recipe (an unknown key to an older runner).
@@ -39,14 +45,24 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 			alt = "; or launch with --recipe default to run today's loop"
 		}
 	}
+	return checkImageSince(ctx, env, slug, spec, kind, recipesSince, subject, "recipes", alt, warn)
+}
+
+// checkImageSince refuses a launch whose job image runs a fugaro older than
+// since: subject needs a runner that knows knows. The judge is the build
+// record's base_ref: the image runs the binary of the base it was built
+// FROM. A non-release base is not judged (one warning); no record, or one
+// without base_ref, is refused. kind is the workflow's base kind, "" when
+// unknown.
+func checkImageSince(ctx context.Context, env *cloudEnv, slug string, spec *task.Spec, kind, since, subject, knows, alt string, warn io.Writer) error {
 	base := "this release's base image"
 	if kind != "" {
 		base = "this release's " + kind + " base image"
 	}
 	refuse := func(why string) error {
-		return userErr("%s needs a job image whose runner knows recipes (fugaro %s or later), but the job image of %s workflow %s %s. "+
+		return userErr("%s needs a job image whose runner knows %s (fugaro %s or later), but the job image of %s workflow %s %s. "+
 			"Run fugaro image refresh --repo %s --workflow %s in its checkout, in your own terminal window, or with --yes from CI or a script (never in a coding agent's session; it copies %s, points the daily image check job at it and rebuilds the image)%s",
-			subject, recipesSince, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
+			subject, knows, since, spec.Repo, spec.Workflow, why, spec.Repo, spec.Workflow, base, alt)
 	}
 	b, err := env.recordBucket(ctx)
 	if err != nil {
@@ -73,8 +89,8 @@ func checkRecipeImage(ctx context.Context, env *cloudEnv, slug string, spec *tas
 	// not judged here; init and image build own that.
 	switch {
 	case m == nil:
-		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows recipes is not checked\n", spec.Repo, spec.Workflow, ref)
-	case imagePredates(m[2], recipesSince):
+		fmt.Fprintf(warn, "warning: the job image of %s workflow %s was built from %s, which is not a release base image; whether its runner knows %s is not checked\n", spec.Repo, spec.Workflow, ref, knows)
+	case imagePredates(m[2], since):
 		return refuse(fmt.Sprintf("was built from base image %s, release %s", ref, m[2]))
 	}
 	return nil
