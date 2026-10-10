@@ -630,3 +630,26 @@ func TestSkillsSayOwnTerminal(t *testing.T) {
 		t.Error("validation.md does not say the cloud image build runs in the user's own terminal window")
 	}
 }
+
+func TestSetupSkillUsesTheProjectLayer(t *testing.T) {
+	files := setupFiles(t)
+	skill := files["skills/setup/SKILL.md"]
+	for _, want := range []string{
+		"fugaro config layer --json",
+		"fugaro config init --yes",
+		"fugaro config show --json",
+		"the investigative path",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("SKILL.md does not mention %q", want)
+		}
+	}
+	// The layer check comes after doctor (TestSetupSkillMentionsDoctorFirst
+	// keeps doctor first).
+	if strings.Index(skill, "fugaro doctor --json") > strings.Index(skill, "fugaro config layer --json") {
+		t.Error("SKILL.md checks the project layer before doctor")
+	}
+	if !strings.Contains(files["skills/setup/reference/decisions.md"], "## Minimal file or full file?") {
+		t.Error("decisions.md has no section on the minimal file")
+	}
+}
