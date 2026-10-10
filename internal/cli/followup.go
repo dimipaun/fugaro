@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dimipaun/fugaro/internal/backend"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/lock"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -110,7 +111,7 @@ func resolvePR(ctx context.Context, env *cloudEnv, repo, slug string, pr int, ex
 		return nil, userErr("no run on PR #%d has pushed to %s, so there is nothing to follow up; start a new run instead", pr, c.Branch)
 	}
 	c.Previous = runs[i]
-	if err := checkBranchLock(ctx, env, slug, c.Branch, now); err != nil {
+	if err := checkBranchLock(ctx, env, slug, c.Branch, now, warn); err != nil {
 		return nil, err
 	}
 	prev, err := readTask(ctx, env, slug, c.Previous.RunID)
@@ -227,11 +228,24 @@ func checkRoot(ctx context.Context, env *cloudEnv, slug, root, branch string, pr
 	return nil
 }
 
-// checkBranchLock refuses a branch whose lock is live. An absent, expired or
-// unparsable lock, or one naming no run, is fine: the runner takes it over
-// (lock.Acquire). One too large to read is refused: the runner can't take
-// it over.
-func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time) error {
+// checkBranchLock refuses a branch whose lock is live and whose holder is
+// not provably over. An absent, expired or unparsable lock, or one naming
+// no run, is fine: the runner takes it over (lock.Acquire). One too large
+// to read is refused: the runner can't take it over either.
+//
+// A lock that still looks live by its expiry is taken over anyway, by
+// deleting it outright (lock.Takeover) rather than merely launching past
+// it, when lock.Stale says its holder is provably over: the backend
+// independently confirms (executionTerminal) that the holder's own
+// execution has ended, never anything read from runs/, which a launcher
+// could forge (lock.go's own doc explains why). Deleting the lock, not
+// just deciding to launch, is what lets the runner's own lock.Acquire
+// succeed right after: Acquire trusts nothing but the lock object's own
+// ExpiresAt, so with the lock gone it has nothing left to conflict with.
+// A launcher's delete refused for lack of access (the 0.7.0 bucket
+// hardening, §10) is reported with the command an operator or the
+// sweeper runs instead. warn gets a note when the takeover happens.
+func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, now time.Time, warn io.Writer) error {
 	key := lock.Key(slug, branch)
 	data, _, err := env.bucket.Read(ctx, key)
 	switch {
@@ -248,7 +262,74 @@ func checkBranchLock(ctx context.Context, env *cloudEnv, slug, branch string, no
 	if json.Unmarshal(data, &h) != nil || h.RunID == "" || !now.Before(h.ExpiresAt) {
 		return nil
 	}
-	return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	if !lock.Stale(h, executionTerminal(ctx, env, h.Execution)) {
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	}
+	gen, err := lock.Takeover(ctx, env.bucket, key, h)
+	switch {
+	case err == nil:
+		fmt.Fprintf(warn, "note: run %s's execution has ended (confirmed by the backend); cleared its branch lock\n", oneLine(h.RunID))
+		return nil
+	case errors.Is(err, lock.ErrHolderChanged):
+		return userErr("branch busy: run %s holds it until %s; wait for it, or cancel it", oneLine(h.RunID), h.ExpiresAt.UTC().Format(time.RFC3339))
+	case isAccessDenied(err):
+		return userErr("%s", lockClearMessage(env, key, gen, h.RunID))
+	default:
+		return remote(err)
+	}
+}
+
+// executionTerminal reports whether the backend confirms execution has
+// ended: the same backend.Execution.State.Terminal() signal runview.Join
+// uses to call a run infra_error after a kill that never finalized it
+// (ls, diagnose). It double-checks the execution the backend answered
+// about is, by backend.SameExecution, the one asked for: defense in depth
+// before lock.Takeover deletes anything on this word. Anything else —
+// empty, not found, a read error, not yet terminal — is not treated as
+// proof.
+func executionTerminal(ctx context.Context, env *cloudEnv, execution string) bool {
+	if execution == "" {
+		return false
+	}
+	e, err := env.be.Execution(ctx, execution)
+	return err == nil && backend.SameExecution(e.Name, execution) && e.State.Terminal()
+}
+
+// lockClearMessage is what checkBranchLock and cancel print when a lock's
+// holder is confirmed over but deleting its lock was refused for lack of
+// access: under the 0.7.0 bucket hardening (design bucket-iam.md §3, §10)
+// locks/ is no longer launcher-writable, so only an operator, or the
+// sweeper, can clear it. gen must be the generation lock.Takeover itself
+// verified matched the confirmed-stale holder (its return value, even on
+// a failure): it is never read fresh here, because a second read, after
+// Takeover already failed, could see a different run's lock by then — a
+// launcher who ran the printed command against its current generation
+// could delete a live run's lock.
+//
+// gen zero means Takeover never verified a generation at all (its own
+// read failed before the delete was even attempted — reads are not what
+// the 0.7.0 hardening denies, so this is a different, rarer failure).
+// Printing an unpinned gcloud storage rm then would be just as unsafe as
+// a fresh re-read: without a generation to match, the command deletes
+// whatever is at that key when an operator finally runs it, which could
+// by then be a different, live run's lock. So no command is printed;
+// the message says the lock could not be read and asks for a look by
+// hand instead.
+func lockClearMessage(env *cloudEnv, key string, gen int64, runID string) string {
+	if gen == 0 {
+		object := key
+		if name := env.lc.RunsBucketName(); name != "" {
+			object = "gs://" + name + "/" + key
+		}
+		return fmt.Sprintf("the lock of run %s is held by an execution that ended, but it could not be read to name its generation safely; an operator must inspect %s by hand before clearing it",
+			oneLine(runID), object)
+	}
+	object := key
+	if name := env.lc.RunsBucketName(); name != "" {
+		object = fmt.Sprintf("gs://%s/%s#%d", name, key, gen)
+	}
+	return fmt.Sprintf("the lock of run %s is held by an execution that ended; an operator must clear it (or the sweeper does): gcloud storage rm %s",
+		oneLine(runID), object)
 }
 
 // prSpec builds the spec of fugaro run --pr: a stored follow-up that a

@@ -59,6 +59,14 @@ func SetLockRelease(t *testing.T, f func(l *lock.Lock, ctx context.Context) erro
 	t.Cleanup(func() { releaseBranchLock = prev })
 }
 
+// SetMarkLockReleasing replaces the branch lock's self-release marking
+// for the rest of t.
+func SetMarkLockReleasing(t *testing.T, f func(l *lock.Lock, ctx context.Context, now time.Time) error) {
+	prev := markLockReleasing
+	markLockReleasing = f
+	t.Cleanup(func() { markLockReleasing = prev })
+}
+
 // RecordWriteTimeout exposes recordWriteTimeout.
 const RecordWriteTimeout = recordWriteTimeout
 

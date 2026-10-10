@@ -62,8 +62,12 @@ type Spec struct {
 	Recipe *Recipe `json:"recipe,omitempty"`
 	// ProjectLayer is the project layer the launching CLI read
 	// (docs/design/layered-config.md §8): its exact text, which the runner
-	// resolves fugaro.yaml against. Nil: none. Runners before 0.6.0 refuse
-	// the field, so the CLI checks the job image first (layeredSince).
+	// resolves fugaro.yaml against. Nil: none. A runner before 0.6.0
+	// refuses an unknown field, so fugaro run's own launch-time image gate
+	// (checkImageSince, layered-config plan Task 11) refuses the launch
+	// before this field is ever set, rather than let a stale runner reject
+	// it after the fact. Nothing in this package enforces that; a launch
+	// this field reaches has already passed that gate.
 	ProjectLayer *ProjectLayer `json:"project_layer,omitempty"`
 }
 

@@ -102,9 +102,13 @@ var Scopes = []ScopeRow{
 	{Key: "review.allow_forks", In: InRepo, Why: whyForks},
 }
 
-// ExecutableKeys are the profile keys whose values run as shell, in the
-// job or in the image build (decision L7): a publish that changes one needs
-// --executable-changes.
+// ExecutableKeys are the profile keys whose values run as shell, or control
+// whether shell a profile already describes runs, in the job or in the
+// image build (decision L7): a publish that changes one needs
+// --executable-changes. image.skip_build_scripts going from true to false
+// (or being dropped) turns the dependency install/build scripts back on in
+// the image build; going from false to true is reported too (the owner's
+// ruling: a direction being safer is not a reason to leave it ungated).
 //
 // workflows.*.image.tools is here because it is exactly as powerful as
 // image.setup: every mise backend with a URL or host form (cargo:, go:,
@@ -117,6 +121,7 @@ var Scopes = []ScopeRow{
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
 	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
+	"workflows.*.image.skip_build_scripts",
 }
 
 // NonExecutableImageKeys are the Image struct's fields ExecutableKeys
@@ -126,9 +131,8 @@ var ExecutableKeys = []string{
 // slips past config publish's --executable-changes gate (PR #244) is a
 // compile-time-visible test failure, not a silent gap.
 var NonExecutableImageKeys = map[string]string{
-	"workflows.*.image.node":               "a pinned Node major or exact version (nodeVersionRE); never a command",
-	"workflows.*.image.jdk":                "refused on every base (validateImage); never reaches a Dockerfile",
-	"workflows.*.image.skip_build_scripts": "a boolean flag, not a command",
+	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
+	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name

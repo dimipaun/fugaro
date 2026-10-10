@@ -720,6 +720,7 @@ func TestRefreshConfirmationsNeedTheTypedName(t *testing.T) {
 func TestRefreshEndsWithTheAnchorNote(t *testing.T) {
 	useVersion(t, "0.5.1")
 	useSelf(t)
+	noProjectLayerBucket(t)
 	for _, tc := range []struct {
 		yaml string
 		note bool
