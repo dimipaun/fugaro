@@ -137,6 +137,27 @@ func TestInitPublishConfigAsLauncherIsRefused(t *testing.T) {
 	}
 }
 
+// A plain `fugaro init` run (not --publish-config) only warns when the
+// shared config publish is forbidden: the installation itself still
+// succeeds, exit 0 (initRun.publishSharedConfig, init.go).
+func TestInitWarnsWhenSharedConfigPublishIsForbidden(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	old := sharedBucketOpener
+	sharedBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return r.gcs.Bucket(t, initRunsBucket), nil
+	}
+	t.Cleanup(func() { sharedBucketOpener = old })
+	r.gcs.DenyWrites(initRunsBucket, "fugaro/")
+	out, _, err := executeStdin(t, "", "init", "--yes")
+	if err != nil {
+		t.Fatalf("exit %d, err %v\n%s", ExitCode(err), err, out)
+	}
+	if !strings.Contains(out, "could not publish the shared config") || !strings.Contains(out, "operator role") {
+		t.Fatalf("no warning naming the operator role:\n%s", out)
+	}
+}
+
 func TestInitPublishConfigNeedsALocalConfig(t *testing.T) {
 	r := newInitRig(t)
 	sharedRuns(t)

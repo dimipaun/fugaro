@@ -5,8 +5,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
+
+	"google.golang.org/api/googleapi"
 
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
@@ -30,6 +33,19 @@ func TestOperatorWriteErr(t *testing.T) {
 			t.Errorf("refusal lacks %q: %v", want, err)
 		}
 	}
+	// isAccessDenied's own path, not errors.Is(err, blobx.ErrForbidden): a
+	// raw *googleapi.Error{Code: 403}, not wrapped by blobx at all (a GCP
+	// client elsewhere in the CLI that doesn't go through blobx's write
+	// path). gcerrors.Code(err) == gcerrors.PermissionDenied is isAccessDenied's
+	// other path, but it has no test here: none of the blob drivers this
+	// repo uses (gcsblob, fileblob, memblob) ever produce that code
+	// (gcsblob's own ErrorCode maps a 403 to NotFound, which is exactly why
+	// the googleapi.Error fallback below exists), and the type backing a
+	// gcerrors-coded error (gocloud.dev/internal/gcerr.Error) is internal to
+	// gocloud.dev, so a real one can't be constructed from this module.
+	if got := operatorWriteErr("gs://b", "k", &googleapi.Error{Code: http.StatusForbidden}); ExitCode(got) != ExitUserError || !strings.Contains(got.Error(), "operator role") {
+		t.Fatalf("raw googleapi 403: exit %d, err %v", ExitCode(got), got)
+	}
 }
 
 // A launcher's recipes publish shows the diff, then is refused with the
@@ -46,6 +62,27 @@ func TestPublishAsLauncherIsRefusedWithTheOperatorText(t *testing.T) {
 	}
 	if _, _, rerr := b.Read(ctx, "fugaro/recipes/review.yaml"); !errors.Is(rerr, blobx.ErrNotExist) {
 		t.Fatalf("something was written: %v", rerr)
+	}
+}
+
+// Replacing an existing recipe while forbidden to write (the ReplaceIfType
+// path, not Create's) is refused the same way, and the existing object is
+// left as it was: publishRecipe reads, diffs and only then writes, so a
+// refused replace never corrupts what was there.
+func TestPublishReplaceAsLauncherIsRefusedWithTheOperatorText(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	const key, old = "fugaro/recipes/review.yaml", "version: 1\nname: review\n"
+	fake.Put("fugaro-runs-proj-1234", key, []byte(old))
+	fake.DenyWrites("fugaro-runs-proj-1234", "fugaro/")
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	var w bytes.Buffer
+	_, err := publishRecipe(ctx, &w, b, key, "review", []byte("version: 1\nname: review\nx: 1\n"))
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "operator role") {
+		t.Fatalf("exit %d, err %v", ExitCode(err), err)
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || string(data) != old {
+		t.Fatalf("the existing recipe changed: %v, %q", rerr, data)
 	}
 }
 

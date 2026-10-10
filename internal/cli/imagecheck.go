@@ -329,7 +329,7 @@ func writeState(ctx context.Context, b *blobx.Bucket, key string, s *imagecheck.
 		return fmt.Errorf("%s changed while this check ran (another check?); not overwriting it", key)
 	}
 	if errors.Is(err, blobx.ErrForbidden) {
-		return operatorWriteErr("gs://"+b.GCSName, key, err)
+		return operatorWriteErr("gs://"+b.GCSName, key, err, "the write was refused")
 	}
 	if err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
@@ -551,7 +551,6 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 		}
 	}
 	var failed []string
-	exitCode := ExitOK
 	for _, name := range workflows {
 		if !slices.Contains(checkedWorkflows(cfg), name) {
 			// Gone from head, or its check turned off: the installed
@@ -559,11 +558,6 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 			lg.log(name, imagecheck.NotInstalled, []string{notInstalledReason}, "", "", "")
 			continue
 		}
-		// wfCode is this workflow's contribution to the exit code if it
-		// fails: ExitRemoteError (today's exit 2) unless the sole cause is
-		// a write this check alone could not make (H8), which is a user
-		// error (exit 1), named in the JSON log line.
-		wfCode := ExitRemoteError
 		ev, err := t.evaluate(ctx, name)
 		if err != nil {
 			ev.d = imagecheck.Decision{Workflow: name, Decision: imagecheck.CheckFailed, Error: oneLine(err.Error())}
@@ -580,7 +574,6 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 			}
 		}
 		if !o.dryRun && !ev.prevUnreadable {
-			wasFailed := ev.d.Decision == imagecheck.CheckFailed
 			if err := writeState(ctx, bucket, imagecheck.CheckKey(slug, name), state, ev); err != nil {
 				msg := oneLine(err.Error())
 				if ev.d.Decision == imagecheck.Rebuild && state.BuildID != "" {
@@ -589,20 +582,15 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 					msg = "submitted Cloud Build build " + state.BuildID + ", but could not record it in check.json: " + msg
 				}
 				ev.d.Decision, ev.d.Error = imagecheck.CheckFailed, cmp.Or(ev.d.Error, msg)
-				var ee *ExitError
-				if !wasFailed && errors.As(err, &ee) && ee.Code == ExitUserError {
-					wfCode = ExitUserError
-				}
 			}
 		}
 		lg.log(name, ev.d.Decision, ev.d.Reasons, state.BuildID, ev.lastStatus, ev.d.Error)
 		if ev.d.Decision == imagecheck.CheckFailed {
 			failed = append(failed, name)
-			exitCode = max(exitCode, wfCode)
 		}
 	}
 	if len(failed) > 0 {
-		return &ExitError{Code: exitCode, Err: fmt.Errorf("the image check of %s failed for %s", s.Repo, strings.Join(failed, ", "))}
+		return remote(fmt.Errorf("the image check of %s failed for %s", s.Repo, strings.Join(failed, ", ")))
 	}
 	return nil
 }
