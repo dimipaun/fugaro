@@ -460,12 +460,29 @@ func yamlProblems(err error) []Problem {
 }
 
 // yamlValueRE is the quoted value yaml.v3 puts in a type error ("cannot
-// unmarshal !!str `abc...` into config.Agent"). A fugaro.yaml may be somebody
-// else's, so an error names the key and the type wanted, never what was there.
-var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal !!\\w+) `.*?` into ")
+// unmarshal !!str `abc...` into config.Agent"). The tag before it is not
+// always !!word: an explicit tag (!<tag:x,...>) stands in its own text, a
+// fugaro.yaml's own, so it is stripped the same way. yaml.v3 percent-decodes
+// a verbatim tag, so that text can itself hold a space (not just a control
+// or bidi character showKey alone would catch), which is why the tag group
+// is .+? (any character, lazily), not \S+: a fugaro.yaml may be somebody
+// else's, so an error names the key and the type wanted, never what was
+// there, whatever the tag looks like. The value group is greedy (.*, not
+// .*?): a tag can also decode to text that itself contains "` into " (say,
+// !<tag:x%20%60y%60%20into%20z>, decoding to "tag:x `y` into z"), and a
+// lazy value group would stop at that first, fake "` into " inside the
+// tag, leaving the real value past it unstripped. Greedy instead matches
+// through to the last "` into " in the message, which is always the real
+// one: the type name after it is ours, never the writer's, so it never
+// itself contains that text.
+var yamlValueRE = regexp.MustCompile("(?s)(cannot unmarshal .+?) `.*` into ")
 
 func problemFromYAML(msg string) Problem {
 	msg = yamlValueRE.ReplaceAllString(msg, "$1 into ")
+	// An explicit tag's text is the writer's own and can hold anything a
+	// YAML tag allows, including an escape sequence or a bidi override
+	// character; showKey escapes it like any other untrusted text.
+	msg = showKey(msg)
 	if m := yamlLineRE.FindStringSubmatch(msg); m != nil {
 		line, _ := strconv.Atoi(m[1])
 		return Problem{Line: line, Message: m[2]}
