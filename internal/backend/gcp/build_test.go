@@ -521,3 +521,25 @@ func TestBuilderStatus(t *testing.T) {
 		t.Fatal("IsDigest")
 	}
 }
+
+// TestBuildRequestCarriesTheLayerSHA: the project layer's sha256 reaches
+// the build as _PROJECT_LAYER_SHA256, "" for a build without one, and a
+// malformed sum is refused before any request is built.
+func TestBuildRequestCarriesTheLayerSHA(t *testing.T) {
+	spec := buildSpec(t)
+	b, err := BuildRequest("proj-1234", spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok := b.Substitutions["_PROJECT_LAYER_SHA256"]; !ok || v != "" {
+		t.Fatalf("no layer: substitution %q, %v", v, ok)
+	}
+	spec.ProjectLayerSHA256 = strings.Repeat("a", 64)
+	if b, err = BuildRequest("proj-1234", spec); err != nil || b.Substitutions["_PROJECT_LAYER_SHA256"] != spec.ProjectLayerSHA256 {
+		t.Fatalf("a layer: %v, %v", b.Substitutions, err)
+	}
+	spec.ProjectLayerSHA256 = "short"
+	if _, err := BuildRequest("proj-1234", spec); !errors.Is(err, ErrBadBuildSpec) {
+		t.Fatalf("a bad sum: %v", err)
+	}
+}

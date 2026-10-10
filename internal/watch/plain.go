@@ -24,7 +24,13 @@ type PlainOptions struct {
 // pipe, a log and a terminal. Meaning is in words (KILLED, SILENT, LOST, OVER,
 // FAST, NOTIONAL), never in colour. Every string of v is already safe
 // (Build sanitised it); nothing here adds a control character but newlines.
-func RenderPlain(w io.Writer, project string, v View, o PlainOptions) error {
+//
+// ready is ReadyRowsOf the view before the finished-run filter hid anything
+// (design generic-tool §10.1): a ready PR stays listed past --keep and
+// --keep-count, which bound how much history the rest of the frame shows,
+// not what still needs a look. The caller resolves it, since by the time
+// RenderPlain runs, v may already be filtered and the run's own block gone.
+func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainOptions) error {
 	warn, sep := "⚠", " · "
 	if o.ASCII {
 		warn, sep = "!", " | "
@@ -53,21 +59,50 @@ func RenderPlain(w io.Writer, project string, v View, o PlainOptions) error {
 		if r.Kill.On {
 			fmt.Fprintf(&b, "  %s\n", killText(r.Kill, warn, "KILLED"))
 		}
-		if len(r.Runs) == 0 {
-			continue
+		if len(r.Runs) > 0 {
+			tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "  RUN\tTITLE\tSTAGE\tROUND\tAGE\tSPENT\tFLAGS")
+			for _, run := range r.Runs {
+				fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Run, run.Title, run.Stage, run.Round, ageText(run), runSpend(run), flags(run, warn))
+			}
+			tw.Flush()
 		}
-		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "  RUN\tTITLE\tSTAGE\tROUND\tAGE\tSPENT\tFLAGS")
-		for _, run := range r.Runs {
-			fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", run.Run, run.Title, run.Stage, run.Round, ageText(run), runSpend(run), flags(run, warn))
+		if len(r.Finished) > 0 {
+			ftw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(ftw, "  FINISHED\tOUTCOME\tAGE\tPR")
+			for _, f := range r.Finished {
+				fmt.Fprintf(ftw, "  %s\t%s\t%s\t%s\n", f.Run, finishedOutcomeText(f), ageText(f), dashIfEmpty(f.PRURL))
+			}
+			ftw.Flush()
 		}
-		tw.Flush()
 	}
 	if len(v.Repos) == 0 {
 		b.WriteString("\nno repository has spend, runs or a kill switch today\n")
 	}
+	if len(ready) > 0 {
+		fmt.Fprintf(&b, "\nReady for your review (%d)\n", len(ready))
+		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
+		for _, item := range ready {
+			fmt.Fprintf(tw, "  %s\t#%d\t%s\t%s\n", item.Repo, item.Run.PRNumber, dashIfEmpty(item.Run.PRURL), dash(item.Run.Title))
+		}
+		tw.Flush()
+	}
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+// finishedOutcomeText is a finished run's status for the plain table: its
+// status word, plus the outcome when it is ready or a draft that passed
+// review (design generic-tool §10.1).
+func finishedOutcomeText(f RunRow) string {
+	word := strings.ToUpper(f.Stage)
+	switch f.Outcome {
+	case "ready":
+		word = "READY FOR REVIEW"
+	case "draft":
+		word += ", passed review"
+	}
+	return word
 }
 
 // ConnText is the connection as the header says it. warn is the warning

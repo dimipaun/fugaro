@@ -55,6 +55,7 @@ func doctorJSON(t *testing.T, args ...string) doctorOutput {
 // reaches selection, and doctor says the config is the shared one.
 func TestDoctorReportsASharedConfig(t *testing.T) {
 	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
 	if err := os.Remove(r.cfgPath); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +111,7 @@ func TestDoctorStillSaysRunInitWithoutAGCPProject(t *testing.T) {
 // A local file wins silently; doctor notes when the published one differs.
 func TestDoctorNotesAPublishedConfigThatDiffers(t *testing.T) {
 	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
 	differs := strings.Replace(auroraShared(), "max_parallel: 20", "max_parallel: 3", 1)
 	publishFor(t, r, differs)
 	t.Chdir(gitCheckout(t, filepath.Join(r.dir, "app"), "version: 1\nproject: aurora\ngcp_project: proj-1234\n"))
@@ -128,6 +130,7 @@ func TestDoctorNotesAPublishedConfigThatDiffers(t *testing.T) {
 // and does not fail because of it.
 func TestDoctorToleratesAnUnreadablePublishedConfig(t *testing.T) {
 	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
 	old := sharedFetch
 	sharedFetch = func(context.Context, func(string) string, time.Time, string, string) (*localcfg.Config, string, error) {
 		return nil, "", userErr("no access")
@@ -147,6 +150,7 @@ func TestDoctorToleratesAnUnreadablePublishedConfig(t *testing.T) {
 // published one: the local config is compared as written.
 func TestDoctorDiffIgnoresTheRegionOverride(t *testing.T) {
 	r := newDoctorRig(t)
+	noProjectLayerBucket(t)
 	// The local file is the published one plus the personal part.
 	local := auroraShared() + "user: someone@example.com\nendpoints: { resource_manager: " + r.crm.URL + "/, cloud_billing: " + r.billing.URL + "/, secret_manager: " + r.sm.URL + "/, no_auth: true }\n"
 	if err := os.WriteFile(r.cfgPath, []byte(local), 0o600); err != nil {

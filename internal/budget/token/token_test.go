@@ -350,6 +350,28 @@ func TestDeleteObject(t *testing.T) {
 	}
 }
 
+// A refused delete (gocloud maps the GCS 403 to NotFound) must not read as
+// "the object was already gone": a replayable token left behind by a
+// refused cleanup is a security-relevant miss, not a benign no-op
+// (docs/design/bucket-iam.md §2.3).
+func TestDeleteObjectForbiddenIsNotSilentSuccess(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	g, b := bucket(t)
+	c := claims()
+	if err := token.PutObject(ctx, b, c.Slug, c.Run, e.mint(t, c, t0)); err != nil {
+		t.Fatal(err)
+	}
+	g.DenyWrites("runs", token.ObjectKey(c.Slug, c.Run))
+	if err := token.DeleteObject(ctx, b, c.Slug, c.Run); !errors.Is(err, blobx.ErrForbidden) {
+		t.Fatalf("a refused delete = %v, want ErrForbidden", err)
+	}
+	// Still there: a refused delete is not silent success.
+	if _, _, err := b.Read(ctx, token.ObjectKey(c.Slug, c.Run)); err != nil {
+		t.Fatalf("the token object should still be there: %v", err)
+	}
+}
+
 func TestExchangeGivesTheRunsIdentity(t *testing.T) {
 	e := newEnv(t)
 	c := claims()

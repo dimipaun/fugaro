@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -87,6 +88,81 @@ func TestFindLayerCacheOnlyWhenBucketCannotBeOpened(t *testing.T) {
 	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow.Add(3*24*time.Hour))
 	if err != nil || got.Layer == nil || !strings.Contains(got.Note, "using the cached project layer of aurora, 3 days old") {
 		t.Fatalf("unreachable to open: %+v, %v", got, err)
+	}
+}
+
+// Production risk: findLayer must not hang when the bucket client retries
+// a flaky or offline network forever; layerBucketTimeout bounds both the
+// open and the read, and a timeout is isUnreachable's own
+// context.DeadlineExceeded case, so it falls back to the cache exactly as
+// a dial failure or a 5xx would.
+//
+// Mutation (run, restore): drop the `context.WithTimeout` wrap around the
+// layerRead call in findLayer (pass ctx straight through), and this test
+// hangs until the outer test timeout kills the whole run, instead of
+// returning within layerBucketTimeout.
+func TestFindLayerTimesOutAndFallsBackToTheCache(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	oldTimeout := layerBucketTimeout
+	layerBucketTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { layerBucketTimeout = oldTimeout })
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(ctx context.Context, b *blobx.Bucket) ([]byte, int64, error) {
+		<-ctx.Done() // a client stuck retrying a dead connection
+		return nil, 0, ctx.Err()
+	}
+	start := time.Now()
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow.Add(time.Hour))
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("findLayer took %s; layerBucketTimeout did not bound the read", d)
+	}
+	if err != nil || got.Layer == nil || !strings.Contains(got.Note, "unreachable") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
+// The bucket opener must receive findLayer's own incoming context, never a
+// context.WithTimeout derived from it and cancelled before findLayer
+// returns: gocloud's gcsblob driver loads default credentials once per
+// process (a sync.Once in lazyCredsOpener) using the FIRST open's context,
+// and oauth2 keeps that context for every later token refresh. A cancelled
+// one there would make every later open and read in the whole process fail
+// with "context canceled" once this call's timeout passed — proven by
+// reverting the fix (wrapping the open in context.WithTimeout again) below.
+// Opening itself does no network I/O, so there is nothing to time-bound
+// here; TestFindLayerTimesOutAndFallsBackToTheCache covers the read, which
+// is where a flaky network can actually hang.
+//
+// This exercises the real blobx.Open (a file:// bucket, never gs://) so a
+// spy only wraps it to capture the context it receives, rather than
+// replacing it outright.
+func TestFindLayerOpensWithTheIncomingContextNeverACancelledOne(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := fileEnv(t, f).lc
+	var openCtx context.Context
+	open := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = open })
+	layerBucketOpener = func(ctx context.Context, url string) (*blobx.Bucket, error) {
+		openCtx = ctx
+		return open(ctx, url)
+	}
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	if openCtx == nil {
+		t.Fatal("layerBucketOpener was never called")
+	}
+	if err := openCtx.Err(); err != nil {
+		t.Fatalf("the context the bucket opener received is already done after findLayer returned (%v): a timeout wrapped around Open would poison every later GCS token refresh in the process", err)
 	}
 }
 
@@ -308,6 +384,67 @@ func TestFindLayerLenientWithConfigUnreadableBucketDoesNotFail(t *testing.T) {
 	}
 }
 
+// findLayer must never open a gs:// bucket this installation's own
+// endpoints say is a fake (sharedcfg.go's own bucket reads already refuse
+// this the same way): skipGSOnFakeEndpoints is off for every other test in
+// this package (main_test.go), since they reach buckets through seams
+// while carrying fake endpoints, so this test turns it back on, as the
+// tests of the skip itself in sharedcfg_test.go and init_fugaroyaml_test.go
+// do, to exercise the guard rather than the seam.
+//
+// Mutation (run, restore): delete the `if lc != nil &&
+// fakeEndpointsOnGS(lc, bucketURL)` block from findLayer, and this test
+// fails: layerBucketOpener is never overridden here, so it would call the
+// real blobx.Open with a gs:// URL (main_test.go's TestMain would panic
+// the whole run, which is the point: this guard is what keeps that panic
+// from ever firing for a config like this one).
+func TestFindLayerSkipsAFakeEndpointGSBucket(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := *fileEnv(t, f).lc
+	lc.Bucket = "" // as a real installation's config would be: BucketURL() falls back to gs://<runs_bucket>
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+
+	lenient, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{Lenient: true}, layerNow)
+	if err != nil || !lenient.Unknown || lenient.Layer != nil || !strings.Contains(lenient.Note, "fake") {
+		t.Fatalf("lenient: got %+v, %v", lenient, err)
+	}
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow); err == nil || !strings.Contains(err.Error(), "fake") {
+		t.Fatalf("strict: %v", err)
+	}
+}
+
+// The fake-endpoint branch itself falls back to a fresh cache exactly like
+// an unreachable bucket does (decision L13), not just "not checked":
+// TestFindLayerSkipsAFakeEndpointGSBucket never primes a cache, so its
+// `ours` is always false and never exercises the `if ours { return
+// fromCache(...) }` line inside that branch.
+//
+// Mutation (run, restore): delete the `if ours { return
+// fromCache(unreachableNote) }` two lines from the fake-endpoint branch in
+// findLayer (falling straight through to unread), and this test fails: the
+// cached layer disappears and the note stops mentioning "unreachable".
+func TestFindLayerFakeEndpointFallsBackToAFreshCache(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	lc := *fileEnv(t, f).lc
+	if _, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow); err != nil {
+		t.Fatal(err)
+	}
+	lc.Bucket = "" // as a real installation's config would be: BucketURL() falls back to gs://<runs_bucket>
+	old := skipGSOnFakeEndpoints
+	skipGSOnFakeEndpoints = true
+	t.Cleanup(func() { skipGSOnFakeEndpoints = old })
+	got, err := findLayer(context.Background(), os.Getenv, []byte(minimalAnchored), &lc, layerOptions{}, layerNow.Add(time.Minute))
+	if err != nil || got.Layer == nil || got.Layer.SHA256 != config.LayerSum([]byte(testProjectLayer)) || !strings.Contains(got.Note, "unreachable") {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+}
+
 // (h) A runs bucket that is not the default name gets no layer, with a
 // note, rather than reading another installation's bucket.
 func TestFindLayerNonDefaultBucketNameGetsNoLayer(t *testing.T) {
@@ -481,30 +618,27 @@ func TestFindLayerNoBucketIsNone(t *testing.T) {
 	}
 }
 
-// readLayerFile's own error paths: a missing file, a non-regular file
-// (here, a directory) and one over the size limit; a regular file within
-// the limit is read whole.
+// readLayerFile's own error paths: a missing file; a non-regular file
+// (a directory, a FIFO, a symlink to each and to a regular file); and one
+// over the size limit. A regular file within the limit is read whole. This
+// is now config.ReadRegular, the one reader of an untrusted path in this
+// codebase (readFugaroYAML, its other caller, has the identical table in
+// TestReadFugaroYAMLRefusesWhatIsNotARegularFile); this test exists to
+// pin that readLayerFile is really that reader, not a reader of its own
+// that could drift from it (as it once did: the previous readLayerFile
+// opened the path directly, following a symlink to any file the user
+// could read).
+//
+// Mutation (run, restore): revert readLayerFile to open the path directly
+// (os.OpenFile without O_NOFOLLOW, as it did before), and the "symlink to
+// a regular file" and "symlink to a directory" cases below fail (the
+// symlink is read or its target's own error shows through, not "symbolic
+// link").
 func TestReadLayerFile(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := readLayerFile(filepath.Join(dir, "missing.yaml")); err == nil {
 		t.Fatal("a missing file was read")
-	}
-
-	sub := filepath.Join(dir, "subdir")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readLayerFile(sub); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("a directory was read: %v", err)
-	}
-
-	big := filepath.Join(dir, "big.yaml")
-	if err := os.WriteFile(big, make([]byte, config.LayerMaxBytes+1), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readLayerFile(big); err == nil || !strings.Contains(err.Error(), "over the") {
-		t.Fatalf("an oversized file was read: %v", err)
 	}
 
 	ok := filepath.Join(dir, "ok.yaml")
@@ -513,7 +647,60 @@ func TestReadLayerFile(t *testing.T) {
 	}
 	data, err := readLayerFile(ok)
 	if err != nil || string(data) != testProjectLayer {
-		t.Fatalf("got %q, %v", data, err)
+		t.Fatalf("regular file: got %q, %v", data, err)
+	}
+
+	sub := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo.yaml")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	okLink := filepath.Join(dir, "ok-link.yaml")
+	if err := os.Symlink(ok, okLink); err != nil {
+		t.Fatal(err)
+	}
+	dirLink := filepath.Join(dir, "dir-link.yaml")
+	if err := os.Symlink(sub, dirLink); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(dir, "big.yaml")
+	if err := os.WriteFile(big, make([]byte, config.LayerMaxBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct{ path, want string }{
+		"directory":              {sub, "not a regular file"},
+		"fifo":                   {fifo, "not a regular file"},
+		"symlink to a file":      {okLink, "symbolic link"},
+		"symlink to a directory": {dirLink, "symbolic link"},
+		"too big":                {big, "larger than"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// A FIFO with no writer must refuse at once (config.ReadRegular
+			// rejects it from the Lstat alone, before any open): proven with
+			// a deadline, not trusted from the implementation.
+			done := make(chan struct{})
+			var b []byte
+			var err error
+			go func() {
+				defer close(done)
+				b, err = readLayerFile(tc.path)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("readLayerFile blocked")
+			}
+			if err == nil || len(b) != 0 {
+				t.Fatalf("read %d bytes, err %v", len(b), err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }
 
