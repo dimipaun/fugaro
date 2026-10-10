@@ -105,8 +105,8 @@ var Scopes = []ScopeRow{
 // job or in the image build (decision L7): a publish that changes one needs
 // --executable-changes.
 var ExecutableKeys = []string{
-	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.rerun_failed",
-	"workflows.*.image.apt", "workflows.*.image.setup",
+	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
+	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
