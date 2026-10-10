@@ -40,6 +40,19 @@ Also check that `fugaro version` works and `docker version` answers. Without Doc
 
 `FUGARO_PROJECT=<name> fugaro config example` (just `fugaro config example` when no project was asked for) prints the template; its `project:` line is the selected project's name. When it shows `example`, no project is selectable: ask the user. Never invent a project name: a wrong one makes every run refuse.
 
+### Does the project publish a project layer?
+
+Run `fugaro config layer --json` in the checkout, after `gcp_project:` is known (ask the user for the Fugaro project and its GCP project if `fugaro.yaml` does not exist yet).
+
+**If it prints a layer,** tell the user which profiles it offers (`profiles`) and which is the default. Ask only whether the repository fits a profile. If it does:
+1. Write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` when needed).
+2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
+3. Run `fugaro validate --json`, then build the image locally and loop until both pass, as for any file (steps 6 and 7 below).
+
+Change a single field under `workflows.default` only for a real quirk.
+
+**If no layer applies, or the repository fits no profile,** follow the investigative path below, unchanged.
+
 ## 2. Investigate the repository
 
 Read, don't run. Take the facts from the files, with their lines: `reference/discovery.md` has the per-language evidence (versions, build tool, test commands, JUnit reports), monorepos and unsupported languages. Collect:
