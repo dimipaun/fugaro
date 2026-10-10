@@ -58,7 +58,10 @@ func NewRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		// The plugin staleness line (design 4.5). No command defines its own
 		// PersistentPreRun, which would replace this one.
-		PersistentPreRun: func(cmd *cobra.Command, _ []string) { warnStaleSkills(cmd) },
+		PersistentPreRun: func(cmd *cobra.Command, _ []string) {
+			cmd.SetContext(withCheckoutParseCache(cmd.Context()))
+			warnStaleSkills(cmd)
+		},
 	}
 	root.AddCommand(
 		newVersionCmd(), newValidateCmd(), newConfigCmd(), newVerifyCmd(), newExecCmd(), newImageCmd(),

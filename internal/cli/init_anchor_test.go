@@ -336,6 +336,7 @@ func TestInitAnchorTwoWorkflowsOneStale(t *testing.T) {
 // (h) The line already there: exit 0 with a fresh image, exit 1 (the
 // dangerous state) with a stale one.
 func TestInitAnchorAlreadyPresent(t *testing.T) {
+	noProjectLayerBucket(t)
 	yaml := withRigAnchor(anchorModeYAML())
 	r := newAnchorModeRig(t, yaml, true)
 	putWorkflowRecord("app", "0.4.0")
@@ -355,6 +356,35 @@ func TestInitAnchorAlreadyPresent(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 	r.check(t, yaml)
+}
+
+// runAnchor resolves a minimal (layer-only) anchored file through the
+// selected project config, not a nil one: with no layer available it would
+// fail at the very first check ("is not valid (workflows: must define...)"),
+// before gcpProjectProblems ever runs.
+//
+// Mutation (run, restore): change `parseCheckoutFugaroYAML(ctx, data, lc)`
+// to pass nil in init_anchor.go's runAnchor, and this test fails ("app.yaml
+// is not valid").
+func TestInitAnchorResolvesTheLayerForTheSelectedProject(t *testing.T) {
+	r := newAnchorModeRig(t, minimalAnchored, false)
+	r.appendConfig(t, "  acme/app: { provider: github, workflows: [default] }\n")
+	runs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := layerBucketOpener
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+runs) }
+	t.Cleanup(func() { layerBucketOpener = old })
+	putWorkflowRecord("default", "0.4.0") // config.ImplicitWorkflow: the layer's default_profile svc names base web-node
+	out, _, err := anchorExec(t, "", "init", "--anchor", "--yes")
+	if err != nil || !strings.Contains(out, "already has "+anchorRigLine+"; nothing to write") {
+		t.Fatalf("err %v\n%s", err, out)
+	}
+	r.check(t, minimalAnchored)
 }
 
 // (i) A custom runs bucket: the note, nothing written.
@@ -526,6 +556,7 @@ func TestInitRepoNotesTheAnchor(t *testing.T) {
 
 // doctor says the same, as information, in a listed repository's checkout.
 func TestDoctorNotesTheAnchor(t *testing.T) {
+	noProjectLayerBucket(t)
 	for _, c := range []struct {
 		yaml   string
 		listed bool

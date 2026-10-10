@@ -50,6 +50,32 @@ func TestCloudCheckReadsOnlyLocalFiles(t *testing.T) {
 	}
 }
 
+// TestCloudCheckReadsOnlyLocalFilesWhenAnchored is
+// TestCloudCheckReadsOnlyLocalFiles for a checkout that already has
+// gcp_project: (an anchored repository, the common case once fugaro init
+// --anchor has run): cloudCheck resolves the project layer too now (Task
+// 10), and must still never read its bucket or need credentials.
+//
+// Mutation (run, restore): revert cloudCheck's loadCheckoutResolved call
+// back to loadCheckoutConfigAt, and this test fails loudly (it opens a real
+// gs:// project layer bucket; noLayerBucketReads catches it directly, and
+// TestMain's own gs:// guard would too if it didn't).
+func TestCloudCheckReadsOnlyLocalFilesWhenAnchored(t *testing.T) {
+	useVersion(t, "0.5.1")
+	useSelf(t)
+	r := newAnchorModeRig(t, withRigAnchor(refreshYAML), true)
+	noRecordReads(t)
+	noLayerBucketReads(t)
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(t.TempDir(), "none.json"))
+	v := cloudCheck(t.Context(), r.root, cloudOptions{}, "")
+	if v.state != cloudStale || !strings.Contains(v.reason, "go: none recorded, this release's is "+managedRef("go", "0.5.1")) {
+		t.Fatalf("%+v", v)
+	}
+	if calls := r.calls(t); len(calls) != 0 || len(r.ar.Requests()) != 0 {
+		t.Fatalf("terraform %q or the registry was touched", calls)
+	}
+}
+
 func TestCloudCheckNotHere(t *testing.T) {
 	t.Run("not onboarded", func(t *testing.T) {
 		useVersion(t, "0.5.1")

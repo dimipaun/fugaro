@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -13,9 +15,11 @@ import (
 	"time"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/gcpfake"
 	"github.com/dimipaun/fugaro/internal/image"
 	"github.com/dimipaun/fugaro/internal/imagecheck"
+	"github.com/dimipaun/fugaro/internal/infra"
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
@@ -65,6 +69,115 @@ func TestImageBuildCloudNeedsRegistry(t *testing.T) {
 	}
 	if buildPosts(fb) != 0 {
 		t.Error("a build without its registry reached Cloud Build")
+	}
+}
+
+// A Cloud Build submission must refuse, not silently proceed, when the
+// project layer's bucket cannot be read: design §8 and decision L16
+// classify Cloud Build submission as strict ("fail when the bucket cannot
+// be read"), unlike image build --local and image render, which stay
+// lenient. cloudBuildCheckout's fixture isn't anchored (no gcp_project:),
+// so this adds one to exercise findLayer's bucket read at all.
+//
+// Mutation (run, restore): change runImageBuildCloud's
+// loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{}) call back to
+// loadCheckout(ctx, o.workflow) (lenient), and this test fails: the build
+// is submitted despite the unreadable bucket.
+func TestImageBuildCloudRefusesAnUnreadableProjectLayer(t *testing.T) {
+	fb, f := cloudBuildCheckout(t, false)
+	isolateCache(t)
+	publishedLayer(t, f, "") // the default runs bucket name; no layer object needed
+	data, err := os.ReadFile("fugaro.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	anchored := strings.Replace(string(data), "project: aurora\n", "project: aurora\ngcp_project: proj-1234\n", 1)
+	if anchored == string(data) {
+		t.Fatal("fugaro.yaml has no project: line to anchor")
+	}
+	if err := os.WriteFile("fugaro.yaml", []byte(anchored), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	read := layerRead
+	t.Cleanup(func() { layerRead = read })
+	layerRead = func(context.Context, *blobx.Bucket) ([]byte, int64, error) {
+		return nil, 0, errors.New("boom")
+	}
+	if _, _, err := executeBuild(t, "image", "build", "--base", "b:1"); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("err = %v", err)
+	}
+	if buildPosts(fb) != 0 {
+		t.Error("a build over an unreadable project layer reached Cloud Build")
+	}
+}
+
+// A Cloud Build submission must resolve the project layer against the same
+// project config openCloud already selected from --config (or
+// --project/--gcp-project), never a flag-blind re-selection:
+// findLayer's bucket comes from that config's own bucket_url
+// (layer_resolve.go), so a config picked flag-blind (here, none at all:
+// there is deliberately no project config anywhere selectedProjectConfig's
+// empty cloudOptions{} could find on its own, only the one --config names)
+// could check the wrong bucket, or find no config and so no bucket
+// override at all, and let the strict submission proceed as though no
+// layer applied instead of refusing.
+//
+// Mutation (run, restore): change runImageBuildCloud's
+// loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{}) call to pass
+// nil instead of lc, and this test fails: with the selection re-derived
+// flag-blind, selectedProjectConfig finds nothing (no $FUGARO_PROJECT, no
+// $FUGARO_CONFIG, no config under the isolated XDG directory), so
+// findLayer's bucket-override never applies and it falls back to the
+// derived default gs://fugaro-runs-proj-1234 — a real bucket this test
+// never fakes, so TestMain's own guard against a test reaching a real
+// gs:// URL panics (see main_test.go), which is exactly what would have
+// been a silent "no layer" in production instead.
+func TestImageBuildCloudUsesTheSelectedProjectsLayer(t *testing.T) {
+	files := npmFiles()
+	files["fugaro.yaml"] = "version: 1\nproject: aurora\ngcp_project: proj-1234\n"
+	checkoutWith(t, files)
+	testutil.Git(t, ".", "remote", "set-url", "origin", "https://bitbucket.org/acme/app.git")
+
+	dir := t.TempDir()
+	// A clean slate: isolateProjects clears $FUGARO_PROJECT/$FUGARO_CONFIG
+	// and points XDG at an empty directory, so selectedProjectConfig's
+	// flag-blind cloudOptions{} has nothing to find by name, $FUGARO_*, or
+	// "exactly one project config" — only --config below names one at all.
+	isolateProjects(t, dir)
+	run := gcpfake.NewRun(t)
+	run.Project, run.Region = "proj-1234", "us-east5"
+	logging := gcpfake.NewLogging(t)
+	fb := gcpfake.NewBuild(t)
+	fb.AddRegistry("proj-1234", "us-east5", gcp.RegistryRepoID(mustSlug("bitbucket", "acme/app")))
+
+	runs := filepath.Join(dir, "runs")
+	if err := os.MkdirAll(filepath.Join(runs, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker, err := json.Marshal(infra.ProjectMarker{Version: 1, Name: "aurora", GCPProject: "proj-1234"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(runs, filepath.FromSlash(infra.ProjectMarkerObject)), marker, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	layer := "version: 1\nproject: aurora\ngcp_project: proj-1234\ndefaults:\n  git: { provider: bitbucket }\n  agent: { auth: api-key }\n" +
+		"profiles:\n  svc:\n    base: web-node\n    commands: { build: sh build.sh, test: sh test.sh }\ndefault_profile: svc\n"
+	if err := os.WriteFile(filepath.Join(runs, "fugaro", "project-layer.yaml"), []byte(layer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(dir, "selected.yaml")
+	cfg := "version: 1\nname: aurora\ngcp_project: proj-1234\nregion: us-east5\nruns_bucket: fugaro-runs-proj-1234\nbucket_url: file://" + runs +
+		"\nuser: someone@example.com\nmax_parallel: 2\n" +
+		"endpoints: { run: " + run.URL + "/, logging: " + logging.URL + "/, cloud_build: " + fb.URL + "/, no_auth: true }\n"
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	out, _, err := executeBuild(t, "image", "build", "--config", cfgPath, "--base", "b:1")
+	if err != nil || !strings.Contains(out, "built ") {
+		t.Fatalf("out %q, err %v", out, err)
 	}
 }
 

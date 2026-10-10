@@ -175,7 +175,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, cfg, name, err := loadCheckout(ctx, o.workflow)
+	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, lc, layerOptions{})
 	if err != nil {
 		return err
 	}
@@ -526,11 +526,38 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 
 // loadCheckout finds the git checkout containing the working directory,
 // loads its fugaro.yaml, validates and checks it the way `fugaro validate`
-// does, and selects the workflow.
+// does, and selects the workflow. Lenient (decision L16): image build
+// --local and image render, the two callers that worked offline before
+// 0.6.0. Neither resolves a cloud project config of its own (no cloud
+// flags), so loadCheckoutWorkflow falls back to selectedProjectConfig.
 func loadCheckout(ctx context.Context, workflow string) (root string, cfg *config.Config, name string, err error) {
-	if root, cfg, err = loadCheckoutConfig(ctx); err != nil {
+	return loadCheckoutWorkflow(ctx, workflow, nil, layerOptions{Lenient: true})
+}
+
+// loadCheckoutWorkflow is loadCheckout resolved over o, against lc (nil:
+// loadCheckoutResolved falls back to selectedProjectConfig, the flag-blind
+// selection loadCheckout's two lenient callers have no better option for).
+// runImageBuildCloud is the one strict caller, and the one that already has
+// a project config of its own: design §8 lists Cloud Build submission as
+// strict ("fail when the bucket cannot be read"), alongside launches and
+// config show|layer|publish. It must pass the same lc openCloud resolved
+// from --project/--config/--gcp-project, not nil: findLayer's bucket
+// comes from that lc's own bucket_url and runs_bucket (layer_resolve.go),
+// so re-deriving a flag-blind selection here could check a different
+// installation's bucket override, miss the layer silently, and let the
+// strict submission proceed as if none applied instead of refusing.
+// Cloud Build's own layer-sha wiring (the builds/<slug>/project-layer.yaml
+// copy and _PROJECT_LAYER_SHA256, §8's Cloud Build row) is Task 14, not
+// built yet; until then, resolving strictly here against the right lc is
+// the whole of this path's layer strictness — it only refuses to submit a
+// build over an unreadable bucket, same as a launch would, rather than
+// silently building on a stale or unknown layer.
+func loadCheckoutWorkflow(ctx context.Context, workflow string, lc *localcfg.Config, o layerOptions) (root string, cfg *config.Config, name string, err error) {
+	root, rf, err := loadCheckoutResolved(ctx, "", lc, o)
+	if err != nil {
 		return "", nil, "", err
 	}
+	cfg = rf.Cfg
 	if name, _, err = cfg.SelectWorkflow(workflow); err != nil {
 		return "", nil, "", &ExitError{Code: ExitUserError, Err: err}
 	}
@@ -545,6 +572,13 @@ func loadCheckoutConfig(ctx context.Context) (root string, cfg *config.Config, e
 // loadCheckoutConfigAt is loadCheckoutConfig for the checkout holding dir
 // (empty: the current directory).
 func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *config.Config, err error) {
+	root, rf, err := loadCheckoutResolved(ctx, dir, nil, layerOptions{Lenient: true})
+	return root, rf.Cfg, err
+}
+
+// loadCheckoutResolved is loadCheckoutConfigAt resolved over the project
+// layer o finds, with the layer (image build passes it to Cloud Build).
+func loadCheckoutResolved(ctx context.Context, dir string, lc *localcfg.Config, o layerOptions) (root string, rf resolvedFile, err error) {
 	args := []string{"rev-parse", "--show-toplevel"}
 	if dir != "" {
 		args = append([]string{"-C", dir}, args...)
@@ -552,25 +586,31 @@ func loadCheckoutConfigAt(ctx context.Context, dir string) (root string, cfg *co
 	out, err := exec.CommandContext(ctx, "git", args...).Output()
 	if err != nil {
 		if dir != "" {
-			return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
+			return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%s is not inside a git checkout; point at the repository's checkout", dir)}
 		}
-		return "", nil, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
+		return "", rf, &ExitError{Code: ExitUserError, Err: errors.New("not inside a git checkout; run this from the repository")}
 	}
 	root = strings.TrimSpace(string(out))
 	data, err := readFugaroYAML(filepath.Join(root, "fugaro.yaml"))
 	if err != nil {
-		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
+		return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("%w; create it with /fugaro:setup or fugaro config example", err)}
 	}
-	cfg, problems := config.Parse(data)
-	if cfg != nil {
-		problems = append(config.Check(cfg, root), computeProblems(cfg)...)
+	if lc == nil {
+		lc = selectedProjectConfig(ctx)
+	}
+	if rf, err = resolveFugaroYAML(ctx, data, lc, o); err != nil {
+		return "", rf, err
+	}
+	problems := rf.Problems
+	if rf.Cfg != nil {
+		problems = append(config.Check(rf.Cfg, root), computeProblems(rf.Cfg)...)
 	}
 	if len(problems) > 0 {
 		msgs := make([]string, len(problems))
 		for i, p := range problems {
 			msgs[i] = p.String()
 		}
-		return "", nil, &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
+		return "", rf, &ExitError{Code: ExitUserError, Err: fmt.Errorf("fugaro.yaml has %d problem(s), see fugaro validate:\n  %s", len(problems), strings.Join(msgs, "\n  "))}
 	}
-	return root, cfg, nil
+	return root, rf, nil
 }

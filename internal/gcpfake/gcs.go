@@ -69,6 +69,10 @@ type GCS struct {
 	projects map[string]uint64
 	// failDeletes makes the next object deletes answer 503.
 	failDeletes int
+	// failGets makes the next metadata-only object reads (Attributes, not
+	// a content GET) answer 503, as a flaky network or an overloaded
+	// backend would.
+	failGets int
 	// listCalls counts object listing requests (one per page).
 	listCalls int
 	// denied maps a bucket to the prefixes DenyWrites has closed.
@@ -140,6 +144,18 @@ func (g *GCS) FailObjectDeletes(n int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.failDeletes = n
+}
+
+// FailObjectGets makes the next n metadata-only object reads (gocloud's
+// Attributes, a GET without alt=media) answer 404 even though the object
+// exists, modeling a failure to read it that is not "the object does not
+// exist" and not "this driver has no generation concept" (file://,
+// mem://): a real GCS failure a caller must not paper over with an
+// unconditional delete. A content read (alt=media) is unaffected.
+func (g *GCS) FailObjectGets(n int) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failGets = n
 }
 
 // AddProject lets bucket inserts name project id, whose number new buckets
@@ -627,6 +643,17 @@ func (g *GCS) get(w http.ResponseWriter, bucket, name string, media bool) {
 		return
 	}
 	if !media {
+		if g.failGets > 0 {
+			g.failGets--
+			// NOT_FOUND, not a 5xx: the storage client retries a 5xx on
+			// its own (idempotent GETs), which would make this answer
+			// transparently instead of ever reaching the caller; a 404
+			// here is deterministic and fast, and models the same "the
+			// object just is not readable as expected" failure (e.g. a
+			// concurrent delete that already removed it).
+			g.notFound(w, bucket, name)
+			return
+		}
 		writeJSON(w, http.StatusOK, meta(bucket, name, o))
 		return
 	}
