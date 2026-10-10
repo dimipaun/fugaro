@@ -22,7 +22,6 @@ import (
 	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
-	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -2366,7 +2365,7 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 		return "", err
 	}
 	if cfg.Layer != nil {
-		rb, err := blobx.Open(ctx, lc.RecordBucketURL())
+		rb, err := openRecordBucket(ctx, lc.RecordBucketURL())
 		if err != nil {
 			return "", remote(err)
 		}

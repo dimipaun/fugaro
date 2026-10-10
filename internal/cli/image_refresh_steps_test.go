@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -572,6 +573,58 @@ func TestRefreshBuildsDeclineStopsSubsequentBuilds(t *testing.T) {
 	err := e.r.refreshBuilds(t.Context(), p, tg)
 	if err == nil || !strings.Contains(err.Error(), "api") || len(fb.specs) != 0 {
 		t.Fatalf("%v, %d builds\n%s", err, len(fb.specs), out.String())
+	}
+}
+
+// Review fix (code review on the prior fix): submitAndWait's project-layer
+// copy write now opens the record bucket through openRecordBucket (the
+// test seam every other record-bucket caller uses), not blobx.Open
+// directly, which could not be exercised successfully in a test at all
+// (lc.RecordBucketURL() is always a real gs:// URL, and blobx has no
+// endpoint-override mechanism). This is the happy path the previous test
+// suite never covered for fugaro image refresh's rebuilds: a project
+// layer, a reachable (fake, file://-backed) record bucket, and the copy
+// actually landing at builds/<slug>/project-layer.yaml with the sha the
+// build was submitted with.
+//
+// Mutation (run, restore): change submitAndWait's openRecordBucket(ctx,
+// lc.RecordBucketURL()) call back to blobx.Open(ctx, lc.RecordBucketURL()),
+// and this test fails: blobx.Open ignores the openRecordBucket override
+// below entirely and tries to open the real gs:// URL, which is not
+// panic-guarded the way layerBucketOpener is (TestMain only guards that
+// one), so it attempts a real network connection and the build fails with
+// a connection/credentials error instead of succeeding.
+func TestRefreshBuildsWritesTheProjectLayerCopy(t *testing.T) {
+	useVersion(t, "0.5.1")
+	r := newAnchorModeRig(t, refreshYAML, true)
+	fb := useFakeBuilder(t)
+	e, tg := buildTargetOpts(t, r, &initOptions{yes: true})
+	l, ps := config.ParseProjectLayer([]byte(testProjectLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	tg.cfg.Layer = l
+	// A layer needs a base whose fugaro reads it (layeredSince, 0.6.0):
+	// buildTargetOpts' own 0.5.1 base would otherwise be refused before the
+	// copy write this test means to exercise.
+	tg.lc.BaseImages["web-node"] = managedRef("web-node", "0.6.0")
+	recordsDir := t.TempDir()
+	prevRB := openRecordBucket
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+recordsDir)
+	}
+	t.Cleanup(func() { openRecordBucket = prevRB })
+	p := &refreshPlan{workflows: []string{"app"}}
+	out := atNoTerminal(e)
+	if err := e.r.refreshBuilds(t.Context(), p, tg); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if len(fb.specs) != 1 || fb.specs[0].ProjectLayerSHA256 != l.SHA256 {
+		t.Fatalf("specs = %+v, want one with ProjectLayerSHA256 %s", fb.specs, l.SHA256)
+	}
+	got, err := os.ReadFile(filepath.Join(recordsDir, "builds", tg.spec.Slug, "project-layer.yaml"))
+	if err != nil || string(got) != testProjectLayer {
+		t.Fatalf("the copy = %q, %v; want testProjectLayer", got, err)
 	}
 }
 
