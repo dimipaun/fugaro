@@ -366,11 +366,3 @@ func usesProfiles(c *config.Config) bool {
 	}
 	return false
 }
-
-// shortSHA is the first 12 characters of a sum, or all of a shorter one.
-func shortSHA(s string) string {
-	if len(s) > 12 {
-		return s[:12]
-	}
-	return s
-}

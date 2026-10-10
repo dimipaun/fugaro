@@ -177,13 +177,31 @@ func TestValidateJSONCarriesTheLayerSHA256(t *testing.T) {
 	}
 }
 
-func TestShortSHA(t *testing.T) {
-	long := strings.Repeat("a", 64)
-	if got := shortSHA(long); got != long[:12] {
-		t.Errorf("long: got %q, want %q", got, long[:12])
+// validate's project-layer line shows the real sha256's 12-character
+// prefix, never "(invalid)": shortSHA (internal/cli/ls.go, task 17)
+// refuses anything that isn't exactly 64 lowercase hex characters, but the
+// layer's own sha256 (config.LayerSum's output, hex.EncodeToString of a
+// sha256.Sum256) always is one, so it must always pass.
+//
+// Mutation (run, restore): change validateLayerLines' shortSHA(l.SHA256)
+// call to shortSHA(l.Project) (a short, non-hex string, "aurora"), and
+// this test fails: the warning line then shows "(invalid)" instead of a
+// sha256 prefix.
+func TestValidateShowsTheRealLayerSHA256Prefix(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, testProjectLayer)
+	layerCheckout(t, f, minimalAnchored)
+	_, errOut, err := execute(t, "validate")
+	if err != nil {
+		t.Fatalf("err %v\nstderr %s", err, errOut)
 	}
-	if got := shortSHA("short"); got != "short" {
-		t.Errorf("short: got %q, want unchanged", got)
+	want := config.LayerSum([]byte(testProjectLayer))[:12]
+	if !strings.Contains(errOut, "sha256 "+want) {
+		t.Fatalf("stderr %q, want it to contain the real sha256 prefix %q", errOut, want)
+	}
+	if strings.Contains(errOut, "(invalid)") {
+		t.Fatalf("stderr %q shows (invalid) for a real layer's sha256", errOut)
 	}
 }
 
