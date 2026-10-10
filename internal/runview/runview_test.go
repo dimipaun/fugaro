@@ -388,3 +388,13 @@ func TestJoinRecipe(t *testing.T) {
 		t.Fatalf("none: %q", got.Recipe)
 	}
 }
+
+func TestJoinCarriesTheProjectLayer(t *testing.T) {
+	r := rec(runstore.StatusSucceeded, nil)
+	r.ProjectLayer = &runstore.ProjectLayerRecord{SHA256: strings.Repeat("a", 64), Generation: 3, Applied: true}
+	r.ConfigSHA256 = strings.Repeat("b", 64)
+	row := Join(Input{Task: spec, Launch: launch, Record: r, Exec: exec(backend.StateSucceeded)}, prices, now)
+	if row.ProjectLayer == nil || row.ProjectLayer.Generation != 3 || row.ConfigSHA256 != r.ConfigSHA256 {
+		t.Fatalf("row %+v", row)
+	}
+}

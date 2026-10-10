@@ -510,9 +510,13 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 	}
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	showRecipe := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.Recipe != "" && r.Recipe != recipe.DefaultName })
+	showLayer := slices.ContainsFunc(rows, func(r runview.Row) bool { return r.ProjectLayer != nil })
 	header := "RUN\tSTATUS\tSTAGE\tAGE\tCOST\tPR"
 	if showRecipe {
 		header += "\tRECIPE"
+	}
+	if showLayer {
+		header += "\tLAYER"
 	}
 	fmt.Fprintln(tw, header)
 	for _, r := range rows {
@@ -530,6 +534,9 @@ func printRows(w io.Writer, project string, rows []runview.Row, warnings []strin
 				name = recipe.DefaultName
 			}
 			line += "\t" + oneLine(name)
+		}
+		if showLayer {
+			line += "\t" + layerCell(r)
 		}
 		fmt.Fprintln(tw, line)
 	}
@@ -561,6 +568,26 @@ func statusCell(r runview.Row) string {
 		return r.Status + " (" + string(r.Halt.Reason) + ")"
 	}
 	return r.Status
+}
+
+// shortSHA is a sha256 hex digest shortened for display.
+func shortSHA(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+// layerCell is a run's project layer in ls: its generation, "-" for none.
+func layerCell(r runview.Row) string {
+	pl := r.ProjectLayer
+	switch {
+	case pl == nil:
+		return "-"
+	case !pl.Applied:
+		return fmt.Sprintf("gen %d (not applied)", pl.Generation)
+	}
+	return fmt.Sprintf("gen %d", pl.Generation)
 }
 
 // prColumn is a row's pull request: "#N <url>", "#N" while the URL is
