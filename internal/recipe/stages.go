@@ -30,15 +30,11 @@ func StageBound(r *Recipe, f, n int) int {
 	return 1 + 2*first + rounds*per
 }
 
-// UsesV07 reports whether r uses a key added in 0.7.0 (the image gate).
+// UsesV07 reports whether r uses a key added in 0.7.0 (the image gate). It
+// decides by key presence (Recipe.newKeys, set while parsing), not by the
+// parsed value: a 0.6 parser refuses use_when, mode, roles.coder, a check
+// step and review.bounce outright, even when the value given looks like a
+// no-op (mode: implement, use_when: "").
 func UsesV07(r *Recipe) bool {
-	if r.UseWhen != "" || r.CoderIsReviewer || r.Mode == ModeReview {
-		return true
-	}
-	for _, s := range r.Steps {
-		if s.Kind == StepCheck || s.Bounce {
-			return true
-		}
-	}
-	return false
+	return r.newKeys
 }

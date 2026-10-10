@@ -36,6 +36,11 @@ steps:
 	if r.Steps[0].MaxRounds != 0 || r.Steps[1].MaxRounds != 0 {
 		t.Fatalf("empty bodies = %+v", r.Steps)
 	}
+	// A recipe that never writes mode defaults to ModeImplement, not "".
+	r = mustParse(t, "version: 1\nname: no-mode\nsteps:\n  - review: {}\n")
+	if r.Mode != ModeImplement {
+		t.Fatalf("Mode = %q, want %q", r.Mode, ModeImplement)
+	}
 }
 
 func TestParseInvalid(t *testing.T) {
@@ -194,6 +199,23 @@ func TestCheckCommandIsAnEnum(t *testing.T) {
 	if !strings.Contains(ProblemsText(ps), "autofix is only for command: lint") {
 		t.Errorf("autofix on test: %s", ProblemsText(ps))
 	}
+	if n := strings.Count(ProblemsText(ps), "autofix is only for command: lint"); n != 1 {
+		t.Errorf("autofix on test reported %d times: %s", n, ProblemsText(ps))
+	}
+	for _, p := range ps {
+		if p.Path == "steps[0].check.autofix" {
+			if p.Line == 0 {
+				t.Fatalf("autofix problem has no line number: %+v", p)
+			}
+			break
+		}
+	}
+	// An invalid command is one problem, not two: autofix's own message adds
+	// nothing once the command itself is already refused.
+	_, ps = Parse([]byte("version: 1\nname: x\nsteps:\n  - check: { command: bogus, autofix: true }\n  - review: {}\n"))
+	if n := len(ps); n != 1 {
+		t.Errorf("bogus command with autofix: true produced %d problems, want 1: %v", n, ps)
+	}
 }
 
 // TestCheckAutofixIsStrictlyBoolean: YAML 1.1 also resolves True, TRUE, False
@@ -259,6 +281,7 @@ func TestNewMessagesCarryLineNumbers(t *testing.T) {
 	for _, tc := range []struct{ name, text, path string }{
 		{"use_when", "version: 1\nname: x\nuse_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n", "use_when"},
 		{"check.command", "version: 1\nname: x\nsteps:\n  - check: { command: bogus }\n  - review: {}\n", "steps[0].check.command"},
+		{"mode", "version: 1\nname: x\nmode: plan\nsteps:\n  - review: {}\n", "mode"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, ps := Parse([]byte(tc.text))
@@ -280,13 +303,28 @@ func TestOrderWithChecksAndModes(t *testing.T) {
 		"steps:\n  - first_line: {}\n  - check: { command: test }\n  - review: {}\n": "check steps must come first",
 		"mode: review\nsteps:\n  - first_line: {}\n  - review: {}\n":                 "mode: review allows exactly one review step and nothing else",
 		"mode: review\nsteps:\n  - review: { max_rounds: 2 }\n":                      "mode: review reviews once: max_rounds must be 1",
-		"mode: plan\nsteps:\n  - review: {}\n":                                       "mode must be implement or review",
+		"mode: plan\nsteps:\n  - review: {}\n":                                       "must be implement or review",
 		"use_when: " + strings.Repeat("x", 301) + "\nsteps:\n  - review: {}\n":       "must be at most 300 bytes",
 	} {
 		_, ps := Parse([]byte("version: 1\nname: x\n" + src))
 		if !strings.Contains(ProblemsText(ps), want) {
 			t.Errorf("%q: got %s", src, ProblemsText(ps))
 		}
+	}
+}
+
+// TestUseWhenRefusesControlChars: use_when is shown verbatim by `recipes ls`
+// and the routing skill, and a project recipe comes from the runs bucket
+// (untrusted), so a control character or newline must be refused, not
+// echoed to a terminal or a skill prompt.
+func TestUseWhenRefusesControlChars(t *testing.T) {
+	_, ps := Parse([]byte("version: 1\nname: x\nuse_when: \"a\\e[2Jb\\nc\"\nsteps:\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+		t.Fatal(ProblemsText(ps))
+	}
+	_, ps = Parse([]byte("version: 1\nname: x\nuse_when: \"a\\tb\"\nsteps:\n  - review: {}\n"))
+	if !strings.Contains(ProblemsText(ps), "must not contain control characters, tabs or newlines") {
+		t.Fatalf("tab: %s", ProblemsText(ps))
 	}
 }
 

@@ -99,6 +99,13 @@ type Recipe struct {
 	// Mode is ModeImplement or ModeReview, never "".
 	Mode  string
 	Steps []Step
+	// newKeys is set when the recipe text uses a key or construct added in
+	// 0.7.0 (use_when, mode, roles.coder, a check step, review.bounce),
+	// regardless of the value given: a 0.6 parser refuses every one of
+	// these keys outright ("is not a recipe key"), even one written with a
+	// value that looks like a no-op (mode: implement, use_when: ""), so
+	// UsesV07 must decide from presence, never from the parsed value.
+	newKeys bool
 }
 
 // Renamed are catalog names removed in 0.7.0 and what replaced them.
@@ -305,7 +312,10 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			}
 		case "use_when":
 			if s, ok := p.str("use_when", v); ok {
-				if len(s) > MaxUseWhen {
+				switch {
+				case hasControlChar(s):
+					p.add("use_when", v.Line, "must not contain control characters, tabs or newlines")
+				case len(s) > MaxUseWhen:
 					p.add("use_when", v.Line, "must be at most %d bytes", MaxUseWhen)
 				}
 				r.UseWhen = s
@@ -313,11 +323,16 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 		case "mode":
 			if s, ok := p.str("mode", v); ok {
 				r.Mode = s
+				switch s {
+				case ModeImplement, ModeReview:
+				default:
+					p.add("mode", v.Line, "must be implement or review")
+				}
 			}
 		case "roles":
-			r.ReviewerIsCoder, r.CoderIsReviewer = p.roles(v)
+			r.ReviewerIsCoder, r.CoderIsReviewer = p.roles(r, v)
 		case "steps":
-			r.Steps, srcIdx = p.steps(v)
+			r.Steps, srcIdx = p.steps(r, v)
 		default:
 			p.key("", k)
 		}
@@ -327,12 +342,11 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 			p.add(req, 0, "is required")
 		}
 	}
-	switch r.Mode {
-	case "":
+	if r.Mode == "" {
 		r.Mode = ModeImplement
-	case ModeImplement, ModeReview:
-	default:
-		p.add("mode", 0, "mode must be implement or review")
+	}
+	if seen["use_when"] || seen["mode"] {
+		r.newKeys = true
 	}
 	if seen["steps"] {
 		p.order(r, srcIdx)
@@ -340,9 +354,22 @@ func (p *parser) top(m *yaml.Node) *Recipe {
 	return r
 }
 
+// hasControlChar reports whether s holds a C0 control character (tab,
+// newline and friends) or DEL. use_when is shown verbatim by `recipes ls`
+// and the routing skill, and project recipes come from the runs bucket, so
+// it is untrusted text that must never carry one.
+func hasControlChar(s string) bool {
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return true
+		}
+	}
+	return false
+}
+
 // roles returns (reviewerIsCoder, coderIsReviewer): which of the two
 // exclusive role mappings the recipe set.
-func (p *parser) roles(v *yaml.Node) (revIsCoder, coderIsRev bool) {
+func (p *parser) roles(r *Recipe, v *yaml.Node) (revIsCoder, coderIsRev bool) {
 	if v.Kind != yaml.MappingNode {
 		p.add("roles", v.Line, "must be a mapping such as {reviewer: coder}")
 		return false, false
@@ -352,6 +379,9 @@ func (p *parser) roles(v *yaml.Node) (revIsCoder, coderIsRev bool) {
 		k, val := v.Content[i], v.Content[i+1]
 		path := "roles." + pluginwire.Printable(k.Value)
 		w := want[k.Value]
+		if k.Value == "coder" {
+			r.newKeys = true
+		}
 		switch {
 		case w == "":
 			p.add(path, k.Line, "only the reviewer and coder roles can be mapped (reviewer: coder, or coder: reviewer)")
@@ -374,7 +404,7 @@ func (p *parser) roles(v *yaml.Node) (revIsCoder, coderIsRev bool) {
 }
 
 // steps returns the valid steps and each one's position in the source list.
-func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
+func (p *parser) steps(r *Recipe, v *yaml.Node) ([]Step, []int) {
 	if v.Kind != yaml.SequenceNode {
 		p.add("steps", v.Line, "must be a list of steps")
 		return nil, nil
@@ -397,6 +427,7 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 			kind = StepReview
 		case string(StepCheck):
 			kind = StepCheck
+			r.newKeys = true
 		case "checks":
 			p.add(kpath, k.Line, "the step type is check, not checks")
 			continue
@@ -435,6 +466,7 @@ func (p *parser) steps(v *yaml.Node) ([]Step, []int) {
 						}
 					}
 				case kind == StepReview && bk.Value == "bounce":
+					r.newKeys = true
 					bp := kpath + ".bounce"
 					if bs, ok := p.str(bp, bv); ok {
 						if bs != "first_line" {
@@ -464,6 +496,7 @@ func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
 		return
 	}
 	seenCommand := false
+	autofixLine := 0
 	for j := 0; j+1 < len(body.Content); j += 2 {
 		bk, bv := body.Content[j], body.Content[j+1]
 		switch bk.Value {
@@ -479,6 +512,7 @@ func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
 				}
 			}
 		case "autofix":
+			autofixLine = bv.Line
 			if b, ok := p.bool(kpath+".autofix", bv); ok {
 				s.Autofix = b
 			}
@@ -489,8 +523,11 @@ func (p *parser) checkBody(kpath string, body *yaml.Node, s *Step) {
 	if !seenCommand {
 		p.add(kpath+".command", 0, "is required")
 	}
-	if s.Autofix && s.Command != CheckLint {
-		p.add(kpath+".autofix", 0, "autofix is only for command: lint")
+	// s.Command == "" means command was missing or already refused above
+	// (the enum message), so this does not pile a second, confusing
+	// problem onto the same bad command.
+	if s.Autofix && s.Command != "" && s.Command != CheckLint {
+		p.add(kpath+".autofix", autofixLine, "autofix is only for command: lint")
 	}
 }
 

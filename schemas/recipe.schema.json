@@ -9,8 +9,8 @@
   "properties": {
     "version": { "const": 1 },
     "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "Must equal the file name (repository) or the object name (project)." },
-    "description": { "type": "string", "maxLength": 200 },
-    "use_when": { "type": "string", "maxLength": 300, "description": "The routing skill's self-description." },
+    "description": { "type": "string", "maxLength": 200, "$comment": "maxLength here counts Unicode characters (the JSON Schema spec); the Go parser's 200-byte limit (recipe.MaxDescription) is stricter for any multi-byte character, so this schema accepts some strings the parser refuses." },
+    "use_when": { "type": "string", "maxLength": 300, "pattern": "^[^\\x00-\\x1f\\x7f]*$", "description": "The routing skill's self-description.", "$comment": "maxLength here counts Unicode characters (the JSON Schema spec); the Go parser's 300-byte limit (recipe.MaxUseWhen) is stricter for any multi-byte character, so this schema accepts some strings the parser refuses. The pattern matches the parser's control-character/newline refusal." },
     "mode": { "enum": ["implement", "review"] },
     "roles": {
       "type": "object",
