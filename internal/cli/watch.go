@@ -59,9 +59,14 @@ type WatchDeps struct {
 	// note, read fresh on every frame; nil when the project has no runs
 	// bucket to scan (never the case for a live project, but degraded mode
 	// doesn't set it either: its own ls-based listing already shows
-	// pending, launching and finished runs). The dashboard does not yet
-	// show the finished rows (plan generic-tool Task 5/6 wire them in).
+	// pending, launching and finished runs).
 	Queued func() ([]watch.QueuedRun, []watch.FinishedRun, string)
+	// Filter bounds which finished rows the interactive and plain views
+	// show (design generic-tool §10.3); --json stays unfiltered.
+	Filter watch.Filter
+	// Acks is the local acknowledgement set x and the plain/json paths
+	// check finished failures against.
+	Acks *watch.Acks
 }
 
 // watchStdoutTTY says whether w is a terminal; tests replace it.
@@ -76,6 +81,7 @@ var runTUI = func(ctx context.Context, d *WatchDeps) error {
 	return watch.RunTUI(ctx, watch.TUIOptions{
 		In: d.In, Out: d.Out, Project: d.LC.Name, Updates: d.Sup.Updates(), Config: d.Config,
 		RepoKey: d.RepoKey, Repo: d.Repo, Queued: d.Queued,
+		All: d.Filter.All, Keep: d.Filter.Keep, KeepCount: d.Filter.KeepCount, AckPath: watch.AckPath(os.Getenv),
 		ASCII:   watch.UseASCII(d.ASCII, os.Getenv),
 		NoColor: watch.UseNoColor(d.NoColor, os.Getenv),
 		Exec: func(ctx context.Context, req watch.Request) watch.Outcome {
@@ -117,6 +123,9 @@ type watchOptions struct {
 	repo                                  string
 	json, once, poll, plain, ascii, noClr bool
 	interval                              time.Duration
+	all                                   bool
+	keep                                  time.Duration
+	keepCount                             int
 }
 
 func newWatchCmd() *cobra.Command {
@@ -136,7 +145,13 @@ func newWatchCmd() *cobra.Command {
 			"no kill keys: fugaro budget kill and resume are the script path.\n\n" +
 			"A project with no budget backend shows its run records only (as fugaro ls\n" +
 			"does, for the last 24 hours) and says so; fugaro ls --watch stays for the\n" +
-			"question \"did my runs finish\".",
+			"question \"did my runs finish\".\n\n" +
+			"A finished run stays shown for --keep (default 6h) or among the most recent\n" +
+			"--keep-count (default 15), whichever is stricter; a failed one stays until it\n" +
+			"is acknowledged (x in the interactive screen) or a day passes. --all shows\n" +
+			"every finished run (the a key toggles this without relaunching). --json is\n" +
+			"always unfiltered: it carries every finished run and, among them, the ones\n" +
+			"ready for review.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error { return runWatch(cmd, &o) },
 	}
@@ -149,6 +164,9 @@ func newWatchCmd() *cobra.Command {
 	f.DurationVar(&o.interval, "interval", 0, "the least time between plain frames (default 10s) and the polling period (default 5s)")
 	f.BoolVar(&o.ascii, "ascii", false, "use ASCII instead of ⚠ ▓░ ▸")
 	f.BoolVar(&o.noClr, "no-color", false, "no colour (NO_COLOR and TERM=dumb do the same)")
+	f.BoolVar(&o.all, "all", false, "show every finished run, not just the active and recent ones")
+	f.DurationVar(&o.keep, "keep", 6*time.Hour, "how long a finished run stays shown (with --keep-count, whichever is stricter)")
+	f.IntVar(&o.keepCount, "keep-count", 15, "how many finished runs stay shown (with --keep, whichever is stricter)")
 	addCloudFlags(cmd, &o.cloud)
 	return cmd
 }
@@ -163,6 +181,12 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 	}
 	if o.json && o.plain {
 		return userErr("--json and --plain don't go together")
+	}
+	if o.keep <= 0 {
+		return userErr("--keep must be positive")
+	}
+	if o.keepCount < 1 {
+		return userErr("--keep-count must be at least 1")
 	}
 	if err := refuseHTTP2Debug(os.Getenv); err != nil {
 		return err
@@ -190,7 +214,9 @@ func runWatch(cmd *cobra.Command, o *watchOptions) error {
 		repoKey = budget.Key(slug)
 	}
 	d := &WatchDeps{In: cmd.InOrStdin(), Out: cmd.OutOrStdout(), Err: cmd.ErrOrStderr(), LC: lc, DB: db,
-		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr}
+		Config: watch.Config{BurnAlertPerHour: lc.BurnAlert(), RepoNames: repoNames(lc)}, RepoKey: repoKey, Repo: o.repo, ASCII: o.ascii, NoColor: o.noClr,
+		Filter: watch.Filter{All: o.all, Keep: o.keep, KeepCount: o.keepCount, FailedKeep: 24 * time.Hour},
+		Acks:   watch.LoadAcks(watch.AckPath(os.Getenv))}
 
 	if o.once {
 		rows, finished, note := fetchQueuedOnce(ctx, lc, o.repo)
@@ -226,7 +252,9 @@ func repoNames(lc *localcfg.Config) map[string]string {
 	return names
 }
 
-// emit writes one frame or document of v.
+// emit writes one frame or document of v. --json stays unfiltered (design
+// generic-tool §10.3: it is the machine view); the plain text frame gets the
+// same finished-run filter the interactive screen uses.
 func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 	if d.RepoKey != "" {
 		v = watch.FilterRepo(v, d.RepoKey)
@@ -234,10 +262,12 @@ func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 	if o.json {
 		return json.NewEncoder(d.Out).Encode(watch.BuildJSON(d.LC.Name, v))
 	}
+	filtered, _ := d.Filter.Apply(v, d.Acks.Has)
+	filtered = watch.DropEmptyFinishedBlocks(filtered)
 	if header {
 		fmt.Fprintf(d.Out, "--- %s ---\n", v.Now.UTC().Format(time.RFC3339))
 	}
-	if err := watch.RenderPlain(d.Out, d.LC.Name, v, watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo}); err != nil {
+	if err := watch.RenderPlain(d.Out, d.LC.Name, filtered, watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo}); err != nil {
 		return err
 	}
 	if header {
@@ -289,8 +319,9 @@ func watchOnce(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	}
 	v := watch.Build(st, now, d.Config)
 	if d.Queued != nil {
-		rows, _, note := d.Queued() // finished rows: not shown yet (plan generic-tool Task 5/6)
+		rows, finished, note := d.Queued()
 		v = watch.MergeQueued(v, d.Config, rows, note, now)
+		v = watch.MergeFinished(v, d.Config, finished, now)
 	}
 	return d.emit(o, v, false)
 }
@@ -311,6 +342,7 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 	var last time.Time
 	var lastConn watch.ConnKind
 	var lastQueued []watch.QueuedRun
+	var lastFinished []watch.FinishedRun
 	var lastQueuedNote string
 	dirty := false
 	for {
@@ -336,12 +368,13 @@ func watchStream(ctx context.Context, d *WatchDeps, o *watchOptions) error {
 		}
 		v := watch.Build(st, u.Now, d.Config)
 		if d.Queued != nil {
-			rows, _, note := d.Queued() // finished rows: not shown yet (plan generic-tool Task 5/6)
-			if note != lastQueuedNote || !slices.Equal(rows, lastQueued) {
+			rows, finished, note := d.Queued()
+			if note != lastQueuedNote || !slices.Equal(rows, lastQueued) || !slices.Equal(finished, lastFinished) {
 				dirty = true
-				lastQueued, lastQueuedNote = rows, note
+				lastQueued, lastFinished, lastQueuedNote = rows, finished, note
 			}
 			v = watch.MergeQueued(v, d.Config, rows, note, u.Now)
+			v = watch.MergeFinished(v, d.Config, finished, u.Now)
 		}
 		if !last.IsZero() && v.Conn.Kind != lastConn {
 			dirty = true
