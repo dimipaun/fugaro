@@ -49,7 +49,7 @@ Also check that `fugaro version` works and `docker version` answers. Without Doc
 2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
 3. Run `fugaro validate --json`, then build the image locally and loop until both pass, as for any file (steps 6 and 7 below).
 
-Change a single field under `workflows.default` only for a real quirk.
+A real quirk needs the full form, not the minimal file's top-level `profile:`: `fugaro validate` refuses a top-level `profile:` beside `workflows:`, so move it to `workflows.default.profile:` and add the one changed field beside it under `workflows.default`. Never copy the rest of the profile's values in; that would stop them from following it.
 
 **If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` you wrote above and follow the investigative path below, unchanged.
 
