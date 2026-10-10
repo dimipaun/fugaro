@@ -184,6 +184,58 @@ func TestFetchRefusesHTTPAndBadSums(t *testing.T) {
 	}
 }
 
+// aptPackages returns the names in the base Dockerfile's
+// "apt-get install -y --no-install-recommends" list.
+func aptPackages(t *testing.T, df string) map[string]bool {
+	t.Helper()
+	m := regexp.MustCompile(`(?s)apt-get install -y --no-install-recommends \\\n(.*?)\n \&\& rm -rf /var/lib/apt/lists`).FindStringSubmatch(df)
+	if m == nil {
+		t.Fatal("no apt-get install -y --no-install-recommends block in the Dockerfile")
+	}
+	pkgs := map[string]bool{}
+	for _, line := range strings.Split(m[1], "\n") {
+		line = strings.TrimSuffix(strings.TrimSpace(line), `\`)
+		for _, pkg := range strings.Fields(line) {
+			pkgs[pkg] = true
+		}
+	}
+	return pkgs
+}
+
+// install-node.sh runs as root during the base build (design base-image.md
+// section 3) and documents, in its own header comment, the non-essential
+// commands it needs on PATH beyond what every Debian image already has
+// (coreutils, findutils, grep, sed, tar, ...): curl to fetch keys and
+// release files, gpg and dirmngr to build the keyring, gpgv to verify
+// SHASUMS256.txt against it. None of those four ship by default on
+// debian:trixie-slim, and none is a dependency of the others
+// (docker-library/node hit exactly this: gpgv is not pulled in by gnupg).
+// If the base's package list ever drops one, this fails before a build
+// does, which otherwise only happens inside Docker (no daemon here).
+func TestBaseKitProvidesInstallNodeCommands(t *testing.T) {
+	data, err := os.ReadFile("base/install-node.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	for _, cmd := range []string{"curl", "gpgv", "gpg", "dirmngr"} {
+		if !strings.Contains(s, cmd) {
+			t.Fatalf("install-node.sh no longer mentions %q; update this test's command list", cmd)
+		}
+	}
+	pkgs := aptPackages(t, baseDockerfile(t))
+	for cmd, pkg := range map[string]string{
+		"curl":    "curl",
+		"gpg":     "gnupg",
+		"dirmngr": "dirmngr",
+		"gpgv":    "gpgv",
+	} {
+		if !pkgs[pkg] {
+			t.Errorf("install-node.sh needs %s (package %s), which the base's apt package list does not install", cmd, pkg)
+		}
+	}
+}
+
 func TestInstallNodeHonoursThePrefix(t *testing.T) {
 	data, err := os.ReadFile("base/install-node.sh")
 	if err != nil {
