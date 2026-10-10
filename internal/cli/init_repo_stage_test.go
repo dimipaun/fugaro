@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/infra"
@@ -418,6 +419,106 @@ func TestRepoEngineRefusesTheBuildWhenTheLayerBucketIsUnreadable(t *testing.T) {
 	}
 	if len(r.ran(t, "apply")) == 0 {
 		t.Fatal("fixture: the repository's own terraform apply never ran, so this test never reached the build-offer step it means to pin")
+	}
+}
+
+// Review fix (code review on the prior fix): submitAndWait's project-layer
+// copy write now opens the record bucket through openRecordBucket (the
+// test seam), not blobx.Open directly: this is the happy path that gap
+// left untested — a repository onboarded far enough to actually submit its
+// first build, with a project layer that resolves and a reachable record
+// bucket, confirming the copy lands at builds/<slug>/project-layer.yaml and
+// the submitted spec carries its sha256.
+//
+// Mutation (run, restore): change submitAndWait's openRecordBucket(ctx,
+// lc.RecordBucketURL()) call back to blobx.Open(ctx, lc.RecordBucketURL()),
+// and this test fails: blobx.Open ignores the override below and tries the
+// real gs:// URL, which (unlike layerBucketOpener) TestMain does not
+// panic-guard, so it attempts a real network connection and the build
+// fails with a connection/credentials error instead of succeeding.
+func TestRepoEngineWritesTheProjectLayerCopyForItsFirstBuild(t *testing.T) {
+	r := newInitRig(t)
+	r.stateBucket()
+	w, err := r.gcs.Bucket(t, initStateBucket).NewWriter(context.Background(), infra.StatePrefixInstallation+"/default.tfstate", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("{}")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A base at layeredSince (0.6.0) or later: an older one is refused
+	// before the copy write this test means to exercise.
+	r.appendConfig(t, "base_images: {web-node: us-east5-docker.pkg.dev/proj-1234/fugaro-base/fugaro-web-node:0.6.0}\n")
+	r.script["show"] = map[string]any{"stdout": `{"format_version":"1.0","values":{"root_module":{"resources":[{"address":"x"}]}}}`}
+	r.script["output"] = map[string]any{"stdout": outputsJSON(t)} // project_name: aurora, matching the checkout below
+	r.save(t)
+	isolateCache(t)
+	// A reachable project layer, published to a file://-backed fake bucket.
+	layerDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(layerDir, "fugaro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(layerDir, "fugaro", "project-layer.yaml"), []byte(testProjectLayer), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	openLayer := layerBucketOpener
+	t.Cleanup(func() { layerBucketOpener = openLayer })
+	layerBucketOpener = func(ctx context.Context, _ string) (*blobx.Bucket, error) { return blobx.Open(ctx, "file://"+layerDir) }
+	// A reachable record bucket, likewise file://-backed, so the copy write
+	// (and its content) can be read back after the run.
+	recordsDir := t.TempDir()
+	openRecords := openRecordBucket
+	t.Cleanup(func() { openRecordBucket = openRecords })
+	openRecordBucket = func(ctx context.Context, _ string) (*blobx.Bucket, error) {
+		return blobx.Open(ctx, "file://"+recordsDir)
+	}
+	// Anchored (gcp_project), on bitbucket (no GitHub App to pre-check), with
+	// one workflow that needs no build record to be offered a first build.
+	// testProjectLayer's own anchor is project aurora, gcp_project proj-1234,
+	// matching this checkout and r.script["output"]'s project_name.
+	yaml := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: bitbucket }\nworkflows:\n" +
+		"  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
+	dir := repoCheckout(t, "https://bitbucket.org/acme/sandbox.git", yaml)
+	t.Chdir(dir)
+	// testProjectLayer's defaults.agent.auth is api-key, so the workflow
+	// needs an anthropic-api-key secret besides its git credential, or
+	// NeedsBuild leaves it out (not an image.* concern this test means to
+	// exercise): both are seeded so the build is actually offered.
+	slug := mustSlug("bitbucket", "acme/sandbox")
+	label, err := gcp.RepoLabel(slug)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedLabels := func(name string) map[string]string {
+		return map[string]string{gcp.LabelManaged: gcp.ManagedValue, gcp.LabelRepo: label, gcp.LabelSecret: name}
+	}
+	r.sm.Seed(gcp.SecretID(slug, "bitbucket-token"), seedLabels("bitbucket-token"), []byte("tok"))
+	r.sm.Seed(gcp.SecretID(slug, "anthropic-api-key"), seedLabels("anthropic-api-key"), []byte("key"))
+	e := rigEngine(t, r, &initOptions{})
+	fb := useFakeBuilder(t)
+	// The first build's confirmation is typed-only (initflow.Typed excludes
+	// --yes, unlike the terraform apply's own ordinary one, and unlike
+	// fugaro image refresh's own build confirmation): a fake terminal, with
+	// the project's name on stdin for each of the three prompts this
+	// reaches (the terraform apply, the build, then the apply that deploys
+	// the image just built).
+	out := atTerminal(t, e, strings.Repeat(initProjectName+"\n", 3))
+	if err := e.r.repoEngine(t.Context(), ".", "", true); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	l, ps := config.ParseProjectLayer([]byte(testProjectLayer), config.LayerAnchor{})
+	if len(ps) > 0 {
+		t.Fatal(ps)
+	}
+	if len(fb.specs) != 1 || fb.specs[0].ProjectLayerSHA256 != l.SHA256 {
+		t.Fatalf("specs = %+v, want one with ProjectLayerSHA256 %s", fb.specs, l.SHA256)
+	}
+	got, err := os.ReadFile(filepath.Join(recordsDir, "builds", slug, "project-layer.yaml"))
+	if err != nil || string(got) != testProjectLayer {
+		t.Fatalf("the copy = %q, %v; want testProjectLayer", got, err)
 	}
 }
 
