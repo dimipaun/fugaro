@@ -232,15 +232,6 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Layer != nil {
-		rb, err := env.recordBucket(ctx)
-		if err != nil {
-			return remote(err)
-		}
-		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
-			return err
-		}
-	}
 	spec.NoSmoke = o.noSmoke
 	b, err := gcp.NewBuilder(ctx, env.gcp, lc.BuildRegion())
 	if err != nil {
@@ -259,6 +250,19 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	}
 	if err := confirmBuild(cmd, lc.Name, lc.GCPProject, cloudBuildBanner(repo, name, lc.Build.MachineType, rs.BuildServiceAccountEmail, rs.RegistryPath)); err != nil {
 		return err
+	}
+	// Writes the repository's copy of the project layer only now, after the
+	// typed confirmation above: like fugaro init's own buildImages/
+	// submitAndWait, a declined (or unconfirmable) build must leave no
+	// trace in the bucket.
+	if cfg.Layer != nil {
+		rb, err := env.recordBucket(ctx)
+		if err != nil {
+			return remote(err)
+		}
+		if spec.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, rs.Slug, cfg.Layer, base); err != nil {
+			return err
+		}
 	}
 	res, err := b.Submit(ctx, spec)
 	switch {

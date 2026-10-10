@@ -2005,9 +2005,17 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err != nil {
 			return initErr(err)
 		}
-		buildCfg, err := resolveForBuild(ctx, root, lc)
-		if err != nil {
-			return err
+		// Only re-resolved (a strict, bucket-reading read: resolveForBuild's
+		// own doc comment) when a build is actually about to happen: the
+		// common re-run with nothing left to build must not gain a new
+		// failure mode (an unreachable project layer bucket) for a result
+		// offerBuilds would never use anyway (buildImages returns at once
+		// for an empty names).
+		var buildCfg *config.Config
+		if len(names) > 0 {
+			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
+				return err
+			}
 		}
 		built, err := r.offerBuilds(ctx, lc, buildCfg, spec, names)
 		if err != nil {
