@@ -122,7 +122,7 @@ func TestSetupSkillExamplesValidate(t *testing.T) {
 			}
 			checkExample(t, fmt.Sprintf("%s:%d", name, ex.line), c)
 			for _, w := range c.Workflows {
-				bases[w.Base] = true
+				bases[w.BaseKind()] = true
 				image = image || !w.Image.IsZero()
 				dockerfile = dockerfile || w.Dockerfile != ""
 			}
