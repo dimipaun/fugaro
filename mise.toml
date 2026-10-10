@@ -1,0 +1,10 @@
+# Fugaro's own runtimes (docs/base-image.md): the Fugaro base installs them
+# into this repository's derived image, and developers who use mise get the
+# same. images/repo_pins_test.go keeps go in go.mod's series and terraform at
+# ci.yml's version.
+[tools]
+go = "1.27.1"
+terraform = "1.16.4"
+
+[env]
+GOTOOLCHAIN = "local"
