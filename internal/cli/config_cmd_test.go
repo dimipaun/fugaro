@@ -15,7 +15,27 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
+	"github.com/dimipaun/fugaro/internal/testutil"
 )
+
+// bareLayerCheckout is layerCheckout (layer_helpers_test.go) before main's
+// PR #230 richened it for fugaro run's own tests: a job registered on a
+// fake Cloud Run, an origin remote, and build/test/lockfile scripts —
+// none of which the tests below need (they never launch a run, select a
+// backend job, or read an origin remote; they only need a git checkout
+// holding fugaro.yaml, with no cloud fixture at all). A thin local
+// wrapper so they don't have to construct a *cloudFixture just to satisfy
+// layerCheckout's new, stricter contract; it leaves that shared helper
+// itself untouched.
+func bareLayerCheckout(t *testing.T, yaml string) string {
+	t.Helper()
+	testutil.IsolateGit(t)
+	dir := t.TempDir()
+	testutil.Git(t, dir, "init", "-q")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	t.Chdir(dir)
+	return dir
+}
 
 // Review Focus 1.
 func TestConfigShowNamesEverySource(t *testing.T) {
@@ -111,7 +131,7 @@ func TestConfigShowNamesAnOmittedZeroValuesSource(t *testing.T) {
 //
 // Mutation: same as TestConfigShowNamesAnOmittedZeroValuesSource.
 func TestConfigShowNamesSourceOfAnUnsetGCPProject(t *testing.T) {
-	layerCheckout(t, nil, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
+	bareLayerCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\nworkflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
 	out, _, err := execute(t, "config", "show", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +162,7 @@ func TestConfigShowNamesSourceOfAnUnsetGCPProject(t *testing.T) {
 // --json assertions.
 func TestConfigShowProjectLayerFileOmitsGenerationAndAge(t *testing.T) {
 	isolateCache(t)
-	dir := layerCheckout(t, nil, minimalAnchored)
+	dir := bareLayerCheckout(t, minimalAnchored)
 	layerPath := filepath.Join(dir, "project-layer.yaml")
 	if err := os.WriteFile(layerPath, []byte(testProjectLayer), 0o600); err != nil {
 		t.Fatal(err)
@@ -192,7 +212,7 @@ func TestConfigShowJSONTellsLayerUnknownFromNone(t *testing.T) {
 	// problems), not this.
 	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\n" +
 		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n"
-	layerCheckout(t, nil, selfSufficient)
+	bareLayerCheckout(t, selfSufficient)
 	out, _, err := execute(t, "config", "show", "--offline", "--json")
 	if err != nil {
 		t.Fatal(err)
@@ -213,7 +233,7 @@ func TestConfigShowJSONTellsLayerUnknownFromNone(t *testing.T) {
 	// The contrast case the field exists to distinguish: a file to which
 	// no layer could ever apply (no gcp_project: at all) also prints
 	// project_layer: null, but LayerUnknown must stay false.
-	layerCheckout(t, nil, "version: 1\nproject: aurora\ngit: { provider: github }\n"+
+	bareLayerCheckout(t, "version: 1\nproject: aurora\ngit: { provider: github }\n"+
 		"workflows:\n  web: { base: go, commands: { build: make, test: make test } }\n")
 	out2, _, err := execute(t, "config", "show", "--json")
 	if err != nil {
@@ -259,7 +279,7 @@ func TestConfigShowJSONRawKeysLayerUnknownAndCheckedAt(t *testing.T) {
 	// --project-layer FILE never has a checked time at all (findLayer's
 	// o.File case sets no CheckedAt): checked_at must be entirely absent
 	// from the raw text, not present as null or a zero time.
-	dir := layerCheckout(t, nil, minimalAnchored)
+	dir := bareLayerCheckout(t, minimalAnchored)
 	layerPath := filepath.Join(dir, "project-layer.yaml")
 	if err := os.WriteFile(layerPath, []byte(testProjectLayer), 0o600); err != nil {
 		t.Fatal(err)
@@ -281,7 +301,7 @@ func TestConfigShowJSONRawKeysLayerUnknownAndCheckedAt(t *testing.T) {
 // open it).
 func TestConfigShowOfflineUsesTheCacheWithoutTheBucket(t *testing.T) {
 	isolateCache(t)
-	layerCheckout(t, nil, minimalAnchored)
+	bareLayerCheckout(t, minimalAnchored)
 	if err := localcfg.SaveLayerCache(os.Getenv, "aurora", localcfg.SharedCacheEntry{
 		GCPProject: "proj-1234", Bucket: "fugaro-runs-proj-1234", CheckedAt: time.Now(), YAML: testProjectLayer,
 	}); err != nil {
