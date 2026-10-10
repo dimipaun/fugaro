@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/backend/gcp"
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/testutil"
@@ -78,16 +79,17 @@ func noLayerBucketReads(t *testing.T) {
 	t.Cleanup(func() { layerBucketOpener = old })
 }
 
-// layerCheckout makes the working directory a git checkout holding yaml as
-// fugaro.yaml, and returns its root. f is unused today (no test here needs
-// a build record or an origin remote); it is kept so a later test that
-// does can add one without changing every call site.
-func layerCheckout(t *testing.T, f *cloudFixture, yaml string) string {
+// layerCheckout makes the current directory a checkout of acme/other whose
+// fugaro.yaml is repoYAML, with a Cloud Run job for the implicit workflow
+// (config.ImplicitWorkflow), which is what a minimal file resolves to.
+func layerCheckout(t *testing.T, f *cloudFixture, repoYAML string) string {
 	t.Helper()
 	testutil.IsolateGit(t)
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), config.ImplicitWorkflow), "2", "4Gi")
 	dir := t.TempDir()
 	testutil.Git(t, dir, "init", "-q")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
+	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": repoYAML, "build.sh": "true\n", "test.sh": "true\n", "package-lock.json": "{}\n"})
 	t.Chdir(dir)
 	return dir
 }
