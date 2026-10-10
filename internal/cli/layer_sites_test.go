@@ -42,6 +42,30 @@ func TestValidateWithAProjectLayerFile(t *testing.T) {
 	}
 }
 
+// --project-layer FILE must refuse a symlink, end to end through the real
+// command, not just at readLayerFile: a symlink could point anywhere the
+// user running validate can read.
+//
+// Mutation (run, restore): revert readLayerFile to open the path directly
+// (see TestReadLayerFile), and this test fails: validate reads the
+// secret through the symlink and reports it valid.
+func TestValidateProjectLayerFileRefusesASymlink(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	publishedLayer(t, f, "") // none published
+	layerCheckout(t, f, minimalAnchored)
+	dir := t.TempDir()
+	testutil.WriteFiles(t, dir, map[string]string{"layer.yaml": testProjectLayer})
+	link := filepath.Join(dir, "link.yaml")
+	if err := os.Symlink(filepath.Join(dir, "layer.yaml"), link); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := execute(t, "validate", "--project-layer", link)
+	if ExitCode(err) != ExitUserError || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestValidateOfflineNeedsTheLayerForAMinimalFile(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)

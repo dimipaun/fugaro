@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -617,30 +618,27 @@ func TestFindLayerNoBucketIsNone(t *testing.T) {
 	}
 }
 
-// readLayerFile's own error paths: a missing file, a non-regular file
-// (here, a directory) and one over the size limit; a regular file within
-// the limit is read whole.
+// readLayerFile's own error paths: a missing file; a non-regular file
+// (a directory, a FIFO, a symlink to each and to a regular file); and one
+// over the size limit. A regular file within the limit is read whole. This
+// is now config.ReadRegular, the one reader of an untrusted path in this
+// codebase (readFugaroYAML, its other caller, has the identical table in
+// TestReadFugaroYAMLRefusesWhatIsNotARegularFile); this test exists to
+// pin that readLayerFile is really that reader, not a reader of its own
+// that could drift from it (as it once did: the previous readLayerFile
+// opened the path directly, following a symlink to any file the user
+// could read).
+//
+// Mutation (run, restore): revert readLayerFile to open the path directly
+// (os.OpenFile without O_NOFOLLOW, as it did before), and the "symlink to
+// a regular file" and "symlink to a directory" cases below fail (the
+// symlink is read or its target's own error shows through, not "symbolic
+// link").
 func TestReadLayerFile(t *testing.T) {
 	dir := t.TempDir()
 
 	if _, err := readLayerFile(filepath.Join(dir, "missing.yaml")); err == nil {
 		t.Fatal("a missing file was read")
-	}
-
-	sub := filepath.Join(dir, "subdir")
-	if err := os.Mkdir(sub, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readLayerFile(sub); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Fatalf("a directory was read: %v", err)
-	}
-
-	big := filepath.Join(dir, "big.yaml")
-	if err := os.WriteFile(big, make([]byte, config.LayerMaxBytes+1), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := readLayerFile(big); err == nil || !strings.Contains(err.Error(), "over the") {
-		t.Fatalf("an oversized file was read: %v", err)
 	}
 
 	ok := filepath.Join(dir, "ok.yaml")
@@ -649,7 +647,60 @@ func TestReadLayerFile(t *testing.T) {
 	}
 	data, err := readLayerFile(ok)
 	if err != nil || string(data) != testProjectLayer {
-		t.Fatalf("got %q, %v", data, err)
+		t.Fatalf("regular file: got %q, %v", data, err)
+	}
+
+	sub := filepath.Join(dir, "subdir")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(dir, "fifo.yaml")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	okLink := filepath.Join(dir, "ok-link.yaml")
+	if err := os.Symlink(ok, okLink); err != nil {
+		t.Fatal(err)
+	}
+	dirLink := filepath.Join(dir, "dir-link.yaml")
+	if err := os.Symlink(sub, dirLink); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(dir, "big.yaml")
+	if err := os.WriteFile(big, make([]byte, config.LayerMaxBytes+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, tc := range map[string]struct{ path, want string }{
+		"directory":              {sub, "not a regular file"},
+		"fifo":                   {fifo, "not a regular file"},
+		"symlink to a file":      {okLink, "symbolic link"},
+		"symlink to a directory": {dirLink, "symbolic link"},
+		"too big":                {big, "larger than"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			// A FIFO with no writer must refuse at once (config.ReadRegular
+			// rejects it from the Lstat alone, before any open): proven with
+			// a deadline, not trusted from the implementation.
+			done := make(chan struct{})
+			var b []byte
+			var err error
+			go func() {
+				defer close(done)
+				b, err = readLayerFile(tc.path)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Fatal("readLayerFile blocked")
+			}
+			if err == nil || len(b) != 0 {
+				t.Fatalf("read %d bytes, err %v", len(b), err)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want it to contain %q", err, tc.want)
+			}
+		})
 	}
 }
 
