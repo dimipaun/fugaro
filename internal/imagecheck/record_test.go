@@ -245,6 +245,10 @@ func TestImageConfigHashCoversMiseFiles(t *testing.T) {
 		{"mise.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"22\"\n"}, true},
 		{"mise.lock", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.lock": "x"}, true},
 		{"conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/a.toml": "x"}, true},
+		// mise itself ignores a dotfile fragment in conf.d (hidden files
+		// aren't config), so miseFiles must skip it too: a project dropping
+		// a .x.toml there (an editor swap file, say) must not rebuild.
+		{"dotfile in conf.d", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".config/mise/conf.d/.x.toml": "x"}, false},
 		{".tool-versions", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", ".tool-versions": "go 1.27\n"}, true},
 		{"subdirectory", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "web/mise.toml": "x"}, false},
 		{"mise.local.toml", baseWorkflowYAML, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "mise.local.toml": "x"}, false},
@@ -258,12 +262,37 @@ func TestImageConfigHashCoversMiseFiles(t *testing.T) {
 	}
 }
 
+// TestImageConfigHashLegacyUnchanged pins a real legacy workflow's hash
+// (webYAML: base web-node, no image:, no dockerfile:, no mise files) to the
+// exact value Task 11 found before it touched record.go: if this ever
+// changes, every existing image record for a go/web-node/java-services
+// workflow reads as stale and rebuilds for no reason.
 func TestImageConfigHashLegacyUnchanged(t *testing.T) {
 	// The canonical form of a legacy workflow is what it was: no new keys.
 	c := imageConfig{Base: "web-node"}
 	data, _ := json.Marshal(c)
 	if strings.Contains(string(data), "tools") || strings.Contains(string(data), "mise_files") {
 		t.Errorf("legacy canonical form gained keys: %s", data)
+	}
+	const wantGolden = "5f17e4672909c77d013e32cf6c26117b3ff77d336b3c995c402e83a996d9f679"
+	got, err := ImageConfigHash(parse(t, webYAML), "web", Dir{Root: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != wantGolden {
+		t.Errorf("ImageConfigHash(webYAML) = %s, want the pinned golden %s (a legacy hash must never move)", got, wantGolden)
+	}
+	// Every legacy (non-empty) base: value must hash as itself: BaseKind()
+	// is only meant to turn "" into BaseKind, never to change what an
+	// existing go/web-node/java-services workflow's hash's Base field reads.
+	for _, base := range config.Bases {
+		if base == config.BaseKind {
+			continue
+		}
+		w := config.Workflow{Base: base}
+		if got := w.BaseKind(); got != base {
+			t.Errorf("Workflow{Base: %q}.BaseKind() = %q, want %q unchanged", base, got, base)
+		}
 	}
 }
 
