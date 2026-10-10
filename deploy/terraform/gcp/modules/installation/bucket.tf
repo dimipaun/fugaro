@@ -73,7 +73,8 @@ resource "google_storage_bucket" "runs" {
 # can't read a bucket label, so every Fugaro command reads this object to
 # check that its project config points at the project's own installation.
 # No job account can write it (the jobs' grants cover runs/, cache/ and
-# locks/; builds cover builds/). It is a safety label, not a boundary.
+# locks/; builds cover builds/), and since 0.7.0 no launcher either
+# (bucket-iam.md): only operators, and project-level storage writers.
 resource "google_storage_bucket_object" "project_marker" {
   bucket       = google_storage_bucket.runs.name
   name         = "fugaro/project.json"

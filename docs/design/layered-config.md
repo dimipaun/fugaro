@@ -129,6 +129,7 @@ The table is `config.Scopes` in code; `docs/project-layer.md` prints it, and a d
 | `workflows.*.dockerfile` | | | yes | | it names a file in the repository |
 | `workflows.*.secrets` | | | yes | | secrets belong to one repository's Secret Manager entries |
 | `followup.trusted`, `followup.allow_public` | | | yes | | they decide whose comments steer a run with the repository's credentials |
+| `review.allow_forks` | | | yes | | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 
 **Secrets and tokens.** No `fugaro.yaml` key holds a secret value: `workflows.*.secrets` maps names to variables. The project layer additionally refuses any value shaped like a credential (`sk-ant-…`, `ghp_…`, `github_pat_…`, a PEM private key, and the like), since nothing in it is secret (decision L18).
 

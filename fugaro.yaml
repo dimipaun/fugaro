@@ -6,7 +6,7 @@ gcp_project: fugaro-dev
 
 git:
   provider: github
-  base_branch: main
+  base_branch: next # the 0.7.0 integration branch; restore to main when next is merged into main
   pr:
     # TODO(user): add your GitHub login (and a label if you want one) once the first run works.
     reviewers: []

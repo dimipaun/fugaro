@@ -1,0 +1,6 @@
+version: 1
+name: standard
+use_when: typical work
+steps:
+  - first_line: {}
+  - review: { bounce: first_line }

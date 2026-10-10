@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+gcp_project: proj-1234
+profiles:
+  p:
+    base: java-services
+    commands: { build: make, test: make test, lint: make lint, fix: make fmt }

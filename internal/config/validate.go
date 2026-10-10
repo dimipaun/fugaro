@@ -161,6 +161,9 @@ func Validate(c *Config) []Problem {
 		if strings.TrimSpace(w.Commands.Test) == "" {
 			add(p+".commands.test", "is required")
 		}
+		if strings.TrimSpace(w.Commands.Fix) != "" && strings.TrimSpace(w.Commands.Lint) == "" {
+			add(p+".commands.fix", "needs commands.lint (the check step runs fix, then lint)")
+		}
 		if rf := w.Commands.RerunFailed; rf != nil {
 			if strings.TrimSpace(rf.Command) == "" {
 				add(p+".commands.rerun_failed.command", "is required")

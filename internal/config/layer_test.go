@@ -220,6 +220,7 @@ func TestProjectLayerErrorsArePrintable(t *testing.T) {
 func TestProfileHasExecutable(t *testing.T) {
 	for _, body := range []string{
 		"commands: { build: make }", "commands: { test: make test }",
+		"commands: { lint: make lint }", "commands: { fix: make fmt }",
 		"commands: { rerun_failed: { command: go test, each: ' -run {id}' } }",
 		"{ base: java-services, image: { apt: [graphviz] } }", "image: { setup: [make tools] }",
 		// A mise tool is as powerful as image.setup: every URL/host-form
