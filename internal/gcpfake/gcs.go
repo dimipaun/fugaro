@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,10 @@ type GCS struct {
 	listCalls int
 	// denied maps a bucket to the prefixes DenyWrites has closed.
 	denied map[string][]string
+	// refusedPolicy makes a bucket's getIamPolicy answer 403.
+	refusedPolicy map[string]bool
+	// held is what testIamPermissions reports the caller holds, by bucket.
+	held map[string][]string
 }
 
 // bucketMeta is what a bucket's get and getIamPolicy report.
@@ -115,7 +120,8 @@ type upload struct {
 func NewGCS(t *testing.T) *GCS {
 	t.Helper()
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
-		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{}}
+		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
+		refusedPolicy: map[string]bool{}, held: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -220,6 +226,32 @@ func (g *GCS) SetBucketPolicy(name string, bindings []Binding) {
 	}
 	m.policy = cloneBindings(bindings)
 	m.policyGen++
+}
+
+// RefuseBucketPolicy makes bucket's getIamPolicy answer 403, as it does for
+// a caller without storage.buckets.getIamPolicy (a launcher, or an operator).
+func (g *GCS) RefuseBucketPolicy(bucket string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.refusedPolicy[bucket] = true
+}
+
+// SetHeldPermissions sets what testIamPermissions on bucket reports the
+// caller holds (by default nothing).
+func (g *GCS) SetHeldPermissions(bucket string, perms ...string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.held[bucket] = perms
+}
+
+func (g *GCS) testPermissions(w http.ResponseWriter, bucket string, asked []string) {
+	var got []string
+	for _, p := range asked {
+		if slices.Contains(g.held[bucket], p) {
+			got = append(got, p)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"kind": "storage#testIamPermissionsResponse", "permissions": got})
 }
 
 // Client returns a storage client pointed at the fake. It reads through the
@@ -336,6 +368,10 @@ func (g *GCS) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	case strings.HasPrefix(r.URL.Path, objPrefix):
 		bucket, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, objPrefix), "/")
+		if rest == "iam/testPermissions" && r.Method == http.MethodGet {
+			g.testPermissions(w, bucket, q["permissions"])
+			return
+		}
 		if (rest == "" || rest == "iam") && r.Method == http.MethodGet {
 			g.bucketGet(w, r, bucket, rest == "iam")
 			return
@@ -375,6 +411,10 @@ func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, i
 		return
 	}
 	if iam {
+		if g.refusedPolicy[bucket] {
+			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
 		serveBucketPolicy(w, r.URL.Query(), m)
 		return
 	}
