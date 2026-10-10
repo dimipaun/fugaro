@@ -30,6 +30,7 @@ type CRM struct {
 	// done yet.
 	PendingPolls int
 
+	noPolicy map[string]bool   // projects whose getIamPolicy answers 403 (the plain read stays readable)
 	taken    map[string]bool   // IDs held by projects the caller cannot read
 	creates  []CreatedProject  // creates accepted, in order
 	failNew  *apiError         // answers every create (an organization policy, say)
@@ -61,7 +62,7 @@ var (
 func NewCRM(t *testing.T) *CRM {
 	t.Helper()
 	f := &CRM{projects: map[string]int64{}, policies: map[string][]Binding{}, noGet: map[string]bool{}, states: map[string]string{},
-		taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{}, nextProj: 900000000000}
+		noPolicy: map[string]bool{}, taken: map[string]bool{}, hide: map[string]int{}, ops: map[string]*crmOp{}, nextProj: 900000000000}
 	f.Server = newServer(t, f.handle)
 	return f
 }
@@ -86,6 +87,15 @@ func (f *CRM) DenyGet(project string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.noGet[project] = true
+}
+
+// DenyPolicy makes project's getIamPolicy answer 403 while its plain read
+// stays readable (the opposite of DenyGet): a caller that holds some
+// project-level roles but not resourcemanager.projects.getIamPolicy.
+func (f *CRM) DenyPolicy(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.noPolicy[project] = true
 }
 
 // SetLifecycle makes project report state (ACTIVE by default).
@@ -220,7 +230,7 @@ func (f *CRM) handle(w http.ResponseWriter, r *http.Request, body []byte) {
 		return
 	}
 	if m := crmPolicyRE.FindStringSubmatch(r.URL.Path); m != nil && r.Method == http.MethodPost {
-		if _, ok := f.projects[m[1]]; !ok {
+		if _, ok := f.projects[m[1]]; !ok || f.noPolicy[m[1]] {
 			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
 			return
 		}

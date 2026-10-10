@@ -80,6 +80,10 @@ type GCS struct {
 	denied map[string][]string
 	// refusedPolicy makes a bucket's getIamPolicy answer 403.
 	refusedPolicy map[string]bool
+	// failedPolicy makes a bucket's getIamPolicy answer 500, as a transient
+	// backend failure would (distinct from a 403 refusal: a caller cannot
+	// tell this apart from any other outage).
+	failedPolicy map[string]bool
 	// held is what testIamPermissions reports the caller holds, by bucket.
 	held map[string][]string
 }
@@ -121,7 +125,7 @@ func NewGCS(t *testing.T) *GCS {
 	t.Helper()
 	g := &GCS{gen: 1_700_000_000_000_000, buckets: map[string]map[string]*object{}, meta: map[string]*bucketMeta{},
 		uploads: map[string]*upload{}, projects: map[string]uint64{}, denied: map[string][]string{},
-		refusedPolicy: map[string]bool{}, held: map[string][]string{}}
+		refusedPolicy: map[string]bool{}, failedPolicy: map[string]bool{}, held: map[string][]string{}}
 	g.Server = newServer(t, g.handle)
 	return g
 }
@@ -234,6 +238,16 @@ func (g *GCS) RefuseBucketPolicy(bucket string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.refusedPolicy[bucket] = true
+}
+
+// FailBucketPolicy makes bucket's getIamPolicy answer 500, as a transient
+// backend error would (not a permission refusal: a caller must not treat
+// the two the same way, and must still surface something rather than
+// nothing).
+func (g *GCS) FailBucketPolicy(bucket string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.failedPolicy[bucket] = true
 }
 
 // SetHeldPermissions sets what testIamPermissions on bucket reports the
@@ -413,6 +427,10 @@ func (g *GCS) bucketGet(w http.ResponseWriter, r *http.Request, bucket string, i
 	if iam {
 		if g.refusedPolicy[bucket] {
 			writeError(w, http.StatusForbidden, "PERMISSION_DENIED", "The caller does not have permission")
+			return
+		}
+		if g.failedPolicy[bucket] {
+			writeError(w, http.StatusInternalServerError, "INTERNAL", "backend error")
 			return
 		}
 		serveBucketPolicy(w, r.URL.Query(), m)

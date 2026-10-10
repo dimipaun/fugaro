@@ -38,11 +38,20 @@ func doctorRunsBucketIAM(ctx context.Context, lc *localcfg.Config, c *crm.Servic
 	p, err := svc.Buckets.GetIamPolicy(bucket).OptionsRequestedPolicyVersion(3).Context(ctx).Do()
 	switch {
 	case err == nil:
-		fs := infra.RunsBucketFindings(p, bucket, launchers, operators)
+		fs := infra.RunsBucketFindings(p, bucket, lc.GCPProject, launchers, operators)
 		if len(launchers) > 0 && c != nil {
 			req := &crm.GetIamPolicyRequest{Options: &crm.GetPolicyOptions{RequestedPolicyVersion: 3}}
-			if pp, perr := c.Projects.GetIamPolicy(lc.GCPProject, req).Context(ctx).Do(); perr == nil {
+			pp, perr := c.Projects.GetIamPolicy(lc.GCPProject, req).Context(ctx).Do()
+			switch {
+			case perr == nil:
 				fs = append(fs, infra.ProjectStorageWriters(pp, launchers, operators)...)
+			default:
+				// A launcher's project-level role (roles/editor, say) bypasses
+				// the bucket's own policy entirely: failing to read it must
+				// not silently leave the summary OK, as if nothing bypasses it.
+				fs = append(fs, infra.BucketFinding{Severity: "warning",
+					Problem: "could not check which launchers hold project-level storage roles (which bypass the bucket's own policy): " + oneLineCLI(perr.Error()),
+					Fix:     "rerun fugaro doctor with access to the project, or as an operator"})
 			}
 		}
 		return findingChecks(fs)
@@ -88,7 +97,10 @@ func findingChecks(fs []infra.BucketFinding) []doctorCheck {
 			sum.OK, sum.Severity, sum.Problem = false, "warning", "someone other than the operators can write fugaro/ (see the runs-bucket-iam-N lines)"
 		}
 		out = append(out, doctorCheck{ID: fmt.Sprintf("runs-bucket-iam-%d", i+1), Severity: f.Severity,
-			Problem: pluginwire.Printable(f.Problem), Fix: f.Fix})
+			// Fix carries the raw member (via shellword.Quote) so the
+			// printed gcloud command is actually correct to paste; Printable
+			// only escapes it for safe terminal display, same as Problem.
+			Problem: pluginwire.Printable(f.Problem), Fix: pluginwire.Printable(f.Fix)})
 	}
 	return append([]doctorCheck{sum}, out...)
 }
