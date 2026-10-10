@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -93,7 +94,7 @@ func TestCommandsNeverFollowAFugaroYAMLSymlink(t *testing.T) {
 	})
 	t.Run("doctor", func(t *testing.T) {
 		dir := testutilCheckout(t)
-		if c, fy := fugaroYAMLCheck(dir); c == nil || c.OK || fy == nil || fy.Valid {
+		if c, fy := fugaroYAMLCheck(context.Background(), dir, nil); c == nil || c.OK || fy == nil || fy.Valid {
 			t.Fatalf("check %+v, %+v: a linked fugaro.yaml must be reported, not read", c, fy)
 		}
 	})
@@ -125,7 +126,7 @@ func TestValidateErrorsDoNotEchoValues(t *testing.T) {
 	if strings.Contains(out+errOut, "TOPSECRETVALUE") {
 		t.Errorf("validate --json echoed a value:\n%s%s", out, errOut)
 	}
-	if c, fy := fugaroYAMLCheck(dir); c == nil || strings.Contains(c.Problem+c.Fix, "TOPSECRETVALUE") || fy == nil {
+	if c, fy := fugaroYAMLCheck(context.Background(), dir, nil); c == nil || strings.Contains(c.Problem+c.Fix, "TOPSECRETVALUE") || fy == nil {
 		t.Fatalf("%+v", c)
 	} else {
 		for _, p := range fy.Problems {

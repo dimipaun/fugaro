@@ -290,16 +290,7 @@ func (s *secretsStage) resolve(ctx context.Context) {
 // (origin/HEAD, main or master, as last fetched), read from git; nil with none
 // or one that does not parse.
 func defaultBranchConfig(ctx context.Context, root string) *config.Config {
-	ref := defaultBranchRef(ctx, root)
-	if ref == "" {
-		return nil
-	}
-	data, err := gitCmd(ctx, root, "cat-file", "blob", "refs/remotes/"+ref+":fugaro.yaml").Output()
-	if err != nil {
-		return nil
-	}
-	cfg, _ := config.Parse(data)
-	return cfg
+	return defaultBranchParse(ctx, root).cfg
 }
 
 // authorize is the hostile-checkout gate (init_repo_gate.go) in front of the

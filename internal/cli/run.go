@@ -389,6 +389,12 @@ func printRecipeNote(warn io.Writer, rr *resolvedRecipe, explicit bool) {
 
 // runnerChooses reports whether the runner, not this CLI, decides spec's
 // recipe: a first run with no recipe in its task and no checkout here.
+//
+// checkoutConfig (Task 10) resolves the repository's project layer,
+// lenient (validate.go's layerOptions{Lenient: true}): an unreadable
+// bucket or no project selected leaves it nil for a minimal (layer-only)
+// file, the same as no checkout at all, so this reports the runner as
+// choosing even where a checkout is right here.
 func runnerChooses(ctx context.Context, spec *task.Spec) bool {
 	return spec.Recipe == nil && !spec.IsFollowUp() && checkoutConfig(ctx, spec.Repo) == nil
 }
