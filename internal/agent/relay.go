@@ -140,7 +140,7 @@ func (r *Relay) line(raw []byte) {
 					r.log.Info(r.msg(t, relayTextBytes), "event", "text")
 				}
 			case "tool_use":
-				s := r.redact("tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input))
+				s := "tool " + r.redact(c.Name) + ": " + r.toolSummary(c.Input)
 				r.log.Info(r.msg(s, relayToolBytes), "event", "tool")
 				if r.OnTool != nil {
 					action := "tool " + r.redact(c.Name)
