@@ -146,8 +146,8 @@ func TestExecutableKeys(t *testing.T) {
 		"workflows.*.commands.rerun_failed",
 		"workflows.*.image.apt",
 		"workflows.*.image.setup",
-		"workflows.*.image.skip_build_scripts",
 		"workflows.*.image.tools",
+		"workflows.*.image.skip_build_scripts",
 	}
 	got := append([]string(nil), ExecutableKeys...)
 	sort.Strings(got)

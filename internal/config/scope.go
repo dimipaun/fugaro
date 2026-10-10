@@ -120,8 +120,8 @@ var Scopes = []ScopeRow{
 // profile published from the bucket must gate it the same way.
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
-	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup",
-	"workflows.*.image.skip_build_scripts", "workflows.*.image.tools",
+	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
+	"workflows.*.image.skip_build_scripts",
 }
 
 // NonExecutableImageKeys are the Image struct's fields ExecutableKeys
