@@ -1,0 +1,7 @@
+version: 1
+project: aurora
+git: { provider: github }
+workflows:
+  server: { base: java-services, commands: { build: make, test: make test } }
+review:
+  allow_forks: true

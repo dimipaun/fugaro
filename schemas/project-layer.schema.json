@@ -82,9 +82,12 @@
         "commands": {
           "type": "object",
           "additionalProperties": false,
+          "dependentRequired": { "fix": ["lint"] },
           "properties": {
             "build": { "type": "string", "minLength": 1 },
             "test": { "type": "string", "minLength": 1 },
+            "lint": { "type": "string", "minLength": 1 },
+            "fix": { "type": "string", "minLength": 1 },
             "rerun_failed": {
               "type": "object",
               "additionalProperties": false,
