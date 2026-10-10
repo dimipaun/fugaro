@@ -1414,7 +1414,15 @@ func (r *run) stage(ctx context.Context, name string, req agent.Request, opts st
 	r.mu.Lock()
 	sess := r.sess
 	r.mu.Unlock()
-	if sess != nil {
+	if sess != nil && err == nil {
+		// Only a stage whose stream reached a result event has a real
+		// token count: Usage/ModelUsage are set from that event alone, so
+		// a killed, timed-out or crashed stage's res is a zero Result and
+		// StageTokens() would be 0. Tokens is one key of the whole-entry
+		// registry write, which a 0 (omitempty) would delete outright,
+		// erasing the last completed stage's real total instead of simply
+		// leaving it in place until a real completion overwrites it (the
+		// same way beginBudgetStage leaves Tokens alone at stage start).
 		tokens := res.StageTokens()
 		sess.Update(func(e *budget.AgentEntry) { e.Tokens = tokens })
 	}
