@@ -254,6 +254,27 @@ func TestWriteLayerCopyRemoveOfOversizedLeavesAConcurrentReplacementAlone(t *tes
 	}
 }
 
+// Review Focus 4: a transient failure to read the oversized object's
+// generation (a network blip, a 5xx/429, a concurrent writer mid-replace)
+// is not "this driver has no generation concept" (GCSName == ""): it must
+// be reported, not papered over with an unconditional delete that would
+// defeat the whole precondition this function exists to provide.
+func TestWriteLayerCopyRemoveOfOversizedReportsATransientAttributesError(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	key := config.LayerCopyKey(appSlug)
+	fake.Put("fugaro-runs-proj-1234", key, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
+	fake.FailObjectGets(1)
+	err := writeLayerCopy(ctx, b, appSlug, nil)
+	if err == nil {
+		t.Fatal("a transient Attributes error was not reported")
+	}
+	if data, _, rerr := b.Read(ctx, key); rerr != nil || len(data) != config.LayerMaxBytes+1 {
+		t.Fatalf("the oversized copy was deleted despite its unreadable generation: data %d, err %v", len(data), rerr)
+	}
+}
+
 func TestPublishWarnsAboutOldImages(t *testing.T) {
 	f := newCloudFixture(t)
 	isolateCache(t)
