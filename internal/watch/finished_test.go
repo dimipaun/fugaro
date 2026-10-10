@@ -30,7 +30,7 @@ func TestMergeFinishedAddsRowsBelowRunning(t *testing.T) {
 // path does (TestMergeQueuedCreatesRepoBlock), and is sorted into place
 // among the other blocks (lessRepoBlock), not merely appended.
 func TestMergeFinishedCreatesNamedRepoBlockInSortedOrder(t *testing.T) {
-	v := fixture() // acme__lib (killed), acme__app (32usd), acme__docs (0usd), in that order
+	v := fixture() // acme__lib (killed), acme__app, acme__docs, in that order
 	fin := []FinishedRun{{Run: "r-new1", Slug: "acme__aaa", Status: "succeeded", FinishedAt: t0.Add(-time.Hour)}}
 	got := MergeFinished(v, Config{RepoNames: map[string]string{"acme__aaa": "acme/aaa"}}, fin, t0)
 
@@ -38,9 +38,9 @@ func TestMergeFinishedCreatesNamedRepoBlockInSortedOrder(t *testing.T) {
 	for _, b := range got.Repos {
 		names = append(names, b.Slug)
 	}
-	// Not killed and 0 spend, so it sorts by name among the other 0-spend
-	// blocks: "acme/aaa" before "acme/docs".
-	want := []string{"acme__lib", "acme__app", "acme__aaa", "acme__docs"}
+	// Blocks keep a stable order by name, not spend (design generic-tool
+	// G23): killed first, then "acme/aaa" before "acme/app" before "acme/docs".
+	want := []string{"acme__lib", "acme__aaa", "acme__app", "acme__docs"}
 	if !slices.Equal(names, want) {
 		t.Fatalf("repo order = %v, want %v", names, want)
 	}
