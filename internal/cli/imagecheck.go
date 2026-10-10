@@ -226,21 +226,44 @@ func checkedWorkflows(cfg *config.Config) []string {
 	return out
 }
 
-// readHeadConfig reads and parses head's fugaro.yaml.
-func readHeadConfig(tree *imagecheck.GitTree) (*config.Config, error) {
+// readHeadConfig reads head's fugaro.yaml and resolves it over the project
+// layer o finds (docs/design/layered-config.md §8): the check job passes
+// its copy (jobLayerOptions); fugaro image check run locally reads the
+// published layer with the operator's access (lc).
+func readHeadConfig(ctx context.Context, tree *imagecheck.GitTree, lc *localcfg.Config, o layerOptions) (*config.Config, error) {
 	data, err := tree.ReadFile("fugaro.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("the base branch's fugaro.yaml: %w", err)
 	}
-	cfg, problems := config.Parse(data)
-	if len(problems) > 0 {
-		msgs := make([]string, len(problems))
-		for i, p := range problems {
+	rf, err := resolveFugaroYAML(ctx, data, lc, o)
+	if err != nil {
+		return nil, err
+	}
+	if len(rf.Problems) > 0 {
+		msgs := make([]string, len(rf.Problems))
+		for i, p := range rf.Problems {
 			msgs[i] = p.String()
 		}
-		return nil, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(problems), strings.Join(msgs, "; "))
+		return nil, fmt.Errorf("the base branch's fugaro.yaml has %d problem(s): %s", len(rf.Problems), strings.Join(msgs, "; "))
 	}
-	return cfg, nil
+	return rf.Cfg, nil
+}
+
+// jobLayerOptions are the check job's: its repository's copy of the project
+// layer (decision L6), in the build account's own prefix, read with the
+// ordinary read (a prefix-conditioned grant answers a missing object with
+// 403, which reads as absent). No copy, no layer; the canonical object is
+// never read (the account cannot).
+func jobLayerOptions(ctx context.Context, b *blobx.Bucket, slug string) (layerOptions, error) {
+	key := config.LayerCopyKey(slug)
+	data, _, err := b.ReadMax(ctx, key, config.LayerMaxBytes)
+	switch {
+	case err == nil:
+		return layerOptions{Data: data, Where: key, NoBucket: true}, nil
+	case errors.Is(err, blobx.ErrNotExist):
+		return layerOptions{NoBucket: true}, nil
+	}
+	return layerOptions{}, fmt.Errorf("reading the project layer copy %s: %w", key, err)
 }
 
 // checkLogLine is the check job's log line for one workflow: Cloud Run
@@ -519,7 +542,11 @@ func runImageCheckJob(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return failAll(err)
 	}
-	cfg, err := readHeadConfig(tree)
+	lo, err := jobLayerOptions(ctx, bucket, slug)
+	if err != nil {
+		return failAll(err)
+	}
+	cfg, err := readHeadConfig(ctx, tree, nil, lo)
 	if err != nil {
 		return failAll(err)
 	}
@@ -635,10 +662,17 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, checkoutCfg, err := loadCheckoutConfig(ctx)
+	// Passes lc, already selected from --config/--project/--gcp-project
+	// (openCloud, above): loadCheckoutConfig's own flag-blind
+	// selectedProjectConfig fallback could pick a different installation
+	// (or none), which would read the wrong project layer bucket, or none
+	// at all, and resolve this file against a stale cache or "unknown"
+	// instead of the one this command actually points at.
+	_, rf, err := loadCheckoutResolved(ctx, "", lc, layerOptions{Lenient: true})
 	if err != nil {
 		return err
 	}
+	checkoutCfg := rf.Cfg
 	for _, name := range checkedWorkflows(checkoutCfg) {
 		if kind := checkoutCfg.Workflows[name].Base; lc.BaseImage(kind) == "" {
 			return userErr("the local config has no base_images.%s, which the daily check builds %s from; set it first", kind, name)
@@ -671,7 +705,7 @@ func runImageCheckLocal(cmd *cobra.Command, o imageCheckOptions) error {
 	if err != nil {
 		return remote(fmt.Errorf("%w (the check clones origin's %s with your own git access)", err, branch))
 	}
-	cfg, err := readHeadConfig(tree)
+	cfg, err := readHeadConfig(ctx, tree, lc, layerOptions{})
 	if err != nil {
 		return userErr("%v", err)
 	}

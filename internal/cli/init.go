@@ -22,6 +22,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/dimipaun/fugaro/internal/backend/gcp"
+	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/gitprov"
 	"github.com/dimipaun/fugaro/internal/image"
@@ -2004,7 +2005,19 @@ func (r *initRun) repoEngine(ctx context.Context, dir, bin string, embedded bool
 		if err != nil {
 			return initErr(err)
 		}
-		built, err := r.offerBuilds(ctx, lc, cfg, spec, names)
+		// Only re-resolved (a strict, bucket-reading read: resolveForBuild's
+		// own doc comment) when a build is actually about to happen: the
+		// common re-run with nothing left to build must not gain a new
+		// failure mode (an unreachable project layer bucket) for a result
+		// offerBuilds would never use anyway (buildImages returns at once
+		// for an empty names).
+		var buildCfg *config.Config
+		if len(names) > 0 {
+			if buildCfg, err = resolveForBuild(ctx, root, lc); err != nil {
+				return err
+			}
+		}
+		built, err := r.offerBuilds(ctx, lc, buildCfg, spec, names)
 		if err != nil {
 			// The first apply already made the repository's resources, so
 			// it joins the local config (and says what it still needs)
@@ -2351,6 +2364,16 @@ func (r *initRun) submitAndWait(ctx context.Context, b cloudBuilder, lc *localcf
 	bs, err := cloudBuildSpec(spec, cfg, name, base, lc.Build.MachineType, lc.RecordBucketURL())
 	if err != nil {
 		return "", err
+	}
+	if cfg.Layer != nil {
+		rb, err := blobx.Open(ctx, lc.RecordBucketURL())
+		if err != nil {
+			return "", remote(err)
+		}
+		defer rb.Close()
+		if bs.ProjectLayerSHA256, err = prepareLayerCopy(ctx, rb, spec.Slug, cfg.Layer, base); err != nil {
+			return "", err
+		}
 	}
 	res, err := b.Submit(ctx, bs)
 	switch {

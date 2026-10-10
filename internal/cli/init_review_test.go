@@ -781,11 +781,46 @@ func TestCloudBuildConfirmationStaysOutsideTheCoveredPath(t *testing.T) {
 			t.Errorf("submitAndWait uses %s", bad)
 		}
 	}
-	img, _ := os.ReadFile("image.go")
+	img, err := os.ReadFile("image.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, bad := range []string{"confirmOrdinary", "askOrdinary", "runCovers"} {
 		if strings.Contains(string(img), bad) {
 			t.Errorf("image.go uses %s", bad)
 		}
+	}
+	// Review fix: prepareLayerCopy writes builds/<slug>/project-layer.yaml
+	// (billable confirmation aside, a mutation of its own), so
+	// runImageBuildCloud must not reach it before confirmBuild, or a
+	// declined build would still publish the copy.
+	imgSrc := string(img)
+	rb := func(sig string) string {
+		i := strings.Index(imgSrc, sig)
+		if i < 0 {
+			t.Fatalf("%s not found", sig)
+		}
+		body := imgSrc[i:]
+		if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+			body = body[:j+1]
+		}
+		return body
+	}
+	ib := rb("func runImageBuildCloud(")
+	if cf, pc := strings.Index(ib, "confirmBuild("), strings.Index(ib, "prepareLayerCopy("); cf < 0 || pc < 0 || cf > pc {
+		t.Errorf("runImageBuildCloud must confirm (at %d) before prepareLayerCopy (at %d)", cf, pc)
+	}
+
+	// Review fix: the common no-op re-run (nothing infra.NeedsBuild lists)
+	// must not gain a new strict, bucket-reading call (resolveForBuild) for
+	// a result offerBuilds would never use.
+	re := funcBody("func (r *initRun) repoEngine(")
+	nb, guard, rfb, ob := strings.Index(re, "infra.NeedsBuild("), strings.Index(re, "if len(names) > 0 {"), strings.Index(re, "resolveForBuild("), strings.Index(re, "r.offerBuilds(")
+	if nb < 0 || guard < 0 || rfb < 0 || ob < 0 {
+		t.Fatalf("repoEngine's build-offer step changed shape: NeedsBuild %d, guard %d, resolveForBuild %d, offerBuilds %d", nb, guard, rfb, ob)
+	}
+	if !(nb < guard && guard < rfb && rfb < ob) {
+		t.Errorf("resolveForBuild must run only guarded by len(names) > 0, between NeedsBuild (%d) and offerBuilds (%d): guard at %d, resolveForBuild at %d", nb, ob, guard, rfb)
 	}
 }
 
