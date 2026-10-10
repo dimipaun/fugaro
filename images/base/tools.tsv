@@ -52,6 +52,7 @@ tar	tar --version	all	kit
 rsync	rsync --version	all	kit
 ps	ps --version	all	kit
 gpg	gpg --version	all	kit
+gpgv	gpgv --version	all	kit
 python3	python3 --version	all	kit
 gcloud	gcloud --version	all	kit
 docker	docker --version	all	kit
