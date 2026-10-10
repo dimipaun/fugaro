@@ -384,6 +384,11 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
+// MarshalYAML writes the duration as UnmarshalYAML reads it, such as
+// 1h30m0s, so a resolved config prints (fugaro config show) and re-reads
+// as written.
+func (d Duration) MarshalYAML() (any, error) { return d.Duration.String(), nil }
+
 // Problem is one reason a fugaro.yaml is invalid.
 type Problem struct {
 	Path    string `json:"path,omitempty"`
