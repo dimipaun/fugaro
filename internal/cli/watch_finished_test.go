@@ -24,7 +24,7 @@ func (f *budgetFixture) writeFinishedResult(t *testing.T, slug, run, status, out
 func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
-	run := runID(10*time.Minute, "fin01")
+	run := runID(10*time.Minute, "f001")
 	f.writeTask(t, appSlug, run, "")
 	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 42, "https://github.com/acme/app/pull/42", 10*time.Minute)
 
@@ -67,21 +67,25 @@ func TestWatchJSONAndPlainShowFinishedAndReady(t *testing.T) {
 	}
 }
 
-// A failed run older than 24h is hidden from --plain by default, and shown
-// again with --all (design generic-tool §10.3); --json never hides it.
-func TestWatchAllFlagShowsOldFailures(t *testing.T) {
+// A successful run older than --keep's default (6h) is hidden from --plain,
+// and shown again with --all (design generic-tool §10.3); --json never
+// hides it. (The same rule for a failure's 24h FailedKeep is pinned at the
+// unit level, TestFailedRunsStayUntilAcked: the queued scanner's own
+// finishedLookback is also 24h, so a run old enough to need FailedKeep's
+// hiding is never discovered by `fugaro watch` at all, successful or not.)
+func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	f := newBudgetFixture(t, "")
 	seedWatch(f, "mine")
-	run := runID(30*time.Hour, "oldfail")
+	run := runID(10*time.Hour, "01d0")
 	f.writeTask(t, appSlug, run, "")
-	f.writeFinishedResult(t, appSlug, run, "failed", "none", 0, "", 30*time.Hour)
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "none", 0, "", 10*time.Hour)
 
 	plain, _, err := execute(t, "watch", "--once", "--plain")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(plain, run) {
-		t.Fatalf("a 30h-old failure must be hidden by default:\n%s", plain)
+		t.Fatalf("a 10h-old success must be hidden by the default --keep (6h):\n%s", plain)
 	}
 
 	all, _, err := execute(t, "watch", "--once", "--plain", "--all")
@@ -89,7 +93,15 @@ func TestWatchAllFlagShowsOldFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !strings.Contains(all, run) {
-		t.Fatalf("--all must show the old failure:\n%s", all)
+		t.Fatalf("--all must show the old success:\n%s", all)
+	}
+
+	kept, _, err := execute(t, "watch", "--once", "--plain", "--keep", "24h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(kept, run) {
+		t.Fatalf("--keep 24h must show a 10h-old run:\n%s", kept)
 	}
 
 	out, _, err := execute(t, "watch", "--once", "--json")
