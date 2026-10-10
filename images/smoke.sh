@@ -14,6 +14,13 @@
 # root filesystem, a Postgres with PostGIS and pgvector, Redis and the Firebase
 # emulators answer, and the preflight of an EdgeServer-style repository
 # passes, before they are stopped.
+# For BASE=base, the pins additionally include MISE_VERSION, GCLOUD_VERSION,
+# DOCKER_CLI_VERSION, YQ_VERSION, CODEX_VERSION, OPENCODE_VERSION,
+# GOOSE_VERSION, CRUSH_VERSION and HARNESS_NODE_VERSION, each matched exactly
+# (not as a substring) against a version token parsed from the tool's own
+# output; every field of /etc/fugaro/base.json is checked against its own
+# pin too. The image's presence checks (images/base/tools.tsv) are run with
+# no network through `fugaro image selftest`.
 set -eu
 image=${1:?usage: smoke.sh IMAGE BASE}
 base=${2:?usage: smoke.sh IMAGE BASE}
@@ -177,6 +184,68 @@ echo "services ok"
 '
     docker run --rm --read-only --tmpfs /tmp --tmpfs /home/fugaro:uid=1000,gid=1000,mode=0755 "$image" bash -c "$services_check" \
       || fail "fugaro-services failed (output above)"
+    ;;
+  base)
+    # resolve_pin NAME is the NAME env var if set, else the Dockerfile's own
+    # ARG NAME=... default; it fails if neither exists.
+    resolve_pin() {
+      v=$(eval "printf '%s' \"\${$1:-}\"")
+      [ -n "$v" ] || v=$(arg_default "$1")
+      [ -n "$v" ] || fail "$dockerfile has no ARG $1=... pin"
+      printf '%s' "$v"
+    }
+    # pinned NAME SED CMD... runs CMD, extracts a clean version token from
+    # its first line with the sed expression SED, and requires it to equal
+    # the Dockerfile's pin NAME exactly: a substring match would let a pin
+    # of 1.2.3 accept a reported 11.2.30 or 1.2.34.
+    pinned() {
+      name=$1; extract=$2; shift 2
+      want=$(resolve_pin "$name")
+      raw=$(first_line "$(run "$@" 2>&1)") || fail "$* failed"
+      got=$(printf '%s' "$raw" | sed -e "$extract")
+      echo "$raw"
+      [ "$got" = "$want" ] || fail "$* reports '$raw' (parsed '$got'), not pinned $name=$want"
+    }
+    pinned MISE_VERSION 's/^\([^ ]*\).*/\1/' mise --version
+    pinned GCLOUD_VERSION 's/^Google Cloud SDK //' gcloud --version
+    pinned DOCKER_CLI_VERSION 's/^Docker version \([^,]*\),.*/\1/' docker --version
+    pinned YQ_VERSION 's/.*version v//' yq --version
+    pinned CODEX_VERSION 's/^codex-cli //' codex --version
+    pinned OPENCODE_VERSION 's/^ *//' opencode --version
+    pinned GOOSE_VERSION 's/^ *//' goose --version
+    pinned CRUSH_VERSION 's/.*version v//' crush --version
+    pinned HARNESS_NODE_VERSION 's/^v//' /opt/fugaro/node/bin/node -v
+
+    # /etc/fugaro/base.json (design base-image.md section 3) records the
+    # base's own pins; every one of its fields must match the Dockerfile's
+    # ARG, not just mise. It is a flat object with no escaped quote, so a
+    # plain sed extraction is enough: no jq or yq needed on the smoke host.
+    base_json=$(run cat /etc/fugaro/base.json) || fail "cat /etc/fugaro/base.json failed"
+    echo "$base_json"
+    check_json_field() {
+      got=$(printf '%s' "$base_json" | sed -n 's/.*"'"$1"'":"\([^"]*\)".*/\1/p')
+      [ "$got" = "$2" ] || fail "/etc/fugaro/base.json's \"$1\" is '$got', not pinned $2"
+    }
+    check_json_field debian "trixie-slim@$(resolve_pin DEBIAN_DIGEST)"
+    check_json_field mise "$(resolve_pin MISE_VERSION)"
+    check_json_field claude_code "$(resolve_pin CLAUDE_CODE_VERSION)"
+    check_json_field gh "$(resolve_pin GH_VERSION)"
+    check_json_field yq "$(resolve_pin YQ_VERSION)"
+    check_json_field gcloud "$(resolve_pin GCLOUD_VERSION)"
+    check_json_field docker_cli "$(resolve_pin DOCKER_CLI_VERSION)"
+    check_json_field harness_node "$(resolve_pin HARNESS_NODE_VERSION)"
+    check_json_field codex "$(resolve_pin CODEX_VERSION)"
+    check_json_field opencode "$(resolve_pin OPENCODE_VERSION)"
+    check_json_field goose "$(resolve_pin GOOSE_VERSION)"
+    check_json_field crush "$(resolve_pin CRUSH_VERSION)"
+    echo "base.json matches every pin"
+
+    # Every row of images/base/tools.tsv, presence only: no network, and the
+    # selftest gives each tool an empty HOME.
+    report=$(printf '%s' '{"tools":"all","tools_only":true}' | docker run --rm -i --network none "$image" fugaro image selftest) \
+      || { printf '%s\n' "$report"; fail "the presence checks failed (report above)"; }
+    case "$report" in *'"passed":true'*) ;; *) printf '%s\n' "$report"; fail "the presence checks did not pass" ;; esac
+    echo "presence checks passed"
     ;;
   *) fail "unknown base $base" ;;
 esac
