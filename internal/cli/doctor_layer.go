@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,8 +44,14 @@ func doctorLayerChecks(ctx context.Context, lc *localcfg.Config, root string, rf
 		}
 		return []doctorCheck{{ID: "project-layer", Severity: "info", Problem: msg}}
 	}
-	out := []doctorCheck{{ID: "project-layer", Severity: "info",
-		Problem: fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))}}
+	problem := fmt.Sprintf("project layer %s generation %d (sha256 %s) applies; fugaro config show prints where each value comes from", l.Project, rf.Layer.Generation, shortSHA(l.SHA256))
+	if rf.Layer.Note != "" {
+		// The layer applies, but came from the offline cache (the bucket was
+		// unreachable): degrade with the note, never drop it (design: "never
+		// fail for lack of network").
+		problem += "; " + rf.Layer.Note
+	}
+	out := []doctorCheck{{ID: "project-layer", Severity: "info", Problem: problem}}
 	// A rewritten origin (the checkout's raw .git/config disagreeing with
 	// what git resolves) is not trusted by name (readOrigin's doc comment),
 	// the same guard every other consumer of it in this package applies
@@ -94,8 +101,12 @@ func layerDrift(ctx context.Context, b *blobx.Bucket, slug string, l *config.Pro
 			Problem: fmt.Sprintf("the last run %s did not apply the project layer: fugaro.yaml at its ref did not name the layer's project and gcp_project", id),
 			Fix:     "merge the gcp_project: line, or launch from the repository's checkout"}}
 	case pl.SHA256 != l.SHA256:
+		gen := "-" // the record is untrusted input: a negative generation never came from a publisher (validGeneration, ls.go)
+		if validGeneration(pl.Generation) {
+			gen = strconv.FormatInt(pl.Generation, 10)
+		}
 		return []doctorCheck{{ID: "project-layer-drift", Severity: "info",
-			Problem: fmt.Sprintf("the last run %s used project layer generation %d (sha256 %s); the published one is sha256 %s", id, pl.Generation, pluginwire.Printable(shortSHA(pl.SHA256)), shortSHA(l.SHA256)),
+			Problem: fmt.Sprintf("the last run %s used project layer generation %s (sha256 %s); the published one is sha256 %s", id, gen, pluginwire.Printable(shortSHA(pl.SHA256)), shortSHA(l.SHA256)),
 			Fix:     "nothing, if the change was meant: the next run uses the published layer"}}
 	}
 	return nil

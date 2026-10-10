@@ -113,6 +113,13 @@ sign, never printed), and it is refused in a coding agent's session. Otherwise
 it never prints a secret's value and never creates, enables or
 changes anything.
 
+Inside a checkout whose project publishes a project layer (fugaro config
+publish), doctor also names which layer applies, flags a run that launched
+without it or on an older generation, a stale per-repository copy (the one
+Cloud Build and the daily image check read), and a workflow whose image was
+last built from settings it no longer resolves to: every one of these
+degrades with a note instead of failing when the bucket is unreachable.
+
 --plugin checks only the plugin's wiring: offline, no credentials, safe for
 CI. --strict makes a stale, unpinned, foreign or unwired plugin fail the
 command; the informational states ("not installed", "cannot compare") never
