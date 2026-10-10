@@ -15,7 +15,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/blobx"
 	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/localcfg"
-	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
 // bareLayerCheckout is layerCheckout (layer_helpers_test.go) before main's
@@ -23,16 +22,13 @@ import (
 // fake Cloud Run, an origin remote, and build/test/lockfile scripts —
 // none of which the tests below need (they never launch a run, select a
 // backend job, or read an origin remote; they only need a git checkout
-// holding fugaro.yaml, with no cloud fixture at all). A thin local
-// wrapper so they don't have to construct a *cloudFixture just to satisfy
-// layerCheckout's new, stricter contract; it leaves that shared helper
-// itself untouched.
+// holding fugaro.yaml, with no cloud fixture at all). gitCheckout
+// (project_test.go) already does that git-init-plus-yaml setup; this
+// just adds the chdir the tests below rely on, instead of a second,
+// parallel reimplementation of the same steps.
 func bareLayerCheckout(t *testing.T, yaml string) string {
 	t.Helper()
-	testutil.IsolateGit(t)
-	dir := t.TempDir()
-	testutil.Git(t, dir, "init", "-q")
-	testutil.WriteFiles(t, dir, map[string]string{"fugaro.yaml": yaml})
+	dir := gitCheckout(t, t.TempDir(), yaml)
 	t.Chdir(dir)
 	return dir
 }
