@@ -175,7 +175,7 @@ func runImageBuildCloud(cmd *cobra.Command, o imageBuildOptions) error {
 	for _, w := range lc.Warnings() {
 		fmt.Fprintf(cmd.ErrOrStderr(), "fugaro: warning: %s\n", w)
 	}
-	_, cfg, name, err := loadCheckout(ctx, o.workflow)
+	_, cfg, name, err := loadCheckoutWorkflow(ctx, o.workflow, layerOptions{})
 	if err != nil {
 		return err
 	}
@@ -526,11 +526,28 @@ func writeCloudOutputs(ctx context.Context, root string, cfg *config.Config, nam
 
 // loadCheckout finds the git checkout containing the working directory,
 // loads its fugaro.yaml, validates and checks it the way `fugaro validate`
-// does, and selects the workflow.
+// does, and selects the workflow. Lenient (decision L16): image build
+// --local and image render, the two callers that worked offline before
+// 0.6.0.
 func loadCheckout(ctx context.Context, workflow string) (root string, cfg *config.Config, name string, err error) {
-	if root, cfg, err = loadCheckoutConfig(ctx); err != nil {
+	return loadCheckoutWorkflow(ctx, workflow, layerOptions{Lenient: true})
+}
+
+// loadCheckoutWorkflow is loadCheckout resolved over o. runImageBuildCloud
+// is its one strict caller: design §8 lists Cloud Build submission as
+// strict ("fail when the bucket cannot be read"), alongside launches and
+// config show|layer|publish. Cloud Build's own layer-sha wiring (the
+// builds/<slug>/project-layer.yaml copy and _PROJECT_LAYER_SHA256, §8's
+// Cloud Build row) is Task 14, not built yet; until then, resolving
+// strictly here is the whole of this path's layer strictness — it only
+// refuses to submit a build over an unreadable bucket, same as a launch
+// would, rather than silently building on a stale or unknown layer.
+func loadCheckoutWorkflow(ctx context.Context, workflow string, o layerOptions) (root string, cfg *config.Config, name string, err error) {
+	root, rf, err := loadCheckoutResolved(ctx, "", nil, o)
+	if err != nil {
 		return "", nil, "", err
 	}
+	cfg = rf.Cfg
 	if name, _, err = cfg.SelectWorkflow(workflow); err != nil {
 		return "", nil, "", &ExitError{Code: ExitUserError, Err: err}
 	}
