@@ -519,7 +519,7 @@ func TestReadyForReviewSection(t *testing.T) {
 		{Run: "r-draft1", Slug: "acme__app", Title: "Half-done refactor", Status: "failed", Outcome: "draft",
 			PRURL: "https://github.com/acme/app/pull/102", PRNumber: 102, FinishedAt: t0.Add(-10 * time.Minute)},
 	}, t0)
-	got := frame(v, 100, 0)
+	got := frame(v, 100, 0, func(o *RenderOptions) { o.Ready = ReadyRowsOf(v) })
 	if !strings.Contains(got, "Ready for your review (2)") {
 		t.Fatalf("missing header:\n%s", got)
 	}

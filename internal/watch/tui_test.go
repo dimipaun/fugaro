@@ -428,6 +428,25 @@ func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
 	}
 }
 
+// A ready PR stays in "Ready for your review" past --keep (6h by default):
+// the filter bounds how much history the dashboard shows, not what still
+// needs a look (design generic-tool §10.1).
+func TestReadyForReviewSurvivesTheFilter(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "r-old", Slug: "acme/app", Title: "Old but ready", Status: "succeeded",
+			Outcome: "ready", PRURL: "https://github.com/acme/app/pull/9", PRNumber: 9, FinishedAt: x.now.Add(-10 * time.Hour)}}, ""
+	}
+	x.seed()
+	s := x.screen()
+	if strings.Contains(s, "r-old") {
+		t.Fatalf("the 10h-old row should not be in the regular finished list:\n%s", s)
+	}
+	if !strings.Contains(s, "Ready for your review (1)") || !strings.Contains(s, "https://github.com/acme/app/pull/9") {
+		t.Fatalf("the ready PR must still be listed:\n%s", s)
+	}
+}
+
 func TestKeyMappingLowercaseRepoCapitalProject(t *testing.T) {
 	cases := []struct {
 		key  string

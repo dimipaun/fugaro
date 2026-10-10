@@ -48,6 +48,12 @@ type RenderOptions struct {
 	// generic-tool §10.3): false shows "showing active + recent · a: all",
 	// true shows "showing all · a: recent". Always drawn, at every width.
 	FilterAll bool
+	// Ready is ReadyRowsOf the view before the finished-run filter hid
+	// anything: a ready PR stays listed past --keep and --keep-count, since
+	// those bound how much history to show, not what still needs a look
+	// (design generic-tool §10.1). The caller computes it, since by the time
+	// Render runs the row's own block may already be gone from v.
+	Ready []ReadyRow
 }
 
 // Frame is a drawn screen.
@@ -291,10 +297,8 @@ func Render(v View, o RenderOptions) Frame {
 			body = append(body, r.line(seg{msg, cFaint}))
 		}
 	}
-	if !o.Help {
-		if ready := ReadyForReview(v); len(ready) > 0 {
-			body = append(body, r.readyForReview(v, ready)...)
-		}
+	if !o.Help && len(o.Ready) > 0 {
+		body = append(body, r.readyForReview(o.Ready)...)
 	}
 
 	// Footer: the prompt or notice (wrapped), then the key line (which leads
@@ -667,26 +671,47 @@ func (r *rend) filterNote(all bool) string {
 	return "showing active + recent" + r.g.sep + "a: all"
 }
 
+// ReadyRow is one row of the "Ready for your review" section: a finished
+// run with its repository already resolved to a display name, since by the
+// time it is drawn the run's own block may be gone from the (filtered) view
+// (design generic-tool §10.1: a ready item outlives the recency filter).
+type ReadyRow struct {
+	Repo string
+	Run  RunRow
+}
+
+// ReadyRowsOf resolves ReadyForReview(v) to its repositories' display names,
+// while every block is still in v (before a filter can drop one).
+func ReadyRowsOf(v View) []ReadyRow {
+	var out []ReadyRow
+	for _, row := range ReadyForReview(v) {
+		out = append(out, ReadyRow{Repo: repoNameOf(v, row.Slug), Run: row})
+	}
+	return out
+}
+
+func repoNameOf(v View, slug string) string {
+	for _, b := range v.Repos {
+		if b.Slug == slug {
+			return b.Name
+		}
+	}
+	return "-"
+}
+
 // readyForReview is the "Ready for your review" section (design
 // generic-tool §10.1): a header with the count, then one line per run with
 // its repository, PR number and link, and its title.
-func (r *rend) readyForReview(v View, ready []RunRow) []string {
-	name := func(slug string) string {
-		for _, b := range v.Repos {
-			if b.Slug == slug {
-				return b.Name
-			}
-		}
-		return "-"
-	}
+func (r *rend) readyForReview(ready []ReadyRow) []string {
 	out := []string{"", r.line(seg{fmt.Sprintf("Ready for your review (%d)", len(ready)), cBold})}
-	for _, row := range ready {
+	for _, item := range ready {
+		row := item.Run
 		pr := "-"
 		if row.PRURL != "" {
 			pr = row.PRURL
 		}
 		out = append(out, r.line(
-			seg{"  " + r.fit(name(row.Slug), 18) + " ", ""},
+			seg{"  " + r.fit(item.Repo, 18) + " ", ""},
 			seg{r.fit(fmt.Sprintf("#%d", row.PRNumber), 6) + " ", ""},
 			seg{pr + "  ", cInfo},
 			seg{dash(row.Title), cFaint},

@@ -260,6 +260,7 @@ func (m *model) rebuild() {
 	if m.o.RepoKey != "" {
 		v = FilterRepo(v, m.o.RepoKey)
 	}
+	ready := ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
 	v, _ = m.filter.Apply(v, m.acks.Has)
 	v = DropEmptyFinishedBlocks(v)
 	m.view = v
@@ -273,7 +274,7 @@ func (m *model) rebuild() {
 	fr := Render(v, RenderOptions{
 		Width: m.w, Height: m.h, Project: m.o.Project, ASCII: m.o.ASCII, Color: !m.o.NoColor,
 		Selected: m.cur, Expanded: m.expanded, Collapsed: m.collapsed, Scroll: m.scroll, Follow: m.follow, Help: m.help,
-		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo, FilterAll: m.filter.All,
+		Footer: foot, Keys: m.o.Exec != nil, Repo: m.o.Repo, FilterAll: m.filter.All, Ready: ready,
 	})
 	m.scroll, m.follow = fr.Scroll, false
 	m.frame = fr.String()
