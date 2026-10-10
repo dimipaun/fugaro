@@ -42,16 +42,16 @@ Also check that `fugaro version` works and `docker version` answers. Without Doc
 
 ### Does the project publish a project layer?
 
-Run `fugaro config layer --json` in the checkout, after `gcp_project:` is known (ask the user for the Fugaro project and its GCP project if `fugaro.yaml` does not exist yet).
+`fugaro config layer --json` reads `gcp_project:` from `fugaro.yaml` on disk, not from a flag or an environment variable; without that file it fails with a raw filesystem error (`lstat .../fugaro.yaml: no such file or directory`), not a "no layer" message. If `fugaro.yaml` already exists, run `fugaro config layer --json` directly. If it does not exist yet, ask the user for the Fugaro project and its GCP project, write a scratch `fugaro.yaml` holding only `version`, `project` and `gcp_project`, then run `fugaro config layer --json`.
 
 **If it prints a layer,** tell the user which profiles it offers (`profiles`) and which is the default. Ask only whether the repository fits a profile. If it does:
-1. Write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` when needed).
+1. Delete any scratch `fugaro.yaml` you wrote above (`fugaro config init` refuses to overwrite a file that is not byte-identical to what it would write), then write the minimal file with fugaro config init --yes (add `--profile NAME` or `--base-branch BRANCH` when needed).
 2. Run `fugaro config show --json`, and confirm with the user the commands and image it resolved to.
 3. Run `fugaro validate --json`, then build the image locally and loop until both pass, as for any file (steps 6 and 7 below).
 
 Change a single field under `workflows.default` only for a real quirk.
 
-**If no layer applies, or the repository fits no profile,** follow the investigative path below, unchanged.
+**If no layer applies, or the repository fits no profile,** delete any scratch `fugaro.yaml` you wrote above and follow the investigative path below, unchanged.
 
 ## 2. Investigate the repository
 
