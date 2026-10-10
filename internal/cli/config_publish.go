@@ -22,14 +22,6 @@ import (
 	"github.com/dimipaun/fugaro/internal/pluginwire"
 )
 
-// layeredSince is the first fugaro release whose runner reads a task's
-// project layer and fugaro.yaml's profile keys. It belongs with
-// recipesSince in internal/cli/recipes_skew.go (layered-config plan Task
-// 11, not yet merged); this task only needs it for warnOldImages, so it is
-// defined here for now. Task 11 should reuse this definition rather than
-// redeclare it.
-const layeredSince = "0.6.0"
-
 func newConfigPublishCmd() *cobra.Command {
 	var (
 		o          cloudOptions
@@ -146,7 +138,7 @@ func publishLayer(ctx context.Context, w io.Writer, b *blobx.Bucket, l *config.P
 	case errors.Is(err, blobx.ErrConflict), errors.Is(err, blobx.ErrExists):
 		return 0, userErr("nothing was published: another publisher changed %s while this ran; look at it (fugaro config layer) and run this again", config.LayerKey)
 	case errors.Is(err, blobx.ErrForbidden):
-		return 0, operatorWriteErr("nothing was published", "gs://"+b.GCSName, config.LayerKey, err)
+		return 0, operatorWriteErr("gs://"+b.GCSName, config.LayerKey, err)
 	case err != nil:
 		return 0, remote(fmt.Errorf("nothing was published: writing %s: %w", config.LayerKey, err))
 	}

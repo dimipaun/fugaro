@@ -37,7 +37,7 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 		if err == nil {
 			// gen is known: delete under a precondition, so a concurrent
 			// writer's copy is never dropped out from under it.
-			return operatorWriteErr("the repository's copy was not removed", url, key, b.DeleteIf(ctx, key, gen, old))
+			return operatorWriteErr(url, key, b.DeleteIf(ctx, key, gen, old), layerCopyRemoveLead)
 		}
 		// ErrTooLarge: the content is unreadable, but the object's
 		// generation is still available as metadata (Attributes is a
@@ -54,51 +54,35 @@ func writeLayerCopy(ctx context.Context, b *blobx.Bucket, slug string, data []by
 		// fall back to an unconditional delete, which would defeat the
 		// whole precondition: it is reported instead, deleting nothing.
 		if b.GCSName == "" {
-			return operatorWriteErr("the repository's copy was not removed", url, key, b.Delete(ctx, key))
+			return operatorWriteErr(url, key, b.Delete(ctx, key), layerCopyRemoveLead)
 		}
 		attrs, aerr := b.Attributes(ctx, key)
 		if aerr != nil {
-			return operatorWriteErr("the repository's copy was not removed", url, key, aerr)
+			return operatorWriteErr(url, key, aerr, layerCopyRemoveLead)
 		}
 		var sa storage.ObjectAttrs
 		if !attrs.As(&sa) || sa.Generation == 0 {
-			return operatorWriteErr("the repository's copy was not removed", url, key, fmt.Errorf("%s: its generation could not be read, so it was not deleted", key))
+			return operatorWriteErr(url, key, fmt.Errorf("%s: its generation could not be read, so it was not deleted", key), layerCopyRemoveLead)
 		}
 		layerCopyRemovalRace(ctx, b, key)
-		return operatorWriteErr("the repository's copy was not removed", url, key, b.DeleteIf(ctx, key, sa.Generation, nil))
+		return operatorWriteErr(url, key, b.DeleteIf(ctx, key, sa.Generation, nil), layerCopyRemoveLead)
 	}
 	// Put, not WriteAll: only blobx's own writers classify a 403 as
 	// blobx.ErrForbidden (docs/design/bucket-iam.md §2.3).
-	return operatorWriteErr("the repository's copy was not written", url, key, b.Put(ctx, key, data, "application/yaml"))
+	return operatorWriteErr(url, key, b.Put(ctx, key, data, "application/yaml"), layerCopyWriteLead)
 }
+
+// layerCopyWriteLead and layerCopyRemoveLead are writeLayerCopy's own
+// lead-ins for operatorWriteErr (internal/cli/operator_write.go):
+// writeLayerCopy's only caller is fanOutLayer, always after the project
+// layer itself has already been published, so operatorWriteErr's default
+// ("nothing was published") would be false here.
+const (
+	layerCopyWriteLead  = "the layer was published, but this repository's copy was not written"
+	layerCopyRemoveLead = "the layer was published, but this repository's copy was not removed"
+)
 
 // layerCopyRemovalRace is a test seam between writeLayerCopy's
 // oversized-removal read of the object's generation and its conditional
 // delete, mirroring config_publish.go's layerPublishRace.
 var layerCopyRemovalRace = func(ctx context.Context, b *blobx.Bucket, key string) {}
-
-// operatorWriteErr is a stand-in for bucket-iam plan Task 6's
-// internal/cli/operator_write.go (docs/plans/2026-10-08-bucket-iam.md),
-// not yet on main: since the runs-bucket IAM hardening (bucket iam task 5,
-// merged) makes a launcher's write to fugaro/ or builds/ come back as
-// blobx.ErrForbidden, a publish must say so plainly rather than failing
-// with a generic remote error. isAccessDenied is also checked: it is the
-// embedded gocloud Bucket's own unclassified 403 (Attributes, and the
-// oversized-object delete's fallback on a driver with no generation
-// concept, both go through it rather than a blobx writer), which gocloud
-// maps to a NotFound-shaped error that only isAccessDenied's
-// googleapi.Error check still finds. Delete this once
-// operator_write.go lands with the identical function; its other call
-// sites (recipes.go, sharedcfg.go, imagecheck.go) still need wiring then.
-//
-// prefix says what the caller's own write was about ("nothing was
-// published" for the main object, "the repository's copy was not
-// written/removed" for a fan-out copy): during a fan-out the main object
-// IS already published, so echoing "nothing was published" there would be
-// false.
-func operatorWriteErr(prefix, url, key string, err error) error {
-	if err == nil || !(errors.Is(err, blobx.ErrForbidden) || isAccessDenied(err)) {
-		return err
-	}
-	return userErr("%s: writing %s in %s needs the operator role (launchers read the runs bucket but write only runs/); ask an operator to publish it, or to add you with fugaro init --operator", prefix, key, url)
-}
