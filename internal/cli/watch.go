@@ -262,12 +262,13 @@ func (d *WatchDeps) emit(o *watchOptions, v watch.View, header bool) error {
 	if o.json {
 		return json.NewEncoder(d.Out).Encode(watch.BuildJSON(d.LC.Name, v))
 	}
+	ready := watch.ReadyRowsOf(v) // before the filter: a ready PR outlives --keep (design generic-tool §10.1)
 	filtered, _ := d.Filter.Apply(v, d.Acks.Has)
 	filtered = watch.DropEmptyFinishedBlocks(filtered)
 	if header {
 		fmt.Fprintf(d.Out, "--- %s ---\n", v.Now.UTC().Format(time.RFC3339))
 	}
-	if err := watch.RenderPlain(d.Out, d.LC.Name, filtered, watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo}); err != nil {
+	if err := watch.RenderPlain(d.Out, d.LC.Name, filtered, ready, watch.PlainOptions{ASCII: o.ascii, Repo: d.Repo}); err != nil {
 		return err
 	}
 	if header {

@@ -24,7 +24,13 @@ type PlainOptions struct {
 // pipe, a log and a terminal. Meaning is in words (KILLED, SILENT, LOST, OVER,
 // FAST, NOTIONAL), never in colour. Every string of v is already safe
 // (Build sanitised it); nothing here adds a control character but newlines.
-func RenderPlain(w io.Writer, project string, v View, o PlainOptions) error {
+//
+// ready is ReadyRowsOf the view before the finished-run filter hid anything
+// (design generic-tool §10.1): a ready PR stays listed past --keep and
+// --keep-count, which bound how much history the rest of the frame shows,
+// not what still needs a look. The caller resolves it, since by the time
+// RenderPlain runs, v may already be filtered and the run's own block gone.
+func RenderPlain(w io.Writer, project string, v View, ready []ReadyRow, o PlainOptions) error {
 	warn, sep := "⚠", " · "
 	if o.ASCII {
 		warn, sep = "!", " | "
@@ -73,7 +79,7 @@ func RenderPlain(w io.Writer, project string, v View, o PlainOptions) error {
 	if len(v.Repos) == 0 {
 		b.WriteString("\nno repository has spend, runs or a kill switch today\n")
 	}
-	if ready := ReadyRowsOf(v); len(ready) > 0 {
+	if len(ready) > 0 {
 		fmt.Fprintf(&b, "\nReady for your review (%d)\n", len(ready))
 		tw := tabwriter.NewWriter(&b, 0, 0, 2, ' ', 0)
 		for _, item := range ready {

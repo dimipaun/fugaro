@@ -113,6 +113,30 @@ func TestWatchAllFlagShowsOldSuccess(t *testing.T) {
 	}
 }
 
+// A ready PR stays in --plain's "Ready for your review" section even once
+// its own row has aged out of the default --keep (6h): the recency filter
+// bounds how much finished-run history the frame shows, not which PRs still
+// need a look (design generic-tool §10.1). This is the --plain counterpart
+// of TestReadyForReviewSurvivesTheFilter (the interactive screen).
+func TestWatchPlainReadySurvivesKeepFilter(t *testing.T) {
+	f := newBudgetFixture(t, "")
+	seedWatch(f, "mine")
+	run := runID(10*time.Hour, "f2ad")
+	f.writeTask(t, appSlug, run, "")
+	f.writeFinishedResult(t, appSlug, run, "succeeded", "ready", 7, "https://github.com/acme/app/pull/7", 10*time.Hour)
+
+	plain, _, err := execute(t, "watch", "--once", "--plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "FINISHED") && strings.Contains(plain[:strings.Index(plain, "Ready for your review")], run) {
+		t.Fatalf("the 10h-old row should have aged out of the regular finished table:\n%s", plain)
+	}
+	if !strings.Contains(plain, "Ready for your review (1)") || !strings.Contains(plain, "https://github.com/acme/app/pull/7") {
+		t.Fatalf("the ready PR must still be listed even though --keep (6h) hid its row:\n%s", plain)
+	}
+}
+
 func TestWatchKeepFlagsValidate(t *testing.T) {
 	newBudgetFixture(t, "")
 	if _, _, err := execute(t, "watch", "--once", "--keep", "0"); err == nil || !strings.Contains(err.Error(), "--keep") {
