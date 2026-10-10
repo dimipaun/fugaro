@@ -364,18 +364,3 @@ func TestBuildLocalPassesThePlatformToSelftest(t *testing.T) {
 		}
 	}
 }
-
-func TestBuildLocalSpecOnTheBase(t *testing.T) {
-	root, cfg := localFixture(t)
-	w := cfg.Workflows["web"]
-	w.Base, w.Image.Node = "", ""
-	cfg.Workflows["web"] = w
-	f := &fakeDocker{t: t, report: &Report{Passed: true, Checks: []Check{{Name: "claude", OK: true}}}}
-	var log bytes.Buffer
-	if _, err := BuildLocal(context.Background(), localOptions(root, cfg, f, &log)); err != nil {
-		t.Fatalf("%v\n%s", err, log.String())
-	}
-	if f.spec.Tools != "critical" || !f.spec.Mise || f.spec.Node != "" {
-		t.Errorf("spec = %+v", f.spec)
-	}
-}

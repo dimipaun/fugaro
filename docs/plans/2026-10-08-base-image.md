@@ -167,7 +167,7 @@ The five failure modes most likely to hit a user, each pinned by a test:
    - `TestValidateRefusesToolsWithARepositoryMiseConfig` (Task 9);
    - the Docker test `TestSampleProjectNodePythonOnTheBase` (Task 12).
 2. **The base loses hardening in the move to Debian** (sudo usable, a new setuid binary, a baked credential). Expected:
-   - the base's root scan matches the allowlists with `ssh-keysign` stripped;
+   - the base's root scan matches the allowlists with `ssh-keysign` and `ssh-agent` stripped;
    - `sudo -n true` fails;
    - the selftest refuses each new harness credential file in `HOME`;
    - a derived image still strips sudo and su.
@@ -2068,7 +2068,8 @@ Append to `images/base_docker_test.go`:
 ```go
 // The base keeps D1's hardening on Debian 13: not root, no passwordless sudo,
 // the expected setuid and setgid sets (sudo and su are still setuid here;
-// every derived build strips them), ssh-keysign stripped, no capability.
+// every derived build strips them), ssh-keysign and ssh-agent stripped, no
+// capability.
 func TestBaseImageHardening(t *testing.T) {
 	img := testutil.BaseImageOf(t, "base")
 	if got := testutil.Docker(t, "run", "--rm", img, "id", "-u"); got != "1000" {

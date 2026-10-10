@@ -341,10 +341,12 @@ func ParseRef(ref string) (slug, runID string, err error) {
 // Prefix is the object-name prefix of this run, ending in "/".
 func (s *Store) Prefix() string { return s.prefix }
 
-// PutFile writes a file under the run's prefix.
+// PutFile writes a file under the run's prefix. Routed through blobx.Put so
+// a GCS 403 is blobx.ErrForbidden, not gocloud's unclassified NotFound
+// (docs/design/bucket-iam.md §2.3).
 func (s *Store) PutFile(ctx context.Context, name string, data []byte, contentType string) error {
 	key := s.prefix + strings.TrimPrefix(name, "/")
-	if err := s.bucket.WriteAll(ctx, key, data, &blob.WriterOptions{ContentType: contentType}); err != nil {
+	if err := blobx.Wrap(s.bucket).Put(ctx, key, data, contentType); err != nil {
 		return fmt.Errorf("writing %s: %w", key, err)
 	}
 	return nil
@@ -389,11 +391,12 @@ func (s *Store) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	return s.readRecordObject(ctx, name)
 }
 
-// create writes name only if it does not exist yet.
+// create writes name only if it does not exist yet. Routed through
+// blobx.Create so a GCS 403 is blobx.ErrForbidden (bucket-iam.md §2.3).
 func (s *Store) create(ctx context.Context, name string, data []byte, contentType string) error {
 	key := s.prefix + name
-	err := s.bucket.WriteAll(ctx, key, data, &blob.WriterOptions{ContentType: contentType, IfNotExist: true})
-	if gcerrors.Code(err) == gcerrors.FailedPrecondition {
+	_, err := blobx.Wrap(s.bucket).Create(ctx, key, data, contentType)
+	if errors.Is(err, blobx.ErrExists) {
 		return fmt.Errorf("%s: %w", key, ErrExists)
 	}
 	if err != nil {

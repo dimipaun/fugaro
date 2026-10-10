@@ -18,6 +18,8 @@ import (
 // smoke.sh actually notices and fails instead of silently continuing.
 const fakeDockerScript = `#!/bin/sh
 set -eu
+all_args="$*" # captured before the shifts below, so a case can check flags
+              # such as --network none that would otherwise be shifted away.
 shift # run
 while [ "$1" != fake-image ]; do shift; done # --rm and any other flags
 shift # IMAGE
@@ -93,6 +95,61 @@ case "$cmd" in
     exit 1 ;;
   "sh -c "*".claude.json"*)
     exit 1 ;;
+  "mise --version")
+    [ "$missing" = mise ] && fail_missing mise
+    echo "$FAKE_MISE_VERSION linux-x64 (2026-10-07)" ;;
+  "gcloud --version")
+    [ "$missing" = gcloud ] && fail_missing gcloud
+    printf 'Google Cloud SDK %s\nbq 2.1.0\n' "$FAKE_GCLOUD_VERSION" ;;
+  "docker --version")
+    [ "$missing" = docker ] && fail_missing docker
+    echo "Docker version $FAKE_DOCKER_CLI_VERSION, build 1a2b3c4" ;;
+  "yq --version")
+    [ "$missing" = yq ] && fail_missing yq
+    echo "yq (https://github.com/mikefarah/yq/) version v$FAKE_YQ_VERSION" ;;
+  "codex --version")
+    [ "$missing" = codex ] && fail_missing codex
+    echo "codex-cli $FAKE_CODEX_VERSION" ;;
+  "opencode --version")
+    [ "$missing" = opencode ] && fail_missing opencode
+    echo "$FAKE_OPENCODE_VERSION" ;;
+  "goose --version")
+    [ "$missing" = goose ] && fail_missing goose
+    echo " $FAKE_GOOSE_VERSION" ;;
+  "crush --version")
+    [ "$missing" = crush ] && fail_missing crush
+    echo "crush version v$FAKE_CRUSH_VERSION" ;;
+  "/opt/fugaro/node/bin/node -v")
+    [ "$missing" = harness-node ] && fail_missing /opt/fugaro/node/bin/node
+    echo "v$FAKE_HARNESS_NODE_VERSION" ;;
+  "cat /etc/fugaro/base.json")
+    [ "$missing" = base-json ] && fail_missing cat
+    # mise's base.json field defaults to FAKE_MISE_VERSION (the same value
+    # "mise --version" reports) but FAKE_BASE_JSON_MISE overrides it alone,
+    # so a test can hold base.json at the real pin while varying what the
+    # tool itself reports: the two checks (pinned()'s own, and
+    # check_json_field's) are then independently defeatable.
+    debian=$FAKE_DEBIAN_DIGEST; mise=${FAKE_BASE_JSON_MISE:-$FAKE_MISE_VERSION}; claude_code=$FAKE_CLAUDE_VERSION; gh=$FAKE_GH_VERSION
+    yq=$FAKE_YQ_VERSION; gcloud=$FAKE_GCLOUD_VERSION; docker_cli=$FAKE_DOCKER_CLI_VERSION; harness_node=$FAKE_HARNESS_NODE_VERSION
+    codex=$FAKE_CODEX_VERSION; opencode=$FAKE_OPENCODE_VERSION; goose=$FAKE_GOOSE_VERSION; crush=$FAKE_CRUSH_VERSION
+    # FAKE_BASE_JSON_MISMATCH names one field to corrupt independently of its
+    # command's own --version output, so a test can prove the base.json
+    # check reads base.json itself rather than piggy-backing on another
+    # check that happens to cover the same pin.
+    if [ -n "${FAKE_BASE_JSON_MISMATCH:-}" ]; then eval "$FAKE_BASE_JSON_MISMATCH=wrong-value"; fi
+    printf '{"debian":"trixie-slim@%s","mise":"%s","claude_code":"%s","gh":"%s","yq":"%s","gcloud":"%s","docker_cli":"%s","harness_node":"%s","codex":"%s","opencode":"%s","goose":"%s","crush":"%s"}\n' \
+      "$debian" "$mise" "$claude_code" "$gh" "$yq" "$gcloud" "$docker_cli" "$harness_node" "$codex" "$opencode" "$goose" "$crush" ;;
+  "fugaro image selftest")
+    spec=$(cat)
+    case "$all_args" in
+      *"--network none"*) ;;
+      *) echo "fake-docker: fugaro image selftest ran without --network none: $all_args" >&2; exit 1 ;;
+    esac
+    [ "$spec" = '{"tools":"all","tools_only":true}' ] \
+      || { echo "fake-docker: unexpected selftest spec on stdin: $spec" >&2; exit 1; }
+    if [ "$missing" = selftest ]; then echo '{"passed":false,"checks":[{"name":"tool:gemini","ok":false}]}'; exit 1; fi
+    if [ "$missing" = selftest-passed-false ]; then echo '{"passed":false,"checks":[{"name":"tool:gemini","ok":false}]}'; exit 0; fi
+    echo '{"passed":true,"checks":[{"name":"tool:gemini","ok":true}]}' ;;
   *)
     echo "fake-docker: unhandled command: $cmd" >&2
     exit 99 ;;
