@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +42,10 @@ func newTM(t *testing.T) *tm {
 		Project: "aurora", Width: 100, Height: 30, NoColor: true, Now: func() time.Time { return x.now },
 		Exec: func(_ context.Context, r Request) Outcome { x.execs = append(x.execs, r); return x.out(r) },
 		Stop: func() { x.stops++ },
+		// A temp file: the real default (AckPath's) must never be touched by a
+		// test, and every test gets its own, so an ack in one never leaks into
+		// another.
+		AckPath: filepath.Join(t.TempDir(), "watch-acks.json"),
 	})
 	return x
 }
@@ -370,6 +375,59 @@ func TestKillingLineTimesOut(t *testing.T) {
 	}
 }
 
+// The a key toggles the finished-run filter between its default ("active +
+// recent") and --all, and the footer reflects it at once (design
+// generic-tool §10.3).
+func TestKeyAToggleFilterAll(t *testing.T) {
+	x := newTM(t)
+	x.seed()
+	if x.m.filter.All {
+		t.Fatal("the filter starts off (not --all)")
+	}
+	if !strings.Contains(x.screen(), "showing active + recent") {
+		t.Fatalf("screen:\n%s", x.screen())
+	}
+	x.key("a")
+	if !x.m.filter.All || !strings.Contains(x.screen(), "showing all") {
+		t.Fatalf("a did not switch to --all:\n%s", x.screen())
+	}
+	x.key("a")
+	if x.m.filter.All || !strings.Contains(x.screen(), "showing active + recent") {
+		t.Fatalf("a did not switch back:\n%s", x.screen())
+	}
+}
+
+// The x key acknowledges the selected row's failure when it names a failed
+// finished run, and the next rebuild hides it (design generic-tool §10.3).
+// On anything else (a live run, a header, a successful finished run) it does
+// nothing.
+func TestKeyXAcksSelectedFailedFinishedRun(t *testing.T) {
+	x := newTM(t)
+	x.m.o.Queued = func() ([]QueuedRun, []FinishedRun, string) {
+		return nil, []FinishedRun{{Run: "f1", Slug: "acme/app", Status: "failed", FinishedAt: x.now.Add(-time.Hour)}}, ""
+	}
+	x.seed()
+	if !strings.Contains(x.screen(), "f1") {
+		t.Fatalf("the failure is not shown before x:\n%s", x.screen())
+	}
+	x.key("down") // onto acme/app's live run, r1
+	x.key("x")    // x on a live run: no-op
+	if !strings.Contains(x.screen(), "f1") {
+		t.Fatal("x on a live run hid the failure")
+	}
+	x.key("down") // onto acme/app's finished run, f1
+	if x.m.cur.Run != "f1" {
+		t.Fatalf("cur = %+v, want the finished row", x.m.cur)
+	}
+	x.key("x")
+	if !x.m.acks.Has(budget.Key("acme/app"), "f1") {
+		t.Fatal("x did not record the acknowledgement")
+	}
+	if strings.Contains(x.screen(), "f1") {
+		t.Fatalf("acknowledged failure still shown:\n%s", x.screen())
+	}
+}
+
 func TestKeyMappingLowercaseRepoCapitalProject(t *testing.T) {
 	cases := []struct {
 		key  string
@@ -636,8 +694,9 @@ func TestProgramSmoke(t *testing.T) {
 	go func() {
 		done <- RunTUI(ctx, TUIOptions{
 			In: pr, Out: out, Project: "aurora", Updates: sup.Updates(), Width: 100, Height: 30, NoColor: true,
-			Exec: func(ctx context.Context, req Request) Outcome { return Execute(ctx, db, req, "tester@x.io") },
-			Stop: func() { stopped.Store(true); supCancel() },
+			Exec:    func(ctx context.Context, req Request) Outcome { return Execute(ctx, db, req, "tester@x.io") },
+			Stop:    func() { stopped.Store(true); supCancel() },
+			AckPath: filepath.Join(t.TempDir(), "watch-acks.json"),
 		})
 	}()
 	waitFor := func(what string, ok func() bool) {
