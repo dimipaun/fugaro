@@ -278,14 +278,31 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 // copy it re-reads config.LayerKey's generation: if it is no longer gen
 // (another publisher replaced it while this fan-out ran), the remaining
 // repositories are not touched with a stale layer; they count as failed,
-// and a plain fugaro config publish fans the current object out again.
+// and a plain fugaro config publish fans the current object out again. A
+// read that fails outright (a transient error, a permissions problem, the
+// object briefly over LayerMaxBytes) is not the same thing and must not
+// be misreported as a concurrent publish, as publishLayer's own read of
+// the same object, 30 lines above, already takes care to distinguish.
 func fanOutLayer(ctx context.Context, w io.Writer, env *cloudEnv, l *config.ProjectLayer, gen int64) (failed int) {
 	repos := slices.Sorted(maps.Keys(env.lc.Repos))
 	for i, repo := range repos {
-		if _, curGen, err := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes); err != nil || curGen != gen {
+		_, curGen, err := env.bucket.ReadMaxStrict(ctx, config.LayerKey, config.LayerMaxBytes)
+		remaining := len(repos) - i
+		switch {
+		case err == nil && curGen == gen:
+			// unchanged since this publish wrote it: proceed.
+		case err == nil:
 			fmt.Fprintf(w, "  stopped: another publisher changed %s while this fan-out ran; run fugaro config publish again to fan out the current layer (%d of %d repositories not yet copied)\n",
-				config.LayerKey, len(repos)-i, len(repos))
-			return failed + (len(repos) - i)
+				config.LayerKey, remaining, len(repos))
+			return failed + remaining
+		case errors.Is(err, blobx.ErrNotExist):
+			fmt.Fprintf(w, "  stopped: %s is gone (something else deleted the project layer while this fan-out ran); run fugaro config publish again (%d of %d repositories not yet copied)\n",
+				config.LayerKey, remaining, len(repos))
+			return failed + remaining
+		default:
+			fmt.Fprintf(w, "  stopped: could not confirm %s is still the layer this fan-out published: %s; run fugaro config publish again (%d of %d repositories not yet copied)\n",
+				config.LayerKey, oneLineCLI(err.Error()), remaining, len(repos))
+			return failed + remaining
 		}
 		provider := env.lc.Repos[repo].Provider
 		if provider == "" {

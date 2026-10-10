@@ -468,10 +468,44 @@ func TestFanOutStopsWhenAnotherPublisherReplacedTheLayer(t *testing.T) {
 	if failed == 0 {
 		t.Fatalf("A's late fan-out did not stop: %s", w.String())
 	}
-	if !strings.Contains(w.String(), "stopped") {
-		t.Fatalf("no note that the fan-out stopped: %s", w.String())
+	if !strings.Contains(w.String(), "stopped") || !strings.Contains(w.String(), "another publisher changed") {
+		t.Fatalf("no note that another publisher changed the layer: %s", w.String())
 	}
 	if _, _, rerr := b.Read(ctx, config.LayerCopyKey(appSlug)); !errors.Is(rerr, blobx.ErrNotExist) {
 		t.Fatalf("A's stale bytes were copied over B's publish: %v", rerr)
+	}
+}
+
+// Review Focus 4: a genuine generation race ("another publisher changed
+// it") and a plain read failure (a transient error, a permissions
+// problem, the object briefly over LayerMaxBytes) are not the same thing;
+// conflating them sends an operator chasing a nonexistent concurrent
+// publish instead of the real connectivity/permissions issue.
+func TestFanOutStopsWithoutClaimingARaceOnAReadError(t *testing.T) {
+	ctx := context.Background()
+	fake := gcpfake.NewGCS(t)
+	b := fake.Bucket(t, "fugaro-runs-proj-1234")
+	env := envOnRepos(b, map[string]localcfg.Repo{"acme/app": {Provider: "github", Workflows: []string{"web"}}})
+	l := parseLayerOrFatal(t, testProjectLayer)
+	gen, err := b.Create(ctx, config.LayerKey, l.Raw, "application/yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Nothing else published; the object just happens to be unreadable
+	// right now (here: oversized), not replaced by another publisher.
+	fake.Put("fugaro-runs-proj-1234", config.LayerKey, bytes.Repeat([]byte("x"), config.LayerMaxBytes+1))
+	var w bytes.Buffer
+	failed := fanOutLayer(ctx, &w, env, l, gen)
+	if failed != 1 {
+		t.Fatalf("failed = %d, want 1: %s", failed, w.String())
+	}
+	if strings.Contains(w.String(), "another publisher changed") {
+		t.Fatalf("a read error was misreported as a concurrent publish: %s", w.String())
+	}
+	if !strings.Contains(w.String(), "could not confirm") {
+		t.Fatalf("stderr lacks the real-error note: %s", w.String())
+	}
+	if _, _, rerr := b.Read(ctx, config.LayerCopyKey(appSlug)); !errors.Is(rerr, blobx.ErrNotExist) {
+		t.Fatalf("a copy was written despite the unconfirmed layer: %v", rerr)
 	}
 }
