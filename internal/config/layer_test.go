@@ -146,6 +146,9 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		// control characters
 		{"ESC in a label", layerHead + "defaults: {git: {pr: {labels: [\"a\\eb\"]}}}\n", "defaults.git.pr.labels[0] (line 4): holds a control or invisible formatting character"},
 		{"bidi in a model", agent("    model: \"a\\u202eb\"\n"), "defaults.agent.model (line 6): holds a control"},
+		{"a tab in a comment", layerHead + "profiles: {}\n# a\tb\n", "line 5: holds a control or invisible formatting character (in a comment or directive)"},
+		{"a tab in a comment after a block scalar", layerHead + "profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\n      test: x\n# z\ty\n", "line 11: holds a control or invisible formatting character (in a comment or directive)"},
+		{"a tab in a %TAG directive", "%TAG !e!\ttag:x,2002:\n---\n" + layerHead + "profiles: {}\n", "line 1: holds a control or invisible formatting character (in a comment or directive)"},
 		// validateLayer
 		{"a version", "version: 2\nproject: acme\ngcp_project: acme-fugaro\n", "version: must be 1"},
 		{"a project name", "version: 1\nproject: Acme_1\ngcp_project: acme-fugaro\n", "project: must be a project name"},
@@ -168,7 +171,7 @@ func TestParseProjectLayerRefusesMore(t *testing.T) {
 		{"a rerun each", prof("    commands: { rerun_failed: { command: x, each: y } }\n"), "profiles.p.commands.rerun_failed.each: must contain {id}"},
 		{"a cache key", prof("    cache: [ { paths: [a] } ]\n"), "profiles.p.cache[0].key: must list"},
 		{"cache paths", prof("    cache: [ { key: [a] } ]\n"), "profiles.p.cache[0].paths: must list"},
-		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must be at least 1"},
+		{"a cpu", prof("    resources: { cpu: -1 }\n"), "profiles.p.resources.cpu: must not be negative"},
 		{"a memory", prof("    resources: { memory: 16GB }\n"), "profiles.p.resources.memory: must look like"},
 		{"a timeout", prof("    timeouts: { stage: -1h }\n"), "profiles.p.timeouts.stage: must be positive"},
 		{"a rebuild", prof("    rebuild: { check: weekly }\n"), "profiles.p.rebuild.check: must be daily or off"},
@@ -185,6 +188,161 @@ func TestProjectLayerDescriptionCountsCharacters(t *testing.T) {
 	l := mustLayer(t, layerHead+"profiles:\n  p: { description: "+strings.Repeat("é", 200)+" }\n")
 	if n := len(l.Profiles["p"].Description); n != 400 {
 		t.Fatalf("description is %d bytes", n)
+	}
+}
+
+// TestProjectLayerAllowsTabInABlockScalarValue: a tab is not a control or
+// invisible formatting character a value refuses (badRune), so one inside a
+// block scalar's text must not be refused by the raw-text scan either, even
+// though that scan also catches a tab in a comment (see
+// TestParseProjectLayerRefusesMore's "a tab in a comment"). A '#' inside the
+// body starts no comment either, the way it would outside one.
+func TestProjectLayerAllowsTabInABlockScalarValue(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n        a\tb\n        # c\td\n      test: x\n")
+	if want := "a\tb\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerAllowsTabInAFoldedBlockScalar is
+// TestProjectLayerAllowsTabInABlockScalarValue for a folded scalar (> and
+// >-, not just | and |+/-): blockHeaderRE must recognize > the same as |.
+// The body's second line starts with '#', so a blockHeaderRE that missed >
+// would show up here: the line would be read as a comment (the key rule,
+// no tab) instead of a value (badRune, tab allowed).
+func TestProjectLayerAllowsTabInAFoldedBlockScalar(t *testing.T) {
+	for _, indicator := range []string{">", ">-"} {
+		t.Run(indicator, func(t *testing.T) {
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
+				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
+			}
+		})
+	}
+}
+
+// TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder: the
+// YAML spec allows a block scalar header's chomping indicator and explicit
+// indentation digit in either order ("|-2" and "|2-" are the same scalar,
+// clip chomping dropped, body indented 2 past the key); blockHeaderRE must
+// recognize both, or the digit-first form's body (with its '#'-led, tab-
+// holding line) is misread as a comment.
+func TestProjectLayerAllowsTabInABlockScalarRegardlessOfIndicatorOrder(t *testing.T) {
+	for _, indicator := range []string{"|-2", "|2-"} {
+		t.Run(indicator, func(t *testing.T) {
+			l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: "+indicator+"\n        a\tb\n        # c\td\n      test: x\n")
+			if !strings.Contains(l.Profiles["p"].Commands.Build, "a\tb") || !strings.Contains(l.Profiles["p"].Commands.Build, "# c\td") {
+				t.Fatalf("commands.build = %q", l.Profiles["p"].Commands.Build)
+			}
+		})
+	}
+}
+
+// TestProjectLayerAllowsTabInAQuotedHash: commentStart tracks single and
+// double quotes within a line, so a '#' inside a quoted value never starts
+// a comment there either, and the tab beside it gets the value rule, not
+// the stricter key/comment rule.
+func TestProjectLayerAllowsTabInAQuotedHash(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: \"a #b\tc\", test: x }\n")
+	if want := "a #b\tc"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerAllowsTabInASingleQuotedDoubledQuote: a single-quoted
+// scalar escapes a literal quote by doubling it, not with a backslash (so
+// the word "it is" contracted and single-quoted reads: it, quote, quote,
+// s, quote); commentStart's quote toggle (exit then immediately re-enter
+// on the second of the doubled pair) must still treat the whole scalar as
+// quoted, so the hash and the tab past the doubled quote never get the
+// stricter key/comment rule.
+func TestProjectLayerAllowsTabInASingleQuotedDoubledQuote(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: 'it''s #x\ty', test: x }\n")
+	if want := "it's #x\ty"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerAllowsTabAfterAnEscapedDoubleQuote: a double-quoted
+// scalar escapes a literal quote with a backslash (\"); commentStart must
+// skip the escaped quote itself (not toggle out of the quote on it), so a
+// '#' and a tab past it, still inside the quotes, never get the stricter
+// key/comment rule either.
+func TestProjectLayerAllowsTabAfterAnEscapedDoubleQuote(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands: { build: \"a\\\" #b\tc\", test: x }\n")
+	if want := "a\" #b\tc"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerRefusesTabInACommentStartedAfterATab: commentStart's
+// comment-start rule fires on a '#' preceded by a tab, not just a space;
+// outside any block scalar body or quotes, that line's comment half
+// (from the '#' on) still gets the stricter key rule, so a second tab in
+// the comment's own text is refused.
+func TestProjectLayerRefusesTabInACommentStartedAfterATab(t *testing.T) {
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: a\t# c\td\n      test: x\n")
+	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
+		t.Fatalf("problems %q, want a refusal for the comment's tab", got)
+	}
+}
+
+// TestProjectLayerRefusesACredentialInABetweenIndentComment is the
+// regression this PR's block-scalar tracking introduced and review
+// caught: a comment indented more than a block scalar's header but less
+// than its real content indent (header "build: |" at indent 6, content
+// at indent 10, comment at indent 8) is a real, standalone comment, not
+// body text - origin/main refuses a credential-shaped string there, and
+// so must this code. See TestProjectLayerBlockScalarBodyIndentBoundary
+// for the same boundary pinned with an explicit indentation digit
+// instead of a sniffed one, and with a tab rather than a credential.
+func TestProjectLayerRefusesACredentialInABetweenIndentComment(t *testing.T) {
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |\n          a\n        # ghp_abcdefghijklmnopqrstuvwxyz0123\n      test: x\n")
+	if !strings.Contains(got, "holds a credential-shaped string (in a comment or directive)") {
+		t.Fatalf("problems %q, want a refusal for the credential", got)
+	}
+}
+
+// TestProjectLayerBlockScalarBodyIndentBoundary: a body line indented
+// exactly as much as the scalar's own content indent (computed here from
+// the header's explicit "2", header indent 6 + 2 = 8) is still body, '#'
+// and tab included; one indented one column less (7: more than the
+// header, less than the content indent) is not - it is a real,
+// standalone comment, and its tab is refused, the same bug (and fix) as
+// TestProjectLayerAllowsTabInABlockScalarValue but pinned exactly at the
+// boundary rawTextProblems computes (indentOf(line) < contentIndent).
+func TestProjectLayerBlockScalarBodyIndentBoundary(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n        # c\td\n      test: x\n")
+	if want := "a\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("at the content indent: commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n       # c\td\n      test: x\n")
+	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
+		t.Fatalf("one column short of the content indent: problems %q, want a refusal", got)
+	}
+}
+
+// TestProjectLayerBlockScalarBodyToleratesBlankLines: a blank line in the
+// middle of a block scalar's body does not end it (bodyKnown's blank
+// check runs before its indent check, which would otherwise read a blank
+// line's indent of 0 as a dedent out of the body).
+func TestProjectLayerBlockScalarBodyToleratesBlankLines(t *testing.T) {
+	l := mustLayer(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n\n        # c\td\n      test: x\n")
+	if want := "a\n\n# c\td\n"; l.Profiles["p"].Commands.Build != want {
+		t.Fatalf("commands.build = %q, want %q", l.Profiles["p"].Commands.Build, want)
+	}
+}
+
+// TestProjectLayerBlockScalarStateDoesNotLeakPastItsBody: once a body
+// ends (a line indented no more than its header, "test: x" here), a
+// later line indented as much as that body's own content indent (8, a
+// plain top-level comment, not a new block scalar) must be scanned on
+// its own merits, not as a leftover body: rawTextProblems must reset its
+// tracking state on the dedent, not just skip ahead past it.
+func TestProjectLayerBlockScalarStateDoesNotLeakPastItsBody(t *testing.T) {
+	got := layerProblems(t, layerHead+"profiles:\n  p:\n    base: go\n    commands:\n      build: |2\n        a\n      test: x\n# note\n        # c\td\n")
+	if !strings.Contains(got, "holds a control or invisible formatting character (in a comment or directive)") {
+		t.Fatalf("problems %q, want a refusal for the later comment's tab", got)
 	}
 }
 

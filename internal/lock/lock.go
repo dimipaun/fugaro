@@ -3,6 +3,13 @@
 // job's task timeout. Creation is create-if-absent; an expired or
 // unreadable lock is taken over with a generation-matched overwrite, so two
 // runners can never both take it over.
+//
+// Acquire, the runner's own takeover, trusts only the lock object itself
+// (its ExpiresAt): never a runs/ record, which a launcher can write for any
+// run (design bucket-iam.md §10, L3) and so can forge. The CLI's own,
+// separate way to clear a live lock before it expires (Takeover) trusts
+// only the backend's view of the holder's execution, which a launcher
+// cannot forge; see Stale.
 package lock
 
 import (
@@ -39,6 +46,91 @@ func (e *BusyError) Error() string {
 	return fmt.Sprintf("branch busy: run %s holds its lock until %s", e.Holder.RunID, e.Holder.ExpiresAt.Format(time.RFC3339))
 }
 
+// Stale reports whether a live lock may be cleared before its own expiry,
+// by the one signal a launcher cannot forge: executionTerminal is true
+// only when the caller has independently confirmed, through the backend,
+// that holder.Execution (compared with backend.SameExecution, so the
+// comparison is the caller's to make, not a string-equals here) is
+// terminal — the same backend.Execution.State.Terminal() signal ls and
+// diagnose use to call a run infra_error after a kill that never
+// finalized it (runview.Join). A holder with no execution named, or no
+// such confirmation, is never stale.
+//
+// This is deliberately the CLI's decision alone (Takeover), never
+// Acquire's: the runner has no Cloud Run Admin credential to confirm any
+// execution's state, holder or its own, so Acquire goes only by the lock
+// object's own ExpiresAt (and MarkReleasing, its holder's self-release).
+// A decision inside Acquire that trusted anything else — a runs/ record
+// above all, which any launcher may write for any run (bucket-iam.md
+// §10, L3) — would let a forged "succeeded" record free a live run's
+// lock to a second launch: exactly what the 0.7.0 bucket hardening closes
+// by making locks/ launcher-unwritable.
+func Stale(holder Holder, executionTerminal bool) bool {
+	return holder.Execution != "" && executionTerminal
+}
+
+// ErrHolderChanged means Takeover's lock, re-read immediately before the
+// delete, is no longer the one its caller confirmed stale: another
+// takeover, a refresh, or a new run on the branch landed first. The lock
+// is left alone; the caller should treat the branch as busy.
+var ErrHolderChanged = errors.New("the lock's holder changed since it was checked")
+
+// beforeTakeoverDelete, when set by a test, runs between Takeover's fresh
+// read and its conditional delete.
+var beforeTakeoverDelete func()
+
+// SetBeforeTakeoverDelete sets the hook Takeover runs, once, between its
+// fresh read and its conditional delete, and returns a restore func to
+// put the previous hook back. Not for production use: it exists only so
+// tests outside this package (internal/cli's checkBranchLock and cancel
+// tests) can simulate a lock changing in that exact gap — the same race
+// TestTakeoverLosesRaceWhenLockChangesUnderneath exercises from within
+// it. A caller within this package sets beforeTakeoverDelete directly
+// instead.
+func SetBeforeTakeoverDelete(f func()) (restore func()) {
+	prev := beforeTakeoverDelete
+	beforeTakeoverDelete = f
+	return func() { beforeTakeoverDelete = prev }
+}
+
+// Takeover clears a lock whose holder's termination the caller has already
+// confirmed through the backend (Stale): the one way a launcher may free a
+// branch before its lock expires. It re-reads the lock immediately before
+// deleting it and requires the fresh holder to still be, by RunID and
+// execution (backend.SameExecution), the one holder names — ErrHolderChanged
+// otherwise, so a lock that changed in between (another takeover, a
+// refresh, a new run) is never deleted out from under its new state. The
+// generation matched is the one this fresh read returns, never an earlier
+// one, and gen is always that verified generation (0 when there was none
+// to verify: the lock was already gone, or didn't match), so a caller that
+// must later name the object by hand (a forbidden delete) never has to
+// read it again — a second read could see a different run's lock by then.
+// A lock already gone is success: the branch is free either way. Any
+// other failure, a storage 403 under the 0.7.0 bucket hardening included
+// (locks/ is not launcher-writable there), is returned as itself, with
+// the verified generation still set.
+func Takeover(ctx context.Context, b *blobx.Bucket, key string, holder Holder) (gen int64, err error) {
+	data, gen, err := b.Read(ctx, key)
+	if errors.Is(err, blobx.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var cur Holder
+	if json.Unmarshal(data, &cur) != nil || cur.RunID != holder.RunID || !backend.SameExecution(cur.Execution, holder.Execution) {
+		return 0, ErrHolderChanged
+	}
+	if beforeTakeoverDelete != nil {
+		beforeTakeoverDelete()
+	}
+	err = b.DeleteIf(ctx, key, gen, data)
+	if errors.Is(err, blobx.ErrConflict) {
+		return gen, ErrHolderChanged
+	}
+	return gen, err
+}
+
 // beforeTakeover, when set by a test, runs between reading an expired or
 // unreadable lock and the conditional overwrite that takes it over.
 var beforeTakeover func()
@@ -65,6 +157,12 @@ func Key(slug, branch string) string {
 // now or that cannot be parsed. A lock already held by h's run and
 // execution (compared with backend.SameExecution, so a run without an
 // execution never matches) is h's own and is returned as acquired.
+//
+// This is the only test Acquire ever applies: it trusts nothing under
+// runs/, which a launcher may write for any run (bucket-iam.md §10, L3)
+// and so could use to forge a holder's record as finished. A holder that
+// wants its own lock taken over sooner than its expiry marks it so itself,
+// in the lock object, with MarkReleasing.
 func Acquire(ctx context.Context, b *blobx.Bucket, key string, h Holder, now time.Time) (*Lock, error) {
 	body, err := json.Marshal(h)
 	if err != nil {
@@ -138,6 +236,42 @@ func winner(ctx context.Context, b *blobx.Bucket, key string) Holder {
 		return h
 	}
 	return Holder{}
+}
+
+// MarkReleasing rewrites l's lock, generation-matched, to ExpiresAt now:
+// its holder is about to call Release, and this is its self-release
+// marker. It exists so a container killed in the short gap between this
+// call and Release's delete leaves a lock that Acquire already treats as
+// expired, needing no new field an older runner's Acquire might not
+// understand — ExpiresAt is the one field every version has always read.
+// It can only ever shorten the lock's life, never extend it: when now is
+// already at or past the lock's own ExpiresAt (the run overran its own
+// deadline, or clock skew), rewriting would move the expiry later, not
+// earlier, so MarkReleasing does nothing and reports success — the lock
+// was already expired, and is Acquire's to take over regardless. l's
+// local generation and body are updated on success, so a Release right
+// after still matches. A failure (the lock changed, or any I/O error) is
+// returned as itself; the caller logs it and carries on to Release, which
+// is unaffected by it either way.
+func (l *Lock) MarkReleasing(ctx context.Context, now time.Time) error {
+	var h Holder
+	if err := json.Unmarshal(l.body, &h); err != nil {
+		return fmt.Errorf("marking lock %s as releasing: %w", l.key, err)
+	}
+	if !now.Before(h.ExpiresAt) {
+		return nil
+	}
+	h.ExpiresAt = now
+	body, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	newGen, err := l.b.ReplaceIf(ctx, l.key, body, l.gen, l.body)
+	if err != nil {
+		return fmt.Errorf("marking lock %s as releasing: %w", l.key, err)
+	}
+	l.gen, l.body = newGen, body
+	return nil
 }
 
 // Release deletes the lock if this holder still has it. A lock that was

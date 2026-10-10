@@ -119,10 +119,22 @@ func (r *run) disownRecord(ctx context.Context, owner lock.Holder) {
 const releaseDeferredTimeout = 15 * time.Second
 
 // releaseLock releases the branch lock, if held, within ctx: callers pass
-// a context that is already detached from cancellation and bounded.
+// a context that is already detached from cancellation and bounded. It
+// first marks the lock releasing (MarkReleasing), right here, after
+// everything else writeback does (the cache uploads, the session save):
+// a container killed in the short gap between that mark and the delete
+// below leaves a lock that already reads as expired, so a follow-up needs
+// no wait for it. This covers only that narrow gap, a few milliseconds
+// wide — a kill earlier in writeback, or at any other stage, is not
+// marked at all and relies on the CLI's own backend-based clearing
+// (lock.Stale, lock.Takeover) instead. A failure to mark is logged and
+// never stops the delete, and never fails the run.
 func (r *run) releaseLock(ctx context.Context) {
 	if r.lock == nil {
 		return
+	}
+	if err := markLockReleasing(r.lock, ctx, r.d.Now()); err != nil {
+		r.d.Log.Warn("marking the branch lock as releasing failed; it still releases or expires", "err", r.redact(err.Error()))
 	}
 	if err := releaseBranchLock(r.lock, ctx); err != nil {
 		r.d.Log.Warn("releasing the branch lock failed; it expires on its own", "err", r.redact(err.Error()))
@@ -353,4 +365,5 @@ var (
 	createRecord      = (*runstore.Store).CreateRecord
 	writeRecord       = (*runstore.Store).WriteRecord
 	releaseBranchLock = (*lock.Lock).Release
+	markLockReleasing = (*lock.Lock).MarkReleasing
 )

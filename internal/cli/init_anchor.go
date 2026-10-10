@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/dimipaun/fugaro/internal/config"
 	"github.com/dimipaun/fugaro/internal/initflow"
 	"github.com/dimipaun/fugaro/internal/localcfg"
 	"github.com/dimipaun/fugaro/internal/pluginwire"
@@ -69,7 +68,7 @@ func (r *initRun) runAnchor(ctx context.Context) error {
 	if err != nil {
 		return userErr("%v", err)
 	}
-	cfg, problems := config.Parse(data)
+	cfg, problems := parseCheckoutFugaroYAML(ctx, data, lc)
 	if cfg == nil {
 		why := "unreadable"
 		if len(problems) > 0 {
