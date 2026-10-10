@@ -22,7 +22,7 @@ fugaro diagnose <run> --json
 ```
 
 The JSON has:
-- `row`: the run as `fugaro ls` shows it: `status`, `stage`, `reason`, `branch`, `outcome`, `pr_url`, `cost`, `log_url`
+- `row`: the run as `fugaro ls` shows it: `status`, `stage`, `reason`, `branch`, `outcome`, `pr_url`, `cost`, `log_url`, `project_layer` (`sha256`, `generation`, `applied`; absent for a run with none) and `config_sha256`
 - `halt`: when halted, `reason`, `scope`, `at` and `detail`
 - `verify`, `failed` and `flaky`: the last test results, the failed and flaky tests
 - `findings`: the last review's findings

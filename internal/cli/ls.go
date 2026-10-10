@@ -570,19 +570,44 @@ func statusCell(r runview.Row) string {
 	return r.Status
 }
 
-// shortSHA is a sha256 hex digest shortened for display.
-func shortSHA(s string) string {
-	if len(s) > 12 {
-		return s[:12]
+// validSHA256 reports whether s is a sha256 hex digest: exactly 64 lowercase
+// hex characters. The record a sha comes from is launcher-writable and
+// json.Unmarshal (runstore.ReadRecordVersion) never checks it against the
+// schema, so it can be any text; shortSHA must reject it before slicing, or
+// a multibyte rune cut mid-byte would corrupt the terminal output.
+func validSHA256(s string) bool {
+	if len(s) != 64 {
+		return false
 	}
-	return s
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
-// layerCell is a run's project layer in ls: its generation, "-" for none.
+// shortSHA is a sha256 hex digest shortened for display; a string that
+// isn't 64 lowercase hex characters shows as "(invalid)" instead.
+func shortSHA(s string) string {
+	if !validSHA256(s) {
+		return "(invalid)"
+	}
+	return s[:12]
+}
+
+// validGeneration reports whether g could be a real layer generation: a
+// publisher only ever increments from 0, so negative means the record
+// wasn't written by one (same untrusted-record concern as validSHA256).
+func validGeneration(g int64) bool { return g >= 0 }
+
+// layerCell is a run's project layer in ls: its generation, "-" for none
+// or for a record whose generation isn't trustworthy.
 func layerCell(r runview.Row) string {
 	pl := r.ProjectLayer
 	switch {
-	case pl == nil:
+	case pl == nil || !validGeneration(pl.Generation):
 		return "-"
 	case !pl.Applied:
 		return fmt.Sprintf("gen %d (not applied)", pl.Generation)
