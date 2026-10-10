@@ -106,7 +106,13 @@ type Profile struct {
 }
 
 // HasExecutable reports whether the profile sets a key that runs as shell
-// (ExecutableKeys).
+// (ExecutableKeys). Image.SkipBuildScripts is deliberately not one of
+// these: true is the safe setting (it skips third-party install/build
+// scripts), so a profile whose only setting is skip_build_scripts: true
+// must not count as executable on its own; only a change to the value
+// (true -> false, or a true removed) is gated, through the direct
+// executableChanges key comparison in internal/cli/config_publish.go, not
+// through this method.
 func (p Profile) HasExecutable() bool {
 	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0
 }
