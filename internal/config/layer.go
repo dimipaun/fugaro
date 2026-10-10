@@ -108,7 +108,7 @@ type Profile struct {
 // (ExecutableKeys).
 func (p Profile) HasExecutable() bool {
 	return p.Commands.Build != "" || p.Commands.Test != "" || p.Commands.Lint != "" || p.Commands.Fix != "" ||
-		p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0
+		p.Commands.RerunFailed != nil || len(p.Image.Apt) > 0 || len(p.Image.Setup) > 0 || len(p.Image.Tools) > 0
 }
 
 // LayerSum is the hex sha256 of a project layer's text.
@@ -450,7 +450,7 @@ func validateProfile(p string, pr Profile) []Problem {
 		add(p+".description", "must be one line of at most %d characters, with no control or formatting characters", maxProfileDescription)
 	}
 	if pr.Base != "" && !slices.Contains(Bases, pr.Base) {
-		add(p+".base", "must be one of %s", strings.Join(Bases, ", "))
+		add(p+".base", "must be one of %s, or left out for the Fugaro base", strings.Join(Bases[1:], ", "))
 	}
 	ps = append(ps, validateImage(p, Workflow{Base: pr.Base, Image: pr.Image})...)
 	if rf := pr.Commands.RerunFailed; rf != nil {

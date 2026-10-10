@@ -177,12 +177,16 @@
         },
         {
           "if": { "not": { "required": ["profile"] } },
-          "then": { "required": ["base", "commands"], "properties": { "commands": { "required": ["build", "test"] } } }
+          "then": { "required": ["commands"], "properties": { "commands": { "required": ["build", "test"] } } }
+        },
+        {
+          "if": { "required": ["base"], "properties": { "base": { "enum": ["go", "java-services", "web-node"] } } },
+          "then": { "properties": { "image": { "not": { "required": ["tools"] } } } }
         }
       ],
       "properties": {
         "profile": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$", "description": "The project layer's profile this workflow starts from; its own keys override the profile's field by field. Needs fugaro 0.6.0." },
-        "base": { "enum": ["go", "java-services", "web-node"] },
+        "base": { "enum": ["base", "go", "java-services", "web-node"] },
         "image": {
           "type": "object",
           "additionalProperties": false,
@@ -200,6 +204,11 @@
                 "pattern": "^[^\\r\\n]*\\S[^\\r\\n]*$",
                 "not": { "pattern": "<<|\\\\\\s*$|^[\\s\\v]*[-\\[]" }
               }
+            },
+            "tools": {
+              "type": "object",
+              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9._/:@-]*$", "maxLength": 128 },
+              "additionalProperties": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+~:-]*$", "maxLength": 64 }
             }
           }
         },

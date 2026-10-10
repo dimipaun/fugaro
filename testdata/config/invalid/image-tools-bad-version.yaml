@@ -1,0 +1,9 @@
+version: 1
+project: acme
+git: { provider: github, base_branch: main }
+workflows:
+  app:
+    image:
+      tools: { node: "24 && curl x", python: "3.12", "npm:firebase-tools": "15.32.1", java: "temurin-25" }
+      apt: [postgresql-17, redis-server]
+    commands: { build: npm run build, test: fugaro-services start && npm test }

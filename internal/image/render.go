@@ -14,9 +14,14 @@ import (
 	"github.com/dimipaun/fugaro/internal/config"
 )
 
-// bases lists the base images Fugaro publishes: one directory each under
-// images/.
-var bases = config.Bases
+// bases are the base kinds the derived template (images/derived/Dockerfile.tmpl)
+// can actually build FROM today: config.Bases minus BaseKind. The base
+// image itself is published (images/base/), but this template has no
+// image.tools/mise step yet (base-image plan Task 10 adds it). Until then,
+// checkBase must refuse BaseKind too, or a workflow with base: base (or no
+// base: at all) and image.tools set would pass fugaro validate and then
+// render/build silently, dropping every configured tool with no error.
+var bases = slices.DeleteFunc(slices.Clone(config.Bases), func(b string) bool { return b == config.BaseKind })
 
 // RenderInput is what the derived-image template is rendered from.
 type RenderInput struct {
@@ -80,10 +85,13 @@ func secretMounts(vars []string) (mounts, prefix string) {
 }
 
 func checkBase(base string) error {
-	if !slices.Contains(bases, base) {
-		return fmt.Errorf("base %s has no published image yet (have %s)", base, strings.Join(bases, ", "))
+	if slices.Contains(bases, base) {
+		return nil
 	}
-	return nil
+	if base == "" || base == config.BaseKind {
+		return fmt.Errorf("the Fugaro base has no derived-image support yet (the renderer has no image.tools/mise step): set base: to one of %s", strings.Join(bases, ", "))
+	}
+	return fmt.Errorf("base %s has no published image yet (have %s)", base, strings.Join(bases, ", "))
 }
 
 // Dockerfile returns the Dockerfile that builds workflow name's derived image

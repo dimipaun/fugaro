@@ -76,6 +76,7 @@ var Scopes = []ScopeRow{
 	{Key: "workflows.*.image.apt", In: InProfile | InRepo},
 	{Key: "workflows.*.image.setup", In: InProfile | InRepo},
 	{Key: "workflows.*.image.skip_build_scripts", In: InProfile | InRepo},
+	{Key: "workflows.*.image.tools", In: InProfile | InRepo},
 	{Key: "workflows.*.dockerfile", In: InRepo, Why: whyFiles},
 	{Key: "workflows.*.commands.build", In: InProfile | InRepo},
 	{Key: "workflows.*.commands.test", In: InProfile | InRepo},
@@ -104,9 +105,30 @@ var Scopes = []ScopeRow{
 // ExecutableKeys are the profile keys whose values run as shell, in the
 // job or in the image build (decision L7): a publish that changes one needs
 // --executable-changes.
+//
+// workflows.*.image.tools is here because it is exactly as powerful as
+// image.setup: every mise backend with a URL or host form (cargo:, go:,
+// npm:, asdf:/vfox:, ubi:/github:/aqua:) passes ValidMiseTool's charset, and
+// a build installs it with the workflow's build secrets mounted, so a mise
+// "tool" can name an arbitrary git ref or release to fetch and run
+// (install scripts, build.rs, a plugin). That is within the threat model
+// for a repository's own reviewed fugaro.yaml, the same as image.setup; a
+// profile published from the bucket must gate it the same way.
 var ExecutableKeys = []string{
 	"workflows.*.commands.build", "workflows.*.commands.test", "workflows.*.commands.lint", "workflows.*.commands.fix",
-	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup",
+	"workflows.*.commands.rerun_failed", "workflows.*.image.apt", "workflows.*.image.setup", "workflows.*.image.tools",
+}
+
+// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
+// deliberately leaves out, each with why its value never runs as shell.
+// TestEveryImageFieldIsClassified walks Image by reflection and fails if a
+// future field is in neither this map nor ExecutableKeys, so a field that
+// slips past config publish's --executable-changes gate (PR #244) is a
+// compile-time-visible test failure, not a silent gap.
+var NonExecutableImageKeys = map[string]string{
+	"workflows.*.image.node":               "a pinned Node major or exact version (nodeVersionRE); never a command",
+	"workflows.*.image.jdk":                "refused on every base (validateImage); never reaches a Dockerfile",
+	"workflows.*.image.skip_build_scripts": "a boolean flag, not a command",
 }
 
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
