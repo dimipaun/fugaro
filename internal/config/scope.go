@@ -124,17 +124,6 @@ var ExecutableKeys = []string{
 	"workflows.*.image.skip_build_scripts",
 }
 
-// NonExecutableImageKeys are the Image struct's fields ExecutableKeys
-// deliberately leaves out, each with why its value never runs as shell.
-// image_test.go's imageFieldReasons is the table TestImageFieldsAreClassified
-// actually walks Image by reflection against (keyed by Go field name, not
-// the yaml path below); this map is kept in step with it by hand, as
-// scope.go's own documentation of the same two fields.
-var NonExecutableImageKeys = map[string]string{
-	"workflows.*.image.node": "a pinned Node major or exact version (nodeVersionRE); never a command",
-	"workflows.*.image.jdk":  "refused on every base (validateImage); never reaches a Dockerfile",
-}
-
 // ScopeOf is the row of path, a fugaro.yaml path with a real workflow name
 // ("workflows.web.commands.test") or "*". A path inside a listed key (an
 // entry of cache:) is the listed key's. false: no such key.
