@@ -98,9 +98,12 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.image.apt` | profile, repo |  |
 | `workflows.*.image.setup` | profile, repo |  |
 | `workflows.*.image.skip_build_scripts` | profile, repo |  |
+| `workflows.*.image.tools` | profile, repo |  |
 | `workflows.*.dockerfile` | repo | it names a file in the repository |
 | `workflows.*.commands.build` | profile, repo |  |
 | `workflows.*.commands.test` | profile, repo |  |
+| `workflows.*.commands.lint` | profile, repo |  |
+| `workflows.*.commands.fix` | profile, repo |  |
 | `workflows.*.commands.rerun_failed` | profile, repo |  |
 | `workflows.*.commands.reports` | profile, repo |  |
 | `workflows.*.cache` | profile, repo |  |
@@ -118,6 +121,7 @@ Each key may be set only in the layers listed; the project layer refuses the res
 | `workflows.*.rebuild.paths` | profile, repo |  |
 | `followup.trusted` | repo | it decides whose comments steer a run with the repository's credentials |
 | `followup.allow_public` | repo | it decides whose comments steer a run with the repository's credentials |
+| `review.allow_forks` | repo | review mode would run a fork's code next to the job's secrets; only the repository opts in |
 <!-- scope-table:end -->
 
 Outside this table: secrets' values live in Secret Manager and are never in any layer; per-person Claude tokens are a later project; the individual layer is flags and env only.
@@ -187,10 +191,13 @@ Its shape is checked strictly, with the shared config's trust rules: one documen
 <!-- executable-keys:start -->
 - `workflows.*.commands.build`
 - `workflows.*.commands.test`
+- `workflows.*.commands.lint`
+- `workflows.*.commands.fix`
 - `workflows.*.commands.rerun_failed`
 - `workflows.*.image.apt`
 - `workflows.*.image.setup`
 - `workflows.*.image.skip_build_scripts`
+- `workflows.*.image.tools`
 <!-- executable-keys:end -->
 
 — values that run as shell, or (`image.skip_build_scripts`) control whether shell a profile already describes runs, in the job or in the image build. `commands.reports` is not gated: it only lists paths to collect, and runs nothing. `config publish` refuses a change to any of these keys, in either direction (`image.skip_build_scripts` going from `false` to `true` is reported too, not only the unsafe direction), unless `--executable-changes` is given, printing each one's before and after under an `EXECUTABLE CHANGES` banner first; changing `default_profile` itself is gated the same way, whenever either the old or the new default profile sets one of these keys.
