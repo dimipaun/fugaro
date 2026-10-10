@@ -243,6 +243,10 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["commands.build"] = strconv.Quote(p.Commands.Build)
 	case "workflows.*.commands.test":
 		out["commands.test"] = strconv.Quote(p.Commands.Test)
+	case "workflows.*.commands.lint":
+		out["commands.lint"] = strconv.Quote(p.Commands.Lint)
+	case "workflows.*.commands.fix":
+		out["commands.fix"] = strconv.Quote(p.Commands.Fix)
 	case "workflows.*.commands.rerun_failed":
 		var cmd, each string
 		if rf := p.Commands.RerunFailed; rf != nil {
@@ -256,6 +260,10 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 		out["image.apt"] = fmt.Sprintf("%q", p.Image.Apt)
 	case "workflows.*.image.setup":
 		out["image.setup"] = fmt.Sprintf("%q", p.Image.Setup)
+	case "workflows.*.image.tools":
+		// fmt sorts a map's keys before printing it, so the display is
+		// deterministic even though config.MiseTools is a map.
+		out["image.tools"] = fmt.Sprintf("%q", p.Image.Tools)
 	case "workflows.*.image.skip_build_scripts":
 		out["image.skip_build_scripts"] = strconv.FormatBool(p.Image.SkipBuildScripts)
 	default:

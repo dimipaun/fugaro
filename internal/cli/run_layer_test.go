@@ -109,6 +109,33 @@ func TestRunAnnouncesABuildOnlyProfile(t *testing.T) {
 	}
 }
 
+// Merge of base kind task 9 (commands.lint/commands.fix, generic-tool Task
+// 9) into the layered-config work: layerAnnounceKeys originally listed only
+// the run-time keys that existed when it was written (build, test,
+// rerun_failed), so a profile whose only run-time key is commands.lint ran
+// shell from the bucket with zero announcement, the exact gap
+// TestRunAnnouncesABuildOnlyProfile above pins for commands.build.
+func TestRunAnnouncesALintOnlyProfile(t *testing.T) {
+	f := newCloudFixture(t)
+	isolateCache(t)
+	layer := strings.Replace(testProjectLayer, "commands: { build: sh build.sh, test: sh test.sh }", "commands: { lint: sh lint.sh }", 1)
+	if layer == testProjectLayer {
+		t.Fatal("testProjectLayer's profile commands line changed shape")
+	}
+	publishedLayer(t, f, layer)
+	layerCheckout(t, f, minimalAnchored+"workflows:\n  svc: { profile: svc, commands: { build: sh build.sh, test: sh test.sh } }\n")
+	f.run.AddJob(gcp.JobName(mustSlug("github", "acme/other"), "svc"), "2", "4Gi")
+	f.appendConfig(t, "  acme/other: { provider: github, base_branch: main, workflows: [svc] }\n")
+	writeBuildRecord(t, f, mustSlug("github", "acme/other"), "svc", release060)
+	_, errOut, err := execute(t, "run", "--run-id", "20261008-100000-abcd", "A task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errOut, "commands: from profile svc (lint; project layer generation") {
+		t.Errorf("stderr %q lacks the lint-only announcement", errOut)
+	}
+}
+
 // Review Focus 3.
 func TestRunRefusesLayerOnOldImage(t *testing.T) {
 	f := newCloudFixture(t)
