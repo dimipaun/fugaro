@@ -266,9 +266,20 @@ func executableKeyValues(out map[string]string, p config.Profile, key string) er
 
 // defaultProfileChange is the change line for default_profile itself
 // (first set, or a -> b), when either the old or the new profile
-// HasExecutable: repositories with no workflows: run that profile's
-// commands, so changing it changes what they run even though no
-// profile's own fields moved.
+// HasExecutable, or the switch turns image.skip_build_scripts off:
+// repositories with no workflows: run that profile's commands and image
+// settings, so changing it changes what they run even though no profile's
+// own fields moved. HasExecutable deliberately ignores SkipBuildScripts
+// (true is the safe setting, so a profile whose only setting is
+// skip_build_scripts: true must not count as executable on its own,
+// decision L7's ruling), but that means a switch whose only difference is
+// SkipBuildScripts going from true (old default) to false or unset (new
+// default) - turning dependency install/build scripts back on for every
+// repository without workflows - would otherwise go undetected by
+// HasExecutable on both sides: reenabled below catches exactly that, so
+// this one unsafe direction is still gated. The opposite direction
+// (false/unset -> true, switching onto a safer default) is deliberately
+// not gated here, matching the same ruling.
 func defaultProfileChange(prev, next *config.ProjectLayer) string {
 	var oldDefault string
 	var oldProfile config.Profile
@@ -278,7 +289,8 @@ func defaultProfileChange(prev, next *config.ProjectLayer) string {
 	}
 	newDefault := next.DefaultProfile
 	newProfile := next.Profiles[newDefault]
-	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable()) {
+	reenabled := oldProfile.Image.SkipBuildScripts && !newProfile.Image.SkipBuildScripts
+	if oldDefault == newDefault || (!oldProfile.HasExecutable() && !newProfile.HasExecutable() && !reenabled) {
 		return ""
 	}
 	return fmt.Sprintf("default_profile: %q -> %q (repositories without workflows: now run %s's commands)", oldDefault, newDefault, profileClause(newDefault))

@@ -169,6 +169,20 @@ func TestExecutableChangesTable(t *testing.T) {
 			want: nil,
 		},
 		{
+			// The unsafe reverse of the case above: the old default's only
+			// setting is skip_build_scripts: true, the new default has it
+			// false/unset. Neither profile HasExecutable (SkipBuildScripts
+			// is deliberately excluded from it), and neither profile's own
+			// fields moved between prev and next, so this switch would
+			// otherwise go undetected; it must still be gated, since every
+			// repository without workflows goes from skipping dependency
+			// install/build scripts in its image build to running them.
+			name: "default_profile a -> b, the old default's only setting is skip_build_scripts: true, the new one has it off: gated (the unsafe direction)",
+			prev: layerPreamble + "profiles:\n  safe:\n    base: web-node\n    image:\n      skip_build_scripts: true\n  other:\n    base: web-node\ndefault_profile: safe\n",
+			next: layerPreamble + "profiles:\n  safe:\n    base: web-node\n    image:\n      skip_build_scripts: true\n  other:\n    base: web-node\ndefault_profile: other\n",
+			want: []string{`default_profile: "safe" -> "other" (repositories without workflows: now run profile other's commands)`},
+		},
+		{
 			name: "first publish (nil previous): every executable key of the one profile, plus default_profile",
 			prev: "",
 			next: layerPreamble + "profiles:\n  svc:\n    base: web-node\n    commands:\n      build: sh build.sh\n      test: sh test.sh\n    image:\n      apt: [git]\n      setup: [\"echo hi\"]\ndefault_profile: svc\n",
