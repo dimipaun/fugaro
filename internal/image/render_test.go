@@ -416,29 +416,6 @@ func TestRenderRefusesUnpublishedBase(t *testing.T) {
 	}
 }
 
-// TestRenderRefusesTheFugaroBaseUntilTask10: config.Bases (and so
-// fugaro validate) accepts base: base and an omitted base: (BaseKind), but
-// images/derived/Dockerfile.tmpl has no image.tools/mise step yet. Render
-// must refuse both forms, the same way, rather than silently rendering a
-// Dockerfile that drops every configured tool (found by review: checkBase
-// inherited config.Bases wholesale, so base: base alone passed while an
-// omitted base: - the documented way to use the new kind - failed with a
-// confusing doubled-space message that listed "base" as available).
-func TestRenderRefusesTheFugaroBaseUntilTask10(t *testing.T) {
-	const want = "the Fugaro base has no derived-image support yet (the renderer has no image.tools/mise step): set base: to one of go, java-services, web-node"
-	for _, base := range []string{config.BaseKind, ""} {
-		t.Run("base="+base, func(t *testing.T) {
-			_, err := Render(RenderInput{Workflow: "app", Base: base, Image: config.Image{Tools: config.MiseTools{"node": "24.19.0"}}})
-			if err == nil {
-				t.Fatal("want an error, got none (image.tools would be silently dropped)")
-			}
-			if err.Error() != want {
-				t.Errorf("err = %q, want %q", err.Error(), want)
-			}
-		})
-	}
-}
-
 func parseConfig(t *testing.T, yaml string) *config.Config {
 	t.Helper()
 	cfg, problems := config.Parse([]byte(yaml))
@@ -650,5 +627,76 @@ func TestRenderJavaServicesBase(t *testing.T) {
 	}
 	if s := string(out); !strings.Contains(s, "python3") || !strings.Contains(s, "./gradlew.sh testClasses") || strings.Contains(s, "install-node") || strings.Contains(s, "install-jdk") {
 		t.Errorf("rendered Dockerfile:\n%s", s)
+	}
+}
+
+func TestRenderMiseInstallWhenTheCheckoutHasAConfig(t *testing.T) {
+	pm := config.NodePM{Name: "npm", Lockfile: "package-lock.json", Install: "npm ci"}
+	got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Mise: true, PM: &pm, Secrets: []string{"NPM_TOKEN"}, Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	step := `RUN --mount=type=cache,id=fugaro-mise,target=/home/fugaro/.cache/mise,uid=1000,gid=1000 --mount=type=secret,id=NPM_TOKEN,uid=1000,mode=0400,required=false if test -e /run/secrets/NPM_TOKEN; then NPM_TOKEN="$(cat /run/secrets/NPM_TOKEN)" || exit 1; export NPM_TOKEN; fi; mise install \` + "\n" +
+		` && missing="$(mise ls --current --missing)" \` + "\n" +
+		` && if [ -n "$missing" ]; then printf 'mise left these tools missing:\n%s\n' "$missing" >&2; exit 1; fi`
+	i, clone, warm := strings.Index(s, step), strings.Index(s, `git remote set-url origin -- "$REPO_ORIGIN"`), strings.Index(s, "# Dependency warm-up for package-lock.json.")
+	if i < 0 || clone < 0 || warm < 0 || !(clone < i && i < warm) {
+		t.Fatalf("the mise step is missing or out of order (clone %d, mise %d, warm-up %d):\n%s", clone, i, warm, s)
+	}
+	if msgs := config.LintDockerfile(got, config.BaseKind); len(msgs) > 0 {
+		t.Errorf("the rendered Dockerfile breaks the contract: %v", msgs)
+	}
+}
+
+func TestRenderNoMiseStepWithoutAConfig(t *testing.T) {
+	got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Version: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "mise install") || strings.Contains(string(got), ".config/mise") {
+		t.Errorf("a mise step without a mise config or image.tools:\n%s", got)
+	}
+}
+
+func TestRenderImageToolsBeforeTheClone(t *testing.T) {
+	got, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Mise: true, Version: "dev",
+		Image: config.Image{Tools: map[string]string{"node": "24.19.0", "npm:firebase-tools": "15.32.1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	line := `printf '%s\n' '[tools]' '"node" = "24.19.0"' '"npm:firebase-tools" = "15.32.1"' > /home/fugaro/.config/mise/config.toml`
+	if i, clone := strings.Index(s, line), strings.Index(s, "clone --quiet"); i < 0 || i > clone {
+		t.Fatalf("image.tools is not written before the clone:\n%s", s)
+	}
+}
+
+func TestRenderRefusesABadTool(t *testing.T) {
+	for _, tools := range []map[string]string{{"node": "24'; rm -rf / #"}, {"no de": "24"}} {
+		if _, err := Render(RenderInput{Workflow: "app", Base: config.BaseKind, Mise: true, Version: "dev", Image: config.Image{Tools: tools}}); err == nil {
+			t.Errorf("rendered %v", tools)
+		}
+	}
+}
+
+func TestDockerfileOnTheBaseDetectsMiseAndNode(t *testing.T) {
+	root := t.TempDir()
+	testutil.WriteFiles(t, root, map[string]string{"mise.toml": "[tools]\nnode = \"24\"\n", "package.json": `{"name":"x"}`, "package-lock.json": `{"lockfileVersion":3}`})
+	cfg, problems := config.Parse([]byte("version: 1\nproject: acme\ngit: { provider: github }\nworkflows:\n  app: { commands: { build: npm run build, test: npm test } }\n"))
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	got, repoFile, err := Dockerfile(root, cfg, "app", "dev")
+	if err != nil || repoFile != "" {
+		t.Fatalf("%v %q", err, repoFile)
+	}
+	for _, want := range []string{"mise install", "# Dependency warm-up for package-lock.json.", "npm ci"} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("lacks %q", want)
+		}
+	}
+	if strings.Contains(string(got), "install-node") {
+		t.Error("the base installs Node through install-node")
 	}
 }

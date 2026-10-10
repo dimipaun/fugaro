@@ -141,11 +141,11 @@ func yarnGlobalCache(root string, major int) (bool, error) {
 }
 
 // DefaultCache is the cache entry a workflow gets when fugaro.yaml declares
-// none (design §5.1). For web-node it is the detected package manager's
-// cache, keyed by its lockfile; root is the checkout. M4's cache restore and
-// write-back apply it.
+// none (design §5.1). For web-node and the Fugaro base it is the detected
+// package manager's cache, keyed by its lockfile; root is the checkout.
+// M4's cache restore and write-back apply it.
 func DefaultCache(base, root string) ([]CacheEntry, error) {
-	if base != "web-node" {
+	if base != "web-node" && base != BaseKind {
 		return nil, nil
 	}
 	pm, err := DetectNodePM(root)
