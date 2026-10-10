@@ -19,9 +19,9 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
-// release060 is a plausible build record BaseRef for TestDoctorFlagsAStaleImage:
-// imageConfigChecks never looks at BaseRef, so its exact form doesn't matter.
-const release060 = "ghcr.io/dimipaun/fugaro-web-node:0.6.0"
+// release060 (run_layer_test.go, Task 11, merged on main) is a plausible
+// build record BaseRef for TestDoctorFlagsAStaleImage: imageConfigChecks
+// never looks at BaseRef, so its exact form doesn't matter here.
 
 func layerCheck(cs []doctorCheck, id string) *doctorCheck {
 	for i := range cs {
@@ -60,7 +60,6 @@ func TestDoctorFlagsLayerDrift(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()
@@ -106,7 +105,6 @@ func TestDoctorLayerDriftShowsInvalidGenerationAsDash(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()
@@ -133,7 +131,7 @@ func TestDoctorLayerChecksDistrustsARewrittenOrigin(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "https://github.com/acme/other.git")
+	testutil.Git(t, dir, "remote", "set-url", "origin", "https://github.com/acme/other.git")
 	// A raw .git/config naming a different host/repo than what git itself
 	// resolves for "origin" (no url.<base>.insteadOf rewrites it back):
 	// readOrigin reports Rewritten.
@@ -170,7 +168,6 @@ func TestDoctorImageConfigNamesEachDifferingSource(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  default: { profile: svc, image: { node: \"22\" } }\n")
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: config.ImplicitWorkflow, ImageConfigHash: strings.Repeat("0", 64)})
 	writeBucketFile(t, f, imagecheck.RecordKey(slug, config.ImplicitWorkflow), string(data))
@@ -189,7 +186,6 @@ func TestDoctorFlagsAStaleImage(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: config.ImplicitWorkflow, ImageConfigHash: strings.Repeat("0", 64), BaseRef: release060})
 	writeBucketFile(t, f, imagecheck.RecordKey(slug, config.ImplicitWorkflow), string(data))
@@ -219,7 +215,6 @@ func TestDoctorImageConfigSkipsDockerfileWorkflows(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored+"git: { provider: github }\nworkflows:\n  app: { base: web-node, dockerfile: .fugaro/app.Dockerfile, commands: { build: sh build.sh, test: sh test.sh } }\n")
 	testutil.WriteFiles(t, dir, map[string]string{".fugaro/app.Dockerfile": "ARG FUGARO_BASE\nFROM ${FUGARO_BASE}\nRUN git clone \"$REPO_URL\" /work/repo\n"})
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	data, _ := json.Marshal(imagecheck.Record{Version: 1, Repo: "acme/other", Workflow: "app", ImageConfigHash: strings.Repeat("0", 64)})
 	writeBucketFile(t, f, imagecheck.RecordKey(slug, "app"), string(data))
@@ -246,7 +241,6 @@ func TestDoctorLayerShowsTheCachedNote(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()
 
@@ -289,7 +283,6 @@ func TestDoctorLayerUnknownWhenBucketUnreachable(t *testing.T) {
 	publishedLayer(t, f, testProjectLayer)
 	selfSufficient := "version: 1\nproject: aurora\ngcp_project: proj-1234\ngit: { provider: github }\nworkflows:\n  app: { base: web-node, commands: { build: sh build.sh, test: sh test.sh } }\n"
 	dir := layerCheckout(t, f, selfSufficient)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	lc := fileEnv(t, f).lc
 	ctx := context.Background()
 
@@ -398,7 +391,6 @@ func TestDoctorLayerCopyCheckSilentOnOtherReadErrors(t *testing.T) {
 	isolateCache(t)
 	publishedLayer(t, f, testProjectLayer)
 	dir := layerCheckout(t, f, minimalAnchored)
-	testutil.Git(t, dir, "remote", "add", "origin", "git@github.com:acme/other.git")
 	slug := mustSlug("github", "acme/other")
 	writeBucketFile(t, f, config.LayerCopyKey(slug), strings.Repeat("a", config.LayerMaxBytes+1))
 	lc := fileEnv(t, f).lc
