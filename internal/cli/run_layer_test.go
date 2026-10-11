@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -600,5 +601,23 @@ func TestRunOutsideACheckoutEmbedsTheInstallationLayer(t *testing.T) {
 	}
 	if pl := readSpec(t, f, "20261008-100000-abcd").ProjectLayer; pl == nil || pl.SHA256 != config.LayerSum([]byte(testProjectLayer)) {
 		t.Fatalf("task project_layer = %+v", pl)
+	}
+}
+
+// TestLayerAnnounceKeysCoversEveryExecutableKey (0.7.0 reconciliation):
+// every config.ExecutableKeys entry is either one of this launch's run-time
+// keys (layerAnnounceKeys, printed by announceProfileCommands) or an
+// image-time one (workflows.*.image.*, which runs later in Cloud Build, not
+// as part of this launch; see layerAnnounceKeys' own comment). A key that is
+// neither falls silently out of the launch-time announcement.
+func TestLayerAnnounceKeysCoversEveryExecutableKey(t *testing.T) {
+	for _, key := range config.ExecutableKeys {
+		bare := strings.TrimPrefix(key, "workflows.*.")
+		if strings.HasPrefix(bare, "image.") {
+			continue
+		}
+		if !slices.Contains(layerAnnounceKeys, bare) {
+			t.Errorf("config.ExecutableKeys has %q, which is neither in layerAnnounceKeys nor image-time: classify it", key)
+		}
 	}
 }
