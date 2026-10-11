@@ -229,6 +229,21 @@ func TestResultSchemaOAuthAccount(t *testing.T) {
 	if err := sch.Validate(bad); err == nil {
 		t.Fatal("schema accepts a non-string oauth_account")
 	}
+	// The bound: a record's account name is data the runner wrote and the
+	// display sanitises it, so the schema is lenient (a string) but bounded:
+	// 64 runes are accepted, 65 are refused.
+	for _, tc := range []struct {
+		n    int
+		want bool
+	}{{64, true}, {65, false}} {
+		long, err := jsonschema.UnmarshalJSON(bytes.NewReader(bytes.Replace(data, []byte(`"oauth_account":"acme-personal"`), []byte(`"oauth_account":"`+strings.Repeat("a", tc.n)+`"`), 1)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sch.Validate(long) == nil; got != tc.want {
+			t.Errorf("oauth_account of %d runes: schema accepts = %v, want %v", tc.n, got, tc.want)
+		}
+	}
 }
 
 func TestResultSchemaImageBlock(t *testing.T) {
