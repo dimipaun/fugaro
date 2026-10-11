@@ -29,7 +29,7 @@ func newRecipesCmd() *cobra.Command {
 		Short: "List, show, validate and publish recipes, the task loop a run follows after implement",
 		Long: "A recipe is found by name in .fugaro/recipes/NAME.yaml in the repository, then in the\n" +
 			"project's fugaro/recipes/NAME.yaml in the runs bucket, then in the catalog\n" +
-			"(default, cheap-loop-senior, claude-solo). See docs/recipes.md.",
+			"(" + strings.Join(recipe.CatalogNames(), ", ") + "). See docs/recipes.md.",
 	}
 	cmd.AddCommand(newRecipesLsCmd(), newRecipesShowCmd(), newRecipesPublishCmd(), newRecipesValidateCmd())
 	return cmd
@@ -55,11 +55,59 @@ func localRoot(ctx context.Context) string {
 }
 
 type recipeRow struct {
-	Name        string `json:"name"`
-	Source      string `json:"source"`
-	Description string `json:"description,omitempty"`
-	ShadowedBy  string `json:"shadowed_by,omitempty"`
-	Problem     string `json:"problem,omitempty"`
+	Name        string     `json:"name"`
+	Source      string     `json:"source"`
+	Description string     `json:"description,omitempty"`
+	UseWhen     string     `json:"use_when,omitempty"`
+	Steps       []stepView `json:"steps,omitempty"`
+	ShadowedBy  string     `json:"shadowed_by,omitempty"`
+	Problem     string     `json:"problem,omitempty"`
+}
+
+// stepView is one of a recipe's steps, for recipes ls --verbose and --json.
+type stepView struct {
+	Kind      string `json:"kind"`
+	MaxRounds int    `json:"max_rounds,omitempty"`
+	Bounce    bool   `json:"bounce,omitempty"`
+	Command   string `json:"command,omitempty"`
+	Autofix   bool   `json:"autofix,omitempty"`
+}
+
+func stepViews(steps []recipe.Step) []stepView {
+	out := make([]stepView, len(steps))
+	for i, s := range steps {
+		out[i] = stepView{Kind: string(s.Kind), MaxRounds: s.MaxRounds, Bounce: s.Bounce, Command: string(s.Command), Autofix: s.Autofix}
+	}
+	return out
+}
+
+// stepsSummary is steps as one comma-joined line for recipes ls --verbose:
+// "first_line, review (bounce: first_line)", "check: test, first_line, review".
+func stepsSummary(steps []stepView) string {
+	parts := make([]string, len(steps))
+	for i, s := range steps {
+		switch recipe.StepKind(s.Kind) {
+		case recipe.StepCheck:
+			parts[i] = "check: " + s.Command
+			if s.Autofix {
+				parts[i] += ", autofix"
+			}
+		case recipe.StepReview:
+			parts[i] = "review"
+			if s.Bounce {
+				parts[i] += " (bounce: first_line)"
+			}
+			if s.MaxRounds > 0 {
+				parts[i] += fmt.Sprintf(" (max_rounds: %d)", s.MaxRounds)
+			}
+		default:
+			parts[i] = s.Kind
+			if s.MaxRounds > 0 {
+				parts[i] += fmt.Sprintf(" (max_rounds: %d)", s.MaxRounds)
+			}
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // listRecipes lists every recipe of every layer, the winning layer first for
@@ -96,6 +144,8 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 			r.Problem = fmt.Sprintf("names itself %q; the file name and the name must agree", rcp.Name)
 		default:
 			r.Description = rcp.Description
+			r.UseWhen = rcp.UseWhen
+			r.Steps = stepViews(rcp.Steps)
 		}
 		return r
 	}
@@ -158,7 +208,7 @@ func listRecipes(ctx context.Context, env *cloudEnv, root string, now time.Time)
 
 func newRecipesLsCmd() *cobra.Command {
 	var o cloudOptions
-	var asJSON bool
+	var asJSON, verbose bool
 	cmd := &cobra.Command{
 		Use:   "ls",
 		Short: "List the recipes of this checkout, the project and the catalog, and which one wins for each name",
@@ -193,11 +243,18 @@ func newRecipesLsCmd() *cobra.Command {
 					desc = "INVALID: " + r.Problem
 				}
 				fmt.Fprintf(tw, "%s\t%s\t%s\n", r.Name, src, oneLine(pluginwire.Printable(desc)))
+				if verbose && r.Problem == "" {
+					if r.UseWhen != "" {
+						fmt.Fprintf(tw, "    use when: %s\n", oneLine(pluginwire.Printable(r.UseWhen)))
+					}
+					fmt.Fprintf(tw, "    steps: %s\n", oneLine(pluginwire.Printable(stepsSummary(r.Steps))))
+				}
 			}
 			return tw.Flush()
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print machine-readable output")
+	cmd.Flags().BoolVar(&verbose, "verbose", false, "also print each recipe's use_when and steps")
 	addCloudFlags(cmd, &o)
 	return cmd
 }

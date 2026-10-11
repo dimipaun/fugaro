@@ -133,6 +133,9 @@ func resolveRecipe(ctx context.Context, env *cloudEnv, root, name string, now ti
 			return &resolvedRecipe{Name: name, Source: recipe.SourceProject, Text: data, Recipe: rcp, Where: where, Note: n}, nil
 		}
 	}
+	if to, ok := recipe.Renamed[name]; ok {
+		return nil, userErr("%s was renamed in 0.7.0: use %s", name, to)
+	}
 	if text, ok := recipe.CatalogText(name); ok {
 		rcp, err := parseRecipeAt(text, name, "catalog recipe "+name)
 		if err != nil {

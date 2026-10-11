@@ -16,6 +16,11 @@ import (
 	"github.com/dimipaun/fugaro/internal/testutil"
 )
 
+// projectSoloCatalogName is a project override of the catalog's solo (so
+// publishing it shows the "replaces the catalog's" note), with a pinned
+// max_rounds to tell it apart from the catalog's own text.
+const projectSoloCatalogName = "version: 1\nname: solo\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 2 }\n"
+
 func writeRecipeFile(t *testing.T, dir, rel, text string) string {
 	t.Helper()
 	testutil.WriteFiles(t, dir, map[string]string{rel: text})
@@ -73,14 +78,14 @@ func TestRecipesPublishWritesObject(t *testing.T) {
 	f := newCloudFixture(t)
 	projectRecipesFixture(t, f, nil)
 	noAgentSession(t)
-	path := writeRecipeFile(t, t.TempDir(), "claude-solo.yaml", projectSolo)
+	path := writeRecipeFile(t, t.TempDir(), "solo.yaml", projectSoloCatalogName)
 	out, errOut, err := execute(t, "recipes", "publish", path)
-	if err != nil || !strings.Contains(out, "published claude-solo to gs://fugaro-runs-proj-1234/fugaro/recipes/claude-solo.yaml") ||
-		!strings.Contains(errOut, "replaces the catalog's claude-solo") {
+	if err != nil || !strings.Contains(out, "published solo to gs://fugaro-runs-proj-1234/fugaro/recipes/solo.yaml") ||
+		!strings.Contains(errOut, "replaces the catalog's solo") {
 		t.Fatalf("out %q, stderr %q, err %v", out, errOut, err)
 	}
-	got, err := os.ReadFile(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("claude-solo"))))
-	if err != nil || string(got) != projectSolo {
+	got, err := os.ReadFile(filepath.Join(f.dir, "runs", filepath.FromSlash(recipe.ObjectKey("solo"))))
+	if err != nil || string(got) != projectSoloCatalogName {
 		t.Fatalf("object = %q, %v", got, err)
 	}
 }
@@ -147,9 +152,14 @@ func TestRecipesLsLayers(t *testing.T) {
 		{Name: "team", Source: "repo"},
 		{Name: "claude-solo", Source: "project"},
 		{Name: "team", Source: "project", ShadowedBy: "repo"},
-		{Name: "cheap-loop-senior", Source: "catalog"},
-		{Name: "claude-solo", Source: "catalog", ShadowedBy: "project"},
 		{Name: "default", Source: "catalog"},
+		{Name: "lint-fix", Source: "catalog"},
+		{Name: "pick", Source: "catalog"},
+		{Name: "premium", Source: "catalog"},
+		{Name: "review-only", Source: "catalog"},
+		{Name: "solo", Source: "catalog"},
+		{Name: "standard", Source: "catalog"},
+		{Name: "test-and-fix", Source: "catalog"},
 	}
 	if len(doc.Recipes) != len(want) {
 		t.Fatalf("rows = %+v", doc.Recipes)
@@ -159,6 +169,49 @@ func TestRecipesLsLayers(t *testing.T) {
 		if g.Name != w.Name || g.Source != w.Source || g.ShadowedBy != w.ShadowedBy {
 			t.Errorf("row %d = %+v, want %+v", i, g, w)
 		}
+	}
+}
+
+// TestRecipesLsVerbose: --verbose prints each recipe's use_when and steps on
+// stdout, and --json always carries them (unlike plain ls, Task 14 step 1).
+func TestRecipesLsVerbose(t *testing.T) {
+	newCloudFixture(t)
+	out, _, err := execute(t, "recipes", "ls", "--verbose")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "use when: Typical feature or bug-fix work that needs a real review.") ||
+		!strings.Contains(out, "steps: first_line, review (bounce: first_line)") {
+		t.Fatalf("out = %q", out)
+	}
+	// Plain ls (no --verbose) prints neither line.
+	plain, _, err := execute(t, "recipes", "ls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(plain, "use when:") || strings.Contains(plain, "steps:") {
+		t.Fatalf("plain ls = %q", plain)
+	}
+	// --json always carries use_when and steps, with or without --verbose.
+	jsonOut, _, err := execute(t, "recipes", "ls", "--json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Recipes []recipeRow `json:"recipes"`
+	}
+	if err := json.Unmarshal([]byte(jsonOut), &doc); err != nil {
+		t.Fatal(err)
+	}
+	var standard recipeRow
+	for _, r := range doc.Recipes {
+		if r.Name == "standard" {
+			standard = r
+		}
+	}
+	if standard.UseWhen == "" || len(standard.Steps) != 2 || standard.Steps[0].Kind != "first_line" ||
+		standard.Steps[1].Kind != "review" || !standard.Steps[1].Bounce {
+		t.Fatalf("standard row = %+v", standard)
 	}
 }
 

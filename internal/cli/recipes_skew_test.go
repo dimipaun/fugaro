@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dimipaun/fugaro/internal/recipe"
 	"github.com/dimipaun/fugaro/internal/task"
 )
 
@@ -57,6 +58,40 @@ func TestCheckRecipeImage(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "fugaro.yaml's agent.recipe needs a job image") || strings.Contains(err.Error(), "--recipe default") ||
 		!strings.Contains(err.Error(), "it copies this release's base image, points") {
 		t.Fatalf("agent.recipe: %v", err)
+	}
+}
+
+// TestRecipeV07NeedsA07Image: a recipe using a 0.7.0 construct (here the
+// catalog's standard, with bounce) is refused on a build record whose
+// base_ref predates 0.7.0 even though it is at or after recipesSince
+// (0.5.0): the same shape as TestCheckRecipeImage's 0.5.0 gate, one version
+// higher. A recipe with no 0.7.0 construct (default) is not held to it.
+func TestRecipeV07NeedsA07Image(t *testing.T) {
+	f := newCloudFixture(t)
+	env := fileEnv(t, f)
+	text, ok := recipe.CatalogText("standard")
+	if !ok {
+		t.Fatal("no catalog recipe standard")
+	}
+	spec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "standard", Source: "catalog", SHA256: recipe.Sum(text), YAML: string(text)}}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.6.2")
+	err := checkRecipeImage(context.Background(), env, appSlug, spec, "web-node", &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "recipe standard needs a job image whose runner knows recipes (fugaro 0.7.0 or later)") ||
+		!strings.Contains(err.Error(), "release 0.6.2") || ExitCode(err) != ExitUserError {
+		t.Fatalf("err = %v", err)
+	}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.7.0")
+	if err := checkRecipeImage(context.Background(), env, appSlug, spec, "web-node", &bytes.Buffer{}); err != nil {
+		t.Fatalf("0.7.0 base: %v", err)
+	}
+	// default carries no 0.7.0 construct, so 0.5.0 still suffices for it.
+	defText, _ := recipe.CatalogText("default")
+	defSpec := &task.Spec{Version: 1, RunID: "20261007-100000-abcd", Repo: "acme/app", Ref: "main", Workflow: "web", Task: "x",
+		Recipe: &task.Recipe{Name: "default", Source: "catalog", SHA256: recipe.Sum(defText), YAML: string(defText)}}
+	writeBuildRecord(t, f, appSlug, "web", "ghcr.io/dimipaun/fugaro-web-node:0.5.0")
+	if err := checkRecipeImage(context.Background(), env, appSlug, defSpec, "web-node", &bytes.Buffer{}); err != nil {
+		t.Fatalf("default on 0.5.0 base: %v", err)
 	}
 }
 

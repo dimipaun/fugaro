@@ -20,17 +20,25 @@ func recipeSpec(r *task.Recipe) *task.Spec {
 	return &task.Spec{Version: 1, RunID: runID, Repo: "acme/app", Ref: "main", Task: "Add a feature", Recipe: r}
 }
 
-// catalogTask is catalog recipe name as the CLI embeds it.
-func catalogTask(t *testing.T, name string) *task.Recipe {
-	t.Helper()
-	text, ok := recipe.CatalogText(name)
-	if !ok {
-		t.Fatalf("no catalog recipe %s", name)
-	}
-	return &task.Recipe{Name: name, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum(text), YAML: string(text)}
+// embeddedTask is a task.Recipe the way the CLI embeds a recipe it resolved
+// (any source, trusted as given: the runner never re-checks an embedded
+// recipe's YAML against its source, resolveRecipe). It is used below for the
+// exact shape of the two 0.6 catalog recipes 0.7.0 retired (recipe.Renamed):
+// the runner's handling of an embedded recipe does not care that they are no
+// longer in the catalog, only the CLI's image gate does (recipes_skew.go).
+func embeddedTask(name, yaml string) *task.Recipe {
+	return &task.Recipe{Name: name, Source: string(recipe.SourceCatalog), SHA256: recipe.Sum([]byte(yaml)), YAML: yaml}
 }
 
 const twoRounds = "version: 1\nname: two-rounds\nsteps:\n  - review: { max_rounds: 2 }\n"
+
+// retiredCheapLoopSenior and retiredClaudeSolo are the exact 0.6 catalog
+// texts of the two recipes the 0.7.0 catalog renamed away (solo, standard):
+// pinned rounds, no use_when, so they still parse that way under any runner.
+const (
+	retiredCheapLoopSenior = "version: 1\nname: cheap-loop-senior\ndescription: Cheap first-line review/fix loop by the coder's model (2 rounds), then one senior review\nsteps:\n  - first_line: { max_rounds: 2 }\n  - review: { max_rounds: 1 }\n"
+	retiredClaudeSolo      = "version: 1\nname: claude-solo\ndescription: One model plays both parts. The coder's model reviews in a fresh session, one senior round, no first line.\nroles:\n  reviewer: coder\nsteps:\n  - review: { max_rounds: 1 }\n"
+)
 
 func TestRecipeDefaultRecorded(t *testing.T) {
 	h := newHarness(t, firstLineCfg(t, 2, "  first_line_review: off\n"), nil)
@@ -45,7 +53,7 @@ func TestRecipeDefaultRecorded(t *testing.T) {
 }
 
 func TestRecipeEmbeddedCatalog(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(catalogTask(t, "cheap-loop-senior")))
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)))
 	rec, err := h.run(t, implement("feature"), review("changes", 1), fixStep, review("changes", 1), fixStep, review("changes", 1))
 	if err != nil {
 		t.Fatal(err)
@@ -61,10 +69,10 @@ func TestRecipeEmbeddedCatalog(t *testing.T) {
 }
 
 func TestRecipeRepoLayerWins(t *testing.T) {
-	// The task embeds the catalog's cheap-loop-senior; the repository has its
-	// own file of that name, which wins.
+	// The task embeds a recipe named cheap-loop-senior; the repository has
+	// its own file of that name, which wins.
 	own := "version: 1\nname: cheap-loop-senior\nsteps:\n  - review: { max_rounds: 1 }\n"
-	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(catalogTask(t, "cheap-loop-senior")),
+	h := newHarnessFiles(t, firstLineCfg(t, 2, ""), recipeSpec(embeddedTask("cheap-loop-senior", retiredCheapLoopSenior)),
 		map[string]string{".fugaro/recipes/cheap-loop-senior.yaml": own})
 	rec, err := h.run(t, implement("feature"), review("ship", 0))
 	if err != nil {
@@ -182,7 +190,7 @@ func TestRecipeFollowUpReadsBase(t *testing.T) {
 // The loop's rounds come from the plan, not from agent.review_rounds: a
 // recipe of one review round on a config saying 3 runs one senior review.
 func TestRecipeRoundsComeFromThePlan(t *testing.T) {
-	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(catalogTask(t, "claude-solo")))
+	h := newHarness(t, firstLineCfg(t, 3, "  first_line_review: off\n"), recipeSpec(embeddedTask("claude-solo", retiredClaudeSolo)))
 	rec, err := h.run(t, implement("feature"), review("changes", 1))
 	if err != nil {
 		t.Fatal(err)
